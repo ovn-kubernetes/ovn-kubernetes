@@ -59,20 +59,107 @@ const (
 )
 
 var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.RouteAdvertisements, func() {
+	const (
+		baseName            = "pod2external"
+		bgpPeerSubnetIPv4   = "172.36.0.0/16"
+		bgpPeerSubnetIPv6   = "fc00:f853:ccd:36::/64"
+		bgpServerSubnetIPv4 = "172.38.0.0/16"
+		bgpServerSubnetIPv6 = "fc00:f853:ccd:38::/64"
+	)
+
 	var serverContainerIPs []string
 	var frrContainerIPv4, frrContainerIPv6 string
+	var nodeIPsV4, nodeIPsV6 map[string]string
 	var nodes *corev1.NodeList
+	var ictx infraapi.Context
+	var testNetworkName, bgpServerName, frrContainerName string
 	f := wrappedTestFramework("pod2external-route-advertisements")
 
 	ginkgo.BeforeEach(func() {
-		serverContainerIPs = getBGPServerContainerIPs(f)
+		ictx = infraprovider.Get().NewTestContext()
+		testSuffix := framework.RandomSuffix()
+		testNetworkName = baseName + testSuffix
+		bgpServerName = testNetworkName + "-bgpserver"
+		frrContainerName = testNetworkName + "-frr"
+
+		ginkgo.By("Setup a BGP network with a bgpserver container for default network")
+		bgpPeerCIDRs := []string{bgpPeerSubnetIPv4, bgpPeerSubnetIPv6}
+		bgpServerCIDRs := []string{bgpServerSubnetIPv4, bgpServerSubnetIPv6}
+		gomega.Expect(runBGPNetworkAndServer(f, ictx, testNetworkName, bgpServerName, bgpPeerCIDRs, bgpServerCIDRs, true)).To(gomega.Succeed())
+
+		// Get bgpserver container IPs
+		bgpServerNetwork, err := infraprovider.Get().GetNetwork(bgpServerName)
+		framework.ExpectNoError(err, "must get bgpserver network")
+		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: bgpServerName}, bgpServerNetwork)
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", bgpServerName, bgpServerName)
+		if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
+			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
+		}
+		if isIPv6Supported(f.ClientSet) && len(networkInterface.IPv6) > 0 {
+			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
+		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
+
+		// Get FRR container IPs from provider primary network
+		// For default network, BGP peering happens on the primary network (same as cluster nodes)
 		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "provider primary network must be available")
-		externalContainerNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: routerContainerName}, providerPrimaryNetwork)
-		framework.ExpectNoError(err, "external container %s network %s information must be available", routerContainerName, providerPrimaryNetwork.Name())
+		externalContainerNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: frrContainerName}, providerPrimaryNetwork)
+		framework.ExpectNoError(err, "external container %s network %s information must be available", frrContainerName, providerPrimaryNetwork.Name())
 		frrContainerIPv4, frrContainerIPv6 = externalContainerNetInf.IPv4, externalContainerNetInf.IPv6
-		framework.Logf("The frr router container IPs are: %s/%s", frrContainerIPv4, frrContainerIPv6)
+		framework.Logf("The frr router container IPs on primary network are: %s, %s", frrContainerIPv4, frrContainerIPv6)
+
+		// Create FRRConfiguration for default network using FRR container's IPs on the PRIMARY network
+		ginkgo.By("Creating FRRConfiguration for default network")
+		var frrContainerIPs []string
+		if frrContainerIPv4 != "" {
+			frrContainerIPs = append(frrContainerIPs, frrContainerIPv4)
+		}
+		if frrContainerIPv6 != "" {
+			frrContainerIPs = append(frrContainerIPs, frrContainerIPv6)
+		}
+		receiveNetworks := []string{bgpServerSubnetIPv4, bgpServerSubnetIPv6}
+		gomega.Expect(createDefaultNetworkFRRConfiguration(f, ictx, testNetworkName, frrContainerIPs, receiveNetworks)).To(gomega.Succeed())
+
+		// get nodes' IPs for route verification later
+		ginkgo.By("Getting node primary network IPs for route verification")
+		nodeIPsV4 = make(map[string]string)
+		nodeIPsV6 = make(map[string]string)
+		nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+		framework.ExpectNoError(err, "failed to list nodes")
+		for _, node := range nodeList.Items {
+			// Get the node's InternalIP (primary network) for each supported IP family
+			var nodeIPv4, nodeIPv6 string
+			for _, addr := range node.Status.Addresses {
+				if addr.Type == corev1.NodeInternalIP {
+					parsedIP := net.ParseIP(addr.Address)
+					if parsedIP == nil {
+						continue
+					}
+					// Check if this is an IPv4 address
+					if parsedIP.To4() != nil {
+						nodeIPv4 = addr.Address
+					} else {
+						// IPv6 address
+						nodeIPv6 = addr.Address
+					}
+				}
+			}
+
+			if isIPv4Supported(f.ClientSet) && nodeIPv4 != "" {
+				nodeIPsV4[node.Name] = nodeIPv4
+				framework.Logf("Node %s primary network IPv4: %s", node.Name, nodeIPv4)
+			}
+
+			if isIPv6Supported(f.ClientSet) && nodeIPv6 != "" {
+				nodeIPsV6[node.Name] = nodeIPv6
+				framework.Logf("Node %s primary network IPv6: %s", node.Name, nodeIPv6)
+			}
+			// Warn if we didn't find any suitable IPs
+			if (isIPv4Supported(f.ClientSet) && nodeIPv4 == "") || (isIPv6Supported(f.ClientSet) && nodeIPv6 == "") {
+				framework.Logf("Warning: Incomplete primary network IPs for node %s (IPv4: %s, IPv6: %s)", node.Name, nodeIPv4, nodeIPv6)
+			}
+		}
 	})
 
 	ginkgo.When("a client ovnk pod is created", func() {
@@ -82,11 +169,9 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 		var err error
 
 		ginkgo.BeforeEach(func() {
-			if !isDefaultNetworkAdvertised() {
-				e2eskipper.Skipf(
-					"skipping pod to external server tests when podNetwork is not advertised",
-				)
-			}
+			ginkgo.By("Ensuring default network RouteAdvertisement exists and is accepted")
+			gomega.Expect(ensureDefaultNetworkRAAccepted(f, ictx)).To(gomega.Succeed())
+
 			ginkgo.By("Selecting 3 schedulable nodes")
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -122,8 +207,8 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 		// This test ensures the north-south connectivity is happening through podIP
 		ginkgo.It("tests are run towards the external agnhost echo server", func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
-			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
-			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
+			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpServerName)
+			framework.ExpectNoError(err, "network %s must be available", bgpServerName)
 			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
 			framework.ExpectNoError(err, "must get bgpnet subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
@@ -131,25 +216,23 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				if isIPv4Supported(f.ClientSet) {
 					ipVer := ""
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
-					framework.Logf("Checking for server's route in node %s", node.Name)
+					framework.Logf("Checking for server's IPv4 route in node %s (expecting next hop %s)", node.Name, frrContainerIPv4)
 					gomega.Eventually(func() bool {
 						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
-						framework.ExpectNoError(err, "failed to get BGP routes from node")
-						framework.Logf("Routes in node %s", routes)
+						framework.ExpectNoError(err, "failed to get BGP IPv4 routes from node")
+						framework.Logf("IPv4 BGP Routes in node %s", routes)
 						return strings.Contains(routes, frrContainerIPv4)
 					}, 30*time.Second).Should(gomega.BeTrue())
 				}
 				if isIPv6Supported(f.ClientSet) {
 					ipVer := " -6"
-					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
-					framework.Logf("Checking for server's route in node %s", node.Name)
+					framework.Logf("Checking for server's IPv6 route in node %s (expecting next hop %s)", node.Name, frrContainerIPv6)
 					gomega.Eventually(func() bool {
 						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
-						framework.ExpectNoError(err, "failed to get BGP routes from node")
-						framework.Logf("Routes in node %s", routes)
-						return strings.Contains(routes, nodeIPv6LLA)
+						framework.ExpectNoError(err, "failed to get BGP IPv6 routes from node")
+						framework.Logf("IPv6 BGP Routes in node %s", routes)
+						return strings.Contains(routes, externalServerV6CIDR) && strings.Contains(routes, "fe80::") && strings.Contains(routes, "breth0")
 					}, 30*time.Second).Should(gomega.BeTrue())
 				}
 			}
@@ -172,14 +255,19 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				return reason
 			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
 
-			ginkgo.By("all 3 node's podSubnet routes are exported correctly to external FRR router by frr-k8s speakers")
+			ginkgo.By("all 3 node's podSubnet routes are advertised correctly to external FRR router by frr-k8s speakers")
 			// sample
-			//10.244.0.0/24 nhid 27 via 172.18.0.3 dev eth0 proto bgp metric 20
-			//10.244.1.0/24 nhid 30 via 172.18.0.2 dev eth0 proto bgp metric 20
-			//10.244.2.0/24 nhid 25 via 172.18.0.4 dev eth0 proto bgp metric 20
+			//10.244.0.0/24 nhid 27 via 172.36.0.3 dev eth0 proto bgp metric 20
+			//10.244.1.0/24 nhid 30 via 172.36.0.2 dev eth0 proto bgp metric 20
+			//10.244.2.0/24 nhid 25 via 172.36.0.4 dev eth0 proto bgp metric 20
 			for _, serverContainerIP := range serverContainerIPs {
 				for _, node := range nodes.Items {
-					checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.DefaultNetworkName)
+					// Use the appropriate node peer IP map based on the server container IP family
+					nodeIPOverrides := nodeIPsV4
+					if utilnet.IsIPv6String(serverContainerIP) {
+						nodeIPOverrides = nodeIPsV6
+					}
+					checkL3NodePodRoute(node, serverContainerIP, frrContainerName, types.DefaultNetworkName, nodeIPOverrides)
 				}
 			}
 
@@ -218,8 +306,8 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 		ginkgo.It("can connect to an external server and another cluster node after toggling default network advertisement off and back on", ginkgo.Serial, func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
-			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
-			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
+			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpServerName)
+			framework.ExpectNoError(err, "network %s must be available", bgpServerName)
 			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
 			framework.ExpectNoError(err, "must get bgpnet subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
@@ -227,7 +315,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				if isIPv4Supported(f.ClientSet) {
 					ipVer := ""
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
-					framework.Logf("Checking for server's route in node %s", node.Name)
+					framework.Logf("Checking for server's route in node %s (expecting next hop %s)", node.Name, frrContainerIPv4)
 					gomega.Eventually(func() bool {
 						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
@@ -237,15 +325,14 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				}
 				if isIPv6Supported(f.ClientSet) {
 					ipVer := " -6"
-					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
-					framework.Logf("Checking for server's route in node %s", node.Name)
+					framework.Logf("Checking for server's IPv6 route in node %s (expecting route via FRR link-local on breth0)", node.Name)
 					gomega.Eventually(func() bool {
 						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
-						return strings.Contains(routes, nodeIPv6LLA)
+						// Check that the route exists via a link-local address (fe80::) on breth0
+						return strings.Contains(routes, externalServerV6CIDR) && strings.Contains(routes, "fe80::") && strings.Contains(routes, "breth0")
 					}, 30*time.Second).Should(gomega.BeTrue())
 				}
 			}
@@ -270,12 +357,17 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 			ginkgo.By("all 3 node's podSubnet routes are exported correctly to external FRR router by frr-k8s speakers")
 			// sample
-			//10.244.0.0/24 nhid 27 via 172.18.0.3 dev eth0 proto bgp metric 20
-			//10.244.1.0/24 nhid 30 via 172.18.0.2 dev eth0 proto bgp metric 20
-			//10.244.2.0/24 nhid 25 via 172.18.0.4 dev eth0 proto bgp metric 20
+			//10.244.0.0/24 nhid 27 via 172.36.0.3 dev eth0 proto bgp metric 20
+			//10.244.1.0/24 nhid 30 via 172.36.0.2 dev eth0 proto bgp metric 20
+			//10.244.2.0/24 nhid 25 via 172.36.0.4 dev eth0 proto bgp metric 20
 			for _, serverContainerIP := range serverContainerIPs {
 				for _, node := range nodes.Items {
-					checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.DefaultNetworkName)
+					// Use the appropriate node peer IP map based on the server container IP family
+					nodeIPOverrides := nodeIPsV4
+					if utilnet.IsIPv6String(serverContainerIP) {
+						nodeIPOverrides = nodeIPsV6
+					}
+					checkL3NodePodRoute(node, serverContainerIP, frrContainerName, types.DefaultNetworkName, nodeIPOverrides)
 				}
 			}
 
@@ -591,10 +683,20 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 })
 
 var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advertised", feature.RouteAdvertisements, func() {
+	const (
+		baseName            = "cudnra"
+		bgpPeerSubnetIPv4   = "172.37.0.0/16"
+		bgpPeerSubnetIPv6   = "fc00:f853:ccd:37::/64"
+		bgpServerSubnetIPv4 = "172.39.0.0/16"
+		bgpServerSubnetIPv6 = "fc00:f853:ccd:39::/64"
+	)
+
 	var serverContainerIPs []string
 	var frrContainerIPv4, frrContainerIPv6 string
 	var nodes *corev1.NodeList
 	var clientPod *corev1.Pod
+	var ictx infraapi.Context
+	var testNetworkName, bgpServerName, frrContainerName string
 
 	f := wrappedTestFramework("pod2external-route-advertisements")
 	f.SkipNamespaceCreation = true
@@ -608,13 +710,26 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		f.Namespace = namespace
 
+		ictx = infraprovider.Get().NewTestContext()
+		testSuffix := framework.RandomSuffix()
+		testNetworkName = baseName + testSuffix
+		bgpServerName = testNetworkName + "-bgpserver"
+		frrContainerName = testNetworkName + "-frr"
+
+		ginkgo.By("Running a BGP network with an agnhost server")
+		bgpPeerCIDRs := []string{bgpPeerSubnetIPv4, bgpPeerSubnetIPv6}
+		bgpServerCIDRs := []string{bgpServerSubnetIPv4, bgpServerSubnetIPv6}
+		// Use forDefaultNetwork=true for non-VRF-Lite CUDN route advertisements
+		// This means BGP peering happens on the default network/VRF
+		gomega.Expect(runBGPNetworkAndServer(f, ictx, testNetworkName, bgpServerName, bgpPeerCIDRs, bgpServerCIDRs, true)).To(gomega.Succeed())
+
 		serverContainerIPs = []string{}
 
-		bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName) // pre-created network
-		framework.ExpectNoError(err, "must get bgpnet network")
-		bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
-		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
-		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
+		// Get server container IPs
+		bgpServerNetwork, err := infraprovider.Get().GetNetwork(bgpServerName)
+		framework.ExpectNoError(err, "must get bgpserver network")
+		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: bgpServerName}, bgpServerNetwork)
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", bgpServerName, bgpServerName)
 		if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 		}
@@ -623,13 +738,26 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		}
 		gomega.Expect(len(serverContainerIPs)).Should(gomega.BeNumerically(">", 0), "failed to find external container IPs")
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
+
+		// Get FRR container IPs
 		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "provider primary network must be available")
-		frrContainer := infraapi.ExternalContainer{Name: routerContainerName}
+		frrContainer := infraapi.ExternalContainer{Name: frrContainerName}
 		networkInterface, err = infraprovider.Get().GetExternalContainerNetworkInterface(frrContainer, providerPrimaryNetwork)
-		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", routerContainerName, providerPrimaryNetwork.Name())
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", frrContainerName, providerPrimaryNetwork.Name())
 		frrContainerIPv4, frrContainerIPv6 = networkInterface.IPv4, networkInterface.IPv6
 		framework.Logf("The frr router container IPs are: %s/%s", frrContainerIPv4, frrContainerIPv6)
+
+		// Create FRRConfiguration for the default network (non-VRF-Lite scenario)
+		// BGP peering happens on the default VRF, CUDN routes are advertised
+		var frrIPs []string
+		if frrContainerIPv4 != "" {
+			frrIPs = append(frrIPs, frrContainerIPv4)
+		}
+		if frrContainerIPv6 != "" {
+			frrIPs = append(frrIPs, frrContainerIPv6)
+		}
+		gomega.Expect(createDefaultNetworkFRRConfiguration(f, ictx, testNetworkName, frrIPs, bgpServerCIDRs)).To(gomega.Succeed())
 
 		// Select nodes here so they're available for all tests
 		ginkgo.By("Selecting 3 schedulable nodes")
@@ -640,12 +768,30 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 	ginkgo.DescribeTable("Route Advertisements",
 		func(cudnTemplate *udnv1.ClusterUserDefinedNetwork, ra *rav1.RouteAdvertisements) {
+			// Use testNetworkName as the CUDN name for consistent naming
+			cudnTemplate.ObjectMeta.Name = testNetworkName
+			cudnTemplate.ObjectMeta.GenerateName = ""
+			cudnTemplate.ObjectMeta.Labels = map[string]string{testNetworkName: ""}
+
 			// set the exact selector
 			cudnTemplate.Spec.NamespaceSelector = metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
 				Key:      "kubernetes.io/metadata.name",
 				Operator: metav1.LabelSelectorOpIn,
 				Values:   []string{f.Namespace.Name},
 			}}}
+
+			// Update the RouteAdvertisement's network selector to match the CUDN label
+			for i := range ra.Spec.NetworkSelectors {
+				if ra.Spec.NetworkSelectors[i].ClusterUserDefinedNetworkSelector != nil {
+					ra.Spec.NetworkSelectors[i].ClusterUserDefinedNetworkSelector.NetworkSelector.MatchLabels = map[string]string{testNetworkName: ""}
+				}
+			}
+
+			// Update the RouteAdvertisement's FRRConfigurationSelector to match the default network FRRConfiguration
+			// The FRRConfiguration created by createDefaultNetworkFRRConfiguration has label {"network": "default"}
+			ra.Spec.FRRConfigurationSelector = metav1.LabelSelector{
+				MatchLabels: map[string]string{"network": "default"},
+			}
 
 			// Create CUDN
 			ginkgo.By("create ClusterUserDefinedNetwork")
@@ -717,15 +863,15 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 			// This test ensures the north-south connectivity is happening through podIP
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
-			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
-			framework.ExpectNoError(err, "network %s must be available", bgpExternalNetworkName)
+			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpServerName)
+			framework.ExpectNoError(err, "network %s must be available", bgpServerName)
 			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
 			framework.ExpectNoError(err, "must get BGP network subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
 			var nodeIPv6LLA string
 			if isDualStackCluster(nodes) {
 				var err error
-				nodeIPv6LLA, err = GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
+				nodeIPv6LLA, err = GetNodeIPv6LinkLocalAddressForEth0(frrContainerName)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 			for _, node := range nodes.Items {
@@ -882,7 +1028,14 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks", feature.RouteAdvertisements,
 	func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
-		const curlConnectionTimeoutCode = "28"
+		const (
+			curlConnectionTimeoutCode = "28"
+			baseName                  = "bgpiso"
+			bgpPeerSubnetIPv4         = "172.40.0.0/16"
+			bgpPeerSubnetIPv6         = "fc00:f853:ccd:40::/64"
+			bgpServerSubnetIPv4       = "172.41.0.0/16"
+			bgpServerSubnetIPv6       = "fc00:f853:ccd:41::/64"
+		)
 
 		f := wrappedTestFramework("bgp-network-isolation")
 		f.SkipNamespaceCreation = true
@@ -897,9 +1050,40 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
+		var ictx infraapi.Context
+		var testNetworkName, bgpServerName, frrContainerName string
 		ginkgo.BeforeEach(func() {
+			ictx = infraprovider.Get().NewTestContext()
+			testSuffix := framework.RandomSuffix()
+			testNetworkName = baseName + testSuffix
+			bgpServerName = testNetworkName + "-bgpserver"
+			frrContainerName = testNetworkName + "-frr"
+
+			ginkgo.By("Running a BGP network with an agnhost server")
+			bgpPeerCIDRs := []string{bgpPeerSubnetIPv4, bgpPeerSubnetIPv6}
+			bgpServerCIDRs := []string{bgpServerSubnetIPv4, bgpServerSubnetIPv6}
+			// Use forDefaultNetwork=true for non-VRF-Lite CUDN route advertisements
+			gomega.Expect(runBGPNetworkAndServer(f, ictx, testNetworkName, bgpServerName, bgpPeerCIDRs, bgpServerCIDRs, true)).To(gomega.Succeed())
+
+			// Get FRR container IPs and create FRRConfiguration for the default network
+			providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+			framework.ExpectNoError(err, "provider primary network must be available")
+			frrContainer := infraapi.ExternalContainer{Name: frrContainerName}
+			networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(frrContainer, providerPrimaryNetwork)
+			framework.ExpectNoError(err, "container %s attached to network %s must contain network info", frrContainerName, providerPrimaryNetwork.Name())
+			frrContainerIPv4, frrContainerIPv6 := networkInterface.IPv4, networkInterface.IPv6
+			framework.Logf("The frr router container IPs are: %s/%s", frrContainerIPv4, frrContainerIPv6)
+
+			var frrIPs []string
+			if frrContainerIPv4 != "" {
+				frrIPs = append(frrIPs, frrContainerIPv4)
+			}
+			if frrContainerIPv6 != "" {
+				frrIPs = append(frrIPs, frrContainerIPv6)
+			}
+			gomega.Expect(createDefaultNetworkFRRConfiguration(f, ictx, testNetworkName, frrIPs, bgpServerCIDRs)).To(gomega.Succeed())
+
 			ginkgo.By("Configuring primary UDN namespaces")
-			var err error
 			udnNamespaceA, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
 				"e2e-framework":           f.BaseName,
 				RequiredUDNNamespaceLabel: "",
@@ -1022,7 +1206,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod.Labels = map[string]string{"network": "default"}
 			podNetDefault = e2epod.PodClientNS(f, "default").CreateSync(context.TODO(), pod)
 
-			svc.Name = fmt.Sprintf("service-default")
+			svc.Name = "service-default"
 			svc.Namespace = "default"
 			svc.Spec.Selector = pod.Labels
 			svc.Spec.Type = corev1.ServiceTypeNodePort
@@ -1045,8 +1229,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							},
 						},
 					},
-					NodeSelector:             metav1.LabelSelector{},
-					FRRConfigurationSelector: metav1.LabelSelector{},
+					NodeSelector: metav1.LabelSelector{},
+					// For non-VRF-Lite, select the default network FRRConfiguration
+					FRRConfigurationSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"network": "default"},
+					},
 					Advertisements: []rav1.AdvertisementType{
 						rav1.PodNetwork,
 					},
@@ -1073,15 +1260,26 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
 
 			ginkgo.By("ensure routes from UDNs are learned by the external FRR router")
-			serverContainerIPs := getBGPServerContainerIPs(f)
+			// Get server container IPs
+			bgpServerNetwork, err := infraprovider.Get().GetNetwork(bgpServerName)
+			framework.ExpectNoError(err, "must get bgpserver network")
+			serverNetworkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: bgpServerName}, bgpServerNetwork)
+			framework.ExpectNoError(err, "container %s attached to network %s must contain network info", bgpServerName, bgpServerName)
+			var serverContainerIPs []string
+			if isIPv4Supported(f.ClientSet) && len(serverNetworkInterface.IPv4) > 0 {
+				serverContainerIPs = append(serverContainerIPs, serverNetworkInterface.IPv4)
+			}
+			if isIPv6Supported(f.ClientSet) && len(serverNetworkInterface.IPv6) > 0 {
+				serverContainerIPs = append(serverContainerIPs, serverNetworkInterface.IPv6)
+			}
 			for _, serverContainerIP := range serverContainerIPs {
 				for _, node := range nodes.Items {
 					if cudnA.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-						checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnATemplate.Name)
-						checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnBTemplate.Name)
+						checkL3NodePodRoute(node, serverContainerIP, frrContainerName, types.CUDNPrefix+cudnATemplate.Name, nil)
+						checkL3NodePodRoute(node, serverContainerIP, frrContainerName, types.CUDNPrefix+cudnBTemplate.Name, nil)
 					} else {
-						checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnATemplate.Spec.Network.Layer2.Subnets)
-						checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnBTemplate.Spec.Network.Layer2.Subnets)
+						checkL2NodePodRoute(node, serverContainerIP, frrContainerName, cudnATemplate.Spec.Network.Layer2.Subnets)
+						checkL2NodePodRoute(node, serverContainerIP, frrContainerName, cudnBTemplate.Spec.Network.Layer2.Subnets)
 					}
 				}
 			}
@@ -1721,7 +1919,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 		ginkgo.By("Running a BGP network with an agnhost server")
 		bgpPeerCIDRs := []string{bgpPeerSubnetIPv4, bgpPeerSubnetIPv6}
 		bgpServerCIDRs := []string{bgpServerSubnetIPv4, bgpServerSubnetIPv6}
-		gomega.Expect(runBGPNetworkAndServer(f, ictx, testNetworkName, bgpServerName, bgpPeerCIDRs, bgpServerCIDRs)).To(gomega.Succeed())
+		gomega.Expect(runBGPNetworkAndServer(f, ictx, testNetworkName, bgpServerName, bgpPeerCIDRs, bgpServerCIDRs, false)).To(gomega.Succeed())
 	})
 
 	// define networks to test with
@@ -2114,7 +2312,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 									otherBGPServerName := otherNetworkName + "-bgpserver"
 									bgpPeerCIDRs := []string{otherBGPPeerSubnetIPv4, otherBGPPeerSubnetIPv6}
 									bgpServerCIDRs := []string{otherBGPServerSubnetIPv4, otherBGPServerSubnetIPv6}
-									gomega.Expect(runBGPNetworkAndServer(f, ictx, otherNetworkName, otherBGPServerName, bgpPeerCIDRs, bgpServerCIDRs)).To(gomega.Succeed())
+									gomega.Expect(runBGPNetworkAndServer(f, ictx, otherNetworkName, otherBGPServerName, bgpPeerCIDRs, bgpServerCIDRs, false)).To(gomega.Succeed())
 								case defaultNetwork:
 									otherNetworkName = "default"
 								}
@@ -2276,7 +2474,7 @@ type templateInputFRR struct {
 var ratestdata embed.FS
 var tmplDir = filepath.Join("testdata", "routeadvertisements")
 
-const frrImage = "quay.io/frrouting/frr:9.1.3"
+const frrImage = "quay.io/frrouting/frr:10.4.1"
 
 // generateFRRConfiguration to establish a BGP session towards the provided
 // neighbors in the network's VRF configured to advertised the provided
@@ -2326,12 +2524,11 @@ func generateFRRConfiguration(neighborIPs, advertiseNetworks []string) (director
 	return directory, nil
 }
 
-// generateFRRk8sConfiguration for the provided network (which doubles up as the
-// FRRConfiguration instance name, VRF name and used as value of `network`
-// label) to establish a BGP session towards the provided neighbors in the
-// network's VRF, configured to receive advertisements for the provided
-// networks. Returns a temporary directory where the configuration is generated.
-func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetworks []string) (directory string, err error) {
+// generateFRRk8sConfiguration for the provided network to establish a BGP session
+// towards the provided neighbors, configured to receive advertisements for the provided
+// networks. If vrfName is non-empty, the FRRConfiguration will be for that VRF.
+// Returns a temporary directory where the configuration is generated.
+func generateFRRk8sConfiguration(name string, vrfName string, labels map[string]string, neighborIPs, receiveNetworks []string) (directory string, err error) {
 	// parse configuration templates
 	var templates *template.Template
 	templates, err = template.ParseFS(ratestdata, filepath.Join(tmplDir, "frr-k8s", "*.tmpl"))
@@ -2353,11 +2550,11 @@ func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetwork
 	receivesIPv4, receivesIPv6 := splitCIDRStringsByIPFamily(receiveNetworks)
 	neighborsIPv4, neighborsIPv6 := splitIPStringsByIPFamily(neighborIPs)
 	conf := templateInputFRR{
-		Name:   networkName,
-		Labels: map[string]string{"network": networkName},
+		Name:   name,
+		Labels: labels,
 		Routers: []templateInputRouter{
 			{
-				VRF:           networkName,
+				VRF:           vrfName,
 				NeighborsIPv4: neighborsIPv4,
 				NeighborsIPv6: neighborsIPv6,
 				NetworksIPv4:  receivesIPv4,
@@ -2371,6 +2568,260 @@ func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetwork
 	}
 
 	return directory, nil
+}
+
+const (
+	frrK8sNamespace      = "frr-k8s-system"
+	frrK8sVersion        = "v0.0.17"
+	frrK8sManifest       = "https://raw.githubusercontent.com/metallb/frr-k8s/" + frrK8sVersion + "/config/all-in-one/frr-k8s.yaml"
+	frrK8sCRDURL         = "https://raw.githubusercontent.com/metallb/frr-k8s/" + frrK8sVersion + "/charts/frr-k8s/charts/crds/templates/frrk8s.metallb.io_frrconfigurations.yaml"
+	frrK8sDeployWait     = 2 * time.Minute
+	raAcceptedWaitTime   = 60 * time.Second
+	defaultNetworkRAName = "default"
+)
+
+// ensureFRRK8sDeployed checks if FRR-K8s is deployed and deploys it if not.
+func ensureFRRK8sDeployed(f *framework.Framework, ictx infraapi.Context) error {
+	// Check if FRR-K8s namespace exists
+	_, err := f.ClientSet.CoreV1().Namespaces().Get(context.Background(), frrK8sNamespace, metav1.GetOptions{})
+	if err == nil {
+		// Namespace exists, check if daemon is running
+		framework.Logf("FRR-K8s namespace %s exists, checking if daemon is ready", frrK8sNamespace)
+		_, err := e2ekubectl.RunKubectl(frrK8sNamespace, "rollout", "status", "daemonset/frr-k8s-daemon", "--timeout=10s")
+		if err == nil {
+			framework.Logf("FRR-K8s is already deployed and ready")
+			// Also verify webhook endpoint is ready before returning
+			err = wait.PollUntilContextTimeout(context.Background(), time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+				endpoints, epErr := f.ClientSet.CoreV1().Endpoints(frrK8sNamespace).Get(ctx, "frr-k8s-webhook-service", metav1.GetOptions{})
+				if epErr != nil {
+					return false, nil
+				}
+				for _, subset := range endpoints.Subsets {
+					if len(subset.Addresses) > 0 && len(subset.Ports) > 0 {
+						return true, nil
+					}
+				}
+				return false, nil
+			})
+			if err != nil {
+				framework.Logf("Webhook endpoint not ready, will wait for full deployment: %v", err)
+			} else {
+				return nil
+			}
+		}
+		framework.Logf("FRR-K8s daemon not ready, will wait for it: %v", err)
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to check FRR-K8s namespace: %w", err)
+	} else {
+		// Namespace doesn't exist, deploy FRR-K8s
+		framework.Logf("FRR-K8s not deployed, deploying from %s", frrK8sManifest)
+
+		// Apply CRD first
+		_, err = e2ekubectl.RunKubectl("", "apply", "-f", frrK8sCRDURL)
+		if err != nil {
+			return fmt.Errorf("failed to apply FRR-K8s CRD: %w", err)
+		}
+		ictx.AddCleanUpFn(func() error {
+			_, err := e2ekubectl.RunKubectl("", "delete", "-f", frrK8sCRDURL, "--ignore-not-found=true")
+			return err
+		})
+
+		// Apply the all-in-one manifest
+		_, err = e2ekubectl.RunKubectl("", "apply", "-f", frrK8sManifest)
+		if err != nil {
+			return fmt.Errorf("failed to apply FRR-K8s manifest: %w", err)
+		}
+		ictx.AddCleanUpFn(func() error {
+			_, err := e2ekubectl.RunKubectl("", "delete", "-f", frrK8sManifest, "--ignore-not-found=true")
+			return err
+		})
+	}
+
+	// Wait for FRR-K8s to be ready
+	framework.Logf("Waiting for FRR-K8s webhook deployment to be available")
+	_, err = e2ekubectl.RunKubectl(frrK8sNamespace, "wait", "deployment/frr-k8s-webhook-server",
+		"--for=condition=Available", fmt.Sprintf("--timeout=%s", frrK8sDeployWait))
+	if err != nil {
+		return fmt.Errorf("failed to wait for FRR-K8s webhook: %w", err)
+	}
+
+	framework.Logf("Waiting for FRR-K8s daemon to be ready")
+	_, err = e2ekubectl.RunKubectl(frrK8sNamespace, "rollout", "status", "daemonset/frr-k8s-daemon",
+		fmt.Sprintf("--timeout=%s", frrK8sDeployWait))
+	if err != nil {
+		return fmt.Errorf("failed to wait for FRR-K8s daemon: %w", err)
+	}
+
+	// Wait for webhook endpoint to actually be reachable
+	// The deployment can be "Available" before the service endpoint is actually serving
+	framework.Logf("Waiting for FRR-K8s webhook service endpoint to be ready")
+	err = wait.PollUntilContextTimeout(context.Background(), time.Second, frrK8sDeployWait, true, func(ctx context.Context) (bool, error) {
+		// Check if the webhook service has ready endpoints
+		endpoints, epErr := f.ClientSet.CoreV1().Endpoints(frrK8sNamespace).Get(ctx, "frr-k8s-webhook-service", metav1.GetOptions{})
+		if epErr != nil {
+			framework.Logf("Failed to get webhook endpoints: %v", epErr)
+			return false, nil
+		}
+		for _, subset := range endpoints.Subsets {
+			if len(subset.Addresses) > 0 && len(subset.Ports) > 0 {
+				framework.Logf("FRR-K8s webhook endpoint is ready: %d addresses", len(subset.Addresses))
+				return true, nil
+			}
+		}
+		framework.Logf("FRR-K8s webhook endpoint not ready yet")
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to wait for FRR-K8s webhook endpoint: %w", err)
+	}
+
+	// Give a short additional delay for the webhook to be fully initialized
+	time.Sleep(2 * time.Second)
+
+	framework.Logf("FRR-K8s deployed and ready")
+	return nil
+}
+
+// createDefaultNetworkFRRConfiguration creates an FRRConfiguration for the default network (without VRF).
+// This is used when advertising the default pod network via BGP.
+// The frrContainerIPs are the IPs of the external FRR router that the nodes will peer with.
+// The receiveNetworks are the networks that nodes will receive routes for.
+func createDefaultNetworkFRRConfiguration(
+	f *framework.Framework,
+	ictx infraapi.Context,
+	name string,
+	frrContainerIPs []string,
+	receiveNetworks []string,
+) error {
+	// Ensure FRR-K8s is deployed first
+	if err := ensureFRRK8sDeployed(f, ictx); err != nil {
+		return fmt.Errorf("failed to ensure FRR-K8s is deployed: %w", err)
+	}
+
+	// Filter out empty or invalid IPs
+	var validFrrIPs []string
+	for _, ip := range frrContainerIPs {
+		if ip != "" && net.ParseIP(ip) != nil {
+			validFrrIPs = append(validFrrIPs, ip)
+		}
+	}
+	if len(validFrrIPs) == 0 {
+		return fmt.Errorf("no valid FRR container IPs provided")
+	}
+
+	framework.Logf("Creating FRRConfiguration %q for default network with neighbors: %v", name, validFrrIPs)
+
+	// Generate FRRConfiguration without VRF and with "default" network label
+	frrK8sConfig, err := generateFRRk8sConfiguration(name, "", map[string]string{"network": "default"}, validFrrIPs, receiveNetworks)
+	if err != nil {
+		return fmt.Errorf("failed to generate FRR-k8s configuration for default network: %w", err)
+	}
+	ictx.AddCleanUpFn(func() error { return os.RemoveAll(frrK8sConfig) })
+
+	_, err = e2ekubectl.RunKubectl(deploymentconfig.Get().FRRK8sNamespace(), "create", "-f", frrK8sConfig)
+	if err != nil {
+		return fmt.Errorf("failed to apply FRRConfiguration for default network: %w", err)
+	}
+	ictx.AddCleanUpFn(func() error {
+		_, err = e2ekubectl.RunKubectl(deploymentconfig.Get().FRRK8sNamespace(), "delete", "-f", frrK8sConfig)
+		if err != nil {
+			return fmt.Errorf("failed to delete FRRConfiguration: %w", err)
+		}
+		return nil
+	})
+
+	framework.Logf("FRRConfiguration %q for default network created successfully", name)
+	return nil
+}
+
+// ensureDefaultNetworkRAAccepted ensures a RouteAdvertisement for the default network exists and is accepted.
+// If the RA doesn't exist, it creates one and waits for it to be accepted.
+func ensureDefaultNetworkRAAccepted(f *framework.Framework, ictx infraapi.Context) error {
+	raClient, err := raclientset.NewForConfig(f.ClientConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create RouteAdvertisements client: %w", err)
+	}
+
+	// Check if the default RA already exists
+	existingRA, err := raClient.K8sV1().RouteAdvertisements().Get(context.Background(), defaultNetworkRAName, metav1.GetOptions{})
+	if err == nil {
+		// RA exists, check if it's already accepted
+		framework.Logf("RouteAdvertisement %q already exists, checking if it's accepted", defaultNetworkRAName)
+		condition := meta.FindStatusCondition(existingRA.Status.Conditions, "Accepted")
+		if condition != nil && condition.Status == metav1.ConditionTrue {
+			framework.Logf("RouteAdvertisement %q is already accepted", defaultNetworkRAName)
+			return nil
+		}
+		// RA exists but not accepted - wait for it
+		return waitForRAAccepted(raClient, defaultNetworkRAName)
+	}
+
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get RouteAdvertisement %q: %w", defaultNetworkRAName, err)
+	}
+
+	// RA doesn't exist - create it
+	framework.Logf("Creating RouteAdvertisement %q for default network", defaultNetworkRAName)
+	ra := &rav1.RouteAdvertisements{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: defaultNetworkRAName,
+		},
+		Spec: rav1.RouteAdvertisementsSpec{
+			NetworkSelectors: apitypes.NetworkSelectors{
+				apitypes.NetworkSelector{
+					NetworkSelectionType: apitypes.DefaultNetwork,
+				},
+			},
+			NodeSelector: metav1.LabelSelector{},
+			FRRConfigurationSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"network": "default"},
+			},
+			Advertisements: []rav1.AdvertisementType{
+				rav1.PodNetwork,
+			},
+		},
+	}
+
+	_, err = raClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create RouteAdvertisement %q: %w", defaultNetworkRAName, err)
+	}
+
+	// Register cleanup to delete the RA
+	ictx.AddCleanUpFn(func() error {
+		framework.Logf("Cleaning up RouteAdvertisement %q", defaultNetworkRAName)
+		err := raClient.K8sV1().RouteAdvertisements().Delete(context.Background(), defaultNetworkRAName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete RouteAdvertisement %q: %w", defaultNetworkRAName, err)
+		}
+		return nil
+	})
+
+	// Wait for RA to be accepted
+	return waitForRAAccepted(raClient, defaultNetworkRAName)
+}
+
+// waitForRAAccepted waits for a RouteAdvertisement to be in Accepted state
+func waitForRAAccepted(raClient *raclientset.Clientset, name string) error {
+	framework.Logf("Waiting for RouteAdvertisement %q to be accepted", name)
+	return wait.PollUntilContextTimeout(context.Background(), time.Second, raAcceptedWaitTime, true, func(ctx context.Context) (bool, error) {
+		ra, err := raClient.K8sV1().RouteAdvertisements().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			framework.Logf("Failed to get RouteAdvertisement %q: %v", name, err)
+			return false, nil
+		}
+		condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+		if condition == nil {
+			framework.Logf("RouteAdvertisement %q has no Accepted condition yet", name)
+			return false, nil
+		}
+		if condition.Status == metav1.ConditionTrue && condition.Reason == "Accepted" {
+			framework.Logf("RouteAdvertisement %q is accepted", name)
+			return true, nil
+		}
+		framework.Logf("RouteAdvertisement %q condition: %s/%s - %s", name, condition.Status, condition.Reason, condition.Message)
+		return false, nil
+	})
 }
 
 // runBGPNetworkAndServer configures a topology appropriate to be used with
@@ -2388,7 +2839,13 @@ func runBGPNetworkAndServer(
 	networkName, serverName string,
 	peerNetworks,
 	serverNetworks []string,
+	forDefaultNetwork bool,
 ) error {
+	// Ensure FRR-K8s is deployed
+	if err := ensureFRRK8sDeployed(f, ictx); err != nil {
+		return fmt.Errorf("failed to ensure FRR-K8s is deployed: %w", err)
+	}
+
 	// filter networks by supported IP families
 	families := getSupportedIPFamiliesSlice(f.ClientSet)
 	peerNetworks = matchCIDRStringsByIPFamily(peerNetworks, families...)
@@ -2417,7 +2874,28 @@ func runBGPNetworkAndServer(
 		if err != nil {
 			return fmt.Errorf("failed to attach node %q to network: %w", node.Name, err)
 		}
-		nodeIPs = append(nodeIPs, iface.IPv4, iface.IPv6)
+		// For default network, we use the nodes' PRIMARY network IPs for BGP peering
+		// so that traffic flows correctly through OVN's gateway
+		if forDefaultNetwork {
+			// Use node's Kubernetes InternalIP (primary network)
+			for _, addr := range node.Status.Addresses {
+				if addr.Type == corev1.NodeInternalIP {
+					parsedIP := net.ParseIP(addr.Address)
+					if parsedIP != nil {
+						nodeIPs = append(nodeIPs, addr.Address)
+						framework.Logf("Node %s: using primary network IP %s for BGP peering", node.Name, addr.Address)
+					}
+				}
+			}
+		} else {
+			// For VRF/CUDN cases, use the peer network IPs
+			if iface.IPv4 != "" {
+				nodeIPs = append(nodeIPs, iface.IPv4)
+			}
+			if iface.IPv6 != "" {
+				nodeIPs = append(nodeIPs, iface.IPv6)
+			}
+		}
 	}
 
 	// run frr container
@@ -2437,11 +2915,18 @@ func runBGPNetworkAndServer(
 	if err != nil {
 		return fmt.Errorf("failed to create frr container: %w", err)
 	}
+	// enable IPv4 forwarding - always enable since the FRR container needs to route traffic
+	framework.Logf("Enabling IPv4 forwarding on FRR container %s", frr.Name)
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr, []string{"sysctl", "-w", "net.ipv4.ip_forward=1"})
+	if err != nil {
+		return fmt.Errorf("failed to enable IPv4 forwarding on frr container: %w", err)
+	}
 	// enable IPv6 forwarding if required
-	if frr.IPv6 != "" {
+	if frr.IPv6 != "" && net.ParseIP(frr.IPv6) != nil {
+		framework.Logf("Enabling IPv6 forwarding on FRR container %s", frr.Name)
 		_, err = infraprovider.Get().ExecExternalContainerCommand(frr, []string{"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"})
 		if err != nil {
-			return fmt.Errorf("failed to set enable IPv6 forwading on frr container: %w", err)
+			return fmt.Errorf("failed to enable IPv6 forwarding on frr container: %w", err)
 		}
 	}
 
@@ -2463,24 +2948,51 @@ func runBGPNetworkAndServer(
 		return fmt.Errorf("failed to create BGP server container: %w", err)
 	}
 
-	// set frr as default gateway for the server
-	if frrServerNetworkInterface.IPv4 != "" {
-		_, err = infraprovider.Get().ExecExternalContainerCommand(server, []string{"ip", "route", "add", "default", "via", frrServerNetworkInterface.IPv4})
+	// set frr as default gateway for the server (use replace to handle existing routes)
+	if frrServerNetworkInterface.IPv4 != "" && net.ParseIP(frrServerNetworkInterface.IPv4) != nil {
+		framework.Logf("Setting default IPv4 gateway on server %s to %s", server.Name, frrServerNetworkInterface.IPv4)
+		_, err = infraprovider.Get().ExecExternalContainerCommand(server, []string{"ip", "route", "replace", "default", "via", frrServerNetworkInterface.IPv4})
 		if err != nil {
 			return fmt.Errorf("failed to set default IPv4 gateway on BGP server container: %w", err)
 		}
 	}
-	if frrServerNetworkInterface.IPv6 != "" {
-		_, err = infraprovider.Get().ExecExternalContainerCommand(server, []string{"ip", "-6", "route", "add", "default", "via", frrServerNetworkInterface.IPv6})
+	if frrServerNetworkInterface.IPv6 != "" && net.ParseIP(frrServerNetworkInterface.IPv6) != nil {
+		framework.Logf("Setting default IPv6 gateway on server %s to %s", server.Name, frrServerNetworkInterface.IPv6)
+		_, err = infraprovider.Get().ExecExternalContainerCommand(server, []string{"ip", "-6", "route", "replace", "default", "via", frrServerNetworkInterface.IPv6})
 		if err != nil {
 			return fmt.Errorf("failed to set default IPv6 gateway on BGP server container: %w", err)
 		}
+	}
 
+	// attach FRR to provider primary network so that it can peer with the cluster nodes
+	providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+	if err != nil {
+		return fmt.Errorf("failed to get provider primary network: %w", err)
+	}
+	_, err = ictx.AttachNetwork(providerPrimaryNetwork, frr.Name)
+	if err != nil {
+		return fmt.Errorf("failed to attach frr to provider primary network: %w", err)
 	}
 
 	// apply FRR-K8s Configuration
 	receiveNetworks := serverNetworks
-	frrK8sConfig, err := generateFRRk8sConfiguration(networkName, []string{frr.IPv4, frr.IPv6}, receiveNetworks)
+	var frrIPs []string
+	if frr.IPv4 != "" && net.ParseIP(frr.IPv4) != nil {
+		frrIPs = append(frrIPs, frr.IPv4)
+	}
+	if frr.IPv6 != "" && net.ParseIP(frr.IPv6) != nil {
+		frrIPs = append(frrIPs, frr.IPv6)
+	}
+
+	// For default network, skip FRRConfiguration creation here.
+	// The caller should use createDefaultNetworkFRRConfiguration() separately.
+	if forDefaultNetwork {
+		framework.Logf("Skipping FRRConfiguration creation for default network (caller should use createDefaultNetworkFRRConfiguration)")
+		return nil
+	}
+
+	// For VRF-Lite, create FRRConfiguration with VRF and network-specific label
+	frrK8sConfig, err := generateFRRk8sConfiguration(networkName, networkName, map[string]string{"network": networkName}, frrIPs, receiveNetworks)
 	if err != nil {
 		return fmt.Errorf("failed to generate FRR-k8s configuration: %w", err)
 	}
@@ -2748,25 +3260,10 @@ func createRouteAdvertisements(
 	return nil
 }
 
-// getBGPServerContainerIPs retrieves the IP addresses of the BGP server container.
-func getBGPServerContainerIPs(f *framework.Framework) (serverContainerIPs []string) {
-	bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName) // pre-created network
-	framework.ExpectNoError(err, "must get bgpnet network")
-	bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
-	networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
-	framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
-	if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
-		serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
-	}
-	if isIPv6Supported(f.ClientSet) && len(networkInterface.IPv6) > 0 {
-		serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
-	}
-	return
-}
-
 // checkL3NodePodRoute checks that the BGP route for the given node's pod subnet is present in the FRR router.
 // It takes the node to check, a serverContainerIP to determine the IP family in use, and the router container name.
-func checkL3NodePodRoute(node corev1.Node, serverContainerIP, routerContainerName, netName string) {
+// nodeIPOverrides can be used to specify custom nexthop IPs for nodes (e.g., for default network with separate peer network).
+func checkL3NodePodRoute(node corev1.Node, serverContainerIP, routerContainerName, netName string, nodeIPOverrides map[string]string) {
 	var podv4CIDR, podv6CIDR string
 
 	gomega.Eventually(func() error {
@@ -2784,7 +3281,7 @@ func checkL3NodePodRoute(node corev1.Node, serverContainerIP, routerContainerNam
 	gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
 		"pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
 
-	checkRouteInFRR(node, podCIDR, routerContainerName, isIPv6)
+	checkRouteInFRR(node, podCIDR, routerContainerName, isIPv6, nodeIPOverrides)
 }
 
 // checkL2NodePodRoute checks that BGP routes for the given CIDRs are present in the FRR router.
@@ -2796,13 +3293,14 @@ func checkL2NodePodRoute(node corev1.Node, serverContainerIP, routerContainerNam
 		if isServerIPv6 != isPodCIDRv6 {
 			continue
 		}
-		checkRouteInFRR(node, string(podCIDR), routerContainerName, isPodCIDRv6)
+		checkRouteInFRR(node, string(podCIDR), routerContainerName, isPodCIDRv6, nil)
 	}
 }
 
 // checkRouteInFRR verifies that a route for a given podCIDR exists in the specified FRR container,
-// with the correct node as its nexthop.
-func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIPv6 bool) {
+// with the correct node as its nexthop. If nodeIPOverrides is provided and contains the node's name,
+// that IP is used instead of looking up the node's Kubernetes internal IP.
+func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIPv6 bool, nodeIPOverrides map[string]string) {
 	var (
 		ipVer  string
 		nodeIP []string
@@ -2817,7 +3315,16 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeIP = []string{nodeIPv6LLA}
 	} else {
-		nodeIP = e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv4Protocol)
+		// Check if there's an override for this node
+		if nodeIPOverrides != nil {
+			if overrideIP, ok := nodeIPOverrides[node.Name]; ok && overrideIP != "" {
+				nodeIP = []string{overrideIP}
+			}
+		}
+		// Fall back to Kubernetes internal IP if no override
+		if len(nodeIP) == 0 {
+			nodeIP = e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv4Protocol)
+		}
 	}
 	gomega.Expect(len(nodeIP)).To(gomega.BeNumerically(">", 0), "must find a valid nexthop IP for node %s", node.Name)
 	framework.Logf("Using nexthop %s for node %s", nodeIP[0], node.Name)
