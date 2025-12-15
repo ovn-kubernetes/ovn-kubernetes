@@ -1,11 +1,6 @@
 name: performance-test
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'contrib/**'
-      - 'dist/templates/ovnkube-monitor.yaml.j2'
-      - '.github/workflows/performance-test.yml'
   issue_comment:
     types: [created]
 
@@ -29,7 +24,7 @@ jobs:
     if: |
       (github.event_name != 'issue_comment') ||
       (github.event.issue.pull_request && 
-       contains(github.event.comment.body, '/test performance'))
+       contains(github.event.comment.body, '/perf-test node-density-cni'))
     env:
       JOB_NAME: "PerformanceTest-6wrk-2infra"
       KIND_NUM_WORKER: "6"
@@ -129,15 +124,24 @@ jobs:
       run: |
         ./contrib/install-prometheus-infra.sh
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
-    - name: Run Performance Tests
-      timeout-minutes: 120
+    - name: Download and setup kube-burner
       run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        make -C test infra-prometheus
+        KUBE_BURNER_VERSION=$(curl -s https://api.github.com/repos/kube-burner/kube-burner/releases/latest | jq -r .tag_name)
+        curl -L https://github.com/kube-burner/kube-burner/releases/download/${KUBE_BURNER_VERSION}/kube-burner-Linux-x86_64.tar.gz | tar xz
+        chmod +x kube-burner
+        sudo mv kube-burner /usr/local/bin/
+        echo "KUBE_BURNER_VERSION=${KUBE_BURNER_VERSION}" >> $GITHUB_ENV
+
+    - name: Download kubelet-density-cni configuration
+      run: |
+        mkdir -p /tmp/kube-burner
+        curl -o /tmp/kube-burner/kubelet-density-cni.yml https://raw.githubusercontent.com/kube-burner/kube-burner/main/examples/workloads/kubelet-density-cni/kubelet-density-cni.yml
+
+    - name: Run kube-burner kubelet-density test
+      timeout-minutes: 120 
+      run: |
+        kube-burner destroy --config /tmp/kube-burner/kubelet-density-cni.yml || true
+        kube-burner init --config /tmp/kube-burner/kubelet-density-cni.yml
 
     - name: Runner Diagnostics
       if: always()
@@ -169,27 +173,13 @@ jobs:
         name: kubeconfig-performance-job-${{ github.run_id }}
         path: /tmp/kubeconfig/
 
-    - name: Upload Prometheus metrics
-      if: always()
-      run: |
-        mkdir -p /tmp/prometheus
-        kubectl logs -l app=prometheus-server -n prometheus-system > /tmp/prometheus/prometheus.log || true
-        kubectl get pods -n prometheus-system -o yaml > /tmp/prometheus/prometheus-pods.yaml || true
-
-    - name: Upload Prometheus artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: prometheus-metrics-performance-job-${{ github.run_id }}
-        path: /tmp/prometheus/
-
   build-pr:
     name: Build-PR
     runs-on: ubuntu-24.04
     if: |
       (github.event_name != 'issue_comment') ||
       (github.event.issue.pull_request && 
-       contains(github.event.comment.body, '/test performance'))
+       contains(github.event.comment.body, '/perf-test node-density-cni'))
     steps:
     - name: Restore PR image cache
       id: image_cache_pr
