@@ -287,12 +287,13 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 		}
 		cncState.tunnelID = tunnelID
 	}
-	// STEP2: Create the patch ports connecting network router's to the connect router
-	// using IPs from the network subnet CNC annotation.
-	// STEP3: If PodNetworkConnect is enabled, create the logical router policies on network router's
-	// to steer traffic to the connect router for other connected networks.
-	// STEP4: If PodNetworkConnect is enabled, add static routes to connect router towards
-	// each of the connected networks.
+	allocatedSubnets, err := util.ParseNetworkConnectSubnetAnnotation(cnc)
+	if err != nil {
+		return fmt.Errorf("failed to parse subnet annotation for CNC %s: %w", cnc.Name, err)
+	}
+	if err := c.syncNetworkConnections(cnc, allocatedSubnets); err != nil {
+		return fmt.Errorf("failed to sync network connections for CNC %s: %v", cnc.Name, err)
+	}
 	return nil
 }
 
@@ -304,6 +305,11 @@ func (c *Controller) cleanupCNC(cncName string) error {
 	if !exists {
 		klog.V(4).Infof("CNC %s not found in cache, nothing to clean up", cncName)
 		return nil
+	}
+
+	// Cleanup network connections
+	if err := c.cleanupNetworkConnections(cncName); err != nil {
+		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
 	}
 
 	// Remove the connect router
