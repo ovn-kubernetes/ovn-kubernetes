@@ -147,8 +147,9 @@ func (a *idAllocatorStub) ReserveID(string, int) error {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *idAllocatorStub) ReleaseID(string) {
+func (a *idAllocatorStub) ReleaseID(string) int {
 	a.released = true
+	return 0
 }
 
 func (a *idAllocatorStub) ForName(string) id.NamedAllocator {

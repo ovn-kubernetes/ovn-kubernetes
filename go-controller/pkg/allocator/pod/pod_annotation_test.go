@@ -64,8 +64,9 @@ func (a *idAllocatorStub) ReserveID(int) error {
 	return a.reserveIDError
 }
 
-func (a *idAllocatorStub) ReleaseID() {
+func (a *idAllocatorStub) ReleaseID() int {
 	a.releasedID = true
+	return a.nextID
 }
 
 type persistentIPsStub struct {

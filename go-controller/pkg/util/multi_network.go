@@ -60,8 +60,10 @@ type NetInfo interface {
 	EVPNVTEPName() string
 	EVPNMACVRFVNI() int32
 	EVPNMACVRFRouteTarget() string
+	EVPNMACVRFVID() int
 	EVPNIPVRFVNI() int32
 	EVPNIPVRFRouteTarget() string
+	EVPNIPVRFVID() int
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
 
@@ -686,6 +688,16 @@ func (nInfo *DefaultNetInfo) EVPNIPVRFRouteTarget() string {
 	return ""
 }
 
+// EVPNMACVRFVID returns 0 as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNMACVRFVID() int {
+	return 0
+}
+
+// EVPNIPVRFVID returns 0 as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNIPVRFVID() int {
+	return 0
+}
+
 func (nInfo *DefaultNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	return GetNodeGatewayIfAddr(hostSubnet)
 }
@@ -894,6 +906,22 @@ func (nInfo *userDefinedNetInfo) EVPNIPVRFRouteTarget() string {
 		return ""
 	}
 	return nInfo.evpn.IPVRF.RouteTarget
+}
+
+// EVPNMACVRFVID returns the MAC-VRF VID for EVPN
+func (nInfo *userDefinedNetInfo) EVPNMACVRFVID() int {
+	if nInfo.evpn == nil || nInfo.evpn.MACVRF == nil {
+		return 0
+	}
+	return nInfo.evpn.MACVRF.VID
+}
+
+// EVPNIPVRFVID returns the IP-VRF VID for EVPN
+func (nInfo *userDefinedNetInfo) EVPNIPVRFVID() int {
+	if nInfo.evpn == nil || nInfo.evpn.IPVRF == nil {
+		return 0
+	}
+	return nInfo.evpn.IPVRF.VID
 }
 
 func (nInfo *userDefinedNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
