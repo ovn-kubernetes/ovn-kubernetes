@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
@@ -43,9 +44,25 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const conditionTypeNetworkCreated = "NetworkCreated"
+const (
+	conditionTypeNetworkCreated = "NetworkCreated"
+	// MaxEVPNVIDs is the maximum number of VIDs available for EVPN networks (0-4094, but 0 is reserved).
+	MaxEVPNVIDs = 4095
+	// reservedVIDZeroKey is the key used to reserve VID 0 (reserved per IEEE 802.1Q).
+	reservedVIDZeroKey = "__vid_zero_reserved__"
+)
 
-type RenderNetAttachDefManifest func(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error)
+// macVRFKey returns the VID allocator key for a network's MAC-VRF.
+func macVRFKey(networkName string) string {
+	return networkName + "/macvrf"
+}
+
+// ipVRFKey returns the VID allocator key for a network's IP-VRF.
+func ipVRFKey(networkName string) string {
+	return networkName + "/ipvrf"
+}
+
+type RenderNetAttachDefManifest func(obj client.Object, targetNamespace string, opts ...template.RenderOption) (*netv1.NetworkAttachmentDefinition, error)
 
 type networkInUseError struct {
 	err error
@@ -76,6 +93,10 @@ type Controller struct {
 
 	networkManager networkmanager.Interface
 
+	// vidAllocator allocates cluster-wide VLAN IDs for EVPN networks.
+	// VIDs are allocated per network name and stored in the NAD config JSON.
+	vidAllocator id.Allocator
+
 	udnClient         userdefinednetworkclientset.Interface
 	udnLister         userdefinednetworklister.UserDefinedNetworkLister
 	cudnLister        userdefinednetworklister.ClusterUserDefinedNetworkLister
@@ -102,6 +123,10 @@ func New(
 ) *Controller {
 	udnLister := udnInformer.Lister()
 	cudnLister := cudnInformer.Lister()
+
+	// Allocates VIDs in range 1-4094 (0 is reserved per IEEE 802.1Q).
+	vidAllocator := id.NewIDAllocator("EVPN-VIDs", MaxEVPNVIDs)
+
 	c := &Controller{
 		nadClient:         nadClient,
 		nadLister:         nadInfomer.Lister(),
@@ -113,6 +138,7 @@ func New(
 		namespaceInformer: namespaceInformer,
 		networkManager:    networkManager,
 		namespaceTracker:  map[string]sets.Set[string]{},
+		vidAllocator:      vidAllocator,
 		eventRecorder:     eventRecorder,
 	}
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
@@ -144,7 +170,7 @@ func New(
 func (c *Controller) Run() error {
 	klog.Infof("Starting user-defined network controllers")
 	if err := controller.StartWithInitialSync(
-		c.initializeNamespaceTracker,
+		c.initializeController,
 		c.cudnController,
 		c.udnController,
 		c.nadNotifier.Controller,
@@ -162,48 +188,182 @@ func (c *Controller) Run() error {
 	return nil
 }
 
-// initializeNamespaceTracker populates the namespace-tracker with NAD namespaces who owned by the controller.
-func (c *Controller) initializeNamespaceTracker() error {
-	cudns, err := c.cudnLister.List(labels.Everything())
+// initializeController performs all startup initialization before controllers begin processing.
+func (c *Controller) initializeController() error {
+	// Reserve VID 0 to ensure it's never allocated to any network.
+	// VID 0 is reserved per IEEE 802.1Q standard.
+	if err := c.vidAllocator.ReserveID(reservedVIDZeroKey, 0); err != nil {
+		return fmt.Errorf("failed to reserve VID 0: %w", err)
+	}
+
+	cudnNADs, err := c.buildCUDNToNADsIndex()
 	if err != nil {
 		return err
 	}
-	if len(cudns) == 0 {
+	if len(cudnNADs) == 0 {
 		return nil
+	}
+
+	c.initializeNamespaceTracker(cudnNADs)
+	if err := c.recoverEVPNVIDs(cudnNADs); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// cudnNADIndex maps CUDN name to its owned NADs.
+type cudnNADIndex map[string][]netv1.NetworkAttachmentDefinition
+
+// buildCUDNToNADsIndex builds an index of CUDNs to their owned NADs.
+// It returns an entry for every existing CUDN, including CUDNs that currently own no NADs
+func (c *Controller) buildCUDNToNADsIndex() (cudnNADIndex, error) {
+	cudns, err := c.cudnLister.List(labels.Everything())
+	if err != nil {
+		return nil, err
+	}
+	if len(cudns) == 0 {
+		return nil, nil
 	}
 
 	nads, err := c.nadLister.List(labels.Everything())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(nads) == 0 {
-		return nil
-	}
-	indexedNADs := map[string]netv1.NetworkAttachmentDefinition{}
-	for _, nad := range nads {
-		if nad != nil {
-			indexedNADs[nad.Namespace+"/"+nad.Name] = *nad.DeepCopy()
-		}
+		return nil, nil
 	}
 
+	index := make(cudnNADIndex, len(cudns))
 	for _, cudn := range cudns {
-		c.namespaceTracker[cudn.Name] = sets.New[string]()
+		index[cudn.Name] = nil
+	}
 
-		for nadKey, nad := range indexedNADs {
-			if !metav1.IsControlledBy(&nad, cudn) {
-				continue
+	for _, nad := range nads {
+		if nad == nil {
+			continue
+		}
+		for _, cudn := range cudns {
+			if metav1.IsControlledBy(nad, cudn) {
+				index[cudn.Name] = append(index[cudn.Name], *nad.DeepCopy())
+				break // NAD can only be owned by one CUDN
 			}
-			c.namespaceTracker[cudn.Name].Insert(nad.Namespace)
-
-			// Usually we don't want to mutate an iterated map, in this case
-			// the processed entry is removed because it shouldn't be processed
-			// again and not expected to be visited again, i.e.: the NAD should
-			// be recorded by the namespaceTracker once.
-			delete(indexedNADs, nadKey)
 		}
 	}
 
+	return index, nil
+}
+
+// initializeNamespaceTracker populates the namespace tracker with NAD namespaces owned by each CUDN.
+func (c *Controller) initializeNamespaceTracker(cudnNADs cudnNADIndex) {
+	for cudnName, nads := range cudnNADs {
+		c.namespaceTracker[cudnName] = sets.New[string]()
+		for _, nad := range nads {
+			c.namespaceTracker[cudnName].Insert(nad.Namespace)
+		}
+	}
+}
+
+// recoverEVPNVIDs recovers VID allocations from existing EVPN NADs.
+// Returns an error if VID recovery fails for any CUDN, which will prevent controller startup.
+// This is necessary to prevent route leakage - if we can't recover a VID, we don't know
+// what VID was assigned, and a new CUDN could reuse it.
+//
+// TODO: NetworkManager already parses NAD configs and caches NetInfo with
+// EVPNMACVRFVID() and EVPNIPVRFVID() accessors. Once NetworkManager exposes
+// a GetAllNetworks() API (see https://github.com/ovn-org/ovn-kubernetes/pull/5800),
+// we could query its cache instead of parsing NAD JSON ourselves.
+//
+// EVPN detection logic:
+//   - If at least one NAD is successfully parsed with EVPN config → CUDN has EVPN
+//   - If no NAD is successfully parsed → assume EVPN (conservative, to be safe)
+//   - If all NADs are successfully parsed without EVPN config → CUDN has no EVPN
+func (c *Controller) recoverEVPNVIDs(cudnNADs cudnNADIndex) error {
+	for cudnName, nads := range cudnNADs {
+		// Skip CUDNs with no NADs - nothing to recover from.
+		if len(nads) == 0 {
+			klog.V(4).Infof("CUDN %s has no NADs, skipping VID recovery", cudnName)
+			continue
+		}
+
+		var (
+			parsedAnyNAD   bool // At least one NAD was successfully parsed
+			foundEVPNInNAD bool // At least one parsed NAD has EVPN config
+			recovered      bool
+			errs           []error
+		)
+
+		for _, nad := range nads {
+			macVRFVID, ipVRFVID, err := parseEVPNVIDs(nad.Spec.Config)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to parse NAD config %s/%s: %w", nad.Namespace, nad.Name, err))
+				klog.Warningf("Failed to parse NAD config %s/%s for CUDN %s: %v",
+					nad.Namespace, nad.Name, cudnName, err)
+				continue // Try other NADs
+			}
+
+			// Successfully parsed this NAD
+			parsedAnyNAD = true
+
+			// Check if this NAD has EVPN VIDs
+			if macVRFVID == 0 && ipVRFVID == 0 {
+				continue // Parsed successfully, but not an EVPN NAD (or no VIDs)
+			}
+
+			// This NAD has EVPN config with VIDs
+			foundEVPNInNAD = true
+			if err := c.reserveRecoveredVIDs(cudnName, macVRFVID, ipVRFVID); err != nil {
+				errs = append(errs, fmt.Errorf("failed to reserve VIDs from NAD %s/%s: %w", nad.Namespace, nad.Name, err))
+				klog.Errorf("VID recovery failed for CUDN %s from NAD %s/%s: %v", cudnName, nad.Namespace, nad.Name, err)
+				continue // Try other NADs
+			}
+
+			// Successfully recovered VIDs from this NAD
+			klog.V(4).Infof("Successfully recovered VIDs for CUDN %s from NAD %s/%s (macVRF=%d, ipVRF=%d)",
+				cudnName, nad.Namespace, nad.Name, macVRFVID, ipVRFVID)
+			recovered = true
+			break
+		}
+
+		// Determine if this CUDN needs EVPN VID recovery:
+		// - foundEVPNInNAD: at least one NAD has EVPN config
+		// - !parsedAnyNAD: no NAD could be parsed, assume EVPN (conservative)
+		needsEVPNRecovery := foundEVPNInNAD || !parsedAnyNAD
+
+		if needsEVPNRecovery && !recovered {
+			return fmt.Errorf("VID recovery failed for CUDN %s: %w. "+
+				"Controller startup aborted to prevent route leakage. "+
+				"Manual intervention required: fix or delete the corrupted NAD(s) for this CUDN",
+				cudnName, errors.Join(errs...))
+		}
+	}
 	return nil
+}
+
+// reserveRecoveredVIDs reserves the given VIDs in the allocator for a network.
+// VIDs of 0 are skipped (not allocated).
+func (c *Controller) reserveRecoveredVIDs(networkName string, macVRFVID, ipVRFVID int) error {
+	if macVRFVID > 0 {
+		if err := c.vidAllocator.ReserveID(macVRFKey(networkName), macVRFVID); err != nil {
+			return fmt.Errorf("failed to reserve VID %d for MAC-VRF: %w", macVRFVID, err)
+		}
+		klog.V(4).Infof("Recovered VID %d for MAC-VRF of network %s", macVRFVID, networkName)
+	}
+	if ipVRFVID > 0 {
+		if err := c.vidAllocator.ReserveID(ipVRFKey(networkName), ipVRFVID); err != nil {
+			return fmt.Errorf("failed to reserve VID %d for IP-VRF: %w", ipVRFVID, err)
+		}
+		klog.V(4).Infof("Recovered VID %d for IP-VRF of network %s", ipVRFVID, networkName)
+	}
+	return nil
+}
+
+// releaseVIDForNetwork releases the VIDs allocated for a network's VRFs.
+// This is called when an EVPN CUDN is deleted.
+func (c *Controller) releaseVIDForNetwork(networkName string) {
+	c.vidAllocator.ReleaseID(macVRFKey(networkName))
+	c.vidAllocator.ReleaseID(ipVRFKey(networkName))
+	klog.V(4).Infof("Released VIDs for network %s", networkName)
 }
 
 func (c *Controller) Shutdown() {
@@ -283,7 +443,7 @@ func (c *Controller) ReconcileNamespace(key string) error {
 		if !affectedNamespace {
 			cudn, err := c.cudnLister.Get(cudnName)
 			if err != nil {
-				return fmt.Errorf("faild to get CUDN %q from cache: %w", cudnName, err)
+				return fmt.Errorf("failed to get CUDN %q from cache: %w", cudnName, err)
 			}
 			cudnSelector, err := metav1.LabelSelectorAsSelector(&cudn.Spec.NamespaceSelector)
 			if err != nil {
@@ -511,7 +671,7 @@ func (c *Controller) cudnNeedUpdate(_ *userdefinednetworkv1.ClusterUserDefinedNe
 }
 
 // reconcileUDN get ClusterUserDefinedNetwork CR key and reconcile it according to spec.
-// It creates NADs according to spec at the spesified selected namespaces.
+// It creates NADs according to spec at the specified selected namespaces.
 // The NAD objects are created with the same key as the request CR, having both kinds have the same key enable
 // the controller to act on NAD changes as well and reconciles NAD objects (e.g: in case NAD is deleted it will be re-created).
 func (c *Controller) reconcileCUDN(key string) error {
@@ -594,6 +754,9 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
 			delete(c.namespaceTracker, cudnName)
 			metrics.DecrementCUDNCount(role, topology)
+
+			// Release VID if this was an EVPN network
+			c.releaseVIDForNetwork(cudnName)
 		}
 
 		return nil, nil
@@ -671,7 +834,7 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 		return strings.Compare(a.Namespace, b.Namespace)
 	})
 
-	networkCreatedCondition := newClusterNetworCreatedCondition(nads, syncError)
+	networkCreatedCondition := newClusterNetworkCreatedCondition(nads, syncError)
 
 	updated := meta.SetStatusCondition(&cudn.Status.Conditions, networkCreatedCondition)
 	if !updated {
@@ -705,7 +868,7 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 	return nil
 }
 
-func newClusterNetworCreatedCondition(nads []netv1.NetworkAttachmentDefinition, syncError error) metav1.Condition {
+func newClusterNetworkCreatedCondition(nads []netv1.NetworkAttachmentDefinition, syncError error) metav1.Condition {
 	var namespaces []string
 	for _, nad := range nads {
 		namespaces = append(namespaces, nad.Namespace)

@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
@@ -35,7 +36,13 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 		}
 	}
 
-	desiredNAD, err := c.renderNadFn(obj, namespace)
+	// Allocate VIDs for EVPN networks before rendering
+	renderOpts, err := c.allocateEVPNVIDsIfNeeded(obj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate EVPN VIDs: %w", err)
+	}
+
+	desiredNAD, err := c.renderNadFn(obj, namespace, renderOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate NetworkAttachmentDefinition: %w", err)
 	}
@@ -119,7 +126,7 @@ func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 
 	pods, err := c.podInformer.Lister().Pods(nadCopy.Namespace).List(labels.Everything())
 	if err != nil {
-		return fmt.Errorf("failed to list pods at target namesapce %q: %w", nadCopy.Namespace, err)
+		return fmt.Errorf("failed to list pods at target namespace %q: %w", nadCopy.Namespace, err)
 	}
 	// This is best-effort check no pod using the subject NAD,
 	// noting prevent a from being pod creation right after this check.
@@ -141,4 +148,54 @@ func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 	klog.Infof("Deleted NetworkAttachmetDefinition [%s/%s]", updatedNAD.Namespace, updatedNAD.Name)
 
 	return nil
+}
+
+// allocateEVPNVIDsIfNeeded checks if the object is an EVPN network and allocates VIDs if needed.
+// Returns render options containing the allocated VIDs, or empty options for non-EVPN networks.
+func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.RenderOption, error) {
+	if c.vidAllocator == nil {
+		return nil, nil
+	}
+
+	spec := template.GetSpec(obj)
+	if spec.GetTransport() != userdefinednetworkv1.TransportOptionEVPN {
+		return nil, nil
+	}
+
+	evpnCfg := spec.GetEVPNConfiguration()
+	if evpnCfg == nil {
+		return nil, nil
+	}
+
+	networkName := obj.GetName()
+	var macVRFVID, ipVRFVID int
+
+	// Allocate VID for MAC-VRF if present
+	if evpnCfg.MACVRF != nil {
+		key := macVRFKey(networkName)
+		vid, err := c.vidAllocator.AllocateID(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate VID for MAC-VRF: %w", err)
+		}
+		macVRFVID = vid
+		klog.V(4).Infof("Allocated VID %d for MAC-VRF of network %s", vid, networkName)
+	}
+
+	// Allocate VID for IP-VRF if present
+	if evpnCfg.IPVRF != nil {
+		key := ipVRFKey(networkName)
+		vid, err := c.vidAllocator.AllocateID(key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate VID for IP-VRF: %w", err)
+		}
+		ipVRFVID = vid
+		klog.V(4).Infof("Allocated VID %d for IP-VRF of network %s", vid, networkName)
+	}
+
+	// Return render options with allocated VIDs
+	if macVRFVID > 0 || ipVRFVID > 0 {
+		return []template.RenderOption{template.WithEVPNVIDs(macVRFVID, ipVRFVID)}, nil
+	}
+
+	return nil, nil
 }
