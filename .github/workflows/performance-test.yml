@@ -14,6 +14,8 @@ env:
   CI_IMAGE_BASE_TAR: image-base.tar
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
+  OVN_REPO: https://github.com/ovn-org/ovn.git
+  OVN_GITREF: main
 
 jobs:
   performance-job:
@@ -123,6 +125,14 @@ jobs:
     - name: Install Prometheus on infra nodes
       run: |
         ./contrib/install-prometheus-infra.sh
+    
+    - name: Upload Prometheus installation logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: prometheus-install-logs
+        path: prometheus-install.log
+        retention-days: 7
 
     - name: Download and setup kube-burner
       run: |
