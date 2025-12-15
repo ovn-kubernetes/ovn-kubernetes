@@ -83,7 +83,7 @@ jobs:
     - name: Setup /mnt/runner directory
       run: |
         sudo mkdir -pv /mnt/runner
-        sudo chown runner:runner /mnt/runner
+        sudo chown $USER:$USER /mnt/runner
 
     - name: Setup /mnt/docker-data as docker storage
       run: |
