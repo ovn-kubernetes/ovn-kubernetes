@@ -18,8 +18,8 @@ env:
 jobs:
   performance-job:
     name: "PerformanceTest-6wrk-2infra"
-    runs-on: [oracle-vm-8cpu-32gb-x86-64]
-    timeout-minutes: 180
+    runs-on: [oracle-vm-32cpu-128gb-x86-64]
+    timeout-minutes: 240
     needs: [build-pr]
     if: |
       (github.event_name != 'issue_comment') ||
