@@ -71,6 +71,9 @@ const (
 
 	// Connect router prefix (for ClusterNetworkConnect feature)
 	ConnectRouterPrefix = "connect_router_"
+	// Connect router port prefixes (for ClusterNetworkConnect)
+	ConnectRouterToRouterPrefix = "crtor-"
+	RouterToConnectRouterPrefix = "rtocr-"
 
 	// DefaultACLTier Priorities
 
