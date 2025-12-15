@@ -1,0 +1,282 @@
+name: performance-test
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 0'  # Weekly on Sundays
+  pull_request:
+    paths:
+      - 'contrib/**'
+      - 'dist/templates/ovnkube-monitor.yaml.j2'
+      - '.github/workflows/performance-test.yml'
+  issue_comment:
+    types: [created]
+
+env:
+  K8S_VERSION: v1.34.0
+  KIND_CLUSTER_NAME: ovn
+  KIND_INSTALL_INGRESS: true
+  KIND_ALLOW_SYSTEM_WRITES: true
+  PARALLEL: true
+  CI_IMAGE_CACHE: tmp/image_cache/
+  CI_IMAGE_BASE_TAR: image-base.tar
+  CI_IMAGE_PR_TAR: image-pr.tar
+  CI_DIST_IMAGES_OUTPUT: dist/images/_output/
+
+jobs:
+  performance-job:
+    name: "Infra-Prometheus-6workers-2infra"
+    runs-on: [oracle-vm-8cpu-32gb-x86-64]
+    timeout-minutes: 180
+    needs: [build-pr]
+    if: |
+      (github.event_name != 'issue_comment') ||
+      (github.event.issue.pull_request && 
+       contains(github.event.comment.body, '/test performance'))
+    env:
+      JOB_NAME: "Infra-Prometheus-Test"
+      KIND_NUM_WORKER: "6"
+      KIND_NUM_INFRA: "2"
+      OVN_HA: "true"
+      PLATFORM_IPV4_SUPPORT: "true"
+      PLATFORM_IPV6_SUPPORT: "false"
+      KIND_IPV4_SUPPORT: "true"
+      KIND_IPV6_SUPPORT: "false"
+      OVN_HYBRID_OVERLAY_ENABLE: "false"
+      OVN_GATEWAY_MODE: "shared"
+      OVN_MULTICAST_ENABLE: "false"
+      KIND_INSTALL_PROMETHEUS: "true"
+      KIND_PROMETHEUS_INFRA_ONLY: "true"
+      KIND_INSTALL_METALLB: "true"
+      OVN_DISABLE_SNAT_MULTIPLE_GWS: "false"
+      OVN_SECOND_BRIDGE: "false"
+      ENABLE_MULTI_NET: "false"
+      ENABLE_NETWORK_SEGMENTATION: "false"
+      OVN_ENABLE_INTERCONNECT: "true"
+      OVN_NETWORK_QOS_ENABLE: "false"
+      MULTI_POD_SUBNET: true
+    steps:
+    - name: Get PR info for issue comment
+      if: github.event_name == 'issue_comment'
+      id: pr_info
+      run: |
+        PR_NUMBER=${{ github.event.issue.number }}
+        PR_INFO=$(curl -s -H "Authorization: token ${{ github.token }}" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER")
+        PR_SHA=$(echo "$PR_INFO" | jq -r .head.sha)
+        echo "sha=$PR_SHA" >> $GITHUB_OUTPUT
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event_name == 'issue_comment' && steps.pr_info.outputs.sha || github.sha }}
+
+    - name: Runner Diagnostics
+      if: always()
+      uses: ./.github/actions/diagnostics
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Set up environment
+      run: |
+        export GOPATH=$(go env GOPATH)
+        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+        echo "$GOPATH/bin" >> $GITHUB_PATH
+
+    - name: Free up disk space
+      uses: ./.github/actions/free-disk-space
+
+    - name: Setup /mnt/runner directory
+      run: |
+        sudo mkdir -pv /mnt/runner
+        sudo chown runner:runner /mnt/runner
+
+    - name: Setup /mnt/docker-data as docker storage
+      run: |
+        sudo mkdir -pv /mnt/docker-data
+        sudo systemctl stop docker.socket docker
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"data-root": "/mnt/docker-data"}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"data-root": "/mnt/docker-data"}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl start docker docker.socket
+        docker system info
+
+    - name: Disable ufw
+      run: |
+        sudo ufw disable
+
+    - name: Download test-image-pr
+      uses: actions/download-artifact@v4
+      with:
+        name: test-image-pr
+
+    - name: Load docker image
+      run: |
+        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+
+    - name: kind setup with infra nodes
+      timeout-minutes: 30
+      run: |
+        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+        make -C test install-kind
+
+    - name: Install Prometheus on infra nodes
+      run: |
+        ./contrib/install-prometheus-infra.sh
+
+    - name: Runner Diagnostics
+      if: always()
+      uses: ./.github/actions/diagnostics
+
+    - name: Run Performance Tests
+      timeout-minutes: 120
+      run: |
+        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+        make -C test infra-prometheus
+
+    - name: Runner Diagnostics
+      if: always()
+      uses: ./.github/actions/diagnostics
+
+    - name: Export kind logs
+      if: always()
+      run: |
+        mkdir -p /tmp/kind/logs
+        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
+
+    - name: Export kubeconfig
+      if: always()
+      run: |
+        mkdir -p /tmp/kubeconfig
+        kind get kubeconfig --name ${KIND_CLUSTER_NAME} > /tmp/kubeconfig/kubeconfig
+
+    - name: Upload kind logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: kind-logs-performance-job-${{ github.run_id }}
+        path: /tmp/kind/logs
+
+    - name: Upload kubeconfig
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: kubeconfig-performance-job-${{ github.run_id }}
+        path: /tmp/kubeconfig/
+
+    - name: Upload Prometheus metrics
+      if: always()
+      run: |
+        mkdir -p /tmp/prometheus
+        kubectl logs -l app=prometheus-server -n prometheus-system > /tmp/prometheus/prometheus.log || true
+        kubectl get pods -n prometheus-system -o yaml > /tmp/prometheus/prometheus-pods.yaml || true
+
+    - name: Upload Prometheus artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: prometheus-metrics-performance-job-${{ github.run_id }}
+        path: /tmp/prometheus/
+
+  build-pr:
+    name: Build-PR
+    runs-on: ubuntu-24.04
+    if: |
+      (github.event_name != 'issue_comment') ||
+      (github.event.issue.pull_request && 
+       contains(github.event.comment.body, '/test performance'))
+    steps:
+    - name: Restore PR image cache
+      id: image_cache_pr
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.CI_IMAGE_CACHE }}
+        key: ${{ github.run_id }}-image-cache-pr
+
+    - name: Check if PR image build is needed
+      id: is_pr_image_build_needed
+      continue-on-error: true
+      run: |
+        set -x
+        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ]; then
+            mkdir -p ${CI_DIST_IMAGES_OUTPUT}
+            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz
+            gunzip ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz
+            echo "PR_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Get PR info for issue comment
+      if: github.event_name == 'issue_comment' && steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      id: pr_info
+      run: |
+        PR_NUMBER=${{ github.event.issue.number }}
+        PR_INFO=$(curl -s -H "Authorization: token ${{ github.token }}" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER")
+        PR_SHA=$(echo "$PR_INFO" | jq -r .head.sha)
+        echo "sha=$PR_SHA" >> $GITHUB_OUTPUT
+
+    - name: Check out code into the Go module directory
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event_name == 'issue_comment' && steps.pr_info.outputs.sha || github.sha }}
+
+    - name: Set up Go
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Build
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      run: |
+        set -x
+        pushd go-controller
+           make gofmt
+           make verify-go-mod-vendor
+           make
+           make windows
+        popd
+
+    - name: Build docker image
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      run: |
+        pushd dist/images
+          IMAGE=ovn-daemonset-fedora:pr
+          make IMAGE=${IMAGE} \
+            OVN_REPO=${{ env.OVN_REPO }} \
+            OVN_GITREF=${{ env.OVN_GITREF }} \
+            fedora-image
+          mkdir _output
+          docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
+        popd
+
+    - name: Cache PR image
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      continue-on-error: true
+      run: |
+        set -x
+        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR} ]; then
+            rm -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+        fi
+        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ]; then
+           rm -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz
+        fi
+        mkdir -p ${CI_IMAGE_CACHE}/
+        cp ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR} ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+        gzip ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: test-image-pr
+        path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
