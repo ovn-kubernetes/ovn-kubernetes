@@ -26,7 +26,8 @@ jobs:
     if: |
       (github.event_name != 'issue_comment') ||
       (github.event.issue.pull_request && 
-       contains(github.event.comment.body, '/perf-test node-density-cni'))
+       contains(github.event.comment.body, '/perf-test node-density-cni')) ||
+      (github.event_name == 'workflow_dispatch')
     env:
       JOB_NAME: "PerformanceTest-6wrk-2infra"
       KIND_NUM_WORKER: "6"
@@ -189,7 +190,8 @@ jobs:
     if: |
       (github.event_name != 'issue_comment') ||
       (github.event.issue.pull_request && 
-       contains(github.event.comment.body, '/perf-test node-density-cni'))
+       contains(github.event.comment.body, '/perf-test node-density-cni')) ||
+      (github.event_name == 'workflow_dispatch')
     steps:
     - name: Restore PR image cache
       id: image_cache_pr
