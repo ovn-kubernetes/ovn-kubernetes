@@ -127,6 +127,9 @@ type VRFConfig struct {
 	VNI int32 `json:"vni"`
 	// RouteTarget is the BGP route target for this VRF.
 	RouteTarget string `json:"routeTarget,omitempty"`
+	// VID is the VLAN ID used for local traffic segmentation on each node.
+	// Allocated cluster-wide by the UDN controller, one per VRF.
+	VID int `json:"vid,omitempty"`
 }
 
 // NetworkSelectionElement represents one element of the JSON format
