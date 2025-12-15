@@ -66,14 +66,20 @@ func generateCNCName() string {
 
 // generateConnectSubnets generates connectSubnets YAML based on cluster IP family support
 func generateConnectSubnets(cs clientset.Interface) string {
+	return generateConnectSubnetsWithCIDRs(cs, cncConnectSubnetIPv4CIDR, cncConnectSubnetIPv4Prefix,
+		cncConnectSubnetIPv6CIDR, cncConnectSubnetIPv6Prefix)
+}
+
+// generateConnectSubnetsWithCIDRs generates connectSubnets YAML with custom CIDRs
+func generateConnectSubnetsWithCIDRs(cs clientset.Interface, v4CIDR string, v4Prefix int, v6CIDR string, v6Prefix int) string {
 	var subnets []string
 	if isIPv4Supported(cs) {
 		subnets = append(subnets, fmt.Sprintf(`    - cidr: "%s"
-      networkPrefix: %d`, cncConnectSubnetIPv4CIDR, cncConnectSubnetIPv4Prefix))
+      networkPrefix: %d`, v4CIDR, v4Prefix))
 	}
 	if isIPv6Supported(cs) {
 		subnets = append(subnets, fmt.Sprintf(`    - cidr: "%s"
-      networkPrefix: %d`, cncConnectSubnetIPv6CIDR, cncConnectSubnetIPv6Prefix))
+      networkPrefix: %d`, v6CIDR, v6Prefix))
 	}
 	return strings.Join(subnets, "\n")
 }
@@ -144,11 +150,16 @@ func deleteNamespace(cs clientset.Interface, nsName string) {
 	_ = cs.CoreV1().Namespaces().Delete(context.Background(), nsName, metav1.DeleteOptions{})
 }
 
-// createOrUpdateCNC creates or updates a CNC with CUDN and/or PUDN selectors
+// createOrUpdateCNC creates or updates a CNC with CUDN and/or PUDN selectors using default connect subnets
 // Uses kubectl apply, so can be called to update an existing CNC
 func createOrUpdateCNC(cs clientset.Interface, cncName string, cudnLabelSelector, udnLabelSelector map[string]string) {
+	createOrUpdateCNCWithSubnets(cncName, cudnLabelSelector, udnLabelSelector, generateConnectSubnets(cs))
+}
+
+// createOrUpdateCNCWithSubnets creates or updates a CNC with custom connect subnets
+func createOrUpdateCNCWithSubnets(cncName string, cudnLabelSelector, udnLabelSelector map[string]string, connectSubnets string) {
 	Expect(cudnLabelSelector != nil || udnLabelSelector != nil).To(BeTrue(),
-		"createOrUpdateCNC requires at least one selector (cudnLabelSelector or udnLabelSelector)")
+		"createOrUpdateCNCWithSubnets requires at least one selector (cudnLabelSelector or udnLabelSelector)")
 
 	var networkSelectors []string
 
@@ -193,7 +204,7 @@ spec:
   connectSubnets:
 %s
   connectivity: ["PodNetwork"]
-`, cncName, strings.Join(networkSelectors, "\n"), generateConnectSubnets(cs))
+`, cncName, strings.Join(networkSelectors, "\n"), connectSubnets)
 	_, err := e2ekubectl.RunKubectlInput("", manifest, "apply", "-f", "-")
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -415,8 +426,8 @@ func verifyCNCSubnetAnnotationContent(cncName string, expectedTopologies []strin
 
 			// Verify IPv4 format if present (should be CIDR within connectSubnets range)
 			if hasIPv4 {
-				g.Expect(subnet.IPv4).To(MatchRegexp(`^192\.168\.\d+\.\d+/\d+$`),
-					fmt.Sprintf("network %s IPv4 subnet should be in connectSubnets range", networkKey))
+				g.Expect(subnet.IPv4).To(MatchRegexp(`^192\.16[89]\.\d+\.\d+/\d+$`),
+					fmt.Sprintf("network %s IPv4 subnet should be in connectSubnets range (192.168.x.x or 192.169.x.x)", networkKey))
 				// Layer2 networks use point-to-point /31 subnets
 				if isLayer2 {
 					g.Expect(subnet.IPv4).To(HaveSuffix("/31"),
@@ -426,8 +437,8 @@ func verifyCNCSubnetAnnotationContent(cncName string, expectedTopologies []strin
 
 			// Verify IPv6 format if present (should be CIDR within connectSubnets range)
 			if hasIPv6 {
-				g.Expect(subnet.IPv6).To(MatchRegexp(`^fd00:10::[0-9a-f:]*/\d+$`),
-					fmt.Sprintf("network %s IPv6 subnet should be in connectSubnets range", networkKey))
+				g.Expect(subnet.IPv6).To(MatchRegexp(`^fd00:1[01]::[0-9a-f:]*/\d+$`),
+					fmt.Sprintf("network %s IPv6 subnet should be in connectSubnets range (fd00:10:: or fd00:11::)", networkKey))
 				// Layer2 networks use point-to-point /127 subnets
 				if isLayer2 {
 					g.Expect(subnet.IPv6).To(HaveSuffix("/127"),
@@ -1581,6 +1592,14 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	// Group 8: Multiple CNCs - multiple CNCs in cluster (3 tests)
 	// ===========================================
 	Context("when multiple CNCs exist", func() {
+		// Second CNC connect subnet configuration (must be different from first CNC)
+		const (
+			cnc2ConnectSubnetIPv4CIDR   = "192.169.0.0/16"
+			cnc2ConnectSubnetIPv4Prefix = 24
+			cnc2ConnectSubnetIPv6CIDR   = "fd00:11::/112"
+			cnc2ConnectSubnetIPv6Prefix = 120
+		)
+
 		It("two CNCs with non-overlapping selectors - each tracks its own networks", func() {
 			cncName1 := generateCNCName()
 			cncName2 := generateCNCName()
@@ -1607,11 +1626,11 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
-			By("creating first CNC matching first CUDN")
-			createOrUpdateCNC(cs, cncName1, label1, nil)
+			By("creating first CNC matching first CUDN (with first connect subnet)")
+			createOrUpdateCNCWithSubnets(cncName1, label1, nil, generateConnectSubnets(cs))
 
-			By("creating second CNC matching second CUDN")
-			createOrUpdateCNC(cs, cncName2, label2, nil)
+			By("creating second CNC matching second CUDN (with different connect subnet)")
+			createOrUpdateCNCWithSubnets(cncName2, label2, nil, generateConnectSubnetsWithCIDRs(cs, cnc2ConnectSubnetIPv4CIDR, cnc2ConnectSubnetIPv4Prefix, cnc2ConnectSubnetIPv6CIDR, cnc2ConnectSubnetIPv6Prefix))
 
 			By("verifying first CNC has only first network")
 			verifyCNCHasBothAnnotations(cncName1)
@@ -1651,11 +1670,11 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			createLayer3PrimaryCUDN(cs, cudnName, sharedLabel, ns.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
-			By("creating first CNC matching the CUDN")
-			createOrUpdateCNC(cs, cncName1, sharedLabel, nil)
+			By("creating first CNC matching the CUDN (with first connect subnet)")
+			createOrUpdateCNCWithSubnets(cncName1, sharedLabel, nil, generateConnectSubnets(cs))
 
-			By("creating second CNC also matching the CUDN")
-			createOrUpdateCNC(cs, cncName2, sharedLabel, nil)
+			By("creating second CNC also matching the CUDN (with different connect subnet)")
+			createOrUpdateCNCWithSubnets(cncName2, sharedLabel, nil, generateConnectSubnetsWithCIDRs(cs, cnc2ConnectSubnetIPv4CIDR, cnc2ConnectSubnetIPv4Prefix, cnc2ConnectSubnetIPv6CIDR, cnc2ConnectSubnetIPv6Prefix))
 
 			By("verifying both CNCs have the network in their annotations")
 			verifyCNCHasBothAnnotations(cncName1)
@@ -1700,9 +1719,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
 
-			By("creating two CNCs with different selectors")
-			createOrUpdateCNC(cs, cncName1, label1, nil)
-			createOrUpdateCNC(cs, cncName2, label2, nil)
+			By("creating two CNCs with different selectors and different connect subnets")
+			createOrUpdateCNCWithSubnets(cncName1, label1, nil, generateConnectSubnets(cs))
+			createOrUpdateCNCWithSubnets(cncName2, label2, nil, generateConnectSubnetsWithCIDRs(cs, cnc2ConnectSubnetIPv4CIDR, cnc2ConnectSubnetIPv4Prefix, cnc2ConnectSubnetIPv6CIDR, cnc2ConnectSubnetIPv6Prefix))
 
 			By("verifying both CNCs have their networks")
 			verifyCNCHasBothAnnotations(cncName1)
@@ -2513,6 +2532,280 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			verifyFullMeshConnectivity(srcPods, podIPs, true)
 
 			By("Test completed successfully - CNC lifecycle validated")
+		})
+	})
+
+	/*
+	   Multiple CNCs with overlapping network selection:
+
+	   This test validates behavior when multiple CNCs exist in the cluster with
+	   overlapping network selections. It creates:
+	   - CNC-1: selects blue (L2 UDN) and red (L3 CUDN)
+	   - CNC-2: selects blue (L2 UDN) and green (L3 UDN)
+
+	   Network topology:
+	   - Blue UDN (L2): shared between both CNCs
+	   - Red CUDN (L3): only in CNC-1
+	   - Green UDN (L3): only in CNC-2
+
+	   Expected connectivity:
+	   - blue <-> red (via CNC-1)
+	   - blue <-> green (via CNC-2)
+	   - red <-/-> green (no direct connection - non-transitive)
+
+	   This validates that:
+	   1. CNCs can be created before networks exist
+	   2. Networks get dynamically added to existing CNCs when they match selectors
+	   3. A network can be part of multiple CNCs simultaneously
+	   4. Connectivity is non-transitive (no indirect routes through shared networks)
+	   5. Each CNC maintains independent routing domains
+
+	   Steps:
+	   1. Create CNC-1 selecting blue and red (no networks exist yet)
+	   2. Create CNC-2 selecting blue and green (no networks exist yet)
+	   3. Create blue UDN (L2) with pods - gets added to both CNCs
+	   4. Create red CUDN (L3) with pods - gets added to CNC-1
+	   5. Create green UDN (L3) with pods - gets added to CNC-2
+	   6. Verify blue <-> red connectivity via CNC-1
+	   7. Verify blue <-> green connectivity via CNC-2
+	   8. Verify red <-/-> green (non-transitive - no connectivity)
+	   9. Delete CNC-1, verify blue <-> green still works, blue <-/-> red
+	   10. Delete CNC-2, verify all networks isolated
+	*/
+	Context("Multiple CNCs with overlapping network selection", func() {
+		const nodeHostnameKey = "kubernetes.io/hostname"
+
+		// Second CNC connect subnet configuration (must be different from first CNC)
+		const (
+			cnc2ConnectSubnetIPv4CIDR   = "192.169.0.0/16"
+			cnc2ConnectSubnetIPv4Prefix = 24
+			cnc2ConnectSubnetIPv6CIDR   = "fd00:11::/112"
+			cnc2ConnectSubnetIPv6Prefix = 120
+		)
+
+		It("should maintain non-transitive connectivity when a network is selected by multiple CNCs", func() {
+			// Test identifiers
+			testID := rand.String(5)
+			cnc1Name := fmt.Sprintf("color-1-%s", testID)
+			cnc2Name := fmt.Sprintf("color-2-%s", testID)
+
+			// Get 2 schedulable nodes for cross-node testing
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(nodes.Items)).To(BeNumerically(">=", 2), "test requires at least 2 schedulable nodes")
+			node1Name, node2Name := nodes.Items[0].Name, nodes.Items[1].Name
+
+			// Network names
+			blueUDN := "blue-udn"                         // L2 UDN - shared between both CNCs
+			redCUDN := fmt.Sprintf("red-cudn-%s", testID) // L3 CUDN - CNC-1 only
+			greenUDN := "green-udn"                       // L3 UDN - CNC-2 only
+
+			// Namespace names
+			blueNs := fmt.Sprintf("blue-ns-%s", testID)
+			redNs := fmt.Sprintf("red-ns-%s", testID)
+			greenNs := fmt.Sprintf("green-ns-%s", testID)
+
+			// Labels for CNC selection
+			// Blue needs labels for both CNC-1 (via blueLabel) and CNC-2 (via cnc2Label)
+			blueLabel := map[string]string{"network-color": "blue", "test-id": testID, "cnc2-member": "true"}
+			redLabel := map[string]string{"network-color": "red", "test-id": testID}
+			// Green needs label for CNC-2
+			greenLabel := map[string]string{"network-color": "green", "test-id": testID, "cnc2-member": "true"}
+			// CNC-2 selector - matches both blue and green namespaces
+			cnc2Label := map[string]string{"cnc2-member": "true"}
+
+			// Store pods and their IPs
+			pods := make(map[string]*corev1.Pod)
+			podIPs := make(map[string][]string)
+
+			// Cleanup
+			DeferCleanup(func() {
+				By("Cleanup: Deleting all test resources")
+				deleteCNC(cnc1Name)
+				deleteCNC(cnc2Name)
+
+				for _, pod := range pods {
+					_ = cs.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+				}
+
+				deleteUDN(blueNs, blueUDN)
+				deleteUDN(greenNs, greenUDN)
+				deleteCUDN(redCUDN)
+
+				deleteNamespace(cs, blueNs)
+				deleteNamespace(cs, redNs)
+				deleteNamespace(cs, greenNs)
+			})
+
+			// =====================================================================
+			// Step 1: Create CNC-1 selecting blue and red (no networks exist yet)
+			// Each CNC must have different connect subnets
+			// =====================================================================
+			By("1. Creating CNC-1 (color-1) selecting blue UDN and red CUDN with first connect subnet")
+			createOrUpdateCNCWithSubnets(cnc1Name, redLabel, blueLabel, generateConnectSubnets(cs))
+
+			By("1. Verifying CNC-1 has only tunnel ID annotation (no networks yet)")
+			verifyCNCHasOnlyTunnelIDAnnotation(cnc1Name)
+
+			// =====================================================================
+			// Step 2: Create CNC-2 selecting blue and green (no networks exist yet)
+			// =====================================================================
+			By("2. Creating CNC-2 (color-2) selecting blue UDN and green UDN with second connect subnet")
+			createOrUpdateCNCWithSubnets(cnc2Name, nil, cnc2Label, generateConnectSubnetsWithCIDRs(cs, cnc2ConnectSubnetIPv4CIDR, cnc2ConnectSubnetIPv4Prefix, cnc2ConnectSubnetIPv6CIDR, cnc2ConnectSubnetIPv6Prefix))
+
+			By("2. Verifying CNC-2 has only tunnel ID annotation (no networks yet)")
+			verifyCNCHasOnlyTunnelIDAnnotation(cnc2Name)
+
+			// =====================================================================
+			// Step 3: Create blue UDN (L2) with pods - gets added to both CNCs
+			// =====================================================================
+			By("3. Creating blue namespace and L2 UDN")
+			createUDNNamespaceWithName(cs, blueNs, blueLabel)
+			createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "10.128.0.0/16", "2014:100:200::0/60")
+
+			By("3. Waiting for blue UDN to be ready")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("3. Verifying CNC-1 now has 1 network (blue)")
+			verifyCNCSubnetAnnotationNetworkCount(cnc1Name, 1)
+
+			By("3. Verifying CNC-2 now has 1 network (blue)")
+			verifyCNCSubnetAnnotationNetworkCount(cnc2Name, 1)
+
+			By("3. Creating pods in blue UDN namespace")
+			bluePodConfig0 := httpServerPodConfig("blue-pod-0", blueNs)
+			bluePodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			bluePodConfig1 := httpServerPodConfig("blue-pod-1", blueNs)
+			bluePodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			pods["blue-pod-0"] = runUDNPod(cs, blueNs, bluePodConfig0, nil)
+			pods["blue-pod-1"] = runUDNPod(cs, blueNs, bluePodConfig1, nil)
+			podIPs["blue-pod-0"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod-0", blueUDN)
+			podIPs["blue-pod-1"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod-1", blueUDN)
+
+			// =====================================================================
+			// Step 4: Create red CUDN (L3) with pods - gets added to CNC-1
+			// =====================================================================
+			By("4. Creating red namespace and L3 CUDN")
+			createUDNNamespaceWithName(cs, redNs, nil)
+			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, redLabel, "10.129.0.0/16", "2014:100:300::0/60", redNs)
+
+			By("4. Waiting for red CUDN to be ready")
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("4. Verifying CNC-1 now has 2 networks (blue + red)")
+			verifyCNCSubnetAnnotationNetworkCount(cnc1Name, 2)
+
+			By("4. Verifying CNC-2 still has 1 network (blue only)")
+			verifyCNCSubnetAnnotationNetworkCount(cnc2Name, 1)
+
+			By("4. Creating pods in red CUDN namespace")
+			redPodConfig0 := httpServerPodConfig("red-pod-0", redNs)
+			redPodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			redPodConfig1 := httpServerPodConfig("red-pod-1", redNs)
+			redPodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			pods["red-pod-0"] = runUDNPod(cs, redNs, redPodConfig0, nil)
+			pods["red-pod-1"] = runUDNPod(cs, redNs, redPodConfig1, nil)
+			podIPs["red-pod-0"] = getPrimaryNetworkPodIPs(redNs, "red-pod-0", redCUDN)
+			podIPs["red-pod-1"] = getPrimaryNetworkPodIPs(redNs, "red-pod-1", redCUDN)
+
+			// =====================================================================
+			// Step 5: Create green UDN (L3) with pods - gets added to CNC-2
+			// =====================================================================
+			By("5. Creating green namespace and L3 UDN")
+			createUDNNamespaceWithName(cs, greenNs, greenLabel)
+			createLayer3PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "10.130.0.0/16", "2014:100:400::0/60")
+
+			By("5. Waiting for green UDN to be ready")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("5. Verifying CNC-1 still has 2 networks (blue + red)")
+			verifyCNCSubnetAnnotationNetworkCount(cnc1Name, 2)
+
+			By("5. Verifying CNC-2 now has 2 networks (blue + green)")
+			verifyCNCSubnetAnnotationNetworkCount(cnc2Name, 2)
+
+			By("5. Creating pods in green UDN namespace")
+			greenPodConfig0 := httpServerPodConfig("green-pod-0", greenNs)
+			greenPodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			greenPodConfig1 := httpServerPodConfig("green-pod-1", greenNs)
+			greenPodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			pods["green-pod-0"] = runUDNPod(cs, greenNs, greenPodConfig0, nil)
+			pods["green-pod-1"] = runUDNPod(cs, greenNs, greenPodConfig1, nil)
+			podIPs["green-pod-0"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-0", greenUDN)
+			podIPs["green-pod-1"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-1", greenUDN)
+
+			// Define pod groups for connectivity testing
+			bluePods := map[string]*corev1.Pod{"blue-pod-0": pods["blue-pod-0"], "blue-pod-1": pods["blue-pod-1"]}
+			redPods := map[string]*corev1.Pod{"red-pod-0": pods["red-pod-0"], "red-pod-1": pods["red-pod-1"]}
+			greenPods := map[string]*corev1.Pod{"green-pod-0": pods["green-pod-0"], "green-pod-1": pods["green-pod-1"]}
+
+			bluePodIPs := map[string][]string{"blue-pod-0": podIPs["blue-pod-0"], "blue-pod-1": podIPs["blue-pod-1"]}
+			redPodIPs := map[string][]string{"red-pod-0": podIPs["red-pod-0"], "red-pod-1": podIPs["red-pod-1"]}
+			greenPodIPs := map[string][]string{"green-pod-0": podIPs["green-pod-0"], "green-pod-1": podIPs["green-pod-1"]}
+
+			// =====================================================================
+			// Step 6: Verify blue <-> red connectivity via CNC-1
+			// =====================================================================
+			By("6. Verifying blue <-> red connectivity via CNC-1")
+			verifyCrossNetworkConnectivity(bluePods, redPodIPs, true)
+			verifyCrossNetworkConnectivity(redPods, bluePodIPs, true)
+
+			// =====================================================================
+			// Step 7: Verify blue <-> green connectivity via CNC-2
+			// =====================================================================
+			By("7. Verifying blue <-> green connectivity via CNC-2")
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, true)
+			verifyCrossNetworkConnectivity(greenPods, bluePodIPs, true)
+
+			// =====================================================================
+			// Step 8: Verify red <-/-> green (non-transitive)
+			// =====================================================================
+			By("8. Verifying red <-/-> green (non-transitive - no direct connectivity)")
+			verifyCrossNetworkConnectivity(redPods, greenPodIPs, false)
+			verifyCrossNetworkConnectivity(greenPods, redPodIPs, false)
+
+			By("8. Verifying blue still connected to both red and green")
+			verifyCrossNetworkConnectivity(bluePods, redPodIPs, true)
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, true)
+
+			// =====================================================================
+			// Step 9: Delete CNC-1, verify blue <-> green still works
+			// =====================================================================
+			By("9. Deleting CNC-1")
+			deleteCNC(cnc1Name)
+
+			By("9. Waiting for CNC-1 deletion to complete")
+			Eventually(func() bool {
+				_, err := getCNCAnnotations(cnc1Name)
+				return err != nil
+			}, 60*time.Second, 2*time.Second).Should(BeTrue())
+
+			By("9. Verifying blue <-> green still connected via CNC-2")
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, true)
+			verifyCrossNetworkConnectivity(greenPods, bluePodIPs, true)
+
+			By("9. Verifying blue <-/-> red (CNC-1 deleted)")
+			verifyCrossNetworkConnectivity(bluePods, redPodIPs, false)
+			verifyCrossNetworkConnectivity(redPods, bluePodIPs, false)
+
+			// =====================================================================
+			// Step 10: Delete CNC-2, verify all networks isolated
+			// =====================================================================
+			By("10. Deleting CNC-2")
+			deleteCNC(cnc2Name)
+
+			By("10. Waiting for CNC-2 deletion to complete")
+			Eventually(func() bool {
+				_, err := getCNCAnnotations(cnc2Name)
+				return err != nil
+			}, 60*time.Second, 2*time.Second).Should(BeTrue())
+
+			By("10. Verifying all networks are now isolated")
+			verifyCrossNetworkConnectivity(bluePods, redPodIPs, false)
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, false)
+			verifyCrossNetworkConnectivity(redPods, greenPodIPs, false)
+
+			By("Test completed successfully - Multiple CNCs with non-transitive connectivity validated")
 		})
 	})
 })
