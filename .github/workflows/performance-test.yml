@@ -1,8 +1,6 @@
 name: performance-test
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * 0'  # Weekly on Sundays
   pull_request:
     paths:
       - 'contrib/**'
