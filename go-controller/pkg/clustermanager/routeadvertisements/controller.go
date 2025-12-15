@@ -641,16 +641,15 @@ func (c *Controller) generateFRRConfiguration(
 		targetRouter.Prefixes = advertisePrefixes
 		targetRouter.Neighbors = make([]frrtypes.Neighbor, 0, len(source.Spec.BGP.Routers[i].Neighbors))
 		for _, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
-			// If MultiProtocol is enabled (default) then a BGP session carries
-			// prefixes of both IPv4 and IPv6 families. Our problem is that with
-			// an IPv4 session, FRR can incorrectly pick the masquerade IPv6
-			// address (instead of the real address) as next hop for IPv6
-			// prefixes and that won't work. Note that with a dedicated IPv6
-			// session that can't happen since FRR will use the same address
-			// that was used to stablish the session. Let's enforce the use of
-			// DisableMP for now.
-			if !neighbor.DisableMP {
-				return nil, fmt.Errorf("%w: DisableMP==false not supported, seen on FRRConfiguration %s/%s neighbor %s",
+			// If MultiProtocol is enabled (DualStackAddressFamily==true) then a
+			// BGP session carries prefixes of both IPv4 and IPv6 families. Our
+			// problem is that with an IPv4 session, FRR can incorrectly pick
+			// the masquerade IPv6 address (instead of the real address) as next
+			// hop for IPv6 prefixes and that won't work. Note that with a
+			// dedicated IPv6 session that can't happen since FRR will use the
+			// same address that was used to establish the session.
+			if neighbor.DualStackAddressFamily {
+				return nil, fmt.Errorf("%w: DualStackAddressFamily==true not supported, seen on FRRConfiguration %s/%s neighbor %s",
 					errConfig,
 					source.Namespace,
 					source.Name,

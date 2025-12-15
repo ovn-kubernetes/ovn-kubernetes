@@ -120,7 +120,7 @@ spec:
       neighbors:
       - address: 192.168.111.3
         asn: 64512
-        disableMP: true
+        dualStackAddressFamily: false
         toReceive:
           allowed:
             mode: filtered
@@ -230,6 +230,12 @@ spec:
 This would advertise routes for the pod network to the BGP peers as defined on
 the selected `FRRConfiguration` instances; and make the necessary changes to
 correctly handle N/S traffic directly addressing IPs of that network.
+
+> [!NOTE]
+> The `FRRConfiguration` field `dualStackAddressFamily` must be left, or set
+> explicitly, to its default `false` value. Currently it is not supported to
+> carry unicast routes of an address family when the BGP session is established
+> over a different address family.
 
 Currently, when the `advertisements` field includes `PodNetwork`, you must
 select all nodes with `nodeSelector`. However, if you are only advertising
@@ -341,7 +347,6 @@ spec:
       neighbors:
       - address: 192.168.221.3
         asn: 64512
-        disableMP: true
         toReceive:
           allowed:
             mode: filtered
@@ -549,7 +554,6 @@ spec:
       neighbors:
       - address: 192.168.111.3
         asn: 64512
-        disableMP: true
         toAdvertise:
           allowed:
             mode: filtered

@@ -149,26 +149,23 @@ func (tn testNode) Node() *corev1.Node {
 }
 
 type testNeighbor struct {
-	ASN       uint32
-	Address   string
-	DisableMP *bool
-	Advertise []string
+	ASN                    uint32
+	Address                string
+	DualStackAddressFamily bool
+	Advertise              []string
 }
 
 func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 	n := frrapi.Neighbor{
-		ASN:       tn.ASN,
-		Address:   tn.Address,
-		DisableMP: true,
+		ASN:                    tn.ASN,
+		Address:                tn.Address,
+		DualStackAddressFamily: tn.DualStackAddressFamily,
 		ToAdvertise: frrapi.Advertise{
 			Allowed: frrapi.AllowedOutPrefixes{
 				Mode:     frrapi.AllowRestricted,
 				Prefixes: tn.Advertise,
 			},
 		},
-	}
-	if tn.DisableMP != nil {
-		n.DisableMP = *tn.DisableMP
 	}
 
 	return n
@@ -925,7 +922,7 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionFalse,
 		},
 		{
-			name: "fails to reconcile if DisableMP is unset",
+			name: "fails to reconcile if DualStackAddressFamily is set",
 			ra:   &testRA{Name: "ra", AdvertisePods: true},
 			frrConfigs: []*testFRRConfig{
 				{
@@ -933,7 +930,7 @@ func TestController_reconcile(t *testing.T) {
 					Namespace: frrNamespace,
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", DisableMP: ptr.To(false)},
+							{ASN: 1, Address: "1.0.0.100", DualStackAddressFamily: true},
 						}},
 					},
 				},
