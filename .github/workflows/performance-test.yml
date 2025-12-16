@@ -23,9 +23,9 @@ jobs:
     timeout-minutes: 240
     needs: [build-pr]
     env:
-      JOB_NAME: "PerformanceTest-6wrk-2infra"
+      JOB_NAME: "PerformanceTest-1wrk-2infra"
       KIND_NUM_WORKER: "1"
-      KIND_NUM_INFRA: "0"
+      KIND_NUM_INFRA: "2"
       OVN_HA: "true"
       PLATFORM_IPV4_SUPPORT: "true"
       PLATFORM_IPV6_SUPPORT: "false"
@@ -163,9 +163,16 @@ jobs:
         
         echo "Container cleanup completed"
 
-    - name: Load docker image
+    - name: Load container image
       run: |
-        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        # Load image using the same runtime that will be used by KIND
+        if [[ "${KIND_EXPERIMENTAL_PROVIDER:-docker}" == "podman" ]]; then
+          echo "Loading image with podman..."
+          podman load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        else
+          echo "Loading image with docker..."
+          docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        fi
 
     - name: Pre-flight system checks and configuration
       run: |
@@ -211,7 +218,10 @@ jobs:
         echo "- CPU: $(nproc) cores"
         
         # Check container runtime and configure
-        if command -v podman >/dev/null 2>&1; then
+        if command -v podman >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+          echo "✓ Both Podman and Docker detected, using Docker for consistency with image loading"
+          # Don't set KIND_EXPERIMENTAL_PROVIDER, let it default to docker
+        elif command -v podman >/dev/null 2>&1; then
           echo "✓ Podman detected, setting KIND_EXPERIMENTAL_PROVIDER=podman"
           echo "KIND_EXPERIMENTAL_PROVIDER=podman" >> $GITHUB_ENV
           
