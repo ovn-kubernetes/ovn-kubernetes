@@ -59,6 +59,8 @@ set_default_params() {
   export TRANSIT_SUBNET_IPV6=${TRANSIT_SUBNET_IPV6:-fd97::/64}
   export METALLB_CLIENT_NET_SUBNET_IPV4=${METALLB_CLIENT_NET_SUBNET_IPV4:-172.22.0.0/16}
   export METALLB_CLIENT_NET_SUBNET_IPV6=${METALLB_CLIENT_NET_SUBNET_IPV6:-fc00:f853:ccd:e792::/64}
+  export DYNAMIC_UDN_ALLOCATION=${DYNAMIC_UDN_ALLOCATION:-false}
+  export DYNAMIC_UDN_GRACE_PERIOD=${DYNAMIC_UDN_GRACE_PERIOD:-}
 
   export KIND_NUM_MASTER=1
   if [ "$OVN_HA" == true ]; then
@@ -105,6 +107,8 @@ usage() {
     echo "       [ -mne | --multi-network-enable ]"
     echo "       [ -nse | --network-segmentation-enable ]"
     echo "       [ -uae | --preconfigured-udn-addresses-enable ]"
+    echo "       [-dudn | --dynamic-udn-allocation]"
+    echo "       [-dug | --dynamic-udn-removal-grace-period]"
     echo "       [ -nqe | --network-qos-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
@@ -128,6 +132,8 @@ usage() {
     echo "-mne | --multi-network-enable                 Enable multi networks. DEFAULT: Disabled"
     echo "-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled"
     echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled"
+    echo "-dudn | --dynamic-udn-allocation              Enable dynamic UDN allocation. DEFAULT: Disabled"
+    echo "-dug | --dynamic-udn-removal-grace-period     Configure the grace period in seconds for dynamic UDN removal. DEFAULT: 120 seconds"
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
@@ -177,6 +183,15 @@ parse_args() {
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
             -uae | --preconfigured-udn-addresses-enable)    ENABLE_PRE_CONF_UDN_ADDR=true
+                                                  ;;
+            -dudn | --dynamic-udn-allocation)     DYNAMIC_UDN_ALLOCATION=true
+                                                  ;;
+            -dug  | --dynamic-udn-removal-grace-period)
+                                                  shift
+                                                  DYNAMIC_UDN_GRACE_PERIOD=$1
+                                                  if [[ "$DYNAMIC_UDN_GRACE_PERIOD" =~ ^[0-9]+$ ]]; then
+                                                    DYNAMIC_UDN_GRACE_PERIOD="${DYNAMIC_UDN_GRACE_PERIOD}s"
+                                                  fi
                                                   ;;
             -nqe | --network-qos-enable )         OVN_NETWORK_QOS_ENABLE=true
                                                   ;;
@@ -252,6 +267,8 @@ print_params() {
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
      echo "MULTI_POD_SUBNET= $MULTI_POD_SUBNET"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
+     echo "DYNAMIC_UDN_ALLOCATION = $DYNAMIC_UDN_ALLOCATION"
+     echo "DYNAMIC_UDN_GRACE_PERIOD =  $DYNAMIC_UDN_GRACE_PERIOD"
      if [[ $OVN_ENABLE_INTERCONNECT == true ]]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
        if [ "${KIND_NUM_NODES_PER_ZONE}" -gt 1 ] && [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" = "true" ]; then
@@ -448,6 +465,8 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableDynamicUDNAllocation=$(if [ "${DYNAMIC_UDN_ALLOCATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          $( [ -n "$DYNAMIC_UDN_GRACE_PERIOD" ] && echo "--set global.dynamicUDNGracePeriod=$DYNAMIC_UDN_GRACE_PERIOD" ) \
           --set global.enablePreconfiguredUDNAddresses=$(if [ "${ENABLE_PRE_CONF_UDN_ADDR}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \

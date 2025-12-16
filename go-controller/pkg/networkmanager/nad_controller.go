@@ -10,7 +10,6 @@ import (
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
-	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -18,7 +17,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
-	coreinformers "k8s.io/client-go/informers/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
@@ -26,9 +24,8 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	rainformers "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
-	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -36,15 +33,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
 )
-
-type watchFactory interface {
-	NADInformer() nadinformers.NetworkAttachmentDefinitionInformer
-	UserDefinedNetworkInformer() userdefinednetworkinformer.UserDefinedNetworkInformer
-	ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer
-	NamespaceInformer() coreinformers.NamespaceInformer
-	RouteAdvertisementsInformer() rainformers.RouteAdvertisementsInformer
-	NodeCoreInformer() coreinformers.NodeInformer
-}
 
 // handlerFunc used as a callback that can be registered with nadController
 type handlerFunc func(nadName string, info util.NetInfo, removed bool)
@@ -59,6 +47,7 @@ type nadController struct {
 	sync.RWMutex
 
 	name            string
+	stopChan        chan struct{}
 	nadLister       nadlisters.NetworkAttachmentDefinitionLister
 	udnLister       userdefinednetworklister.UserDefinedNetworkLister
 	cudnLister      userdefinednetworklister.ClusterUserDefinedNetworkLister
@@ -83,6 +72,10 @@ type nadController struct {
 	nadClient           nadclientset.Interface
 	// handlerFuncs is a list of registered callbacks that is called during events
 	handlerFuncs []handlerFunc
+
+	markedForRemoval map[string]time.Time
+
+	nadFilterFunc func(nad *nettypes.NetworkAttachmentDefinition) (bool, error)
 }
 
 func newController(
@@ -97,6 +90,7 @@ func newController(
 ) (*nadController, error) {
 	c := &nadController{
 		name:              fmt.Sprintf("[%s NAD controller]", name),
+		stopChan:          make(chan struct{}),
 		recorder:          recorder,
 		nadLister:         wf.NADInformer().Lister(),
 		nodeLister:        wf.NodeCoreInformer().Lister(),
@@ -104,6 +98,11 @@ func newController(
 		nads:              map[string]string{},
 		primaryNADs:       map[string]string{},
 		handlerFuncs:      []handlerFunc{},
+		markedForRemoval:  map[string]time.Time{},
+	}
+
+	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		c.nadFilterFunc = cm.Filter
 	}
 
 	if ovnClient != nil {
@@ -176,6 +175,7 @@ func (c *nadController) Start() error {
 
 func (c *nadController) Stop() {
 	klog.Infof("%s: shutting down", c.name)
+	close(c.stopChan)
 	controller.Stop(c.controller)
 	c.networkController.Stop()
 }
@@ -194,6 +194,59 @@ func (c *nadController) executeHandlers(nadName string, info util.NetInfo, remov
 	for _, handler := range c.handlerFuncs {
 		handler(nadName, info, removed)
 	}
+}
+
+func (c *nadController) Reconcile(key string) {
+	c.controller.Reconcile(key)
+}
+
+// UpdateNADState enqueues a sync for a given NAD.
+// "active" defines if the network is actively being used by a dynamic resource
+//   - For local events, we either want to wait for grace period before tearing down an inactive network
+//     or clear any removal timer, but both conditions should lead to the network being reconciled (nad sync)
+func (c *nadController) UpdateNADState(key string, active bool) {
+	if active { // if local and active, clear the mark for removal
+		c.removeMarkedForRemoval(key)
+	} else { // inactive start timer for removal
+		c.setMarkedForRemoval(key)
+	}
+	// always requeue to nad controller to syncNAD again
+	c.controller.Reconcile(key)
+}
+
+func (c *nadController) setMarkedForRemoval(key string) {
+	c.Lock()
+	removalTime := time.Now().Add(config.OVNKubernetesFeature.UDNDeletionGracePeriod)
+	c.markedForRemoval[key] = removalTime
+	c.Unlock()
+
+	// ensure we reconcile later
+	go func() {
+		klog.V(5).Infof("Scheduling to remove nad %q after %v", key, removalTime)
+		timer := time.NewTimer(time.Until(removalTime))
+		defer timer.Stop()
+
+		select {
+		case <-c.stopChan:
+			return
+		case <-timer.C:
+			shouldReconcile := false
+			c.Lock()
+			if rt, ok := c.markedForRemoval[key]; ok && time.Now().After(rt) {
+				shouldReconcile = true
+			}
+			c.Unlock()
+			if shouldReconcile {
+				c.Reconcile(key)
+			}
+		}
+	}()
+}
+
+func (c *nadController) removeMarkedForRemoval(key string) {
+	c.Lock()
+	defer c.Unlock()
+	delete(c.markedForRemoval, key)
 }
 
 func (c *nadController) syncAll() (err error) {
@@ -294,15 +347,29 @@ func (c *nadController) sync(key string) error {
 	return c.syncNAD(key, nad)
 }
 
-func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefinition) error {
+func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefinition) (syncErr error) {
 	var nadNetworkName string
 	var nadNetwork util.NetInfo
 	var oldNetwork, ensureNetwork util.MutableNetInfo
 	var err error
 
+	c.Lock()
+	defer c.Unlock()
+
 	namespace, _, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return fmt.Errorf("%s: failed splitting key %s: %v", c.name, key, err)
+	}
+
+	deleteTime, setforDeletion := c.markedForRemoval[key]
+	if setforDeletion && time.Now().After(deleteTime) {
+		klog.Infof("%s: NAD %q: marked for deletion and time has expired, will remove", c.name, key)
+		nad = nil
+		defer func() {
+			if syncErr == nil {
+				delete(c.markedForRemoval, key)
+			}
+		}()
 	}
 
 	if nad != nil {
@@ -323,8 +390,6 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		nadNetworkName = nadNetwork.GetNetworkName()
 	}
 
-	c.Lock()
-	defer c.Unlock()
 	// We can only have one primary NAD per namespace
 	primaryNAD := c.primaryNADs[namespace]
 	if nadNetwork != nil && nadNetwork.IsPrimaryNetwork() && primaryNAD != "" && primaryNAD != key {
@@ -378,7 +443,43 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		if len(oldNetwork.GetNADs()) == 0 {
 			c.networkController.DeleteNetwork(oldNetworkName)
 		} else {
-			c.networkController.EnsureNetwork(oldNetwork)
+			networkShouldExist := true
+			if c.nadFilterFunc != nil {
+				// We don't want to create/update NADs that map to UDNs not on our node
+				// Need to check remaining nads and see if we have a pod/egress IP on them
+				networkShouldExist = false
+				for _, nadNamespacedName := range oldNetwork.GetNADs() {
+					nadNamespace, nadName, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+					if err != nil {
+						return fmt.Errorf("%s: failed splitting key %s: %v", c.name, nadNamespacedName, err)
+					}
+					n, err := c.nadLister.NetworkAttachmentDefinitions(nadNamespace).Get(nadName)
+					if err != nil {
+						if !apierrors.IsNotFound(err) {
+							return err
+						} else {
+							// NAD not doesn't exist, shouldn't render anyway
+							continue
+						}
+					}
+					shouldFilter, err := c.nadFilterFunc(n)
+					if err != nil {
+						return fmt.Errorf("%s: failed filtering NAD %s: %w", c.name, key, err)
+					}
+					if !shouldFilter {
+						networkShouldExist = true
+						break
+					}
+				}
+			}
+			if networkShouldExist {
+				c.networkController.EnsureNetwork(oldNetwork)
+			} else {
+				klog.V(4).Infof("Network is filtered and will not be rendered: %s", oldNetwork)
+			}
+		}
+		if c.primaryNADs[namespace] == key {
+			delete(c.primaryNADs, namespace)
 		}
 		c.executeHandlers(key, oldNetwork, true)
 	}
@@ -390,9 +491,6 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	// this was a nad delete
 	if ensureNetwork == nil {
 		delete(c.nads, key)
-		if c.primaryNADs[namespace] == key {
-			delete(c.primaryNADs, namespace)
-		}
 		return err
 	}
 
@@ -417,9 +515,23 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		}
 	}
 
-	// reconcile the network
-	c.networkController.EnsureNetwork(ensureNetwork)
-	c.executeHandlers(key, ensureNetwork, false)
+	shouldNetworkExist := true
+	if c.nadFilterFunc != nil {
+		shouldFilter, err := c.nadFilterFunc(nad)
+		if err != nil {
+			return fmt.Errorf("%s: failed filtering NAD %s: %w", c.name, key, err)
+		}
+		if shouldFilter {
+			shouldNetworkExist = false
+		}
+	}
+	if shouldNetworkExist {
+		// reconcile the network
+		c.networkController.EnsureNetwork(ensureNetwork)
+		c.executeHandlers(key, ensureNetwork, false)
+	} else {
+		klog.V(4).Infof("Network is filtered and will not be rendered: %s", ensureNetwork.GetNetworkName())
+	}
 	return nil
 }
 
@@ -517,6 +629,35 @@ func (c *nadController) GetActiveNetworkForNamespaceFast(namespace string) util.
 	return network
 }
 
+// GetPrimaryNADForNamespace returns the full namespaced key of the
+// primary NAD for the given namespace, if one exists.
+// Returns default network if namespace has no primary UDN
+func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	c.RLock()
+	primary := c.primaryNADs[namespace]
+	c.RUnlock()
+	if primary != "" {
+		return primary, nil
+	}
+
+	// Double-check if the namespace *requires* a primary UDN.
+	ns, err := c.namespaceLister.Get(namespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Namespace is gone — no primary NAD by definition.
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace, err)
+	}
+	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
+		// Namespace promises a primary UDN, but we haven't cached one yet.
+		return "", util.NewUnprocessedActiveNetworkError(namespace, "")
+	}
+
+	// No required label: means default network only.
+	return types.DefaultNetworkName, nil
+}
+
 func (c *nadController) getActiveNetworkForNamespace(namespace string) (util.NetInfo, string) {
 	c.RLock()
 	defer c.RUnlock()
@@ -550,6 +691,10 @@ func (c *nadController) GetNetwork(name string) util.NetInfo {
 		return &util.DefaultNetInfo{}
 	}
 	return network
+}
+
+func (c *nadController) NotifyNetworkRefChange(networkName, node string, active bool) {
+	c.networkController.NotifyNetworkRefChange(networkName, node, active)
 }
 
 func (c *nadController) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
