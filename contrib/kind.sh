@@ -870,7 +870,7 @@ create_kind_cluster() {
   
   # Add extended timeouts for performance tests with infra nodes
   if [[ -n "${KIND_NUM_INFRA}" && "${KIND_NUM_INFRA}" != "0" ]]; then
-    kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain --wait 10m --wait-for-ready 10m
+    kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain --wait 10m
   else
     kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
   fi
