@@ -35,6 +35,24 @@ func (_m *CNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link,
 	return r0
 }
 
+// ReplaceRouteECMP provides a mock function with given fields: ipn, gw, devs, mtu
+func (_m *CNIPluginLibOps) ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error {
+	ret := _m.Called(ipn, gw, devs, mtu)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReplaceRouteECMP")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*net.IPNet, net.IP, []netlink.Link, int) error); ok {
+		r0 = rf(ipn, gw, devs, mtu)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // SetupVeth provides a mock function with given fields: contVethName, hostVethName, mtu, contVethMac, hostNS
 func (_m *CNIPluginLibOps) SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error) {
 	ret := _m.Called(contVethName, hostVethName, mtu, contVethMac, hostNS)

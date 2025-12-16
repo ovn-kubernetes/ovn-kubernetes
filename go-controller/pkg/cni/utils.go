@@ -152,37 +152,44 @@ func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *ut
 	return podInterfaceInfo, nil
 }
 
-// GetCNINADKey gets the pod's nadKey (nadName with index in case there are multiple same NADs in the pod)
-// for the specific CNI request based on the ifName information in the CNI request.
+// GetPodIfNamesForNAD gets the pod's all interface names of the given secondary NAD name
 //
-// Note that the names of non-default pod interfaces are determined by multus: it is either specified by
+// Note that the names of secondary UDN pod interfaces are determined by multus: it is either specified by
 // network selection itself, or it is net<index> (<index> is determined by order of the pod interface,
-// started from 1 for the 1st non-default interface). So we are able to derive the specific network selection
-// element associated with the given ifName in the CNI request and therefore determine its associated NAD key
-// index.
-func GetCNINADKey(pod *corev1.Pod, ifName, nadName string) (string, error) {
+// started from 1 for the 1st non-default interface).
+func GetPodIfNamesForNAD(pod *corev1.Pod, nadName string) ([]string, error) {
 	networks, err := util.GetK8sPodAllNetworkSelections(pod)
 	if err != nil {
-		return "", fmt.Errorf("failed to find NAD key associated with CNI request with ifName %s: %v", ifName, err)
+		return nil, fmt.Errorf("failed to getting network selection elements for pod %s/%s: %v",
+			pod.Namespace, pod.Name, err)
 	}
-	nNADs := map[string]int{}
+	ifNames := make([]string, 0, len(networks))
 	for idx, network := range networks {
 		nad := util.GetNADName(network.Namespace, network.Name)
-		// for multiple NetworkSelectionElements of the same NAD, set its nadName to indexed nadName
-		cnt := nNADs[nad]
-		nNADs[nad] = cnt + 1
-		if network.InterfaceRequest != "" {
-			if network.InterfaceRequest != ifName {
-				continue
-			}
-		} else if fmt.Sprintf("net%d", idx+1) != ifName {
+		if nad != nadName {
 			continue
 		}
-		// check if the derived NAD is the same as the given nadName in the CNI request
-		if nad != nadName {
-			return "", fmt.Errorf("unexpected NAD %s associated with CNI request with ifName %s, expected NAD %s", nadName, ifName, nad)
+		if network.InterfaceRequest != "" {
+			ifNames = append(ifNames, network.InterfaceRequest)
+		} else {
+			ifNames = append(ifNames, fmt.Sprintf("net%d", idx+1))
 		}
-		return util.GetIndexedNADKey(nad, cnt), nil
+	}
+	return ifNames, nil
+}
+
+// GetCNINADKey gets the pod's nadKey (nadName with index in case there are multiple same NADs in the pod)
+// Based on the given ifName, find out which number of this CNI request is for the given nadName, then
+// determine its associated NAD key.
+func GetCNINADKey(pod *corev1.Pod, ifName, nadName string) (string, error) {
+	ifNames, err := GetPodIfNamesForNAD(pod, nadName)
+	if err != nil {
+		return "", err
+	}
+	for idx, name := range ifNames {
+		if ifName == name {
+			return util.GetIndexedNADKey(nadName, idx), nil
+		}
 	}
 	return "", fmt.Errorf("failed to find NAD key associated with CNI request for pod %s/%s with ifName %s",
 		pod.Namespace, pod.Name, ifName)
