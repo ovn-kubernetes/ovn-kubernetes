@@ -28,6 +28,7 @@ import (
 
 type CNIPluginLibOps interface {
 	AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error
+	ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error
 	SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error)
 }
 
@@ -45,6 +46,23 @@ func (defaultCNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Li
 	}
 
 	return util.GetNetLinkOps().RouteAdd(route)
+}
+
+func (defaultCNIPluginLibOps) ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error {
+	ecmpRoute := &netlink.Route{
+		Dst: ipn,
+		MTU: mtu,
+	}
+
+	ecmpRoute.MultiPath = make([]*netlink.NexthopInfo, len(devs))
+	for i, dev := range devs {
+		ecmpRoute.MultiPath[i] = &netlink.NexthopInfo{
+			LinkIndex: dev.Attrs().Index,
+			Gw:        gw,
+			Hops:      0, // Weight (0 means weight of 1)
+		}
+	}
+	return util.GetNetLinkOps().RouteReplace(ecmpRoute)
 }
 
 func (defaultCNIPluginLibOps) SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error) {
@@ -197,8 +215,27 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 		}
 	}
 	for _, route := range ifInfo.Routes {
-		if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU); err != nil && !os.IsExist(err) {
-			return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+		if len(ifInfo.PodIfNamesOfSameNAD) == 0 {
+			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU); err != nil {
+				return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+			}
+		} else {
+			links := make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
+			for _, ifName := range ifInfo.PodIfNamesOfSameNAD {
+				if ifName == link.Attrs().Name {
+					// loop all pod interfaces of the same secondary UDN until adding the current pod interface
+					links = append(links, link)
+					break
+				}
+				ifLink, err := util.GetNetLinkOps().LinkByName(ifName)
+				if err != nil {
+					return fmt.Errorf("failed to lookup pod interface %s when setup route for link %s: %v", ifName, link.Attrs().Name, err)
+				}
+				links = append(links, ifLink)
+			}
+			if err := cniPluginLibOps.ReplaceRouteECMP(route.Dest, route.NextHop, links, ifInfo.RoutableMTU); err != nil {
+				return fmt.Errorf("failed to replace pod route %v via %v through links %v: %v", route.Dest, route.NextHop, links, err)
+			}
 		}
 	}
 
