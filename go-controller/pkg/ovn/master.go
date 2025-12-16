@@ -382,7 +382,7 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		return fmt.Errorf("failed to sync chassis: error: %v", err)
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
+	if config.OVNKubernetesFeature.EnableInterconnect && config.Default.Transport != config.TransportNoOverlay {
 		if err := oc.zoneChassisHandler.SyncNodes(kNodes); err != nil {
 			return fmt.Errorf("zoneChassisHandler failed to sync nodes: error: %w", err)
 		}
@@ -637,7 +637,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		}
 	}
 
-	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
+	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect && config.Default.Transport != config.TransportNoOverlay {
 		// Call zone chassis handler's AddLocalZoneNode function to mark
 		// this node's chassis record in Southbound db as a local zone chassis.
 		// This is required when a node moves from a remote zone to local zone
@@ -652,6 +652,23 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 				oc.syncZoneICFailed.Store(node.Name, true)
 			} else {
 				oc.syncZoneICFailed.Delete(node.Name)
+			}
+		}
+	}
+
+	// Sync no-overlay SNAT exemption address set for no-overlay mode with outbound SNAT enabled in SGW mode.
+	// The address set contains cluster CIDRs + local zone node IPs and is used in SNAT
+	// exemption rules to prevent SNATing pod-to-pod and pod-to-local-node traffic.
+	// In LGW mode, nftables sets are used instead.
+	if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeShared {
+		if nSyncs.syncNode || nSyncs.syncGw {
+			hostAddrs, err := util.GetNodeHostAddrs(node)
+			if err != nil {
+				klog.Warningf("Failed to get host addresses for node %s: %v", node.Name, err)
+			} else {
+				if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, hostAddrs); err != nil {
+					errs = append(errs, fmt.Errorf("failed to sync no-overlay SNAT exemption address set: %w", err))
+				}
 			}
 		}
 	}

@@ -196,6 +196,15 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup PMTUD nftables chain: %w", err)
 		}
+
+		// Setup nftables sets for no-overlay SNAT exemption in LGW mode.
+		// In SGW mode, OVN address sets are used instead.
+		if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+			err = setupNoOverlaySNATExemptNFTSets()
+			if err != nil {
+				return nil, fmt.Errorf("failed to setup no-overlay SNAT exemption nftables sets: %w", err)
+			}
+		}
 	}
 
 	return nc, nil
@@ -916,6 +925,18 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 
+	// Sync nftables sets for no-overlay SNAT exemption in LGW mode.
+	// In SGW mode, OVN address sets are used instead.
+	if config.OvnKubeNode.Mode != types.NodeModeDPU && config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			return fmt.Errorf("failed to get host addresses for node %s: %w", nc.name, err)
+		}
+		if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+			return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
+		}
+	}
+
 	// Connect ovn-controller to SBDB
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
@@ -1014,7 +1035,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	//        plumbing (takes 80ms based on what we saw in CI runs so we might still have that small window of disruption).
 	// NOTE: ovnkube-node in DPU host mode doesn't go through upgrades for OVN-IC and has no SBDB to connect to. Thus this part shall be skipped.
 	var syncNodes, syncServices, syncPods bool
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) && config.Default.Transport != config.TransportNoOverlay {
 		klog.Info("Upgrade Hack: Interconnect is enabled")
 		var err1 error
 		start := time.Now()
@@ -1596,7 +1617,7 @@ func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 
 		// calc required MTU
 		var requiredMTU int
-		if config.Gateway.SingleNode {
+		if config.Gateway.SingleNode || config.Default.Transport == config.TransportNoOverlay {
 			requiredMTU = config.Default.MTU
 		} else {
 			if config.IPv4Mode && !config.IPv6Mode {
