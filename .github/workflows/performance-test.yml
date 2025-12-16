@@ -261,148 +261,20 @@ jobs:
         
         echo "=== Pre-flight checks completed ==="
 
-    - name: Create performance-optimized kind configuration
+    - name: Configure kubelet health optimizations for performance testing
       run: |
-        # Create a performance-specific kind config with kubelet health optimizations
-        cat > /tmp/kind-perf-config.yaml <<EOF
-        kind: Cluster
-        apiVersion: kind.x-k8s.io/v1alpha4
-        networking:
-          kubeProxyMode: "none"
-          disableDefaultCNI: true
-          podSubnet: "10.244.0.0/16"
-          serviceSubnet: "10.96.0.0/16"
-        kubeadmConfigPatches:
-        - |
-          kind: ClusterConfiguration
-          metadata:
-            name: config
-          apiServer:
-            extraArgs:
-              "v": "2"
-          controllerManager:
-            extraArgs:
-              "v": "2"
-              "controllers": "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
-          scheduler:
-            extraArgs:
-              "v": "2"
-          networking: 
-            dnsDomain: cluster.local
-          ---
-          kind: InitConfiguration
-          localAPIEndpoint:
-            advertiseAddress: "127.0.0.1"
-          nodeRegistration:
-            kubeletExtraArgs:
-              "v": "2"
-              # Kubelet health optimizations for performance testing
-              "node-status-update-frequency": "10s"
-              "node-status-report-frequency": "1m"
-              "runtime-request-timeout": "10m"
-              "healthz-bind-address": "0.0.0.0"
-              "healthz-port": "10248"
-              # Resource management for performance testing
-              "system-reserved": "cpu=200m,memory=512Mi"
-              "kube-reserved": "cpu=200m,memory=512Mi"
-              "cgroup-driver": "systemd"
-              "enforce-node-allocatable": "pods"
-              "serialize-image-pulls": "false"
-              "max-pods": "250"
-          ---
-          kind: JoinConfiguration
-          nodeRegistration:
-            kubeletExtraArgs:
-              "v": "2"
-              # Kubelet health optimizations for performance testing  
-              "node-status-update-frequency": "10s"
-              "node-status-report-frequency": "1m"
-              "runtime-request-timeout": "10m"
-              "healthz-bind-address": "0.0.0.0"
-              "healthz-port": "10248"
-              "system-reserved": "cpu=200m,memory=512Mi"
-              "kube-reserved": "cpu=200m,memory=512Mi"
-              "cgroup-driver": "systemd"
-              "enforce-node-allocatable": "pods"
-              "serialize-image-pulls": "false"
-              "max-pods": "250"
-        - |
-          kind: KubeletConfiguration
-          apiVersion: kubelet.config.k8s.io/v1beta1
-          healthzBindAddress: "0.0.0.0"
-          healthzPort: 10248
-          nodeStatusUpdateFrequency: "10s"
-          nodeStatusReportFrequency: "1m"
-          runtimeRequestTimeout: "10m"
-          systemReserved:
-            cpu: "200m"
-            memory: "512Mi"
-          kubeReserved:
-            cpu: "200m" 
-            memory: "512Mi"
-          cgroupDriver: "systemd"
-          enforceNodeAllocatable:
-          - "pods"
-          serializeImagePulls: false
-          maxPods: 250
-          evictionHard:
-            memory.available: "100Mi"
-            nodefs.available: "10%"
-          evictionSoft:
-            memory.available: "200Mi"
-            nodefs.available: "15%"
-          evictionSoftGracePeriod:
-            memory.available: "2m"
-            nodefs.available: "2m"
-          evictionMaxPodGracePeriod: 60
-        nodes:
-        - role: control-plane
-          kubeadmConfigPatches:
-          - |
-            kind: InitConfiguration
-            nodeRegistration:
-              kubeletExtraArgs:
-                node-labels: "ingress-ready=true"
-                authorization-mode: "AlwaysAllow"
-        # 6 worker nodes for performance testing
-        - role: worker
-        - role: worker
-        - role: worker
-        - role: worker
-        - role: worker
-        - role: worker
-        # 2 infra nodes for performance testing
-        - role: worker
-          kubeadmConfigPatches:
-          - |
-            kind: JoinConfiguration
-            nodeRegistration:
-              kubeletExtraArgs:
-                node-labels: "node-role.kubernetes.io/infra=,prometheus-node=true"
-        - role: worker
-          kubeadmConfigPatches:
-          - |
-            kind: JoinConfiguration
-            nodeRegistration:
-              kubeletExtraArgs:
-                node-labels: "node-role.kubernetes.io/infra=,prometheus-node=true"
-        EOF
+        # Set extended timeout for large cluster performance testing
+        echo "KIND_WAIT_TIMEOUT=15m" >> $GITHUB_ENV
 
     - name: kind setup with infra nodes
       timeout-minutes: 45
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        export KIND_CONFIG="/tmp/kind-perf-config.yaml"
+        # Set enhanced timeouts for large cluster performance testing
+        export KIND_CLUSTER_LOGLEVEL=2
         
-        # Create cluster with enhanced timeouts for kubelet health checks
-        echo "Creating performance cluster with kubelet health optimizations..."
-        kind create cluster \
-          --name "${KIND_CLUSTER_NAME}" \
-          --kubeconfig "${KUBECONFIG}" \
-          --config="${KIND_CONFIG}" \
-          --retain \
-          --wait 15m \
-          --verbosity 1
+        # Use the existing kind infrastructure but with enhanced kubelet health settings
+        make -C test install-kind
         
         # Wait for kubelet health on all nodes with retries
         echo "Verifying kubelet health on all nodes..."
@@ -418,8 +290,15 @@ jobs:
           
           if [ $i -eq 10 ]; then
             echo "Cluster health check failed after 10 attempts"
-            kubectl get nodes
+            echo "=== Node Status ==="
+            kubectl get nodes -o wide
+            echo "=== Node Conditions ==="
             kubectl describe nodes
+            echo "=== Kubelet Logs ==="
+            for node in $(kind get nodes --name ${KIND_CLUSTER_NAME}); do
+              echo "--- Kubelet logs for $node ---"
+              docker exec $node journalctl -u kubelet --no-pager -l --since "10 minutes ago" | tail -50
+            done
             exit 1
           fi
         done
