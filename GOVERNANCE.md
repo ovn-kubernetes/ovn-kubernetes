@@ -21,21 +21,21 @@ This governance explains how the project is run.
 
 The ovn-kubernetes and its leadership embrace the following values:
 
-* Openness: Communication and decision-making happens in the open and is discoverable for future
+- Openness: Communication and decision-making happens in the open and is discoverable for future
   reference. As much as possible, all discussions and work take place in public
   forums and open repositories.
 
-* Fairness: All stakeholders have the opportunity to provide feedback and submit
+- Fairness: All stakeholders have the opportunity to provide feedback and submit
   contributions, which will be considered on their merits.
 
-* Community over Product or Company: Sustaining and growing our community takes
+- Community over Product or Company: Sustaining and growing our community takes
   priority over shipping code or sponsors' organizational goals.  Each
   contributor participates in the project as an individual.
 
-* Inclusivity: We innovate through different perspectives and skill sets, which
+- Inclusivity: We innovate through different perspectives and skill sets, which
   can only be accomplished in a welcoming and respectful environment.
 
-* Participation: Responsibilities within the project are earned through
+- Participation: Responsibilities within the project are earned through
   participation, and there is a clear path up the contributor ladder into leadership
   positions.
 
@@ -63,15 +63,15 @@ is the governing body for the project.
 
 To become a Maintainer you need to demonstrate the following:
 
-  * commitment to the project:
-    * participate in discussions, contributions, code and documentation reviews
-      for 10 months or more,
-    * perform reviews for 10 non-trivial pull requests,
-    * contribute 15 non-trivial pull requests and have them merged,
-  * ability to write quality code and/or documentation,
-  * ability to collaborate with the team,
-  * understanding of how the team works (policies, processes for testing and code review, etc),
-  * understanding of the project's code base and coding and documentation style.
+- commitment to the project:
+  - participate in discussions, contributions, code and documentation reviews
+    for 10 months or more,
+  - perform reviews for 10 non-trivial pull requests,
+  -  contribute 15 non-trivial pull requests and have them merged,
+- ability to write quality code and/or documentation,
+- ability to collaborate with the team,
+- understanding of how the team works (policies, processes for testing and code review, etc),
+- understanding of the project's code base and coding and documentation style.
 
 A new Maintainer must be proposed by an existing maintainer by sending a message to the
 [developer mailing list](https://groups.google.com/g/ovn-kubernetes). A simple majority vote of existing Maintainers
@@ -108,17 +108,17 @@ expected to contribute to the project and collaborate with the team.
 ### Becoming a Member
 
 To become a Member, you need to demonstrate the following:
-  * commitment to the project:
-    * participate in discussions, contributions, code and documentation reviews
-      for 3 months or more,
-    * perform reviews for 5 non-trivial pull requests,
-    * contribute 10 non-trivial pull requests and have them merged,
-  * ability to write quality code and/or documentation,
-  * ability to collaborate with the team (e.g., participate in project meetings,
-    join discussion in the CNCF slack channel, etc.),
-  * understanding of how the team works (policies, processes for testing and
-    code review, etc),
-  * understanding of the project's code base and coding and documentation style.
+- commitment to the project:
+  - participate in discussions, contributions, code and documentation reviews
+    for 3 months or more,
+  - perform reviews for 5 non-trivial pull requests,
+  - contribute 10 non-trivial pull requests and have them merged,
+- ability to write quality code and/or documentation,
+- ability to collaborate with the team (e.g., participate in project meetings,
+  join discussion in the CNCF slack channel, etc.),
+- understanding of how the team works (policies, processes for testing and
+  code review, etc),
+- understanding of the project's code base and coding and documentation style.
 
 A new Member must be proposed by an existing maintainer by sending a message to
 the developer mailing list. The application is approved with two affirmative
