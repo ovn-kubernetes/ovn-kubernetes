@@ -1,38 +1,41 @@
 # ovn-kubernetes Project Governance
 
-The ovn-kubernetes  project is dedicated to creating a robust Kubernetes Networking platform built from the ground up by leveraging Open vSwitch (OVS) as the data plane, and Open Virtual Network (OVN) as the SDN Controller. The project focuses strictly on enhancing networking for the Kubernetes platform and includes a wide variety of features that are critical to enterprise and telco users.
+The ovn-kubernetes project is dedicated to creating a robust Kubernetes Networking platform built from the ground up by leveraging Open vSwitch (OVS) as the data plane, and Open Virtual Network (OVN) as the SDN Controller. The project focuses strictly on enhancing networking for the Kubernetes platform and includes a wide variety of features that are critical to enterprise and telco users.
 
 This governance explains how the project is run.
 
 - [Values](#values)
 - [Maintainers](#maintainers)
-- [Becoming a Maintainer](#becoming-a-maintainer)
+  - [Becoming a Maintainer](#becoming-a-maintainer)
+  - [Removing a Maintainer](#removing-a-maintainer)
+- [Members](#members)
+  - [Becoming a Member](#becoming-a-member)
+  - [Removing a Member](#removing-a-member)
 - [Meetings](#meetings)
-- [CNCF Resources](#cncf-resources)
-- [Code of Conduct Enforcement](#code-of-conduct)
+- [Code of Conduct](#code-of-conduct)
 - [Security Response Team](#security-response-team)
 - [Voting](#voting)
-- [Modifications](#modifying-this-charter)
+- [Modifying this Charter](#modifying-this-charter)
 
 ## Values
 
 The ovn-kubernetes and its leadership embrace the following values:
 
-* Openness: Communication and decision-making happens in the open and is discoverable for future
+- Openness: Communication and decision-making happens in the open and is discoverable for future
   reference. As much as possible, all discussions and work take place in public
   forums and open repositories.
 
-* Fairness: All stakeholders have the opportunity to provide feedback and submit
+- Fairness: All stakeholders have the opportunity to provide feedback and submit
   contributions, which will be considered on their merits.
 
-* Community over Product or Company: Sustaining and growing our community takes
+- Community over Product or Company: Sustaining and growing our community takes
   priority over shipping code or sponsors' organizational goals.  Each
   contributor participates in the project as an individual.
 
-* Inclusivity: We innovate through different perspectives and skill sets, which
+- Inclusivity: We innovate through different perspectives and skill sets, which
   can only be accomplished in a welcoming and respectful environment.
 
-* Participation: Responsibilities within the project are earned through
+- Participation: Responsibilities within the project are earned through
   participation, and there is a clear path up the contributor ladder into leadership
   positions.
 
@@ -60,15 +63,15 @@ is the governing body for the project.
 
 To become a Maintainer you need to demonstrate the following:
 
-  * commitment to the project:
-    * participate in discussions, contributions, code and documentation reviews
-      for 10 months or more,
-    * perform reviews for 10 non-trivial pull requests,
-    * contribute 15 non-trivial pull requests and have them merged,
-  * ability to write quality code and/or documentation,
-  * ability to collaborate with the team,
-  * understanding of how the team works (policies, processes for testing and code review, etc),
-  * understanding of the project's code base and coding and documentation style.
+- commitment to the project:
+  - participate in discussions, contributions, code and documentation reviews
+    for 10 months or more,
+  - perform reviews for 10 non-trivial pull requests,
+  -  contribute 15 non-trivial pull requests and have them merged,
+- ability to write quality code and/or documentation,
+- ability to collaborate with the team,
+- understanding of how the team works (policies, processes for testing and code review, etc),
+- understanding of the project's code base and coding and documentation style.
 
 A new Maintainer must be proposed by an existing maintainer by sending a message to the
 [developer mailing list](https://groups.google.com/g/ovn-kubernetes). A simple majority vote of existing Maintainers
@@ -93,6 +96,46 @@ A Maintainer may be removed at any time by a 2/3 vote of the remaining maintaine
 Depending on the reason for removal, a Maintainer may be converted to Emeritus
 status.  Emeritus Maintainers will still be consulted on some project matters,
 and can be rapidly returned to Maintainer status if their availability changes.
+
+## Members
+
+Members are active contributors who have shown a commitment to the project. They
+have privileges to review pull requests and are part of the
+`ovn-kubernetes/ovn-kubernetes-members` GitHub team, which makes them eligible
+for automatic PR review assignments. Members are not Maintainers, but they are
+expected to contribute to the project and collaborate with the team.
+
+### Becoming a Member
+
+To become a Member, you need to demonstrate the following:
+- commitment to the project:
+  - participate in discussions, contributions, code and documentation reviews
+    for 3 months or more,
+  - perform reviews for 5 non-trivial pull requests,
+  - contribute 10 non-trivial pull requests and have them merged,
+- ability to write quality code and/or documentation,
+- ability to collaborate with the team (e.g., participate in project meetings,
+  join discussion in the CNCF slack channel, etc.),
+- understanding of how the team works (policies, processes for testing and
+  code review, etc),
+- understanding of the project's code base and coding and documentation style.
+
+A new Member must be proposed by an existing maintainer by sending a message to
+the developer mailing list. The application is approved with two affirmative
+votes from current maintainers.
+
+### Removing a Member
+
+Members may resign at any time.
+
+Members may also be removed after being inactive for a period of 6 months or
+more, for failure to fulfill their responsibilities, or for violating the Code
+of Conduct. A Member may be removed at any time by a simple majority vote of the
+maintainers.
+
+Members who are consistently unresponsive to assigned PR reviews may be
+contacted by Maintainers to discuss their availability and commitment. If the
+pattern of non-responsiveness continues, the Member may be removed.
 
 ## Meetings
 
