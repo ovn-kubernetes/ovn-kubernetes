@@ -111,10 +111,40 @@ jobs:
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
 
+    - name: Check container runtime and configure for performance
+      run: |
+        # Check if podman is being used and configure accordingly
+        if command -v podman >/dev/null 2>&1; then
+          echo "Podman detected, setting KIND_EXPERIMENTAL_PROVIDER=podman"
+          echo "KIND_EXPERIMENTAL_PROVIDER=podman" >> $GITHUB_ENV
+          # Configure podman for better performance
+          sudo mkdir -p /etc/containers
+          sudo tee /etc/containers/containers.conf > /dev/null <<EOF
+        [containers]
+        default_ulimits = [
+          "nofile=65536:65536",
+          "nproc=32768:32768"
+        ]
+        EOF
+        else
+          echo "Docker detected, using default configuration"
+        fi
+        
+        # Check cgroups version for kubelet configuration
+        if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+          echo "CGROUPS_VERSION=v2" >> $GITHUB_ENV
+          echo "Detected cgroups v2"
+        else
+          echo "CGROUPS_VERSION=v1" >> $GITHUB_ENV  
+          echo "Detected cgroups v1"
+        fi
+
     - name: kind setup with infra nodes
-      timeout-minutes: 30
+      timeout-minutes: 45
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
+        # Set enhanced timeouts for large cluster performance testing
+        export KIND_CLUSTER_LOGLEVEL=2
         make -C test install-kind
 
     - name: Install Prometheus on infra nodes
