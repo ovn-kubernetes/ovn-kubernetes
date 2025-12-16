@@ -107,45 +107,322 @@ jobs:
       with:
         name: test-image-pr
 
+    - name: Cleanup container resources and images
+      run: |
+        echo "Cleaning up existing container resources..."
+        
+        # Cleanup Docker resources
+        if command -v docker >/dev/null 2>&1; then
+          echo "Cleaning up Docker resources..."
+          # Stop and remove all containers
+          docker ps -aq | xargs -r docker stop || true
+          docker ps -aq | xargs -r docker rm -f || true
+          # Remove all images except base ones needed for kind
+          docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -v "kindest/node\|registry:" | tail -n +2 | awk '{print $2}' | xargs -r docker rmi -f || true
+          # Clean up volumes and networks
+          docker volume prune -f || true
+          docker network prune -f || true
+          # Clean up build cache
+          docker builder prune -a -f || true
+          # Show remaining resources
+          echo "Remaining Docker images:"
+          docker images
+          echo "Docker system df:"
+          docker system df
+        fi
+        
+        # Cleanup Podman resources  
+        if command -v podman >/dev/null 2>&1; then
+          echo "Cleaning up Podman resources..."
+          # Stop and remove all containers
+          podman ps -aq | xargs -r podman stop || true
+          podman ps -aq | xargs -r podman rm -f || true
+          # Remove all images except base ones needed for kind
+          podman images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -v "kindest/node\|registry:" | tail -n +2 | awk '{print $2}' | xargs -r podman rmi -f || true
+          # Clean up volumes and networks
+          podman volume prune -f || true
+          podman network prune -f || true
+          # Reset storage if needed
+          podman system reset --force || true
+          # Show remaining resources
+          echo "Remaining Podman images:"
+          podman images
+          echo "Podman system df:"
+          podman system df || true
+        fi
+        
+        # Clean up any existing kind clusters
+        if command -v kind >/dev/null 2>&1; then
+          echo "Cleaning up existing kind clusters..."
+          kind get clusters | xargs -r -I {} kind delete cluster --name {} || true
+        fi
+        
+        # Clean up container runtime directories
+        sudo rm -rf /var/lib/containers/* || true
+        sudo rm -rf /tmp/kind* || true
+        
+        echo "Container cleanup completed"
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
 
-    - name: Check container runtime and configure for performance
+    - name: Pre-flight system checks and configuration
       run: |
-        # Check if podman is being used and configure accordingly
+        echo "=== System Pre-flight Checks ==="
+        
+        # Check systemd status
+        systemctl --version || true
+        systemctl is-system-running || true
+        
+        # Check cgroups configuration
+        echo "Cgroups check:"
+        if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+          echo "CGROUPS_VERSION=v2" >> $GITHUB_ENV
+          echo "✓ Detected cgroups v2"
+          cat /sys/fs/cgroup/cgroup.controllers
+          # Ensure required cgroups controllers are available
+          if ! grep -q "cpu\|memory\|pids" /sys/fs/cgroup/cgroup.controllers; then
+            echo "⚠️  Warning: Required cgroups controllers may not be available"
+          fi
+        else
+          echo "CGROUPS_VERSION=v1" >> $GITHUB_ENV  
+          echo "✓ Detected cgroups v1"
+          cat /proc/cgroups || true
+        fi
+        
+        # Check kernel parameters
+        echo "Kernel parameters:"
+        echo "- net.bridge.bridge-nf-call-iptables: $(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo 'N/A')"
+        echo "- net.ipv4.ip_forward: $(cat /proc/sys/net/ipv4/ip_forward)"
+        
+        # Enable required kernel modules
+        sudo modprobe br_netfilter || true
+        sudo modprobe overlay || true
+        
+        # Set required sysctl values
+        sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 || true
+        sudo sysctl -w net.ipv4.ip_forward=1 || true
+        
+        # Check available resources
+        echo "System resources:"
+        echo "- Memory: $(free -h | grep Mem)"
+        echo "- Disk: $(df -h / | tail -1)"
+        echo "- CPU: $(nproc) cores"
+        
+        # Check container runtime and configure
         if command -v podman >/dev/null 2>&1; then
-          echo "Podman detected, setting KIND_EXPERIMENTAL_PROVIDER=podman"
+          echo "✓ Podman detected, setting KIND_EXPERIMENTAL_PROVIDER=podman"
           echo "KIND_EXPERIMENTAL_PROVIDER=podman" >> $GITHUB_ENV
+          
           # Configure podman for better performance
           sudo mkdir -p /etc/containers
           sudo tee /etc/containers/containers.conf > /dev/null <<EOF
         [containers]
         default_ulimits = [
-          "nofile=65536:65536",
+          "nofile=65536:65536", 
           "nproc=32768:32768"
         ]
+        
+        [engine]
+        cgroup_manager = "systemd"
+        events_logger = "journald"
+        runtime = "crun"
         EOF
+          # Restart podman service if running
+          sudo systemctl restart podman.socket || true
         else
-          echo "Docker detected, using default configuration"
+          echo "✓ Docker detected, using default configuration"
+          # Ensure Docker is using systemd cgroup driver
+          if [ -f /etc/docker/daemon.json ]; then
+            sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+          fi
+          sudo mkdir -p /etc/docker
+          sudo tee /etc/docker/daemon.json > /dev/null <<EOF
+        {
+          "data-root": "/mnt/docker-data",
+          "exec-opts": ["native.cgroupdriver=systemd"],
+          "log-driver": "json-file",
+          "log-opts": {
+            "max-size": "100m"
+          },
+          "storage-driver": "overlay2",
+          "default-ulimits": {
+            "nofile": {
+              "Hard": 65536,
+              "Name": "nofile", 
+              "Soft": 65536
+            }
+          }
+        }
+        EOF
+          sudo systemctl restart docker
         fi
         
-        # Check cgroups version for kubelet configuration
-        if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
-          echo "CGROUPS_VERSION=v2" >> $GITHUB_ENV
-          echo "Detected cgroups v2"
-        else
-          echo "CGROUPS_VERSION=v1" >> $GITHUB_ENV  
-          echo "Detected cgroups v1"
-        fi
+        echo "=== Pre-flight checks completed ==="
+
+    - name: Create performance-optimized kind configuration
+      run: |
+        # Create a performance-specific kind config with kubelet health optimizations
+        cat > /tmp/kind-perf-config.yaml <<EOF
+        kind: Cluster
+        apiVersion: kind.x-k8s.io/v1alpha4
+        networking:
+          kubeProxyMode: "none"
+          disableDefaultCNI: true
+          podSubnet: "10.244.0.0/16"
+          serviceSubnet: "10.96.0.0/16"
+        kubeadmConfigPatches:
+        - |
+          kind: ClusterConfiguration
+          metadata:
+            name: config
+          apiServer:
+            extraArgs:
+              "v": "2"
+          controllerManager:
+            extraArgs:
+              "v": "2"
+              "controllers": "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
+          scheduler:
+            extraArgs:
+              "v": "2"
+          networking: 
+            dnsDomain: cluster.local
+          ---
+          kind: InitConfiguration
+          localAPIEndpoint:
+            advertiseAddress: "127.0.0.1"
+          nodeRegistration:
+            kubeletExtraArgs:
+              "v": "2"
+              # Kubelet health optimizations for performance testing
+              "node-status-update-frequency": "10s"
+              "node-status-report-frequency": "1m"
+              "runtime-request-timeout": "10m"
+              "healthz-bind-address": "0.0.0.0"
+              "healthz-port": "10248"
+              # Resource management for performance testing
+              "system-reserved": "cpu=200m,memory=512Mi"
+              "kube-reserved": "cpu=200m,memory=512Mi"
+              "cgroup-driver": "systemd"
+              "enforce-node-allocatable": "pods"
+              "serialize-image-pulls": "false"
+              "max-pods": "250"
+          ---
+          kind: JoinConfiguration
+          nodeRegistration:
+            kubeletExtraArgs:
+              "v": "2"
+              # Kubelet health optimizations for performance testing  
+              "node-status-update-frequency": "10s"
+              "node-status-report-frequency": "1m"
+              "runtime-request-timeout": "10m"
+              "healthz-bind-address": "0.0.0.0"
+              "healthz-port": "10248"
+              "system-reserved": "cpu=200m,memory=512Mi"
+              "kube-reserved": "cpu=200m,memory=512Mi"
+              "cgroup-driver": "systemd"
+              "enforce-node-allocatable": "pods"
+              "serialize-image-pulls": "false"
+              "max-pods": "250"
+        - |
+          kind: KubeletConfiguration
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          healthzBindAddress: "0.0.0.0"
+          healthzPort: 10248
+          nodeStatusUpdateFrequency: "10s"
+          nodeStatusReportFrequency: "1m"
+          runtimeRequestTimeout: "10m"
+          systemReserved:
+            cpu: "200m"
+            memory: "512Mi"
+          kubeReserved:
+            cpu: "200m" 
+            memory: "512Mi"
+          cgroupDriver: "systemd"
+          enforceNodeAllocatable:
+          - "pods"
+          serializeImagePulls: false
+          maxPods: 250
+          evictionHard:
+            memory.available: "100Mi"
+            nodefs.available: "10%"
+          evictionSoft:
+            memory.available: "200Mi"
+            nodefs.available: "15%"
+          evictionSoftGracePeriod:
+            memory.available: "2m"
+            nodefs.available: "2m"
+          evictionMaxPodGracePeriod: 60
+        nodes:
+        - role: control-plane
+          kubeadmConfigPatches:
+          - |
+            kind: InitConfiguration
+            nodeRegistration:
+              kubeletExtraArgs:
+                node-labels: "ingress-ready=true"
+                authorization-mode: "AlwaysAllow"
+        # 6 worker nodes for performance testing
+        - role: worker
+        - role: worker
+        - role: worker
+        - role: worker
+        - role: worker
+        - role: worker
+        # 2 infra nodes for performance testing
+        - role: worker
+          kubeadmConfigPatches:
+          - |
+            kind: JoinConfiguration
+            nodeRegistration:
+              kubeletExtraArgs:
+                node-labels: "node-role.kubernetes.io/infra=,prometheus-node=true"
+        - role: worker
+          kubeadmConfigPatches:
+          - |
+            kind: JoinConfiguration
+            nodeRegistration:
+              kubeletExtraArgs:
+                node-labels: "node-role.kubernetes.io/infra=,prometheus-node=true"
+        EOF
 
     - name: kind setup with infra nodes
       timeout-minutes: 45
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        # Set enhanced timeouts for large cluster performance testing
-        export KIND_CLUSTER_LOGLEVEL=2
-        make -C test install-kind
+        export KIND_CONFIG="/tmp/kind-perf-config.yaml"
+        
+        # Create cluster with enhanced timeouts for kubelet health checks
+        echo "Creating performance cluster with kubelet health optimizations..."
+        kind create cluster \
+          --name "${KIND_CLUSTER_NAME}" \
+          --kubeconfig "${KUBECONFIG}" \
+          --config="${KIND_CONFIG}" \
+          --retain \
+          --wait 15m \
+          --verbosity 1
+        
+        # Wait for kubelet health on all nodes with retries
+        echo "Verifying kubelet health on all nodes..."
+        for i in {1..10}; do
+          echo "Health check attempt $i/10..."
+          if kubectl get nodes --no-headers | awk '{print $2}' | grep -v Ready; then
+            echo "Some nodes not ready, waiting 30s..."
+            sleep 30
+          else
+            echo "All nodes are ready!"
+            break
+          fi
+          
+          if [ $i -eq 10 ]; then
+            echo "Cluster health check failed after 10 attempts"
+            kubectl get nodes
+            kubectl describe nodes
+            exit 1
+          fi
+        done
 
     - name: Install Prometheus on infra nodes
       run: |
