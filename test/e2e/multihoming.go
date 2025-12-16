@@ -2584,70 +2584,66 @@ ip a add %[4]s/24 dev %[2]s
 					return err
 				}, 30*time.Second, 2*time.Second).Should(Succeed(), fmt.Sprintf("Should be able to reach server through working interface %s when %s is down", workingInterface, interfaceToDisable))
 
-				// in case of layer3 network, the route to its network net_cidr through the first interface is already deleted when the interface is deleted
-				// does not help even if we bring that interface up back.
-				if netConfig.topology == "layer2" {
-					_, err = e2ekubectl.RunKubectl(
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"up",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring interface %s back up", interfaceToDisable))
+
+				// Test the reverse
+				interfaceToDisable = interfaceNames[1]
+				workingInterface = interfaceNames[0]
+
+				By(fmt.Sprintf("bringing down interface 1 (%s) and verifying connectivity through interface 0 (%s)", interfaceToDisable, workingInterface))
+
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"down",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring down interface %s", interfaceToDisable))
+
+				Eventually(func() error {
+					_, err := e2ekubectl.RunKubectl(
 						podConfig.namespace,
 						"exec",
 						pod.Name,
 						"--",
-						"ip",
-						"link",
-						"set",
-						interfaceToDisable,
-						"up",
+						"curl",
+						"--connect-timeout",
+						"2",
+						"--interface",
+						workingInterface,
+						fmt.Sprintf("http://%s:8080/hostname", serverIP),
 					)
-					Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring interface %s back up", interfaceToDisable))
+					return err
+				}, 30*time.Second, 2*time.Second).Should(Succeed(), fmt.Sprintf("Should be able to reach server through working interface %s when %s is down", workingInterface, interfaceToDisable))
 
-					// Test the reverse
-					interfaceToDisable = interfaceNames[1]
-					workingInterface = interfaceNames[0]
-
-					By(fmt.Sprintf("bringing down interface 1 (%s) and verifying connectivity through interface 0 (%s)", interfaceToDisable, workingInterface))
-
-					_, err = e2ekubectl.RunKubectl(
-						podConfig.namespace,
-						"exec",
-						pod.Name,
-						"--",
-						"ip",
-						"link",
-						"set",
-						interfaceToDisable,
-						"down",
-					)
-					Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring down interface %s", interfaceToDisable))
-
-					Eventually(func() error {
-						_, err := e2ekubectl.RunKubectl(
-							podConfig.namespace,
-							"exec",
-							pod.Name,
-							"--",
-							"curl",
-							"--connect-timeout",
-							"2",
-							"--interface",
-							workingInterface,
-							fmt.Sprintf("http://%s:8080/hostname", serverIP),
-						)
-						return err
-					}, 30*time.Second, 2*time.Second).Should(Succeed(), fmt.Sprintf("Should be able to reach server through working interface %s when %s is down", workingInterface, interfaceToDisable))
-
-					_, err = e2ekubectl.RunKubectl(
-						podConfig.namespace,
-						"exec",
-						pod.Name,
-						"--",
-						"ip",
-						"link",
-						"set",
-						interfaceToDisable,
-						"up",
-					)
-					Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring interface %s back up", interfaceToDisable))
-				}
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"up",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring interface %s back up", interfaceToDisable))
 
 				By("Successfully verified that both interfaces can reach the same secondary NAD and provide redundancy")
 			},
