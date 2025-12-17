@@ -153,6 +153,24 @@ _Appears in:_
 
 
 
+#### EVPNConfig
+
+
+
+EVPNConfig contains configuration options for networks operating in EVPN mode.
+
+
+
+_Appears in:_
+- [NetworkSpec](#networkspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `vtep` _string_ | VTEP is the name of the VTEP CR that defines VTEP IPs for EVPN. |  | MinLength: 1 <br />Required: \{\} <br /> |
+| `macVRF` _[VRFConfig](#vrfconfig)_ | MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.<br />This field is required for Layer2 topology and forbidden for Layer3 topology. |  |  |
+| `ipVRF` _[VRFConfig](#vrfconfig)_ | IPVRF contains the IP-VRF configuration for Layer 3 EVPN.<br />This field is required for Layer3 topology and optional for Layer2 topology. |  |  |
+
+
 #### IP
 
 _Underlying type:_ _string_
@@ -339,8 +357,9 @@ _Appears in:_
 | `layer3` _[Layer3Config](#layer3config)_ | Layer3 is the Layer3 topology configuration. |  |  |
 | `layer2` _[Layer2Config](#layer2config)_ | Layer2 is the Layer2 topology configuration. |  |  |
 | `localnet` _[LocalnetConfig](#localnetconfig)_ | Localnet is the Localnet topology configuration. |  |  |
-| `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay" and "Geneve".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "Geneve": The network uses Geneve overlay.<br />When omitted, the default behaviour is Geneve. |  | Enum: [NoOverlay Geneve] <br /> |
+| `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay", "Geneve", and "EVPN".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "Geneve": The network uses Geneve overlay.<br />- "EVPN": The network uses EVPN transport.<br />When omitted, the default behaviour is Geneve. |  | Enum: [NoOverlay Geneve EVPN] <br /> |
 | `noOverlay` _[NoOverlayConfig](#nooverlayconfig)_ | NoOverlay contains configuration for no-overlay mode.<br />This is only allowed when Transport is "NoOverlay". |  |  |
+| `evpn` _[EVPNConfig](#evpnconfig)_ | EVPN contains configuration for EVPN mode.<br />This is only allowed when Transport is "EVPN". |  |  |
 
 
 #### NetworkTopology
@@ -377,6 +396,19 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `outboundSNAT` _[SNATOption](#snatoption)_ | OutboundSNAT defines the SNAT behavior for outbound traffic from pods. |  | Enum: [Enabled Disabled] <br /> |
 | `routing` _[RoutingOption](#routingoption)_ | Routing specifies whether the pod network routing is managed by OVN-Kubernetes or users. |  | Enum: [Managed Unmanaged] <br /> |
+
+
+#### RouteTargetString
+
+_Underlying type:_ _string_
+
+RouteTargetString represents a BGP route target in the format "<AS>:<VNI>".
+
+
+
+_Appears in:_
+- [VRFConfig](#vrfconfig)
+
 
 
 #### RoutingOption
@@ -428,6 +460,7 @@ _Appears in:_
 | --- | --- |
 | `NoOverlay` |  |
 | `Geneve` |  |
+| `EVPN` |  |
 
 
 #### UserDefinedNetwork
@@ -534,5 +567,22 @@ _Appears in:_
 | Field | Description |
 | --- | --- |
 | `Access` |  |
+
+
+#### VRFConfig
+
+
+
+VRFConfig contains configuration for a VRF in EVPN.
+
+
+
+_Appears in:_
+- [EVPNConfig](#evpnconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `vni` _integer_ | VNI is the Virtual Network Identifier for this VRF.<br />Must be unique across all EVPN configurations in the cluster. |  | Maximum: 1.6777215e+07 <br />Minimum: 1 <br />Required: \{\} <br /> |
+| `routeTarget` _[RouteTargetString](#routetargetstring)_ | RouteTarget is the import/export route target for this VRF.<br />If not specified, it will be auto-generated as "<AS Number>:<VNI>".<br />Format should be "<AS>:<VNI>" where AS is the autonomous system number and VNI is the Virtual Network Identifier number.<br />AS must be between 1 and 4294967295 (4-byte ASN). VNI must be between 1 and 16777215 (24-bit). |  |  |
 
 
