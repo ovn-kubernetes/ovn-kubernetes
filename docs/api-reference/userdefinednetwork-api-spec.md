@@ -153,6 +153,24 @@ _Appears in:_
 
 
 
+#### EVPNConfig
+
+
+
+EVPNConfig contains configuration options for networks operating in EVPN mode.
+
+
+
+_Appears in:_
+- [NetworkSpec](#networkspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `vtep` _string_ | VTEP is the name of the VTEP CR that defines VTEP IPs for EVPN. |  | MinLength: 1 <br />Required: \{\} <br /> |
+| `macVRF` _[VRFConfig](#vrfconfig)_ | MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.<br />This field is required for Layer2 topology and forbidden for Layer3 topology. |  |  |
+| `ipVRF` _[VRFConfig](#vrfconfig)_ | IPVRF contains the IP-VRF configuration for Layer 3 EVPN.<br />This field is required for Layer3 topology and optional for Layer2 topology. |  |  |
+
+
 #### IP
 
 _Underlying type:_ _string_
@@ -339,8 +357,9 @@ _Appears in:_
 | `layer3` _[Layer3Config](#layer3config)_ | Layer3 is the Layer3 topology configuration. |  |  |
 | `layer2` _[Layer2Config](#layer2config)_ | Layer2 is the Layer2 topology configuration. |  |  |
 | `localnet` _[LocalnetConfig](#localnetconfig)_ | Localnet is the Localnet topology configuration. |  |  |
-| `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay" and "Geneve".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "Geneve": The network uses Geneve overlay.<br />When omitted, the default behaviour is Geneve. |  | Enum: [NoOverlay Geneve] <br /> |
+| `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay", "Geneve", and "EVPN".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "Geneve": The network uses Geneve overlay.<br />- "EVPN": The network uses EVPN transport.<br />When omitted, the default behaviour is Geneve. |  | Enum: [NoOverlay Geneve EVPN] <br /> |
 | `noOverlay` _[NoOverlayConfig](#nooverlayconfig)_ | NoOverlay contains configuration for no-overlay mode.<br />This is only allowed when Transport is "NoOverlay". |  |  |
+| `evpn` _[EVPNConfig](#evpnconfig)_ | EVPN contains configuration for EVPN mode.<br />This is only allowed when Transport is "EVPN". |  |  |
 
 
 #### NetworkTopology
@@ -377,6 +396,38 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `outboundSNAT` _[SNATOption](#snatoption)_ | OutboundSNAT defines the SNAT behavior for outbound traffic from pods. |  | Enum: [Enabled Disabled] <br /> |
 | `routing` _[RoutingOption](#routingoption)_ | Routing specifies whether the pod network routing is managed by OVN-Kubernetes or users. |  | Enum: [Managed Unmanaged] <br /> |
+
+
+#### RouteTargetString
+
+_Underlying type:_ _string_
+
+RouteTargetString represents the 6-byte value of a BGP extended community route target (RFC 4360).
+BGP Extended Communities are 8 bytes total: 2-byte type field + 6-byte value field.
+This string encodes the 6-byte value, split between a global administrator (Autonomous System or IPv4) and a local administrator.
+
+When auto-generated, the local administrator is set to the VNI, creating a natural mapping
+between Route Targets and VXLAN network segments (e.g., "65000:100" for AS 65000 and VNI 100).
+When explicitly specified, the local administrator can be any value within the type constraints.
+
+FRR EVPN L3 Route-Targets use format (A.B.C.D:MN|EF:OPQR|GHJK:MN|*:OPQR|*:MN) where:
+  - EF:OPQR   = 2-byte AS (1-65535) : local administrator (4 bytes, 0-4294967295)
+  - GHJK:MN   = 4-byte AS (65536-4294967295) : local administrator (2 bytes, 0-65535)
+  - A.B.C.D:MN = IPv4 address (4 bytes) : local administrator (2 bytes, 0-65535)
+  - *:OPQR    = wildcard AS : local administrator (4 bytes, 0-4294967295) - for import matching
+  - *:MN      = wildcard AS : local administrator (2 bytes, 0-65535) - for import matching
+
+The 6-byte constraint means: if AS is 4 bytes, local admin can only be 2 bytes, and vice versa.
+Wildcard (*) matches any AS and is useful for import rules in Downstream VNI scenarios.
+Note: VNI is 24-bit (max 16777215), so auto-generation with 4-byte AS or IPv4 only works if VNI <= 65535.
+See: https://docs.frrouting.org/en/stable-8.5/bgp.html#evpn-l3-route-targets
+
+_Validation:_
+- MaxLength: 21
+
+_Appears in:_
+- [VRFConfig](#vrfconfig)
+
 
 
 #### RoutingOption
@@ -428,6 +479,7 @@ _Appears in:_
 | --- | --- |
 | `NoOverlay` |  |
 | `Geneve` |  |
+| `EVPN` |  |
 
 
 #### UserDefinedNetwork
@@ -534,5 +586,22 @@ _Appears in:_
 | Field | Description |
 | --- | --- |
 | `Access` |  |
+
+
+#### VRFConfig
+
+
+
+VRFConfig contains configuration for a VRF in EVPN.
+
+
+
+_Appears in:_
+- [EVPNConfig](#evpnconfig)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `vni` _integer_ | VNI is the Virtual Network Identifier for this VRF.<br />VNI is a 24-bit field in the VXLAN header (RFC 7348), allowing values from 1 to 16777215.<br />but in the future this could be having different limit for other dataplane implementations.<br />Must be unique across all EVPN configurations in the cluster. |  | Maximum: 1.6777215e+07 <br />Minimum: 1 <br />Required: \{\} <br /> |
+| `routeTarget` _[RouteTargetString](#routetargetstring)_ | RouteTarget is the import/export route target for this VRF.<br />If not specified, it will be auto-generated as "<AS (Autonomous System)>:<VNI (Virtual Network Identifier)>".<br />Auto-generation will use 2-byte AS if VNI > 65535, since 4-byte AS/IPv4 only allows 2-byte local admin.<br />Follows FRR EVPN L3 Route-Target format (A.B.C.D:MN\|EF:OPQR\|GHJK:MN\|*:OPQR\|*:MN):<br />  - EF:OPQR   = 2-byte AS (1-65535) : local admin (4 bytes, 1-4294967295)<br />  - GHJK:MN   = 4-byte AS (65536-4294967295) : local admin (2 bytes, 1-65535)<br />  - A.B.C.D:MN = IPv4 address : local admin (2 bytes, 1-65535)<br />  - *:OPQR    = wildcard AS : local admin (4 bytes, 1-4294967295) - for import matching<br />  - *:MN      = wildcard AS : local admin (2 bytes, 1-65535) - for import matching<br />The 6-byte value constraint (RFC 4360) means AS size + local admin size = 6 bytes. |  | MaxLength: 21 <br /> |
 
 
