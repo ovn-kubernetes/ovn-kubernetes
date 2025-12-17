@@ -459,7 +459,7 @@ func (ncc *networkClusterController) newRetryFramework(objectType reflect.Type, 
 			syncFunc: nil,
 		},
 	}
-	return objretry.NewRetryFramework(ncc.stopChan, ncc.wg, ncc.watchFactory, resourceHandler)
+	return objretry.NewRetryFramework(ncc.GetNetworkName()+"/clustermanager", ncc.stopChan, ncc.wg, ncc.watchFactory, resourceHandler)
 }
 
 // Cleanup the subnet annotations from the node for the User Defined Networks
