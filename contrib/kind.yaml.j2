@@ -47,27 +47,11 @@ kubeadmConfigPatches:
   nodeRegistration:
     kubeletExtraArgs:
       "v": "{{ cluster_log_level }}"
-{%- if kind_num_infra is defined and kind_num_infra|int > 0 %}
-      # Kubelet health optimizations for performance testing
-      "node-status-update-frequency": "10s"
-      "runtime-request-timeout": "10m"
-      "healthz-bind-address": "0.0.0.0"
-      "cgroup-driver": "systemd"
-      "serialize-image-pulls": "false"
-{%- endif %}
   ---
   kind: JoinConfiguration
   nodeRegistration:
     kubeletExtraArgs:
       "v": "{{ cluster_log_level }}"
-{%- if kind_num_infra is defined and kind_num_infra|int > 0 %}
-      # Kubelet health optimizations for performance testing
-      "node-status-update-frequency": "10s"
-      "runtime-request-timeout": "10m"
-      "healthz-bind-address": "0.0.0.0"
-      "cgroup-driver": "systemd"
-      "serialize-image-pulls": "false"
-{%- endif %}
 nodes:
  - role: control-plane
    kubeadmConfigPatches:
@@ -88,11 +72,5 @@ nodes:
 {%- if kind_num_infra is defined and kind_num_infra|int > 0 %}
 {%- for i in range(kind_num_infra|int) %}
  - role: worker
-   kubeadmConfigPatches:
-   - |
-     kind: JoinConfiguration
-     nodeRegistration:
-       kubeletExtraArgs:
-         node-labels: "node-role.kubernetes.io/infra=,prometheus-node=true"
 {%- endfor %}
 {%- endif %}
