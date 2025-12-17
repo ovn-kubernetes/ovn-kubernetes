@@ -37,7 +37,7 @@ jobs:
     needs: [build-pr]
     env:
       JOB_NAME: "PerformanceTest-1wrk-2infra"
-      KIND_NUM_WORKER: "1"
+      KIND_NUM_WORKER: "2"
       KIND_NUM_INFRA: "2"
       OVN_HA: "true"
       PLATFORM_IPV4_SUPPORT: "true"
