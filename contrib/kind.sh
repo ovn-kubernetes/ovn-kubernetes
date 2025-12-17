@@ -58,6 +58,7 @@ usage() {
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
     echo "                 [--isolated]"
+    echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
     echo "                 [-obs | --observability]"
     echo "                 [-h]]"
@@ -121,6 +122,7 @@ echo "--disable-ovnkube-identity                    Disable per-node cert and ov
 echo "-npz | --nodes-per-zone                       If interconnect is enabled, number of nodes per zone (Default 1). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
 echo "-mtu                                          Define the overlay mtu"
 echo "--isolated                                    Deploy with an isolated environment (no default gateway)"
+echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled."
 echo "--delete                                      Delete current cluster"
 echo "--deploy                                      Deploy ovn-kubernetes without restarting kind"
 echo "--add-nodes                                   Adds nodes to an existing cluster. The number of nodes to be added is specified by --num-workers. Also use -ic if the cluster is using interconnect."
@@ -309,6 +311,8 @@ parse_args() {
            -cm  | --compact-mode )              OVN_COMPACT_MODE=true
                                                 ;;
             --isolated )                        OVN_ISOLATED=true
+                                                ;;
+            --enable-coredumps )                ENABLE_COREDUMPS=true
                                                 ;;
             -mne | --multi-network-enable )     ENABLE_MULTI_NET=true
                                                 ;;
@@ -695,6 +699,7 @@ set_default_params() {
   OVN_MTU=${OVN_MTU:-1400}
   OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
   OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
+  ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
 }
 
 check_ipv6() {
@@ -929,6 +934,7 @@ create_ovn_kube_manifests() {
     --ovn-loglevel-sb="${OVN_LOG_LEVEL_SB}" \
     --ovn-loglevel-controller="${OVN_LOG_LEVEL_CONTROLLER}" \
     --ovnkube-libovsdb-client-logfile="${LIBOVSDB_CLIENT_LOGFILE}" \
+    --enable-coredumps="${ENABLE_COREDUMPS}" \
     --ovnkube-config-duration-enable=true \
     --admin-network-policy-enable=true \
     --egress-ip-enable=true \
@@ -1226,6 +1232,9 @@ check_ipv6
 set_cluster_cidr_ip_families
 if [ "$KIND_CREATE" == true ]; then
     create_kind_cluster
+    if [ "$ENABLE_COREDUMPS" == true ]; then
+      setup_coredumps
+    fi
     if [ "$RUN_IN_CONTAINER" == true ]; then
       run_script_in_container
     fi

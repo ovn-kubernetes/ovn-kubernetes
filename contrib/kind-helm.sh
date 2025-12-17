@@ -89,6 +89,7 @@ set_default_params() {
 
   export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
   export MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
+  export ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
 }
 
 usage() {
@@ -112,6 +113,7 @@ usage() {
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
     echo "       [ -cn  | --cluster-name ]"
+    echo "       [ --enable-coredumps ]"
     echo "       [ -h ]"
     echo ""
     echo "--delete                                      Delete current cluster"
@@ -135,6 +137,7 @@ usage() {
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
+    echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
     echo "-ce  | --enable-central                       Deploy with OVN Central (Legacy Architecture)"
     echo "-npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
@@ -218,6 +221,8 @@ parse_args() {
                                                   KIND_NUM_NODES_PER_ZONE=$1
                                                   ;;
             -mps| --multi-pod-subnet )            MULTI_POD_SUBNET=true
+                                                  ;;
+            --enable-coredumps )                  ENABLE_COREDUMPS=true
                                                   ;;
             * )                                   usage
                                                   exit 1
@@ -461,6 +466,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF
        )
@@ -489,6 +495,9 @@ print_params
 helm_prereqs
 build_ovn_image
 create_kind_cluster
+if [ "$ENABLE_COREDUMPS" == true ]; then
+  setup_coredumps
+fi
 detect_apiserver_url
 docker_disable_ipv6
 coredns_patch

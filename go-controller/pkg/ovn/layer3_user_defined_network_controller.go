@@ -460,8 +460,13 @@ func (oc *Layer3UserDefinedNetworkController) Start(_ context.Context) error {
 
 // Stop gracefully stops the controller, and delete all logical entities for this network if requested
 func (oc *Layer3UserDefinedNetworkController) Stop() {
+	if oc.stopChan == nil {
+		klog.Infof("%s UDN controller of network %s is already stopped", oc.TopologyType(), oc.GetNetworkName())
+		return
+	}
 	klog.Infof("Stop %s UDN controller of network %s", oc.TopologyType(), oc.GetNetworkName())
 	close(oc.stopChan)
+	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
 	oc.wg.Wait()
 

@@ -24,6 +24,7 @@ env:
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
+  ENABLE_COREDUMPS: true
   # This skips tests tagged as Serial for most lanes
   # Serial tests are run in a dedicated lane
   PARALLEL: true

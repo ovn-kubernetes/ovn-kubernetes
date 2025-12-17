@@ -312,6 +312,10 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        {%- if (enable_coredumps | default("false")) == "true" %}
+        - name: GOTRACEBACK
+          value: "crash"
+        {% endif -%}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: "{{ ovn_egress_service_enable }}"
         - name: OVN_DAEMONSET_VERSION
