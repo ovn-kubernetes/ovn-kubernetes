@@ -189,4 +189,3 @@ func (s *testVTEPSubscriber) GetReconciledKeys() map[string]int64 {
 	maps.Copy(cp, s.reconciledKeys)
 	return cp
 }
-

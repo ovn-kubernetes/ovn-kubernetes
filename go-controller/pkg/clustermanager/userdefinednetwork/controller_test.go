@@ -705,7 +705,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				vtep := testVTEP("vtep-test")
 
 				// Create an existing NAD with VID already set (simulating state before restart)
-				existingNAD := testEVPNClusterUdnNAD("evpn-existing", testNs.Name, vtep.Name)
+				existingNAD := testEVPNClusterUdnNAD("evpn-existing", testNs.Name)
 				existingNAD.Spec.Config = `
 				{
 					"cniVersion": "1.0.0",
@@ -805,7 +805,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				testNs := testNamespace("evpn-all-corrupted-test")
 
 				// Create a CUDN with ONLY corrupted NADs (no valid NAD to recover from)
-				corruptedNAD := testEVPNClusterUdnNAD("evpn-all-corrupted", testNs.Name, "vtep-test")
+				corruptedNAD := testEVPNClusterUdnNAD("evpn-all-corrupted", testNs.Name)
 				// Corrupted JSON that contains "evpn" to trigger the parse path
 				corruptedNAD.Spec.Config = `{"transport":"evpn", invalid json - corrupted`
 
@@ -824,7 +824,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				testNs := testNamespace("evpn-vid-conflict-test")
 
 				// Create a NAD with VID 5 for MAC-VRF
-				existingNAD := testEVPNClusterUdnNAD("evpn-conflict", testNs.Name, "vtep-test")
+				existingNAD := testEVPNClusterUdnNAD("evpn-conflict", testNs.Name)
 				existingNAD.Spec.Config = `{"cniVersion":"1.0.0","name":"cluster.udn.evpn-conflict","type":"ovn-k8s-cni-overlay","topology":"layer2","transport":"evpn","evpnConfig":{"vtep":"vtep-test","macVRF":{"vni":100,"vid":5}}}`
 
 				cudn := testEVPNClusterUDN("evpn-conflict", "vtep-test", testNs.Name)
@@ -871,7 +871,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				cudnWithNoNADs := testEVPNClusterUDN("evpn-no-nads", vtep.Name, "nonexistent-ns")
 				// Create another CUDN WITH NADs to ensure buildCUDNToNADsIndex returns non-nil
 				otherNs := testNamespace("other-ns")
-				otherNAD := testEVPNClusterUdnNAD("other-cudn", otherNs.Name, vtep.Name)
+				otherNAD := testEVPNClusterUdnNAD("other-cudn", otherNs.Name)
 				otherCUDN := testEVPNClusterUDN("other-cudn", vtep.Name, otherNs.Name)
 				otherCUDN.UID = "other-uid"
 
@@ -894,10 +894,10 @@ var _ = Describe("User Defined Network Controller", func() {
 				cudn := testEVPNClusterUDN("evpn-mixed", vtep.Name, testNs1.Name, testNs2.Name)
 
 				// Create one corrupted NAD and one valid NAD for the same CUDN
-				corruptedNAD := testEVPNClusterUdnNAD("evpn-mixed", testNs1.Name, vtep.Name)
+				corruptedNAD := testEVPNClusterUdnNAD("evpn-mixed", testNs1.Name)
 				corruptedNAD.Spec.Config = `{invalid json`
 
-				validNAD := testEVPNClusterUdnNAD("evpn-mixed", testNs2.Name, vtep.Name)
+				validNAD := testEVPNClusterUdnNAD("evpn-mixed", testNs2.Name)
 				validNAD.Spec.Config = `
 				{
 					"cniVersion": "1.0.0",
@@ -2464,7 +2464,7 @@ func testEVPNClusterUDN(name string, vtepName string, targetNamespaces ...string
 	}
 }
 
-func testEVPNClusterUdnNAD(name, namespace, vtepName string) *netv1.NetworkAttachmentDefinition {
+func testEVPNClusterUdnNAD(name, namespace string) *netv1.NetworkAttachmentDefinition {
 	nad := testClusterUdnNAD(name, namespace)
 	nad.Spec.Config = `{"cniVersion":"1.0.0","name":"cluster.udn.` + name + `","type":"ovn-k8s-cni-overlay","topology":"layer2","transport":"evpn","evpnConfig":{"vtep":"vtep-test","macVRF":{"vni":100}}}`
 	return nad

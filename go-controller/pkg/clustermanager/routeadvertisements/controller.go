@@ -48,8 +48,9 @@ import (
 )
 
 const (
-	generateName = "ovnk-generated-"
-	fieldManager = "clustermanager-routeadvertisements-controller"
+	generateName          = "ovnk-generated-"
+	fieldManager          = "clustermanager-routeadvertisements-controller"
+	evpnRawConfigPriority = 10
 )
 
 var (
@@ -324,6 +325,31 @@ type selectedNetworks struct {
 	prefixLength map[string]uint32
 	// networkType is a map of selected network to their topology
 	networkTopology map[string]string
+	// macVRFConfigs is an ordered list of MAC-VRF EVPN configurations for selected networks
+	macVRFConfigs []*vrfConfig
+	// ipVRFConfigs is an ordered list of IP-VRF EVPN configurations for selected networks
+	ipVRFConfigs []*ipVRFConfig
+}
+
+// vrfConfig holds base VRF EVPN configuration for a network
+type vrfConfig struct {
+	// VNI is the VXLAN Network Identifier
+	VNI int32
+	// RouteTarget is the BGP route target, empty means use FRR defaults
+	RouteTarget string
+}
+
+// ipVRFConfig holds IP-VRF EVPN configuration for a network
+type ipVRFConfig struct {
+	vrfConfig
+	// NetworkName is the name of the network this config belongs to
+	NetworkName string
+	// VRFName is the Linux VRF name
+	VRFName string
+	// HasIPv4 indicates if the network has IPv4 subnets
+	HasIPv4 bool
+	// HasIPv6 indicates if the network has IPv6 subnets
+	HasIPv6 bool
 }
 
 // generateFRRConfigurations generates FRRConfigurations for the route
@@ -385,6 +411,40 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
 		selectedNetworks.networkVRFs[vrf] = networkName
 		selectedNetworks.networkTopology[networkName] = network.TopologyType()
+
+		// MAC-VRF configuration
+		if macVNI := network.EVPNMACVRFVNI(); macVNI > 0 {
+			selectedNetworks.macVRFConfigs = append(selectedNetworks.macVRFConfigs, &vrfConfig{
+				VNI:         macVNI,
+				RouteTarget: network.EVPNMACVRFRouteTarget(),
+			})
+		}
+
+		// IP-VRF configuration
+		if ipVNI := network.EVPNIPVRFVNI(); ipVNI > 0 {
+			// Compute IP families from network subnets
+			hasIPv4, hasIPv6 := false, false
+			for _, subnet := range network.Subnets() {
+				if subnet.CIDR.IP.To4() == nil {
+					hasIPv6 = true
+				} else {
+					hasIPv4 = true
+				}
+			}
+			selectedNetworks.ipVRFConfigs = append(selectedNetworks.ipVRFConfigs, &ipVRFConfig{
+				vrfConfig: vrfConfig{
+					VNI:         ipVNI,
+					RouteTarget: network.EVPNIPVRFRouteTarget(),
+				},
+				NetworkName: networkName,
+				VRFName:     vrf,
+				HasIPv4:     hasIPv4,
+				HasIPv6:     hasIPv6,
+			})
+		}
+		if (len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0) && ra.Spec.TargetVRF == "" {
+			return nil, nil, fmt.Errorf("%w: advertising networks with EVPN configuration to default target VRF is not supported", errConfig)
+		}
 		// TODO check overlaps?
 		for _, cidr := range network.Subnets() {
 			subnet := cidr.CIDR.String()
@@ -399,6 +459,8 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// ordered
 	slices.Sort(selectedNetworks.vrfs)
 	slices.Sort(selectedNetworks.subnets)
+	slices.SortFunc(selectedNetworks.macVRFConfigs, func(a, b *vrfConfig) int { return int(a.VNI - b.VNI) })
+	slices.SortFunc(selectedNetworks.ipVRFConfigs, func(a, b *ipVRFConfig) int { return int(a.VNI - b.VNI) })
 	selectedNetworks.networks = sets.List(networkSet)
 
 	// gather selected nodes
@@ -592,7 +654,7 @@ func (c *Controller) generateFRRConfiguration(
 	selectedNetworks *selectedNetworks,
 	matchedNetworks sets.Set[string],
 ) (*frrtypes.FRRConfiguration, error) {
-	routers := []frrtypes.Router{}
+	var routers []frrtypes.Router
 
 	// go over the source routers
 	for i, router := range source.Spec.BGP.Routers {
@@ -720,11 +782,49 @@ func (c *Controller) generateFRRConfiguration(
 			routers = append(routers, importRouter)
 		}
 	}
-	if len(routers) == 0 {
-		// we ended up with no routers, bail out
-		return nil, nil
+	var globalRouterASN uint32
+	var neighbors []string
+
+	if len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0 {
+		// Look for global router in the source FRRConfiguration, not in the filtered routers
+		for _, router := range source.Spec.BGP.Routers {
+			if router.VRF == "" { // default VRF
+				globalRouterASN = router.ASN
+				for _, neighbor := range router.Neighbors {
+					neighbors = append(neighbors, neighbor.Address)
+				}
+				break
+			}
+		}
+
+		if globalRouterASN == 0 {
+			return nil, fmt.Errorf("%w: EVPN requires a global router but none were found", errConfig)
+		}
+		if len(neighbors) == 0 {
+			return nil, fmt.Errorf("%w: EVPN requires a global router neighbors to be set but none were found", errConfig)
+		}
 	}
 
+	// For IP-VRF: Ensure routers exist for all EVPN networks
+	// If a router doesn't exist for an EVPN network's VRF, create it here since
+	// EVPN routers don't need neighbors (they use the global router's neighbors).
+	for _, cfg := range selectedNetworks.ipVRFConfigs {
+		if slices.ContainsFunc(routers, func(r frrtypes.Router) bool { return r.VRF == cfg.VRFName }) {
+			continue
+		}
+		klog.Infof("Creating router for EVPN network %q VRF %q with ASN=%d, prefixes=%v",
+			cfg.NetworkName, cfg.VRFName, globalRouterASN, selectedNetworks.hostNetworkSubnets[cfg.NetworkName])
+		routers = append(routers, frrtypes.Router{
+			ASN:      globalRouterASN,
+			VRF:      cfg.VRFName,
+			Prefixes: selectedNetworks.hostNetworkSubnets[cfg.NetworkName],
+		})
+	}
+
+	if len(routers) == 0 && len(selectedNetworks.macVRFConfigs) == 0 {
+		// we ended up with no routers and there is no macVRF to configure, bail out
+		return nil, nil
+	}
 	new := &frrtypes.FRRConfiguration{}
 	new.GenerateName = generateName
 	new.Namespace = source.Namespace
@@ -746,6 +846,15 @@ func (c *Controller) generateFRRConfiguration(
 		MatchLabels: map[string]string{
 			"kubernetes.io/hostname": nodeName,
 		},
+	}
+
+	// Generate EVPN raw config for the EVPN-specific parts
+	if len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0 {
+		rawConfig := generateEVPNRawConfig(selectedNetworks, globalRouterASN, neighbors)
+		new.Spec.Raw = frrtypes.RawConfig{
+			Priority: evpnRawConfigPriority,
+			Config:   rawConfig,
+		}
 	}
 
 	return new, nil
