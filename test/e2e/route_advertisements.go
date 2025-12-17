@@ -1404,11 +1404,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					}
 					for _, ipFamily := range getSupportedIPFamiliesSlice(f.ClientSet) {
 						clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(ipFamily)
-						asyncAssertion := gomega.Eventually
+						asyncAssertion := gomega.Consistently
 						timeout := time.Second * 30
 						if expectErr {
-							// When the connectivity check is expected to fail it should be failing consistently
-							asyncAssertion = gomega.Consistently
+							// When the connectivity check is expected to fail (negative connectivity scenario), use gomegaEventually() to confirm
+							// it's blocked once (with expected error code). Do not use gomega.Consistently() for negative connectivity scenarios any more
+							// because repeated probes may destabilize the server pod, also it can save test execution time.
+							asyncAssertion = gomega.Eventually
 							timeout = time.Second * 15
 						}
 						asyncAssertion(func() error {
