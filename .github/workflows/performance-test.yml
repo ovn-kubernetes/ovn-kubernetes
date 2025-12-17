@@ -17,6 +17,19 @@ env:
   OVN_GITREF: main
 
 jobs:
+  setup-tmate:
+    runs-on: [oracle-vm-32cpu-128gb-x86-64] 
+    outputs:
+      ssh-command: ${{ steps.tmate.outputs.ssh-command }}
+      ssh-address: ${{ steps.tmate.outputs.ssh-address }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup tmate session
+      id: tmate
+      uses: mxschmitt/action-tmate@v3
+      with:
+        detached: true
+
   performance-job:
     name: "PerformanceTest-6wrk-2infra"
     runs-on: [oracle-vm-32cpu-128gb-x86-64]
