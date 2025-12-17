@@ -17,7 +17,7 @@ env:
   OVN_GITREF: main
 
 jobs:
- performance-job:
+  performance-job:
     name: "PerformanceTest-6wrk-2infra"
     runs-on: [oracle-vm-32cpu-128gb-x86-64]
     timeout-minutes: 240
