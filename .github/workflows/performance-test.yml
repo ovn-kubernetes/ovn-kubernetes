@@ -48,7 +48,7 @@ jobs:
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
         include:
-          - {"target": "node-density-cni", "ha": "HA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "node-density-cni", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
