@@ -37,8 +37,13 @@ echo "Log file: ${LOG_FILE}"
 exec > >(tee -a "${LOG_FILE}")
 exec 2>&1
 
+# Wait for API server to be fully ready
+echo "Waiting for Kubernetes API server to be ready..."
+kubectl wait --for=condition=Ready nodes --all --timeout=300s || true
+sleep 5
+
 # Create namespace if it doesn't exist
-kubectl create namespace "${PROMETHEUS_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace "${PROMETHEUS_NAMESPACE}" --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
 # Add prometheus-community helm repository
 echo "Adding prometheus-community helm repository..."
