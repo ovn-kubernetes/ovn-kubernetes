@@ -276,7 +276,7 @@ jobs:
     - name: Configure kubelet health optimizations for performance testing
       run: |
         # Set extended timeout for large cluster performance testing
-        echo "KIND_WAIT_TIMEOUT=15m" >> $GITHUB_ENV
+        echo "KIND_WAIT_TIMEOUT=5m" >> $GITHUB_ENV
 
     - name: kind setup with infra nodes
       timeout-minutes: 45
@@ -287,6 +287,9 @@ jobs:
         
         # Use the existing kind infrastructure but with enhanced kubelet health settings
         make -C test install-kind
+
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
         
         # Wait for kubelet health on all nodes with retries
         echo "Verifying kubelet health on all nodes..."
@@ -317,6 +320,10 @@ jobs:
 
     - name: Label 2 random worker nodes for Prometheus
       run: |
+
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+
         workers=$(kubectl get nodes --no-headers | grep -v control-plane | awk '{print $1}' | shuf -n 2)
         for worker in $workers; do
           kubectl label node $worker prometheus-node=true
@@ -325,6 +332,8 @@ jobs:
 
     - name: Install Prometheus on infra nodes
       run: |
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
         ./contrib/install-prometheus-infra.sh
     
     - name: Upload Prometheus installation logs
@@ -351,6 +360,9 @@ jobs:
     - name: Run kube-burner kubelet-density test
       timeout-minutes: 120 
       run: |
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+
         kube-burner destroy --config /tmp/kube-burner/kubelet-density-cni.yml || true
         kube-burner init --config /tmp/kube-burner/kubelet-density-cni.yml
 
