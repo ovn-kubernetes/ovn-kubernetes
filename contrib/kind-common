@@ -668,7 +668,7 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.17
+readonly FRR_K8S_VERSION=v0.0.21
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -678,7 +678,7 @@ clone_frr() {
     git clone --depth 1 --branch $FRR_K8S_VERSION https://github.com/metallb/frr-k8s
 
     # Download the patches
-    curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp.tar.gz | tar xzvf - frr-k8s-ovnk-bgp/patches --strip-components 1
+    curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp-v0.0.21.tar.gz | tar xzvf - frr-k8s-ovnk-bgp-v0.0.21/patches --strip-components 1
 
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
