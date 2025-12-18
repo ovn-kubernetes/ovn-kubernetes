@@ -8,42 +8,85 @@ env:
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
+  # This skips tests tagged as Serial for most lanes
+  # Serial tests are run in a dedicated lane
   PARALLEL: true
+
+  # This must be a directory
   CI_IMAGE_CACHE: tmp/image_cache/
   CI_IMAGE_BASE_TAR: image-base.tar
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
-  OVN_REPO: https://github.com/ovn-org/ovn.git
-  OVN_GITREF: main
+
+  # To run CI over custom OVN
+  # OVN_REPO: https://github.com/ovn-org/ovn
+  # OVN_GITREF: main
 
 jobs:
   performance-job:
-    name: "PerformanceTest-6wrk-2infra"
+    name: performance
     runs-on: [oracle-vm-32cpu-128gb-x86-64]
     timeout-minutes: 240
     needs: [build-pr]
+    strategy:
+      fail-fast: false
+      matrix:
+        # Valid options are:
+        # target: ["shard-conformance", "control-plane", "multi-homing", "multi-node-zones", "node-ip-mac-migration", "compact-mode", "serial"]
+        #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
+        #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
+        # ha: ["HA", "noHA"]
+        # gateway-mode: ["local", "shared"]
+        # ipfamily: ["ipv4", "ipv6", "dualstack"]
+        # disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
+        # second-bridge: ["2br", "1br"]
+        # ic: ["ic-disabled", "ic-single-node-zones", "ic-multi-node-zones"]
+        # num-workers : "<integer value>"
+        # num-nodes-per-zone : "<integer value>"
+        # forwarding : ["", "disable-forwarding"]
+        # dns-name-resolver : ["", "enable-dns-name-resolver"]
+        # network-segmentation : ["", "enable-network-segmentation"]
+        # traffic-flow-tests : "<tests range. i.e. 1-24>"
+        include:
+          - {"target": "node-density-cni", "ha": "HA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
     env:
-      JOB_NAME: "PerformanceTest-1wrk-2infra"
-      KIND_NUM_WORKER: "2"
+      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
+      OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
+      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_HA: "${{ matrix.ha == 'HA' }}"
+      OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
+      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' }}"
+      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+      OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
+      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || matrix.target == 'network-segmentation' || matrix.target == 'tools' || matrix.target == 'multi-homing-helm' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      ENABLE_NETWORK_SEGMENTATION: "${{ matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation' }}"
+      PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
+      PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
+      KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
+      OVN_COMPACT_MODE: "${{ matrix.target == 'compact-mode' }}"
+      OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'compact-mode' }}"
+      OVN_ENABLE_INTERCONNECT: "${{ matrix.ic == 'ic-single-node-zones' ||  matrix.ic == 'ic-multi-node-zones'}}"
+      KIND_NUM_WORKER: "${{ matrix.num-workers }}"
+      KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
+      OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
+      USE_HELM: "${{ matrix.target == 'control-plane-helm' || matrix.target == 'multi-homing-helm' }}"
+      OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
+      OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"
+      TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
+      ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
+      ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
+      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation') }}"
+      ENABLE_NETWORK_CONNECT: "${{ matrix.target == 'network-segmentation' }}"
+      ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
+      # Override PARALLEL=true for Serial tests target to run Serial tests
+      PARALLEL: "${{ matrix.target != 'serial' }}"
+      OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
+      MULTI_POD_SUBNET: true
+      # Performance test specific settings
       KIND_NUM_INFRA: "2"
-      OVN_HA: "true"
-      PLATFORM_IPV4_SUPPORT: "true"
-      PLATFORM_IPV6_SUPPORT: "false"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "shared"
-      OVN_MULTICAST_ENABLE: "false"
       KIND_INSTALL_PROMETHEUS: "true"
       KIND_PROMETHEUS_INFRA_ONLY: "true"
-      KIND_INSTALL_METALLB: "true"
-      OVN_DISABLE_SNAT_MULTIPLE_GWS: "false"
-      OVN_SECOND_BRIDGE: "false"
-      ENABLE_MULTI_NET: "false"
-      ENABLE_NETWORK_SEGMENTATION: "false"
-      OVN_ENABLE_INTERCONNECT: "true"
-      OVN_NETWORK_QOS_ENABLE: "false"
-      MULTI_POD_SUBNET: true
     steps:
     - uses: actions/checkout@v4
     - name: Setup tmate session
@@ -83,6 +126,45 @@ jobs:
         export GOPATH=$(go env GOPATH)
         echo "GOPATH=$GOPATH" >> $GITHUB_ENV
         echo "$GOPATH/bin" >> $GITHUB_PATH
+        if [ $OVN_SECOND_BRIDGE == "true" ]; then
+          # must be "greater" lexigraphically than network "kind", therefore external gateway is named xgw
+          echo OVN_TEST_EX_GW_NETWORK=xgw >> $GITHUB_ENV
+          echo OVN_ENABLE_EX_GW_NETWORK_BRIDGE=true >> $GITHUB_ENV
+        fi
+        if [ "$ADVERTISE_DEFAULT_NETWORK" == "true" ]; then
+          echo "ADVERTISE_DEFAULT_NETWORK=true" >> $GITHUB_ENV
+
+          # Use proper variable declaration with default values
+          if [ $MULTI_POD_SUBNET == "true" ]; then
+            NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.243.0.0/23,10.244.0.0/16}
+            NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:243::/63,fd00:10:244::/48}
+          else
+            NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
+            NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
+          fi
+          sudo ip a
+          sudo ip r
+
+          # Add masquerade rules for both IPv4 and IPv6 networks
+          echo "Adding masquerade rule for $NET_CIDR_IPV4"
+          IFS=',' read -r -a ELEMENTS <<< "$NET_CIDR_IPV4"
+          for element in "${ELEMENTS[@]}"; do
+            sudo iptables -t nat -A POSTROUTING -s $element -o eth0 -j MASQUERADE
+          done
+
+          echo "Adding masquerade rule for $NET_CIDR_IPV6"
+          IFS=',' read -r -a ELEMENTS <<< "$NET_CIDR_IPV6"
+          for element in "${ELEMENTS[@]}"; do
+            sudo ip6tables -t nat -A POSTROUTING -s $element -o eth0 -j MASQUERADE
+          done
+
+          # Verify the rules were added
+          echo "IPv4 POSTROUTING rules:"
+          sudo iptables -t nat -L POSTROUTING -v
+
+          echo "IPv6 POSTROUTING rules:"
+          sudo ip6tables -t nat -L POSTROUTING -v
+        fi
 
     - name: Free up disk space
       uses: ./.github/actions/free-disk-space
@@ -114,72 +196,10 @@ jobs:
       with:
         name: test-image-pr
 
-    - name: Cleanup container resources and images
-      run: |
-        echo "Cleaning up existing container resources..."
-        
-        # Cleanup Docker resources
-        if command -v docker >/dev/null 2>&1; then
-          echo "Cleaning up Docker resources..."
-          # Stop and remove all containers
-          docker ps -aq | xargs -r docker stop || true
-          docker ps -aq | xargs -r docker rm -f || true
-          # Remove all images except base ones needed for kind
-          docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -v "kindest/node\|registry:" | tail -n +2 | awk '{print $2}' | xargs -r docker rmi -f || true
-          # Clean up volumes and networks
-          docker volume prune -f || true
-          docker network prune -f || true
-          # Clean up build cache
-          docker builder prune -a -f || true
-          # Show remaining resources
-          echo "Remaining Docker images:"
-          docker images
-          echo "Docker system df:"
-          docker system df
-        fi
-        
-        # Cleanup Podman resources  
-        if command -v podman >/dev/null 2>&1; then
-          echo "Cleaning up Podman resources..."
-          # Stop and remove all containers
-          podman ps -aq | xargs -r podman stop || true
-          podman ps -aq | xargs -r podman rm -f || true
-          # Remove all images except base ones needed for kind
-          podman images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -v "kindest/node\|registry:" | tail -n +2 | awk '{print $2}' | xargs -r podman rmi -f || true
-          # Clean up volumes and networks
-          podman volume prune -f || true
-          podman network prune -f || true
-          # Reset storage if needed
-          podman system reset --force || true
-          # Show remaining resources
-          echo "Remaining Podman images:"
-          podman images
-          echo "Podman system df:"
-          podman system df || true
-        fi
-        
-        # Clean up any existing kind clusters
-        if command -v kind >/dev/null 2>&1; then
-          echo "Cleaning up existing kind clusters..."
-          kind get clusters | xargs -r -I {} kind delete cluster --name {} || true
-        fi
-        
-        # Clean up container runtime directories
-        sudo rm -rf /var/lib/containers/* || true
-        sudo rm -rf /tmp/kind* || true
-        
-        echo "Container cleanup completed"
-
     - name: Load container image
       run: |
-        # Load image using the same runtime that will be used by KIND
-        if [[ "${KIND_EXPERIMENTAL_PROVIDER:-docker}" == "podman" ]]; then
-          echo "Loading image with podman..."
-          podman load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
-        else
-          echo "Loading image with docker..."
-          docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
-        fi
+        echo "Loading image with docker..."
+        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
 
     - name: Pre-flight system checks and configuration
       run: |
@@ -224,38 +244,14 @@ jobs:
         echo "- Disk: $(df -h / | tail -1)"
         echo "- CPU: $(nproc) cores"
         
-        # Check container runtime and configure
-        if command -v podman >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-          echo "✓ Both Podman and Docker detected, using Docker for consistency with image loading"
-          # Don't set KIND_EXPERIMENTAL_PROVIDER, let it default to docker
-        elif command -v podman >/dev/null 2>&1; then
-          echo "✓ Podman detected, setting KIND_EXPERIMENTAL_PROVIDER=podman"
-          echo "KIND_EXPERIMENTAL_PROVIDER=podman" >> $GITHUB_ENV
-          
-          # Configure podman for better performance
-          sudo mkdir -p /etc/containers
-          sudo tee /etc/containers/containers.conf > /dev/null <<EOF
-        [containers]
-        default_ulimits = [
-          "nofile=65536:65536", 
-          "nproc=32768:32768"
-        ]
-        
-        [engine]
-        cgroup_manager = "systemd"
-        events_logger = "journald"
-        runtime = "crun"
-        EOF
-          # Restart podman service if running
-          sudo systemctl restart podman.socket || true
-        else
-          echo "✓ Docker detected, using default configuration"
-          # Ensure Docker is using systemd cgroup driver
-          if [ -f /etc/docker/daemon.json ]; then
-            sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
-          fi
-          sudo mkdir -p /etc/docker
-          sudo tee /etc/docker/daemon.json > /dev/null <<EOF
+        # Configure Docker runtime
+        echo "✓ Configuring Docker"
+        # Ensure Docker is using systemd cgroup driver
+        if [ -f /etc/docker/daemon.json ]; then
+          sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+        fi
+        sudo mkdir -p /etc/docker
+        sudo tee /etc/docker/daemon.json > /dev/null <<EOF
         {
           "data-root": "/mnt/docker-data",
           "exec-opts": ["native.cgroupdriver=systemd"],
@@ -267,14 +263,13 @@ jobs:
           "default-ulimits": {
             "nofile": {
               "Hard": 65536,
-              "Name": "nofile", 
+              "Name": "nofile",
               "Soft": 65536
             }
           }
         }
         EOF
-          sudo systemctl restart docker
-        fi
+        sudo systemctl restart docker
         
         echo "=== Pre-flight checks completed ==="
 
