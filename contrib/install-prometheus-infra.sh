@@ -74,6 +74,19 @@ fi
 echo "Waiting for Prometheus pods to be ready..."
 kubectl wait --for=condition=ready pod -l "release=${PROMETHEUS_RELEASE_NAME}" -n "${PROMETHEUS_NAMESPACE}" --timeout=300s
 
+# Mark nodes running prometheus pods as unschedulable
+echo "Marking nodes running Prometheus as unschedulable..."
+PROM_NODES=$(kubectl get pods -n "${PROMETHEUS_NAMESPACE}" -l "release=${PROMETHEUS_RELEASE_NAME}" -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u)
+if [ -n "${PROM_NODES}" ]; then
+    for node in ${PROM_NODES}; do
+        echo "Marking node ${node} as unschedulable..."
+        kubectl cordon "${node}"
+    done
+    echo "Marked $(echo "${PROM_NODES}" | wc -w) node(s) running Prometheus as unschedulable"
+else
+    echo "No nodes found running Prometheus pods"
+fi
+
 echo "Prometheus installation completed successfully!"
 echo "Access Prometheus at: kubectl port-forward -n ${PROMETHEUS_NAMESPACE} svc/${PROMETHEUS_RELEASE_NAME}-prometheus 9090:9090"
 echo "Access Grafana at: kubectl port-forward -n ${PROMETHEUS_NAMESPACE} svc/${PROMETHEUS_RELEASE_NAME}-grafana 3000:80"
