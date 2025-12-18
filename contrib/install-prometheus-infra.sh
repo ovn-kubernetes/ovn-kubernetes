@@ -55,16 +55,10 @@ PROMETHEUS_NODES=$(kubectl get nodes -l prometheus-node=true --no-headers 2>/dev
 
 if [ "${PROMETHEUS_NODES}" -gt 0 ]; then
     echo "Found ${PROMETHEUS_NODES} prometheus node(s), installing Prometheus on nodes with prometheus-node=true label..."
-    # Install on prometheus nodes using node selector
+    # Install on prometheus nodes using values file with node selectors
     helm upgrade --install "${PROMETHEUS_RELEASE_NAME}" prometheus-community/kube-prometheus-stack \
         --namespace "${PROMETHEUS_NAMESPACE}" \
-        --set prometheusOperator.tls.enabled=false \
-        --set prometheusOperator.admissionWebhooks.enabled=false \
-        --set prometheusOperator.admissionWebhooks.patch.enabled=false \
-        --set prometheus.prometheusSpec.nodeSelector."prometheus-node"="true" \
-        --set grafana.nodeSelector."prometheus-node"="true" \
-        --set prometheusOperator.nodeSelector."prometheus-node"="true" \
-        --set alertmanager.alertmanagerSpec.nodeSelector."prometheus-node"="true" \
+        --values "${DIR}/prometheus-values.yaml" \
         --wait --timeout=10m
 else
     echo "No nodes with prometheus-node=true label found, installing Prometheus on any available nodes..."
