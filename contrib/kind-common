@@ -828,7 +828,7 @@ install_ffr_k8s() {
 
   # apply frr-k8s
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  kubectl wait -n frr-k8s-system deployment frr-k8s-webhook-server --for condition=Available --timeout 2m
+  kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
   kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
 
   # apply a BGP peer configration with the external gateway that does not
