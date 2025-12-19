@@ -377,13 +377,19 @@ jobs:
         # Port-Forward so we can scrape metrics.
         kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090 &
 
+        # Make sure the port-forward is up prior to running the workload
+        sleep 30
 
         cp ./contrib/metric-endpoint.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/metrics.yml kube-burner/examples/workloads/kubelet-density-cni
 
         cd kube-burner/examples/workloads/kubelet-density-cni
 
-        kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml
+        if [[ -z "${ES_SERVER}" ]]; then
+          kube-burner init --config kubelet-density-cni.yml -e metric-endpoint-local.yml
+        else
+          kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml
+        fi
 
     - name: Export kube-burner data
       if: always()
