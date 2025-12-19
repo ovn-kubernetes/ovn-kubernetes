@@ -398,6 +398,37 @@ jobs:
         mkdir -p /tmp/kube-burner
         cp -r kube-burner/* /tmp/kube-burner/
 
+    - name: Generate performance dashboard
+      if: always()
+      run: |
+        # Create dashboard directory for GitHub Pages
+        mkdir -p /tmp/dashboard
+        
+        # Copy the dashboard generator script
+        cp contrib/generate_dashboard.py /tmp/dashboard/
+        
+        # Change to the kube-burner metrics directory
+        cd kube-burner/examples/workloads/kubelet-density-cni
+        
+        # Generate the dashboard using the metrics files
+        python3 ../../../../contrib/generate_dashboard.py \
+          --metrics-dir . \
+          --output /tmp/dashboard/index.html \
+          --title "OVN-Kubernetes Performance Test Results - Run ${{ github.run_id }}"
+        
+        # Copy metrics files for reference
+        cp *.json /tmp/dashboard/ 2>/dev/null || true
+        
+        echo "Dashboard generated successfully"
+        ls -la /tmp/dashboard/
+
+    - name: Upload performance dashboard
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-dashboard-${{ github.run_id }}
+        path: /tmp/dashboard
+
     - name: Upload kube-burner data
       if: always()
       uses: actions/upload-artifact@v4
@@ -421,6 +452,63 @@ jobs:
       with:
         name: kind-logs-performance-job-${{ github.run_id }}
         path: /tmp/kind/logs
+
+  deploy-dashboard:
+    name: Deploy Performance Dashboard
+    runs-on: ubuntu-latest
+    needs: [performance-job]
+    if: always() && needs.performance-job.result != 'cancelled'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - name: Download performance dashboard
+      uses: actions/download-artifact@v4
+      with:
+        name: performance-dashboard-${{ github.run_id }}
+        path: ./dashboard
+    
+    - name: Setup Pages
+      uses: actions/configure-pages@v3
+    
+    - name: Upload to GitHub Pages
+      uses: actions/upload-pages-artifact@v2
+      with:
+        path: ./dashboard
+    
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v2
+
+    - name: Comment PR with dashboard link
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const dashboardUrl = '${{ steps.deployment.outputs.page_url }}';
+          const comment = `## 🚀 Performance Test Results
+
+          Your performance test has completed! View the interactive dashboard here:
+
+          **📊 [Performance Dashboard](${dashboardUrl})**
+
+          The dashboard includes:
+          - 🎯 Pod Ready Latency (main KPI)
+          - 💻 OVN Container CPU Usage
+          - 🧠 OVN Container Memory Usage
+
+          _Dashboard generated from run #${{ github.run_id }}_`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
 
   build-pr:
     name: Build-PR
