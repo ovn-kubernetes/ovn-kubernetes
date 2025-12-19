@@ -158,6 +158,9 @@ const (
 	PacketsPerSecond     = "pktps"
 	MeterAction          = "drop"
 
+	// Default COPP object name
+	DefaultCOPPName = "ovnkube-default"
+
 	// OVN-K8S annotation & taint constants
 	OvnK8sPrefix = "k8s.ovn.org"
 
