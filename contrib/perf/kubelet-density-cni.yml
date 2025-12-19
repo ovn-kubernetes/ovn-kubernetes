@@ -5,18 +5,18 @@ global:
 
 jobs:
   - name: kubelet-density-cni
-    jobIterations: 100
-    qps: 20
-    burst: 20
+    jobIterations: 300
+    qps: 10
+    burst: 10
     namespacedIterations: true 
     namespace: kubelet-density-cni
     iterationsPerNamespace: 10
     waitWhenFinished: true
-    podWait: false
+    podWait: true 
     preLoadImages: true
     preLoadPeriod: 2m
     churnConfig:
-      percent: 20
+      percent: 10
       cycles: 10
     objects:
 
