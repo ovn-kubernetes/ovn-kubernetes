@@ -159,7 +159,7 @@ var _ = Describe("Node DPU tests", func() {
 				Egress:        -1,
 				IsDPUHostMode: true,
 				NetName:       types.DefaultNetworkName,
-				NADName:       types.DefaultNetworkName,
+				NADKey:        types.DefaultNetworkName,
 				PodUID:        "a-pod",
 			}
 

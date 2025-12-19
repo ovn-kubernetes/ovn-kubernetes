@@ -20,8 +20,8 @@ import (
 type podAnnotWaitCond = func(*corev1.Pod, string) (*util.PodAnnotation, bool, error)
 
 // isOvnReady is a wait condition for OVN master to set pod-networks annotation
-func isOvnReady(pod *corev1.Pod, nadName string) (*util.PodAnnotation, bool, error) {
-	podNADAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+func isOvnReady(pod *corev1.Pod, nadKey string) (*util.PodAnnotation, bool, error) {
+	podNADAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			return nil, false, nil
@@ -33,7 +33,7 @@ func isOvnReady(pod *corev1.Pod, nadName string) (*util.PodAnnotation, bool, err
 
 // isDPUReady is a wait condition which waits for OVN master to set pod-networks annotation and
 // ovnkube running on DPU to set connection-status pod annotation and its status is Ready
-func isDPUReady(annotCondFn podAnnotWaitCond, nadName string) podAnnotWaitCond {
+func isDPUReady(annotCondFn podAnnotWaitCond, nadKey string) podAnnotWaitCond {
 	return func(pod *corev1.Pod, nad string) (annotation *util.PodAnnotation, ready bool, err error) {
 		if annotCondFn != nil {
 			annotation, ready, err = annotCondFn(pod, nad)
@@ -42,7 +42,7 @@ func isDPUReady(annotCondFn podAnnotWaitCond, nadName string) podAnnotWaitCond {
 			}
 		}
 		// check DPU connection status of the given nad name
-		status, err := util.UnmarshalPodDPUConnStatus(pod.Annotations, nadName)
+		status, err := util.UnmarshalPodDPUConnStatus(pod.Annotations, nadKey)
 		if err != nil {
 			if util.IsAnnotationNotSetError(err) {
 				return annotation, false, nil
@@ -118,11 +118,11 @@ func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
 
 // PodAnnotation2PodInfo creates PodInterfaceInfo from Pod annotations and additional attributes
 func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *util.PodAnnotation, podUID,
-	netdevname, nadName, netName string, mtu int) (*PodInterfaceInfo, error) {
+	netdevname, nadKey, netName string, mtu int) (*PodInterfaceInfo, error) {
 	var err error
 	// get pod's annotation of the given NAD if it is not available
 	if podNADAnnotation == nil {
-		podNADAnnotation, err = util.UnmarshalPodAnnotation(podAnnotation, nadName)
+		podNADAnnotation, err = util.UnmarshalPodAnnotation(podAnnotation, nadKey)
 		if err != nil {
 			return nil, err
 		}
@@ -146,10 +146,53 @@ func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *ut
 		PodUID:               podUID,
 		NetdevName:           netdevname,
 		NetName:              netName,
-		NADName:              nadName,
+		NADKey:               nadKey,
 		EnableUDPAggregation: config.Default.EnableUDPAggregation,
 	}
 	return podInterfaceInfo, nil
+}
+
+// GetPodIfNamesForNAD gets the pod's all interface names of the given secondary NAD name
+//
+// Note that the names of secondary UDN pod interfaces are determined by multus: it is either specified by
+// network selection itself, or it is net<index> (<index> is determined by order of the pod interface,
+// started from 1 for the 1st non-default interface).
+func GetPodIfNamesForNAD(pod *corev1.Pod, nadName string) ([]string, error) {
+	networks, err := util.GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return nil, fmt.Errorf("failed to getting network selection elements for pod %s/%s: %v",
+			pod.Namespace, pod.Name, err)
+	}
+	ifNames := make([]string, 0, len(networks))
+	for idx, network := range networks {
+		nad := util.GetNADName(network.Namespace, network.Name)
+		if nad != nadName {
+			continue
+		}
+		if network.InterfaceRequest != "" {
+			ifNames = append(ifNames, network.InterfaceRequest)
+		} else {
+			ifNames = append(ifNames, fmt.Sprintf("net%d", idx+1))
+		}
+	}
+	return ifNames, nil
+}
+
+// GetCNINADKey gets the pod's nadKey (nadName with index in case there are multiple same NADs in the pod)
+// Based on the given ifName, find out which number of this CNI request is for the given nadName, then
+// determine its associated NAD key.
+func GetCNINADKey(pod *corev1.Pod, ifName, nadName string) (string, error) {
+	ifNames, err := GetPodIfNamesForNAD(pod, nadName)
+	if err != nil {
+		return "", err
+	}
+	for idx, name := range ifNames {
+		if ifName == name {
+			return util.GetIndexedNADKey(nadName, idx), nil
+		}
+	}
+	return "", fmt.Errorf("failed to find NAD key associated with CNI request for pod %s/%s with ifName %s",
+		pod.Namespace, pod.Name, ifName)
 }
 
 // START taken from https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/types/pod_update.go

@@ -790,20 +790,20 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		return nil
 	}
 	var remainingAssignments, staleAssignments []egressipv1.EgressIPStatusItem
-	nadName := ni.GetNetworkName()
+	nadKey := ni.GetNetworkName()
 	if ni.IsUserDefinedNetwork() {
 		nadNames := ni.GetNADs()
 		if len(nadNames) == 0 {
 			return fmt.Errorf("expected at least one NAD name for Namespace %s", pod.Namespace)
 		}
-		nadName = nadNames[0] // there should only be one active network
+		nadKey = nadNames[0] // there should only be one active network
 	}
-	podIPNets, err := e.getPodIPs(ni, pod, nadName)
+	podIPNets, err := e.getPodIPs(ni, pod, nadKey)
 	if err != nil {
 		return fmt.Errorf("failed to get pod %s/%s IPs: %v", pod.Namespace, pod.Name, err)
 	}
 	if len(podIPNets) == 0 {
-		return fmt.Errorf("failed to get pod ips for pod %s on network %s with NAD name %s", podKey, ni.GetNetworkName(), nadName)
+		return fmt.Errorf("failed to get pod ips for pod %s on network %s with NAD key %s", podKey, ni.GetNetworkName(), nadKey)
 	}
 	podIPs := make([]net.IP, 0, len(podIPNets))
 	for _, ipNet := range podIPNets {
@@ -2085,14 +2085,14 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				egressLocalPods:  map[string]sets.Set[string]{},
 				egressRemotePods: map[string]sets.Set[string]{},
 			}
-			nadName := types.DefaultNetworkName
+			nadKey := types.DefaultNetworkName
 			if ni.IsUserDefinedNetwork() {
 				nadNames := ni.GetNADs()
 				if len(nadNames) == 0 {
 					klog.Errorf("Network %s: error build egress IP sync cache, expected at least one NAD name for Namespace %s", ni.GetNetworkName(), namespace.Name)
 					continue
 				}
-				nadName = nadNames[0] // there should only be one active network
+				nadKey = nadNames[0] // there should only be one active network
 			}
 			for _, pod := range pods {
 				if !util.PodNeedsSNAT(pod) {
@@ -2101,7 +2101,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				if egressLocalNodesCache.Len() == 0 && !e.isPodScheduledinLocalZone(pod) {
 					continue // don't process anything on master's that have nothing to do with the pod
 				}
-				podIPs, err := e.getPodIPs(ni, pod, nadName)
+				podIPs, err := e.getPodIPs(ni, pod, nadKey)
 				if err != nil {
 					klog.Errorf("Network %s: error build egress IP sync cache, error while trying to get pod %s/%s IPs: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
 					continue
@@ -2424,17 +2424,17 @@ func (e *EgressIPController) addStandByEgressIPAssignment(ni util.NetInfo, podKe
 		return nil
 	}
 	// get IPs
-	nadName := ni.GetNetworkName()
+	nadKey := ni.GetNetworkName()
 	if ni.IsUserDefinedNetwork() {
 		nadNames := ni.GetNADs()
 		if len(nadNames) == 0 {
 			return fmt.Errorf("expected at least one NAD name for Namespace %s", pod.Namespace)
 		}
-		nadName = nadNames[0] // there should only be one active network
+		nadKey = nadNames[0] // there should only be one active network
 	}
-	podIPNets, err := e.getPodIPs(ni, pod, nadName)
+	podIPNets, err := e.getPodIPs(ni, pod, nadKey)
 	if err != nil {
-		return fmt.Errorf("failed to get pod %s/%s IPs using nad name %q: %v", pod.Namespace, pod.Name, nadName, err)
+		return fmt.Errorf("failed to get pod %s/%s IPs using NAD key %q: %v", pod.Namespace, pod.Name, nadKey, err)
 	}
 	if len(podIPNets) == 0 {
 		return fmt.Errorf("no IP(s) available for pod %s/%s on network %s", pod.Namespace, pod.Name, ni.GetNetworkName())
@@ -3736,7 +3736,7 @@ func ensureDefaultNoRerouteNodePolicies(nbClient libovsdbclient.Client, addressS
 	return nil
 }
 
-func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName string) ([]*net.IPNet, error) {
+func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadKey string) ([]*net.IPNet, error) {
 	podIPs := make([]*net.IPNet, 0)
 	getIPFromIPNetFn := func(podIPNets []*net.IPNet) []*net.IPNet {
 		ipNetsCopy := make([]*net.IPNet, 0, len(podIPNets))
@@ -3753,7 +3753,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 		// addLogicalPort has finished successfully setting up networking for
 		// the pod, so we can proceed with retrieving its IP and deleting the
 		// external GW configuration created in addLogicalPort for the pod.
-		logicalPort, err := e.logicalPortCache.get(pod, nadName)
+		logicalPort, err := e.logicalPortCache.get(pod, nadKey)
 		if err != nil {
 			return nil, nil
 		}
@@ -3779,7 +3779,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 			}
 			podIPs = getIPFromIPNetFn(podIPNets)
 		} else if ni.IsUserDefinedNetwork() {
-			podIPNets := util.GetPodCIDRsWithFullMaskOfNetwork(pod, nadName)
+			podIPNets := util.GetPodCIDRsWithFullMaskOfNetwork(pod, nadKey)
 			if len(podIPNets) == 0 {
 				return nil, fmt.Errorf("failed to get pod %s/%s IPs", pod.Namespace, pod.Name)
 			}

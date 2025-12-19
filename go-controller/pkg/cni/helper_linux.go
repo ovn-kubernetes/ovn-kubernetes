@@ -28,6 +28,7 @@ import (
 
 type CNIPluginLibOps interface {
 	AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error
+	ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error
 	SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error)
 }
 
@@ -45,6 +46,23 @@ func (defaultCNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Li
 	}
 
 	return util.GetNetLinkOps().RouteAdd(route)
+}
+
+func (defaultCNIPluginLibOps) ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error {
+	ecmpRoute := &netlink.Route{
+		Dst: ipn,
+		MTU: mtu,
+	}
+
+	ecmpRoute.MultiPath = make([]*netlink.NexthopInfo, len(devs))
+	for i, dev := range devs {
+		ecmpRoute.MultiPath[i] = &netlink.NexthopInfo{
+			LinkIndex: dev.Attrs().Index,
+			Gw:        gw,
+			Hops:      0, // Weight (0 means weight of 1)
+		}
+	}
+	return util.GetNetLinkOps().RouteReplace(ecmpRoute)
 }
 
 func (defaultCNIPluginLibOps) SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error) {
@@ -197,8 +215,27 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 		}
 	}
 	for _, route := range ifInfo.Routes {
-		if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU); err != nil {
-			return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+		if len(ifInfo.PodIfNamesOfSameNAD) == 0 {
+			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU); err != nil {
+				return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+			}
+		} else {
+			links := make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
+			for _, ifName := range ifInfo.PodIfNamesOfSameNAD {
+				if ifName == link.Attrs().Name {
+					// loop all pod interfaces of the same secondary UDN until adding the current pod interface
+					links = append(links, link)
+					break
+				}
+				ifLink, err := util.GetNetLinkOps().LinkByName(ifName)
+				if err != nil {
+					return fmt.Errorf("failed to lookup pod interface %s when setup route for link %s: %v", ifName, link.Attrs().Name, err)
+				}
+				links = append(links, ifLink)
+			}
+			if err := cniPluginLibOps.ReplaceRouteECMP(route.Dest, route.NextHop, links, ifInfo.RoutableMTU); err != nil {
+				return fmt.Errorf("failed to replace pod route %v via %v through links %v: %v", route.Dest, route.NextHop, links, err)
+			}
 		}
 	}
 
@@ -428,12 +465,12 @@ func getPfEncapIP(deviceID string) (string, error) {
 }
 
 // ConfigureOVS performs OVS configurations in order to set up Pod networking
-func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
+func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceName string,
 	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, getter PodInfoGetter) error {
 
 	ifaceID := util.GetIfaceId(namespace, podName)
 	if ifInfo.NetName != types.DefaultNetworkName {
-		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADName)
+		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADKey)
 	}
 	initialPodUID := ifInfo.PodUID
 	ipStrs := make([]string, len(ifInfo.IPs))
@@ -447,7 +484,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	}
 
 	klog.Infof("ConfigureOVS: namespace: %s, podName: %s, hostIfaceName: %s, network: %s, NAD %s, SandboxID: %q, PCI device ID: %s, UID: %q, MAC: %s, IPs: %v",
-		namespace, podName, hostIfaceName, ifInfo.NetName, ifInfo.NADName, sandboxID, deviceID, initialPodUID, ifInfo.MAC, ipStrs)
+		namespace, podName, hostIfaceName, ifInfo.NetName, ifInfo.NADKey, sandboxID, deviceID, initialPodUID, ifInfo.MAC, ipStrs)
 
 	// Find and remove any existing OVS port with this iface-id. Pods can
 	// have multiple sandboxes if some are waiting for garbage collection,
@@ -470,16 +507,16 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	if err == nil && len(extIds) == 1 {
 		extId := extIds[0]
 		ifaceIDStr := util.GetExternalIDValByKey(extId, "iface-id")
-		nadNameString := util.GetExternalIDValByKey(extId, types.NADExternalID)
+		nadKeyString := util.GetExternalIDValByKey(extId, types.NADExternalID)
 		// if NADExternalID does not exists, it is default network
-		if nadNameString == "" {
-			nadNameString = types.DefaultNetworkName
+		if nadKeyString == "" {
+			nadKeyString = types.DefaultNetworkName
 		}
 		if ifaceIDStr != ifaceID {
 			return fmt.Errorf("OVS port %s was added for iface-id (%s), now readding it for (%s)", hostIfaceName, ifaceIDStr, ifaceID)
 		}
-		if nadNameString != ifInfo.NADName {
-			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, nadNameString, ifInfo.NADName)
+		if nadKeyString != ifInfo.NADKey {
+			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, nadKeyString, ifInfo.NADKey)
 		}
 	}
 
@@ -492,6 +529,11 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 		fmt.Sprintf("external_ids:iface-id=%s", ifaceID),
 		fmt.Sprintf("external_ids:iface-id-ver=%s", initialPodUID),
 		fmt.Sprintf("external_ids:sandbox=%s", sandboxID),
+	}
+
+	// pod interface name, used to identify CNI request with the same NAD
+	if podIfName != "" {
+		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:pod-if-name=%s", podIfName))
 	}
 
 	// In case of multi-vtep, host has multipe NICs and each NIC has a VTEP interface, the mapping
@@ -538,7 +580,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 
 	if ifInfo.NetName != types.DefaultNetworkName {
 		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:%s=%s", types.NetworkExternalID, ifInfo.NetName))
-		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, ifInfo.NADName))
+		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, ifInfo.NADKey))
 	} else {
 		ovsArgs = append(ovsArgs, []string{"--", "--if-exists", "remove", "interface", hostIfaceName, "external_ids", types.NetworkExternalID}...)
 		ovsArgs = append(ovsArgs, []string{"--", "--if-exists", "remove", "interface", hostIfaceName, "external_ids", types.NADExternalID}...)
@@ -614,7 +656,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	}
 
 	if !ifInfo.IsDPUHostMode {
-		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, getter)
+		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, getter)
 		if err != nil {
 			pr.deletePort(hostIface.Name, pr.PodNamespace, pr.PodName)
 			return nil, err
