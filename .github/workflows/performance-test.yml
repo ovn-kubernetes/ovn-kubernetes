@@ -31,6 +31,9 @@ jobs:
     runs-on: [oracle-vm-32cpu-128gb-x86-64]
     timeout-minutes: 240
     needs: [build-pr]
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -277,11 +280,6 @@ jobs:
         
         echo "=== Pre-flight checks completed ==="
 
-    - name: Configure kubelet health optimizations for performance testing
-      run: |
-        # Set extended timeout for large cluster performance testing
-        echo "KIND_WAIT_TIMEOUT=5m" >> $GITHUB_ENV
-
     - name: kind setup with infra nodes
       timeout-minutes: 45
       run: |
@@ -384,6 +382,7 @@ jobs:
         sleep 30
 
         cp ./contrib/metric-endpoint.yml kube-burner/examples/workloads/kubelet-density-cni
+        yes | cp ./contrib/perf/kubelet-density-cni.yml kube-burner/examples/workloads/kubelet-density-cni/
         cp ./contrib/performance-meta.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/metric-endpoint-local.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/metrics.yml kube-burner/examples/workloads/kubelet-density-cni
@@ -405,36 +404,62 @@ jobs:
         mkdir -p /tmp/kube-burner
         cp -r kube-burner/* /tmp/kube-burner/
 
-    - name: Generate performance dashboard
+    - name: Generate performance report
       if: always()
       run: |
-        # Create dashboard directory for GitHub Pages
-        mkdir -p /tmp/dashboard
-        
-        # Copy the dashboard generator script
-        cp contrib/generate_dashboard.py /tmp/dashboard/
-        
         # Change to the kube-burner metrics directory
         cd kube-burner/examples/workloads/kubelet-density-cni
         
-        # Generate the dashboard using the metrics files
-        python3 ../../../../contrib/generate_dashboard.py \
+        # Generate the performance report (without posting comment)
+        python3 ../../../../contrib/perf/generate_perf_report.py \
           --metrics-dir . \
-          --output /tmp/dashboard/index.html \
+          --output performance_report.md \
           --title "OVN-Kubernetes Performance Test Results - Run ${{ github.run_id }}"
         
-        # Copy metrics files for reference
-        cp *.json /tmp/dashboard/ 2>/dev/null || true
-        
-        echo "Dashboard generated successfully"
-        ls -la /tmp/dashboard/
+        echo "Performance report generated successfully"
 
-    - name: Upload performance dashboard
-      if: always()
+    - name: Post performance report as PR comment
+      id: post_comment
+      if: always() && (github.event_name == 'pull_request' || github.event_name == 'issue_comment')
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'kube-burner/examples/workloads/kubelet-density-cni/performance_report.md';
+          
+          if (fs.existsSync(path)) {
+            const report = fs.readFileSync(path, 'utf8');
+            
+            // Get the issue/PR number based on event type
+            const issueNumber = context.eventName === 'pull_request' ? 
+              context.payload.pull_request.number : 
+              context.payload.issue.number;
+            
+            try {
+              await github.rest.issues.createComment({
+                issue_number: issueNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: report
+              });
+              console.log('Performance report posted as PR comment');
+              return { success: true };
+            } catch (error) {
+              console.error('Failed to post PR comment:', error.message);
+              return { success: false };
+            }
+          } else {
+            console.log('Performance report file not found');
+            return { success: false };
+          }
+
+    - name: Upload performance report as fallback
+      if: always() && (steps.post_comment.outcome == 'failure' || steps.post_comment.outputs.result == '{"success":false}' || (github.event_name != 'pull_request' && github.event_name != 'issue_comment'))
       uses: actions/upload-artifact@v4
       with:
-        name: performance-dashboard-${{ github.run_id }}
-        path: /tmp/dashboard
+        name: performance-report-${{ github.run_id }}
+        path: kube-burner/examples/workloads/kubelet-density-cni/performance_report.md
+
 
     - name: Upload kube-burner data
       if: always()
@@ -460,62 +485,6 @@ jobs:
         name: kind-logs-performance-job-${{ github.run_id }}
         path: /tmp/kind/logs
 
-  deploy-dashboard:
-    name: Deploy Performance Dashboard
-    runs-on: ubuntu-latest
-    needs: [performance-job]
-    if: always() && needs.performance-job.result != 'cancelled'
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-    - name: Download performance dashboard
-      uses: actions/download-artifact@v4
-      with:
-        name: performance-dashboard-${{ github.run_id }}
-        path: ./dashboard
-    
-    - name: Setup Pages
-      uses: actions/configure-pages@v3
-    
-    - name: Upload to GitHub Pages
-      uses: actions/upload-pages-artifact@v2
-      with:
-        path: ./dashboard
-    
-    - name: Deploy to GitHub Pages
-      id: deployment
-      uses: actions/deploy-pages@v2
-
-    - name: Comment PR with dashboard link
-      if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const dashboardUrl = '${{ steps.deployment.outputs.page_url }}';
-          const comment = `## 🚀 Performance Test Results
-
-          Your performance test has completed! View the interactive dashboard here:
-
-          **📊 [Performance Dashboard](${dashboardUrl})**
-
-          The dashboard includes:
-          - 🎯 Pod Ready Latency (main KPI)
-          - 💻 OVN Container CPU Usage
-          - 🧠 OVN Container Memory Usage
-
-          _Dashboard generated from run #${{ github.run_id }}_`;
-
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
 
   build-pr:
     name: Build-PR
