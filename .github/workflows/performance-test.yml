@@ -50,6 +50,7 @@ jobs:
         include:
           - {"target": "node-density-cni", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
     env:
+      ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
@@ -330,6 +331,18 @@ jobs:
           echo "Labeled node: $worker"
         done
 
+    - name: Label remaining worker nodes
+      run: |
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+
+        # Get all worker nodes that don't have the prometheus-node label
+        workers_without_prometheus=$(kubectl get nodes --no-headers -l '!prometheus-node' | grep -v control-plane | awk '{print $1}')
+        for worker in $workers_without_prometheus; do
+          kubectl label node $worker node-role.kubernetes.io/worker=""
+          echo "Labeled worker node: $worker"
+        done
+
     - name: Install Prometheus on infra nodes
       run: |
         kind get kubeconfig > kconfig
@@ -351,10 +364,9 @@ jobs:
         sudo mv kube-burner /usr/local/bin/
         echo "KUBE_BURNER_VERSION=${KUBE_BURNER_VERSION}" >> $GITHUB_ENV
 
-    - name: Download kubelet-density-cni configuration
+    - name: git clone kube-burner repo 
       run: |
-        mkdir -p /tmp/kube-burner
-        curl -o /tmp/kube-burner/kubelet-density-cni.yml https://raw.githubusercontent.com/kube-burner/kube-burner/main/examples/workloads/kubelet-density-cni/kubelet-density-cni.yml
+        git clone http://github.com/kube-burner/kube-burner
 
     - name: Run kube-burner kubelet-density test
       timeout-minutes: 120 
@@ -362,8 +374,29 @@ jobs:
         kind get kubeconfig > kconfig
         export KUBECONFIG=${PWD}/kconfig
 
-        kube-burner destroy --config /tmp/kube-burner/kubelet-density-cni.yml || true
-        kube-burner init --config /tmp/kube-burner/kubelet-density-cni.yml
+        # Port-Forward so we can scrape metrics.
+        kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090 &
+
+
+        cp ./contrib/metric-endpoint.yml kube-burner/examples/workloads/kubelet-density-cni
+        cp ./contrib/metrics.yml kube-burner/examples/workloads/kubelet-density-cni
+
+        cd kube-burner/examples/workloads/kubelet-density-cni
+
+        kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml
+
+    - name: Export kube-burner data
+      if: always()
+      run: |
+        mkdir -p /tmp/kube-burner
+        cp -r kube-burner/* /tmp/kube-burner/
+
+    - name: Upload kube-burner data
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: kube-burner-performance-job-${{ github.run_id }}
+        path: /tmp/kube-burner 
 
     - name: Runner Diagnostics
       if: always()
@@ -375,25 +408,12 @@ jobs:
         mkdir -p /tmp/kind/logs
         kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
 
-    - name: Export kubeconfig
-      if: always()
-      run: |
-        mkdir -p /tmp/kubeconfig
-        kind get kubeconfig --name ${KIND_CLUSTER_NAME} > /tmp/kubeconfig/kubeconfig
-
     - name: Upload kind logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: kind-logs-performance-job-${{ github.run_id }}
         path: /tmp/kind/logs
-
-    - name: Upload kubeconfig
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: kubeconfig-performance-job-${{ github.run_id }}
-        path: /tmp/kubeconfig/
 
   build-pr:
     name: Build-PR
