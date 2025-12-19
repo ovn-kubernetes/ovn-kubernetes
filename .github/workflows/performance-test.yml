@@ -381,6 +381,7 @@ jobs:
         sleep 30
 
         cp ./contrib/metric-endpoint.yml kube-burner/examples/workloads/kubelet-density-cni
+        cp ./contrib/metric-endpoint-local.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/metrics.yml kube-burner/examples/workloads/kubelet-density-cni
 
         cd kube-burner/examples/workloads/kubelet-density-cni
