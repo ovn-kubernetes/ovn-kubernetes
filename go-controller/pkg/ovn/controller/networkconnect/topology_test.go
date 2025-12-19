@@ -12,6 +12,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func TestGetConnectRouterName(t *testing.T) {
@@ -54,10 +55,15 @@ func TestEnsureConnectRouter(t *testing.T) {
 		expectedRouters []*nbdb.LogicalRouter
 	}{
 		{
-			name:      "create new connect router",
-			cncName:   "test-cnc",
-			tunnelID:  100,
-			initialDB: []libovsdbtest.TestData{},
+			name:     "create new connect router",
+			cncName:  "test-cnc",
+			tunnelID: 100,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.Copp{
+					UUID: "copp-uuid",
+					Name: ovntypes.DefaultCOPPName,
+				},
+			},
 			expectedRouters: []*nbdb.LogicalRouter{
 				{
 					Name: "connect_router_test-cnc",
@@ -72,6 +78,10 @@ func TestEnsureConnectRouter(t *testing.T) {
 			cncName:  "existing-cnc",
 			tunnelID: 200,
 			initialDB: []libovsdbtest.TestData{
+				&nbdb.Copp{
+					UUID: "copp-uuid",
+					Name: ovntypes.DefaultCOPPName,
+				},
 				&nbdb.LogicalRouter{
 					UUID: "existing-router-uuid",
 					Name: "connect_router_existing-cnc",
@@ -117,6 +127,10 @@ func TestEnsureConnectRouter(t *testing.T) {
 			err = c.ensureConnectRouter(cnc, tt.tunnelID)
 			require.NoError(t, err)
 
+			// Get the COPP UUID for verification
+			copp, err := libovsdbops.GetCOPP(nbClient, &nbdb.Copp{Name: ovntypes.DefaultCOPPName})
+			require.NoError(t, err, "expected default COPP to exist")
+
 			// Verify the router was created/updated correctly
 			for _, expectedRouter := range tt.expectedRouters {
 				router, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: expectedRouter.Name})
@@ -127,6 +141,9 @@ func TestEnsureConnectRouter(t *testing.T) {
 				assert.Equal(t, controllerName, router.ExternalIDs[libovsdbops.OwnerControllerKey.String()])
 				assert.Equal(t, string(libovsdbops.ClusterNetworkConnectOwnerType), router.ExternalIDs[libovsdbops.OwnerTypeKey.String()])
 				assert.Equal(t, tt.cncName, router.ExternalIDs[libovsdbops.ObjectNameKey.String()])
+				// Verify COPP is set on the router
+				require.NotNil(t, router.Copp, "expected COPP to be set on router")
+				assert.Equal(t, copp.UUID, *router.Copp, "COPP UUID mismatch")
 			}
 		})
 	}

@@ -20,6 +20,14 @@ func getConnectRouterName(cncName string) string {
 // ensureConnectRouter creates or updates the connect router for a CNC.
 func (c *Controller) ensureConnectRouter(cnc *networkconnectv1.ClusterNetworkConnect, tunnelID int) error {
 	routerName := getConnectRouterName(cnc.Name)
+	// The default COPP is used for all routers in all networks.
+	// Since the default COPP is created in SetupMaster() which is
+	// called before the network connect controller is initialized (run() method),
+	// we can safely fetch and use the default COPP here.
+	copp, err := libovsdbops.GetCOPP(c.nbClient, &nbdb.Copp{Name: ovntypes.DefaultCOPPName})
+	if err != nil {
+		return fmt.Errorf("unable to create router control plane protection: %w", err)
+	}
 	router := &nbdb.LogicalRouter{
 		Name: routerName,
 		ExternalIDs: map[string]string{
@@ -31,10 +39,11 @@ func (c *Controller) ensureConnectRouter(cnc *networkconnectv1.ClusterNetworkCon
 			// Set the tunnel key for the connect router
 			"requested-tnl-key": strconv.Itoa(tunnelID),
 		},
+		Copp: &copp.UUID,
 	}
 
 	// Create or update the router
-	err := libovsdbops.CreateOrUpdateLogicalRouter(c.nbClient, router, &router.ExternalIDs, &router.Options)
+	err = libovsdbops.CreateOrUpdateLogicalRouter(c.nbClient, router, &router.ExternalIDs, &router.Options, &router.Copp)
 	if err != nil {
 		return fmt.Errorf("failed to create/update connect router %s for CNC %s: %v", routerName, cnc.Name, err)
 	}
