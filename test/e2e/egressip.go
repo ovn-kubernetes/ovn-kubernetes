@@ -3181,6 +3181,199 @@ spec:
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, pod2OtherNetworkNamespace, pod2Name, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	})
+	/*
+		This test does the following:
+		0. Add the "k8s.ovn.org/egress-assignable" label to two nodes
+		1. Create an EgressIP object with one egress IP defined
+		2. Create an EgressIP object with one egress IP defined
+		3. Check that status of both EgressIP objects is of length one
+		4. Create one pod matching the EgressIP
+		5. Run namespace label updates multiple times to ensure EIP reassignment works well
+		6. Run pod label updates multiple times to ensure EIP reassignment works well
+		7. Run EIP object updates multiple times to ensure EIP reassignment works well
+	*/
+	ginkgo.It("Should handle EIP reassignment correctly on namespace and pod label updates, and EIP object updates", func() {
+		if isUserDefinedNetwork(netConfigParams) {
+			ginkgo.Skip("Unsupported for UDNs")
+		}
+
+		ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to two nodes")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		ginkgo.By("1. Create an EgressIP object with one egress IP defined")
+		var egressIP1, egressIP2 net.IP
+		var err error
+		var retryTimeout2 = 2 * retryInterval
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new EgressIP")
+			egressIP2, err = ipalloc.NewPrimaryIPv6()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new EgressIP")
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new EgressIP")
+			egressIP2, err = ipalloc.NewPrimaryIPv4()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new EgressIP")
+		}
+
+		podNamespace := f.Namespace
+		egressLabels := map[string]string{
+			"wants": "egress",
+		}
+		egressLabels2 := map[string]string{
+			"wants": "egress2",
+		}
+
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Applying the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("2. Create second EgressIP object with one egress IP defined")
+		var egressIPConfig2 = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName2 + `
+spec:
+    egressIPs:
+    - ` + egressIP2.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress2
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig2), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Create the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("3. Check that status of both EgressIP objects is of length one")
+		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
+		verifySpecificEgressIPStatusLengthEquals(egressIPName2, 1, nil)
+
+		ginkgo.By("4. Create one pod matching the EgressIP")
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), egressLabels)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		framework.Logf("Created pod %s on node %s", pod1Name, pod1Node.name)
+
+		// Run namespace label updates multiple times to ensure EIP reassignment works well
+		for i := 1; i <= 5; i++ {
+			ginkgo.By(fmt.Sprintf("5.%d. Update namespace labels match egressIP %s selectors (iteration %d)", i, egressIPName, i))
+			podNamespace = getNamespace(f, podNamespace.Name)
+			updateNamespaceLabels(f, podNamespace, egressLabels)
+			ginkgo.By(fmt.Sprintf("6.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d)", i, egressIPName, i))
+			err := wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}).WithContext())
+			framework.ExpectNoError(err, "6.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d): %v", i, egressIPName, i, err)
+			ginkgo.By(fmt.Sprintf("7.%d. Verify source IP is NOT the node IP (iteration %d)", i, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout2, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "Node IP should NOT be used as source IP - connection should succeed but node IP should not be found")
+
+			ginkgo.By(fmt.Sprintf("8.%d. Update namespace labels to match egressIP %s selectors (iteration %d)", i, egressIPName2, i))
+			podNamespace = getNamespace(f, podNamespace.Name)
+			updateNamespaceLabels(f, podNamespace, egressLabels2)
+			ginkgo.By(fmt.Sprintf("9.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d)", i, egressIPName2, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP2.String()}).WithContext())
+			framework.ExpectNoError(err, "9.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d): %v", i, egressIPName2, i, err)
+			ginkgo.By(fmt.Sprintf("10.%d. Verify source IP is NOT the node IP (iteration %d)", i, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout2, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "Node IP should NOT be used as source IP - connection should succeed but node IP should not be found")
+		}
+
+		ginkgo.By("11. Update both EgressIP objects that namespace having same labels, and different pod selectors labels")
+		e2ekubectl.RunKubectlOrDie("default", "patch", "EgressIP/"+egressIPName, "-p", "{\"spec\":{\"podSelector\":{\"matchLabels\":{\"wants\": \"egress\"}},\"namespaceSelector\": {\"matchLabels\":{\"wants\": \"egress\"}}}}", "--type=merge")
+		e2ekubectl.RunKubectlOrDie("default", "patch", "EgressIP/"+egressIPName2, "-p", "{\"spec\":{\"podSelector\":{\"matchLabels\":{\"wants\": \"egress2\"}},\"namespaceSelector\": {\"matchLabels\":{\"wants\": \"egress\"}}}}", "--type=merge")
+
+		ginkgo.By("12. Check that status of both EgressIP objects is of length one")
+		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
+		verifySpecificEgressIPStatusLengthEquals(egressIPName2, 1, nil)
+		ginkgo.By("13. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP.")
+		err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+		framework.ExpectNoError(err, "Step 13. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
+		podNamespace = getNamespace(f, podNamespace.Name)
+		updateNamespaceLabels(f, podNamespace, egressLabels)
+		ginkgo.By(fmt.Sprintf("14. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s ", egressIPName))
+		err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}).WithContext())
+		framework.ExpectNoError(err, "14. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s ", egressIPName)
+
+		// Run pod label updates multiple times to ensure EIP reassignment works well
+		for i := 1; i <= 5; i++ {
+			ginkgo.By(fmt.Sprintf("15.%d. Update pod labels match egressIP %s selectors (iteration %d)", i, egressIPName, i))
+			pod1 := getPod(f, pod1Name)
+			pod1.Labels = egressLabels
+			updatePod(f, pod1)
+			ginkgo.By(fmt.Sprintf("16.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d)", i, egressIPName, i))
+			err := wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}).WithContext())
+			framework.ExpectNoError(err, "16.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d): %v", i, egressIPName, i, err)
+			ginkgo.By(fmt.Sprintf("17.%d. Verify source IP is NOT the node IP (iteration %d)", i, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout2, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "Node IP should NOT be used as source IP - connection should succeed but node IP should not be found")
+
+			ginkgo.By(fmt.Sprintf("18.%d. Update pod labels to match egressIP object2 %s selectors (iteration %d)", i, egressIPName2, i))
+			pod1 = getPod(f, pod1Name)
+			pod1.Labels = egressLabels2
+			updatePod(f, pod1)
+			ginkgo.By(fmt.Sprintf("19.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from object2 %s (iteration %d)", i, egressIPName2, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP2.String()}).WithContext())
+			framework.ExpectNoError(err, "19.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from object2 %s (iteration %d): %v", i, egressIPName2, i, err)
+			ginkgo.By(fmt.Sprintf("20.%d. Verify source IP is NOT the node IP (iteration %d)", i, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout2, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "Node IP should NOT be used as source IP - connection should succeed but node IP should not be found")
+		}
+
+		// Run EIP object updates multiple times to ensure EIP reassignment works well
+		for i := 1; i <= 5; i++ {
+			ginkgo.By(fmt.Sprintf("21.%d. Update EgressIP %s selectors to match pod labels and EgressIP %s not matching pod labels,(iteration %d)", i, egressIPName, egressIPName2, i))
+			e2ekubectl.RunKubectlOrDie("default", "patch", "EgressIP/"+egressIPName, "-p", "{\"spec\":{\"podSelector\":{\"matchLabels\":{\"wants\": \"egress2\"}},\"namespaceSelector\": {\"matchLabels\":{\"wants\": \"egress\"}}}}", "--type=merge")
+			e2ekubectl.RunKubectlOrDie("default", "patch", "EgressIP/"+egressIPName2, "-p", "{\"spec\":{\"podSelector\":{\"matchLabels\":{\"wants\": \"egress\"}},\"namespaceSelector\": {\"matchLabels\":{\"wants\": \"egress\"}}}}", "--type=merge")
+			ginkgo.By(fmt.Sprintf("22.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from object1 %s (iteration %d)", i, egressIPName, i))
+			err := wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}).WithContext())
+			framework.ExpectNoError(err, "22.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d): %v", i, egressIPName, i, err)
+			ginkgo.By(fmt.Sprintf("23.%d. Verify source IP is NOT the node IP (iteration %d)", i, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout2, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "Node IP should NOT be used as source IP - connection should succeed but node IP should not be found")
+
+			ginkgo.By(fmt.Sprintf("24.%d. Update EgressIP %s selectors to match pod labels and EgressIP %s not matching pod labels,(iteration %d)", i, egressIPName2, egressIPName, i))
+			e2ekubectl.RunKubectlOrDie("default", "patch", "EgressIP/"+egressIPName, "-p", "{\"spec\":{\"podSelector\":{\"matchLabels\":{\"wants\": \"egress\"}},\"namespaceSelector\": {\"matchLabels\":{\"wants\": \"egress\"}}}}", "--type=merge")
+			e2ekubectl.RunKubectlOrDie("default", "patch", "EgressIP/"+egressIPName2, "-p", "{\"spec\":{\"podSelector\":{\"matchLabels\":{\"wants\": \"egress2\"}},\"namespaceSelector\": {\"matchLabels\":{\"wants\": \"egress\"}}}}", "--type=merge")
+			ginkgo.By(fmt.Sprintf("25.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d)", i, egressIPName2, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP2.String()}).WithContext())
+			framework.ExpectNoError(err, "25.%d. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from %s (iteration %d): %v", i, egressIPName2, i, err)
+			ginkgo.By(fmt.Sprintf("26.%d. Verify source IP is NOT the node IP (iteration %d)", i, i))
+			err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout2, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}).WithContext())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "Node IP should NOT be used as source IP - connection should succeed but node IP should not be found")
+		}
+	})
 
 	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
 		if !isNetworkSegmentationEnabled() {
