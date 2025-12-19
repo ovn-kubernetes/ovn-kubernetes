@@ -2,6 +2,9 @@ name: performance-test
 on:
   pull_request:
     branches: [ master ]
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+  workflow_dispatch:
 
 env:
   K8S_VERSION: v1.34.0
@@ -381,15 +384,19 @@ jobs:
         sleep 30
 
         cp ./contrib/metric-endpoint.yml kube-burner/examples/workloads/kubelet-density-cni
+        cp ./contrib/performance-meta.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/metric-endpoint-local.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/metrics.yml kube-burner/examples/workloads/kubelet-density-cni
 
         cd kube-burner/examples/workloads/kubelet-density-cni
 
+        #Generate metadata.
+        envsubst < performance-meta.yml > perf-meta.yml
+
         if [[ -z "${ES_SERVER}" ]]; then
-          kube-burner init --config kubelet-density-cni.yml -e metric-endpoint-local.yml
+          kube-burner init --config kubelet-density-cni.yml -e metric-endpoint-local.yml --user-metadata perf-meta.yml
         else
-          kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml
+          kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
         fi
 
     - name: Export kube-burner data
