@@ -771,6 +771,15 @@ func (eIPC *egressIPClusterController) addEgressNode(nodeName string) error {
 	if err != nil {
 		return fmt.Errorf("unable to list EgressIPs, err: %v", err)
 	}
+
+	// Before reconciling unassigned EgressIPs, ensure the allocator cache is populated
+	// with existing assignments from EgressIP statuses. This prevents duplicate IP
+	// assignments when two EgressIPs have the same IP in their specs but only one has
+	// it assigned in status (e.g., after control-plane restart or during initial sync).
+	for _, egressIP := range egressIPs {
+		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
+	}
+
 	for _, egressIP := range egressIPs {
 		egressIP := *egressIP
 		if len(egressIP.Spec.EgressIPs) != len(egressIP.Status.Items) {
@@ -1825,15 +1834,29 @@ func generateStatusPatchOp(statusItems []egressipv1.EgressIPStatusItem) jsonPatc
 	}
 }
 
+// ensureAllocatorEgressIPAssignments adds EgressIP assignments to the allocator cache
+// if the EgressIP has status items. This is critical to prevent duplicate IP assignments
+// during restart when EgressIPs are processed in arbitrary order.
+func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) {
+	if len(egressIP.Status.Items) > 0 {
+		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, egressIP.Status.Items)
+	}
+}
+
 // syncEgressIPMarkAllocator iterates over all existing EgressIPs. It builds a mark cache of existing marks stored on each
 // EgressIP annotation or allocates and adds a new mark to an EgressIP if it doesn't exist
 func (eIPC *egressIPClusterController) syncEgressIPMarkAllocator(egressIPs []interface{}) error {
-	// reserve previously assigned marks
+	// Reserve previously assigned marks and pre-populate the allocator cache with existing
+	// assignments from EgressIP statuses. The allocator cache must be populated before
+	// individual EgressIP ADD events are processed to prevent duplicate IP assignments
+	// when two EgressIPs have the same IP in their specs but only one has it assigned in
+	// its status.
 	for _, object := range egressIPs {
 		egressIP, ok := object.(*egressipv1.EgressIP)
 		if !ok {
 			return fmt.Errorf("failed to cast %T to *egressipv1.EgressIP", egressIP)
 		}
+		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
 		if !util.IsEgressIPMarkSet(egressIP.Annotations) {
 			continue
 		}
