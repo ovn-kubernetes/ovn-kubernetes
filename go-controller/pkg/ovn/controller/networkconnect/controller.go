@@ -35,6 +35,7 @@ const (
 // - ports connecting each selected (C)UDN network routers to connect-router
 // - logical router policies on each selected (C)UDN's network router steering traffic to the connect-router
 // - logical router static routes on the connect-router routing traffic to the corresponding selected (C)UDNs
+// - load balancer attachments for ClusterIPServiceNetwork connectivity enabled CNCs
 type Controller struct {
 	// zone is the name of the zone that this controller manages
 	zone string
@@ -46,8 +47,9 @@ type Controller struct {
 	wf *factory.WatchFactory
 
 	// listers
-	cncLister  networkconnectlisters.ClusterNetworkConnectLister
-	nodeLister corev1listers.NodeLister
+	cncLister     networkconnectlisters.ClusterNetworkConnectLister
+	nodeLister    corev1listers.NodeLister
+	serviceLister corev1listers.ServiceLister
 
 	// networkManager provides access to network information
 	networkManager networkmanager.Interface
@@ -57,6 +59,9 @@ type Controller struct {
 
 	// nodeController handles Node events (for updating routes when nodes change)
 	nodeController controllerutil.Controller
+
+	// serviceController handles Service events (for ClusterIPServiceNetwork connectivity)
+	serviceController controllerutil.Controller
 
 	// Single global lock protecting all controller state
 	sync.RWMutex
@@ -85,6 +90,7 @@ func NewController(
 ) *Controller {
 	cncLister := wf.ClusterNetworkConnectInformer().Lister()
 	nodeLister := wf.NodeCoreInformer().Lister()
+	serviceLister := wf.ServiceCoreInformer().Lister()
 
 	c := &Controller{
 		zone:           zone,
@@ -92,6 +98,7 @@ func NewController(
 		wf:             wf,
 		cncLister:      cncLister,
 		nodeLister:     nodeLister,
+		serviceLister:  serviceLister,
 		networkManager: networkManager,
 		cncCache:       make(map[string]*networkConnectState),
 	}
@@ -122,6 +129,19 @@ func NewController(
 		nodeCfg,
 	)
 
+	serviceCfg := &controllerutil.ControllerConfig[corev1.Service]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Informer:       wf.ServiceCoreInformer().Informer(),
+		Lister:         serviceLister.List,
+		Reconcile:      c.reconcileService,
+		ObjNeedsUpdate: serviceNeedsUpdate,
+		Threadiness:    1,
+	}
+	c.serviceController = controllerutil.NewController(
+		"ovnkube-network-connect-service-controller",
+		serviceCfg,
+	)
+
 	return c
 }
 
@@ -131,6 +151,7 @@ func (c *Controller) Start() error {
 	return controllerutil.Start(
 		c.cncController,
 		c.nodeController,
+		c.serviceController,
 	)
 }
 
@@ -139,6 +160,7 @@ func (c *Controller) Stop() {
 	controllerutil.Stop(
 		c.cncController,
 		c.nodeController,
+		c.serviceController,
 	)
 	klog.Infof("Stopped ovnkube network connect controller for zone %s", c.zone)
 }
@@ -190,6 +212,27 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	return util.NodeIDAnnotationChanged(oldObj, newObj) && oldObj.Annotations[util.OvnNodeID] == ""
 }
 
+// serviceNeedsUpdate determines if a service change requires reconciliation.
+// We only care about service CREATE for ClusterIPServiceNetwork connectivity.
+// Service deletes don't need processing because:
+//   - LogicalSwitch.load_balancer is a weak reference with min=0 and refType=weak
+//   - When the LB is deleted by services controller, OVSDB automatically
+//     garbage-collects the UUID from all switches (including cross-network attachments)
+//
+// Service updates (like endpoint changes) are handled by the services controller.
+// We only need to care about load balancer attachments. LB Updates or deattachments
+// are handled by the services controller.
+func serviceNeedsUpdate(oldObj, newObj *corev1.Service) bool {
+	// Only process create (oldObj == nil)
+	// Delete events are handled automatically by OVN weak reference cleanup
+	if oldObj == nil && newObj != nil {
+		return true
+	}
+	// Skip updates and deletes- services controller handles LB content updates,
+	// we only care about service existence for LB attachment purposes.
+	return false
+}
+
 // reconcileCNC reconciles a ClusterNetworkConnect object.
 func (c *Controller) reconcileCNC(key string) error {
 	c.Lock()
@@ -239,6 +282,137 @@ func (c *Controller) reconcileNode(key string) error {
 	// We process ALL nodes (not just our zone) because the connect-router
 	// needs static routes to all node subnets across all zones.
 	return c.requeueAllCNCs()
+}
+
+// reconcileService reconciles service changes for ClusterIPServiceNetwork connectivity.
+// When a service is created/deleted, we check if its network is connected by any CNC
+// with ClusterIPServiceNetwork enabled and requeue those CNCs.
+// This follows the same pattern as reconcileNAD in cluster manager.
+func (c *Controller) reconcileService(key string) error {
+	c.RLock()
+	defer c.RUnlock()
+
+	startTime := time.Now()
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return err
+	}
+
+	klog.V(5).Infof("Reconciling service %s/%s for network connect", namespace, name)
+	defer func() {
+		klog.V(4).Infof("Reconciling service %s/%s for network connect took %v", namespace, name, time.Since(startTime))
+	}()
+
+	// Get the service
+	svc, err := c.serviceLister.Services(namespace).Get(name)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	// Service may be nil if deleted (this shouldn't happen since we only process create events)
+	if svc == nil {
+		klog.V(5).Infof("Service %s/%s deleted, skipping network connect reconciliation", namespace, name)
+		return nil
+	}
+
+	// Get the network owner key for this service's namespace.
+	// This determines which network the service belongs to.
+	networkOwnerKey, err := c.getNetworkOwnerKeyForNamespace(namespace)
+	if err != nil {
+		// Log and skip - namespace might not have a primary UDN
+		klog.V(5).Infof("Could not get network owner key for namespace %s: %v", namespace, err)
+		return nil
+	}
+	if networkOwnerKey == "" {
+		// Namespace uses default network, which we don't handle for network-connect
+		klog.V(5).Infof("Namespace %s uses default network, skipping service %s", namespace, name)
+		return nil
+	}
+
+	// List all CNCs and check which ones need to be reconciled for this service
+	existingCNCs, err := c.cncLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list CNCs: %w", err)
+	}
+
+	// Process each CNC to check if this service's network matching state changed
+	for _, cnc := range existingCNCs {
+		if c.mustProcessCNCForService(svc, cnc, networkOwnerKey) {
+			c.cncController.Reconcile(cnc.Name)
+		}
+	}
+
+	return nil
+}
+
+// getNetworkOwnerKeyForNamespace returns the owner key (e.g., "layer3_5") for the primary network
+// of the given namespace. Returns empty string if namespace uses default network.
+// TODO(tssurya): Make this a common utility function and reuse the one in clustermanager/networkconnect/controller.go
+func (c *Controller) getNetworkOwnerKeyForNamespace(namespace string) (string, error) {
+	// Get the primary network for this namespace
+	primaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace)
+	if err != nil {
+		if util.IsUnprocessedActiveNetworkError(err) {
+			// Network not yet processed, skip for now - will be reconciled later
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get primary network for namespace %s: %w", namespace, err)
+	}
+
+	// Check if it's the default network
+	if primaryNetwork.IsDefault() {
+		return "", nil
+	}
+
+	// Build owner key: "layer3_{networkID}" or "layer2_{networkID}"
+	networkID := primaryNetwork.GetNetworkID()
+	topologyType := primaryNetwork.TopologyType()
+	ownerKey := fmt.Sprintf("%s_%d", topologyType, networkID)
+
+	return ownerKey, nil
+}
+
+// mustProcessCNCForService checks if:
+// 1. the service's network is currently in the CNC's connectedNetworks AND
+// 2. the CNC has ClusterIPServiceNetwork enabled
+// Returns true if both conditions are met, meaning we need to attach this service's LB
+// to the other connected networks' switches.
+// This function is READ-ONLY and does not update the cache.
+// NOTE: Caller must hold at least RLock.
+func (c *Controller) mustProcessCNCForService(svc *corev1.Service, cnc *networkconnectv1.ClusterNetworkConnect, networkOwnerKey string) bool {
+	// Check if CNC has ClusterIPServiceNetwork enabled - if not, skip entirely
+	if !hasClusterIPServiceNetwork(cnc) {
+		return false
+	}
+
+	cncState, cncExists := c.cncCache[cnc.Name]
+
+	// If CNC state doesn't exist yet, we don't know the connected networks
+	// Cache will be populated during CNC reconciliation and that will trigger
+	// service reconciliation as well from reconcileCNC.
+	if !cncExists {
+		klog.V(5).Infof("CNC %s state not found in cache, skipping service %s/%s", cnc.Name, svc.Namespace, svc.Name)
+		return false
+	}
+
+	// Check if service's network is connected by this CNC
+	isConnected := cncState.connectedNetworks.Has(networkOwnerKey)
+
+	if isConnected {
+		klog.V(5).Infof("Service %s/%s network %s is connected by CNC %s with ClusterIPServiceNetwork",
+			svc.Namespace, svc.Name, networkOwnerKey, cnc.Name)
+	}
+
+	return isConnected
+}
+
+// hasClusterIPServiceNetwork checks if the CNC has ClusterIPServiceNetwork in its connectivity spec.
+func hasClusterIPServiceNetwork(cnc *networkconnectv1.ClusterNetworkConnect) bool {
+	for _, ct := range cnc.Spec.Connectivity {
+		if ct == networkconnectv1.ClusterIPServiceNetwork {
+			return true
+		}
+	}
+	return false
 }
 
 // requeueAllCNCs requeues all CNCs for reconciliation.
