@@ -68,6 +68,11 @@ type Controller struct {
 
 	// cncCache holds the state for each CNC keyed by CNC name
 	cncCache map[string]*networkConnectState
+
+	// localZoneNode is the node in this controller's zone.
+	// We only support 1 node per zone for this feature.
+	// Updated during each CNC reconciliation via computeNodeInfo().
+	localZoneNode *corev1.Node
 }
 
 // networkConnectState tracks the state of a single ClusterNetworkConnect
@@ -464,9 +469,25 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 	if err != nil {
 		return fmt.Errorf("failed to parse subnet annotation for CNC %s: %w", cnc.Name, err)
 	}
-	if err := c.syncNetworkConnections(cnc, allocatedSubnets); err != nil {
+
+	// Compute node info once - updates c.localZoneNode and returns allNodes and currentNodeIDs
+	allNodes, currentNodeIDs, err := c.computeNodeInfo()
+	if err != nil {
+		return fmt.Errorf("failed to compute node info for CNC %s: %v", cnc.Name, err)
+	}
+
+	// STEPs 2,3,4: Create patch ports, routing policies, and static routes for all connected networks.
+	if err := c.syncNetworkConnections(cnc, allocatedSubnets, allNodes, currentNodeIDs); err != nil {
 		return fmt.Errorf("failed to sync network connections for CNC %s: %v", cnc.Name, err)
 	}
+
+	// STEP5: Handle ClusterIPServiceNetwork connectivity if enabled
+	if hasClusterIPServiceNetwork(cnc) {
+		if err := c.syncServiceConnectivity(cnc); err != nil {
+			return fmt.Errorf("failed to sync service connectivity for CNC %s: %v", cnc.Name, err)
+		}
+	}
+
 	return nil
 }
 

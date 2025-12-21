@@ -1468,7 +1468,12 @@ func TestEnsureRoutingPoliciesOps(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: tt.cncName},
 			}
 
-			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets, nodes[0])
+			// Set localZoneNode for Layer3 tests
+			if tt.srcTopologyType == ovntypes.Layer3Topology {
+				c.localZoneNode = nodes[0]
+			}
+
+			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets)
 
 			if tt.expectError {
 				assert.Error(t, err)

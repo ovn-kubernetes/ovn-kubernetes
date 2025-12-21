@@ -113,29 +113,22 @@ func parseOwnerKey(owner string) (topologyType string, networkID int, err error)
 	return
 }
 
-// syncNetworkConnections syncs all network connections for a CNC.
-// STEP2: Create the patch ports connecting network router's to the connect router
-// using IPs from the network subnet CNC annotation.
-// STEP3: If PodNetworkConnect is enabled, create the logical router policies on network router's
-// to steer traffic to the connect router for other connected networks.
-// STEP4: If PodNetworkConnect is enabled, add static routes to connect router towards
-// each of the connected networks.
-func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetworkConnect, allocatedSubnets map[string][]*net.IPNet) error {
-	cncName := cnc.Name
-	cncState := c.cncCache[cncName]
-
-	// Get all nodes - the connect-router needs static routes to ALL node subnets
+// computeNodeInfo computes node information used by sync functions.
+// It updates c.localZoneNode and returns:
+//   - allNodes: all nodes in the cluster
+//   - currentNodeIDs: set of all node IDs (as strings) for comparison
+func (c *Controller) computeNodeInfo() ([]*corev1.Node, sets.Set[string], error) {
 	allNodes, err := c.nodeLister.List(labels.Everything())
 	if err != nil {
-		return fmt.Errorf("failed to list nodes: %v", err)
+		return nil, nil, fmt.Errorf("failed to list nodes: %v", err)
 	}
-	// Build set of current node IDs for comparison. (used for deleting ports for nodes that no longer exist)
+
 	currentNodeIDs := sets.New[string]()
-	var localNode *corev1.Node
+
 	for _, node := range allNodes {
 		if util.GetNodeZone(node) == c.zone {
-			// we don't support multiple local nodes per zone for this feature
-			localNode = node
+			// we only support 1 node per zone for this feature
+			c.localZoneNode = node
 		}
 		nodeID, err := util.GetNodeID(node)
 		if err != nil {
@@ -143,6 +136,21 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		}
 		currentNodeIDs.Insert(strconv.Itoa(nodeID))
 	}
+
+	return allNodes, currentNodeIDs, nil
+}
+
+// syncNetworkConnections syncs all network connections for a CNC.
+// STEP2: Create the patch ports connecting network router's to the connect router
+// using IPs from the network subnet CNC annotation.
+// STEP3: If PodNetworkConnect is enabled, create the logical router policies on network router's
+// to steer traffic to the connect router for other connected networks.
+// STEP4: If PodNetworkConnect is enabled, add static routes to connect router towards
+// each of the connected networks.
+func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetworkConnect, allocatedSubnets map[string][]*net.IPNet,
+	allNodes []*corev1.Node, currentNodeIDs sets.Set[string]) error {
+	cncName := cnc.Name
+	cncState := c.cncCache[cncName]
 
 	desiredNetworks := sets.New[string]()
 	for owner := range allocatedSubnets {
@@ -157,6 +165,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 
 	var createOps, deleteOps []ovsdb.Operation
 	var errs []error
+	var err error
 
 	// Track networks that had ops built successfully - cache will be updated only after transact succeeds
 	// This ensures cache stays consistent with OVN NB even if transact fails
@@ -220,7 +229,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		klog.V(5).Infof("CNC %s: ensuring routing policies and static routes for network %s", cncName, netInfo.GetNetworkName())
 
 		// Ensure routing policies on the network router
-		createOps, err = c.ensureRoutingPoliciesOps(createOps, cncName, netInfo, allocatedSubnets, localNode)
+		createOps, err = c.ensureRoutingPoliciesOps(createOps, cncName, netInfo, allocatedSubnets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure routing policies for network %s: %w", netInfo.GetNetworkName(), err))
 			continue
@@ -666,7 +675,7 @@ func (c *Controller) createRouterPortOps(ops []ovsdb.Operation, routerName, port
 // For Layer3: creates policy for the local node only (each zone handles its own node)
 // For Layer2: creates a single policy (transit router is distributed)
 func (c *Controller) ensureRoutingPoliciesOps(ops []ovsdb.Operation, cncName string, srcNetwork util.NetInfo,
-	allocatedSubnets map[string][]*net.IPNet, localNode *corev1.Node) ([]ovsdb.Operation, error) {
+	allocatedSubnets map[string][]*net.IPNet) ([]ovsdb.Operation, error) {
 	networkRouterName := srcNetwork.GetNetworkScopedClusterRouterName()
 
 	// Get the source network's subnets to build the inport match
@@ -693,21 +702,21 @@ func (c *Controller) ensureRoutingPoliciesOps(ops []ovsdb.Operation, cncName str
 		// For Layer3, create policy for the local node
 		// If there's no local node (node moved to different zone), skip policy creation.
 		// The controller in the node's zone will handle its policies.
-		if localNode == nil {
+		if c.localZoneNode == nil {
 			klog.Infof("No local node found for zone %s, skipping routing policy "+
 				"creation for Layer3 network %s (node moved to different zone)", c.zone, srcNetwork.GetNetworkName())
 			return ops, nil
 		}
-		nodeID, err := util.GetNodeID(localNode)
+		nodeID, err := util.GetNodeID(c.localZoneNode)
 		if err != nil {
-			return nil, fmt.Errorf("local node %s does not have node ID: %v", localNode.Name, err)
+			return nil, fmt.Errorf("local node %s does not have node ID: %v", c.localZoneNode.Name, err)
 		}
 
-		inportName = srcNetwork.GetNetworkScopedSwitchToRouterPortName(localNode.Name)
+		inportName = srcNetwork.GetNetworkScopedSwitchToRouterPortName(c.localZoneNode.Name)
 
 		p2pSubnets, err := calculateP2PSubnets(srcConnectSubnets, nodeID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to calculate P2P subnets for node %s: %v", localNode.Name, err)
+			return nil, fmt.Errorf("failed to calculate P2P subnets for node %s: %v", c.localZoneNode.Name, err)
 		}
 		connectPortIPs, _ := getP2PIPs(p2pSubnets)
 		nexthops = util.IPNetsToIPs(connectPortIPs)
@@ -961,4 +970,161 @@ func (c *Controller) getNodeSubnet(netInfo util.NetInfo, nodeName string) ([]*ne
 		return nil, fmt.Errorf("failed to parse node subnet for network %s: %v", netInfo.GetNetworkName(), err)
 	}
 	return nodeSubnets, nil
+}
+
+// syncServiceConnectivity handles ClusterIPServiceNetwork connectivity.
+// It finds ClusterIP LBs from each connected network and attaches them to the
+// switches of all OTHER connected networks.
+// NOTE: Service deletions are handled automatically by OVN weak references.
+// When an LB is deleted by the services controller, OVSDB automatically removes
+// the LB UUID from all LogicalSwitch.load_balancer columns (weak ref with min=0).
+// NOTE2: Network connections and disconnections OR CNC connectivity field updates
+// will trigger the reconciliation again and the service connectivity sync will be called through
+// those approriate reconciliation functions.
+func (c *Controller) syncServiceConnectivity(cnc *networkconnectv1.ClusterNetworkConnect) error {
+	cncState, exists := c.cncCache[cnc.Name]
+	if !exists || cncState == nil {
+		return fmt.Errorf("CNC %s state not found in cache or is nil", cnc.Name)
+	}
+
+	// Get list of connected networks from cache
+	connectedNetworks := cncState.connectedNetworks.UnsortedList()
+	if len(connectedNetworks) < 2 {
+		klog.V(5).Infof("CNC %s has less than 2 connected networks, skipping service connectivity", cnc.Name)
+		return nil
+	}
+
+	// Collect all LBs per network and all switches per connectednetwork
+	networkLBs := make(map[string][]*nbdb.LoadBalancer)       // networkOwnerKey -> ClusterIP LBs
+	networkSwitches := make(map[string][]*nbdb.LogicalSwitch) // networkOwnerKey -> switches
+
+	for _, networkOwnerKey := range connectedNetworks {
+		// Parse network owner key: "topology_networkID" (e.g., "layer3_5")
+		netInfo, err := c.parseNetworkOwnerKey(networkOwnerKey)
+		if err != nil {
+			klog.Warningf("Failed to parse network owner key %s: %v", networkOwnerKey, err)
+			continue
+		}
+
+		// Find ClusterIP LBs for this network
+		lbs, err := c.findClusterIPLoadBalancers(netInfo)
+		if err != nil {
+			return fmt.Errorf("failed to find ClusterIP LBs for network %s: %w", netInfo.GetNetworkName(), err)
+		}
+		networkLBs[networkOwnerKey] = lbs
+		klog.V(5).Infof("Found %d ClusterIP LBs for network %s", len(lbs), netInfo.GetNetworkName())
+
+		// Find switches for this network (only for local zone node to avoid predicate scan)
+		switches, err := c.findNetworkSwitches(netInfo)
+		if err != nil {
+			return fmt.Errorf("failed to find switches for network %s: %w", netInfo.GetNetworkName(), err)
+		}
+		networkSwitches[networkOwnerKey] = switches
+		klog.V(5).Infof("Found %d switches for network %s", len(switches), netInfo.GetNetworkName())
+	}
+
+	// Build ops to attach each network's LBs to all OTHER networks' switches
+	var ops []ovsdb.Operation
+	for srcNetworkKey, lbs := range networkLBs {
+		if len(lbs) == 0 {
+			continue
+		}
+
+		for dstNetworkKey, switches := range networkSwitches {
+			// Skip same network - LBs are already attached by services controller
+			if srcNetworkKey == dstNetworkKey {
+				continue
+			}
+
+			// Attach srcNetwork's LBs to dstNetwork's switches
+			for _, sw := range switches {
+				addOps, err := libovsdbops.AddLoadBalancersToLogicalSwitchOps(c.nbClient, nil, sw, lbs...)
+				if err != nil {
+					return fmt.Errorf("failed to create ops to attach LBs to switch %s: %w", sw.Name, err)
+				}
+				ops = append(ops, addOps...)
+				klog.V(5).Infof("Adding %d LBs from network %s to switch %s (network %s)",
+					len(lbs), srcNetworkKey, sw.Name, dstNetworkKey)
+			}
+		}
+	}
+
+	if len(ops) == 0 {
+		klog.V(5).Infof("No LB attachment operations needed for CNC %s", cnc.Name)
+		return nil
+	}
+
+	// Execute all ops in a single transaction
+	_, err := libovsdbops.TransactAndCheck(c.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("failed to attach LBs for CNC %s: %w", cnc.Name, err)
+	}
+
+	klog.V(4).Infof("Successfully synced service connectivity for CNC %s (%d operations)", cnc.Name, len(ops))
+	return nil
+}
+
+// parseNetworkOwnerKey parses a network owner key (e.g., "layer3_5") and returns the NetInfo.
+// TODO(tssurya): Make this a common utility function and reuse the one in clustermanager/networkconnect/controller.go
+func (c *Controller) parseNetworkOwnerKey(ownerKey string) (util.NetInfo, error) {
+	// Format: "topology_networkID"
+	parts := strings.Split(ownerKey, "_")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid network owner key format: %s", ownerKey)
+	}
+
+	networkID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid network ID in owner key %s: %v", ownerKey, err)
+	}
+
+	return c.findNetworkByID(networkID)
+}
+
+// findClusterIPLoadBalancers finds all ClusterIP service load balancers for a network.
+// ClusterIP LBs have names ending with "_cluster" and are tagged with the network name.
+func (c *Controller) findClusterIPLoadBalancers(netInfo util.NetInfo) ([]*nbdb.LoadBalancer, error) {
+	networkName := netInfo.GetNetworkName()
+
+	predicate := func(lb *nbdb.LoadBalancer) bool {
+		// Must be a Service LB
+		if lb.ExternalIDs[ovntypes.LoadBalancerKindExternalID] != "Service" {
+			return false
+		}
+		// Must belong to this network
+		if lb.ExternalIDs[ovntypes.NetworkExternalID] != networkName {
+			return false
+		}
+		// Must be a ClusterIP LB (name contains "_cluster")
+		return strings.Contains(lb.Name, "_cluster")
+	}
+
+	return libovsdbops.FindLoadBalancersWithPredicate(c.nbClient, predicate)
+}
+
+// findNetworkSwitches finds logical switches for a network for the local zone node.
+// For Layer2, there's a single distributed switch (localZoneNode is ignored).
+// For Layer3, there's a switch per node, and we use direct lookup by constructing
+// the switch name from the node name (avoiding predicate scan over all switches).
+// We only support 1 node per zone for this feature.
+func (c *Controller) findNetworkSwitches(netInfo util.NetInfo) ([]*nbdb.LogicalSwitch, error) {
+	// For Layer3, there's a switch per node - use direct lookup by name
+	if netInfo.TopologyType() == ovntypes.Layer3Topology && c.localZoneNode == nil {
+		klog.V(5).Infof("No local zone node found, returning empty switch list for network %s", netInfo.GetNetworkName())
+		return nil, nil
+	}
+	var switchName string
+	if netInfo.TopologyType() == ovntypes.Layer2Topology {
+		switchName = netInfo.GetNetworkScopedSwitchName("")
+	} else if netInfo.TopologyType() == ovntypes.Layer3Topology {
+		switchName = netInfo.GetNetworkScopedSwitchName(c.localZoneNode.Name)
+	} else {
+		return nil, fmt.Errorf("unsupported topology type: %s", netInfo.TopologyType())
+	}
+	sw := &nbdb.LogicalSwitch{Name: switchName}
+	sw, err := libovsdbops.GetLogicalSwitch(c.nbClient, sw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get switch %s: %w", switchName, err)
+	}
+	return []*nbdb.LogicalSwitch{sw}, nil
 }
