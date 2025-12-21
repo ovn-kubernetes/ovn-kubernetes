@@ -878,7 +878,7 @@ func TestCleanupNetworkConnections(t *testing.T) {
 				nbClient: nbClient,
 			}
 
-			err = c.cleanupNetworkConnections(tt.cncName)
+			err = c.cleanupNetworkConnections(tt.cncName, false)
 			if tt.expectError {
 				assert.Error(t, err)
 				return
@@ -998,6 +998,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 		zone:           "zone1",
 		nodeLister:     wf.NodeCoreInformer().Lister(),
 		networkManager: nm,
+		localZoneNode:  node,
 		cncCache: map[string]*networkConnectState{
 			cncName: {
 				name:              cncName,
@@ -1600,8 +1601,11 @@ func TestEnsureRoutingPoliciesOps(t *testing.T) {
 			cnc := &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: tt.cncName},
 			}
-
-			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets, nodes[0])
+			// Set localZoneNode for Layer3 tests
+			if tt.srcTopologyType == ovntypes.Layer3Topology {
+				c.localZoneNode = nodes[0]
+			}
+			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets)
 
 			if tt.expectError {
 				assert.Error(t, err)

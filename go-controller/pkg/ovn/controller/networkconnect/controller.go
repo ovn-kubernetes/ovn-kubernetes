@@ -75,6 +75,11 @@ type Controller struct {
 
 	// cncCache holds the state for each CNC keyed by CNC name
 	cncCache map[string]*networkConnectState
+
+	// localZoneNode is the node in this controller's zone.
+	// We only support 1 node per zone for this feature.
+	// Updated during each CNC reconciliation via computeNodeInfo().
+	localZoneNode *corev1.Node
 }
 
 // networkConnectState tracks the state of a single ClusterNetworkConnect
@@ -86,6 +91,9 @@ type networkConnectState struct {
 	// connectedNetworks is the set of owner keys (e.g., "layer3_1", "layer2_2") for networks
 	// connected by this CNC. Used to track OVN resources created and detect NAD matching changes.
 	connectedNetworks sets.Set[string]
+	// clusterIPServiceNetworkEnabled tracks whether ClusterIPServiceNetwork connectivity is enabled
+	// Used for cleanup when the connectivity type is removed from the CNC spec.
+	clusterIPServiceNetworkEnabled bool
 }
 
 // NewController creates a new network connect controller for ovnkube-controller.
@@ -554,6 +562,7 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 	if err != nil {
 		return fmt.Errorf("failed to parse subnet annotation for CNC %s: %w", cnc.Name, err)
 	}
+
 	if err := c.syncNetworkConnections(cnc, allocatedSubnets); err != nil {
 		return fmt.Errorf("failed to sync network connections for CNC %s: %v", cnc.Name, err)
 	}
@@ -564,14 +573,14 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 func (c *Controller) cleanupCNC(cncName string) error {
 	klog.V(4).Infof("Cleaning up CNC %s", cncName)
 
-	_, exists := c.cncCache[cncName]
+	cncState, exists := c.cncCache[cncName]
 	if !exists {
 		klog.V(4).Infof("CNC %s not found in cache, nothing to clean up", cncName)
 		return nil
 	}
 
-	// Cleanup network connections
-	if err := c.cleanupNetworkConnections(cncName); err != nil {
+	// Cleanup network connections (includes service connectivity, ports, and policies)
+	if err := c.cleanupNetworkConnections(cncName, cncState.clusterIPServiceNetworkEnabled); err != nil {
 		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
 	}
 
