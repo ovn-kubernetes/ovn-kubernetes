@@ -199,11 +199,13 @@ type podConfiguration struct {
 	nodeSelector           map[string]string
 	isPrivileged           bool
 	labels                 map[string]string
-	annotations                  map[string]string
+	annotations            map[string]string
 	requiresExtraNamespace bool
 	hostNetwork            bool
 	ipRequestFromSubnet    string
 	usesExternalRouter     bool
+	nodeIndex              int
+	vtepIndex              int
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
