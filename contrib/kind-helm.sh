@@ -412,8 +412,8 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  deploy_frr_external_container
-  deploy_bgp_external_server
+  run_bgp_setup deploy-frr
+  run_bgp_setup deploy-bgp-server
 fi
 if [ "$KIND_REMOVE_TAINT" == true ]; then
   remove_no_schedule_taint
@@ -454,7 +454,7 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_frr_k8s
+  run_bgp_setup install-frr-k8s
 fi
 
 interconnect_arg_check
