@@ -220,6 +220,9 @@ func areNetlinkRulesEqual(r1, r2 *netlink.Rule) bool {
 	if r1.Type != r2.Type {
 		return false
 	}
+	if r1.Mark != r2.Mark {
+		return false
+	}
 
 	return areIPNetsEqual(r1.Src, r2.Src) && areIPNetsEqual(r1.Dst, r2.Dst)
 }
