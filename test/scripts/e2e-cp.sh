@@ -226,10 +226,7 @@ if [ "${PARALLEL:-false}" = "true" ]; then
 fi
 
 if [ "$ENABLE_MULTI_VTEP" != true ]; then
-  skip "Multi-VTEP"
-else
-  # transit router has ARP/ND flooding issue with multi-VTEP, need further investigation.
- skip "e2e egress IP"
+  skip_label "Feature:MultiVTEP"
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
