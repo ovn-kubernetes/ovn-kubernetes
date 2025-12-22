@@ -5,7 +5,7 @@ global:
 
 jobs:
   - name: kubelet-density-cni
-    jobIterations: 300
+    jobIterations: 200
     qps: 10
     burst: 10
     namespacedIterations: true 
