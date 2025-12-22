@@ -22,6 +22,56 @@ delete() {
   timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
   sleep 5
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
+
+  # Clean up stale endpoints from kind network that kind delete may leave behind
+  if $OCI_BIN network ls --format '{{.Name}}' | grep -q '^kind$'; then
+    echo "Cleaning up stale endpoints from kind network..."
+    for endpoint in ovn-control-plane ovn-worker ovn-worker2 ovn-worker3 ovn-worker4 frr; do
+      $OCI_BIN network disconnect -f kind "$endpoint" 2>/dev/null || true
+    done
+  fi
+}
+
+# Build and run the bgp-setup tool from test/e2e/cmd/bgp-setup
+# This replaces the shell functions: deploy_frr_external_container, deploy_bgp_external_server, install_frr_k8s
+# Arguments:
+#   $1 - phase: "deploy-frr", "deploy-bgp-server", "deploy-containers", "install-frr-k8s", or "all"
+run_bgp_setup() {
+  local phase="${1:-all}"
+  local bgp_setup_bin="${DIR}/../test/e2e/bgp-setup"
+  
+  # Build bgp-setup if it doesn't exist or if source is newer
+  if [ ! -f "$bgp_setup_bin" ] || [ "${DIR}/../test/e2e/cmd/bgp-setup/main.go" -nt "$bgp_setup_bin" ]; then
+    echo "Building bgp-setup tool..."
+    pushd "${DIR}/../test/e2e" > /dev/null
+    go build -o bgp-setup ./cmd/bgp-setup
+    popd > /dev/null
+  fi
+  
+  echo "Running bgp-setup with phase: $phase"
+  
+  # Determine IPv4/IPv6 flags
+  local ipv4_flag="true"
+  local ipv6_flag="false"
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
+    ipv4_flag="true"
+  else
+    ipv4_flag="false"
+  fi
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
+    ipv6_flag="true"
+  fi
+  
+  "$bgp_setup_bin" \
+    --phase="$phase" \
+    --container-runtime="$OCI_BIN" \
+    --ipv4="$ipv4_flag" \
+    --ipv6="$ipv6_flag" \
+    --bgp-server-subnet-ipv4="${BGP_SERVER_NET_SUBNET_IPV4}" \
+    --bgp-server-subnet-ipv6="${BGP_SERVER_NET_SUBNET_IPV6}" \
+    --isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE:-strict}" \
+    --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK:-true}" \
+    --kubeconfig="${KUBECONFIG}"
 }
 
 usage() {
@@ -1290,8 +1340,11 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  deploy_frr_external_container
-  deploy_bgp_external_server
+  # Phase 1a: Deploy external FRR container (before OVN installation)
+  run_bgp_setup deploy-frr
+
+  # Phase 1b: Deploy BGP server container (before OVN installation)
+  run_bgp_setup deploy-bgp-server
 fi
 build_ovn_image
 detect_apiserver_url
@@ -1330,7 +1383,8 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   fi
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_ffr_k8s
+  # Phase 2: Install frr-k8s and create FRRConfiguration (after OVN is installed)
+  run_bgp_setup install-frr-k8s
 fi
 
 interconnect_arg_check

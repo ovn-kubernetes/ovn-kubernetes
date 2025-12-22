@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/template"
 
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/frr"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
 
 	corev1 "k8s.io/api/core/v1"
@@ -104,6 +104,19 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 						"sleep",
 						"infinity",
 					}
+				}
+				// Add required security context to comply with PodSecurity "restricted" policy
+				if clientPod.Spec.Containers[k].SecurityContext == nil {
+					clientPod.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{}
+				}
+				clientPod.Spec.Containers[k].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				clientPod.Spec.Containers[k].SecurityContext.RunAsNonRoot = ptr.To(true)
+				clientPod.Spec.Containers[k].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				clientPod.Spec.Containers[k].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
+				clientPod.Spec.Containers[k].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				}
 			}
 			e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
@@ -680,6 +693,19 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						"infinity",
 					}
 				}
+				// Add required security context to comply with PodSecurity "restricted" policy
+				if podSpec.Spec.Containers[k].SecurityContext == nil {
+					podSpec.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{}
+				}
+				podSpec.Spec.Containers[k].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				podSpec.Spec.Containers[k].SecurityContext.RunAsNonRoot = ptr.To(true)
+				podSpec.Spec.Containers[k].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				podSpec.Spec.Containers[k].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
+				podSpec.Spec.Containers[k].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				}
 			}
 			clientPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), podSpec)
 
@@ -978,6 +1004,24 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
 					p.Spec.Containers[0].Args = args
 					p.Spec.HostNetwork = true
+
+					// Add required security context to comply with PodSecurity "restricted" policy
+					for i := range p.Spec.Containers {
+						if p.Spec.Containers[i].SecurityContext == nil {
+							p.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
+						}
+
+						// Set required security context fields
+						p.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+						p.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
+						p.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
+						p.Spec.Containers[i].SecurityContext.Capabilities = &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						}
+						p.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						}
+					}
 				})
 
 				framework.ExpectNoError(err)
@@ -988,6 +1032,21 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod := e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
 			pod.Spec.NodeName = nodes.Items[0].Name
 			pod.Labels = map[string]string{"network": cudnA.Name}
+			// Add required security context to comply with PodSecurity "restricted" policy
+			for i := range pod.Spec.Containers {
+				if pod.Spec.Containers[i].SecurityContext == nil {
+					pod.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
+				}
+				pod.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				pod.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
+				pod.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				pod.Spec.Containers[i].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
+				pod.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				}
+			}
 			podsNetA = append(podsNetA, e2epod.NewPodClient(f).CreateSync(context.TODO(), pod))
 
 			pod.Name = fmt.Sprintf("pod-2-%s-net-%s", nodes.Items[0].Name, cudnA.Name)
@@ -1022,7 +1081,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod.Labels = map[string]string{"network": "default"}
 			podNetDefault = e2epod.PodClientNS(f, "default").CreateSync(context.TODO(), pod)
 
-			svc.Name = fmt.Sprintf("service-default")
+			svc.Name = "service-default"
 			svc.Namespace = "default"
 			svc.Spec.Selector = pod.Labels
 			svc.Spec.Type = corev1.ServiceTypeNodePort
@@ -2253,124 +2312,28 @@ func routeAdvertisementsReadyFunc(c raclientset.Clientset, name string) func() e
 	}
 }
 
-// templateInputRouter data
-type templateInputRouter struct {
-	VRF           string
-	NeighborsIPv4 []string
-	NeighborsIPv6 []string
-	NetworksIPv4  []string
-	NetworksIPv6  []string
-}
-
-// templateInputFRR data
-type templateInputFRR struct {
-	// Name and Label are used for FRRConfiguration metadata
-	Name    string
-	Labels  map[string]string
-	Routers []templateInputRouter
-}
-
-// for routeadvertisements test cases we generate configuration from templates embed in the program
+// for routeadvertisements test cases we generate configuration from templates embedded in the program
 //
 //go:embed testdata/routeadvertisements
 var ratestdata embed.FS
-var tmplDir = filepath.Join("testdata", "routeadvertisements")
 
-const frrImage = "quay.io/frrouting/frr:10.4.1"
+// frrTemplateSource provides access to embedded FRR templates
+var frrTemplateSource = frr.NewEmbedFSSource(ratestdata, filepath.Join("testdata", "routeadvertisements"))
 
-// generateFRRConfiguration to establish a BGP session towards the provided
-// neighbors in the network's VRF configured to advertised the provided
-// networks. Returns a temporary directory where the configuration is generated.
+// generateFRRConfiguration generates external FRR configuration for BGP routing.
+// It returns a temporary directory containing the configuration files.
+// Caller is responsible for cleaning up the returned directory.
 func generateFRRConfiguration(neighborIPs, advertiseNetworks []string) (directory string, err error) {
-	// parse configuration templates
-	var templates *template.Template
-	templates, err = template.ParseFS(ratestdata, filepath.Join(tmplDir, "frr", "*.tmpl"))
-	if err != nil {
-		return "", fmt.Errorf("failed to parse templates: %w", err)
-	}
-
-	// create the directory that will hold the configuration files
-	directory, err = os.MkdirTemp("", "frrconf-")
-	if err != nil {
-		return "", fmt.Errorf("failed to make temp directory: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			os.RemoveAll(directory)
-		}
-	}()
-
-	// generate external frr configuration executing the templates
-	networksIPv4, networksIPv6 := splitCIDRStringsByIPFamily(advertiseNetworks)
-	neighborsIPv4, neighborsIPv6 := splitIPStringsByIPFamily(neighborIPs)
-	conf := templateInputFRR{
-		Routers: []templateInputRouter{
-			{
-				NeighborsIPv4: neighborsIPv4,
-				NetworksIPv4:  networksIPv4,
-				NeighborsIPv6: neighborsIPv6,
-				NetworksIPv6:  networksIPv6,
-			},
-		},
-	}
-
-	err = executeFileTemplate(templates, directory, "frr.conf", conf)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute template %q: %w", "frr.conf", err)
-	}
-	err = executeFileTemplate(templates, directory, "daemons", nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute template %q: %w", "daemons", err)
-	}
-
-	return directory, nil
+	return frr.GenerateConfiguration(frrTemplateSource, neighborIPs, advertiseNetworks)
 }
 
-// generateFRRk8sConfiguration for the provided network (which doubles up as the
-// FRRConfiguration instance name, VRF name and used as value of `network`
-// label) to establish a BGP session towards the provided neighbors in the
-// network's VRF, configured to receive advertisements for the provided
-// networks. Returns a temporary directory where the configuration is generated.
+// generateFRRk8sConfiguration generates FRR-K8s configuration for the provided network.
+// The networkName is used as the FRRConfiguration instance name, VRF name, and `network` label value.
+// It returns a temporary directory containing the configuration files.
+// Caller is responsible for cleaning up the returned directory.
 func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetworks []string) (directory string, err error) {
-	// parse configuration templates
-	var templates *template.Template
-	templates, err = template.ParseFS(ratestdata, filepath.Join(tmplDir, "frr-k8s", "*.tmpl"))
-	if err != nil {
-		return "", fmt.Errorf("failed to parse templates: %w", err)
-	}
-
-	// create the directory that will hold the configuration files
-	directory, err = os.MkdirTemp("", "frrk8sconf-")
-	if err != nil {
-		return "", fmt.Errorf("failed to make temp directory: %w", err)
-	}
-	defer func() {
-		if err != nil {
-			os.RemoveAll(directory)
-		}
-	}()
-
-	receivesIPv4, receivesIPv6 := splitCIDRStringsByIPFamily(receiveNetworks)
-	neighborsIPv4, neighborsIPv6 := splitIPStringsByIPFamily(neighborIPs)
-	conf := templateInputFRR{
-		Name:   networkName,
-		Labels: map[string]string{"network": networkName},
-		Routers: []templateInputRouter{
-			{
-				VRF:           networkName,
-				NeighborsIPv4: neighborsIPv4,
-				NeighborsIPv6: neighborsIPv6,
-				NetworksIPv4:  receivesIPv4,
-				NetworksIPv6:  receivesIPv6,
-			},
-		},
-	}
-	err = executeFileTemplate(templates, directory, "frrconf.yaml", conf)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute template %q: %w", "frrconf.yaml", err)
-	}
-
-	return directory, nil
+	labels := map[string]string{"network": networkName}
+	return frr.GenerateK8sConfiguration(frrTemplateSource, networkName, labels, neighborIPs, receiveNetworks)
 }
 
 // runBGPNetworkAndServer configures a topology appropriate to be used with
@@ -2429,7 +2392,7 @@ func runBGPNetworkAndServer(
 	ictx.AddCleanUpFn(func() error { return os.RemoveAll(frrConfig) })
 	frr := infraapi.ExternalContainer{
 		Name:        networkName + "-frr",
-		Image:       frrImage,
+		Image:       frr.Image,
 		Network:     bgpPeerNetwork,
 		RuntimeArgs: []string{"--volume", frrConfig + ":" + filepath.Join(filepath.FromSlash("/"), "etc", "frr")},
 	}
