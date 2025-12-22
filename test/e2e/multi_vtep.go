@@ -116,7 +116,7 @@ var _ = Describe("Multi-VTEP", feature.MultiVTEP, func() {
 				multiVtepNodes = append(multiVtepNodes, MultiVtepNode{Node: &node, EncapIPs: encapIPs})
 			}
 		}
-		Expect(len(nodeList.Items)).To(BeNumerically(">", 1), "cluster should have at least 2  multi-vtep nodes for testing")
+		Expect(len(multiVtepNodes)).To(BeNumerically(">", 1), "cluster should have at least 2  multi-vtep nodes for testing")
 
 	})
 
@@ -408,7 +408,68 @@ var _ = Describe("Multi-VTEP", feature.MultiVTEP, func() {
 				),
 			)
 		},
+		Entry("default network", func(podConfigs []podConfiguration) (string, string) {
+			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+				"e2e-framework": f.BaseName,
+			})
+			Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+			f.Namespace = namespace
+			return types.DefaultNetworkName, types.NetworkRoleDefault
+		}),
+		Entry("Layer3 Primary network", func(podConfigs []podConfiguration) (string, string) {
+			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+				"e2e-framework":           f.BaseName,
+				RequiredUDNNamespaceLabel: "",
+			})
+			Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+			f.Namespace = namespace
+			netConfigParams := networkAttachmentConfigParams{
+				name:     primaryNetworkName,
+				topology: types.Layer3Topology,
+				cidr:     netCIDR(primaryNetworkCIDR, netPrefixLengthPerNode),
+				role:     types.NetworkRolePrimary,
+			}
+			netConfig := newNetworkAttachmentConfig(netConfigParams)
+			netConfig.namespace = f.Namespace.Name
+			By("creating Layer3 Primary network")
+			_, err = nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
+				context.Background(),
+				generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
+				metav1.CreateOptions{},
+			)
+			Expect(err).NotTo(HaveOccurred())
 
+			return primaryNetworkName, types.NetworkRolePrimary
+		}),
+		Entry("Layer3 Secondary network", func(podConfigs []podConfiguration) (string, string) {
+			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+				"e2e-framework": f.BaseName,
+			})
+			Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+			f.Namespace = namespace
+
+			netConfigParams := networkAttachmentConfigParams{
+				name:     secondaryNetworkName,
+				topology: types.Layer3Topology,
+				cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+			}
+			netConfig := newNetworkAttachmentConfig(netConfigParams)
+			netConfig.namespace = f.Namespace.Name
+			By("creating Layer3 Secondary network")
+			_, err = nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
+				context.Background(),
+				generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
+				metav1.CreateOptions{},
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("attatch Pod to secondary network")
+			for i := range podConfigs {
+				podConfigs[i].attachments = []nadapi.NetworkSelectionElement{{Name: netConfigParams.name}}
+			}
+
+			return secondaryNetworkName, types.NetworkRoleSecondary
+		}),
 		Entry("Layer2 Primary network", func(podConfigs []podConfiguration) (string, string) {
 			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
 				"e2e-framework":           f.BaseName,
@@ -434,7 +495,6 @@ var _ = Describe("Multi-VTEP", feature.MultiVTEP, func() {
 
 			return primaryNetworkName, types.NetworkRolePrimary
 		}),
-
 		Entry("Layer2 Secondary network", func(podConfigs []podConfiguration) (string, string) {
 			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
 				"e2e-framework": f.BaseName,
