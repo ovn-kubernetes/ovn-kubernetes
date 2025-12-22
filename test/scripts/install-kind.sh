@@ -10,8 +10,24 @@ esac
 # from https://github.com/kubernetes-sigs/kind/releases
 KIND_URL=https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-${ARCH}
 KIND_SHA_URL=$KIND_URL.sha256sum
-KIND_SHA="$( curl -L -s ${KIND_SHA_URL}| awk '{ print $1 }')"
 KIND_DOWNLOAD_RETRIES=5
+
+# Fetch SHA256 checksum with retries
+KIND_SHA=""
+for retry in $(seq 1 ${KIND_DOWNLOAD_RETRIES}); do
+    KIND_SHA="$(curl -L -s --retry 3 --retry-delay 2 ${KIND_SHA_URL} | awk '{ print $1 }')"
+    if [ -n "${KIND_SHA}" ]; then
+        echo "Successfully fetched KIND checksum: ${KIND_SHA}"
+        break
+    fi
+    echo "Failed to fetch KIND checksum (attempt ${retry}/${KIND_DOWNLOAD_RETRIES}), retrying..."
+    sleep 5
+done
+
+if [ -z "${KIND_SHA}" ]; then
+    echo "ERROR: Could not fetch KIND SHA256 checksum from ${KIND_SHA_URL}"
+    exit 1
+fi
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 TMP_DIR="$(mktemp -d)"
