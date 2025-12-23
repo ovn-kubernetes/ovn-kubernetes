@@ -340,7 +340,7 @@ _Appears in:_
 | `layer2` _[Layer2Config](#layer2config)_ | Layer2 is the Layer2 topology configuration. |  |  |
 | `localnet` _[LocalnetConfig](#localnetconfig)_ | Localnet is the Localnet topology configuration. |  |  |
 | `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay" and "Geneve".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "Geneve": The network uses Geneve overlay.<br />When omitted, the default behaviour is Geneve. |  | Enum: [NoOverlay Geneve] <br /> |
-| `noOverlayOptions` _[NoOverlayOptions](#nooverlayoptions)_ | NoOverlayOptions contains configuration for no-overlay mode.<br />This is only allowed when Transport is "NoOverlay". |  |  |
+| `noOverlay` _[NoOverlayConfig](#nooverlayconfig)_ | NoOverlay contains configuration for no-overlay mode.<br />This is only allowed when Transport is "NoOverlay". |  |  |
 
 
 #### NetworkTopology
@@ -362,11 +362,11 @@ _Appears in:_
 | `Layer3` |  |
 
 
-#### NoOverlayOptions
+#### NoOverlayConfig
 
 
 
-NoOverlayOptions contains configuration options for networks operating in no-overlay mode.
+NoOverlayConfig contains configuration options for networks operating in no-overlay mode.
 
 
 
@@ -388,7 +388,7 @@ _Underlying type:_ _string_
 
 
 _Appears in:_
-- [NoOverlayOptions](#nooverlayoptions)
+- [NoOverlayConfig](#nooverlayconfig)
 
 | Field | Description |
 | --- | --- |
@@ -405,7 +405,7 @@ _Underlying type:_ _string_
 
 
 _Appears in:_
-- [NoOverlayOptions](#nooverlayoptions)
+- [NoOverlayConfig](#nooverlayconfig)
 
 | Field | Description |
 | --- | --- |
