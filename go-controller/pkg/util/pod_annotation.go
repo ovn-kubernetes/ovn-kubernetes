@@ -61,6 +61,13 @@ const (
 	// IPAMClaim will hold the allocation for the workload.
 	// Deprecated: Use 'v1.multus-cni.io/default-network' annotation instead, specifying the 'ipam-claim-reference' attribute.
 	DeprecatedOvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
+
+	// OvnPodNetworkEncapIPMappingAnnotation is only use  for 2e testing purpose.
+	// Multi-VTEP is only supported with SR-IOV NICs, while e2e test
+	// is run in kind env which uses veth. For testing multi-VTEP in e2e test, this annotation is
+	// used to map network to a encap IP on the node.
+	// The format is: "{"red": "10.10.0.1", "blue": "10.10.0.2", ...}"
+	OvnPodNetworkEncapIPMappingAnnotation = "test.k8s.ovn.org/pod-network-encap-ip-mapping"
 )
 
 var ErrNoPodIPFound = errors.New("no pod IPs found")
@@ -564,4 +571,16 @@ func UnmarshalUDNOpenPortsAnnotation(annotations map[string]string) ([]*OpenPort
 // Ensure the IP is a valid IPv6 LLA
 func isIPv6LLA(ip net.IP) bool {
 	return utilnet.IsIPv6(ip) && ip.IsLinkLocalUnicast()
+}
+
+func UnmarshalPodNetworkEncapIPMappingAnnotation(annotations map[string]string) (map[string]string, error) {
+	encapIPs, ok := annotations[OvnPodNetworkEncapIPMappingAnnotation]
+	if !ok {
+		return nil, nil
+	}
+	result := make(map[string]string)
+	if err := yaml.Unmarshal([]byte(encapIPs), &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal OvnPodNetworkEncapIPMappingAnnotation %s: %v", encapIPs, err)
+	}
+	return result, nil
 }
