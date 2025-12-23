@@ -21,23 +21,23 @@ import (
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
-// NoOverlayOptionsApplyConfiguration represents a declarative configuration of the NoOverlayOptions type for use
+// NoOverlayConfigApplyConfiguration represents a declarative configuration of the NoOverlayConfig type for use
 // with apply.
-type NoOverlayOptionsApplyConfiguration struct {
+type NoOverlayConfigApplyConfiguration struct {
 	OutboundSNAT *userdefinednetworkv1.SNATOption    `json:"outboundSNAT,omitempty"`
 	Routing      *userdefinednetworkv1.RoutingOption `json:"routing,omitempty"`
 }
 
-// NoOverlayOptionsApplyConfiguration constructs a declarative configuration of the NoOverlayOptions type for use with
+// NoOverlayConfigApplyConfiguration constructs a declarative configuration of the NoOverlayConfig type for use with
 // apply.
-func NoOverlayOptions() *NoOverlayOptionsApplyConfiguration {
-	return &NoOverlayOptionsApplyConfiguration{}
+func NoOverlayConfig() *NoOverlayConfigApplyConfiguration {
+	return &NoOverlayConfigApplyConfiguration{}
 }
 
 // WithOutboundSNAT sets the OutboundSNAT field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the OutboundSNAT field is set to the value of the last call.
-func (b *NoOverlayOptionsApplyConfiguration) WithOutboundSNAT(value userdefinednetworkv1.SNATOption) *NoOverlayOptionsApplyConfiguration {
+func (b *NoOverlayConfigApplyConfiguration) WithOutboundSNAT(value userdefinednetworkv1.SNATOption) *NoOverlayConfigApplyConfiguration {
 	b.OutboundSNAT = &value
 	return b
 }
@@ -45,7 +45,7 @@ func (b *NoOverlayOptionsApplyConfiguration) WithOutboundSNAT(value userdefinedn
 // WithRouting sets the Routing field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Routing field is set to the value of the last call.
-func (b *NoOverlayOptionsApplyConfiguration) WithRouting(value userdefinednetworkv1.RoutingOption) *NoOverlayOptionsApplyConfiguration {
+func (b *NoOverlayConfigApplyConfiguration) WithRouting(value userdefinednetworkv1.RoutingOption) *NoOverlayConfigApplyConfiguration {
 	b.Routing = &value
 	return b
 }
