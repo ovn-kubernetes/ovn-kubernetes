@@ -110,16 +110,8 @@ var ovnNorthdStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 	"ovnsb_db_run":     {},
 }
 
-func RegisterOvnNorthdMetrics(
-	waitTimeoutFunc func() bool,
-	stopChan <-chan struct{},
-) {
-	if ok := waitTimeoutFunc(); !ok {
-		klog.Info("OVN northd metrics registration skipped: readiness gate not satisfied")
-		return
-	}
-	klog.Info("Registering OVN northd metrics")
-
+// RegisterOvnNorthdMetrics registers the ovn-northd metrics
+func RegisterOvnNorthdMetrics(ovnRegistry prometheus.Registerer) {
 	// ovn-northd metrics
 	getOvnNorthdVersionInfo()
 	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
@@ -186,11 +178,9 @@ func RegisterOvnNorthdMetrics(
 
 	// Register the ovn-northd coverage/show metrics with prometheus
 	componentCoverageShowMetricsMap[ovnNorthd] = ovnNorthdCoverageShowMetricsMap
-	registerCoverageShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
-	go coverageShowMetricsUpdater(ovnNorthd, stopChan)
+	registerCoverageShowMetrics(ovnRegistry, ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
 
 	// Register the ovn-northd stopwatch/show metrics with prometheus
 	componentStopwatchShowMetricsMap[ovnNorthd] = ovnNorthdStopwatchShowMetricsMap
-	registerStopwatchShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
-	go stopwatchShowMetricsUpdater(ovnNorthd, stopChan)
+	registerStopwatchShowMetrics(ovnRegistry, ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
 }
