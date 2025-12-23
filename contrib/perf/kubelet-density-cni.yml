@@ -5,7 +5,7 @@ global:
 
 jobs:
   - name: kubelet-density-cni
-    jobIterations: 200
+    jobIterations: 100
     qps: 10
     burst: 10
     namespacedIterations: true 
@@ -17,7 +17,7 @@ jobs:
     preLoadPeriod: 2m
     churnConfig:
       percent: 10
-      cycles: 10
+      cycles: 20
     objects:
 
       - objectTemplate: templates/webserver-deployment.yml
