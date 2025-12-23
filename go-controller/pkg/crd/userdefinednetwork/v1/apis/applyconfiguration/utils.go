@@ -51,8 +51,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &userdefinednetworkv1.LocalnetConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("NetworkSpec"):
 		return &userdefinednetworkv1.NetworkSpecApplyConfiguration{}
-	case v1.SchemeGroupVersion.WithKind("NoOverlayOptions"):
-		return &userdefinednetworkv1.NoOverlayOptionsApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("NoOverlayConfig"):
+		return &userdefinednetworkv1.NoOverlayConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UserDefinedNetwork"):
 		return &userdefinednetworkv1.UserDefinedNetworkApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UserDefinedNetworkSpec"):

@@ -34,8 +34,8 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer2' ? has(self.layer2): !has(self.layer2)", message="spec.layer2 is required when topology is Layer2 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Localnet' ? has(self.localnet): !has(self.localnet)", message="spec.localnet is required when topology is Localnet and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary')", message="transport 'NoOverlay' is only supported for Layer3 primary networks"
-	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || has(self.noOverlayOptions)", message="noOverlayOptions is required when transport is 'NoOverlay'"
-	// +kubebuilder:validation:XValidation:rule="self.transport == 'NoOverlay' || !has(self.noOverlayOptions)", message="noOverlayOptions is forbidden when transport is not 'NoOverlay'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || has(self.noOverlay)", message="spec.noOverlay is required when type transport is 'NoOverlay'"
+	// +kubebuilder:validation:XValidation:rule="self.transport == 'NoOverlay' || !has(self.noOverlay)", message="spec.noOverlay is forbidden when transport type is not 'NoOverlay'"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
@@ -77,10 +77,10 @@ type NetworkSpec struct {
 	// +kubebuilder:validation:Enum=NoOverlay;Geneve
 	// +optional
 	Transport TransportOption `json:"transport,omitempty"`
-	// NoOverlayOptions contains configuration for no-overlay mode.
+	// NoOverlay contains configuration for no-overlay mode.
 	// This is only allowed when Transport is "NoOverlay".
 	// +optional
-	NoOverlayOptions *NoOverlayOptions `json:"noOverlayOptions,omitempty"`
+	NoOverlay *NoOverlayConfig `json:"noOverlay,omitempty"`
 }
 
 // ClusterUserDefinedNetworkStatus contains the observed status of the ClusterUserDefinedNetwork.
@@ -250,8 +250,8 @@ const (
 	RoutingUnmanaged RoutingOption = "Unmanaged"
 )
 
-// NoOverlayOptions contains configuration options for networks operating in no-overlay mode.
-type NoOverlayOptions struct {
+// NoOverlayConfig contains configuration options for networks operating in no-overlay mode.
+type NoOverlayConfig struct {
 	// OutboundSNAT defines the SNAT behavior for outbound traffic from pods.
 	// +kubebuilder:validation:Enum=Enabled;Disabled
 	// +required
