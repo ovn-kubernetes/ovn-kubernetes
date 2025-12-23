@@ -149,11 +149,18 @@ func (tn testNode) Node() *corev1.Node {
 	}
 }
 
+type testPrefixSelector struct {
+	Prefix string
+	LE     uint32
+	GE     uint32
+}
+
 type testNeighbor struct {
 	ASN       uint32
 	Address   string
 	DisableMP *bool
 	Advertise []string
+	Receive   []testPrefixSelector
 }
 
 func (tn testNeighbor) Neighbor() frrapi.Neighbor {
@@ -170,6 +177,22 @@ func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 	}
 	if tn.DisableMP != nil {
 		n.DisableMP = *tn.DisableMP
+	}
+	if len(tn.Receive) > 0 {
+		prefixSelectors := make([]frrapi.PrefixSelector, 0, len(tn.Receive))
+		for _, ps := range tn.Receive {
+			prefixSelectors = append(prefixSelectors, frrapi.PrefixSelector{
+				Prefix: ps.Prefix,
+				LE:     ps.LE,
+				GE:     ps.GE,
+			})
+		}
+		n.ToReceive = frrapi.Receive{
+			Allowed: frrapi.AllowedInPrefixes{
+				Mode:     frrapi.AllowRestricted,
+				Prefixes: prefixSelectors,
+			},
+		}
 	}
 
 	return n
@@ -408,6 +431,7 @@ func TestController_reconcile(t *testing.T) {
 		namespaces           []*testNamespace
 		eips                 []*testEIP
 		reconcile            string
+		transport            string
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
 		expectFRRConfigs     []*testFRRConfig
@@ -816,6 +840,37 @@ func TestController_reconcile(t *testing.T) {
 			eips:                 []*testEIP{{Name: "eip", EIPs: map[string]string{"node": "1.0.1.1"}}},
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionTrue,
+		},
+		{
+			name:      "reconciles pod RouteAdvertisement for default network in no-overlay mode with ToReceive routes",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			transport: types.NetworkTransportNoOverlay,
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Receive: []testPrefixSelector{{Prefix: "1.2.0.0/16"}}},
+						}},
+					},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.0.0/24"}, Receive: []testPrefixSelector{{Prefix: "1.1.0.0/16", LE: 24, GE: 24}}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
 			name: "fails to reconcile a secondary network",
@@ -1328,6 +1383,7 @@ exit
 					HostSubnetLength: 64,
 				},
 			}
+			config.Default.Transport = tt.transport
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
