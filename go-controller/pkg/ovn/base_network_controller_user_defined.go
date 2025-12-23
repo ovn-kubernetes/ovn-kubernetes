@@ -282,7 +282,7 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 		return nil
 	}
 
-	if bsnc.doesNetworkRequireIPAM() && bsnc.lsManager.IsNonHostSubnetSwitch(switchName) {
+	if bsnc.isNonHostSubnetSwitch(switchName) {
 		klog.V(5).Infof(
 			"Pod %s/%s requires IPAM but does not have an assigned IP address", pod.Namespace, pod.Name)
 		return nil
