@@ -614,9 +614,9 @@ spec:
                         IPv6 subnet is used
                       rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                         isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280'
-                  noOverlayOptions:
+                  noOverlay:
                     description: |-
-                      NoOverlayOptions contains configuration for no-overlay mode.
+                      NoOverlay contains configuration for no-overlay mode.
                       This is only allowed when Transport is "NoOverlay".
                     properties:
                       outboundSNAT:
@@ -682,11 +682,12 @@ spec:
                   rule: '!has(self.transport) || self.transport != ''NoOverlay'' ||
                     (self.topology == ''Layer3'' && has(self.layer3) && self.layer3.role
                     == ''Primary'')'
-                - message: noOverlayOptions is required when transport is 'NoOverlay'
+                - message: spec.noOverlay is required when type transport is 'NoOverlay'
                   rule: '!has(self.transport) || self.transport != ''NoOverlay'' ||
-                    has(self.noOverlayOptions)'
-                - message: noOverlayOptions is forbidden when transport is not 'NoOverlay'
-                  rule: self.transport == 'NoOverlay' || !has(self.noOverlayOptions)
+                    has(self.noOverlay)'
+                - message: spec.noOverlay is forbidden when transport type is not
+                    'NoOverlay'
+                  rule: self.transport == 'NoOverlay' || !has(self.noOverlay)
                 - message: Network spec is immutable
                   rule: self == oldSelf
             required:
