@@ -20,7 +20,7 @@ spec:
       subnets:
       - 10.10.0.0/16
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
@@ -43,7 +43,7 @@ spec:
       - cidr: 10.10.0.0/16
         hostSubnet: 24
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
@@ -66,14 +66,14 @@ spec:
       subnets:
       - 10.10.0.0/16
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
 	},
 	{
-		Description: "noOverlayOptions is required when transport is NoOverlay",
-		ExpectedErr: `noOverlayOptions is required when transport is 'NoOverlay'`,
+		Description: "noOverlay is required when transport is NoOverlay",
+		ExpectedErr: `spec.noOverlay is required when type transport is 'NoOverlay'`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -92,8 +92,8 @@ spec:
 `,
 	},
 	{
-		Description: "noOverlayOptions is forbidden when transport is Geneve",
-		ExpectedErr: `noOverlayOptions is forbidden when transport is not 'NoOverlay'`,
+		Description: "noOverlay is forbidden when transport is Geneve",
+		ExpectedErr: `spec.noOverlay is forbidden when transport type is not 'NoOverlay'`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -109,14 +109,14 @@ spec:
       - cidr: 10.10.0.0/16
         hostSubnet: 24
     transport: Geneve
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
 	},
 	{
-		Description: "noOverlayOptions is forbidden when transport is not set (defaults to Geneve)",
-		ExpectedErr: `noOverlayOptions is forbidden when transport is not 'NoOverlay'`,
+		Description: "noOverlay is forbidden when transport is not set (defaults to Geneve)",
+		ExpectedErr: `spec.noOverlay is forbidden when transport type is not 'NoOverlay'`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -131,7 +131,7 @@ spec:
       subnets:
       - cidr: 10.10.0.0/16
         hostSubnet: 24
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
