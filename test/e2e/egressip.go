@@ -3182,6 +3182,55 @@ spec:
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	})
 
+	ginkgo.It("Should fail if egressip-mark annotation is present during EgressIP creation", func() {
+		egressIPValidatingadmissionpolicy, _ := e2ekubectl.RunKubectl("default", "get", "--no-headers", "validatingadmissionpolicy", "egressip-create-validation")
+		egressIPValidatingadmissionpolicyBinding, _ := e2ekubectl.RunKubectl("default", "get", "--no-headers", "validatingadmissionpolicybinding", "egressip-create-validation-binding")
+		if egressIPValidatingadmissionpolicy == "" || egressIPValidatingadmissionpolicyBinding == "" {
+			ginkgo.Skip("Required validatingadmissionpolicy or validatingadmissionpolicyBinding are missing, hence skipping this test")
+		}
+		ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to egress1Node node")
+		egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
+		egressNodeAvailabilityHandler.Enable(egress1Node.name)
+		defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
+
+		ginkgo.By("1. Create an EgressIP object with one egress IP defined")
+		var egressIP1 net.IP
+		var err error
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
+
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+    annotations:
+      ` + util.EgressIPMarkAnnotation + `: "50000"
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    namespaceSelector:
+        matchLabels:
+            name: ` + f.Namespace.Name + `
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		ginkgo.By("2. Create an EgressIP with k8s.ovn.org/egressip-mark annotation defined")
+		_, err = e2ekubectl.RunKubectl("default", "create", "-f", egressIPYaml)
+		gomega.Expect(err).To(gomega.HaveOccurred(), "Should fail if k8s.ovn.org/egressip-mark annotation is present during creation")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("EgressIP resources cannot be created with the \"k8s.ovn.org/egressip-mark\" annotation. This annotation is managed by the system.")))
+	})
+
 	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
 		if !isNetworkSegmentationEnabled() {
 			ginkgo.Skip("network segmentation is disabled")
