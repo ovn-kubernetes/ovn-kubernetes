@@ -39,9 +39,23 @@ delete() {
 run_bgp_setup() {
   local phase="${1:-all}"
   local bgp_setup_bin="${DIR}/../test/e2e/bgp-setup"
+  local bgp_setup_src="${DIR}/../test/e2e/cmd/bgp-setup"
   
-  # Build bgp-setup if it doesn't exist or if source is newer
-  if [ ! -f "$bgp_setup_bin" ] || [ "${DIR}/../test/e2e/cmd/bgp-setup/main.go" -nt "$bgp_setup_bin" ]; then
+  # Build bgp-setup if it doesn't exist or if any source file (including templates) is newer
+  local needs_rebuild=false
+  if [ ! -f "$bgp_setup_bin" ]; then
+    needs_rebuild=true
+  else
+    # Check if any file in the bgp-setup directory is newer than the binary
+    while IFS= read -r -d '' src_file; do
+      if [ "$src_file" -nt "$bgp_setup_bin" ]; then
+        needs_rebuild=true
+        break
+      fi
+    done < <(find "$bgp_setup_src" -type f -print0)
+  fi
+  
+  if [ "$needs_rebuild" = true ]; then
     echo "Building bgp-setup tool..."
     pushd "${DIR}/../test/e2e" > /dev/null
     go build -o bgp-setup ./cmd/bgp-setup
@@ -511,6 +525,11 @@ install_jinjanator_renderer() {
 }
 
 check_dependencies() {
+  if ! command_exists go ; then
+    echo "Dependency not met: Command not found 'go'"
+    exit 1
+  fi
+
   if ! command_exists curl ; then
     echo "Dependency not met: Command not found 'curl'"
     exit 1

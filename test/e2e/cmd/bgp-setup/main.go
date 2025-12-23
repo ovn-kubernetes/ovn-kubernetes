@@ -996,6 +996,7 @@ func addPodNetworkRoutes(cfg *Config, clientset *kubernetes.Clientset) error {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
 
+	var errs []error
 	for _, node := range nodes.Items {
 		// Get node's internal IPs
 		var nodeIPv4, nodeIPv6 string
@@ -1044,11 +1045,16 @@ func addPodNetworkRoutes(cfg *Config, clientset *kubernetes.Clientset) error {
 					args = append([]string{"-6"}, args...)
 				}
 				// This requires root privileges
-				runCmd("sudo", append([]string{"ip"}, args...)...)
+				if err := runCmd("sudo", append([]string{"ip"}, args...)...); err != nil {
+					errs = append(errs, fmt.Errorf("failed to add route for %s via %s (node %s): %w", subnet, via, node.Name, err))
+				}
 			}
 		}
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to add some routes: %v", errs)
+	}
 	return nil
 }
 
