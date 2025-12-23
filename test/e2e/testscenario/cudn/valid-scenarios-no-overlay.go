@@ -21,7 +21,7 @@ spec:
       - cidr: 10.10.0.0/16
         hostSubnet: 24
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
@@ -44,7 +44,7 @@ spec:
       - cidr: 10.20.0.0/16
         hostSubnet: 24
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Disabled
       routing: Unmanaged
 `,
@@ -67,7 +67,7 @@ spec:
       - cidr: 10.30.0.0/16
         hostSubnet: 24
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Disabled
       routing: Managed
 `,
@@ -90,7 +90,7 @@ spec:
       - cidr: 10.40.0.0/16
         hostSubnet: 24
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Unmanaged
 `,
@@ -115,7 +115,7 @@ spec:
       - cidr: fd00:10:50::/48
         hostSubnet: 64
     transport: NoOverlay
-    noOverlayOptions:
+    noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
