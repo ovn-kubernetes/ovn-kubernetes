@@ -61,12 +61,21 @@ func (bnc *BaseNetworkController) allocatePodIPsOnSwitch(pod *corev1.Pod,
 	if !util.PodScheduled(pod) || util.PodWantsHostNetwork(pod) {
 		return "", nil
 	}
-	// skip nodes that are not running ovnk (inferred from host subnets)
-	if bnc.lsManager.IsNonHostSubnetSwitch(switchName) {
+
+	// skip nodes that are not running ovnk (inferred from host subnets and
+	// topology type)
+	if bnc.isNonHostSubnetSwitch(switchName) {
 		return "", nil
 	}
 
 	expectedLogicalPortName = bnc.GetLogicalPortName(pod, nadName)
+
+	// For IPAM-less networks (e.g., localnet without subnet ), skip IP allocation.
+	// The logical port should still be tracked to prevent deletion during sync.
+	if !bnc.doesNetworkRequireIPAM() {
+		return expectedLogicalPortName, nil
+	}
+
 	// it is possible to try to add a pod here that has no node. For example if a pod was deleted with
 	// a finalizer, and then the node was removed. In this case the pod will still exist in a running state.
 	// Terminating pods should still have network connectivity for pre-stop hooks or termination grace period
@@ -116,7 +125,7 @@ func (bnc *BaseNetworkController) deleteStaleLogicalSwitchPorts(expectedLogicalP
 		for _, n := range nodes {
 			// skip nodes that are not running ovnk (inferred from host subnets)
 			switchName := bnc.GetNetworkScopedSwitchName(n.Name)
-			if bnc.lsManager.IsNonHostSubnetSwitch(switchName) {
+			if bnc.isNonHostSubnetSwitch(switchName) {
 				continue
 			}
 			switchNames = append(switchNames, switchName)
@@ -397,8 +406,7 @@ func (bnc *BaseNetworkController) podExpectedInLogicalCache(pod *corev1.Pod) boo
 		return false
 	}
 	return !util.PodWantsHostNetwork(pod) &&
-		!(bnc.lsManager.IsNonHostSubnetSwitch(switchName) &&
-			bnc.doesNetworkRequireIPAM()) &&
+		!bnc.isNonHostSubnetSwitch(switchName) &&
 		!util.PodCompleted(pod)
 }
 
@@ -1208,4 +1216,8 @@ func (bnc *BaseNetworkController) wasPodReleasedBeforeStartup(uid, nad string) b
 		return false
 	}
 	return bnc.releasedPodsBeforeStartup[nad].Has(uid)
+}
+
+func (bnc *BaseNetworkController) isNonHostSubnetSwitch(switchName string) bool {
+	return bnc.doesNetworkRequireIPAM() && bnc.lsManager.IsNonHostSubnetSwitch(switchName)
 }
