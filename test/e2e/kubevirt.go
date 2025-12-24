@@ -1841,6 +1841,8 @@ write_files:
 								},
 							},
 						}},
+						NodeSelector:             metav1.LabelSelector{},
+						FRRConfigurationSelector: metav1.LabelSelector{},
 					},
 				})
 			}

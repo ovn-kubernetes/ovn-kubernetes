@@ -105,6 +105,19 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 						"infinity",
 					}
 				}
+				// Add required security context to comply with PodSecurity "restricted" policy
+				if clientPod.Spec.Containers[k].SecurityContext == nil {
+					clientPod.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{}
+				}
+				clientPod.Spec.Containers[k].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				clientPod.Spec.Containers[k].SecurityContext.RunAsNonRoot = ptr.To(true)
+				clientPod.Spec.Containers[k].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				clientPod.Spec.Containers[k].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
+				clientPod.Spec.Containers[k].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				}
 			}
 			e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
 
@@ -680,6 +693,19 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						"infinity",
 					}
 				}
+				// Add required security context to comply with PodSecurity "restricted" policy
+				if podSpec.Spec.Containers[k].SecurityContext == nil {
+					podSpec.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{}
+				}
+				podSpec.Spec.Containers[k].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				podSpec.Spec.Containers[k].SecurityContext.RunAsNonRoot = ptr.To(true)
+				podSpec.Spec.Containers[k].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				podSpec.Spec.Containers[k].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
+				podSpec.Spec.Containers[k].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				}
 			}
 			clientPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), podSpec)
 
@@ -978,6 +1004,24 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
 					p.Spec.Containers[0].Args = args
 					p.Spec.HostNetwork = true
+
+					// Add required security context to comply with PodSecurity "restricted" policy
+					for i := range p.Spec.Containers {
+						if p.Spec.Containers[i].SecurityContext == nil {
+							p.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
+						}
+
+						// Set required security context fields
+						p.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+						p.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
+						p.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
+						p.Spec.Containers[i].SecurityContext.Capabilities = &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						}
+						p.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						}
+					}
 				})
 
 				framework.ExpectNoError(err)
@@ -988,6 +1032,21 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod := e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
 			pod.Spec.NodeName = nodes.Items[0].Name
 			pod.Labels = map[string]string{"network": cudnA.Name}
+			// Add required security context to comply with PodSecurity "restricted" policy
+			for i := range pod.Spec.Containers {
+				if pod.Spec.Containers[i].SecurityContext == nil {
+					pod.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
+				}
+				pod.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				pod.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
+				pod.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				pod.Spec.Containers[i].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
+				pod.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				}
+			}
 			podsNetA = append(podsNetA, e2epod.NewPodClient(f).CreateSync(context.TODO(), pod))
 
 			pod.Name = fmt.Sprintf("pod-2-%s-net-%s", nodes.Items[0].Name, cudnA.Name)
@@ -1022,7 +1081,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod.Labels = map[string]string{"network": "default"}
 			podNetDefault = e2epod.PodClientNS(f, "default").CreateSync(context.TODO(), pod)
 
-			svc.Name = fmt.Sprintf("service-default")
+			svc.Name = "service-default"
 			svc.Namespace = "default"
 			svc.Spec.Selector = pod.Labels
 			svc.Spec.Type = corev1.ServiceTypeNodePort
@@ -2276,7 +2335,7 @@ type templateInputFRR struct {
 var ratestdata embed.FS
 var tmplDir = filepath.Join("testdata", "routeadvertisements")
 
-const frrImage = "quay.io/frrouting/frr:9.1.3"
+const frrImage = "quay.io/frrouting/frr:10.4.1"
 
 // generateFRRConfiguration to establish a BGP session towards the provided
 // neighbors in the network's VRF configured to advertised the provided
