@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -198,9 +199,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			isUpdated, err = addrMgr.UpdateEgressIP(assignedEIP1, assignedEIP2)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.ConsistOf(ipV4Addr2))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).WithTimeout(3 * time.Second).WithPolling(1 * time.Second).Should(gomega.ConsistOf(ipV4Addr2))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
