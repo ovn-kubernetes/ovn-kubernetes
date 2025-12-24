@@ -3,6 +3,7 @@ package kubevirt
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	v1 "kubevirt.io/api/core/v1"
@@ -32,8 +33,11 @@ func RetrieveAllGlobalAddressesFromGuest(cli *Client, vmi *v1.VirtualMachineInst
 			continue
 		}
 		for _, address := range iface.Addresses {
-			// Skip non DHCPv6 address
-			if address.Family == "inet6" && address.PrefixLen != 128 {
+			ip := net.ParseIP(address.Local)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid ip address %q", address.Local)
+			}
+			if ip.IsLinkLocalUnicast() {
 				continue
 			}
 			addresses = append(addresses, address.Local)
