@@ -21,6 +21,7 @@ var (
 	Interconnect          = New("Interconnect")
 	Multicast             = New("Multicast")
 	MultiHoming           = New("MultiHoming")
+	MultiVTEP             = New("MultiVTEP")
 	NodeIPMACMigration    = New("NodeIPMACMigration")
 	OVSCPUPin             = New("OVSCPUPin")
 	RouteAdvertisements   = New("RouteAdvertisements")

@@ -128,7 +128,7 @@ docker_disable_ipv6() {
 
 coredns_patch() {
   dns_server="8.8.8.8"
-  # No need for ipv6 nameserver for dual stack, it will ask for 
+  # No need for ipv6 nameserver for dual stack, it will ask for
   # A and AAAA records
   if [ "$IP_FAMILY" == "ipv6" ]; then
     dns_server="2001:4860:4860::8888"
@@ -500,6 +500,33 @@ enable_multi_net() {
   docker_create_second_disconnected_interface "underlay"  # localnet scenarios require an extra interface
 }
 
+
+enable_multi_vtep() {
+  echo "add second VTEP interface to nodes"
+
+  KIND_NODES=$(kind_get_nodes)
+  # e2e test case could create docker containers, the IP_OFFSET should be large enough to avoid collision
+  IP_OFFSET=4096
+
+  for n in $KIND_NODES; do
+    echo "adding VTEP interface to node $n"
+    veth_host="veth`openssl rand -hex 4`"
+    veth_cont="veth`openssl rand -hex 4`"
+    ns_cont=`"$OCI_BIN" inspect -f '{{ .State.Pid }}' $n`
+    bridge=`"$OCI_BIN" network inspect kind --format 'br-{{.Id}}' | cut -c1-15`
+    eth0_ip=`sudo nsenter -t $ns_cont -n ip -br addr show dev eth0  | awk '{print $3}' | cut -d '/' -f 1`
+    sudo ip link add $veth_host type veth peer name $veth_cont
+    sudo ip link set $veth_cont netns $ns_cont
+    sudo ip link set $veth_host master $bridge
+    sudo ip link set $veth_host up
+
+    vtep1_ip=$(python3 -c "import ipaddress; n=ipaddress.ip_network('$eth0_ip', strict=False); print(f'{n.network_address + $IP_OFFSET}/{n.prefixlen}')")
+    sudo nsenter -t $ns_cont -n ip link set $veth_cont name vtep1
+    sudo nsenter -t $ns_cont -n ip link set vtep1 up
+    sudo nsenter -t $ns_cont -n ip addr add $vtep1_ip dev vtep1 noprefixroute
+  done
+}
+
 kind_get_nodes() {
   kind get nodes --name "${KIND_CLUSTER_NAME}" | grep -v external-load-balancer
 }
@@ -516,7 +543,7 @@ set_dnsnameresolver_images() {
 
 # build_image accepts three arguments. The first argument is the absolute path to the directory
 # which contains the Dockerfile. The second argument is the image name along with the tag. The
-# third argument is the name of the Dockerfile to use for building the image. 
+# third argument is the name of the Dockerfile to use for building the image.
 build_image() {
   pushd ${1}
   $OCI_BIN build -t "${2}" -f ${3} .
@@ -536,7 +563,7 @@ build_dnsnameresolver_images() {
   pushd /tmp/coredns-ocp-dnsnameresolver
   git checkout release-4.21
   popd
- 
+
   build_image /tmp/coredns-ocp-dnsnameresolver ${COREDNS_WITH_OCP_DNSNAMERESOLVER} Dockerfile.upstream
 
   build_image /tmp/coredns-ocp-dnsnameresolver/operator ${DNSNAMERESOLVER_OPERATOR} Dockerfile
@@ -566,7 +593,7 @@ install_dnsnameresolver_images() {
 
 install_dnsnameresolver_operator() {
   pushd /tmp/coredns-ocp-dnsnameresolver/operator
-  
+
   # Before installing DNSNameResolver operator, update the args so that the operator
   # is configured with the correct values.
   sed -i -e 's/^\(.*--coredns-namespace=\).*/\1kube-system/' \
@@ -692,11 +719,11 @@ clone_frr() {
 deploy_frr_external_container() {
   echo "Deploying FRR external container ..."
   clone_frr
- 
+
   pushd "$FRR_TMP_DIR" || exit 1
   run_kubectl apply -f frr-k8s/charts/frr-k8s/charts/crds/templates/frrk8s.metallb.io_frrconfigurations.yaml
   popd || exit 1
- 
+
   # apply the demo which will deploy an external FRR container that the cluster
   # can peer with acting as BGP (reflector) external gateway
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
@@ -847,10 +874,10 @@ install_ffr_k8s() {
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done
   fi
-  
+
   # frr-k8s webhook is declaring readiness before its endpoint is serving.
   # Let's do our own probing. Also will print logs in case of failure so we get
-  # insights on why this is hapenning 
+  # insights on why this is hapenning
   local r
   r=0
   timeout 60s bash -x <<EOF || r=$?
@@ -886,12 +913,12 @@ EOF
       node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
       # Get subnet information
       subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
-      
+
       if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
         # Extract IPv4 address (first address)
         node_ipv4=$(echo "$node_ips" | awk '{print $1}')
         ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
-        
+
         # Add IPv4 route
         if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
           echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
@@ -904,7 +931,7 @@ EOF
         # Extract IPv6 address (second address, if present)
         node_ipv6=$(echo "$node_ips" | awk '{print $2}')
         ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
-        
+
         if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
           echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
           sudo ip -6 route replace $ipv6_subnet via $node_ipv6
