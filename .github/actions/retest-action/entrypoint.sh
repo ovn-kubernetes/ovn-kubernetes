@@ -122,7 +122,7 @@ for url in $(cat url.data); do
 done
 
 if [ -f "triggered.data" ]; then
-  RESPONSE_MESSAGE="The following workflows runs were succesfully triggered:\n$(cat triggered.data)"
+  RESPONSE_MESSAGE="It looks like the previous CI run failed, please report failed tests: this is the only way to get them fixed! See https://ovn-kubernetes.io/ci/ci#ci-fails-what-do-i-do for more details on what to do. The following workflows runs were successfully triggered:\n$(cat triggered.data)"
   send_comment "${RESPONSE_MESSAGE}"
 else
   REACTION_SYMBOL="confused"
