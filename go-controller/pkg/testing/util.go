@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
 
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -108,4 +109,21 @@ func AddNetworkConnectApplyReactor(fakeClient *networkconnectfake.Clientset) {
 			networkconnectv1.SchemeGroupVersion.WithResource("clusternetworkconnects"), cnc, "")
 		return true, cnc, nil
 	})
+}
+
+func BuildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nadapi.NetworkAttachmentDefinition, error) {
+	config, err := json.Marshal(network)
+	if err != nil {
+		return nil, err
+	}
+	nad := &nadapi.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: nadapi.NetworkAttachmentDefinitionSpec{
+			Config: string(config),
+		},
+	}
+	return nad, nil
 }

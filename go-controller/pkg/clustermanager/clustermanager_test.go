@@ -7,16 +7,20 @@ import (
 	"strconv"
 	"sync"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 	utilnet "k8s.io/utils/net"
 
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
@@ -408,6 +412,171 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("Add subnet to layer3 UDN", func() {
+			app.Action = func(ctx *cli.Context) error {
+
+				testNADName := "test/primary"
+				oneSubnetNetwork := &ovncnitypes.NetConf{
+					Topology: ovntypes.Layer3Topology,
+					NADName:  testNADName,
+					NetConf: cnitypes.NetConf{
+						Name: "primary",
+						Type: "ovn-k8s-cni-overlay",
+					},
+					Subnets: "10.10.0.0/16/17",
+					Role:    ovntypes.NetworkRolePrimary,
+					MTU:     1400,
+				}
+				twoSubnetNetwork := &ovncnitypes.NetConf{
+					Topology: ovntypes.Layer3Topology,
+					NADName:  testNADName,
+					NetConf: cnitypes.NetConf{
+						Name: "primary",
+						Type: "ovn-k8s-cni-overlay",
+					},
+					Subnets: "10.10.0.0/16/17, 10.20.0.0/16/17",
+					Role:    ovntypes.NetworkRolePrimary,
+					MTU:     1400,
+				}
+
+				nodes := []corev1.Node{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "node1",
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "node2",
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "node3",
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "node4",
+						},
+					},
+				}
+
+				objs := []runtime.Object{
+					&corev1.NodeList{
+						Items: nodes,
+					},
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+				config.OVNKubernetesFeature.EnableInterconnect = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+				fakeClient := util.GetOVNClientset(objs...).GetClusterManagerClientset()
+
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = f.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				c, cancel := context.WithCancel(ctx.Context)
+				defer cancel()
+				clusterManager, err := NewClusterManager(fakeClient, f, "identity", nil)
+				gomega.Expect(clusterManager).NotTo(gomega.BeNil())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = clusterManager.Start(c)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				defer clusterManager.Stop()
+
+				meetsExpectations := func(g gomega.Gomega, netName string,
+					expectedSubnetCount int, expectedSubnets []string, expectedNodeSubnetMap map[string]string) {
+					// Check subnet allocations
+					nodes, err := fakeClient.KubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+					g.Expect(err).ToNot(gomega.HaveOccurred())
+
+					nodesWithSubnets := 0
+					actualSubnets := []string{}
+					actualNodeSubnetMap := map[string]string{}
+					for _, node := range nodes.Items {
+						ipnets, err := util.ParseNodeHostSubnetAnnotation(&node, netName)
+						if err == nil {
+							nodesWithSubnets++
+							g.Expect(ipnets).To(gomega.HaveLen(1))
+							actualSubnets = append(actualSubnets, ipnets[0].String())
+							actualNodeSubnetMap[node.Name] = ipnets[0].String()
+						}
+					}
+					g.Expect(nodesWithSubnets).To(gomega.Equal(expectedSubnetCount))
+					if expectedSubnets != nil {
+						g.Expect(actualSubnets).To(gomega.ConsistOf(expectedSubnets))
+					}
+
+					for k, v := range expectedNodeSubnetMap {
+
+						g.Expect(actualNodeSubnetMap[k]).To(gomega.Equal(v))
+					}
+				}
+
+				// Wait for nodes to be allocated a default network subnet.
+				// Only the number of allocated subnets is checked here; the actual subnet values are not validated.
+				gomega.Eventually(func(g gomega.Gomega) {
+					meetsExpectations(g, ovntypes.DefaultNetworkName, 4, nil, nil)
+				}).Should(gomega.Succeed())
+
+				// create NAD with one subnet
+				namespace, nadName, err := cache.SplitMetaNamespaceKey(testNADName)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				nad, err := testing.BuildNAD(nadName, namespace, oneSubnetNetwork)
+				nad.ResourceVersion = "2" // apparently changing the actual config isn't enough
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				// Check that only 2 nodes get subnet due to subnet shortage
+				gomega.Eventually(func(g gomega.Gomega) {
+					meetsExpectations(g, nadName, 2, []string{"10.10.0.0/17", "10.10.128.0/17"}, nil)
+				}).Should(gomega.Succeed())
+
+				getNodeSubnetMap := func(netName string) map[string]string {
+					nodes, err := fakeClient.KubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+					gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+					ret := map[string]string{}
+					for _, node := range nodes.Items {
+						ipnets, _ := util.ParseNodeHostSubnetAnnotation(&node, netName)
+						if len(ipnets) > 0 {
+							ret[node.Name] = ipnets[0].String()
+						}
+					}
+					return ret
+				}
+
+				expectedNodeSubnetMap := getNodeSubnetMap(nadName)
+
+				// Update NAD to add one more subnet
+				nad, err = testing.BuildNAD(nadName, namespace, twoSubnetNetwork)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Update(context.Background(), nad, metav1.UpdateOptions{})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+				// Verify that all nodes have been allocated subnets after adding the new subnet.
+				gomega.Eventually(func(g gomega.Gomega) {
+					meetsExpectations(g, nadName, 4, []string{"10.10.0.0/17", "10.10.128.0/17", "10.20.0.0/17", "10.20.128.0/17"}, expectedNodeSubnetMap)
+				}, "100s", "5s").Should(gomega.Succeed())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 	})
 
 	ginkgo.Context("Node Id allocations", func() {

@@ -376,7 +376,8 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	case util.AreNetworksCompatible(currentNetwork, nadNetwork):
 		// the NAD refers to an existing compatible network, ensure that
 		// existing network holds a reference to this NAD
-		ensureNetwork = currentNetwork
+		ensureNetwork = util.NewMutableNetInfo(nadNetwork)
+		ensureNetwork.AddNADs(currentNetwork.GetNADs()...)
 	case sets.New(key).HasAll(currentNetwork.GetNADs()...):
 		// the NAD is the only NAD referring to an existing incompatible
 		// network, remove the reference from the old network and ensure that
