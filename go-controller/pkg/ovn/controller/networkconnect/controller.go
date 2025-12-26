@@ -84,6 +84,9 @@ type networkConnectState struct {
 	// connectedNetworks is the set of owner keys (e.g., "layer3_1", "layer2_2") for networks
 	// connected by this CNC. Used to track OVN resources created and detect NAD matching changes.
 	connectedNetworks sets.Set[string]
+	// clusterIPServiceNetworkEnabled tracks whether ClusterIPServiceNetwork connectivity is enabled
+	// Used for cleanup when the connectivity type is removed from the CNC spec.
+	clusterIPServiceNetworkEnabled bool
 }
 
 // NewController creates a new network connect controller for ovnkube-controller.
@@ -476,17 +479,29 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 		return fmt.Errorf("failed to compute node info for CNC %s: %v", cnc.Name, err)
 	}
 
+	clusterIPServiceNetworkConnectivityIsDesired := hasClusterIPServiceNetwork(cnc)
+
 	// STEPs 2,3,4: Create patch ports, routing policies, and static routes for all connected networks.
 	if err := c.syncNetworkConnections(cnc, allocatedSubnets, allNodes, currentNodeIDs); err != nil {
 		return fmt.Errorf("failed to sync network connections for CNC %s: %v", cnc.Name, err)
 	}
 
 	// STEP5: Handle ClusterIPServiceNetwork connectivity if enabled
-	if hasClusterIPServiceNetwork(cnc) {
+	if clusterIPServiceNetworkConnectivityIsDesired {
+		klog.V(4).Infof("CNC %s: ClusterIPServiceNetwork enabled, syncing service connectivity", cnc.Name)
 		if err := c.syncServiceConnectivity(cnc); err != nil {
 			return fmt.Errorf("failed to sync service connectivity for CNC %s: %v", cnc.Name, err)
 		}
+	} else if cncState.clusterIPServiceNetworkEnabled {
+		// ClusterIPServiceNetwork was enabled but now disabled - cleanup all cross-network LB attachments
+		klog.V(4).Infof("CNC %s: ClusterIPServiceNetwork disabled, cleaning up cross-network LB attachments", cnc.Name)
+		if err := c.cleanupAllServiceConnectivity(cnc.Name); err != nil {
+			return fmt.Errorf("failed to cleanup service connectivity for CNC %s: %v", cnc.Name, err)
+		}
 	}
+
+	// Update cached state for next reconciliation
+	cncState.clusterIPServiceNetworkEnabled = clusterIPServiceNetworkConnectivityIsDesired
 
 	return nil
 }
@@ -495,13 +510,20 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 func (c *Controller) cleanupCNC(cncName string) error {
 	klog.V(4).Infof("Cleaning up CNC %s", cncName)
 
-	_, exists := c.cncCache[cncName]
+	cncState, exists := c.cncCache[cncName]
 	if !exists {
 		klog.V(4).Infof("CNC %s not found in cache, nothing to clean up", cncName)
 		return nil
 	}
 
-	// Cleanup network connections
+	// Cleanup cross-network LB attachments if ClusterIPServiceNetwork was enabled
+	if cncState.clusterIPServiceNetworkEnabled {
+		if err := c.cleanupAllServiceConnectivity(cncName); err != nil {
+			return fmt.Errorf("failed to cleanup service connectivity for CNC %s: %v", cncName, err)
+		}
+	}
+
+	// Cleanup network connections (reverse order from sync)
 	if err := c.cleanupNetworkConnections(cncName); err != nil {
 		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
 	}
