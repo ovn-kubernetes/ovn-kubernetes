@@ -398,6 +398,7 @@ jobs:
           kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
         fi
 
+
     - name: Export kube-burner data
       if: always()
       run: |

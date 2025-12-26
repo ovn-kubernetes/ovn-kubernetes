@@ -17,7 +17,7 @@ jobs:
     preLoadPeriod: 2m
     churnConfig:
       percent: 10
-      cycles: 20
+      cycles: 10
     objects:
 
       - objectTemplate: templates/webserver-deployment.yml
