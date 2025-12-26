@@ -69,3 +69,8 @@ nodes:
 {%- for _ in range(ovn_num_worker | int) %}
  - role: worker
 {%- endfor %}
+{%- if kind_num_infra is defined and kind_num_infra|int > 0 %}
+{%- for i in range(kind_num_infra|int) %}
+ - role: worker
+{%- endfor %}
+{%- endif %}

@@ -1,0 +1,6 @@
+- endpoint: http://localhost:9090
+  metrics:
+  - metrics.yml
+  indexer:
+    type: local
+    metricsDirectory: metrics

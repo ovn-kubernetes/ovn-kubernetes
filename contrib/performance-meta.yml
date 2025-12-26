@@ -1,0 +1,3 @@
+github_ref: $GITHUB_HEAD_REF
+github_ref_name: $GITHUB_REF_NAME
+github_sha: $GITHUB_SHA

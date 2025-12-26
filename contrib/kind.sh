@@ -90,6 +90,8 @@ echo "-n4  | --no-ipv4                              Disable IPv4. DEFAULT: IPv4 
 echo "-i6  | --ipv6                                 Enable IPv6. DEFAULT: IPv6 Disabled."
 echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: HA - 2 worker"
 echo "                                              nodes and no HA - 0 worker nodes."
+echo "-inf | --num-infra                            Number of infra nodes. DEFAULT: 0"
+echo "-prom| --install-prometheus                   Install Prometheus on infra nodes"
 echo "-sw  | --allow-system-writes                  Allow script to update system. Intended to allow"
 echo "                                              github CI to be updated with IPv6 settings."
 echo "                                              DEFAULT: Don't allow."
@@ -212,6 +214,16 @@ parse_args() {
                                                     exit 1
                                                 fi
                                                 KIND_NUM_WORKER=$1
+                                                ;;
+            -inf | --num-infra )                shift
+                                                if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+                                                    echo "Invalid num-infra: $1"
+                                                    usage
+                                                    exit 1
+                                                fi
+                                                KIND_NUM_INFRA=$1
+                                                ;;
+            -prom | --install-prometheus )      KIND_INSTALL_PROMETHEUS=true
                                                 ;;
             -npz | --nodes-per-zone )           shift
                                                 if ! [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -447,6 +459,8 @@ print_params() {
      echo "OVN_ENABLE_OVNKUBE_IDENTITY = $OVN_ENABLE_OVNKUBE_IDENTITY"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
+     echo "KIND_NUM_INFRA = $KIND_NUM_INFRA"
+     echo "KIND_INSTALL_PROMETHEUS = $KIND_INSTALL_PROMETHEUS"
      echo "OVN_MTU= $OVN_MTU"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
      echo "MULTI_POD_SUBNET= $MULTI_POD_SUBNET"
@@ -635,6 +649,9 @@ set_default_params() {
   else
     KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   fi
+
+  KIND_NUM_INFRA=${KIND_NUM_INFRA:-0}
+  KIND_INSTALL_PROMETHEUS=${KIND_INSTALL_PROMETHEUS:-false}
 
   if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
     KIND_NUM_NODES_PER_ZONE=${KIND_NUM_NODES_PER_ZONE:-1}
@@ -836,6 +853,7 @@ create_kind_cluster() {
   dns_domain=${KIND_DNS_DOMAIN} \
   ovn_num_master=${KIND_NUM_MASTER} \
   ovn_num_worker=${KIND_NUM_WORKER} \
+  kind_num_infra=${KIND_NUM_INFRA} \
   cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
   kind_local_registry_port=${KIND_LOCAL_REGISTRY_PORT} \
   kind_local_registry_name=${KIND_LOCAL_REGISTRY_NAME} \
