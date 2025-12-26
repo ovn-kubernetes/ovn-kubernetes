@@ -307,6 +307,23 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			continue
 		}
 
+		// If ClusterIPServiceNetwork is enabled, cleanup cross-network LB attachments for disconnected network
+		if hasClusterIPServiceNetwork(cnc) {
+			// Calculate remaining networks after this deletion
+			remainingNetworks := cncState.connectedNetworks.Clone()
+			remainingNetworks.Delete(owner)
+			// Also remove other networks that are being deleted in this sync
+			for otherOwner := range networksToDelete {
+				remainingNetworks.Delete(otherOwner)
+			}
+
+			deleteOps, err = c.cleanupServiceConnectivityForNetworkOps(deleteOps, networkID, remainingNetworks)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to cleanup service connectivity for network %s: %w", owner, err))
+				// Continue with other cleanup operations
+			}
+		}
+
 		// Find all ports matching this CNC and network ID (across all routers)
 		// This allows cleanup even if the network has been deleted from the network manager
 		ports, err := libovsdbops.FindLogicalRouterPortWithPredicate(c.nbClient, func(item *nbdb.LogicalRouterPort) bool {
@@ -505,6 +522,15 @@ func (c *Controller) cleanupNetworkConnections(cncName string) error {
 			})
 		if err != nil {
 			return fmt.Errorf("failed to delete routing policies from router %s: %w", routerName, err)
+		}
+	}
+
+	// If ClusterIPServiceNetwork was enabled, cleanup cross-network LB attachments
+	cncState := c.cncCache[cncName]
+	if cncState != nil && cncState.clusterIPServiceNetworkEnabled {
+		ops, err = c.cleanupAllServiceConnectivityOps(ops, cncState.connectedNetworks)
+		if err != nil {
+			return fmt.Errorf("failed to cleanup service connectivity for CNC %s: %w", cncName, err)
 		}
 	}
 
@@ -1127,4 +1153,172 @@ func (c *Controller) findNetworkSwitches(netInfo util.NetInfo) ([]*nbdb.LogicalS
 		return nil, fmt.Errorf("failed to get switch %s: %w", switchName, err)
 	}
 	return []*nbdb.LogicalSwitch{sw}, nil
+}
+
+// cleanupAllServiceConnectivity removes all cross-network LB attachments for a CNC.
+// Called when ClusterIPServiceNetwork is disabled on the CNC or when CNC is deleted.
+func (c *Controller) cleanupAllServiceConnectivity(cncName string) error {
+	cncState, exists := c.cncCache[cncName]
+	if !exists || cncState == nil {
+		return fmt.Errorf("CNC %s state not found in cache", cncName)
+	}
+
+	ops, err := c.cleanupAllServiceConnectivityOps(nil, cncState.connectedNetworks)
+	if err != nil {
+		return err
+	}
+
+	if len(ops) > 0 {
+		if _, err := libovsdbops.TransactAndCheck(c.nbClient, ops); err != nil {
+			return fmt.Errorf("failed to cleanup service connectivity: %w", err)
+		}
+		klog.Infof("CNC %s: cleaned up %d cross-network LB attachment operations", cncName, len(ops))
+	}
+
+	return nil
+}
+
+// cleanupAllServiceConnectivityOps creates ops to cleanup all cross-network LB attachments.
+// This removes all LBs that were attached across networks.
+func (c *Controller) cleanupAllServiceConnectivityOps(ops []ovsdb.Operation, connectedNetworks sets.Set[string]) ([]ovsdb.Operation, error) {
+	networkList := connectedNetworks.UnsortedList()
+
+	// For each pair of networks, remove cross-network LB attachments
+	// This is a O(n^2) operation, so we should optimize it if needed
+	// but hoping number of networks per connect is not more than 10 or 15.
+	// The reason its hard to optimized cleanup is because the externalIDs on
+	// the LBs are not owned by network connect controller.
+	// TODO(tssurya): If we add networkID as a key to load balancers this can be optimized to O(n) operation?
+	for i, srcOwner := range networkList {
+		srcNetInfo, err := c.parseNetworkOwnerKey(srcOwner)
+		if err != nil {
+			klog.V(4).Infof("Failed to parse network owner key %s: %v", srcOwner, err)
+			continue
+		}
+
+		srcLBs, err := c.findClusterIPLoadBalancers(srcNetInfo)
+		if err != nil {
+			klog.V(4).Infof("Failed to find LBs for network %s: %v", srcNetInfo.GetNetworkName(), err)
+			continue
+		}
+
+		if len(srcLBs) == 0 {
+			continue
+		}
+
+		// Remove srcNetwork's LBs from all other networks' switches
+		for j, dstOwner := range networkList {
+			if i == j {
+				continue // Skip same network
+			}
+
+			dstNetInfo, err := c.parseNetworkOwnerKey(dstOwner)
+			if err != nil {
+				klog.V(4).Infof("Failed to parse network owner key %s: %v", dstOwner, err)
+				continue
+			}
+
+			dstSwitches, err := c.findNetworkSwitches(dstNetInfo)
+			if err != nil {
+				klog.V(4).Infof("Failed to find switches for network %s: %v", dstNetInfo.GetNetworkName(), err)
+				continue
+			}
+
+			for _, sw := range dstSwitches {
+				removeOps, err := libovsdbops.RemoveLoadBalancersFromLogicalSwitchOps(c.nbClient, nil, sw, srcLBs...)
+				if err != nil {
+					klog.V(4).Infof("Failed to create ops to remove LBs from switch %s: %v", sw.Name, err)
+					continue
+				}
+				ops = append(ops, removeOps...)
+			}
+		}
+	}
+
+	return ops, nil
+}
+
+// cleanupServiceConnectivityForNetworkOps creates ops to cleanup cross-network LB attachments
+// when a network is disconnected from a CNC with ClusterIPServiceNetwork enabled.
+// This removes:
+// 1. Disconnected network's LBs from remaining connected networks' switches
+// 2. Remaining connected networks' LBs from disconnected network's switches
+func (c *Controller) cleanupServiceConnectivityForNetworkOps(ops []ovsdb.Operation,
+	disconnectedNetworkID int, remainingNetworks sets.Set[string]) ([]ovsdb.Operation, error) {
+
+	// Try to get the disconnected network's info - it might still exist in network manager
+	disconnectedNetInfo, err := c.findNetworkByID(disconnectedNetworkID)
+	if err != nil {
+		// Network no longer exists in network manager - we can't find its LBs or switches
+		// But the LBs belonging to this network will be deleted by services controller when
+		// the network is fully removed, and weak refs will auto-cleanup
+		klog.V(4).Infof("Disconnected network ID %d not found in network manager, skipping LB cleanup: %v", disconnectedNetworkID, err)
+		return ops, nil
+	}
+
+	// Find LBs for the disconnected network
+	disconnectedLBs, err := c.findClusterIPLoadBalancers(disconnectedNetInfo)
+	if err != nil {
+		return ops, fmt.Errorf("failed to find LBs for disconnected network: %w", err)
+	}
+
+	// Find switches for the disconnected network
+	disconnectedSwitches, err := c.findNetworkSwitches(disconnectedNetInfo)
+	if err != nil {
+		return ops, fmt.Errorf("failed to find switches for disconnected network: %w", err)
+	}
+
+	// For each remaining connected network:
+	// 1. Remove disconnected network's LBs from remaining network's switches
+	// 2. Remove remaining network's LBs from disconnected network's switches
+	for remainingOwner := range remainingNetworks {
+		remainingNetInfo, err := c.parseNetworkOwnerKey(remainingOwner)
+		if err != nil {
+			klog.Warningf("Failed to parse remaining network owner key %s: %v", remainingOwner, err)
+			continue
+		}
+
+		// Get remaining network's switches and LBs
+		remainingSwitches, err := c.findNetworkSwitches(remainingNetInfo)
+		if err != nil {
+			klog.Warningf("Failed to find switches for remaining network %s: %v", remainingNetInfo.GetNetworkName(), err)
+			continue
+		}
+
+		remainingLBs, err := c.findClusterIPLoadBalancers(remainingNetInfo)
+		if err != nil {
+			klog.Warningf("Failed to find LBs for remaining network %s: %v", remainingNetInfo.GetNetworkName(), err)
+			continue
+		}
+
+		// Remove disconnected network's LBs from remaining network's switches
+		if len(disconnectedLBs) > 0 {
+			for _, sw := range remainingSwitches {
+				removeOps, err := libovsdbops.RemoveLoadBalancersFromLogicalSwitchOps(c.nbClient, nil, sw, disconnectedLBs...)
+				if err != nil {
+					klog.Warningf("Failed to create ops to remove LBs from switch %s: %v", sw.Name, err)
+					continue
+				}
+				ops = append(ops, removeOps...)
+				klog.V(5).Infof("Removing %d LBs from disconnected network %s from switch %s",
+					len(disconnectedLBs), disconnectedNetInfo.GetNetworkName(), sw.Name)
+			}
+		}
+
+		// Remove remaining network's LBs from disconnected network's switches
+		if len(remainingLBs) > 0 {
+			for _, sw := range disconnectedSwitches {
+				removeOps, err := libovsdbops.RemoveLoadBalancersFromLogicalSwitchOps(c.nbClient, nil, sw, remainingLBs...)
+				if err != nil {
+					klog.Warningf("Failed to create ops to remove LBs from switch %s: %v", sw.Name, err)
+					continue
+				}
+				ops = append(ops, removeOps...)
+				klog.V(5).Infof("Removing %d LBs from remaining network %s from disconnected switch %s",
+					len(remainingLBs), remainingNetInfo.GetNetworkName(), sw.Name)
+			}
+		}
+	}
+
+	return ops, nil
 }
