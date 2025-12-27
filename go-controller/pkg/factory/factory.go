@@ -370,6 +370,10 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		return nil, err
 	}
 
+	if err := networkconnectapi.AddToScheme(networkconnectscheme.Scheme); err != nil {
+		return nil, err
+	}
+
 	// For Services and Endpoints, pre-populate the shared Informer with one that
 	// has a label selector excluding headless services.
 	wf.iFactory.InformerFor(&corev1.Service{}, func(c kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
@@ -523,6 +527,15 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	if config.OVNKubernetesFeature.EnableNetworkQoS {
 		wf.informers[NetworkQoSType], err = newQueuedInformer(eventQueueSize, NetworkQoSType,
 			wf.networkQoSFactory.K8s().V1alpha1().NetworkQoSes().Informer(), wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if util.IsNetworkConnectEnabled() {
+		wf.cncFactory = networkconnectinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkConnectClient, resyncInterval)
+		wf.informers[ClusterNetworkConnectType], err = newQueuedInformer(eventQueueSize,
+			ClusterNetworkConnectType,
+			wf.cncFactory.K8s().V1().ClusterNetworkConnects().Informer(), wf.stopChan, minNumEventQueues)
 		if err != nil {
 			return nil, err
 		}
