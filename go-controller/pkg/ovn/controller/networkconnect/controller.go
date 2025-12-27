@@ -19,11 +19,13 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectlisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -57,6 +59,9 @@ type Controller struct {
 
 	// networkManager provides access to network information
 	networkManager networkmanager.Interface
+
+	// addressSetFactory creates and manages OVN address sets
+	addressSetFactory addressset.AddressSetFactory
 
 	// cncController handles ClusterNetworkConnect events
 	cncController controllerutil.Controller
@@ -94,6 +99,9 @@ type networkConnectState struct {
 	// clusterIPServiceNetworkEnabled tracks whether ClusterIPServiceNetwork connectivity is enabled
 	// Used for cleanup when the connectivity type is removed from the CNC spec.
 	clusterIPServiceNetworkEnabled bool
+	// podNetworkConnectEnabled tracks whether PodNetworkConnect connectivity is enabled
+	// Used to determine if partial connectivity (service without pod) was active.
+	podNetworkConnectEnabled bool
 }
 
 // NewController creates a new network connect controller for ovnkube-controller.
@@ -109,15 +117,16 @@ func NewController(
 	serviceLister := wf.ServiceCoreInformer().Lister()
 
 	c := &Controller{
-		zone:           zone,
-		nbClient:       nbClient,
-		wf:             wf,
-		cncLister:      cncLister,
-		nodeLister:     nodeLister,
-		nadLister:      nadLister,
-		serviceLister:  serviceLister,
-		networkManager: networkManager,
-		cncCache:       make(map[string]*networkConnectState),
+		zone:              zone,
+		nbClient:          nbClient,
+		wf:                wf,
+		cncLister:         cncLister,
+		nodeLister:        nodeLister,
+		nadLister:         nadLister,
+		serviceLister:     serviceLister,
+		networkManager:    networkManager,
+		addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode),
+		cncCache:          make(map[string]*networkConnectState),
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{
@@ -512,6 +521,16 @@ func serviceConnectivityEnabled(cnc *networkconnectv1.ClusterNetworkConnect) boo
 	return false
 }
 
+// podConnectivityEnabled checks if the CNC has PodNetwork in its connectivity spec.
+func podConnectivityEnabled(cnc *networkconnectv1.ClusterNetworkConnect) bool {
+	for _, ct := range cnc.Spec.Connectivity {
+		if ct == networkconnectv1.PodNetwork {
+			return true
+		}
+	}
+	return false
+}
+
 // requeueAllCNCs requeues all CNCs for reconciliation.
 func (c *Controller) requeueAllCNCs() error {
 	cncs, err := c.cncLister.List(labels.Everything())
@@ -579,8 +598,8 @@ func (c *Controller) cleanupCNC(cncName string) error {
 		return nil
 	}
 
-	// Cleanup network connections (includes service connectivity, ports, and policies)
-	if err := c.cleanupNetworkConnections(cncName, cncState.clusterIPServiceNetworkEnabled); err != nil {
+	// Cleanup network connections (includes service connectivity, partial connectivity ACLs, ports, and policies)
+	if err := c.cleanupNetworkConnections(cncName, cncState.clusterIPServiceNetworkEnabled, cncState.podNetworkConnectEnabled); err != nil {
 		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
 	}
 
