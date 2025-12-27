@@ -17,11 +17,13 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectlisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -53,6 +55,9 @@ type Controller struct {
 
 	// networkManager provides access to network information
 	networkManager networkmanager.Interface
+
+	// addressSetFactory creates and manages OVN address sets
+	addressSetFactory addressset.AddressSetFactory
 
 	// cncController handles ClusterNetworkConnect events
 	cncController controllerutil.Controller
@@ -101,14 +106,15 @@ func NewController(
 	serviceLister := wf.ServiceCoreInformer().Lister()
 
 	c := &Controller{
-		zone:           zone,
-		nbClient:       nbClient,
-		wf:             wf,
-		cncLister:      cncLister,
-		nodeLister:     nodeLister,
-		serviceLister:  serviceLister,
-		networkManager: networkManager,
-		cncCache:       make(map[string]*networkConnectState),
+		zone:              zone,
+		nbClient:          nbClient,
+		wf:                wf,
+		cncLister:         cncLister,
+		nodeLister:        nodeLister,
+		serviceLister:     serviceLister,
+		networkManager:    networkManager,
+		addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode),
+		cncCache:          make(map[string]*networkConnectState),
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{
@@ -423,6 +429,16 @@ func hasClusterIPServiceNetwork(cnc *networkconnectv1.ClusterNetworkConnect) boo
 	return false
 }
 
+// hasPodNetwork checks if the CNC has PodNetwork in its connectivity spec.
+func hasPodNetwork(cnc *networkconnectv1.ClusterNetworkConnect) bool {
+	for _, ct := range cnc.Spec.Connectivity {
+		if ct == networkconnectv1.PodNetwork {
+			return true
+		}
+	}
+	return false
+}
+
 // requeueAllCNCs requeues all CNCs for reconciliation.
 func (c *Controller) requeueAllCNCs() error {
 	cncs, err := c.cncLister.List(labels.Everything())
@@ -480,15 +496,32 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 	}
 
 	clusterIPServiceNetworkConnectivityIsDesired := hasClusterIPServiceNetwork(cnc)
+	podNetworkConnectivityIsDesired := hasPodNetwork(cnc)
 
-	// STEPs 2,3,4: Create patch ports, routing policies, and static routes for all connected networks.
+	// STEP2: Handle partial connectivity ACLs BEFORE creating network connections
+	// This ensures drop rules are in place before connectivity is established (security)
+	// When user wants only service connectivity (not pod-to-pod), add ACLs to:
+	// - Allow traffic to service CIDR (pass)
+	// - Drop direct pod-to-pod traffic between connected networks (drop)
+	if clusterIPServiceNetworkConnectivityIsDesired && !podNetworkConnectivityIsDesired {
+		if err := c.syncPartialConnectivity(cnc, allocatedSubnets); err != nil {
+			return fmt.Errorf("failed to sync partial connectivity ACLs and Address sets for CNC %s: %v", cnc.Name, err)
+		}
+	} else if podNetworkConnectivityIsDesired && cncState.clusterIPServiceNetworkEnabled {
+		// PodNetwork is now enabled and ClusterIPServiceNetwork was previously enabled
+		// Need to cleanup any partial connectivity ACLs that were created when only ClusterIPServiceNetwork was enabled
+		if err := c.cleanupPartialConnectivity(cnc.Name); err != nil {
+			return fmt.Errorf("failed to cleanup partial connectivity ACLs and Address sets for CNC %s: %v", cnc.Name, err)
+		}
+	}
+
+	// STEPs 3,4,5: Create patch ports, routing policies, and static routes for all connected networks.
 	if err := c.syncNetworkConnections(cnc, allocatedSubnets, allNodes, currentNodeIDs); err != nil {
 		return fmt.Errorf("failed to sync network connections for CNC %s: %v", cnc.Name, err)
 	}
 
-	// STEP5: Handle ClusterIPServiceNetwork connectivity if enabled
+	// STEP6: Handle ClusterIPServiceNetwork connectivity if enabled
 	if clusterIPServiceNetworkConnectivityIsDesired {
-		klog.V(4).Infof("CNC %s: ClusterIPServiceNetwork enabled, syncing service connectivity", cnc.Name)
 		if err := c.syncServiceConnectivity(cnc); err != nil {
 			return fmt.Errorf("failed to sync service connectivity for CNC %s: %v", cnc.Name, err)
 		}
@@ -526,6 +559,11 @@ func (c *Controller) cleanupCNC(cncName string) error {
 	// Cleanup network connections (reverse order from sync)
 	if err := c.cleanupNetworkConnections(cncName); err != nil {
 		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
+	}
+
+	// Cleanup partial connectivity ACLs and address sets after connections are removed
+	if err := c.cleanupPartialConnectivity(cncName); err != nil {
+		return fmt.Errorf("failed to cleanup partial connectivity ACLs for CNC %s: %v", cncName, err)
 	}
 
 	// Remove the connect router
