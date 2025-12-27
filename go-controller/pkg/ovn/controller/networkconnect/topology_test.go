@@ -869,7 +869,7 @@ func TestCleanupNetworkConnections(t *testing.T) {
 				nbClient: nbClient,
 			}
 
-			err = c.cleanupNetworkConnections(tt.cncName, false)
+			err = c.cleanupNetworkConnections(tt.cncName, false, false)
 			if tt.expectError {
 				assert.Error(t, err)
 				return
