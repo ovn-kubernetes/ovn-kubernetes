@@ -81,6 +81,11 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        {%- if ovn_no_overlay_enable == "true" %}
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        {%- endif %}
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -151,6 +156,11 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        {%- if ovn_no_overlay_enable == "true" %}
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        {%- endif %}
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -357,6 +367,8 @@ spec:
           value: "{{ ovn_route_advertisements_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: "{{ ovn_advertised_udn_isolation_mode }}"
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ ovn_no_overlay_enable }}"
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: "{{ ovn_hybrid_overlay_net_cidr }}"
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -440,6 +452,11 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      {%- if ovn_no_overlay_enable == "true" %}
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
+      {%- endif %}
       - name: host-var-lib-ovs
         hostPath:
           path: /var/lib/openvswitch
