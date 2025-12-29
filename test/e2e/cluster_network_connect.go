@@ -18,6 +18,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
@@ -153,13 +154,27 @@ func deleteNamespace(cs clientset.Interface, nsName string) {
 // createOrUpdateCNC creates or updates a CNC with CUDN and/or PUDN selectors using default connect subnets
 // Uses kubectl apply, so can be called to update an existing CNC
 func createOrUpdateCNC(cs clientset.Interface, cncName string, cudnLabelSelector, udnLabelSelector map[string]string) {
-	createOrUpdateCNCWithSubnets(cncName, cudnLabelSelector, udnLabelSelector, generateConnectSubnets(cs))
+	createOrUpdateCNCWithSubnetsAndConnectivity(cncName, cudnLabelSelector, udnLabelSelector,
+		generateConnectSubnets(cs), []string{"PodNetwork"})
 }
 
-// createOrUpdateCNCWithSubnets creates or updates a CNC with custom connect subnets
+// createOrUpdateCNCWithSubnets creates or updates a CNC with custom connect subnets (PodNetwork connectivity only)
 func createOrUpdateCNCWithSubnets(cncName string, cudnLabelSelector, udnLabelSelector map[string]string, connectSubnets string) {
+	createOrUpdateCNCWithSubnetsAndConnectivity(cncName, cudnLabelSelector, udnLabelSelector,
+		connectSubnets, []string{"PodNetwork"})
+}
+
+// createOrUpdateCNCWithConnectivity creates or updates a CNC with custom connectivity types
+// connectivity should be a slice like []string{"PodNetwork"} or []string{"PodNetwork", "ClusterIPServiceNetwork"}
+func createOrUpdateCNCWithConnectivity(cs clientset.Interface, cncName string, cudnLabelSelector, udnLabelSelector map[string]string, connectivity []string) {
+	createOrUpdateCNCWithSubnetsAndConnectivity(cncName, cudnLabelSelector, udnLabelSelector,
+		generateConnectSubnets(cs), connectivity)
+}
+
+// createOrUpdateCNCWithSubnetsAndConnectivity creates or updates a CNC with custom connect subnets and connectivity
+func createOrUpdateCNCWithSubnetsAndConnectivity(cncName string, cudnLabelSelector, udnLabelSelector map[string]string, connectSubnets string, connectivity []string) {
 	Expect(cudnLabelSelector != nil || udnLabelSelector != nil).To(BeTrue(),
-		"createOrUpdateCNCWithSubnets requires at least one selector (cudnLabelSelector or udnLabelSelector)")
+		"createOrUpdateCNCWithSubnetsAndConnectivity requires at least one selector (cudnLabelSelector or udnLabelSelector)")
 
 	var networkSelectors []string
 
@@ -193,6 +208,16 @@ func createOrUpdateCNCWithSubnets(cncName string, cudnLabelSelector, udnLabelSel
             %s`, udnLabelSelectorStr))
 	}
 
+	// Format connectivity array as YAML
+	connectivityYAML := "["
+	for i, c := range connectivity {
+		if i > 0 {
+			connectivityYAML += ", "
+		}
+		connectivityYAML += fmt.Sprintf(`"%s"`, c)
+	}
+	connectivityYAML += "]"
+
 	manifest := fmt.Sprintf(`
 apiVersion: k8s.ovn.org/v1
 kind: ClusterNetworkConnect
@@ -203,8 +228,8 @@ spec:
 %s
   connectSubnets:
 %s
-  connectivity: ["PodNetwork"]
-`, cncName, strings.Join(networkSelectors, "\n"), connectSubnets)
+  connectivity: %s
+`, cncName, strings.Join(networkSelectors, "\n"), connectSubnets, connectivityYAML)
 	_, err := e2ekubectl.RunKubectlInput("", manifest, "apply", "-f", "-")
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -2046,6 +2071,38 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		return err != nil || stdout != "200"
 	}
 
+	// checkConnectivityFailureType checks connectivity and returns the failure type
+	// Returns: "success", "timeout" (no route), "reject" (connection refused), or "other"
+	// - timeout: no route exists (network deleted/disconnected)
+	// - reject: route exists but no backends (endpoints deleted, OVN LB returns reject)
+	checkConnectivityFailureType := func(fromNamespace, fromPodName, toIP string) string {
+		url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(toIP, "8080"))
+		stdout, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
+			"curl", "--connect-timeout", "1", "-s", "-o", "/dev/null", "-w", "%{http_code}:%{exitcode}", url)
+		if err == nil && strings.HasPrefix(stdout, "200:") {
+			return "success"
+		}
+		// Parse exit code from output (format: "httpcode:exitcode")
+		if strings.Contains(stdout, ":28") || strings.Contains(stdout, ":7") {
+			// Exit 28 = timeout, Exit 7 = connection refused
+			if strings.Contains(stdout, ":28") {
+				return "timeout"
+			}
+			return "reject"
+		}
+		// Check error message for common patterns
+		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "timed out") || strings.Contains(errStr, "timeout") {
+				return "timeout"
+			}
+			if strings.Contains(errStr, "refused") || strings.Contains(errStr, "reset") {
+				return "reject"
+			}
+		}
+		return "other"
+	}
+
 	// verifyCrossNetworkConnectivity verifies connectivity from a set of pods to another set
 	// Supports dual-stack by testing all IPs for each pod
 	// Uses Eventually for expected success
@@ -2145,7 +2202,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	   23. Re-create CNC
 	   24. Verify all cross-network connectivity restored
 	*/
-	Context("End-to-end connectivity validation", func() {
+	Context("Pod to pod connectivity validation", func() {
 		const nodeHostnameKey = "kubernetes.io/hostname"
 
 		It("should manage cross-network connectivity through CNC lifecycle", func() {
@@ -2806,6 +2863,964 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			verifyCrossNetworkConnectivity(redPods, greenPodIPs, false)
 
 			By("Test completed successfully - Multiple CNCs with non-transitive connectivity validated")
+		})
+	})
+
+	// Service connectivity validation through CNC (ClusterNetworkConnect).
+	// This context validates end-to-end service connectivity when CNC enables ClusterIPServiceNetwork.
+	// Tests cover full lifecycle management of services across connected networks, including:
+	// - Network deselection/reselection (via namespace labels and CNC selector updates)
+	// - Network deletion/recreation
+	// - Service deletion/recreation
+	// - Endpoint deletion (OVNLB reject behavior)
+	// - CNC lifecycle (deletion and recreation)
+	// - Connectivity type toggling (PodNetwork vs ClusterIPServiceNetwork)
+	Context("Service connectivity validation", func() {
+		const (
+			nodeHostnameKey = "kubernetes.io/hostname"
+			servicePort     = 8080
+		)
+
+		var (
+			// Shared across tests - set in BeforeEach
+			node1Name, node2Name string
+			testID               string
+
+			// Network and namespace names - set in BeforeEach
+			cncName                                 string
+			blackCUDN, whiteCUDN, blueUDN, greenUDN string
+			blackNs0, blackNs1, whiteNs0, whiteNs1  string
+			blueNs, greenNs                         string
+
+			// Labels for CNC selection and pod selectors
+			cudnLabel     map[string]string
+			pudnLabel     map[string]string
+			blackPodLabel map[string]string
+			whitePodLabel map[string]string
+			bluePodLabel  map[string]string
+			greenPodLabel map[string]string
+
+			// Resource maps
+			pods     map[string]*corev1.Pod
+			services map[string]*corev1.Service
+
+			// Tracking IPs for connectivity tests
+			podIPs            map[string][]string
+			serviceIPs        map[string][]string
+			networkPods       map[string]*corev1.Pod
+			networkPodIPs     map[string][]string
+			networkServiceIPs map[string][]string
+
+			// Pod configurations for recreation (needed by Test 1)
+			bluePodConfig0, bluePodConfig1   podConfiguration
+			greenPodConfig0, greenPodConfig1 podConfiguration
+		)
+
+		// createClusterIPService creates a ClusterIP service using e2eservice.CreateServiceSpec
+		createClusterIPService := func(cs clientset.Interface, namespace, serviceName string, podSelector map[string]string) *corev1.Service {
+			svc := e2eservice.CreateServiceSpec(serviceName, "", false, podSelector)
+			svc.Spec.Ports = []corev1.ServicePort{{Port: int32(servicePort), Protocol: corev1.ProtocolTCP}}
+			familyPolicy := corev1.IPFamilyPolicyPreferDualStack
+			svc.Spec.IPFamilyPolicy = &familyPolicy
+			createdSvc, err := cs.CoreV1().Services(namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for ClusterIP assignment and return updated service
+			Eventually(func(g Gomega) {
+				createdSvc, err = cs.CoreV1().Services(namespace).Get(context.Background(), serviceName, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(createdSvc.Spec.ClusterIP).NotTo(BeEmpty())
+				g.Expect(createdSvc.Spec.ClusterIP).NotTo(Equal("None"))
+			}, 30*time.Second, 1*time.Second).Should(Succeed(),
+				fmt.Sprintf("waiting for ClusterIP to be assigned to service %s/%s", namespace, serviceName))
+			return createdSvc
+		}
+
+		// getServiceClusterIPs returns all ClusterIPs for a service (dual-stack support)
+		getServiceClusterIPs := func(svc *corev1.Service) []string {
+			if len(svc.Spec.ClusterIPs) > 0 {
+				return svc.Spec.ClusterIPs
+			}
+			if svc.Spec.ClusterIP != "" && svc.Spec.ClusterIP != "None" {
+				return []string{svc.Spec.ClusterIP}
+			}
+			return nil
+		}
+
+		// verifyFullMeshServiceConnectivity verifies that pods from each network can reach IPs in all OTHER networks
+		// Reuses verifyCrossNetworkConnectivity from Describe level (port 8080 matches servicePort)
+		verifyFullMeshServiceConnectivity := func(
+			netPods map[string]*corev1.Pod, // one pod per network
+			netServiceIPs map[string][]string,
+			expectSuccess bool,
+		) {
+			for srcNetwork, srcPod := range netPods {
+				for dstNetwork, dstIPs := range netServiceIPs {
+					if srcNetwork == dstNetwork {
+						continue // Skip same network - that's intra-network
+					}
+					srcPodMap := map[string]*corev1.Pod{srcPod.Name: srcPod}
+					targetIPs := map[string][]string{dstNetwork + "-svc": dstIPs}
+					verifyCrossNetworkConnectivity(srcPodMap, targetIPs, expectSuccess)
+				}
+			}
+		}
+
+		BeforeEach(func() {
+			// Get 2 schedulable nodes for cross-node testing
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(nodes.Items)).To(BeNumerically(">=", 2), "test requires at least 2 schedulable nodes")
+			node1Name, node2Name = nodes.Items[0].Name, nodes.Items[1].Name
+
+			// Generate test ID and resource names
+			testID = rand.String(5)
+			cncName = generateCNCName()
+
+			// Network names
+			blackCUDN = fmt.Sprintf("black-cudn-%s", testID)
+			whiteCUDN = fmt.Sprintf("white-cudn-%s", testID)
+			blueUDN = "blue-udn"
+			greenUDN = "green-udn"
+
+			// Namespace names
+			blackNs0 = fmt.Sprintf("black-ns0-%s", testID)
+			blackNs1 = fmt.Sprintf("black-ns1-%s", testID)
+			whiteNs0 = fmt.Sprintf("white-ns0-%s", testID)
+			whiteNs1 = fmt.Sprintf("white-ns1-%s", testID)
+			blueNs = fmt.Sprintf("blue-ns-%s", testID)
+			greenNs = fmt.Sprintf("green-ns-%s", testID)
+
+			// Labels for CNC selection
+			cudnLabel = map[string]string{"cnc-svc-test": testID, "type": "cudn"}
+			pudnLabel = map[string]string{"cnc-svc-test": testID, "type": "pudn"}
+
+			// Pod labels for service selectors
+			blackPodLabel = map[string]string{"app": "black-" + testID}
+			whitePodLabel = map[string]string{"app": "white-" + testID}
+			bluePodLabel = map[string]string{"app": "blue-" + testID}
+			greenPodLabel = map[string]string{"app": "green-" + testID}
+
+			// Initialize maps
+			pods = make(map[string]*corev1.Pod)
+			services = make(map[string]*corev1.Service)
+			podIPs = make(map[string][]string)
+			serviceIPs = make(map[string][]string)
+			networkPods = make(map[string]*corev1.Pod)
+			networkPodIPs = make(map[string][]string)
+			networkServiceIPs = make(map[string][]string)
+
+			// =====================================================================
+			// Setup Step 1: Create 2 CUDNs (black L3, white L2) with namespaces and pods
+			// =====================================================================
+			By("Setup: Creating namespaces for black and white CUDNs")
+			createUDNNamespaceWithName(cs, blackNs0, nil)
+			createUDNNamespaceWithName(cs, blackNs1, nil)
+			createUDNNamespaceWithName(cs, whiteNs0, nil)
+			createUDNNamespaceWithName(cs, whiteNs1, nil)
+
+			By("Setup: Creating black CUDN (L3)")
+			createLayer3PrimaryCUDNWithSubnets(cs, blackCUDN, cudnLabel, "10.128.0.0/16", "2014:100:200::0/60", blackNs0, blackNs1)
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("Setup: Creating white CUDN (L2)")
+			createLayer2PrimaryCUDNWithSubnets(cs, whiteCUDN, cudnLabel, "10.129.0.0/16", "2014:100:300::0/60", whiteNs0, whiteNs1)
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("Setup: Creating pods in black CUDN namespaces")
+			blackPodConfig0 := httpServerPodConfig("black-pod-0", blackNs0)
+			blackPodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			blackPodConfig0.labels = blackPodLabel
+			blackPodConfig1 := httpServerPodConfig("black-pod-1", blackNs1)
+			blackPodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			blackPodConfig1.labels = blackPodLabel
+			pods["black-pod-0"] = runUDNPod(cs, blackNs0, blackPodConfig0, nil)
+			pods["black-pod-1"] = runUDNPod(cs, blackNs1, blackPodConfig1, nil)
+			podIPs["black-pod-0"] = getPrimaryNetworkPodIPs(blackNs0, "black-pod-0", blackCUDN)
+			podIPs["black-pod-1"] = getPrimaryNetworkPodIPs(blackNs1, "black-pod-1", blackCUDN)
+
+			By("Setup: Creating pods in white CUDN namespaces")
+			whitePodConfig0 := httpServerPodConfig("white-pod-0", whiteNs0)
+			whitePodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			whitePodConfig0.labels = whitePodLabel
+			whitePodConfig1 := httpServerPodConfig("white-pod-1", whiteNs1)
+			whitePodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			whitePodConfig1.labels = whitePodLabel
+			pods["white-pod-0"] = runUDNPod(cs, whiteNs0, whitePodConfig0, nil)
+			pods["white-pod-1"] = runUDNPod(cs, whiteNs1, whitePodConfig1, nil)
+			podIPs["white-pod-0"] = getPrimaryNetworkPodIPs(whiteNs0, "white-pod-0", whiteCUDN)
+			podIPs["white-pod-1"] = getPrimaryNetworkPodIPs(whiteNs1, "white-pod-1", whiteCUDN)
+
+			// =====================================================================
+			// Setup Step 2: Create 2 PUDNs (blue L3, green L2) with namespaces and pods
+			// =====================================================================
+			By("Setup: Creating namespaces for blue and green PUDNs with labels")
+			createUDNNamespaceWithName(cs, blueNs, pudnLabel)
+			createUDNNamespaceWithName(cs, greenNs, pudnLabel)
+
+			By("Setup: Creating blue UDN (L3)")
+			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "10.130.0.0/16", "2014:100:400::0/60")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("Setup: Creating green UDN (L2)")
+			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "10.131.0.0/16", "2014:100:500::0/60")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("Setup: Creating pods in blue UDN namespace")
+			bluePodConfig0 = httpServerPodConfig("blue-pod-0", blueNs)
+			bluePodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			bluePodConfig0.labels = bluePodLabel
+			bluePodConfig1 = httpServerPodConfig("blue-pod-1", blueNs)
+			bluePodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			bluePodConfig1.labels = bluePodLabel
+			pods["blue-pod-0"] = runUDNPod(cs, blueNs, bluePodConfig0, nil)
+			pods["blue-pod-1"] = runUDNPod(cs, blueNs, bluePodConfig1, nil)
+			podIPs["blue-pod-0"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod-0", blueUDN)
+			podIPs["blue-pod-1"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod-1", blueUDN)
+
+			By("Setup: Creating pods in green UDN namespace")
+			greenPodConfig0 = httpServerPodConfig("green-pod-0", greenNs)
+			greenPodConfig0.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			greenPodConfig0.labels = greenPodLabel
+			greenPodConfig1 = httpServerPodConfig("green-pod-1", greenNs)
+			greenPodConfig1.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			greenPodConfig1.labels = greenPodLabel
+			pods["green-pod-0"] = runUDNPod(cs, greenNs, greenPodConfig0, nil)
+			pods["green-pod-1"] = runUDNPod(cs, greenNs, greenPodConfig1, nil)
+			podIPs["green-pod-0"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-0", greenUDN)
+			podIPs["green-pod-1"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-1", greenUDN)
+
+			// =====================================================================
+			// Setup Step 3: Create 1 ClusterIP service per network
+			// =====================================================================
+			By("Setup: Creating ClusterIP services for each network")
+			services["black-svc"] = createClusterIPService(cs, blackNs0, "black-svc", blackPodLabel)
+			serviceIPs["black-svc"] = getServiceClusterIPs(services["black-svc"])
+
+			services["white-svc"] = createClusterIPService(cs, whiteNs0, "white-svc", whitePodLabel)
+			serviceIPs["white-svc"] = getServiceClusterIPs(services["white-svc"])
+
+			services["blue-svc"] = createClusterIPService(cs, blueNs, "blue-svc", bluePodLabel)
+			serviceIPs["blue-svc"] = getServiceClusterIPs(services["blue-svc"])
+
+			services["green-svc"] = createClusterIPService(cs, greenNs, "green-svc", greenPodLabel)
+			serviceIPs["green-svc"] = getServiceClusterIPs(services["green-svc"])
+
+			// Organize pods and services by network for full mesh testing
+			networkPods["black"] = pods["black-pod-0"]
+			networkPods["white"] = pods["white-pod-0"]
+			networkPods["blue"] = pods["blue-pod-0"]
+			networkPods["green"] = pods["green-pod-0"]
+
+			networkPodIPs["black"] = podIPs["black-pod-1"] // Use pod-1 as target (cross-node)
+			networkPodIPs["white"] = podIPs["white-pod-1"]
+			networkPodIPs["blue"] = podIPs["blue-pod-1"]
+			networkPodIPs["green"] = podIPs["green-pod-1"]
+
+			networkServiceIPs["black"] = serviceIPs["black-svc"]
+			networkServiceIPs["white"] = serviceIPs["white-svc"]
+			networkServiceIPs["blue"] = serviceIPs["blue-svc"]
+			networkServiceIPs["green"] = serviceIPs["green-svc"]
+
+			// =====================================================================
+			// Setup Step 4: Verify initial isolation
+			// =====================================================================
+			By("Setup: Verifying initial isolation - pods cannot reach services in other networks")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, false)
+		})
+
+		AfterEach(func() {
+			By("Cleanup: Deleting all test resources")
+			deleteCNC(cncName)
+
+			for _, svc := range services {
+				_ = cs.CoreV1().Services(svc.Namespace).Delete(context.Background(), svc.Name, metav1.DeleteOptions{})
+			}
+
+			for _, pod := range pods {
+				_ = cs.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+			}
+
+			deleteUDN(blueNs, blueUDN)
+			deleteUDN(greenNs, greenUDN)
+			deleteCUDN(blackCUDN)
+			deleteCUDN(whiteCUDN)
+
+			deleteNamespace(cs, blackNs0)
+			deleteNamespace(cs, blackNs1)
+			deleteNamespace(cs, whiteNs0)
+			deleteNamespace(cs, whiteNs1)
+			deleteNamespace(cs, blueNs)
+			deleteNamespace(cs, greenNs)
+		})
+
+		/*
+		   Test: Full CNC service connectivity lifecycle management
+		   Creates 4 networks (2 CUDNs, 2 PUDNs) with pods and services, then validates:
+
+		   --- Setup (Steps 1-4) ---
+		   1.  Create 2 CUDNs: black (L3) and white (L2), each with 2 namespaces and pods on different nodes
+		   2.  Create 2 PUDNs: blue (L3) and green (L2), each with 2 pods on different nodes
+		   3.  Create 1 ClusterIP service per network (selecting both pods in each network)
+		   4.  Verify initial isolation - pods cannot reach services in other networks
+
+		   --- CNC Creation and Service Connectivity Enablement (Steps 5-10) ---
+		   5.  Create CNC selecting all 4 networks with connectivity: ["PodNetwork"] only
+		   6.  Verify CNC annotations are set correctly (subnet allocation, 4 networks)
+		   7.  Verify pods CANNOT reach ClusterIP services of other networks (service connectivity not enabled)
+		   8.  Update CNC to enable service connectivity: ["PodNetwork", "ClusterIPServiceNetwork"]
+		   9.  Verify pods can reach ClusterIP services of all connected networks (full mesh pod-to-service)
+		   10. Verify intra-network service connectivity still works
+
+		   --- Network Deselection Tests (PUDN via namespace label) (Steps 11-20) ---
+		   11. Deselect blue PUDN (L3) via namespace label removal
+		   12. Verify CNC subnet annotation has 3 networks (blue removed)
+		   13. Verify blue service unreachable from other networks (no route)
+		   14. Verify other networks (black, white, green) services still reachable
+		   15. Deselect green PUDN (L2) via CNC selector update (remove PUDN selector)
+		   16. Verify CNC subnet annotation has 2 networks (only CUDNs)
+		   17. Verify green service unreachable (no route)
+		   18. Verify black and white CUDN services still reachable from each other
+		   19. Re-select green PUDN via CNC selector update (add PUDN selector back)
+		   20. Re-select blue PUDN via namespace label restoration, verify all 4 services reachable
+
+		   --- Network Deselection Tests (CUDN via CUDN label) (Steps 21-26) ---
+		   21. Deselect black CUDN (L3) via CUDN label removal
+		   22. Verify CNC subnet annotation has 3 networks (black removed)
+		   23. Verify black service unreachable from other networks (no route)
+		   24. Verify other network services still reachable
+		   25. Re-select black CUDN via CUDN label restoration
+		   26. Verify black service reachable again
+
+		   --- Network Deletion Tests (route removal) (Steps 27-33) ---
+		   27. Delete blue PUDN (network object) along with its pods
+		   28. Verify CNC subnet annotation has 3 networks, blue service unreachable (no route - timeout)
+		   29. Delete green PUDN along with its pods, verify CNC has 2 networks, green unreachable
+		   30. Verify black and white CUDN services still reachable
+		   31. Re-create blue PUDN namespace, network, pods, and service
+		   32. Re-create green PUDN namespace, network, pods, and service
+		   33. Verify all 4 network services are reachable again
+
+		   --- Service Lifecycle Tests (Steps 34-37) ---
+		   34. Delete the ClusterIP service in blue network (keep pods)
+		   35. Verify CIP of blue service is not reachable (service VIP deleted)
+		   36. Re-create the ClusterIP service in blue network (same selector)
+		   37. Verify CIP of blue service is reachable again from other networks
+
+		   --- Endpoint Deletion Tests (OVNLB reject vs no route) (Steps 38-41) ---
+		   38. Delete all pods backing the green service (keep service)
+		   39. Verify CIP of green service returns REJECT (no endpoints - OVNLB rejects)
+		   40. Re-create pods backing the green service
+		   41. Verify CIP of green service works again
+
+		   --- CNC Lifecycle Tests (Steps 42-45) ---
+		   42. Delete CNC
+		   43. Verify all cross-network service connectivity disabled (no route)
+		   44. Re-create CNC with service connectivity enabled
+		   45. Verify all cross-network service connectivity restored
+		*/
+		It("should manage cross-network service connectivity through CNC lifecycle", func() {
+			// Setup (Steps 1-4) completed in BeforeEach
+			// This test starts from Step 5
+			var err error
+
+			// =====================================================================
+			// Step 5: Create CNC selecting all 4 networks with connectivity: ["PodNetwork"] only
+			// =====================================================================
+			By("5. Creating CNC with PodNetwork connectivity only (no service connectivity)")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork"})
+
+			// =====================================================================
+			// Step 6: Verify CNC annotations are set correctly
+			// =====================================================================
+			By("6. Verifying CNC has both tunnel ID and subnet annotations")
+			verifyCNCHasBothAnnotations(cncName)
+
+			By("6. Verifying CNC subnet annotation has 4 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 7: Verify pods CANNOT reach ClusterIP services of other networks
+			// (service connectivity not enabled yet)
+			// =====================================================================
+			By("7. Verifying pods CANNOT reach services in other networks (service connectivity not enabled)")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, false)
+
+			// =====================================================================
+			// Step 8: Update CNC to enable service connectivity
+			// =====================================================================
+			By("8. Updating CNC to enable ClusterIPServiceNetwork connectivity")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+
+			// =====================================================================
+			// Step 9: Verify pods can reach ClusterIP services of all connected networks
+			// =====================================================================
+			By("9. Verifying pods CAN reach services in all connected networks (full mesh)")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
+
+			// =====================================================================
+			// Step 10: Verify intra-network service connectivity still works
+			// =====================================================================
+			By("10. Verifying intra-network service connectivity works")
+			// Black pod can reach black service
+			blackPodMap := map[string]*corev1.Pod{"black-pod-0": pods["black-pod-0"]}
+			blackSvcIPs := map[string][]string{"black-svc": serviceIPs["black-svc"]}
+			verifyCrossNetworkConnectivity(blackPodMap, blackSvcIPs, true)
+
+			// Blue pod can reach blue service
+			bluePodMap := map[string]*corev1.Pod{"blue-pod-0": pods["blue-pod-0"]}
+			blueSvcIPs := map[string][]string{"blue-svc": serviceIPs["blue-svc"]}
+			verifyCrossNetworkConnectivity(bluePodMap, blueSvcIPs, true)
+
+			// =====================================================================
+			// Step 11: Deselect blue PUDN (L3) via namespace label removal
+			// =====================================================================
+			By("11. Deselecting blue PUDN via namespace label removal")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), blueNs,
+				types.MergePatchType, []byte(`{"metadata":{"labels":{"type":null}}}`), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// =====================================================================
+			// Step 12: Verify CNC subnet annotation now has 3 networks
+			// =====================================================================
+			By("12. Verifying CNC subnet annotation has 3 networks (blue removed)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
+
+			// =====================================================================
+			// Step 13: Verify blue service unreachable from other networks (no route)
+			// =====================================================================
+			By("13. Verifying blue service is unreachable from other networks")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
+
+			// =====================================================================
+			// Step 14: Verify other networks (black, white, green) services still reachable
+			// =====================================================================
+			By("14. Verifying black, white, green services still reachable from each other")
+			whitePodMap := map[string]*corev1.Pod{"white-pod-0": pods["white-pod-0"]}
+			greenPodMap := map[string]*corev1.Pod{"green-pod-0": pods["green-pod-0"]}
+			// black -> white, green
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+			// white -> black, green
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+			// green -> black, white
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+
+			// =====================================================================
+			// Step 15: Deselect green PUDN (L2) via CNC selector update (remove PUDN selector)
+			// =====================================================================
+			By("15. Deselecting green PUDN via CNC selector update (remove PUDN selector)")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, nil, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+
+			// =====================================================================
+			// Step 16: Verify CNC subnet annotation now has 2 networks (only CUDNs)
+			// =====================================================================
+			By("16. Verifying CNC subnet annotation has 2 networks (only CUDNs)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			// =====================================================================
+			// Step 17: Verify green service unreachable (no route)
+			// =====================================================================
+			By("17. Verifying green service is unreachable from CUDNs")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, false)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, false)
+
+			// =====================================================================
+			// Step 18: Verify black and white CUDN services still reachable from each other
+			// =====================================================================
+			By("18. Verifying black and white CUDN services still reachable")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+
+			// =====================================================================
+			// Step 19: Re-select green PUDN via CNC selector update (add PUDN selector back)
+			// =====================================================================
+			By("19. Re-selecting green PUDN via CNC selector update")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+
+			By("19. Verifying CNC subnet annotation has 3 networks (green re-added)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
+
+			// =====================================================================
+			// Step 20: Re-select blue PUDN via namespace label restoration
+			// =====================================================================
+			By("20. Re-selecting blue PUDN via namespace label restoration")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), blueNs,
+				types.MergePatchType, []byte(`{"metadata":{"labels":{"type":"pudn"}}}`), metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("20. Verifying CNC subnet annotation has 4 networks (blue re-added)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			By("20. Verifying all 4 network services are reachable again")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
+
+			// =====================================================================
+			// Step 21: Deselect black CUDN (L3) via CUDN label removal
+			// =====================================================================
+			By("21. Deselecting black CUDN via CUDN label removal")
+			_, err = e2ekubectl.RunKubectl("", "label", "clusteruserdefinednetwork", blackCUDN, "type-")
+			Expect(err).NotTo(HaveOccurred())
+
+			// =====================================================================
+			// Step 22: Verify CNC subnet annotation now has 3 networks
+			// =====================================================================
+			By("22. Verifying CNC subnet annotation has 3 networks (black removed)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
+
+			// =====================================================================
+			// Step 23: Verify black service unreachable from other networks (no route)
+			// =====================================================================
+			By("23. Verifying black service is unreachable from other networks")
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+
+			// =====================================================================
+			// Step 24: Verify other network services still reachable
+			// =====================================================================
+			By("24. Verifying white, blue, green services still reachable from each other")
+			// white -> blue, green
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+			// blue -> white, green
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+			// green -> white, blue
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, true)
+
+			// =====================================================================
+			// Step 25: Re-select black CUDN via CUDN label restoration
+			// =====================================================================
+			By("25. Re-selecting black CUDN via CUDN label restoration")
+			_, err = e2ekubectl.RunKubectl("", "label", "clusteruserdefinednetwork", blackCUDN, "type=cudn")
+			Expect(err).NotTo(HaveOccurred())
+
+			By("25. Verifying CNC subnet annotation has 4 networks (black re-added)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 26: Verify black service reachable again
+			// =====================================================================
+			By("26. Verifying black service is reachable again")
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+
+			// =====================================================================
+			// --- Network Deletion Tests (route removal, not just LB cleanup) ---
+			// =====================================================================
+
+			// =====================================================================
+			// Step 27: Delete blue PUDN (the network object) along with its pods and service
+			// =====================================================================
+			By("27. Deleting blue PUDN pods")
+			err = cs.CoreV1().Pods(blueNs).Delete(context.Background(), pods["blue-pod-0"].Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			err = cs.CoreV1().Pods(blueNs).Delete(context.Background(), pods["blue-pod-1"].Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("27. Deleting blue PUDN network object")
+			deleteUDN(blueNs, blueUDN)
+
+			By("27. Waiting for blue pods to be deleted")
+			Eventually(func() bool {
+				_, err := cs.CoreV1().Pods(blueNs).Get(context.Background(), pods["blue-pod-0"].Name, metav1.GetOptions{})
+				return err != nil
+			}, 60*time.Second, 1*time.Second).Should(BeTrue())
+			Eventually(func() bool {
+				_, err := cs.CoreV1().Pods(blueNs).Get(context.Background(), pods["blue-pod-1"].Name, metav1.GetOptions{})
+				return err != nil
+			}, 60*time.Second, 1*time.Second).Should(BeTrue())
+
+			// =====================================================================
+			// Step 28: Verify CNC annotation and service connectivity to blue network
+			// =====================================================================
+			By("28. Verifying CNC subnet annotation has 3 networks (blue removed)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
+
+			By("28. Verifying blue service is unreachable (no route exists)")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
+
+			// =====================================================================
+			// Step 29: Delete green PUDN along with its pods and service
+			// =====================================================================
+			By("29. Deleting green PUDN pods")
+			err = cs.CoreV1().Pods(greenNs).Delete(context.Background(), pods["green-pod-0"].Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			err = cs.CoreV1().Pods(greenNs).Delete(context.Background(), pods["green-pod-1"].Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("29. Deleting green PUDN network object")
+			deleteUDN(greenNs, greenUDN)
+
+			By("29. Waiting for green pods to be deleted")
+			Eventually(func() bool {
+				_, err := cs.CoreV1().Pods(greenNs).Get(context.Background(), pods["green-pod-0"].Name, metav1.GetOptions{})
+				return err != nil
+			}, 60*time.Second, 1*time.Second).Should(BeTrue())
+			Eventually(func() bool {
+				_, err := cs.CoreV1().Pods(greenNs).Get(context.Background(), pods["green-pod-1"].Name, metav1.GetOptions{})
+				return err != nil
+			}, 60*time.Second, 1*time.Second).Should(BeTrue())
+
+			By("29. Verifying CNC subnet annotation has 2 networks (only CUDNs remain)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			By("29. Verifying green service is unreachable (no route exists)")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, false)
+
+			// =====================================================================
+			// Step 30: Verify black and white CUDN services still reachable
+			// =====================================================================
+			By("30. Verifying black and white CUDN services still reachable")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+
+			// =====================================================================
+			// Step 31: Re-create blue PUDN namespace, network, pods, and service
+			// =====================================================================
+			By("31. Recreating blue PUDN network")
+			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "103.103.0.0/16", "2014:100:400::0/60")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("31. Recreating blue pods")
+			pods["blue-pod-0"] = runUDNPod(cs, blueNs, bluePodConfig0, nil)
+			pods["blue-pod-1"] = runUDNPod(cs, blueNs, bluePodConfig1, nil)
+			podIPs["blue-pod-0"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod-0", blueUDN)
+			podIPs["blue-pod-1"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod-1", blueUDN)
+
+			// Update pod maps
+			networkPods["blue"] = pods["blue-pod-0"]
+			bluePodMap = map[string]*corev1.Pod{"blue-pod-0": pods["blue-pod-0"]}
+
+			// =====================================================================
+			// Step 32: Re-create green PUDN namespace, network, pods, and service
+			// =====================================================================
+			By("32. Recreating green PUDN network")
+			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "104.104.0.0/16", "2014:100:500::0/60")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("32. Recreating green pods")
+			pods["green-pod-0"] = runUDNPod(cs, greenNs, greenPodConfig0, nil)
+			pods["green-pod-1"] = runUDNPod(cs, greenNs, greenPodConfig1, nil)
+			podIPs["green-pod-0"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-0", greenUDN)
+			podIPs["green-pod-1"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-1", greenUDN)
+
+			// Update pod maps
+			networkPods["green"] = pods["green-pod-0"]
+			greenPodMap = map[string]*corev1.Pod{"green-pod-0": pods["green-pod-0"]}
+
+			// =====================================================================
+			// Step 33: Verify all 4 network services are reachable again
+			// =====================================================================
+			By("33. Verifying all 4 network services are reachable again")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
+
+			// =====================================================================
+			// --- Service Lifecycle Tests ---
+			// =====================================================================
+
+			// =====================================================================
+			// Step 34: Delete the ClusterIP service in blue network (keep pods)
+			// =====================================================================
+			By("34. Deleting blue ClusterIP service (keeping pods)")
+			err = cs.CoreV1().Services(blueNs).Delete(context.Background(), "blue-svc", metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// =====================================================================
+			// Step 35: Verify CIP of blue service is not reachable (no route to deleted service VIP)
+			// =====================================================================
+			By("35. Verifying blue service CIP is not reachable after service deletion")
+			// The service VIP no longer exists, so connections should fail
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
+
+			// =====================================================================
+			// Step 36: Re-create the ClusterIP service in blue network (same selector)
+			// =====================================================================
+			By("36. Re-creating blue ClusterIP service")
+			services["blue-svc"] = createClusterIPService(cs, blueNs, "blue-svc", bluePodLabel)
+			// Update service IPs (ClusterIP may change)
+			serviceIPs["blue-svc"] = getServiceClusterIPs(services["blue-svc"])
+			networkServiceIPs["blue"] = serviceIPs["blue-svc"]
+
+			// =====================================================================
+			// Step 37: Verify CIP of blue service is reachable again from other networks
+			// =====================================================================
+			By("37. Verifying blue service is reachable again after recreation")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, true)
+
+			// =====================================================================
+			// --- Endpoint Deletion Tests (OVNLB reject vs no route) ---
+			// =====================================================================
+
+			// =====================================================================
+			// Step 38: Delete all pods backing the green service (keep service)
+			// =====================================================================
+			By("38. Deleting pods backing green service (keeping service)")
+			err = cs.CoreV1().Pods(greenNs).Delete(context.Background(), "green-pod-0", metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			err = cs.CoreV1().Pods(greenNs).Delete(context.Background(), "green-pod-1", metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Wait for pods to be fully deleted
+			Eventually(func() bool {
+				_, err := cs.CoreV1().Pods(greenNs).Get(context.Background(), "green-pod-0", metav1.GetOptions{})
+				return err != nil
+			}, 30*time.Second, 1*time.Second).Should(BeTrue(), "green-pod-0 should be deleted")
+			Eventually(func() bool {
+				_, err := cs.CoreV1().Pods(greenNs).Get(context.Background(), "green-pod-1", metav1.GetOptions{})
+				return err != nil
+			}, 30*time.Second, 1*time.Second).Should(BeTrue(), "green-pod-1 should be deleted")
+
+			// =====================================================================
+			// Step 39: Verify CIP of green service is routable but returns REJECT
+			// =====================================================================
+			By("39. Verifying green service CIP returns REJECT (no endpoints, OVNLB rejects)")
+			// The service still exists and route is there, but OVN LB has no backends -> reject
+			for _, greenIP := range serviceIPs["green-svc"] {
+				Eventually(func() string {
+					return checkConnectivityFailureType(blackNs0, "black-pod-0", greenIP)
+				}, 30*time.Second, 2*time.Second).Should(Equal("reject"),
+					fmt.Sprintf("green service %s should return reject (no endpoints)", greenIP))
+			}
+
+			// =====================================================================
+			// Step 40: Re-create pods backing the green service
+			// =====================================================================
+			By("40. Re-creating pods backing green service")
+			pods["green-pod-0"] = runUDNPod(cs, greenNs, greenPodConfig0, nil)
+			pods["green-pod-1"] = runUDNPod(cs, greenNs, greenPodConfig1, nil)
+			podIPs["green-pod-0"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-0", greenUDN)
+			podIPs["green-pod-1"] = getPrimaryNetworkPodIPs(greenNs, "green-pod-1", greenUDN)
+			networkPods["green"] = pods["green-pod-0"]
+			greenPodMap = map[string]*corev1.Pod{"green-pod-0": pods["green-pod-0"]}
+
+			// =====================================================================
+			// Step 41: Verify CIP of green service works again
+			// =====================================================================
+			By("41. Verifying green service is reachable again after pod recreation")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+
+			// =====================================================================
+			// --- CNC Lifecycle Tests ---
+			// =====================================================================
+
+			// =====================================================================
+			// Step 42: Delete CNC
+			// =====================================================================
+			By("42. Deleting CNC")
+			deleteCNC(cncName)
+
+			// Wait for CNC to be deleted
+			Eventually(func() bool {
+				_, err := e2ekubectl.RunKubectl("", "get", "clusternetworkconnect", cncName)
+				return err != nil
+			}, 30*time.Second, 1*time.Second).Should(BeTrue(), "CNC should be deleted")
+
+			// =====================================================================
+			// Step 43: Verify all cross-network service connectivity disabled (no route)
+			// =====================================================================
+			By("43. Verifying all cross-network service connectivity is disabled after CNC deletion")
+			// black -> other networks should fail
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, false)
+			// white -> other networks should fail
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+			// blue -> other networks should fail
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+			// green -> other networks should fail
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+
+			// =====================================================================
+			// Step 44: Re-create CNC with service connectivity enabled
+			// =====================================================================
+			By("44. Re-creating CNC with service connectivity enabled")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+
+			By("44. Verifying CNC has both annotations")
+			verifyCNCHasBothAnnotations(cncName)
+
+			By("44. Verifying CNC subnet annotation has 4 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 45: Verify all cross-network service connectivity restored
+			// =====================================================================
+			By("45. Verifying all cross-network service connectivity is restored")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
+
+			By("Steps 1-45 completed successfully - full service connectivity lifecycle validated")
+		})
+
+		/*
+		   Test: Connectivity type toggling (PodNetwork vs ClusterIPServiceNetwork)
+		   Creates 4 networks (2 CUDNs, 2 PUDNs) with pods and services, then validates
+		   independent control of pod and service connectivity through CNC.
+
+		   Steps:
+		   1-3.  Setup: Create 4 networks with pods and services
+		   4.    Verify initial isolation
+		   5-6.  Create CNC with ["PodNetwork"] only, verify annotations
+		   7.    Verify pod-to-pod works cross-network and within same network
+		   8.    Verify pod-to-service FAILS cross-network (service connectivity not enabled)
+		   9.    Update CNC: ["PodNetwork", "ClusterIPServiceNetwork"]
+		   10.   Verify pod-to-service works cross-network (full mesh)
+		   11.   Verify pod-to-pod still works
+		   12.   Update CNC: ["ClusterIPServiceNetwork"] only (disable PodNetwork)
+		   13.   Verify service connectivity still works cross-network
+		   14.   Verify pod-to-pod FAILS cross-network
+		   15.   Verify pod-to-pod still works WITHIN same network
+		   16.   Update CNC: ["PodNetwork"] only (swap back)
+		   17.   Verify pod-to-pod works cross-network again
+		   18.   Verify service connectivity FAILS cross-network, but works within same network
+		*/
+		It("pod and service connectivity through CNC connectivity types toggling [Feature:NetworkConnect]", func() {
+			// Setup (Steps 1-4) completed in BeforeEach
+			// This test starts from Step 5
+
+			// Pod maps for targeted tests (derived from Context-level pods map)
+			blackPodMap := map[string]*corev1.Pod{"black-pod-0": pods["black-pod-0"]}
+			whitePodMap := map[string]*corev1.Pod{"white-pod-0": pods["white-pod-0"]}
+			bluePodMap := map[string]*corev1.Pod{"blue-pod-0": pods["blue-pod-0"]}
+			greenPodMap := map[string]*corev1.Pod{"green-pod-0": pods["green-pod-0"]}
+
+			// =====================================================================
+			// Step 5: Create CNC with connectivity: ["PodNetwork"] only
+			// =====================================================================
+			By("5. Creating CNC with PodNetwork connectivity only")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork"})
+
+			// =====================================================================
+			// Step 6: Verify CNC annotations are set correctly
+			// =====================================================================
+			By("6. Verifying CNC has both annotations")
+			verifyCNCHasBothAnnotations(cncName)
+
+			By("6. Verifying CNC subnet annotation has 4 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 7: Verify all pods can talk cross network and within same network
+			// =====================================================================
+			By("7. Verifying pod-to-pod connectivity works cross-network (PodNetwork enabled)")
+			// Cross-network pod-to-pod
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-pod": networkPodIPs["white"]}, true)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-pod": networkPodIPs["blue"]}, true)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-pod": networkPodIPs["green"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-pod": networkPodIPs["black"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"black-pod": networkPodIPs["black"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"black-pod": networkPodIPs["black"]}, true)
+
+			By("7. Verifying pod-to-pod connectivity works within same network")
+			// Same network pod-to-pod (black-pod-0 -> black-pod-1)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"black-pod-1": podIPs["black-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"white-pod-1": podIPs["white-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"blue-pod-1": podIPs["blue-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"green-pod-1": podIPs["green-pod-1"]}, true)
+
+			// =====================================================================
+			// Step 8: Verify pods CANNOT reach ClusterIP services of other networks
+			// =====================================================================
+			By("8. Verifying pods CANNOT reach services in other networks (service connectivity not enabled)")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+
+			// =====================================================================
+			// Step 9: Update CNC to enable service connectivity
+			// =====================================================================
+			By("9. Updating CNC to enable ClusterIPServiceNetwork connectivity")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+
+			// =====================================================================
+			// Step 10: Verify pods can reach ClusterIP services of all connected networks
+			// =====================================================================
+			By("10. Verifying pods CAN reach services in all connected networks (full mesh)")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
+
+			// =====================================================================
+			// Step 11: Verify all pods can talk cross network and within same network
+			// =====================================================================
+			By("11. Verifying pod-to-pod still works cross-network")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-pod": networkPodIPs["white"]}, true)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-pod": networkPodIPs["blue"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"green-pod": networkPodIPs["green"]}, true)
+
+			By("11. Verifying pod-to-pod still works within same network")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"black-pod-1": podIPs["black-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"blue-pod-1": podIPs["blue-pod-1"]}, true)
+
+			// =====================================================================
+			// Step 12: Update CNC to enable only service connectivity
+			// =====================================================================
+			By("12. Updating CNC to enable ONLY ClusterIPServiceNetwork (disabling PodNetwork)")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"ClusterIPServiceNetwork"})
+
+			// =====================================================================
+			// Step 13: Ensure ClusterIP service cross network works
+			// =====================================================================
+			By("13. Verifying service connectivity still works cross-network")
+			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
+
+			// =====================================================================
+			// Step 14: Ensure direct pod2pod cross network doesn't work
+			// =====================================================================
+			By("14. Verifying pod-to-pod FAILS cross-network (PodNetwork disabled)")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-pod": networkPodIPs["white"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-pod": networkPodIPs["blue"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-pod": networkPodIPs["green"]}, false)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-pod": networkPodIPs["black"]}, false)
+
+			// =====================================================================
+			// Step 15: Ensure direct pod2pod in same network works
+			// =====================================================================
+			By("15. Verifying pod-to-pod still works WITHIN same network")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"black-pod-1": podIPs["black-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"white-pod-1": podIPs["white-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"blue-pod-1": podIPs["blue-pod-1"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"green-pod-1": podIPs["green-pod-1"]}, true)
+
+			// =====================================================================
+			// Step 16: Swap service connectivity with podnetwork in CNC update
+			// =====================================================================
+			By("16. Updating CNC to enable ONLY PodNetwork (disabling ClusterIPServiceNetwork)")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork"})
+
+			// =====================================================================
+			// Step 17: Ensure direct pod2pod works in cross network
+			// =====================================================================
+			By("17. Verifying pod-to-pod works cross-network again")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-pod": networkPodIPs["white"]}, true)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-pod": networkPodIPs["blue"]}, true)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-pod": networkPodIPs["green"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-pod": networkPodIPs["black"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"green-pod": networkPodIPs["green"]}, true)
+
+			// =====================================================================
+			// Step 18: Ensure service connectivity cross network fails but works within same network
+			// =====================================================================
+			By("18. Verifying service connectivity FAILS cross-network (ClusterIPServiceNetwork disabled)")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, false)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, false)
+
+			By("18. Verifying service connectivity still works WITHIN same network")
+			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
+			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, true)
+			verifyCrossNetworkConnectivity(bluePodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, true)
+			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
+
+			By("Steps 1-18 completed successfully - connectivity type switching validated")
 		})
 	})
 })
