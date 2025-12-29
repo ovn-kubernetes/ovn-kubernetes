@@ -21,9 +21,6 @@ const (
 	OVNRejectRateLimiter           = "reject"
 	OVNTCPRSTRateLimiter           = "tcp-reset"
 	OVNServiceMonitorLimiter       = "svc-monitor"
-
-	// Default COPP object name
-	defaultCOPPName = "ovnkube-default"
 )
 
 var defaultProtocolNames = [...]string{
@@ -83,7 +80,7 @@ func EnsureDefaultCOPP(nbClient libovsdbclient.Client) (string, error) {
 	}
 
 	defaultCOPP := &nbdb.Copp{
-		Name:   defaultCOPPName,
+		Name:   types.DefaultCOPPName,
 		Meters: meterNames,
 	}
 	ops, err = libovsdbops.CreateOrUpdateCOPPsOps(nbClient, ops, defaultCOPP)

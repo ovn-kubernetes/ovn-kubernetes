@@ -9,6 +9,25 @@ import (
 
 type coppPredicate func(*nbdb.Copp) bool
 
+// GetCOPP looks up a COPP from the cache
+func GetCOPP(nbClient libovsdbclient.Client, copp *nbdb.Copp) (*nbdb.Copp, error) {
+	found := []*nbdb.Copp{}
+	opModel := operationModel{
+		Model:          copp,
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(nbClient)
+	err := m.Lookup(opModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
+
 // CreateOrUpdateCOPPsOps creates or updates the provided COPP returning the
 // corresponding ops
 func CreateOrUpdateCOPPsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, copps ...*nbdb.Copp) ([]ovsdb.Operation, error) {
