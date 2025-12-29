@@ -138,7 +138,7 @@ func (c *Controller) backendNodesFor(svc *corev1.Service) ([]string, error) {
 				if !clusterNetworkedEpFound {
 					for _, ip := range ep.Addresses {
 						ipStr := utilnet.ParseIPSloppy(ip).String()
-						if !services.IsHostEndpoint(ipStr) {
+						if !services.IsHostEndpoint(ipStr, &util.DefaultNetInfo{}) {
 							clusterNetworkedEpFound = true
 							break
 						}
