@@ -10,6 +10,8 @@ const (
 	logicalRouterPolicy
 	qos
 	nat
+	logicalRouterPort
+	logicalRouterStaticRoute
 )
 
 const (
@@ -42,7 +44,8 @@ const (
 	// ClusterOwnerType means the object is cluster-scoped and doesn't belong to any k8s objects
 	ClusterOwnerType ownerType = "Cluster"
 	// UDNIsolationOwnerType means the object is needed to implement UserDefinedNetwork isolation
-	UDNIsolationOwnerType ownerType = "UDNIsolation"
+	UDNIsolationOwnerType          ownerType = "UDNIsolation"
+	ClusterNetworkConnectOwnerType ownerType = "ClusterNetworkConnect"
 
 	// owner extra IDs, make sure to define only 1 ExternalIDKey for every string value
 	PriorityKey           ExternalIDKey = "priority"
@@ -50,6 +53,8 @@ const (
 	GressIdxKey           ExternalIDKey = "gress-index"
 	IPFamilyKey           ExternalIDKey = "ip-family"
 	NetworkKey            ExternalIDKey = "network"
+	NetworkIDKey          ExternalIDKey = "network-id"
+	NodeIDKey             ExternalIDKey = "node-id"
 	TypeKey               ExternalIDKey = "type"
 	IpKey                 ExternalIDKey = "ip"
 	PortPolicyIndexKey    ExternalIDKey = "port-policy-index"
@@ -57,6 +62,7 @@ const (
 	RuleIndex             ExternalIDKey = "rule-index"
 	CIDRKey               ExternalIDKey = types.OvnK8sPrefix + "/cidr"
 	PortPolicyProtocolKey ExternalIDKey = "port-policy-protocol"
+	RouterNameKey         ExternalIDKey = "router-name"
 )
 
 // ObjectIDsTypes should only be created here
@@ -155,6 +161,13 @@ var AddressSetNetworkQoS = newObjectIDsType(addressSet, NetworkQoSOwnerType, []E
 var AddressSetAdvertisedNetwork = newObjectIDsType(addressSet, AdvertisedNetworkOwnerType, []ExternalIDKey{
 	// cluster-wide address set name
 	ObjectNameKey,
+	IPFamilyKey,
+})
+
+var AddressSetClusterNetworkConnect = newObjectIDsType(addressSet, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// IP family: v4 or v6
 	IPFamilyKey,
 })
 
@@ -283,6 +296,13 @@ var ACLUDN = newObjectIDsType(acl, UDNIsolationOwnerType, []ExternalIDKey{
 	PolicyDirectionKey,
 })
 
+var ACLClusterNetworkConnect = newObjectIDsType(acl, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// type of ACL: allow-service, or drop-pod
+	TypeKey,
+})
+
 var VirtualMachineDHCPOptions = newObjectIDsType(dhcpOptions, VirtualMachineOwnerType, []ExternalIDKey{
 	// We can have multiple VMs with same CIDR they  may have different
 	// hostname.
@@ -373,4 +393,43 @@ var NetworkQoS = newObjectIDsType(qos, NetworkQoSOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// rule index
 	RuleIndex,
+})
+
+var LogicalRouterPortClusterNetworkConnect = newObjectIDsType(logicalRouterPort, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network ID
+	NetworkIDKey,
+	// node ID
+	// for layer2 network type ports, the node ID is 0 since there is only one port per network.
+	// for layer3 network type ports, the node ID is the node ID of the node that the port is connected to.
+	NodeIDKey,
+	// router name - stores the name of the router this port belongs to
+	// This allows cleanup without maintaining a cache of router names
+	RouterNameKey,
+})
+
+var LogicalRouterPolicyClusterNetworkConnect = newObjectIDsType(logicalRouterPolicy, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network owner (topology_networkID, e.g. "layer2_3")
+	NetworkKey,
+	// destination network ID
+	NetworkIDKey,
+	// IP family (v4 or v6)
+	IPFamilyKey,
+	// router name - stores the name of the router this port belongs to
+	// This allows cleanup without maintaining a cache of router names
+	RouterNameKey,
+})
+
+var LogicalRouterStaticRouteClusterNetworkConnect = newObjectIDsType(logicalRouterStaticRoute, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// destination network name
+	NetworkKey,
+	// destination node ID
+	NodeIDKey,
+	// IP family (v4 or v6)
+	IPFamilyKey,
 })

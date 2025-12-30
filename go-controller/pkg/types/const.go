@@ -69,6 +69,12 @@ const (
 	TransitRouterToSwitchPrefix = "trtos-"
 	SwitchToTransitRouterPrefix = "stotr-"
 
+	// Connect router prefix (for ClusterNetworkConnect feature)
+	ConnectRouterPrefix = "connect_router_"
+	// Connect router port prefixes (for ClusterNetworkConnect)
+	ConnectRouterToRouterPrefix = "crtor-"
+	RouterToConnectRouterPrefix = "rtocr-"
+
 	// DefaultACLTier Priorities
 
 	// Default routed multicast allow acl rule priority
@@ -91,6 +97,11 @@ const (
 	PrimaryUDNAllowPriority = 1001
 	// Default deny acl rule priority
 	PrimaryUDNDenyPriority = 1000
+	// Priority for allowing service traffic to pass through before the drop ACL
+	// for network connect partial service connectivity
+	NetworkConnectAllowServiceTrafficPriority = 5000
+	// Priority for dropping pod-to-pod traffic between connected networks
+	NetworkConnectDropPodTrafficPriority = 4950
 
 	// ACL Tiers
 	// Tier 0 is called Primary as it is evaluated before any other feature-related Tiers.
@@ -116,6 +127,7 @@ const (
 	EgressSVCReroutePriority              = 101
 	EgressIPReroutePriority               = 100
 	EgressIPRerouteQoSRulePriority        = 103
+	NetworkConnectPolicyPriority          = 9001
 	// priority of logical router policies on a nodes gateway router
 	EgressIPSNATMarkPriority           = 95
 	EgressLiveMigrationReroutePriority = 10
@@ -154,6 +166,9 @@ const (
 	OvnRateLimitingMeter = "rate-limiter"
 	PacketsPerSecond     = "pktps"
 	MeterAction          = "drop"
+
+	// Default COPP object name
+	DefaultCOPPName = "ovnkube-default"
 
 	// OVN-K8S annotation & taint constants
 	OvnK8sPrefix = "k8s.ovn.org"

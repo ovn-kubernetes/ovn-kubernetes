@@ -6,25 +6,27 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 
-	globalconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// hasHostEndpoints determines if a slice of endpoints contains a host networked pod
-func hasHostEndpoints(endpointIPs []string) bool {
+// hasHostEndpoints determines if a slice of endpoints contains a host networked pod.
+func hasHostEndpoints(endpointIPs []string, netInfo util.NetInfo) bool {
 	for _, endpointIP := range endpointIPs {
-		if IsHostEndpoint(endpointIP) {
+		if IsHostEndpoint(endpointIP, netInfo) {
 			return true
 		}
 	}
 	return false
 }
 
-// IsHostEndpoint determines if the given endpoint ip belongs to a host networked pod
-func IsHostEndpoint(endpointIP string) bool {
-	for _, clusterNet := range globalconfig.Default.ClusterSubnets {
-		if clusterNet.CIDR.Contains(net.ParseIP(endpointIP)) {
+// IsHostEndpoint determines if the given endpoint ip belongs to a host networked pod.
+// Checks against netInfo.Subnets() which returns the network's subnets
+// (for default network this is config.Default.ClusterSubnets, for UDNs it's the UDN subnets).
+func IsHostEndpoint(endpointIP string, netInfo util.NetInfo) bool {
+	ip := net.ParseIP(endpointIP)
+	for _, subnet := range netInfo.Subnets() {
+		if subnet.CIDR.Contains(ip) {
 			return false
 		}
 	}

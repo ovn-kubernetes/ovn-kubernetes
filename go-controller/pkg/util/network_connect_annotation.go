@@ -108,6 +108,16 @@ func ParseNetworkConnectSubnetAnnotation(cnc *networkconnectv1.ClusterNetworkCon
 	return result, nil
 }
 
+func NetworkConnectSubnetAnnotationChanged(oldObj, newObj *networkconnectv1.ClusterNetworkConnect) bool {
+	if oldObj == nil && newObj == nil {
+		return false
+	}
+	if oldObj == nil || newObj == nil {
+		return true
+	}
+	return oldObj.Annotations[ovnNetworkConnectSubnetAnnotation] != newObj.Annotations[ovnNetworkConnectSubnetAnnotation]
+}
+
 // UpdateNetworkConnectRouterTunnelKeyAnnotation updates the router tunnel key annotation for the given CNC and given tunnel ID.
 // It uses the Apply method to patch the annotation and has its own manager field to avoid conflicts with other annotation patches
 // like the subnet annotation patch above.
@@ -146,4 +156,14 @@ func ParseNetworkConnectTunnelKeyAnnotation(cnc *networkconnectv1.ClusterNetwork
 	}
 
 	return tunnelID, nil
+}
+
+func NetworkConnectTunnelKeyAnnotationsChanged(oldObj, newObj *networkconnectv1.ClusterNetworkConnect) bool {
+	if oldObj == nil && newObj == nil {
+		return false
+	}
+	if oldObj == nil || newObj == nil {
+		return true
+	}
+	return oldObj.Annotations[OvnConnectRouterTunnelKeyAnnotation] != newObj.Annotations[OvnConnectRouterTunnelKeyAnnotation]
 }

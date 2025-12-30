@@ -113,6 +113,7 @@ type OVNKubeControllerClientset struct {
 	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	NetworkConnectClient      networkconnectclientset.Interface
 }
 
 type OVNNodeClientset struct {
@@ -210,6 +211,7 @@ func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClient
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		NetworkConnectClient:      cs.NetworkConnectClient,
 	}
 }
 
