@@ -815,9 +815,6 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 }
 
 func (c *Controller) deleteIPConfig(podIPConfigToDelete *podIPConfig) error {
-	if err := c.ruleManager.Delete(podIPConfigToDelete.ipRule); err != nil {
-		return err
-	}
 	if podIPConfigToDelete.v6 {
 		if err := c.iptablesManager.DeleteRule(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv6,
 			podIPConfigToDelete.ipTableRule); err != nil {
@@ -828,6 +825,9 @@ func (c *Controller) deleteIPConfig(podIPConfigToDelete *podIPConfig) error {
 			podIPConfigToDelete.ipTableRule); err != nil {
 			return err
 		}
+	}
+	if err := c.ruleManager.Delete(podIPConfigToDelete.ipRule); err != nil {
+		return err
 	}
 	return nil
 }
@@ -846,10 +846,6 @@ func (c *Controller) applyPodConfig(existingPodIPsConfig *podIPConfigList, updat
 		}
 	}
 	for _, newPodIPConfig := range newPodIPConfigs.elems {
-		if err := c.ruleManager.Add(newPodIPConfig.ipRule); err != nil {
-			existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
-			return err
-		}
 		if newPodIPConfig.v6 {
 			if err := c.iptablesManager.EnsureRule(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv6, newPodIPConfig.ipTableRule); err != nil {
 				existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
@@ -860,6 +856,10 @@ func (c *Controller) applyPodConfig(existingPodIPsConfig *podIPConfigList, updat
 				existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
 				return fmt.Errorf("failed to ensure rules (%+v) in chain %s: %v", newPodIPConfig.ipTableRule, iptChainName, err)
 			}
+		}
+		if err := c.ruleManager.Add(newPodIPConfig.ipRule); err != nil {
+			existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
+			return err
 		}
 		existingPodIPsConfig.insertOverwrite(*newPodIPConfig)
 	}
