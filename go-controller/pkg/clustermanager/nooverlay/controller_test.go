@@ -94,7 +94,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
 
-			controller := NewController(wf, recorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, recorder)
 			gomega.Expect(controller).NotTo(gomega.BeNil())
 			gomega.Expect(controller.wf).To(gomega.Equal(wf))
 			gomega.Expect(controller.recorder).To(gomega.Equal(recorder))
@@ -112,7 +112,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
 
-			controller := NewController(wf, recorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, recorder)
 			gomega.Expect(controller.lastValidationError).To(gomega.BeEmpty())
 		})
 	})
@@ -154,7 +154,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, recorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, recorder)
 
 			// Give time for informers to sync
 			gomega.Eventually(func() bool {
@@ -238,7 +238,6 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 	ginkgo.Context("RA needsValidation logic", func() {
 		var controller *Controller
 		var wf *factory.WatchFactory
-		var err error
 
 		ginkgo.BeforeEach(func() {
 			fakeClient := &util.OVNClusterManagerClientset{
@@ -248,10 +247,10 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 
-			wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller = NewController(wf, recorder)
+			controller = NewController(wf, fakeClient.RouteAdvertisementsClient, recorder)
 		})
 
 		ginkgo.AfterEach(func() {
@@ -339,7 +338,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller := NewController(wf, localRecorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, localRecorder)
 
 			// Start controller which will run initial validation
 			err = controller.Start()
@@ -373,7 +372,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller := NewController(wf, localRecorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, localRecorder)
 
 			// Run validation multiple times with the same error
 			controller.runValidation()
@@ -399,7 +398,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller := NewController(wf, localRecorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, localRecorder)
 
 			// First validation will fail (no RouteAdvertisements)
 			controller.runValidation()
@@ -456,7 +455,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller := NewController(wf, recorder)
+			controller := NewController(wf, fakeClient.RouteAdvertisementsClient, recorder)
 
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
