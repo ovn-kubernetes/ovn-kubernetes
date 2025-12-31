@@ -136,7 +136,8 @@ func (tn testNode) Node() *corev1.Node {
 	if primaryAddressAnnotation == "" {
 		primaryAddressAnnotation = "{\"ipv4\":\"" + nodePrimaryAddr[tn.Name] + "\", \"ipv6\":\"" + nodePrimaryAddrIPv6[tn.Name] + "\"}"
 	}
-	return &corev1.Node{
+
+	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       tn.Name,
 			Labels:     tn.Labels,
@@ -147,6 +148,35 @@ func (tn testNode) Node() *corev1.Node {
 			},
 		},
 	}
+
+	// Parse IPs from annotation for Status.Addresses
+	var nodeIPs []string
+	if strings.Contains(primaryAddressAnnotation, "{") {
+		if strings.Contains(primaryAddressAnnotation, "\"ipv4\":\"") {
+			v4 := strings.Split(strings.Split(primaryAddressAnnotation, "\"ipv4\":\"")[1], "\"")[0]
+			nodeIPs = append(nodeIPs, v4)
+		}
+		if strings.Contains(primaryAddressAnnotation, "\"ipv6\":\"") {
+			v6 := strings.Split(strings.Split(primaryAddressAnnotation, "\"ipv6\":\"")[1], "\"")[0]
+			nodeIPs = append(nodeIPs, v6)
+		}
+	} else {
+		nodeIPs = append(nodeIPs, primaryAddressAnnotation)
+	}
+
+	for _, ip := range nodeIPs {
+		if ip == "" {
+			continue
+		}
+		// strip CIDR mask if present
+		ip = strings.Split(ip, "/")[0]
+		node.Status.Addresses = append(node.Status.Addresses, corev1.NodeAddress{
+			Type:    corev1.NodeInternalIP,
+			Address: ip,
+		})
+	}
+
+	return node
 }
 
 type testPrefixSelector struct {
@@ -1032,6 +1062,43 @@ func TestController_reconcile(t *testing.T) {
 			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "excludes self-neighbor in managed full-mesh topology",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig-base",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.1"}, // self for node
+							{ASN: 1, Address: "10.0.0.2"}, // other node
+						}},
+					},
+				},
+			},
+			nodes: []*testNode{
+				{
+					Name:                     "node",
+					SubnetsAnnotation:        "{\"default\":\"1.1.0.0/24\"}",
+					PrimaryAddressAnnotation: "10.0.0.1",
+				},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig-base/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.2", Advertise: []string{"1.1.0.0/24"}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
 			name: "fails to reconcile EVPN-enabled network to default VRF",
