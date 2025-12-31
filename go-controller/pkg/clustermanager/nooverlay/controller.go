@@ -1,6 +1,7 @@
 package nooverlay
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -15,9 +17,11 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/managedbgp"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 )
@@ -38,6 +42,8 @@ const (
 	eventReasonNoRA          eventReason = "NoRouteAdvertisements"
 	eventReasonConfigError   eventReason = "NoOverlayConfigurationError"
 	eventReasonConfigReady   eventReason = "NoOverlayConfigurationReady"
+	// Managed RouteAdvertisement name
+	defaultRouteAdvertisementName = "ovnk-managed-default-network"
 )
 
 // validationError represents different types of validation failures
@@ -56,6 +62,7 @@ func (e *validationError) Error() string {
 type Controller struct {
 	wf       *factory.WatchFactory
 	recorder record.EventRecorder
+	raClient raclientset.Interface
 
 	// raController watches RouteAdvertisements resources
 	raController controllerutil.Controller
@@ -68,12 +75,13 @@ type Controller struct {
 
 // NewController creates a new no-overlay validation controller.
 // This should only be called when config.Default.Transport == config.TransportNoOverlay.
-func NewController(wf *factory.WatchFactory, recorder record.EventRecorder) *Controller {
+func NewController(wf *factory.WatchFactory, raClient raclientset.Interface, recorder record.EventRecorder) *Controller {
 	klog.Infof("Creating no-overlay validation controller")
 
 	c := &Controller{
 		wf:       wf,
 		recorder: recorder,
+		raClient: raClient,
 	}
 
 	// Create controller config with RouteAdvertisements informer
@@ -165,6 +173,14 @@ func (c *Controller) raNeedsValidation(oldRA, newRA *ratypes.RouteAdvertisements
 func (c *Controller) runValidation() {
 	c.validationLock.Lock()
 	defer c.validationLock.Unlock()
+
+	// Ensure managed RouteAdvertisement if needed
+	if config.NoOverlay.Routing == config.NoOverlayRoutingManaged {
+		if err := c.ensureManagedRouteAdvertisement(); err != nil {
+			klog.Errorf("Failed to ensure managed RouteAdvertisement: %v", err)
+			// We still continue to validation, though it will likely fail if the RA is missing or not accepted
+		}
+	}
 
 	err := c.validate()
 	currentError := ""
@@ -308,4 +324,46 @@ func (c *Controller) emitReadyEvent() {
 func isRAAccepted(conditions []metav1.Condition) bool {
 	condition := meta.FindStatusCondition(conditions, "Accepted")
 	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+func (c *Controller) ensureManagedRouteAdvertisement() error {
+	ra := &ratypes.RouteAdvertisements{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: defaultRouteAdvertisementName,
+		},
+		Spec: ratypes.RouteAdvertisementsSpec{
+			NetworkSelectors: apitypes.NetworkSelectors{
+				{
+					NetworkSelectionType: apitypes.DefaultNetwork,
+				},
+			},
+			Advertisements: []ratypes.AdvertisementType{
+				ratypes.PodNetwork,
+			},
+			FRRConfigurationSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					managedbgp.FRRConfigManagedLabel: managedbgp.FRRConfigManagedValue,
+				},
+			}, // nodeSelector must select all nodes for PodNetwork
+			NodeSelector: metav1.LabelSelector{},
+		},
+	}
+
+	existing, err := c.wf.RouteAdvertisementsInformer().Lister().Get(defaultRouteAdvertisementName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			_, err = c.raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+			return err
+		}
+		return err
+	}
+
+	if !reflect.DeepEqual(existing.Spec, ra.Spec) {
+		updated := existing.DeepCopy()
+		updated.Spec = ra.Spec
+		_, err = c.raClient.K8sV1().RouteAdvertisements().Update(context.TODO(), updated, metav1.UpdateOptions{})
+		return err
+	}
+
+	return nil
 }
