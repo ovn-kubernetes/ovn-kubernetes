@@ -248,7 +248,8 @@ var (
 
 	// ManagedBGP holds managed BGP configuration
 	ManagedBGP = ManagedBGPConfig{
-		ASNumber: 64512, // Default AS number
+		ASNumber:     64512,            // Default AS number
+		FRRNamespace: "frr-k8s-system", // Default FRR namespace
 	}
 
 	// Layer2UsesTransitRouter indicated whether the layer2 primary networks will use transit router.
@@ -674,6 +675,9 @@ type ManagedBGPConfig struct {
 	// Supported values: "full-mesh".
 	// Required when transport=no-overlay and routing=managed.
 	Topology string `gcfg:"topology"`
+	// FRRNamespace specifies the namespace where FRR-K8s FRRConfiguration resources are created
+	// when routing is managed. Defaults to "frr-k8s-system" if not specified.
+	FRRNamespace string `gcfg:"frr-namespace"`
 }
 
 // OvnDBScheme describes the OVN database connection transport method
