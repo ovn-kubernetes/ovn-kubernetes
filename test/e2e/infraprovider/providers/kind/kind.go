@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -721,27 +720,18 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 		return valueStr, nil
 	}
 
-	getIPFamilyFlagForIPRoute2 := func(ipStr string) (string, error) {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			return "", fmt.Errorf("invalid IP address: %s", ipStr)
-		}
-		if utilnet.IsIPv6(ip) {
-			return "-6", nil
-		}
-		return "-4", nil
-	}
-
 	getInterfaceNameUsingIP := func(ip string) (string, error) {
-		ipFlag, err := getIPFamilyFlagForIPRoute2(ip)
+		// Use 'ip -o addr show' instead of 'ip -br addr show' because -br flag is not supported by BusyBox
+		// which is used by some container images like cloudflare/goflow.
+		// The -o (oneline) flag is supported by both BusyBox and full iproute2.
+		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "-o", "addr", "show").CombinedOutput()
 		if err != nil {
-			return "", fmt.Errorf("failed to get IP family flag for %s: %w", ip, err)
-		}
-		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "-br", ipFlag, "a", "sh").CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command 'ip -br a sh': err %v, out: %s", ip, containerName,
+			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command 'ip -o addr show': err %v, out: %s", ip, containerName,
 				err, allInfAddrBytes)
 		}
+		// ip -o addr show output format:
+		// 1: lo    inet 127.0.0.1/8 scope host lo\       valid_lft forever preferred_lft forever
+		// 2: eth0    inet 172.18.0.6/16 brd 172.18.255.255 scope global eth0\       valid_lft forever preferred_lft forever
 		var ipLine string
 		for _, line := range strings.Split(string(allInfAddrBytes), "\n") {
 			if strings.Contains(line, ip) {
@@ -750,22 +740,25 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 			}
 		}
 		if ipLine == "" {
-			return "", fmt.Errorf("failed to find IP %q within 'ip a' command on container %q:\n\n%q", ip, containerName, string(allInfAddrBytes))
+			return "", fmt.Errorf("failed to find IP %q within 'ip -o addr show' command on container %q:\n\n%q", ip, containerName, string(allInfAddrBytes))
 		}
-		ipLineSplit := strings.Split(ipLine, " ")
-		if len(ipLine) == 0 {
-			return "", fmt.Errorf("failed to find interface name from 'ip a' output line %q", ipLine)
+		// Parse the interface name from "N: ifname    inet ..." format
+		// Split by colon first to get "N" and "ifname    inet ..."
+		colonParts := strings.SplitN(ipLine, ":", 2)
+		if len(colonParts) < 2 {
+			return "", fmt.Errorf("failed to parse interface line %q: expected 'N: ifname ...' format", ipLine)
 		}
-		infNames := ipLineSplit[0]
-		splitChar := " "
-		if strings.Contains(infNames, "@") {
-			splitChar = "@"
+		// The second part starts with the interface name after trimming spaces
+		afterColon := strings.TrimSpace(colonParts[1])
+		fields := strings.Fields(afterColon)
+		if len(fields) == 0 {
+			return "", fmt.Errorf("failed to find interface name from 'ip -o addr show' output line %q", ipLine)
 		}
-		infNamesSplit := strings.Split(infNames, splitChar)
-		if len(infNamesSplit) == 0 {
-			return "", fmt.Errorf("failed to extract inf name + veth name from %q splitting by %q", infNames, splitChar)
+		infName := fields[0]
+		// Handle interface names like "eth0@if123" - extract just the interface name
+		if atIdx := strings.Index(infName, "@"); atIdx != -1 {
+			infName = infName[:atIdx]
 		}
-		infName := infNamesSplit[0]
 		// validate its an interface name on the Node with iproute2
 		out, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "link", "show", infName).CombinedOutput()
 		if err != nil {
@@ -805,7 +798,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv6 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv6, err)
+			framework.Logf("failed to get network interface name using IPv6 address %s: %v", ni.IPv6, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)
