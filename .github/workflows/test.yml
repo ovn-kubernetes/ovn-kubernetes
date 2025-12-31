@@ -681,6 +681,7 @@ jobs:
           make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
           make -C test control-plane
+          make -C test control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "serial" ]; then
           # Run only Serial tests with ginkgo focus
           make -C test control-plane WHAT=Serial

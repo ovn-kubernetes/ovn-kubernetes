@@ -162,8 +162,10 @@ if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
 fi
 
 BGP_TESTS="BGP"
+EVPN_TESTS="EVPN"
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip $BGP_TESTS
+  skip $EVPN_TESTS
 else
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
     # Filter out extended RouteAdvertisements tests to keep job run time down
