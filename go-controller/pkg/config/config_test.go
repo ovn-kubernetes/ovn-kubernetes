@@ -2282,14 +2282,16 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		It("parses BGP config from file with all fields set", func() {
 			fileConfig := config{
 				ManagedBGP: ManagedBGPConfig{
-					Topology: ManagedBGPTopologyFullMesh,
-					ASNumber: 64500,
+					Topology:     ManagedBGPTopologyFullMesh,
+					ASNumber:     64500,
+					FRRNamespace: "custom-frr-namespace",
 				},
 			}
 			err := buildManagedBGPConfig(&fileConfig)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(ManagedBGP.Topology).To(gomega.Equal(ManagedBGPTopologyFullMesh))
 			gomega.Expect(ManagedBGP.ASNumber).To(gomega.Equal(uint32(64500)))
+			gomega.Expect(ManagedBGP.FRRNamespace).To(gomega.Equal("custom-frr-namespace"))
 		})
 
 		It("handles partial BGP config in file", func() {
@@ -2312,7 +2314,8 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			err := buildManagedBGPConfig(&fileConfig)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			// Should retain default values without panicking
-			gomega.Expect(ManagedBGP.ASNumber).To(gomega.Equal(uint32(64512))) // default value
+			gomega.Expect(ManagedBGP.ASNumber).To(gomega.Equal(uint32(64512)))        // default value
+			gomega.Expect(ManagedBGP.FRRNamespace).To(gomega.Equal("frr-k8s-system")) // default value
 		})
 
 		It("validates reserved AS number 0", func() {
