@@ -16,6 +16,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/dnsnameresolver"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/endpointslicemirror"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/managedbgp"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/networkconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/nooverlay"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/routeadvertisements"
@@ -65,8 +66,9 @@ type ClusterManager struct {
 	// networkManager creates and deletes network controllers
 	networkManager networkmanager.Controller
 
-	raController        *routeadvertisements.Controller
-	noOverlayController *nooverlay.Controller
+	raController         *routeadvertisements.Controller
+	noOverlayController  *nooverlay.Controller
+	managedBGPController *managedbgp.Controller
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -191,8 +193,9 @@ func NewClusterManager(
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
 		if config.Default.Transport == types.NetworkTransportNoOverlay {
-			cm.noOverlayController = nooverlay.NewController(wf, recorder)
+			cm.noOverlayController = nooverlay.NewController(wf, ovnClient.RouteAdvertisementsClient, recorder)
 		}
+		cm.managedBGPController = managedbgp.NewController(wf, ovnClient.FRRClient, recorder)
 	}
 
 	return cm, nil
@@ -260,6 +263,9 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 	}
 
 	if cm.raController != nil {
+		if err := cm.managedBGPController.Start(); err != nil {
+			return err
+		}
 		err := cm.raController.Start()
 		if err != nil {
 			return err
@@ -303,6 +309,7 @@ func (cm *ClusterManager) Stop() {
 		cm.networkConnectController.Stop()
 	}
 	if cm.raController != nil {
+		cm.managedBGPController.Stop()
 		cm.raController.Stop()
 		cm.raController = nil
 	}
