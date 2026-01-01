@@ -28,7 +28,7 @@ OVN_FROM := source
 OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V  |tail -1 | awk '{ print $$1 }')
 endif
 GO_VERSION ?= 1.24
-GO_IMAGE = quay.io/lib/golang:${GO_VERSION}
+GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 
 OCI_BIN ?= docker
 
