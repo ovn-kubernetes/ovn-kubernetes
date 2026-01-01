@@ -91,6 +91,88 @@ spec:
               network:
                 description: Network is the user-defined-network spec
                 properties:
+                  evpnConfiguration:
+                    description: |-
+                      EVPNConfiguration contains configuration for EVPN mode.
+                      This is only allowed when Transport is "EVPN".
+                    properties:
+                      ipVRF:
+                        description: |-
+                          IPVRF contains the IP-VRF configuration for Layer 3 EVPN.
+                          This field is required for Layer3 topology and optional for Layer2 topology.
+                        properties:
+                          routeTarget:
+                            description: |-
+                              RouteTarget is the BGP route target for this VRF.
+                              If not specified, it will be auto-generated as "<AS Number>:<VNI>".
+                              Format should be "<AS>:<VNI>" where AS is the autonomous system number and VNI is the VXLAN Network Identifier number.
+                              AS must be between 1 and 4294967295 (4-byte ASN). VNI must be between 1 and 16777215 (24-bit).
+                            type: string
+                            x-kubernetes-validations:
+                            - message: routeTarget must be in the format '<AS>:<VNI>'
+                              rule: self.matches('^[0-9]+:[0-9]+$')
+                            - message: AS number in routeTarget must be between 1
+                                and 4294967295
+                              rule: int(self.split(':')[0]) >= 1 && int(self.split(':')[0])
+                                <= 4294967295
+                            - message: VNI in routeTarget must be between 1 and 16777215
+                              rule: int(self.split(':')[1]) >= 1 && int(self.split(':')[1])
+                                <= 16777215
+                          vni:
+                            description: |-
+                              VNI is the VXLAN Network Identifier for this VRF.
+                              Must be unique across all EVPN configurations in the cluster.
+                            format: int32
+                            maximum: 16777215
+                            minimum: 1
+                            type: integer
+                        required:
+                        - vni
+                        type: object
+                      macVRF:
+                        description: |-
+                          MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.
+                          This field is required for Layer2 topology and forbidden for Layer3 topology.
+                        properties:
+                          routeTarget:
+                            description: |-
+                              RouteTarget is the BGP route target for this VRF.
+                              If not specified, it will be auto-generated as "<AS Number>:<VNI>".
+                              Format should be "<AS>:<VNI>" where AS is the autonomous system number and VNI is the VXLAN Network Identifier number.
+                              AS must be between 1 and 4294967295 (4-byte ASN). VNI must be between 1 and 16777215 (24-bit).
+                            type: string
+                            x-kubernetes-validations:
+                            - message: routeTarget must be in the format '<AS>:<VNI>'
+                              rule: self.matches('^[0-9]+:[0-9]+$')
+                            - message: AS number in routeTarget must be between 1
+                                and 4294967295
+                              rule: int(self.split(':')[0]) >= 1 && int(self.split(':')[0])
+                                <= 4294967295
+                            - message: VNI in routeTarget must be between 1 and 16777215
+                              rule: int(self.split(':')[1]) >= 1 && int(self.split(':')[1])
+                                <= 16777215
+                          vni:
+                            description: |-
+                              VNI is the VXLAN Network Identifier for this VRF.
+                              Must be unique across all EVPN configurations in the cluster.
+                            format: int32
+                            maximum: 16777215
+                            minimum: 1
+                            type: integer
+                        required:
+                        - vni
+                        type: object
+                      vtep:
+                        description: VTEP is the name of the VTEP CR that defines
+                          VTEP IPs for EVPN.
+                        minLength: 1
+                        type: string
+                    required:
+                    - vtep
+                    type: object
+                    x-kubernetes-validations:
+                    - message: at least one of macVRF or ipVRF must be specified
+                      rule: has(self.macVRF) || has(self.ipVRF)
                   layer2:
                     description: Layer2 is the Layer2 topology configuration.
                     properties:
@@ -653,13 +735,15 @@ spec:
                   transport:
                     description: |-
                       Transport describes the transport technology for pod-to-pod traffic.
-                      Allowed values are "NoOverlay" and "Geneve".
+                      Allowed values are "NoOverlay", "Geneve", and "EVPN".
                       - "NoOverlay": The network operates in no-overlay mode.
                       - "Geneve": The network uses Geneve overlay.
+                      - "EVPN": The network uses EVPN transport.
                       When omitted, the default behaviour is Geneve.
                     enum:
                     - NoOverlay
                     - Geneve
+                    - EVPN
                     type: string
                 required:
                 - topology
@@ -687,6 +771,28 @@ spec:
                     has(self.noOverlayOptions)'
                 - message: noOverlayOptions is forbidden when transport is not 'NoOverlay'
                   rule: self.transport == 'NoOverlay' || !has(self.noOverlayOptions)
+                - message: transport 'EVPN' is only supported for Layer2 or Layer3
+                    primary networks
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || ((self.topology
+                    == ''Layer2'' && has(self.layer2) && self.layer2.role == ''Primary'')
+                    || (self.topology == ''Layer3'' && has(self.layer3) && self.layer3.role
+                    == ''Primary''))'
+                - message: evpnConfiguration is required when transport is 'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || has(self.evpnConfiguration)'
+                - message: evpnConfiguration is forbidden when transport is not 'EVPN'
+                  rule: self.transport == 'EVPN' || !has(self.evpnConfiguration)
+                - message: macVRF is required for Layer2 topology when transport is
+                    'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
+                    != ''Layer2'' || (has(self.evpnConfiguration) && has(self.evpnConfiguration.macVRF))'
+                - message: ipVRF is required for Layer3 topology when transport is
+                    'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
+                    != ''Layer3'' || (has(self.evpnConfiguration) && has(self.evpnConfiguration.ipVRF))'
+                - message: macVRF is forbidden for Layer3 topology when transport
+                    is 'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
+                    != ''Layer3'' || !has(self.evpnConfiguration) || !has(self.evpnConfiguration.macVRF)'
                 - message: Network spec is immutable
                   rule: self == oldSelf
             required:
