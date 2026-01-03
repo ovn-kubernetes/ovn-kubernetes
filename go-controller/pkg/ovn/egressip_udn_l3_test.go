@@ -1377,6 +1377,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Options: map[string]string{
 							"mcast_flood": "true",
 						},
+						ExternalIDs: map[string]string{
+							ovntypes.NodeExternalID:    node1.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+						},
 					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
@@ -1447,7 +1451,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Addresses: []string{"router"},
 						Name:      netInfo.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node1.Name),
 						ExternalIDs: map[string]string{
-							"node": node1.Name,
+							"node":                     node1.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
 						},
 						Options: map[string]string{
 							libovsdbops.RouterPort:      netInfo.GetNetworkScopedName(ovntypes.RouterToTransitSwitchPrefix + node1.Name),
@@ -1460,7 +1465,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Addresses: []string{util.IPAddrToHWAddr(net.ParseIP(v4Node2Tsp)).String() + " " + v4Node2Tsp + "/16"},
 						Name:      netInfo.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node2.Name),
 						ExternalIDs: map[string]string{
-							"node": node2.Name,
+							"node":                     node2.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
 						},
 						Options: map[string]string{
 							libovsdbops.RequestedChassis: node2.Name,
@@ -1629,6 +1635,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Options: map[string]string{
 							"mcast_flood": "true",
 						},
+						ExternalIDs: map[string]string{
+							ovntypes.NodeExternalID:    node1.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+						},
 					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
@@ -1696,7 +1706,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Addresses: []string{"router"},
 						Name:      netInfo.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node1.Name),
 						ExternalIDs: map[string]string{
-							"node": node1.Name,
+							"node":                     node1.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
 						},
 						Options: map[string]string{
 							libovsdbops.RouterPort:      netInfo.GetNetworkScopedName(ovntypes.RouterToTransitSwitchPrefix + node1.Name),
@@ -1709,7 +1720,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Addresses: []string{util.IPAddrToHWAddr(net.ParseIP(v4Node2Tsp)).String() + " " + v4Node2Tsp + "/16"},
 						Name:      netInfo.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node2.Name),
 						ExternalIDs: map[string]string{
-							"node": node2.Name,
+							"node":                     node2.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
 						},
 						Options: map[string]string{
 							libovsdbops.RequestedChassis: node2.Name,
@@ -2849,6 +2861,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Options: map[string]string{
 							"mcast_flood": "true",
 						},
+						ExternalIDs: map[string]string{
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
+							ovntypes.NodeExternalID:    node1.Name,
+						},
 					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
@@ -2918,7 +2934,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Addresses: []string{"router"},
 						Name:      netInfo.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node1.Name),
 						ExternalIDs: map[string]string{
-							"node": node1.Name,
+							"node":                     node1.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
 						},
 						Options: map[string]string{
 							libovsdbops.RouterPort:      netInfo.GetNetworkScopedName(ovntypes.RouterToTransitSwitchPrefix + node1.Name),
@@ -2931,7 +2948,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Addresses: []string{util.IPAddrToHWAddr(net.ParseIP(v4Node2Tsp)).String() + " " + v4Node2Tsp + "/16"},
 						Name:      netInfo.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node2.Name),
 						ExternalIDs: map[string]string{
-							"node": node2.Name,
+							"node":                     node2.Name,
+							ovntypes.NetworkExternalID: netInfo.GetNetworkName(),
 						},
 						Options: map[string]string{
 							libovsdbops.RequestedChassis: node2.Name,
