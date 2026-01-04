@@ -668,7 +668,7 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.17
+readonly FRR_K8S_VERSION=v0.0.20
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -682,7 +682,7 @@ clone_frr() {
 
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
-    git apply ../patches/*
+    git apply --exclude hack/kind.sh ../patches/*
     popd
 
     popd || exit 1
@@ -822,7 +822,7 @@ destroy_bgp() {
   fi
 }
 
-install_ffr_k8s() {
+install_frr_k8s() {
   echo "Installing frr-k8s ..."
   clone_frr
 
@@ -841,8 +841,8 @@ install_ffr_k8s() {
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
     IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
-    # Process each occurrence of the IPv4 prefix
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+    # Process each occurrence of the IPv4 prefix in reverse order to avoid line number shifting
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
       # Insert the IPv6 prefix after each IPv4 prefix line
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done

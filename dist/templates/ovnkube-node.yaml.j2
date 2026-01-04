@@ -100,6 +100,11 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        {%- if ovn_no_overlay_enable == "true" %}
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        {%- endif %}
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
           readOnly: true
@@ -248,6 +253,8 @@ spec:
           value: "{{ ovn_route_advertisements_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: "{{ ovn_advertised_udn_isolation_mode }}"
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ ovn_no_overlay_enable }}"
         - name: OVN_ENABLE_INTERCONNECT
           value: "{{ ovn_enable_interconnect }}"
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
@@ -323,6 +330,11 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        {%- if ovn_no_overlay_enable == "true" %}
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        {%- endif %}
 
         resources:
           requests:
@@ -447,6 +459,11 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      {%- if ovn_no_overlay_enable == "true" %}
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
+      {%- endif %}
       {%- if ovnkube_app_name!="ovnkube-node-dpu-host" %}
       # non DPU related volumes
       - name: host-var-log-ovs
