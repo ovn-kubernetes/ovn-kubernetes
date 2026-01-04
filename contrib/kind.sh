@@ -16,7 +16,7 @@ delete() {
   if [ "$KIND_INSTALL_METALLB" == true ]; then
     destroy_metallb
   fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$NO_OVERLAY_MANAGED_ROUTING" != "true" ]; then
     destroy_bgp
   fi
   timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
@@ -134,7 +134,7 @@ echo "-rae | --enable-route-advertisements          Enable route advertisements"
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
-echo "-noe | --enable-no-overlay [snat-enabled]     Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT for pod outbound traffic. DEFAULT: disabled."
+echo "-noe | --enable-no-overlay [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled."
 echo ""
 }
 
@@ -343,9 +343,13 @@ parse_args() {
                                                     if [[ "$2" == "snat-enabled" ]]; then
                                                       ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
                                                       shift  # consume the value argument
+                                                    elif [[ "$2" == "managed" ]]; then
+                                                      ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
+                                                      NO_OVERLAY_MANAGED_ROUTING=true
+                                                      shift  # consume the value argument
                                                     else
                                                       echo "Error: Invalid value for --enable-no-overlay: $2"
-                                                      echo "Valid value is: snat-enabled"
+                                                      echo "Valid values are: snat-enabled, managed"
                                                       exit 1
                                                     fi
                                                   else
@@ -455,6 +459,7 @@ print_params() {
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
      echo "ENABLE_NO_OVERLAY_OUTBOUND_SNAT = $ENABLE_NO_OVERLAY_OUTBOUND_SNAT"
+     echo "NO_OVERLAY_MANAGED_ROUTING = $NO_OVERLAY_MANAGED_ROUTING"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -715,6 +720,7 @@ set_default_params() {
   ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
   ENABLE_NO_OVERLAY_OUTBOUND_SNAT=${ENABLE_NO_OVERLAY_OUTBOUND_SNAT:-false}
+  NO_OVERLAY_MANAGED_ROUTING=${NO_OVERLAY_MANAGED_ROUTING:-false}
   if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
     echo "No-overlay mode requires multi-network to be enabled (-mne)"
     exit 1
@@ -723,7 +729,7 @@ set_default_params() {
     echo "No-overlay mode requires route advertisement to be enabled (-rae)"
     exit 1
   fi
-  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$NO_OVERLAY_MANAGED_ROUTING" != true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
     echo "No-overlay mode requires advertise the default network (-adv)"
     exit 1
   fi
@@ -997,6 +1003,7 @@ create_ovn_kube_manifests() {
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
     --no-overlay-enable="${ENABLE_NO_OVERLAY}" \
     --no-overlay-enable-snat="${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" \
+    --no-overlay-managed-routing="${NO_OVERLAY_MANAGED_ROUTING}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
     --enable-interconnect="${OVN_ENABLE_INTERCONNECT}" \
@@ -1305,8 +1312,16 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  deploy_frr_external_container
-  deploy_bgp_external_server
+  frr_port=0
+  if [ "$NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+    # Enable bgp port listening on node, required for managed mode. FRR will listen on port 179 to receive BGP updates from other nodes.
+    frr_port=179
+  else
+    # external FRR is required for unmanaged mode
+    deploy_frr_external_container
+    deploy_bgp_external_server
+  fi
+  install_frr_k8s $frr_port
 fi
 build_ovn_image
 detect_apiserver_url
@@ -1344,8 +1359,13 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
     install_kubevirt_ipam_controller
   fi
 fi
+
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_frr_k8s
+  # wait for frr-k8s to be ready
+  wait_for_frr_k8s
+  if [ "$NO_OVERLAY_MANAGED_ROUTING" != true ]; then
+    configure_frr_k8s
+  fi
 fi
 
 interconnect_arg_check
