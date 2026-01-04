@@ -80,6 +80,7 @@ OVN_ADVERTISE_DEFAULT_NETWORK=
 OVN_ADVERTISED_UDN_ISOLATION_MODE=
 OVN_NO_OVERLAY_ENABLE=
 OVN_NO_OVERLAY_OUTBOUND_SNAT_ENABLE=
+OVN_NO_OVERLAY_MANAGED_ROUTING=
 OVN_V4_JOIN_SUBNET=""
 OVN_V6_JOIN_SUBNET=""
 OVN_V4_MASQUERADE_SUBNET=""
@@ -309,6 +310,9 @@ while [ "$1" != "" ]; do
   --no-overlay-enable-snat)
     OVN_NO_OVERLAY_OUTBOUND_SNAT_ENABLE=$VALUE
     ;;
+  --no-overlay-managed-routing)
+    OVN_NO_OVERLAY_MANAGED_ROUTING=$VALUE
+    ;;
   --egress-service-enable)
     OVN_EGRESSSERVICE_ENABLE=$VALUE
     ;;
@@ -518,6 +522,8 @@ ovn_no_overlay_enable=${OVN_NO_OVERLAY_ENABLE}
 echo "ovn_no_overlay_enable: ${ovn_no_overlay_enable}"
 ovn_no_overlay_outbound_snat_enable=${OVN_NO_OVERLAY_OUTBOUND_SNAT_ENABLE}
 echo "ovn_no_overlay_outbound_snat_enable: ${ovn_no_overlay_outbound_snat_enable}"
+ovn_no_overlay_managed_routing=${OVN_NO_OVERLAY_MANAGED_ROUTING}
+echo "ovn_no_overlay_managed_routing: ${ovn_no_overlay_managed_routing}"
 ovn_hybrid_overlay_net_cidr=${OVN_HYBRID_OVERLAY_NET_CIDR}
 echo "ovn_hybrid_overlay_net_cidr: ${ovn_hybrid_overlay_net_cidr}"
 ovn_disable_snat_multiple_gws=${OVN_DISABLE_SNAT_MULTIPLE_GWS}
@@ -1162,6 +1168,7 @@ net_cidr=${net_cidr} svc_cidr=${svc_cidr} \
   advertise_default_network=${ovn_advertise_default_network} \
   ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_no_overlay_outbound_snat_enable=${ovn_no_overlay_outbound_snat_enable} \
+  ovn_no_overlay_managed_routing=${OVN_NO_OVERLAY_MANAGED_ROUTING} \
   jinjanate ../templates/ovn-setup.yaml.j2 -o ${output_dir}/ovn-setup.yaml
 
 ovn_enable_interconnect=${ovn_enable_interconnect} \
@@ -1174,6 +1181,7 @@ ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
 ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
 ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
 ovn_evpn_enable=${ovn_evpn_enable} \
+ovn_no_overlay_managed_routing=${ovn_no_overlay_managed_routing} \
 ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
   jinjanate ../templates/rbac-ovnkube-cluster-manager.yaml.j2 -o ${output_dir}/rbac-ovnkube-cluster-manager.yaml
 
