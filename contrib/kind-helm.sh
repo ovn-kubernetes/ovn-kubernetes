@@ -45,7 +45,7 @@ usage() {
     echo "       [-adv | --advertise-default-network]"
     echo "       [-rud | --routed-udn-isolation-disable]"
     echo "       [ -nqe | --network-qos-enable ]"
-    echo "       [ -noe | --no-overlay-enable [snat-enabled] ]"
+    echo "       [ -noe | --no-overlay-enable [snat-enabled|managed] ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
@@ -82,7 +82,7 @@ usage() {
     echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
     echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
-    echo "-noe | --no-overlay-enable [snat-enabled]     Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT for pod outbound traffic. DEFAULT: disabled."
+    echo "-noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled."
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-ov  | --ovn-image                            Use the specified docker image instead of building locally. DEFAULT: local build."
@@ -170,13 +170,18 @@ parse_args() {
                                                     if [[ "$2" == "snat-enabled" ]]; then
                                                       ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
                                                       shift  # consume the value argument
+                                                    elif [[ "$2" == "managed" ]]; then
+                                                      ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
+                                                      ENABLE_NO_OVERLAY_MANAGED_ROUTING=true
+                                                      shift  # consume the value argument
                                                     else
                                                       echo "Error: Invalid value for --no-overlay-enable: $2"
-                                                      echo "Valid value is: snat-enabled"
+                                                      echo "Valid values are: snat-enabled, managed"
                                                       exit 1
                                                     fi
                                                   else
                                                     ENABLE_NO_OVERLAY_OUTBOUND_SNAT=false
+                                                    ENABLE_NO_OVERLAY_MANAGED_ROUTING=false
                                                   fi
                                                   ;;
             -ha | --ha-enabled )                  OVN_HA=true
@@ -273,6 +278,7 @@ print_params() {
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
      echo "ENABLE_NO_OVERLAY_OUTBOUND_SNAT = $ENABLE_NO_OVERLAY_OUTBOUND_SNAT"
+     echo "ENABLE_NO_OVERLAY_MANAGED_ROUTING = $ENABLE_NO_OVERLAY_MANAGED_ROUTING"
      echo "OVN_MTU = $OVN_MTU"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "OVN_REPO = $OVN_REPO"
@@ -389,6 +395,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlay=$(if [ "${ENABLE_NO_OVERLAY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlaySnat=$(if [ "${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableNoOverlayManagedRouting=$(if [ "${ENABLE_NO_OVERLAY_MANAGED_ROUTING}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.allowICMPNetworkPolicy=$(if [ "${OVN_ALLOW_ICMP_NETPOL}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
@@ -427,8 +434,16 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  deploy_frr_external_container
-  deploy_bgp_external_server
+  frr_port=0
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+    # Enable bgp port listening on node, required for managed mode. FRR will listen on port 179 to receive BGP updates from other nodes.
+    frr_port=179
+  else
+    # external FRR is required for unmanaged mode
+    deploy_frr_external_container
+    deploy_bgp_external_server
+  fi
+  install_frr_k8s $frr_port
 fi
 if [ "$KIND_REMOVE_TAINT" == true ]; then
   remove_no_schedule_taint
@@ -469,7 +484,11 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_frr_k8s
+  # wait for frr-k8s to be ready
+  wait_for_frr_k8s
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
+    configure_frr_k8s
+  fi
 fi
 
 interconnect_arg_check

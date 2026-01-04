@@ -186,15 +186,16 @@ set_common_default_params() {
   
 
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
+  ENABLE_NO_OVERLAY_OUTBOUND_SNAT=${ENABLE_NO_OVERLAY_OUTBOUND_SNAT:-false}
+  ENABLE_NO_OVERLAY_MANAGED_ROUTING=${ENABLE_NO_OVERLAY_MANAGED_ROUTING:-false}
   if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
     echo "No-overlay mode requires route advertisement to be enabled (-rae)"
     exit 1
   fi
-  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
-    echo "No-overlay mode requires advertise the default network (-adv)"
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ] && [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
+    echo "No-overlay mode requires advertise the default network (-adv) in unmanaged routing mode"
     exit 1
   fi
-
   if [ "$ENABLE_NO_OVERLAY" == true ]; then
     # Set default MTU for no-overlay mode (1500) if not already set
     OVN_MTU=${OVN_MTU:-1500}
@@ -202,9 +203,12 @@ set_common_default_params() {
     # Set default MTU for overlay mode (1400) if not already set
     OVN_MTU=${OVN_MTU:-1400}
   fi
-  ENABLE_NO_OVERLAY_OUTBOUND_SNAT=${ENABLE_NO_OVERLAY_OUTBOUND_SNAT:-false}
   if [ "$ENABLE_NO_OVERLAY_OUTBOUND_SNAT" == true ] && [ "$ENABLE_NO_OVERLAY" != true ]; then
     echo "No-overlay outbound SNAT can only be enabled when no-overlay mode is enabled (-noe)"
+    exit 1
+  fi
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ] && [ "$ENABLE_NO_OVERLAY" != true ]; then
+    echo "No-overlay managed routing can only be enabled when no-overlay mode is enabled (-noe)"
     exit 1
   fi
 }
@@ -1136,14 +1140,23 @@ destroy_bgp() {
 }
 
 install_frr_k8s() {
+  local bgp_port=${1:-0}
   echo "Installing frr-k8s ..."
   clone_frr
 
   # apply frr-k8s
+  if [ "${bgp_port}" -ne 0 ]; then
+    sed -i "s/bgpd_options=\"\(.*\)-p 0\(.*\)\"/bgpd_options=\"\1-p ${bgp_port}\2\"/g" "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+  fi
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+}
+
+wait_for_frr_k8s() {
   kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
   kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
 
+configure_frr_k8s() {
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
