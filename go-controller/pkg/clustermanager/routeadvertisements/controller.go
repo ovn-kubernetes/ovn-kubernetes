@@ -324,6 +324,8 @@ type selectedNetworks struct {
 	prefixLength map[string]uint32
 	// networkType is a map of selected network to their topology
 	networkTopology map[string]string
+	// networkTransport is a map of selected network to their transport mode
+	networkTransport map[string]string
 }
 
 // generateFRRConfigurations generates FRRConfigurations for the route
@@ -351,10 +353,11 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// validate and gather information about the networks
 	networkSet := sets.New[string]()
 	selectedNetworks := &selectedNetworks{
-		networkVRFs:     map[string]string{},
-		networkSubnets:  map[string][]string{},
-		prefixLength:    map[string]uint32{},
-		networkTopology: map[string]string{},
+		networkVRFs:      map[string]string{},
+		networkSubnets:   map[string][]string{},
+		prefixLength:     map[string]uint32{},
+		networkTopology:  map[string]string{},
+		networkTransport: map[string]string{},
 	}
 	for _, nad := range nads {
 		networkName := util.GetAnnotatedNetworkName(nad)
@@ -385,6 +388,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
 		selectedNetworks.networkVRFs[vrf] = networkName
 		selectedNetworks.networkTopology[networkName] = network.TopologyType()
+		selectedNetworks.networkTransport[networkName] = network.GetNetworkTransport()
 		// TODO check overlaps?
 		for _, cidr := range network.Subnets() {
 			subnet := cidr.CIDR.String()
@@ -639,8 +643,20 @@ func (c *Controller) generateFRRConfiguration(
 		// prefixes as appropriate
 		targetRouter := router
 		targetRouter.Prefixes = advertisePrefixes
+
+		node, err := c.nodeLister.Get(nodeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+		}
+		nodeV4, nodeV6 := util.GetNodeInternalAddrs(node)
+
 		targetRouter.Neighbors = make([]frrtypes.Neighbor, 0, len(source.Spec.BGP.Routers[i].Neighbors))
 		for _, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
+			// Skip neighbors that are the node itself
+			if (nodeV4 != nil && neighbor.Address == nodeV4.String()) || (nodeV6 != nil && neighbor.Address == nodeV6.String()) {
+				continue
+			}
+
 			// If MultiProtocol is enabled (default) then a BGP session carries
 			// prefixes of both IPv4 and IPv6 families. Our problem is that with
 			// an IPv4 session, FRR can incorrectly pick the masquerade IPv6
@@ -670,6 +686,32 @@ func (c *Controller) generateFRRConfiguration(
 					Prefixes: advertisePrefixes,
 				},
 			}
+
+			// For no-overlay networks, add routes to pod subnets to the accepted routes list
+			if selectedNetworks.networkTransport[matchedNetwork] == config.TransportNoOverlay {
+				// Get the pod subnets for this network (the network subnets, not host subnets)
+				podSubnets := selectedNetworks.networkSubnets[matchedNetwork]
+				if len(podSubnets) > 0 {
+					// Filter pod subnets by IP family to match the neighbor
+					filteredPodSubnets := util.MatchAllIPNetsStringFamily(isIPV6, podSubnets)
+					if len(filteredPodSubnets) > 0 {
+						neighbor.ToReceive = frrtypes.Receive{
+							Allowed: frrtypes.AllowedInPrefixes{
+								Mode:     frrtypes.AllowRestricted,
+								Prefixes: neighbor.ToReceive.Allowed.Prefixes,
+							},
+						}
+						for _, subnet := range filteredPodSubnets {
+							neighbor.ToReceive.Allowed.Prefixes = append(neighbor.ToReceive.Allowed.Prefixes, frrtypes.PrefixSelector{
+								Prefix: subnet,
+								LE:     selectedNetworks.prefixLength[subnet],
+								GE:     selectedNetworks.prefixLength[subnet],
+							})
+						}
+					}
+				}
+			}
+
 			targetRouter.Neighbors = append(targetRouter.Neighbors, neighbor)
 		}
 		if len(targetRouter.Neighbors) == 0 {
