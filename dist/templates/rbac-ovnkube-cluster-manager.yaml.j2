@@ -92,6 +92,12 @@ rules:
           - routeadvertisements/status
           - clusternetworkconnects # Unlike core kubernetes objects, for CRDs there is strict enforcement of status subresource permissions. Since CM has to annotate CNC we need to provide full object patch permissions.
       verbs: [ "patch", "update" ]
+    {% if ovn_no_overlay_managed_routing == "true" -%}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - routeadvertisements
+      verbs: [ "create", "patch", "update", "delete", "get"]
+    {%- endif %}
     - apiGroups: [""]
       resources:
           - events
@@ -132,7 +138,7 @@ rules:
           - dnsnameresolvers
       verbs: [ "create", "delete", "list", "patch", "update", "watch" ]
     {%- endif %}
-    {% if ovn_route_advertisements_enable == "true" -%}
+    {% if ovn_route_advertisements_enable == "true" or ovn_no_overlay_managed_routing == "true" -%}
     - apiGroups: ["frrk8s.metallb.io"]
       resources:
           - frrconfigurations

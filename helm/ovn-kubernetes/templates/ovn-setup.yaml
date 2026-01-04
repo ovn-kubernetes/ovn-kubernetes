@@ -71,7 +71,13 @@ data:
 {{- else }}
     outbound-snat = disabled
 {{- end }}
-    routing = unmanaged
+    routing = {{ if .Values.global.enableNoOverlayManagedRouting }}managed{{ else }}unmanaged{{ end }}
+{{- if .Values.global.enableNoOverlayManagedRouting }}
+
+    [bgp-managed]
+    as-number = {{ .Values.global.managedBGPASNumber | default 64512 }}
+    topology = {{ .Values.global.managedBGPTopology | default "full-mesh" }}
+{{- end }}
 {{- end }}
 
 {{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}

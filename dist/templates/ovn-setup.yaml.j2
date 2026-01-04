@@ -102,19 +102,33 @@ data:
     routing = unmanaged
 {%- endif %}
 
-{% if advertise_default_network == "true" -%}
+{%- if ovn_no_overlay_enable == "true" %}
+
 ---
-apiVersion: k8s.ovn.org/v1
-kind: RouteAdvertisements
+# ovnkube-config ConfigMap
+#
+# Configuration for ovnkube binaries
+kind: ConfigMap
+apiVersion: v1
 metadata:
-  name: default
-spec:
-  networkSelectors:
-    - networkSelectionType: DefaultNetwork
-  nodeSelector: {}
-  frrConfigurationSelector:
-    matchLabels:
-      name: receive-all
-  advertisements:
-    - "PodNetwork"
+  name: ovnkube-config
+  namespace: ovn-kubernetes
+data:
+  ovnkube.conf: |
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+{%- if ovn_no_overlay_outbound_snat_enable == "true" %}
+    outbound-snat = enabled
+{%- else %}
+    outbound-snat = disabled
+{%- endif %}
+    routing = {{ "managed" if ovn_no_overlay_managed_routing == "true" else "unmanaged" }}
+{%- if ovn_no_overlay_managed_routing == "true" %}
+
+    [bgp-managed]
+    as-number = {{ ovn_managed_bgp_as_number | default(64512) }}
+    topology = {{ ovn_managed_bgp_topology | default("full-mesh") }}
+{%- endif %}
 {%- endif %}

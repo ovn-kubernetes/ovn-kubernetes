@@ -88,6 +88,12 @@ global:
   enableNoOverlay: false
   # -- Configure to enable SNAT for outbound traffic in no-overlay mode
   enableNoOverlaySnat: false
+  # -- Configure to enable managed routing mode for no-overlay (automatically configures internal BGP fabric)
+  enableNoOverlayManagedRouting: false
+  # -- BGP AS number for managed routing mode
+  managedBGPASNumber: 64512
+  # -- BGP topology for managed routing mode (full-mesh or spine-leaf)
+  managedBGPTopology: "full-mesh"
   # -- Configure to enable workloads with preconfigured network connect to user defined networks (UDN) with ovn-kubernetes
   enablePreconfiguredUDNAddresses: false
   # -- Configure to enable IPsec
