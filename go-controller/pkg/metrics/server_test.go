@@ -786,7 +786,7 @@ func TestHandleMetrics(t *testing.T) {
 			// Test the /metrics endpoint
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/metrics", nil)
-			server.handleMetrics(rec, req)
+			server.mux.ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
 				t.Errorf("Expected status 200, got %d", rec.Code)
 			}

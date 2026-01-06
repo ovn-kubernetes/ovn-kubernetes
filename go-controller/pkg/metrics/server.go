@@ -4,13 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/expfmt"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilwait "k8s.io/apimachinery/pkg/util/wait"
@@ -75,12 +73,22 @@ func NewMetricServer(opts MetricServerOptions, ovsDBClient libovsdbclient.Client
 	}
 
 	server.mux = http.NewServeMux()
-	server.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(server.ovnRegistry, http.HandlerFunc(server.handleMetrics)))
+	metricsHandler := promhttp.HandlerForTransactional(
+		prometheus.ToTransactionalGatherer(server.ovnRegistry),
+		promhttp.HandlerOpts{},
+	)
+	server.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
+		server.ovnRegistry,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Update metrics in the registry before emitting them.
+			server.handleMetrics(r)
+			// Emit the updated metrics using the transactional handler.
+			metricsHandler.ServeHTTP(w, r)
+		}),
+	))
 
 	return server
 }
-
-const FmtText = `text/plain; version=` + expfmt.TextVersion + `; charset=utf-8`
 
 // registerMetrics registers the metrics to the OVN registry
 func (s *MetricServer) registerMetrics() {
@@ -112,21 +120,6 @@ func (s *MetricServer) EnableOVNDBMetrics() {
 	s.opts.EnableOVNDBMetrics = true
 	klog.Infof("MetricServer registers OVN DB metrics")
 	s.ovsDbProperties, s.opts.dbIsClustered, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.ovnRegistry)
-}
-
-// writeRegisteredMetrics writes the registered metrics to the /metrics response.
-func (s *MetricServer) writeRegisteredMetrics(w io.Writer) error {
-	mfs, err := s.ovnRegistry.Gather()
-	if err != nil {
-		return err
-	}
-	enc := expfmt.NewEncoder(w, FmtText)
-	for _, mf := range mfs {
-		if err := enc.Encode(mf); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // updateOvsMetrics updates the OVS metrics
@@ -187,7 +180,7 @@ func (s *MetricServer) updateOvnDBMetrics() {
 }
 
 // handleMetrics handles the /metrics request
-func (s *MetricServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+func (s *MetricServer) handleMetrics(r *http.Request) {
 	klog.V(5).Infof("MetricServer starts to handle metrics request from %s", r.RemoteAddr)
 
 	if s.opts.EnableOVSMetrics {
@@ -201,13 +194,6 @@ func (s *MetricServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.opts.EnableOVNNorthdMetrics {
 		s.updateOvnNorthdMetrics()
-	}
-
-	// write out the registered metrics
-	w.Header().Set("Content-Type", FmtText)
-	if err := s.writeRegisteredMetrics(io.Writer(w)); err != nil {
-		klog.Errorf("Failed to write registered metrics: %v", err)
-		return
 	}
 }
 
