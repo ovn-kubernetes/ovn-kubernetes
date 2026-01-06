@@ -136,8 +136,9 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 					syncClusterRouterPort: true,
 				}
 			}
-			return h.oc.addUpdateLocalNodeEvent(node, nodeParams)
+			return h.oc.addUpdateLocalNodeEvent(node, nodeParams, nil)
 		}
+
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			if !h.oc.networkManager.NodeHasNetwork(node.Name, h.oc.GetNetworkName()) {
 				klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
@@ -148,7 +149,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 				return nil
 			}
 		}
-		return h.oc.addUpdateRemoteNodeEvent(node, config.OVNKubernetesFeature.EnableInterconnect)
+		return h.oc.addUpdateRemoteNodeEvent(node, config.OVNKubernetesFeature.EnableInterconnect, nil)
 	default:
 		return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 	}
@@ -186,7 +187,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 			return fmt.Errorf("could not cast oldObj of type %T to *kapi.Node", oldObj)
 		}
 		newNodeIsLocalZoneNode := h.oc.isLocalZoneNode(newNode)
-		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, h.oc.GetNetworkName())
+		nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, h.oc.GetNetworkName(), h.oc.nodeAnnotationCache, nil, nil)
 		if newNodeIsLocalZoneNode {
 			var nodeSyncsParam *nodeSyncs
 			if h.oc.isLocalZoneNode(oldNode) {
@@ -219,7 +220,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 				}
 			}
 
-			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
+			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam, nil)
 		} else {
 			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 				if !h.oc.networkManager.NodeHasNetwork(newNode.Name, h.oc.GetNetworkName()) {
@@ -234,7 +235,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 			if oldNodeNoRouter && util.UDNLayer2NodeUsesTransitRouter(newNode) {
 				syncZoneIC = true
 			}
-			return h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
+			return h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC, nil)
 		}
 	case factory.PodType:
 		newPod := newObj.(*corev1.Pod)
@@ -663,7 +664,7 @@ func (oc *Layer2UserDefinedNetworkController) newRetryFramework(
 	)
 }
 
-func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs) error {
+func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs, state *util.NodeAnnotationState) error {
 	var errs []error
 	var err error
 
@@ -674,7 +675,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
 		if nSyncs.syncClusterRouterPort && config.Layer2UsesTransitRouter {
-			if err = oc.syncClusterRouterPorts(node, hostSubnets); err != nil {
+			if err = oc.syncClusterRouterPorts(node, hostSubnets, state); err != nil {
 				errs = append(errs, err)
 				oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 			} else {
@@ -762,7 +763,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 	return err
 }
 
-func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, syncZoneIC bool) error {
+func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, syncZoneIC bool, state *util.NodeAnnotationState) error {
 	var errs []error
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
@@ -771,7 +772,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 			if !config.Layer2UsesTransitRouter {
 				portUpdateFn = oc.addSwitchPortForRemoteNodeGR
 			}
-			if err := portUpdateFn(node); err != nil {
+			if err := portUpdateFn(node, state); err != nil {
 				err = fmt.Errorf("failed to add the remote zone node %s's remote LRP, %w", node.Name, err)
 				errs = append(errs, err)
 				oc.syncZoneICFailed.Store(node.Name, true)
@@ -790,7 +791,14 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 	return err
 }
 
-func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node *corev1.Node) error {
+func (oc *Layer2UserDefinedNetworkController) tunnelIDForNode(node *corev1.Node, state *util.NodeAnnotationState) (int, error) {
+	if state != nil {
+		return state.TunnelID(oc.GetNetworkName())
+	}
+	return util.ParseUDNLayer2NodeGRLRPTunnelIDsWithCache(node, oc.GetNetworkName(), oc.nodeAnnotationCache)
+}
+
+func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node *corev1.Node, state *util.NodeAnnotationState) error {
 	nodeJoinSubnetIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
@@ -821,7 +829,7 @@ func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node 
 		types.TopologyExternalID: oc.TopologyType(),
 		types.NodeExternalID:     node.Name,
 	}
-	tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, oc.GetNetworkName())
+	tunnelID, err := oc.tunnelIDForNode(node, state)
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			// remote node may not have the annotation yet, suppress it
@@ -861,7 +869,7 @@ func (oc *Layer2UserDefinedNetworkController) cleanupSwitchPortForRemoteNodeGR(n
 	return libovsdbops.DeleteLogicalSwitchPorts(oc.nbClient, sw, logicalSwitchPort)
 }
 
-func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node *corev1.Node) error {
+func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node *corev1.Node, state *util.NodeAnnotationState) error {
 	if _, ok := oc.remoteNodesNoRouter.Load(node.Name); ok {
 		// remote node uses old topology
 		if util.UDNLayer2NodeUsesTransitRouter(node) {
@@ -891,7 +899,7 @@ func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node
 			}
 		} else {
 			// node is still using old topology
-			if err := oc.addSwitchPortForRemoteNodeGR(node); err != nil {
+			if err := oc.addSwitchPortForRemoteNodeGR(node, state); err != nil {
 				return err
 			}
 			gwRouterJoinIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
@@ -1191,6 +1199,9 @@ func (oc *Layer2UserDefinedNetworkController) gatewayOptions() []GatewayOption {
 	if resolver := oc.getNetworkNameForNADKeyFunc(); resolver != nil {
 		opts = append(opts, WithNetworkNameForNADKeyResolver(resolver))
 	}
+	if oc.nodeAnnotationCache != nil {
+		opts = append(opts, WithNodeAnnotationCache(oc.nodeAnnotationCache))
+	}
 	return opts
 }
 
@@ -1241,7 +1252,7 @@ func (oc *Layer2UserDefinedNetworkController) reconcileLiveMigrationTargetZone(k
 }
 
 // syncClusterRouterPorts connects the network switch to the transit router
-func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev1.Node, hostSubnets []*net.IPNet) error {
+func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev1.Node, hostSubnets []*net.IPNet, state *util.NodeAnnotationState) error {
 	switchName := oc.GetNetworkScopedSwitchName("")
 
 	// Connect the switch to the router.
@@ -1276,7 +1287,7 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 
 	if !isEmpty {
 		// now add upgrade-only connection using IP-less port
-		if err = oc.ensureUpgradeTopology(node); err != nil {
+		if err = oc.ensureUpgradeTopology(node, state); err != nil {
 			return fmt.Errorf("failed to ensure upgrade topology for node %s: %w", node.Name, err)
 		}
 	} else {
@@ -1288,7 +1299,7 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 	return nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1.Node) error {
+func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1.Node, state *util.NodeAnnotationState) error {
 	switchName := oc.GetNetworkScopedSwitchName("")
 	sw := nbdb.LogicalSwitch{Name: switchName}
 
@@ -1307,7 +1318,7 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 			types.TopologyExternalID: oc.TopologyType(),
 		},
 	}
-	tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, oc.GetNetworkName())
+	tunnelID, err := oc.tunnelIDForNode(node, state)
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			// wait for the annotation to be assigned
