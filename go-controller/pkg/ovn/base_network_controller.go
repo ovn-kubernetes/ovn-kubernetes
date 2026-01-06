@@ -105,6 +105,11 @@ type BaseNetworkController struct {
 	// retry framework for IPAMClaims
 	retryIPAMClaims *ovnretry.RetryFramework
 
+	// node reconciler for shared node controllers (optional)
+	nodeReconciler NodeReconciler
+	// node annotation cache for shared node controllers (optional)
+	nodeAnnotationCache util.NodeAnnotationCache
+
 	// pod events factory handler
 	podHandler *factory.Handler
 	// node events factory handler
@@ -256,6 +261,14 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 
 	for _, nodeName := range reconcileNodes {
 		setNodeFailed(nodeName)
+		if oc.nodeReconciler != nil {
+			oc.nodeReconciler.Reconcile(nodeName)
+			continue
+		}
+		if oc.retryNodes == nil {
+			klog.Infof("No node reconciler available for network %s, skipping node %s", oc.GetNetworkName(), nodeName)
+			continue
+		}
 		node, err := oc.watchFactory.GetNode(nodeName)
 		if err != nil {
 			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
@@ -268,7 +281,7 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 		}
 	}
 
-	if len(reconcileNodes) > 0 {
+	if len(reconcileNodes) > 0 && oc.nodeReconciler == nil && oc.retryNodes != nil {
 		oc.retryNodes.RequestRetryObjs()
 	}
 
@@ -299,6 +312,15 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 	if namespaceAdded {
 		oc.retryNamespaces.RequestRetryObjs()
 	}
+}
+
+// SetNodeReconciler configures a shared node reconciler for this controller.
+func (oc *BaseNetworkController) SetNodeReconciler(reconciler NodeReconciler) {
+	oc.nodeReconciler = reconciler
+}
+
+func (oc *BaseNetworkController) SetNodeAnnotationCache(cache util.NodeAnnotationCache) {
+	oc.nodeAnnotationCache = cache
 }
 
 // BaseUserDefinedNetworkController structure holds per-network fields and network specific
