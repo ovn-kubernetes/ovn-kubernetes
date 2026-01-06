@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -13,6 +14,7 @@ import (
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/applyconfiguration/clusternetworkconnect/v1"
 	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 const (
@@ -21,6 +23,26 @@ const (
 	networkConnectSubnetAnnotationFieldManager = "ovn-kubernetes-network-connect-controller-subnet-annotation"
 	networkConnectRouterTunnelKeyFieldManager  = "ovn-kubernetes-network-connect-controller-tunnel-key-annotation"
 )
+
+// ComputeNetworkOwner returns a unique owner key for a network based on its topology type and ID.
+// This is used for tracking network ownership in external IDs and annotations.
+func ComputeNetworkOwner(networkType string, networkID int) string {
+	return fmt.Sprintf("%s_%d", networkType, networkID)
+}
+
+// ParseNetworkOwner parses an owner key like "layer3_1" into topology type and network ID.
+func ParseNetworkOwner(owner string) (topologyType string, networkID int, err error) {
+	if strings.HasPrefix(owner, ovntypes.Layer3Topology+"_") {
+		topologyType = ovntypes.Layer3Topology
+		_, err = fmt.Sscanf(owner, ovntypes.Layer3Topology+"_%d", &networkID)
+	} else if strings.HasPrefix(owner, ovntypes.Layer2Topology+"_") {
+		topologyType = ovntypes.Layer2Topology
+		_, err = fmt.Sscanf(owner, ovntypes.Layer2Topology+"_%d", &networkID)
+	} else {
+		err = fmt.Errorf("unknown owner format: %s", owner)
+	}
+	return
+}
 
 type NetworkConnectSubnetAnnotation struct {
 	IPv4 string `json:"ipv4,omitempty"`

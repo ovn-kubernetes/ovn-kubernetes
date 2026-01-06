@@ -14,6 +14,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var (
@@ -323,8 +324,8 @@ func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets m
 	defer hca.mu.Unlock()
 
 	for owner, subnets := range allocatedSubnets {
-		topologyType, ok := parseNetworkOwnerTopology(owner)
-		if !ok {
+		topologyType, _, err := util.ParseNetworkOwner(owner)
+		if err != nil {
 			continue
 		}
 
