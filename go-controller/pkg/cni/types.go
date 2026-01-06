@@ -62,7 +62,7 @@ type PodInterfaceInfo struct {
 	// NADKey, for default network, it is "default", otherwise, in the form of net-attach-def's <Namespace>/<Name>{/index}
 	NADKey string `json:"nadKey"`
 	// pod interface names of the same NAD, in plumbing order.
-	// Only set for second and subsequent pod interfaces of same secondary UDN
+	// Only set for when there are more than one pod interface with the same UDN
 	PodIfNamesOfSameNAD []string `json:"pod-if-names"`
 }
 

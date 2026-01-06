@@ -216,12 +216,15 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 		}
 	}
 
-	// needs ip table for each Pod interface of the same secondary UDN, table number start from 100
-	iptableNum := 100 + link.Attrs().Index
-
 	// all pod links of the same secondary UDN up to the current one
-	links := make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
-	if len(ifInfo.PodIfNamesOfSameNAD) > 1 && len(ifInfo.Routes) != 0 {
+	var links []netlink.Link
+	var iptableNum int
+
+	if len(ifInfo.PodIfNamesOfSameNAD) != 0 && len(ifInfo.Routes) != 0 {
+		// needs ip table for each Pod interface of the same secondary UDN, table number start from 100
+		iptableNum = 100 + link.Attrs().Index
+
+		links = make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
 		// this is a pod with multiple interfaces of the same secondary UDN, also, ECMP routes are needed
 		//
 		// get all the Pod interface names of the same nadName
@@ -279,15 +282,22 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 	}
 
 	for _, route := range ifInfo.Routes {
-		if len(ifInfo.PodIfNamesOfSameNAD) <= 1 || len(links) == 1 {
-			// if there is no other interface of the same NAD or this is the first one, just add route directly
+		if len(ifInfo.PodIfNamesOfSameNAD) == 0 {
+			// if there is no other interface of the same NAD, just add route directly
 			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, 0); err != nil {
 				return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
 			}
 		} else {
-			// otherwise replace it with ECMP routes
-			if err := cniPluginLibOps.ReplaceRouteECMP(route.Dest, route.NextHop, links, ifInfo.RoutableMTU); err != nil {
-				return fmt.Errorf("failed to replace pod route %v via %v through links %v: %v", route.Dest, route.NextHop, links, err)
+			if len(links) == 1 {
+				// if this is the first pod interface of this NAD, just add route directly
+				if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, 0); err != nil {
+					return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+				}
+			} else {
+				// otherwise replace it with ECMP routes
+				if err := cniPluginLibOps.ReplaceRouteECMP(route.Dest, route.NextHop, links, ifInfo.RoutableMTU); err != nil {
+					return fmt.Errorf("failed to replace pod route %v via %v through links %v: %v", route.Dest, route.NextHop, links, err)
+				}
 			}
 
 			// add ECMP route to specific IP route table
