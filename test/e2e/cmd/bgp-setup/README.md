@@ -20,7 +20,7 @@ This tool reuses packages from the e2e test framework:
 -----------------               ------------------                         ---------------------
 |               | bgpnet        |                |       kind network      | ovn-control-plane |
 |   bgpserver   |<------------- |   FRR router   |<------ KIND cluster --  ---------------------
-|   (agnhost)   |               |   (frr:9.1.3)  |                         |    ovn-worker     |
+|   (agnhost)   |               |  (frr:10.4.1)  |                         |    ovn-worker     |
 -----------------               ------------------                         ---------------------
                                                                            |    ovn-worker2    |
                                                                            ---------------------

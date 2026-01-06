@@ -12,6 +12,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -269,7 +270,7 @@ func run(cfg *Config) error {
 		}
 	}
 
-	// Phase 2: Install frr-k8s (install_ffr_k8s + create FRRConfiguration)
+	// Phase 2: Install frr-k8s (install_frr_k8s + create FRRConfiguration)
 	if runInstallFRRK8s {
 		fmt.Println("\n====================== Installing frr-k8s ======================")
 		if err := installFRRK8s(cfg); err != nil {
@@ -377,8 +378,8 @@ var kubectlServer string
 // setupKubectlServer gets the control plane container's IP for direct API server access
 func setupKubectlServer() error {
 	runtime := containerRuntime()
-	// Get control plane container IP on the kind network
-	output, err := runCmdOutput(runtime, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", "ovn-control-plane")
+	// Get control plane container IP on the kind network specifically
+	output, err := runCmdOutput(runtime, "inspect", "-f", "{{.NetworkSettings.Networks.kind.IPAddress}}", "ovn-control-plane")
 	if err != nil {
 		return fmt.Errorf("failed to get control plane IP: %w", err)
 	}
@@ -1082,26 +1083,16 @@ func addPodNetworkRoutes(cfg *Config, clientset *kubernetes.Clientset) error {
 func parseSubnetAnnotation(annotation string) []string {
 	var subnets []string
 
-	// Remove outer braces and quotes
-	annotation = strings.TrimPrefix(annotation, "{")
-	annotation = strings.TrimSuffix(annotation, "}")
-
-	// Find the array part
-	start := strings.Index(annotation, "[")
-	end := strings.LastIndex(annotation, "]")
-	if start == -1 || end == -1 || start >= end {
+	// Parse the JSON annotation which has format: {"default":["10.244.0.0/24"]}
+	// It's a map of network names to arrays of subnet strings
+	var networkSubnets map[string][]string
+	if err := json.Unmarshal([]byte(annotation), &networkSubnets); err != nil {
 		return subnets
 	}
 
-	arrStr := annotation[start+1 : end]
-	// Split by comma and clean up
-	parts := strings.Split(arrStr, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		part = strings.Trim(part, "\"")
-		if part != "" {
-			subnets = append(subnets, part)
-		}
+	// Collect all subnets from all networks
+	for _, nets := range networkSubnets {
+		subnets = append(subnets, nets...)
 	}
 
 	return subnets
