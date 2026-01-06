@@ -45,6 +45,7 @@ type GatewayManager struct {
 	netInfo                 util.NetInfo
 	watchFactory            *factory.WatchFactory
 	getNetworkNameForNADKey func(nadKey string) string
+	nodeAnnotationCache     util.NodeAnnotationCache
 	// Cluster wide Load_Balancer_Group UUID.
 	// Includes all node switches and node gateway routers.
 	clusterLoadBalancerGroupUUID string
@@ -61,6 +62,12 @@ type GatewayManager struct {
 }
 
 type GatewayOption func(*GatewayManager)
+
+func WithNodeAnnotationCache(cache util.NodeAnnotationCache) GatewayOption {
+	return func(gw *GatewayManager) {
+		gw.nodeAnnotationCache = cache
+	}
+}
 
 func NewGatewayManagerForLayer2Topology(
 	nodeName string,
@@ -365,7 +372,7 @@ func (gw *GatewayManager) createGWRouterPeerSwitchPort(nodeName string) error {
 		if err != nil {
 			return fmt.Errorf("failed to fetch node %s from watch factory %w", node.Name, err)
 		}
-		tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, gw.netInfo.GetNetworkName())
+		tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDsWithCache(node, gw.netInfo.GetNetworkName(), gw.nodeAnnotationCache)
 		if err != nil {
 			if util.IsAnnotationNotSetError(err) {
 				// remote node may not have the annotation yet, suppress it
