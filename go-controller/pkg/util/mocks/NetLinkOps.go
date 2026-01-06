@@ -704,6 +704,24 @@ func (_m *NetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterM
 	return r0, r1
 }
 
+// RuleAdd provides a mock function with given fields: rule
+func (_m *NetLinkOps) RuleAdd(rule *netlink.Rule) error {
+	ret := _m.Called(rule)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RuleAdd")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*netlink.Rule) error); ok {
+		r0 = rf(rule)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NewNetLinkOps creates a new instance of NetLinkOps. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewNetLinkOps(t interface {

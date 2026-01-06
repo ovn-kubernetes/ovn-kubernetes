@@ -17,17 +17,17 @@ type CNIPluginLibOps struct {
 	mock.Mock
 }
 
-// AddRoute provides a mock function with given fields: ipn, gw, dev, mtu
-func (_m *CNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error {
-	ret := _m.Called(ipn, gw, dev, mtu)
+// AddRoute provides a mock function with given fields: ipn, gw, dev, mtu, table
+func (_m *CNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error {
+	ret := _m.Called(ipn, gw, dev, mtu, table)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AddRoute")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*net.IPNet, net.IP, netlink.Link, int) error); ok {
-		r0 = rf(ipn, gw, dev, mtu)
+	if rf, ok := ret.Get(0).(func(*net.IPNet, net.IP, netlink.Link, int, int) error); ok {
+		r0 = rf(ipn, gw, dev, mtu, table)
 	} else {
 		r0 = ret.Error(0)
 	}

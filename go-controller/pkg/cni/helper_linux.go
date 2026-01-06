@@ -27,7 +27,7 @@ import (
 )
 
 type CNIPluginLibOps interface {
-	AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error
+	AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error
 	ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error
 	SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error)
 }
@@ -36,13 +36,14 @@ type defaultCNIPluginLibOps struct{}
 
 var cniPluginLibOps CNIPluginLibOps = &defaultCNIPluginLibOps{}
 
-func (defaultCNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error {
+func (defaultCNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error {
 	route := &netlink.Route{
 		LinkIndex: dev.Attrs().Index,
 		Scope:     netlink.SCOPE_UNIVERSE,
 		Dst:       ipn,
 		Gw:        gw,
 		MTU:       mtu,
+		Table:     table,
 	}
 
 	return util.GetNetLinkOps().RouteAdd(route)
@@ -210,31 +211,88 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 		}
 	}
 	for _, gw := range ifInfo.Gateways {
-		if err := cniPluginLibOps.AddRoute(nil, gw, link, ifInfo.RoutableMTU); err != nil {
+		if err := cniPluginLibOps.AddRoute(nil, gw, link, ifInfo.RoutableMTU, 0); err != nil {
 			return fmt.Errorf("failed to add gateway route to link '%s': %v", link.Attrs().Name, err)
 		}
 	}
+
+	// needs ip table for each Pod interface of the same secondary UDN, table number start from 100
+	iptableNum := 100 + link.Attrs().Index
+
+	// all pod links of the same secondary UDN up to the current one
+	links := make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
+	if len(ifInfo.PodIfNamesOfSameNAD) != 1 && len(ifInfo.Routes) != 0 {
+		// this is a pod with multiple interfaces of the same secondary UDN, also, ECMP routes are needed
+		//
+		// get all the Pod interface names of the same nadName
+		// up to the current link name. This is used for configuring ECMP routes via multiple pod interfaces
+		for _, ifName := range ifInfo.PodIfNamesOfSameNAD {
+			if ifName == link.Attrs().Name {
+				// loop all pod interfaces of the same secondary UDN until the current pod interface
+				links = append(links, link)
+				break
+			}
+			ifLink, err := util.GetNetLinkOps().LinkByName(ifName)
+			if err != nil {
+				return fmt.Errorf("failed to lookup pod interface %s when setup route for link %s: %v", ifName, link.Attrs().Name, err)
+			}
+			links = append(links, ifLink)
+		}
+
+		// for ECMP routes, need to configure the following sysctl configuration, stop ARP flux and stop RP filter drop from happening
+		//   sysctl -w net.ipv4.conf.<linkName>.arp_ignore=1 # only reply to ARP requests if its sent to the IP on this interface
+		//   sysctl -w net.ipv4.conf.<linkName>.arp_announce=2 # when sending ARP use the IP that belongs to this interface
+		//   sysctl -w net.ipv4.conf.<linkName>.rp_filter=2 # allow reverse path filter check to pass if there is any route to the source
+		linkName := link.Attrs().Name
+		if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/arp_ignore", linkName), 1); err != nil {
+			return fmt.Errorf("failed to set arp_ignore for %s: %v", linkName, err)
+		}
+		if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/arp_announce", linkName), 2); err != nil {
+			return fmt.Errorf("failed to set arp_announce for %s: %v", linkName, err)
+		}
+		if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/rp_filter", linkName), 2); err != nil {
+			return fmt.Errorf("failed to set rp_filter for %s: %v", linkName, err)
+		}
+
+		// then add ip rules/routes to the specific table
+		// configure IP rule for this interface
+		// 	 ip rule add from <IP_on_this_interface> table <iptableNum>
+		for _, ip := range ifInfo.IPs {
+			rule := netlink.NewRule()
+			rule.Src = util.GetIPNetFullMaskFromIP(ip.IP)
+			rule.Table = iptableNum
+			if err := util.GetNetLinkOps().RuleAdd(rule); err != nil {
+				return fmt.Errorf("failed to add IP rule for %s to table %d: %v", ip.IP, iptableNum, err)
+			}
+
+			// add scope link route to the specific table
+			route := &netlink.Route{
+				LinkIndex: link.Attrs().Index,
+				Scope:     netlink.SCOPE_LINK,
+				Dst:       util.IPsToNetworkIPs(ip)[0],
+				Table:     iptableNum,
+			}
+			if err := util.GetNetLinkOps().RouteAdd(route); err != nil {
+				return fmt.Errorf("failed to add link scope route to %v via %v to table %v: %v", ip, linkName, iptableNum, err)
+			}
+		}
+	}
+
 	for _, route := range ifInfo.Routes {
-		if len(ifInfo.PodIfNamesOfSameNAD) == 0 {
-			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU); err != nil {
+		if len(ifInfo.PodIfNamesOfSameNAD) == 1 || len(links) == 1 {
+			// if there is no other interface of the same NAD or this is the first one, just add route directly
+			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, 0); err != nil {
 				return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
 			}
 		} else {
-			links := make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
-			for _, ifName := range ifInfo.PodIfNamesOfSameNAD {
-				if ifName == link.Attrs().Name {
-					// loop all pod interfaces of the same secondary UDN until adding the current pod interface
-					links = append(links, link)
-					break
-				}
-				ifLink, err := util.GetNetLinkOps().LinkByName(ifName)
-				if err != nil {
-					return fmt.Errorf("failed to lookup pod interface %s when setup route for link %s: %v", ifName, link.Attrs().Name, err)
-				}
-				links = append(links, ifLink)
-			}
+			// otherwise replace it with ECMP routes
 			if err := cniPluginLibOps.ReplaceRouteECMP(route.Dest, route.NextHop, links, ifInfo.RoutableMTU); err != nil {
 				return fmt.Errorf("failed to replace pod route %v via %v through links %v: %v", route.Dest, route.NextHop, links, err)
+			}
+
+			// add ECMP route to specific IP route table
+			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, iptableNum); err != nil {
+				return fmt.Errorf("failed to add pod route %v nexthop %v via %v table %v: %v", route.Dest, route.NextHop, link.Attrs().Name, iptableNum, err)
 			}
 		}
 	}
