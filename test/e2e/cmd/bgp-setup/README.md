@@ -201,9 +201,9 @@ and passes the appropriate configuration flags.
 
 ## Template Files
 
-The templates in the `templates/` directory are copies of the templates from 
-`test/e2e/testdata/routeadvertisements/`. They are simplified versions without 
-the `{{- define ... -}}` wrapper to work directly with Go's embed package.
+This tool uses the shared templates from `test/e2e/testdata/routeadvertisements/`.
+The templates are loaded from the filesystem at runtime using `runtime.Caller()` to
+determine the source file location and find the templates relative to it.
 
-If the original templates are updated, these copies should be synchronized.
-
+The same templates are also used by the route advertisement e2e tests in
+`test/e2e/route_advertisements.go`.

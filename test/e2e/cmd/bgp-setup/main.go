@@ -12,13 +12,13 @@ package main
 import (
 	"bytes"
 	"context"
-	"embed"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/template"
 	"time"
@@ -34,11 +34,22 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 )
 
-// templateFS embeds the FRR configuration templates from the templates/ subdirectory.
-// These templates are used to generate frr.conf, daemons, and FRRConfiguration YAML files.
-//
-//go:embed templates/*
-var templateFS embed.FS
+// getTestdataPath returns the path to the shared testdata templates.
+// These templates are used by both the route_advertisements tests and this setup tool.
+// The path is determined relative to this source file's location.
+func getTestdataPath() string {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("failed to get current file path")
+	}
+	// thisFile is .../test/e2e/cmd/bgp-setup/main.go
+	// We need .../test/e2e/testdata/routeadvertisements
+	// Go up 3 levels: bgp-setup -> cmd -> e2e
+	cmdDir := filepath.Dir(thisFile)
+	e2eCmdDir := filepath.Dir(cmdDir)
+	e2eDir := filepath.Dir(e2eCmdDir)
+	return filepath.Join(e2eDir, "testdata", "routeadvertisements")
+}
 
 const (
 	// Container and network names
@@ -622,6 +633,13 @@ func getContainerNetworkIPs(containerName, networkName string) (ipv4, ipv6 strin
 
 // generateFRRConfigFiles generates FRR configuration files in the specified directory
 func generateFRRConfigFiles(cfg *Config, neighborsIPv4, neighborsIPv6 []string, outputDir string) error {
+	// Parse configuration templates (all templates in the frr subdirectory)
+	testdataPath := getTestdataPath()
+	templates, err := template.ParseGlob(filepath.Join(testdataPath, "frr", "*.tmpl"))
+	if err != nil {
+		return fmt.Errorf("failed to parse templates: %w", err)
+	}
+
 	// Prepare networks to advertise (the BGP server network)
 	var networksIPv4, networksIPv6 []string
 	if cfg.IPv4Enabled {
@@ -642,13 +660,13 @@ func generateFRRConfigFiles(cfg *Config, neighborsIPv4, neighborsIPv6 []string, 
 		},
 	}
 
-	// Parse and execute frr.conf template
-	if err := executeEmbeddedTemplate(templateFS, "templates/frr.conf.tmpl", filepath.Join(outputDir, "frr.conf"), conf); err != nil {
+	// Execute frr.conf named template
+	if err := executeFileTemplate(templates, outputDir, "frr.conf", conf); err != nil {
 		return fmt.Errorf("failed to generate frr.conf: %w", err)
 	}
 
-	// Parse and execute daemons template
-	if err := executeEmbeddedTemplate(templateFS, "templates/daemons.tmpl", filepath.Join(outputDir, "daemons"), nil); err != nil {
+	// Execute daemons named template
+	if err := executeFileTemplate(templates, outputDir, "daemons", nil); err != nil {
 		return fmt.Errorf("failed to generate daemons: %w", err)
 	}
 
@@ -656,24 +674,17 @@ func generateFRRConfigFiles(cfg *Config, neighborsIPv4, neighborsIPv6 []string, 
 	return nil
 }
 
-func executeEmbeddedTemplate(fs embed.FS, tmplPath, outputPath string, data any) error {
-	content, err := fs.ReadFile(tmplPath)
-	if err != nil {
-		return fmt.Errorf("failed to read template %s: %w", tmplPath, err)
-	}
-
-	tmpl, err := template.New(filepath.Base(tmplPath)).Parse(string(content))
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
-	}
-
+// executeFileTemplate executes a named template and writes the output to a file.
+// This is similar to the executeFileTemplate in util.go but uses bytes.Buffer for easier testing.
+func executeFileTemplate(templates *template.Template, directory, name string, data any) error {
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("failed to execute template: %w", err)
+	if err := templates.ExecuteTemplate(&buf, name, data); err != nil {
+		return fmt.Errorf("failed to execute template %q: %w", name, err)
 	}
 
+	outputPath := filepath.Join(directory, name)
 	if err := os.WriteFile(outputPath, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write output file: %w", err)
+		return fmt.Errorf("failed to write output file %q: %w", outputPath, err)
 	}
 
 	return nil
@@ -919,6 +930,13 @@ func createDefaultNetworkFRRConfiguration(cfg *Config) error {
 }
 
 func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetworks []string) (string, error) {
+	// Parse configuration templates (all templates in the frr-k8s subdirectory)
+	testdataPath := getTestdataPath()
+	templates, err := template.ParseGlob(filepath.Join(testdataPath, "frr-k8s", "*.tmpl"))
+	if err != nil {
+		return "", fmt.Errorf("failed to parse templates: %w", err)
+	}
+
 	tmpDir, err := os.MkdirTemp("", "frrk8sconf-")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
@@ -956,8 +974,8 @@ func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetwork
 		},
 	}
 
-	// Parse and execute frrconf.yaml template
-	if err := executeEmbeddedTemplate(templateFS, "templates/frrconf.yaml.tmpl", filepath.Join(tmpDir, "frrconf.yaml"), conf); err != nil {
+	// Execute frrconf.yaml named template
+	if err := executeFileTemplate(templates, tmpDir, "frrconf.yaml", conf); err != nil {
 		os.RemoveAll(tmpDir)
 		return "", fmt.Errorf("failed to generate frrconf.yaml: %w", err)
 	}
