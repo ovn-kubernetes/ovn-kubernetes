@@ -164,3 +164,14 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 	}
 	return errors.Join(errs...)
 }
+
+func (fnm *FakeNetworkManager) GetNetworkByID(id int) util.NetInfo {
+	fnm.Lock()
+	defer fnm.Unlock()
+	for _, ni := range fnm.PrimaryNetworks {
+		if ni.GetNetworkID() == id {
+			return ni
+		}
+	}
+	return nil
+}

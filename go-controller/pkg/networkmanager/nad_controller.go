@@ -861,6 +861,10 @@ func (c *nadController) GetActiveNetwork(network string) util.NetInfo {
 	return state.controller
 }
 
+func (c *nadController) GetNetworkByID(id int) util.NetInfo {
+	return c.networkController.GetNetworkByID(id)
+}
+
 func (c *nadController) isClusterManagerMode() bool {
 	return c.tunnelKeysAllocator != nil
 }
