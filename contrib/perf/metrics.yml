@@ -1,0 +1,123 @@
+# API server
+- query: histogram_quantile(0.99, sum(rate(apiserver_request_duration_seconds_bucket{apiserver="kube-apiserver", verb!~"WATCH", subresource!="log"}[2m])) by (verb,resource,subresource,instance,le)) > 0
+  metricName: API99thLatency
+
+- query: sum(irate(apiserver_request_total{apiserver="kube-apiserver",verb!="WATCH",subresource!="log"}[2m])) by (verb,instance,resource,code) > 0
+  metricName: APIRequestRate
+
+- query: sum(apiserver_current_inflight_requests{}) by (request_kind) > 0
+  metricName: APIInflightRequests
+
+# Containers & pod metrics
+
+- query: (sum(irate(container_cpu_usage_seconds_total{name!="",container!~"POD|"}[2m]) * 100) by (container, pod, namespace, node)) > 0
+  metricName: containerCPU
+
+- query: sum(container_memory_rss{name!="",container!~"POD|"}) by (container, pod, namespace, node)
+  metricName: containerMemory
+
+- query: sum(irate(container_cpu_usage_seconds_total{}[2m]) * 100) by (pod, namespace, node)
+  metricName: podCPU
+
+- query: sum(container_memory_rss{}) by (pod, namespace, node)
+  metricName: podMemory
+
+- query: (sum(rate(container_fs_writes_bytes_total{container!="",device!~".+dm.+"}[5m])) by (device, container, node) and on (node) kube_node_role{role="master"}) > 0
+  metricName: containerDiskUsage
+
+# Kubelet & CRI-O metrics
+- query: sum(irate(process_cpu_seconds_total{service="kubelet",job="kubelet"}[2m]) * 100) by (node) and on (node) kube_node_role{role="worker"}
+  metricName: kubeletCPU
+
+- query: sum(process_resident_memory_bytes{service="kubelet",job="kubelet"}) by (node) and on (node) kube_node_role{role="worker"}
+  metricName: kubeletMemory
+
+- query: sum(irate(process_cpu_seconds_total{service="kubelet",job="crio"}[2m]) * 100) by (node) and on (node) kube_node_role{role="worker"}
+  metricName: crioCPU
+
+- query: sum(process_resident_memory_bytes{service="kubelet",job="crio"}) by (node) and on (node) kube_node_role{role="worker"}
+  metricName: crioMemory
+
+# Node metrics
+- query: sum(irate(node_cpu_seconds_total[2m])) by (mode,instance) > 0
+  metricName: nodeCPU
+
+- query: avg(node_memory_MemAvailable_bytes) by (instance)
+  metricName: nodeMemoryAvailable
+
+- query: avg(node_memory_Active_bytes) by (instance)
+  metricName: nodeMemoryActive
+
+- query: avg(node_memory_Cached_bytes) by (instance) + avg(node_memory_Buffers_bytes) by (instance)
+  metricName: nodeMemoryCached+nodeMemoryBuffers
+
+- query: irate(node_network_receive_bytes_total{device=~"^(ens|eth|bond|team).*"}[2m])
+  metricName: rxNetworkBytes
+
+- query: irate(node_network_transmit_bytes_total{device=~"^(ens|eth|bond|team).*"}[2m])
+  metricName: txNetworkBytes
+
+- query: rate(node_disk_written_bytes_total{device!~"^(dm|rb).*"}[2m])
+  metricName: nodeDiskWrittenBytes
+
+- query: rate(node_disk_read_bytes_total{device!~"^(dm|rb).*"}[2m])
+  metricName: nodeDiskReadBytes
+
+- query: sum(rate(etcd_server_leader_changes_seen_total[2m]))
+  metricName: etcdLeaderChangesRate
+
+# Etcd metrics
+- query: etcd_server_is_leader > 0
+  metricName: etcdServerIsLeader
+
+- query: histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket[2m]))
+  metricName: 99thEtcdDiskBackendCommitDurationSeconds
+
+- query: histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[2m]))
+  metricName: 99thEtcdDiskWalFsyncDurationSeconds
+
+- query: histogram_quantile(0.99, rate(etcd_network_peer_round_trip_time_seconds_bucket[5m]))
+  metricName: 99thEtcdRoundTripTimeSeconds
+
+- query: etcd_mvcc_db_total_size_in_bytes
+  metricName: etcdDBPhysicalSizeBytes
+
+- query: etcd_mvcc_db_total_size_in_use_in_bytes
+  metricName: etcdDBLogicalSizeBytes
+
+- query: sum(rate(etcd_object_counts{}[5m])) by (resource) > 0
+  metricName: etcdObjectCount
+
+- query: sum by (cluster_version)(etcd_cluster_version)
+  metricName: etcdVersion
+  instant: true
+
+# Cluster metrics
+- query: sum(kube_namespace_status_phase) by (phase) > 0
+  metricName: namespaceCount
+
+- query: sum(kube_pod_status_phase{}) by (phase)
+  metricName: podStatusCount
+
+- query: count(kube_secret_info{})
+  metricName: secretCount
+
+- query: count(kube_deployment_spec_replicas{})
+  metricName: deploymentCount
+
+- query: count(kube_configmap_info{})
+  metricName: configmapCount
+
+- query: count(kube_service_info{})
+  metricName: serviceCount
+
+- query: kube_node_role
+  metricName: nodeRoles
+  instant: true
+
+- query: sum(kube_node_status_condition{status="true"}) by (condition)
+  metricName: nodeStatus
+
+- query: cluster_version{type="completed"}
+  metricName: clusterVersion
+  instant: true

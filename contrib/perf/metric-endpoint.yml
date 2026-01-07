@@ -1,0 +1,15 @@
+- endpoint: http://localhost:9090
+  metrics:
+  - metrics.yml
+  indexer:
+    type: local
+    metricsDirectory: metrics
+
+- endpoint: http://localhost:9090
+  metrics:
+  - metrics.yml
+  indexer:
+      esServers: ["{{.ES_SERVER}}"]
+      insecureSkipVerify: true
+      defaultIndex: upstream-ovnk-kube-burner
+      type: opensearch
