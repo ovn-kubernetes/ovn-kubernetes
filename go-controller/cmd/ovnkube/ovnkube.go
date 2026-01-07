@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/term"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/leaderelection"
@@ -58,10 +60,13 @@ COMMANDS:{{range .VisibleCategories}}{{if .Name}}
    {{.Name}}:{{end}}{{range .VisibleCommands}}
      {{join .Names ", "}}{{"\t"}}{{.Usage}}{{end}}{{end}}
 
-GLOBAL OPTIONS:{{range $title, $category := getFlagsByCategory}}
-   {{upper $title}}
+GLOBAL OPTIONS:
+{{range $title, $category := getFlagsByCategory}}
+   {{upper $title}}:
+	 {{$maxLen := maxOptionLength $category}}{{$categoryIndent := makeIndentForLength $maxLen}}
    {{range $index, $option := $category}}{{if $index}}
-   {{end}}{{$option}}{{end}}
+
+   {{end}}--{{$option.Name}}{{if flagTakesValue $option}} value{{end}}{{$currentLen := len $option.Name}}{{if flagTakesValue $option}}{{$currentLen = add $currentLen 6}}{{end}}{{printf "%*s" (sub $maxLen $currentLen) ""}}  {{wrapWithIndent (printf "%s%s%s" $option.Usage (formatDefaultValue (getDefaultValue $option)) (formatEnvVars (getEnvVars $option))) $categoryIndent}}{{end}}
    {{end}}`
 )
 
@@ -86,12 +91,171 @@ func getFlagsByCategory() map[string][]cli.Flag {
 	return m
 }
 
+// getTerminalWidth returns the width of the terminal, defaulting to 80 if unable to determine
+func getTerminalWidth() int {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		return 80 // default width
+	}
+	return width
+}
+
+// wrapWithIndent wraps text to fit within specified width, adding indent to continuation lines
+func wrapWithIndent(text string, width int, indent string) string {
+	if len(text) <= width {
+		return text
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return text
+	}
+
+	var result strings.Builder
+	currentLine := words[0]
+
+	for _, word := range words[1:] {
+		// Check if adding the next word would exceed the width
+		if len(currentLine)+1+len(word) <= width {
+			currentLine += " " + word
+		} else {
+			// Write current line and start a new one with indent
+			result.WriteString(currentLine)
+			result.WriteString("\n")
+			result.WriteString(indent)
+			currentLine = word
+		}
+	}
+
+	// Write the final line
+	result.WriteString(currentLine)
+	return result.String()
+}
+
 // borrowed from cli packages' printHelpCustom()
 func printOvnKubeHelp(out io.Writer, templ string, data interface{}, customFunc map[string]interface{}) {
+	termWidth := getTerminalWidth()
 	funcMap := template.FuncMap{
 		"join":               strings.Join,
 		"upper":              strings.ToUpper,
 		"getFlagsByCategory": getFlagsByCategory,
+		"wrapWithIndent": func(text string, indent string) string {
+			// Reserve space for option name and spacing, use remaining width for description
+			availableWidth := termWidth - len(indent) - 1
+			if availableWidth < 40 {
+				availableWidth = 40 // minimum reasonable width
+			}
+			return wrapWithIndent(text, availableWidth, indent)
+		},
+		"makeIndentForLength": func(optionNameLength int) string {
+			// Create indent string to align continuation lines with description text
+			// Format is "   --<option-name>  " so we need to match that length
+			baseIndent := "   --" + strings.Repeat(" ", optionNameLength) + "  "
+			return strings.Repeat(" ", len(baseIndent))
+		},
+		"maxOptionLength": func(category []cli.Flag) int {
+			maxLen := 0
+			for _, flag := range category {
+				nameLen := len(flag.Names()[0])
+				// Add 6 characters for " value" if flag takes a value
+				if _, isBoolFlag := flag.(*cli.BoolFlag); !isBoolFlag {
+					nameLen += 6
+				}
+				if nameLen > maxLen {
+					maxLen = nameLen
+				}
+			}
+			return maxLen
+		},
+		"sub": func(a, b int) int {
+			return a - b
+		},
+		"add": func(a, b int) int {
+			return a + b
+		},
+		"getEnvVars": func(flag cli.Flag) []string {
+			// Use reflection to get the EnvVars field from different flag types
+			val := reflect.ValueOf(flag)
+			if val.Kind() == reflect.Ptr {
+				val = val.Elem()
+			}
+			envVarsField := val.FieldByName("EnvVars")
+			if !envVarsField.IsValid() {
+				return nil
+			}
+			if envVarsField.Kind() == reflect.Slice && envVarsField.Type().Elem().Kind() == reflect.String {
+				result := make([]string, envVarsField.Len())
+				for i := 0; i < envVarsField.Len(); i++ {
+					result[i] = envVarsField.Index(i).String()
+				}
+				return result
+			}
+			return nil
+		},
+		"formatEnvVars": func(envVars []string) string {
+			if len(envVars) == 0 {
+				return ""
+			}
+			// Add $ prefix to each environment variable
+			prefixedVars := make([]string, len(envVars))
+			for i, envVar := range envVars {
+				prefixedVars[i] = "$" + envVar
+			}
+
+			// Use non-breaking spaces within the env section to prevent splitting
+			envString := strings.Join(prefixedVars, ", ")
+			return " (env: " + envString + ")"
+		},
+		"flagTakesValue": func(flag cli.Flag) bool {
+			// Check if the flag type takes a value (not a BoolFlag)
+			switch flag.(type) {
+			case *cli.BoolFlag:
+				return false
+			default:
+				return true
+			}
+		},
+		"getDefaultValue": func(flag cli.Flag) string {
+			// Use reflection to get the default value from different flag types
+			val := reflect.ValueOf(flag)
+			if val.Kind() == reflect.Ptr {
+				val = val.Elem()
+			}
+
+			// Try to get the Value field which contains the default
+			valueField := val.FieldByName("Value")
+			if valueField.IsValid() {
+				switch flag.(type) {
+				case *cli.StringFlag:
+					if str := valueField.String(); str != "" {
+						return str
+					}
+				case *cli.IntFlag:
+					if intVal := valueField.Int(); intVal != 0 {
+						return fmt.Sprintf("%d", intVal)
+					}
+				case *cli.Float64Flag:
+					if floatVal := valueField.Float(); floatVal != 0 {
+						return fmt.Sprintf("%g", floatVal)
+					}
+				case *cli.BoolFlag:
+					if boolVal := valueField.Bool(); boolVal {
+						return "true"
+					}
+				case *cli.DurationFlag:
+					if durVal := valueField.Interface(); durVal != time.Duration(0) {
+						return fmt.Sprintf("%v", durVal)
+					}
+				}
+			}
+			return ""
+		},
+		"formatDefaultValue": func(defaultVal string) string {
+			if defaultVal == "" {
+				return ""
+			}
+			return fmt.Sprintf(" (default: %s)", defaultVal)
+		},
 	}
 	for key, value := range customFunc {
 		funcMap[key] = value
