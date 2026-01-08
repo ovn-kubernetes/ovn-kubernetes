@@ -127,7 +127,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 							fakeOvn,
 							[]testPod{podInfo},
 							expectationOptions...,
-						).expectedLogicalSwitchesAndPorts(netInfo.isPrimary)...))
+						).expectedLogicalSwitchesAndPorts()...))
 
 				return nil
 			}
@@ -250,7 +250,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 							fakeOvn,
 							[]testPod{sourcePodInfo},
 							expectationOptions...,
-						).expectedLogicalSwitchesAndPorts(netInfo.isPrimary)...))
+						).expectedLogicalSwitchesAndPorts()...))
 
 				targetPodInfo := dummyL2TestPod(ns, netInfo, targetPodInfoIdx, userDefinedNetworkIdx)
 				targetKvPod := newMultiHomedKubevirtPod(
@@ -277,7 +277,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 							fakeOvn,
 							testPods,
 							expectationOptions...,
-						).expectedLogicalSwitchesAndPortsWithLspEnabled(netInfo.isPrimary, expectedPodLspEnabled)...))
+						).expectedLogicalSwitchesAndPortsWithLspEnabled(expectedPodLspEnabled)...))
 				return nil
 			}
 
