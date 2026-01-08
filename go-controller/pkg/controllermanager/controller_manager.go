@@ -90,7 +90,9 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 		if cm.udnNodeController != nil {
 			oc.SetNodeReconciler(cm.udnNodeController)
 			oc.SetNodeAnnotationCache(cm.udnNodeController.AnnotationCache())
-			cm.udnNodeController.RegisterNetworkController(oc)
+			oc.SetNodeHandlerRegistrar(func() {
+				cm.udnNodeController.RegisterNetworkController(oc)
+			})
 		}
 		return oc, nil
 	case ovntypes.Layer2Topology:
@@ -101,7 +103,9 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 		if cm.udnNodeController != nil {
 			oc.SetNodeReconciler(cm.udnNodeController)
 			oc.SetNodeAnnotationCache(cm.udnNodeController.AnnotationCache())
-			cm.udnNodeController.RegisterNetworkController(oc)
+			oc.SetNodeHandlerRegistrar(func() {
+				cm.udnNodeController.RegisterNetworkController(oc)
+			})
 		}
 		return oc, nil
 	case ovntypes.LocalnetTopology:
@@ -109,7 +113,9 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 		if cm.udnNodeController != nil {
 			oc.SetNodeReconciler(cm.udnNodeController)
 			oc.SetNodeAnnotationCache(cm.udnNodeController.AnnotationCache())
-			cm.udnNodeController.RegisterNetworkController(oc)
+			oc.SetNodeHandlerRegistrar(func() {
+				cm.udnNodeController.RegisterNetworkController(oc)
+			})
 		}
 		return oc, nil
 	}
