@@ -2,6 +2,8 @@ name: performance-test
 on:
   pull_request:
     branches: [ master ]
+  issue_comment:
+    types: [created]
   schedule:
     - cron: '0 6 * * *'  # Daily at 6 AM UTC
   workflow_dispatch:
@@ -311,7 +313,7 @@ jobs:
         sleep 30
 
         cp ./contrib/perf/metric-endpoint.yml kube-burner/examples/workloads/kubelet-density-cni
-        yes | cp ./contrib/perf/workloads/kubelet-density-cni.yml kube-burner/examples/workloads/kubelet-density-cni/
+        cp -f ./contrib/perf/workloads/kubelet-density-cni.yml kube-burner/examples/workloads/kubelet-density-cni/
         cp ./contrib/perf/performance-meta.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/perf/metric-endpoint-local.yml kube-burner/examples/workloads/kubelet-density-cni
         cp ./contrib/perf/metrics.yml kube-burner/examples/workloads/kubelet-density-cni
@@ -326,7 +328,9 @@ jobs:
         else
           kube-burner init --config kubelet-density-cni.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
         fi
-
+        
+        mkdir /tmp/pprof-data
+        cp pprof-data/* /tmp/pprof-data
 
     - name: Export kube-burner data
       if: always()
@@ -390,6 +394,13 @@ jobs:
       with:
         name: performance-report-${{ github.run_id }}
         path: kube-burner/examples/workloads/kubelet-density-cni/performance_report.md
+
+    - name: Upload pprof data
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pprof-${{ github.run_id }}
+        path: /tmp/pprof-data
 
 
     - name: Upload kube-burner data

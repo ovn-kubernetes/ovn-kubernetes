@@ -2,14 +2,26 @@
 global:
   measurements:
     - name: podLatency
-#    - name: pprof
-#      pprofInterval: 1m
-#      pprofDirectory: pprof-data
-#      pprofTargets:
-#      - name: ovnkube-controller
-#        namespace: "ovn-kubernetes"
-#        labelSelector: {app: ovnkube-node}
-#        url: http://localhost:9410/debug/pprof/profile?seconds=30
+    - name: pprof
+      pprofInterval: 1m
+      pprofDirectory: pprof-data
+      pprofTargets:
+      - name: ovnkube-controller
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/profile?seconds=30
+      - name: ovnkube-control-plane
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/profile?seconds=30
+      - name: ovnkube-controller-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/heap?seconds=30
+      - name: ovnkube-control-plane-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/heap?seconds=30
 jobs:
   - name: kubelet-density-cni
     jobIterations: 100

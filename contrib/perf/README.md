@@ -1,7 +1,7 @@
 # Performance tooling
 ```
 contrib/perf
-├── generate_perf_report.pyi        # Generates high-level report of OVNK Container CPU/Memory utilization during a workload
+├── generate_perf_report.py         # Generates high-level report of OVNK Container CPU/Memory utilization during a workload
 ├── metrics.yml                     # Metrics we capture with kube-burner
 ├── performance-meta.yml            # Additional Metadata we append to our OpenSearch documents
 └── workloads                       # Workload definition folder
