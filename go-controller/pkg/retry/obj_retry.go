@@ -820,3 +820,22 @@ func RequeuePendingPods(wf *factory.WatchFactory, netInfo util.NetInfo, retryPod
 	}
 	return utilerrors.Join(errs...)
 }
+
+// RequeuePendingNodes renqueues all Pending nodes and triggers a retry immediately
+func RequeueAllNodes(wf *factory.WatchFactory, netInfo util.NetInfo, retryNodes *RetryFramework) error {
+
+	allNodes, err := wf.GetNodes()
+	if err != nil {
+		return fmt.Errorf("failed to get all nodes: %w", err)
+	}
+
+	klog.V(5).Infof("Reconcile all nodes for network %s", netInfo.GetNetworkName())
+	for _, node := range allNodes {
+		if err := retryNodes.AddRetryObjWithAddNoBackoff(node); err != nil {
+			continue
+		}
+	}
+
+	retryNodes.RequestRetryObjs()
+	return nil
+}
