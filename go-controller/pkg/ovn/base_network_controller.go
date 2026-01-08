@@ -109,6 +109,8 @@ type BaseNetworkController struct {
 	nodeReconciler NodeReconciler
 	// node annotation cache for shared node controllers (optional)
 	nodeAnnotationCache util.NodeAnnotationCache
+	// nodeHandlerRegistrar registers this controller with a shared node controller.
+	nodeHandlerRegistrar func()
 
 	// pod events factory handler
 	podHandler *factory.Handler
@@ -321,6 +323,18 @@ func (oc *BaseNetworkController) SetNodeReconciler(reconciler NodeReconciler) {
 
 func (oc *BaseNetworkController) SetNodeAnnotationCache(cache util.NodeAnnotationCache) {
 	oc.nodeAnnotationCache = cache
+}
+
+// SetNodeHandlerRegistrar configures a callback to register with the shared node controller.
+func (oc *BaseNetworkController) SetNodeHandlerRegistrar(register func()) {
+	oc.nodeHandlerRegistrar = register
+}
+
+// RegisterNodeHandler registers this controller with the shared node controller when configured.
+func (oc *BaseNetworkController) RegisterNodeHandler() {
+	if oc.nodeHandlerRegistrar != nil {
+		oc.nodeHandlerRegistrar()
+	}
 }
 
 // BaseUserDefinedNetworkController structure holds per-network fields and network specific
