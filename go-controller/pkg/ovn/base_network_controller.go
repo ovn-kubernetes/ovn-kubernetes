@@ -103,6 +103,13 @@ type BaseNetworkController struct {
 	// retry framework for IPAMClaims
 	retryIPAMClaims *ovnretry.RetryFramework
 
+	// node reconciler for shared node controllers (optional)
+	nodeReconciler NodeReconciler
+	// node annotation cache for shared node controllers (optional)
+	nodeAnnotationCache util.NodeAnnotationCache
+	// nodeHandlerRegistrar registers this controller with a shared node controller.
+	nodeHandlerRegistrar func()
+
 	// pod events factory handler
 	podHandler *factory.Handler
 	// node events factory handler
@@ -241,6 +248,14 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 
 	for _, nodeName := range reconcileNodes {
 		setNodeFailed(nodeName)
+		if oc.nodeReconciler != nil {
+			oc.nodeReconciler.Reconcile(nodeName)
+			continue
+		}
+		if oc.retryNodes == nil {
+			klog.Infof("No node reconciler available for network %s, skipping node %s", oc.GetNetworkName(), nodeName)
+			continue
+		}
 		node, err := oc.watchFactory.GetNode(nodeName)
 		if err != nil {
 			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
@@ -251,7 +266,7 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 			klog.Errorf("Failed to retry node %s for network %s: %v", nodeName, oc.GetNetworkName(), err)
 		}
 	}
-	if len(reconcileNodes) > 0 {
+	if len(reconcileNodes) > 0 && oc.nodeReconciler == nil && oc.retryNodes != nil {
 		oc.retryNodes.RequestRetryObjs()
 	}
 
@@ -281,6 +296,27 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 	}
 	if namespaceAdded {
 		oc.retryNamespaces.RequestRetryObjs()
+	}
+}
+
+// SetNodeReconciler configures a shared node reconciler for this controller.
+func (oc *BaseNetworkController) SetNodeReconciler(reconciler NodeReconciler) {
+	oc.nodeReconciler = reconciler
+}
+
+func (oc *BaseNetworkController) SetNodeAnnotationCache(cache util.NodeAnnotationCache) {
+	oc.nodeAnnotationCache = cache
+}
+
+// SetNodeHandlerRegistrar configures a callback to register with the shared node controller.
+func (oc *BaseNetworkController) SetNodeHandlerRegistrar(register func()) {
+	oc.nodeHandlerRegistrar = register
+}
+
+// RegisterNodeHandler registers this controller with the shared node controller when configured.
+func (oc *BaseNetworkController) RegisterNodeHandler() {
+	if oc.nodeHandlerRegistrar != nil {
+		oc.nodeHandlerRegistrar()
 	}
 }
 
