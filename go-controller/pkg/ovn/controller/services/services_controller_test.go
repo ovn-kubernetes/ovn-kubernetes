@@ -122,7 +122,7 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 	return &serviceController{
 		controller,
 		factoryMock.ServiceCoreInformer().Informer().GetStore(),
-		factoryMock.EndpointSliceInformer().GetStore(),
+		factoryMock.EndpointSliceCoreInformer().Informer().GetStore(),
 		cleanup,
 	}, nil
 }
@@ -132,10 +132,11 @@ func (c *serviceController) close() {
 }
 
 func getSampleUDNNetInfo(namespace string, topology string) (util.NetInfo, error) {
-	// requires that config.IPv4Mode = true
-	subnets := "192.168.200.0/16"
+	// IPv4 and IPv6 subnets for dual-stack support
+	// IPv6 subnet 2001:db8::/32 contains the UDN IPv6 endpoints (2001:db8::2, 2001:db8::3)
+	subnets := "192.168.200.0/16,2001:db8::/32"
 	if topology == types.Layer3Topology {
-		subnets += "/24"
+		subnets = "192.168.200.0/16/24,2001:db8::/32/64"
 	}
 	netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
 		Topology:   topology,
@@ -174,6 +175,14 @@ func TestSyncServices(t *testing.T) {
 		nodeAEndpoint2V6 = "fe00::5555:0:0:3"
 
 		nodeBEndpointIP = "10.128.1.2"
+
+		// UDN endpoints - IPs from the UDN subnet (192.168.200.0/16)
+		// These match the subnet in getSampleUDNNetInfo
+		nodeAEndpointUDN    = "192.168.200.2"
+		nodeAEndpoint2UDN   = "192.168.200.3"
+		nodeAEndpointV6UDN  = "2001:db8::2"
+		nodeAEndpoint2V6UDN = "2001:db8::3"
+		nodeBEndpointIPUDN  = "192.168.201.2"
 
 		nodeAHostAddress = "10.0.0.1"
 		nodeBHostAddress = "10.0.0.2"
@@ -223,6 +232,7 @@ func TestSyncServices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error creating UDNNetInfo: %v", err)
 	}
+
 	// define node configs
 	nodeAInfo := getNodeInfo(nodeA, []string{nodeAHostAddress}, nil)
 	nodeBInfo := getNodeInfo(nodeB, []string{nodeBHostAddress}, nil)
@@ -759,11 +769,11 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpoint, nodeBEndpointIP),
+								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpointUDN, nodeBEndpointIPUDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpoint, nodeBEndpointIP),
+						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
@@ -822,11 +832,11 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpoint, nodeBEndpointIP),
+								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpointUDN, nodeBEndpointIPUDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpoint, nodeBEndpointIP),
+						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
@@ -1005,11 +1015,11 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpoint, nodeBEndpointIP),
+								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpointUDN, nodeBEndpointIPUDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpoint, nodeBEndpointIP),
+						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalSwitchForNetwork(nodeA, initialLsGroups, l3UDN),
@@ -1037,11 +1047,11 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpoint, nodeBEndpointIP),
+								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpointUDN, nodeBEndpointIPUDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpoint, nodeBEndpointIP),
+						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l3UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalSwitchForNetwork(nodeA, initialLsGroups, l3UDN),
@@ -1099,11 +1109,11 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpoint, nodeBEndpointIP),
+								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpointUDN, nodeBEndpointIPUDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpoint, nodeBEndpointIP),
+						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalSwitchForNetwork("", initialLsGroups, l2UDN),
@@ -1130,11 +1140,11 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpoint, nodeBEndpointIP),
+								IPAndPort(serviceClusterIP, servicePort): formatEndpoints(outPort, nodeAEndpointUDN, nodeBEndpointIPUDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
-						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpoint, nodeBEndpointIP),
+						nodeMergedTemplateLoadBalancerForNetwork(nodePort, serviceName, ns, outPort, l2UDN, nodeAEndpointUDN, nodeBEndpointIPUDN),
 						nodeLogicalSwitch(nodeA, initialLsGroups),
 						nodeLogicalSwitch(nodeB, initialLsGroups),
 						nodeLogicalSwitchForNetwork("", initialLsGroups, l2UDN),
@@ -1296,8 +1306,9 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort):   formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
-								IPAndPort(serviceClusterIPv6, servicePort): formatEndpoints(outPort, nodeAEndpointV6, nodeAEndpoint2V6),
+								// UDN endpoints use UDN-specific IPs
+								IPAndPort(serviceClusterIP, servicePort):   formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
+								IPAndPort(serviceClusterIPv6, servicePort): formatEndpoints(outPort, nodeAEndpointV6UDN, nodeAEndpoint2V6UDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
@@ -1307,9 +1318,9 @@ func TestSyncServices(t *testing.T) {
 							Options:  templateServicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								"^NODEIP_IPv4_1:30123": formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
-								"^NODEIP_IPv4_2:30123": formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
-								"^NODEIP_IPv4_0:30123": formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
+								"^NODEIP_IPv4_1:30123": formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
+								"^NODEIP_IPv4_2:30123": formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
+								"^NODEIP_IPv4_0:30123": formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
@@ -1319,8 +1330,8 @@ func TestSyncServices(t *testing.T) {
 							Options:  templateServicesOptionsV6(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								"^NODEIP_IPv6_1:30123": formatEndpoints(outPort, nodeAEndpointV6, nodeAEndpoint2V6),
-								"^NODEIP_IPv6_0:30123": formatEndpoints(outPort, nodeAEndpointV6, nodeAEndpoint2V6),
+								"^NODEIP_IPv6_1:30123": formatEndpoints(outPort, nodeAEndpointV6UDN, nodeAEndpoint2V6UDN),
+								"^NODEIP_IPv6_0:30123": formatEndpoints(outPort, nodeAEndpointV6UDN, nodeAEndpoint2V6UDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
@@ -1381,8 +1392,9 @@ func TestSyncServices(t *testing.T) {
 							Options:  servicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								IPAndPort(serviceClusterIP, servicePort):   formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
-								IPAndPort(serviceClusterIPv6, servicePort): formatEndpoints(outPort, nodeAEndpointV6, nodeAEndpoint2V6),
+								// UDN endpoints use UDN-specific IPs
+								IPAndPort(serviceClusterIP, servicePort):   formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
+								IPAndPort(serviceClusterIPv6, servicePort): formatEndpoints(outPort, nodeAEndpointV6UDN, nodeAEndpoint2V6UDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
@@ -1392,9 +1404,9 @@ func TestSyncServices(t *testing.T) {
 							Options:  templateServicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								"^NODEIP_IPv4_1:30123": formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
-								"^NODEIP_IPv4_2:30123": formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
-								"^NODEIP_IPv4_0:30123": formatEndpoints(outPort, nodeAEndpoint, nodeAEndpoint2),
+								"^NODEIP_IPv4_1:30123": formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
+								"^NODEIP_IPv4_2:30123": formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
+								"^NODEIP_IPv4_0:30123": formatEndpoints(outPort, nodeAEndpointUDN, nodeAEndpoint2UDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
@@ -1404,8 +1416,8 @@ func TestSyncServices(t *testing.T) {
 							Options:  templateServicesOptionsV6(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
-								"^NODEIP_IPv6_1:30123": formatEndpoints(outPort, nodeAEndpointV6, nodeAEndpoint2V6),
-								"^NODEIP_IPv6_0:30123": formatEndpoints(outPort, nodeAEndpointV6, nodeAEndpoint2V6),
+								"^NODEIP_IPv6_1:30123": formatEndpoints(outPort, nodeAEndpointV6UDN, nodeAEndpoint2V6UDN),
+								"^NODEIP_IPv6_0:30123": formatEndpoints(outPort, nodeAEndpointV6UDN, nodeAEndpoint2V6UDN),
 							},
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
@@ -1505,9 +1517,24 @@ func TestSyncServices(t *testing.T) {
 				}
 
 				// Add mirrored endpoint slices when the controller runs on a UDN
+				// Transform endpoint IPs from default cluster subnet to UDN subnet
 				if !netInfo.IsDefault() {
+					// IP transformation map: default network IPs -> UDN IPs
+					ipTransformMap := map[string]string{
+						nodeAEndpoint:    nodeAEndpointUDN,
+						nodeAEndpoint2:   nodeAEndpoint2UDN,
+						nodeAEndpointV6:  nodeAEndpointV6UDN,
+						nodeAEndpoint2V6: nodeAEndpoint2V6UDN,
+						nodeBEndpointIP:  nodeBEndpointIPUDN,
+					}
+					ipTransform := func(ip string) string {
+						if udnIP, ok := ipTransformMap[ip]; ok {
+							return udnIP
+						}
+						return ip
+					}
 					for _, slice := range tt.slices {
-						err = controller.endpointSliceStore.Add(kubetest.MirrorEndpointSlice(&slice, netInfo.GetNetworkName(), true))
+						err = controller.endpointSliceStore.Add(kubetest.MirrorEndpointSliceWithIPTransform(&slice, netInfo.GetNetworkName(), true, ipTransform))
 						g.Expect(err).NotTo(gomega.HaveOccurred())
 					}
 				}

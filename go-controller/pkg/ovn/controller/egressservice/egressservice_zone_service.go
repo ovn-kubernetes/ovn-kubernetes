@@ -179,7 +179,7 @@ func (c *Controller) allEndpointsFor(svc *corev1.Service) (
 			}
 			for _, ip := range ep.Addresses {
 				ipStr := utilnet.ParseIPSloppy(ip).String()
-				if !services.IsHostEndpoint(ipStr) {
+				if !services.IsHostEndpoint(ipStr, &util.DefaultNetInfo{}) {
 					if isEpLocal {
 						localEndpoints.Insert(ipStr)
 					} else {
