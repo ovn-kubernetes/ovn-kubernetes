@@ -513,8 +513,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 			By("Triggering networkRefChange callback after updating remote node as active on NAD")
 			fakeOvn.fakeNodeNADTracker.addEntry(remoteNode.Name, netInfo.nadName)
-			err = l3Controller.Reconcile(l3Controller.GetNetInfo())
-			Expect(err).NotTo(HaveOccurred())
+			l3Controller.HandleNetworkRefChange(remoteNode.Name, true)
 
 			By("Remote node should now be configured in the controller cache")
 			Eventually(func() bool {
@@ -536,8 +535,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
 			fakeOvn.fakeNodeNADTracker.delEntry(remoteNode.Name, netInfo.nadName)
-			err = l3Controller.Reconcile(l3Controller.GetNetInfo())
-			Expect(err).NotTo(HaveOccurred())
+			l3Controller.HandleNetworkRefChange(remoteNode.Name, false)
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
 				p := func(item *nbdb.LogicalSwitchPort) bool {

@@ -192,6 +192,9 @@ type BaseNetworkController struct {
 	// Tracker used to track nodes with active NADs on them
 	// Used by Dynamic UDN allocation
 	nodeNADTracker networkmanager.Tracker
+
+	// Ensure we only do the initial remote-node reconcile sweep once at startup.
+	remoteNodeInitOnce sync.Once
 }
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
@@ -220,34 +223,42 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			sets.NewString(oc.GetNADNamespaces()...))
 	}
 
-	// nodeTracker is nil for localnet, since it doesn't do anything for remote nodes
+	// nodeTracker is nil for localnet, since it doesn't do anything for remote nodes.
+	// Do a one-time sweep at startup to seed remote-node add/remove work; steady-state
+	// changes are handled via NotifyNetworkRefChange callbacks.
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && oc.nodeNADTracker != nil {
-		// look for remote nodes to reconcile
-		nads := oc.GetNADs()
-		nodes, err := oc.watchFactory.GetNodes()
-		if err != nil {
-			return fmt.Errorf("failed to get nodes for reconciling network: %s, error: %w", oc.GetNetworkName(), err)
-		}
-		for _, node := range nodes {
-			if _, present := oc.localZoneNodes.Load(node.Name); present {
-				// local node
-				continue
+		var remoteInitErr error
+		oc.remoteNodeInitOnce.Do(func() {
+			nads := oc.GetNADs()
+			nodes, err := oc.watchFactory.GetNodes()
+			if err != nil {
+				remoteInitErr = fmt.Errorf("failed to get nodes for reconciling network: %s, error: %w", oc.GetNetworkName(), err)
+				return
 			}
-			// remote node: reconcile if any NAD is active, else remove
-			active := false
-			for _, nad := range nads {
-				if oc.nodeNADTracker.NodeHasNAD(node.Name, nad) {
-					active = true
-					break
+			for _, node := range nodes {
+				if _, present := oc.localZoneNodes.Load(node.Name); present {
+					// local node
+					continue
+				}
+				// remote node: reconcile if any NAD is active, else remove
+				active := false
+				for _, nad := range nads {
+					if oc.nodeNADTracker.NodeHasNAD(node.Name, nad) {
+						active = true
+						break
+					}
+				}
+				if active {
+					// we need to reconcile and configure these remote nodes
+					reconcileNodes.Insert(node.Name)
+				} else {
+					// ensure the remote node is removed
+					removeNodes.Insert(node.Name)
 				}
 			}
-			if active {
-				// we need to reconcile and configure these remote nodes
-				reconcileNodes.Insert(node.Name)
-			} else {
-				// ensure the remote node is removed
-				removeNodes.Insert(node.Name)
-			}
+		})
+		if remoteInitErr != nil {
+			return remoteInitErr
 		}
 	}
 

@@ -665,7 +665,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			By("Triggering networkRefChange callback after updating remote node as active on NAD")
 			fakeOvn.fakeNodeNADTracker.addEntry(remoteNode.Name, netInfo.nadName)
-			err = l2Controller.Reconcile(l2Controller.GetNetInfo())
+			l2Controller.HandleNetworkRefChange(remoteNode.Name, true)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Remote node should now be configured in the controller cache")
@@ -688,7 +688,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
 			fakeOvn.fakeNodeNADTracker.delEntry(remoteNode.Name, netInfo.nadName)
-			err = l2Controller.Reconcile(l2Controller.GetNetInfo())
+			l2Controller.HandleNetworkRefChange(remoteNode.Name, false)
 			Expect(err).NotTo(HaveOccurred())
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
