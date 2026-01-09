@@ -149,26 +149,23 @@ func (tn testNode) Node() *corev1.Node {
 }
 
 type testNeighbor struct {
-	ASN       uint32
-	Address   string
-	DisableMP *bool
-	Advertise []string
+	ASN                    uint32
+	Address                string
+	DualStackAddressFamily bool
+	Advertise              []string
 }
 
 func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 	n := frrapi.Neighbor{
-		ASN:       tn.ASN,
-		Address:   tn.Address,
-		DisableMP: true,
+		ASN:                    tn.ASN,
+		Address:                tn.Address,
+		DualStackAddressFamily: tn.DualStackAddressFamily,
 		ToAdvertise: frrapi.Advertise{
 			Allowed: frrapi.AllowedOutPrefixes{
 				Mode:     frrapi.AllowRestricted,
 				Prefixes: tn.Advertise,
 			},
 		},
-	}
-	if tn.DisableMP != nil {
-		n.DisableMP = *tn.DisableMP
 	}
 
 	return n
@@ -801,13 +798,13 @@ func TestController_reconcile(t *testing.T) {
 		},
 		{
 			name:                 "fails to reconcile pod network if node selector is not empty",
-			ra:                   &testRA{Name: "ra", AdvertisePods: true, NodeSelector: map[string]string{"selected": "true"}},
+			ra:                   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true, NodeSelector: map[string]string{"selected": "true"}},
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionFalse,
 		},
 		{
 			name: "fails to reconcile if no FRRConfiguration is selected for selected node",
-			ra:   &testRA{Name: "ra", AdvertisePods: true, NodeSelector: map[string]string{"selected-by": "RouteAdvertisements"}},
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true, NodeSelector: map[string]string{"selected-by": "RouteAdvertisements"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:         "frrConfig",
@@ -829,7 +826,7 @@ func TestController_reconcile(t *testing.T) {
 		},
 		{
 			name: "fails to reconcile when subnet annotation is missing from node",
-			ra:   &testRA{Name: "ra", AdvertisePods: true},
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -847,7 +844,7 @@ func TestController_reconcile(t *testing.T) {
 		},
 		{
 			name: "fails to reconcile when subnet annotation is missing for network",
-			ra:   &testRA{Name: "ra", AdvertisePods: true},
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -865,7 +862,7 @@ func TestController_reconcile(t *testing.T) {
 		},
 		{
 			name: "fails to reconcile if a selectd FRRConfiguration has no matching VRF",
-			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true},
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -925,15 +922,15 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionFalse,
 		},
 		{
-			name: "fails to reconcile if DisableMP is unset",
-			ra:   &testRA{Name: "ra", AdvertisePods: true},
+			name: "fails to reconcile if DualStackAddressFamily is set",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
 					Namespace: frrNamespace,
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", DisableMP: ptr.To(false)},
+							{ASN: 1, Address: "1.0.0.100", DualStackAddressFamily: true},
 						}},
 					},
 				},
