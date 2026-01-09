@@ -90,6 +90,7 @@ set_default_params() {
   export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
   export MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
   export ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
+  export METRICS_IP=${METRICS_IP:-""}
 }
 
 usage() {
@@ -113,6 +114,7 @@ usage() {
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
     echo "       [ -cn  | --cluster-name ]"
+    echo "       [ -mip | --metrics-ip <ip> ]"
     echo "       [ --enable-coredumps ]"
     echo "       [ -h ]"
     echo ""
@@ -137,6 +139,7 @@ usage() {
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
+    echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
     echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
     echo "-ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)"
@@ -222,6 +225,9 @@ parse_args() {
                                                   KIND_NUM_NODES_PER_ZONE=$1
                                                   ;;
             -mps| --multi-pod-subnet )            MULTI_POD_SUBNET=true
+                                                  ;;
+            -mip | --metrics-ip ) shift
+                                                  METRICS_IP="$1"
                                                   ;;
             --enable-coredumps )                  ENABLE_COREDUMPS=true
                                                   ;;

@@ -185,8 +185,8 @@ svc_cidr=${OVN_SVC_CIDR:-172.30.0.0/16}
 mtu=${OVN_MTU:-1400}
 routable_mtu=${OVN_ROUTABLE_MTU:-}
 
-# set metrics endpoint bind to K8S_NODE_IP.
-metrics_endpoint_ip=${K8S_NODE_IP:-0.0.0.0}
+# set metrics endpoint to METRICS_IP. if METRICS_IP not set K8S_NODE_IP or default to 0.0.0.0
+metrics_endpoint_ip="${METRICS_IP:-${K8S_NODE_IP:-0.0.0.0}}"
 metrics_endpoint_ip=$(bracketify $metrics_endpoint_ip)
 
 # set metrics master port
@@ -1319,7 +1319,7 @@ ovn-master() {
   fi
   echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
 
-  ovnkube_master_metrics_bind_address="127.0.0.1:${metrics_master_port}"
+  ovnkube_master_metrics_bind_address="${metrics_endpoint_ip}:${metrics_master_port}"
   local ovnkube_metrics_tls_opts=""
   if [[ ${OVNKUBE_METRICS_PK} != "" && ${OVNKUBE_METRICS_CERT} != "" ]]; then
     ovnkube_metrics_tls_opts="
@@ -1640,7 +1640,7 @@ ovnkube-controller() {
   fi
   echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
 
-  ovnkube_master_metrics_bind_address="127.0.0.1:${metrics_master_port}"
+  ovnkube_master_metrics_bind_address="${metrics_endpoint_ip}:${metrics_master_port}"
   echo "ovnkube_master_metrics_bind_address=${ovnkube_master_metrics_bind_address}"
 
   local ovnkube_metrics_tls_opts=""
@@ -2088,7 +2088,7 @@ ovnkube-controller-with-node() {
   fi
 
   ovn_metrics_bind_address="${metrics_endpoint_ip}:${metrics_bind_port}"
-  metrics_bind_address="127.0.0.1:${metrics_worker_port}"
+  metrics_bind_address="${metrics_endpoint_ip}:${metrics_worker_port}"
   echo "ovn_metrics_bind_address=${ovn_metrics_bind_address}"
   echo "metrics_bind_address=${metrics_bind_address}"
 
@@ -2432,7 +2432,7 @@ ovn-cluster-manager() {
   fi
   echo "persistent_ips_enabled_flag: ${persistent_ips_enabled_flag}"
 
-  ovnkube_cluster_manager_metrics_bind_address="127.0.0.1:9411"
+  ovnkube_cluster_manager_metrics_bind_address="${metrics_endpoint_ip}:9411"
   echo "ovnkube_cluster_manager_metrics_bind_address: ${ovnkube_cluster_manager_metrics_bind_address}"
 
   local ovnkube_metrics_tls_opts=""
@@ -2829,7 +2829,7 @@ ovn-node() {
   fi
 
   ovn_metrics_bind_address="${metrics_endpoint_ip}:9476"
-  ovnkube_node_metrics_bind_address="127.0.0.1:9410"
+  ovnkube_node_metrics_bind_address="${metrics_endpoint_ip}:9410"
 
   local ovnkube_metrics_tls_opts=""
   if [[ ${OVNKUBE_METRICS_PK} != "" && ${OVNKUBE_METRICS_CERT} != "" ]]; then

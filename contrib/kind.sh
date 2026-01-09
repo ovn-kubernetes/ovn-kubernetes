@@ -47,7 +47,7 @@ usage() {
     echo "                 [-dd |--dns-domain |"
     echo "                 [-ric | --run-in-container |"
     echo "                 [-cn | --cluster-name |"
-    echo "                 [-ehp|--egress-ip-healthcheck-port <num>]"
+    echo "                 [-ehp|--egress-ip-healthcheck-port <num>] [-mip|--metrics-ip <ip>]"
     echo "                 [-is | --ipsec]"
     echo "                 [-cm | --compact-mode]"
     echo "                 [-ic | --enable-interconnect]"
@@ -115,6 +115,7 @@ echo "-dd  | --dns-domain                           Configure a custom dnsDomain
 echo "-cn  | --cluster-name                         Configure the kind cluster's name"
 echo "-ric | --run-in-container                     Configure the script to be run from a docker container, allowing it to still communicate with the kind controlplane"
 echo "-ehp | --egress-ip-healthcheck-port           TCP port used for gRPC session by egress IP node check. DEFAULT: 9107 (Use "0" for legacy dial to port 9)."
+echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
 echo "-is  | --ipsec                                Enable IPsec encryption (spawns ovn-ipsec pods)"
 echo "-sm  | --scale-metrics                        Enable scale metrics"
 echo "-cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process."
@@ -318,6 +319,9 @@ parse_args() {
                                                 fi
                                                 OVN_EGRESSIP_HEALTHCHECK_PORT=$1
                                                 ;;
+            -mip | --metrics-ip ) 		shift
+                                                METRICS_IP="$1"
+                                                ;;
            -sm  | --scale-metrics )             OVN_METRICS_SCALE_ENABLE=true
                                                 ;;
            -cm  | --compact-mode )              OVN_COMPACT_MODE=true
@@ -438,6 +442,7 @@ print_params() {
      echo "OVN_ENABLE_EX_GW_NETWORK_BRIDGE = $OVN_ENABLE_EX_GW_NETWORK_BRIDGE"
      echo "OVN_EX_GW_NETWORK_INTERFACE = $OVN_EX_GW_NETWORK_INTERFACE"
      echo "OVN_EGRESSIP_HEALTHCHECK_PORT = $OVN_EGRESSIP_HEALTHCHECK_PORT"
+     echo "METRICS_IP = $METRICS_IP"
      echo "OVN_DEPLOY_PODS = $OVN_DEPLOY_PODS"
      echo "OVN_METRICS_SCALE_ENABLE = $OVN_METRICS_SCALE_ENABLE"
      echo "OVN_ISOLATED = $OVN_ISOLATED"
@@ -665,6 +670,7 @@ set_default_params() {
 
   OVN_HOST_NETWORK_NAMESPACE=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
   OVN_EGRESSIP_HEALTHCHECK_PORT=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
+  METRICS_IP=${METRICS_IP:-""}
   OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
   OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
   OVN_METRICS_SCALE_ENABLE=${OVN_METRICS_SCALE_ENABLE:-false}
@@ -976,6 +982,7 @@ create_ovn_kube_manifests() {
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
+    --metrics-ip="${METRICS_IP}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
     --enable-interconnect="${OVN_ENABLE_INTERCONNECT}" \
     --enable-multi-external-gateway=true \

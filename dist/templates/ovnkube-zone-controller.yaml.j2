@@ -304,6 +304,8 @@ spec:
           value: "{{ ovnkube_libovsdb_client_logfile }}"
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
           value: "{{ ovnkube_config_duration_enable }}"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         - name: OVN_NET_CIDR
           valueFrom:
             configMapKeyRef:

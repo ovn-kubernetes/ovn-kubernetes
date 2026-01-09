@@ -396,6 +396,8 @@ spec:
           value: "{{ ovn_disable_forwarding }}"
         - name: OVN_ENCAP_PORT
           value: "{{ ovn_encap_port }}"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         - name: OVN_DISABLE_PKT_MTU_CHECK
           value: "{{ ovn_disable_pkt_mtu_check }}"
         - name: OVN_NETFLOW_TARGETS
@@ -586,6 +588,8 @@ spec:
           value: "local"
         - name: OVN_SOUTH
           value: "local"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         # end of container
 
       nodeSelector:

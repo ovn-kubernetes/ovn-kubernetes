@@ -36,6 +36,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -96,14 +97,9 @@ jobs:
       KIND_NUM_INFRA: "2"
       KIND_INSTALL_PROMETHEUS: "true"
       KIND_PROMETHEUS_INFRA_ONLY: "true"
+      METRICS_IP: "127.0.0.1"
     steps:
     - uses: actions/checkout@v4
-
-    - name: Setup tmate session
-      id: tmate
-      uses: mxschmitt/action-tmate@v3
-      with:
-        detached: true
 
     - name: Get PR info for issue comment
       if: github.event_name == 'issue_comment'
