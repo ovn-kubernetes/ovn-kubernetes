@@ -36,7 +36,7 @@ func (gtf *GatewayTopologyFactory) NewClusterRouterWithMulticastSupport(
 	netInfo util.NetInfo,
 	coopUUID string,
 ) (*nbdb.LogicalRouter, error) {
-	routerOptions := map[string]string{"mcast_relay": "true"}
+	routerOptions := map[string]string{"mcast_relay": "true", "always_learn_from_arp_request": "false"}
 	return gtf.newClusterRouter(clusterRouterName, netInfo, coopUUID, routerOptions)
 }
 
