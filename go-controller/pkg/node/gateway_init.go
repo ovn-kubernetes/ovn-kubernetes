@@ -475,6 +475,10 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 		return err
 	}
 
+	// In DPU-host mode, bridgeEIPAddrManager is not initialized because:
+	// - There's no OVS on the host (it runs on the DPU)
+	// - Traffic is offloaded to the DPU which handles EgressIP configuration
+	// - There's no openflow manager to use the mark-to-IP cache
 	nc.Gateway = &gateway{
 		initFunc:     func() error { return nil },
 		readyFunc:    func() (bool, error) { return true, nil },
