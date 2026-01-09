@@ -93,6 +93,9 @@ type Controller interface {
 	Interface() Interface
 	Start() error
 	Stop()
+	// SetSubsystemConditionUpdater injects a callback for updating UDN subsystem conditions.
+	// It is a no-op for controllers that do not support UDN condition updates.
+	SetSubsystemConditionUpdater(SubsystemConditionUpdater)
 }
 
 // Default returns a default implementation that assumes the default network is
@@ -241,6 +244,8 @@ func (nm defaultNetworkManager) Start() error {
 }
 
 func (nm defaultNetworkManager) Stop() {}
+
+func (nm defaultNetworkManager) SetSubsystemConditionUpdater(_ SubsystemConditionUpdater) {}
 
 func (nm defaultNetworkManager) GetActiveNetworkForNamespace(string) (util.NetInfo, error) {
 	return &util.DefaultNetInfo{}, nil
