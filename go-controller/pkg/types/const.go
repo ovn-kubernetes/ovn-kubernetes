@@ -229,6 +229,9 @@ const (
 	Layer2Topology   = "layer2"
 	LocalnetTopology = "localnet"
 
+	// different transport types for user-defined networks
+	TransportEVPN = "evpn"
+
 	// different types of network roles
 	// defined in CNI netconf as a user-defined network
 	NetworkRolePrimary   = "primary"
