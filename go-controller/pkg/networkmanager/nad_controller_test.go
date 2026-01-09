@@ -273,6 +273,13 @@ func (f *fakeNamespaceLister) Get(name string) (*corev1.Namespace, error) {
 
 func TestNADController(t *testing.T) {
 	t.Run("filter respects node trackers", func(t *testing.T) {
+		if err := config.PrepareTestConfig(); err != nil {
+			t.Fatalf("prepare test config: %v", err)
+		}
+		config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+
 		pt := &PodTrackerController{
 			nodeNADToPodCache: map[string]map[string]map[string]struct{}{},
 		}

@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -59,7 +60,6 @@ type FakeNetworkManager struct {
 	nextID          uint64
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
-	Reconciled    []string
 }
 
 func (fnm *FakeNetworkManager) RegisterNADReconciler(r NADReconciler) (uint64, error) {
@@ -100,6 +100,8 @@ func (fnm *FakeNetworkManager) Interface() Interface {
 func (fnm *FakeNetworkManager) Start() error { return nil }
 
 func (fnm *FakeNetworkManager) Stop() {}
+
+func (fnm *FakeNetworkManager) SetSubsystemConditionUpdater(_ SubsystemConditionUpdater) {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
@@ -185,4 +187,6 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 	return errors.Join(errs...)
 }
 
-func (fnm *FakeNetworkManager) NodeHasNAD(_, _ string) bool { return false }
+func (fnm *FakeNetworkManager) NodeHasNAD(_, _ string) bool {
+	return !config.OVNKubernetesFeature.EnableDynamicUDNAllocation
+}

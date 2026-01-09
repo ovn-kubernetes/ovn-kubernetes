@@ -83,8 +83,8 @@ type Interface interface {
 	// DeRegisterNADReconciler removes a previously registered reconciler.
 	DeRegisterNADReconciler(id uint64) error
 
-	// NodeHasNAD returns true if the given node has at least one pod using the NAD.
-	// It only works for the nadControllers created with a non-empty filterNADsOnNode.
+	// NodeHasNAD returns true if the given node has at least one pod/egress IP using the NAD with Dynamic UDN.
+	// If Dynamic UDN is disabled, it always returns true.
 	NodeHasNAD(node, nad string) bool
 }
 
@@ -93,6 +93,9 @@ type Controller interface {
 	Interface() Interface
 	Start() error
 	Stop()
+	// SetSubsystemConditionUpdater injects a callback for updating UDN subsystem conditions.
+	// It is a no-op for controllers that do not support UDN condition updates.
+	SetSubsystemConditionUpdater(SubsystemConditionUpdater)
 }
 
 // Default returns a default implementation that assumes the default network is
@@ -221,9 +224,8 @@ type BaseNetworkController interface {
 type NetworkController interface {
 	BaseNetworkController
 	Cleanup() error
-	// HandleNetworkRefChange is only used by nadControllers with non-empty filterNADsOnNode
+	// HandleNetworkRefChange is only used by nadControllers with Dynamic UDN
 	// to inform the network controller that a relevant NAD has become active or inactive.
-	// Every networkController that uses NodeHasNAD function must implement this method.
 	HandleNetworkRefChange(node string, active bool)
 }
 
@@ -241,6 +243,8 @@ func (nm defaultNetworkManager) Start() error {
 }
 
 func (nm defaultNetworkManager) Stop() {}
+
+func (nm defaultNetworkManager) SetSubsystemConditionUpdater(_ SubsystemConditionUpdater) {}
 
 func (nm defaultNetworkManager) GetActiveNetworkForNamespace(string) (util.NetInfo, error) {
 	return &util.DefaultNetInfo{}, nil
@@ -285,7 +289,8 @@ func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) (uint64, 
 func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) error { return nil }
 
 func (nm defaultNetworkManager) NodeHasNAD(_ string, _ string) bool {
-	return false
+	// default network is never filtered
+	return true
 }
 
 var def Controller = &defaultNetworkManager{}

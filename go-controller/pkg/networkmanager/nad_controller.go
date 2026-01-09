@@ -28,11 +28,15 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
 )
+
+// SubsystemConditionUpdater allows callers to update UDN subsystem conditions.
+type SubsystemConditionUpdater func(networkName string, fieldManager string, condition *metav1.Condition, events ...*util.EventDetails) error
 
 // nadController handles namespaced scoped NAD events and
 // manages cluster scoped networks defined in those NADs. NADs are mostly
@@ -81,6 +85,10 @@ type nadController struct {
 
 	podTracker      *PodTrackerController
 	egressIPTracker *EgressIPTrackerController
+
+	// updateSubsystemCondition is an optional callback used only in cluster-manager
+	// mode to update UDN subsystem conditions (e.g., NodesSelected).
+	updateSubsystemCondition SubsystemConditionUpdater
 }
 
 type reconcilerRegistration struct {
@@ -112,7 +120,7 @@ func newController(
 		markedForRemoval:  map[string]time.Time{},
 	}
 
-	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation && filterNADsOnNode != "" {
+	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		c.podTracker = NewPodTrackerController("cluster-manager-pod-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
 		if config.OVNKubernetesFeature.EnableEgressIP {
 			c.egressIPTracker = NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
@@ -163,11 +171,14 @@ func newController(
 	return c, nil
 }
 
-func (cm *nadController) NodeHasNAD(node, nad string) bool {
-	if cm.podTracker != nil && cm.podTracker.NodeHasNAD(node, nad) {
+func (c *nadController) NodeHasNAD(node, nad string) bool {
+	if !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		return true
 	}
-	if cm.egressIPTracker != nil && cm.egressIPTracker.NodeHasNAD(node, nad) {
+	if c.podTracker != nil && c.podTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	if c.egressIPTracker != nil && c.egressIPTracker.NodeHasNAD(node, nad) {
 		return true
 	}
 	return false
@@ -176,7 +187,7 @@ func (cm *nadController) NodeHasNAD(node, nad string) bool {
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated.
 // Used as a callback for pod/egress IP events when dynamic UDN allocation is enabled.
-func (cm *nadController) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
+func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
 	klog.V(4).Infof("Network change for zone controller triggered by pod/egress IP events "+
 		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
 
@@ -184,15 +195,15 @@ func (cm *nadController) OnNetworkRefChange(node, nadNamespacedName string, acti
 	if err != nil {
 		klog.Errorf("Failed splitting key %q, falling back to normal network reconcile: %v", nadNamespacedName, err)
 		// fallback to regular reconcile
-		cm.reconcile(nadNamespacedName)
+		c.reconcile(nadNamespacedName)
 		return
 	}
 
-	nad, err := cm.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
+	nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
 	if err != nil {
 		klog.Errorf("Failed to find NAD %q in informer, falling back to normal network reconcile: %v", nadNamespacedName, err)
 		// fallback to regular reconcile
-		cm.reconcile(nadNamespacedName)
+		c.reconcile(nadNamespacedName)
 		return
 	}
 
@@ -209,36 +220,87 @@ func (cm *nadController) OnNetworkRefChange(node, nadNamespacedName string, acti
 	if err != nil || nadNetwork == nil {
 		klog.Errorf("Failed to parse NAD %q info, falling back to normal network reconcile: %v", nadNamespacedName, err)
 		// fallback to regular reconcile
-		cm.reconcile(nadNamespacedName)
+		c.reconcile(nadNamespacedName)
 		return
 	}
 
-	isLocal := node == cm.filterNADsOnNode
+	isLocal := node == c.filterNADsOnNode
+	networkName := nadNetwork.GetNetworkName()
 	// Enqueue node-level reconcile on the running network controller for remote nodes (non-blocking).
 	if !isLocal {
-		cm.networkController.NotifyNetworkRefChange(nadNetwork.GetNetworkName(), node, active)
+		c.networkController.NotifyNetworkRefChange(networkName, node, active)
 	}
 	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
 	if isLocal {
-		cm.updateNADState(nadNamespacedName, active)
+		c.updateNADState(nadNamespacedName, active)
+	}
+
+	// Update dynamic UDN metrics and status
+	if c.isClusterManagerMode() {
+		allNodes, err := c.nodeLister.List(labels.Everything())
+		if err != nil {
+			klog.Errorf("Failed getting nodes for UDN status update %q: %v", name, err)
+			return
+		}
+
+		uniqueNodes := sets.New[string]()
+		for _, node := range allNodes {
+			if c.NodeHasNAD(node.Name, util.GetNADName(nad.Namespace, nad.Name)) {
+				uniqueNodes.Insert(node.Name)
+			}
+		}
+		metrics.SetDynamicUDNNodeCount(networkName, ownerRef.Kind, float64(uniqueNodes.Len()))
+		klog.V(5).Infof("Updated metric: network=%s kind=%s nodes=%d", networkName,
+			ownerRef.Kind, uniqueNodes.Len())
+		var cond *metav1.Condition
+		if uniqueNodes.Len() == 0 {
+			msg := "no nodes currently rendered with network"
+			cond = &metav1.Condition{
+				Type:               "NodesSelected",
+				Status:             metav1.ConditionFalse,
+				Reason:             "DynamicAllocation",
+				Message:            msg,
+				LastTransitionTime: metav1.Now(),
+			}
+		} else {
+			msg := fmt.Sprintf("%d node(s) rendered with network", uniqueNodes.Len())
+			cond = &metav1.Condition{
+				Type:               "NodesSelected",
+				Status:             metav1.ConditionTrue,
+				Reason:             "DynamicAllocation",
+				Message:            msg,
+				LastTransitionTime: metav1.Now(),
+			}
+		}
+		if c.updateSubsystemCondition != nil {
+			if err := c.updateSubsystemCondition(
+				networkName,
+				"ClusterManager", // FieldManager – must be unique per subsystem
+				cond,
+			); err != nil {
+				klog.Errorf("Failed to update NodesSelected condition for %s: %v", networkName, err)
+			} else {
+				klog.V(4).Infof("Updated Dynamic Allocation NodesSelected condition for %s: %s", networkName, cond.Message)
+			}
+		}
 	}
 }
 
 // filter should only be called if cm.filterNADsOnNode is set
-func (cm *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error) {
+func (c *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error) {
 	ownerRef := metav1.GetControllerOf(nad)
 	if ownerRef == nil {
 		return false, nil
 	}
 
-	ourNode := cm.filterNADsOnNode
+	ourNode := c.filterNADsOnNode
 
 	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
 		return false, nil
 	}
 
 	// we don't support multiple nodes per zone, assume zone name is node name
-	if cm.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
+	if c.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
 		return false, nil
 	}
 
@@ -247,6 +309,11 @@ func (cm *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool
 
 func (c *nadController) Interface() Interface {
 	return c
+}
+
+// SetSubsystemConditionUpdater allows late injection of the UDN condition updater.
+func (c *nadController) SetSubsystemConditionUpdater(updater SubsystemConditionUpdater) {
+	c.updateSubsystemCondition = updater
 }
 
 func (c *nadController) Start() error {
@@ -261,6 +328,9 @@ func (c *nadController) Start() error {
 		return err
 	}
 
+	// Pod and Egress IP Trackers start and process existing pods/egress IPs.
+	// The trackers warm up their cache and trigger OnNetworkRefChange to queue keys
+	// to NAD Controller.
 	if c.podTracker != nil {
 		if err := c.podTracker.Start(); err != nil {
 			return fmt.Errorf("failed to start pod tracker: %w", err)
@@ -273,6 +343,8 @@ func (c *nadController) Start() error {
 		}
 	}
 
+	// NetworkController starts last and starts to process network keys to spin up network controllers.
+	// At this point the tracker cache's are warm to get accurate information for filtering.
 	err = c.networkController.Start()
 	if err != nil {
 		return err
