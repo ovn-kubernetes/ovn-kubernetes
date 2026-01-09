@@ -75,6 +75,9 @@ OVN_PRE_CONF_UDN_ADDR_ENABLE=
 OVN_ROUTE_ADVERTISEMENTS_ENABLE=
 OVN_ADVERTISE_DEFAULT_NETWORK=
 OVN_ADVERTISED_UDN_ISOLATION_MODE=
+OVN_NO_OVERLAY_ENABLE=
+OVN_NO_OVERLAY_OUTBOUND_SNAT_ENABLE=
+OVN_NO_OVERLAY_MANAGED_ROUTING=
 OVN_V4_JOIN_SUBNET=""
 OVN_V6_JOIN_SUBNET=""
 OVN_V4_MASQUERADE_SUBNET=""
@@ -288,6 +291,15 @@ while [ "$1" != "" ]; do
     --advertised-udn-isolation-mode)
     OVN_ADVERTISED_UDN_ISOLATION_MODE=$VALUE
     ;;
+  --no-overlay-enable)
+    OVN_NO_OVERLAY_ENABLE=$VALUE
+    ;;
+  --no-overlay-enable-snat)
+    OVN_NO_OVERLAY_OUTBOUND_SNAT_ENABLE=$VALUE
+    ;;
+  --no-overlay-managed-routing)
+    OVN_NO_OVERLAY_MANAGED_ROUTING=$VALUE
+    ;;
   --egress-service-enable)
     OVN_EGRESSSERVICE_ENABLE=$VALUE
     ;;
@@ -488,6 +500,12 @@ ovn_advertise_default_network=${OVN_ADVERTISE_DEFAULT_NETWORK}
 echo "ovn_advertise_default_network: ${ovn_advertise_default_network}"
 ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE}
 echo "ovn_advertised_udn_isolation_mode: ${ovn_advertised_udn_isolation_mode}"
+ovn_no_overlay_enable=${OVN_NO_OVERLAY_ENABLE}
+echo "ovn_no_overlay_enable: ${ovn_no_overlay_enable}"
+ovn_no_overlay_outbound_snat_enable=${OVN_NO_OVERLAY_OUTBOUND_SNAT_ENABLE}
+echo "ovn_no_overlay_outbound_snat_enable: ${ovn_no_overlay_outbound_snat_enable}"
+ovn_no_overlay_managed_routing=${OVN_NO_OVERLAY_MANAGED_ROUTING}
+echo "ovn_no_overlay_managed_routing: ${ovn_no_overlay_managed_routing}"
 ovn_hybrid_overlay_net_cidr=${OVN_HYBRID_OVERLAY_NET_CIDR}
 echo "ovn_hybrid_overlay_net_cidr: ${ovn_hybrid_overlay_net_cidr}"
 ovn_disable_snat_multiple_gws=${OVN_DISABLE_SNAT_MULTIPLE_GWS}
@@ -635,6 +653,7 @@ ovn_image=${ovnkube_image} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_remote_probe_interval=${ovn_remote_probe_interval} \
@@ -657,6 +676,7 @@ ovn_image=${ovnkube_image} \
   ovn_observ_enable=${ovn_observ_enable} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
   enable_coredumps=${enable_coredumps} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovnkube_app_name=ovnkube-node \
   jinjanate ../templates/ovnkube-node.yaml.j2 -o ${output_dir}/ovnkube-node.yaml
 
@@ -691,6 +711,7 @@ ovn_image=${ovnkube_image} \
   ovn_network_connect_enable=${ovn_network_connect_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_remote_probe_interval=${ovn_remote_probe_interval} \
@@ -712,6 +733,7 @@ ovn_image=${ovnkube_image} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_observ_enable=${ovn_observ_enable} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovnkube_app_name=ovnkube-node-dpu \
   jinjanate ../templates/ovnkube-node.yaml.j2 -o ${output_dir}/ovnkube-node-dpu.yaml
 
@@ -755,6 +777,7 @@ ovn_image=${image} \
   ovnkube_node_mgmt_port_netdev=${ovnkube_node_mgmt_port_netdev} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovnkube_app_name=ovnkube-node-dpu-host \
   jinjanate ../templates/ovnkube-node.yaml.j2 -o ${output_dir}/ovnkube-node-dpu-host.yaml
 
@@ -791,6 +814,7 @@ ovn_image=${ovnkube_image} \
   ovn_network_connect_enable=${ovn_network_connect_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_master_count=${ovn_master_count} \
@@ -811,6 +835,7 @@ ovn_image=${ovnkube_image} \
   ovn_nohostsubnet_label=${ovn_nohostsubnet_label} \
   ovn_disable_requestedchassis=${ovn_disable_requestedchassis} \
   enable_coredumps=${enable_coredumps} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   jinjanate ../templates/ovnkube-master.yaml.j2 -o ${output_dir}/ovnkube-master.yaml
 
 ovn_image=${ovnkube_image} \
@@ -844,6 +869,7 @@ ovn_image=${ovnkube_image} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_master_count=${ovn_master_count} \
@@ -859,6 +885,7 @@ ovn_image=${ovnkube_image} \
   ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
   ovn_observ_enable=${ovn_observ_enable} \
   enable_coredumps=${enable_coredumps} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   jinjanate ../templates/ovnkube-control-plane.yaml.j2 -o ${output_dir}/ovnkube-control-plane.yaml
 
 ovn_image=${image} \
@@ -929,6 +956,7 @@ ovn_image=${ovnkube_image} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_remote_probe_interval=${ovn_remote_probe_interval} \
@@ -961,6 +989,7 @@ ovn_image=${ovnkube_image} \
   ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
   ovn_observ_enable=${ovn_observ_enable} \
   enable_coredumps=${enable_coredumps} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   jinjanate ../templates/ovnkube-single-node-zone.yaml.j2 -o ${output_dir}/ovnkube-single-node-zone.yaml
 
 ovn_image=${ovnkube_image} \
@@ -999,6 +1028,7 @@ ovn_image=${ovnkube_image} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_remote_probe_interval=${ovn_remote_probe_interval} \
   ovn_monitor_all=${ovn_monitor_all} \
@@ -1030,6 +1060,7 @@ ovn_image=${ovnkube_image} \
   ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
   ovn_observ_enable=${ovn_observ_enable} \
   enable_coredumps=${enable_coredumps} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
   jinjanate ../templates/ovnkube-zone-controller.yaml.j2 -o ${output_dir}/ovnkube-zone-controller.yaml
 
 ovn_image=${image} \
@@ -1087,6 +1118,9 @@ net_cidr=${net_cidr} svc_cidr=${svc_cidr} \
   host_network_namespace=${host_network_namespace} \
   in_upgrade=${in_upgrade} \
   advertise_default_network=${ovn_advertise_default_network} \
+  ovn_no_overlay_enable=${ovn_no_overlay_enable} \
+  ovn_no_overlay_outbound_snat_enable=${ovn_no_overlay_outbound_snat_enable} \
+  ovn_no_overlay_managed_routing=${OVN_NO_OVERLAY_MANAGED_ROUTING} \
   jinjanate ../templates/ovn-setup.yaml.j2 -o ${output_dir}/ovn-setup.yaml
 
 ovn_enable_interconnect=${ovn_enable_interconnect} \
@@ -1098,6 +1132,7 @@ ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
 ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
 ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
 ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
+ovn_no_overlay_managed_routing=${ovn_no_overlay_managed_routing} \
 ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
   jinjanate ../templates/rbac-ovnkube-cluster-manager.yaml.j2 -o ${output_dir}/rbac-ovnkube-cluster-manager.yaml
 
