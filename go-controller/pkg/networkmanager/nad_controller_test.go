@@ -12,6 +12,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
 
@@ -206,6 +207,58 @@ func testNetworkKey(nInfo util.NetInfo) string {
 
 func networkFromTestNetworkKey(key string) string {
 	return key[:strings.LastIndex(key, " ")]
+}
+
+type fakeNodeLister struct {
+	nodes []*corev1.Node
+}
+
+func (f *fakeNodeLister) List(_ labels.Selector) ([]*corev1.Node, error) {
+	return f.nodes, nil
+}
+
+func (f *fakeNodeLister) Get(name string) (*corev1.Node, error) {
+	for _, n := range f.nodes {
+		if n.Name == name {
+			return n, nil
+		}
+	}
+	return nil, apierrors.NewNotFound(corev1.Resource("node"), name)
+}
+
+type fakeNADNamespaceLister struct {
+	nads map[string]*nettypes.NetworkAttachmentDefinition
+}
+
+func (f *fakeNADNamespaceLister) List(_ labels.Selector) ([]*nettypes.NetworkAttachmentDefinition, error) {
+	result := []*nettypes.NetworkAttachmentDefinition{}
+	for _, nad := range f.nads {
+		result = append(result, nad)
+	}
+	return result, nil
+}
+
+func (f *fakeNADNamespaceLister) Get(name string) (*nettypes.NetworkAttachmentDefinition, error) {
+	if nad, ok := f.nads[name]; ok {
+		return nad, nil
+	}
+	return nil, apierrors.NewNotFound(nettypes.Resource("networkattachmentdefinition"), name)
+}
+
+type fakeNADLister struct {
+	nads map[string]*nettypes.NetworkAttachmentDefinition
+}
+
+func (f *fakeNADLister) List(_ labels.Selector) ([]*nettypes.NetworkAttachmentDefinition, error) {
+	result := []*nettypes.NetworkAttachmentDefinition{}
+	for _, nad := range f.nads {
+		result = append(result, nad)
+	}
+	return result, nil
+}
+
+func (f *fakeNADLister) NetworkAttachmentDefinitions(_ string) nadlisters.NetworkAttachmentDefinitionNamespaceLister {
+	return &fakeNADNamespaceLister{nads: f.nads}
 }
 
 type testControllerManager struct {
@@ -1441,4 +1494,124 @@ func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetCon
 	}
 	nad.Annotations = annotations
 	return nad, nil
+}
+
+func TestOnNetworkRefChangeUpdatesStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		active         bool
+		nodeHasNAD     bool
+		expectedStatus metav1.ConditionStatus
+		expectedMsg    string
+	}{
+		{
+			name:           "node selected",
+			active:         true,
+			nodeHasNAD:     true,
+			expectedStatus: metav1.ConditionTrue,
+			expectedMsg:    "1 node(s) rendered with network",
+		},
+		{
+			name:           "no nodes selected",
+			active:         true,
+			nodeHasNAD:     false,
+			expectedStatus: metav1.ConditionFalse,
+			expectedMsg:    "no nodes currently rendered with network",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			err := config.PrepareTestConfig()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+
+			// Build fake NAD with UDN owner reference and overlay topology.
+			netConf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: "udn-net",
+					Type: "ovn-k8s-cni-overlay",
+				},
+				Topology: types.Layer3Topology,
+				Role:     types.NetworkRolePrimary,
+				NADName:  "ns1/primary",
+			}
+			nad, err := buildNAD("primary", "ns1", netConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			nad.OwnerReferences = []metav1.OwnerReference{{
+				Kind:       "UserDefinedNetwork",
+				Name:       "udn",
+				Controller: ptrTo(true),
+			}}
+
+			nadLister := &fakeNADLister{
+				nads: map[string]*nettypes.NetworkAttachmentDefinition{
+					"primary": nad,
+				},
+			}
+			nodeName := "node1"
+			nodeLister := &fakeNodeLister{
+				nodes: []*corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}},
+			}
+
+			// Fake pod tracker to control NodeHasNAD responses.
+			podCache := map[string]map[string]map[string]struct{}{}
+			if tt.nodeHasNAD {
+				podCache[nodeName] = map[string]map[string]struct{}{
+					util.GetNADName(nad.Namespace, nad.Name): {
+						"pod1": {},
+					},
+				}
+			}
+			podTracker := &PodTrackerController{
+				nodeNADToPodCache: podCache,
+			}
+
+			// Capture subsystem condition updates.
+			var gotNetwork string
+			var gotCond *metav1.Condition
+			updater := func(networkName, _ string, condition *metav1.Condition, _ ...*util.EventDetails) error {
+				gotNetwork = networkName
+				if condition != nil {
+					condCopy := *condition
+					gotCond = &condCopy
+				}
+				return nil
+			}
+
+			tcm := &testControllerManager{
+				controllers: map[string]NetworkController{},
+				defaultNetwork: &testNetworkController{
+					ReconcilableNetInfo: &util.DefaultNetInfo{},
+				},
+			}
+
+			nc := &nadController{
+				nads:                map[string]string{},
+				primaryNADs:         map[string]string{},
+				networkController:   newNetworkController("", "", "", tcm, nil),
+				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+				tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
+				nadLister:           nadLister,
+				nodeLister:          nodeLister,
+				podTracker:          podTracker,
+			}
+			err = nc.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			nc.SetSubsystemConditionUpdater(updater)
+
+			// Trigger network ref change.
+			nc.OnNetworkRefChange(nodeName, util.GetNADName(nad.Namespace, nad.Name), tt.active)
+
+			g.Expect(gotNetwork).To(gomega.Equal("udn-net"))
+			g.Expect(gotCond).ToNot(gomega.BeNil())
+			g.Expect(gotCond.Type).To(gomega.Equal("NodesSelected"))
+			g.Expect(gotCond.Status).To(gomega.Equal(tt.expectedStatus))
+			g.Expect(gotCond.Reason).To(gomega.Equal("DynamicAllocation"))
+			g.Expect(gotCond.Message).To(gomega.Equal(tt.expectedMsg))
+		})
+	}
 }
