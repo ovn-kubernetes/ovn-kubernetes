@@ -230,3 +230,65 @@ spec:
         operations:  ["UPDATE"]
         resources:   ["pods"]
 {%- endif %}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: egressip-update-validation
+spec:
+  failurePolicy: Fail
+  matchConditions:
+  - expression: '("k8s.ovn.org/egressip-mark" in object.metadata.annotations) && (!has(oldObject.metadata.annotations) ||
+       !("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations))'
+    name: egressip-mark-annotation-update
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["k8s.ovn.org"]
+      apiVersions: ["v1"]
+      operations: ["UPDATE"]
+      resources: ["egressips"]
+  validations:
+  {% if ovn_enable_interconnect == "true" -%}
+  - expression: '(request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager")'
+  {% else %}
+  - expression: '(request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-master")'
+  {%- endif %}
+    message: 'A regular user must not add "k8s.ovn.org/egressip-mark" annotation to an EgressIP custom resource.'
+    reason: Invalid
+
+---    
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: egressip-create-validation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["k8s.ovn.org"]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["egressips"]
+  validations:
+  - expression: '!has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations)'
+    message: 'EgressIP resources cannot be created with the "k8s.ovn.org/egressip-mark" annotation. This annotation is managed by the system.'
+    reason: Invalid
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: egressip-update-validation-binding
+spec:
+  policyName: egressip-update-validation
+  validationActions: [Deny]
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: egressip-create-validation-binding
+spec:
+  policyName: egressip-create-validation
+  validationActions: [Deny]
