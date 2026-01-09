@@ -269,22 +269,6 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 	return discoveredNetworks, allMatchingNADKeys, kerrors.NewAggregate(errs)
 }
 
-func computeNetworkOwner(networkType string, networkID int) string {
-	return fmt.Sprintf("%s_%d", networkType, networkID)
-}
-
-// parseNetworkOwnerTopology extracts the topology type from an owner key.
-// Owner keys are formatted as "{topology}_{networkID}" (e.g., "layer3_1", "layer2_2").
-func parseNetworkOwnerTopology(owner string) (topologyType string, ok bool) {
-	if len(owner) > len(ovntypes.Layer3Topology)+1 && owner[:len(ovntypes.Layer3Topology)] == ovntypes.Layer3Topology {
-		return ovntypes.Layer3Topology, true
-	}
-	if len(owner) > len(ovntypes.Layer2Topology)+1 && owner[:len(ovntypes.Layer2Topology)] == ovntypes.Layer2Topology {
-		return ovntypes.Layer2Topology, true
-	}
-	return "", false
-}
-
 // allocateSubnets allocates subnets for the given discovered networks
 // It returns a map of owner to subnets
 // NOTE: If owner already had its subnets allocated, it will simply return those existing subnets
@@ -302,14 +286,14 @@ func (c *Controller) allocateSubnets(discoveredNetworks []util.NetInfo, allocato
 		}
 		var err error
 		if network.TopologyType() == ovntypes.Layer3Topology {
-			owner = computeNetworkOwner(ovntypes.Layer3Topology, networkID)
+			owner = util.ComputeNetworkOwner(ovntypes.Layer3Topology, networkID)
 			subnets, err = allocator.AllocateLayer3Subnet(owner)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to allocate Layer3 subnet for network %s: %w", network.GetNetworkName(), err))
 				continue
 			}
 		} else if network.TopologyType() == ovntypes.Layer2Topology {
-			owner = computeNetworkOwner(ovntypes.Layer2Topology, networkID)
+			owner = util.ComputeNetworkOwner(ovntypes.Layer2Topology, networkID)
 			subnets, err = allocator.AllocateLayer2Subnet(owner)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to allocate Layer2 subnet for network %s: %w", network.GetNetworkName(), err))
@@ -333,8 +317,8 @@ func (c *Controller) releaseSubnets(networksNeedingRelease sets.Set[string],
 	allocator HybridConnectSubnetAllocator) error {
 	var errs []error
 	for networkKey := range networksNeedingRelease {
-		topologyType, ok := parseNetworkOwnerTopology(networkKey)
-		if !ok {
+		topologyType, _, err := util.ParseNetworkOwner(networkKey)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("invalid network key format: %s", networkKey))
 			continue
 		}

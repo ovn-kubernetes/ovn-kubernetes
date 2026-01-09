@@ -34,6 +34,7 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		zone:               zone,
 		cm:                 cm,
 		networks:           map[string]util.MutableNetInfo{},
+		networksByID:       map[int]string{},
 		networkControllers: map[string]*networkControllerState{},
 	}
 
@@ -110,6 +111,7 @@ type networkController struct {
 
 	cm                 ControllerManager
 	networks           map[string]util.MutableNetInfo
+	networksByID       map[int]string // reverse index: network ID -> network name for O(1) lookup
 	networkControllers map[string]*networkControllerState
 }
 
@@ -168,11 +170,21 @@ func (c *networkController) DeleteNetwork(network string) {
 func (c *networkController) setNetwork(network string, netInfo util.MutableNetInfo) {
 	c.Lock()
 	defer c.Unlock()
+	// Remove old ID mapping if network existed
+	if old, exists := c.networks[network]; exists {
+		if oldID := old.GetNetworkID(); oldID != types.InvalidID {
+			delete(c.networksByID, oldID)
+		}
+	}
 	if netInfo == nil {
 		delete(c.networks, network)
 		return
 	}
 	c.networks[network] = netInfo
+	// Add new ID mapping
+	if id := netInfo.GetNetworkID(); id != types.InvalidID {
+		c.networksByID[id] = network
+	}
 }
 
 func (c *networkController) getNetwork(network string) util.MutableNetInfo {
@@ -541,4 +553,18 @@ func (c *networkController) getRunningNetwork(id int) string {
 		}
 	}
 	return ""
+}
+
+// GetNetworkByID returns the network with the given ID or nil if not found.
+// This is an O(1) lookup using an internal index.
+func (c *networkController) GetNetworkByID(id int) util.NetInfo {
+	if id == types.DefaultNetworkID {
+		return &util.DefaultNetInfo{}
+	}
+	c.RLock()
+	defer c.RUnlock()
+	if name, ok := c.networksByID[id]; ok {
+		return c.networks[name]
+	}
+	return nil
 }

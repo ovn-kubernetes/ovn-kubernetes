@@ -59,6 +59,9 @@ type Interface interface {
 	RegisterNADReconciler(r NADReconciler) (uint64, error)
 	// DeRegisterNADReconciler removes a previously registered reconciler.
 	DeRegisterNADReconciler(id uint64) error
+	// GetNetworkByID returns the network with the given ID or nil if not found.
+	// This is an O(1) lookup using an internal index.
+	GetNetworkByID(id int) util.NetInfo
 }
 
 // Controller handles the runtime of the package
@@ -240,5 +243,12 @@ func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) (uint64, 
 }
 
 func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) error { return nil }
+
+func (nm defaultNetworkManager) GetNetworkByID(id int) util.NetInfo {
+	if id != types.DefaultNetworkID {
+		return nil
+	}
+	return &util.DefaultNetInfo{}
+}
 
 var def Controller = &defaultNetworkManager{}
