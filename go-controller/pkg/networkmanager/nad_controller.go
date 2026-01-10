@@ -591,6 +591,8 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	var nadNetwork util.NetInfo
 	var oldNetwork, ensureNetwork util.MutableNetInfo
 	var err error
+	forceDelete := false
+	originalNADPresent := nad != nil
 
 	c.Lock()
 	defer c.Unlock()
@@ -602,8 +604,9 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 
 	deleteTime, setforDeletion := c.markedForRemoval[key]
 	if setforDeletion && time.Now().After(deleteTime) {
-		klog.Infof("%s: NAD %q: marked for deletion and time has expired, will remove", c.name, key)
-		nad = nil
+		// Grace period expired. Force a local teardown, but keep caches aligned to informer state.
+		klog.Infof("%s: NAD %q: marked for deletion and time has expired, will remove locally", c.name, key)
+		forceDelete = true
 		defer func() {
 			if syncErr == nil {
 				delete(c.markedForRemoval, key)
@@ -611,7 +614,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		}()
 	}
 
-	if nad != nil {
+	if nad != nil && !forceDelete {
 		nadNetwork, err = util.ParseNADInfo(nad)
 		if err != nil {
 			// in case the type for the NAD is not ovn-k we should not record the error event
@@ -627,6 +630,12 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 			return nil
 		}
 		nadNetworkName = nadNetwork.GetNetworkName()
+	}
+
+	// For forced delete, we want to tear down local rendering but not drop informer-derived cache state.
+	if forceDelete {
+		// Act like a delete for rendering/ensure paths
+		nad = nil
 	}
 
 	defer func() {
@@ -721,7 +730,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 				klog.V(4).Infof("%s: Network is filtered and will not be rendered: %s", c.name, oldNetwork.GetNetworkName())
 			}
 		}
-		if c.primaryNADs[namespace] == key {
+		if (!forceDelete || !originalNADPresent) && c.primaryNADs[namespace] == key {
 			delete(c.primaryNADs, namespace)
 		}
 	}
@@ -732,7 +741,14 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 
 	// this was a nad delete
 	if ensureNetwork == nil {
-		delete(c.nads, key)
+		// On a true delete (incoming nad nil) we must clean caches even if forceDelete was set.
+		if !forceDelete || !originalNADPresent {
+			// clean up primary mapping even if we never had an oldNetwork rendered
+			if c.primaryNADs[namespace] == key {
+				delete(c.primaryNADs, namespace)
+			}
+			delete(c.nads, key)
+		}
 		return err
 	}
 
