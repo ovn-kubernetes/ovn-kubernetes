@@ -127,6 +127,10 @@ func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 	return nil
 }
 
+// HandleNetworkRefChange satisfies the NetworkController interface. UDN node controllers only
+// manage local node state, so NAD reference changes for remote nodes are ignored.
+func (nc *UserDefinedNodeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
+
 func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
 	wasUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(old, nc.name)
 	isUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(new, nc.name)

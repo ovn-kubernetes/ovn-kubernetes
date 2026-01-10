@@ -62,6 +62,7 @@ var _ = Describe("Healthcheck tests", func() {
 	var err error
 
 	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		execMock = ovntest.NewFakeExec()
 		Expect(util.SetExec(execMock)).To(Succeed())
 		factoryMock = factoryMocks.NodeWatchFactory{}
@@ -138,10 +139,19 @@ var _ = Describe("Healthcheck tests", func() {
 
 		BeforeEach(func() {
 			// setup kube output
-			factoryMock.On("NADInformer").Return(nil)
+			factoryMock.On("GetPods", "").Return(podList, nil)
+			nadListerMock := &nadlistermocks.NetworkAttachmentDefinitionLister{}
+			nadInformerMock := &nadinformermocks.NetworkAttachmentDefinitionInformer{}
+			nadInformerMock.On("Lister").Return(nadListerMock)
+			nadInformerMock.On("Informer").Return(nil)
+			factoryMock.On("NADInformer").Return(nadInformerMock)
+			nodeInformerMock := &coreinformermocks.NodeInformer{}
+			nodeListerMock := &corelistermocks.NodeLister{}
+			nodeListerMock.On("List", mock.Anything).Return(nil, nil)
+			nodeInformerMock.On("Lister").Return(nodeListerMock)
+			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
 			ncm, err = NewNodeControllerManager(fakeClient, &factoryMock, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
 			Expect(err).NotTo(HaveOccurred())
-			factoryMock.On("GetPods", "").Return(podList, nil)
 		})
 
 		Context("bridge has stale representor ports", func() {

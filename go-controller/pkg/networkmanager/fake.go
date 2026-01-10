@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -25,9 +26,11 @@ func (fnc *FakeNetworkController) Cleanup() error {
 	return nil
 }
 
-func (nc *FakeNetworkController) Reconcile(util.NetInfo) error {
+func (fnc *FakeNetworkController) Reconcile(util.NetInfo) error {
 	return nil
 }
+
+func (fnc *FakeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
 
 type FakeControllerManager struct{}
 
@@ -56,6 +59,7 @@ type FakeNetworkManager struct {
 	nextID          uint64
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
+	Reconciled    []string
 }
 
 func (fnm *FakeNetworkManager) RegisterNADReconciler(r NADReconciler) (uint64, error) {
@@ -97,12 +101,30 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 
 func (fnm *FakeNetworkManager) Stop() {}
 
+func (fnm *FakeNetworkManager) SetSubsystemConditionUpdater(_ SubsystemConditionUpdater) {}
+
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
 	if network == nil {
 		return nil, util.NewInvalidPrimaryNetworkError(namespace)
 	}
 	return network, nil
+}
+
+func (fnm *FakeNetworkManager) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	fnm.Lock()
+	defer fnm.Unlock()
+	if primaryNetwork, ok := fnm.PrimaryNetworks[namespace]; ok {
+		if primaryNetwork == nil {
+			return "", util.NewInvalidPrimaryNetworkError(namespace)
+		}
+		nads := primaryNetwork.GetNADs()
+		if len(nads) == 0 {
+			return "", util.NewInvalidPrimaryNetworkError(namespace)
+		}
+		return nads[0], nil
+	}
+	return types.DefaultNetworkName, nil
 }
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
@@ -164,3 +186,5 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 	}
 	return errors.Join(errs...)
 }
+
+func (fnm *FakeNetworkManager) NodeHasNAD(_, _ string) bool { return false }

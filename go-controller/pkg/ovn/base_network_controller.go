@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -187,11 +188,16 @@ type BaseNetworkController struct {
 
 	// Controller used for programming OVN for Network QoS
 	nqosController *nqoscontroller.Controller
+
+	// Ensure we only do the initial remote-node reconcile sweep once at startup, but allow retry on failure.
+	remoteNodeInitDone bool
+	remoteNodeInitMu   sync.Mutex
 }
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
-	var reconcileNodes []string
+	reconcileNodes := sets.NewString()
+	removeNodes := sets.NewString()
 	oc.localZoneNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
@@ -200,7 +206,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			// noop
 			return true
 		}
-		reconcileNodes = append(reconcileNodes, nodeName)
+		reconcileNodes.Insert(nodeName)
 		return true
 	})
 	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(netInfo)
@@ -214,13 +220,51 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			sets.NewString(oc.GetNADNamespaces()...))
 	}
 
+	// nodeTracker is nil for localnet, since it doesn't do anything for remote nodes.
+	// Do a one-time sweep at startup to seed remote-node add/remove work; steady-state
+	// changes are handled via NotifyNetworkRefChange callbacks.
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && oc.TopologyType() != types.LocalnetTopology && !oc.IsDefault() {
+		oc.remoteNodeInitMu.Lock()
+		if !oc.remoteNodeInitDone {
+			nads := oc.GetNADs()
+			nodes, err := oc.watchFactory.GetNodes()
+			if err != nil {
+				oc.remoteNodeInitMu.Unlock()
+				return fmt.Errorf("failed to get nodes for reconciling network: %s, error: %w", oc.GetNetworkName(), err)
+			}
+			for _, node := range nodes {
+				if _, present := oc.localZoneNodes.Load(node.Name); present {
+					// local node
+					continue
+				}
+				// remote node: reconcile if any NAD is active, else remove
+				active := false
+				for _, nad := range nads {
+					if oc.networkManager.NodeHasNAD(node.Name, nad) {
+						active = true
+						break
+					}
+				}
+				if active {
+					// we need to reconcile and configure these remote nodes
+					reconcileNodes.Insert(node.Name)
+				} else {
+					// ensure the remote node is removed
+					removeNodes.Insert(node.Name)
+				}
+			}
+			oc.remoteNodeInitDone = true
+		}
+		oc.remoteNodeInitMu.Unlock()
+	}
+
 	// set the new NetInfo, point of no return
 	err := util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
-
-	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
+	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes.UnsortedList(), removeNodes.UnsortedList(),
+		setNodeFailed, reconcileNamespaces.List())
 
 	return nil
 }
@@ -230,7 +274,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 // provided on the arguments of the method. This method returns no error and logs them
 // instead since once the controller NetInfo has been updated there is no point in retrying.
 func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPods bool,
-	reconcileNodes []string, setNodeFailed func(string), reconcileNamespaces []string,
+	reconcileNodes, removeNodes []string, setNodeFailed func(string), reconcileNamespaces []string,
 ) {
 	if reconcileRoutes {
 		err := oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
@@ -246,12 +290,26 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
 			continue
 		}
+		klog.V(5).Infof("Requesting to add node %s to network %s", nodeName, oc.GetNetworkName())
 		err = oc.retryNodes.AddRetryObjWithAddNoBackoff(node)
 		if err != nil {
 			klog.Errorf("Failed to retry node %s for network %s: %v", nodeName, oc.GetNetworkName(), err)
 		}
 	}
-	if len(reconcileNodes) > 0 {
+
+	for _, nodeName := range removeNodes {
+		node, err := oc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
+			continue
+		}
+		klog.V(5).Infof("Requesting to remove remote node %s from network %s", nodeName, oc.GetNetworkName())
+		if err := oc.retryNodes.AddRetryObjWithDeleteNoBackoff(node); err != nil {
+			klog.Errorf("Failed to retry deleting node %s for network %s: %v", nodeName, oc.GetNetworkName(), err)
+		}
+	}
+
+	if len(reconcileNodes) > 0 || len(removeNodes) > 0 {
 		oc.retryNodes.RequestRetryObjs()
 	}
 
@@ -1006,7 +1064,7 @@ func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
 
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error) {
-	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetActiveNetworkForNamespace, pod)
+	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetPrimaryNADForNamespace, pod)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			bnc.recordPodErrorEvent(pod, err)
@@ -1019,6 +1077,39 @@ func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error
 
 func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
 	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer2Topology
+}
+
+// HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.
+func (bnc *BaseNetworkController) HandleNetworkRefChange(nodeName string, active bool) {
+	if bnc.retryNodes == nil || bnc.watchFactory == nil {
+		return
+	}
+	var node *corev1.Node
+	var err error
+	if active {
+		node, err = bnc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			klog.V(4).Infof("%s: skipping network ref change for node %s: %v", bnc.controllerName, nodeName, err)
+			return
+		}
+	} else {
+		// Prefer the cached node for deletes; if it is gone, fall back to a stub with just the name.
+		node, err = bnc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+		}
+	}
+	if active {
+		if err := bnc.retryNodes.AddRetryObjWithAddNoBackoff(node); err != nil {
+			klog.V(4).Infof("%s: failed to enqueue add for node %s: %v", bnc.controllerName, nodeName, err)
+		}
+	} else {
+		if err := bnc.retryNodes.AddRetryObjWithDeleteNoBackoff(node); err != nil {
+			klog.V(4).Infof("%s: failed to enqueue delete for node %s: %v", bnc.controllerName, nodeName, err)
+		}
+	}
+	// Nudge the queue so newly enqueued work is processed promptly.
+	bnc.retryNodes.RequestRetryObjs()
 }
 
 func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev1.Node) bool {

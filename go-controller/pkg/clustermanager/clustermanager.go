@@ -174,6 +174,9 @@ func NewClusterManager(
 		if cm.udnClusterManager != nil {
 			cm.udnClusterManager.SetNetworkStatusReporter(udnController.UpdateSubsystemCondition)
 		}
+		if cm.networkManager != nil {
+			cm.networkManager.SetSubsystemConditionUpdater(udnController.UpdateSubsystemCondition)
+		}
 	}
 
 	if util.IsNetworkConnectEnabled() {
@@ -254,7 +257,6 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 			return err
 		}
 	}
-
 	return nil
 }
 

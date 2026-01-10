@@ -140,6 +140,24 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 				return err
 			}
 		} else {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				nads := h.oc.GetNADs()
+				hasNad := false
+				for _, nadName := range nads {
+					if h.oc.networkManager.NodeHasNAD(node.Name, nadName) {
+						hasNad = true
+						break
+					}
+				}
+				if !hasNad {
+					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
+						node.Name, h.oc.GetNetworkName())
+					// store sync IC failed for the node, so if on node update if the NAD is no longer filtered, we actually
+					// process it
+					h.oc.syncZoneICFailed.Store(node.Name, true)
+					return nil
+				}
+			}
 			if err := h.oc.addUpdateRemoteNodeEvent(node, config.OVNKubernetesFeature.EnableInterconnect); err != nil {
 				return err
 			}
@@ -211,6 +229,22 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				nads := h.oc.GetNADs()
+				hasNad := false
+				for _, nadName := range nads {
+					if h.oc.networkManager.NodeHasNAD(newNode.Name, nadName) {
+						hasNad = true
+						break
+					}
+				}
+				if !hasNad {
+					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
+						newNode.Name, h.oc.GetNetworkName())
+					h.oc.syncZoneICFailed.Store(newNode.Name, true)
+					return nil
+				}
+			}
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
 
 			// Check if the node moved from local zone to remote zone and if so syncZoneIC should be set to true.
@@ -637,8 +671,14 @@ func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) er
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(node string) {
-			oc.addNodeFailed.Store(node, true)
-			oc.gatewaysFailed.Store(node, true)
+			_, present := oc.localZoneNodes.Load(node)
+			if present {
+				oc.addNodeFailed.Store(node, true)
+				oc.gatewaysFailed.Store(node, true)
+			} else {
+				// remote node
+				oc.syncZoneICFailed.Store(node, true)
+			}
 		},
 	)
 }
@@ -931,26 +971,28 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 	klog.V(5).Infof("Deleting Node %q for network %s. Removing the node from "+
 		"various caches", node.Name, oc.GetNetworkName())
 
-	if err := oc.deleteNode(node.Name); err != nil {
-		return err
-	}
-
-	if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
-		return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
-	}
-	oc.gatewayManagers.Delete(node.Name)
-	oc.localZoneNodes.Delete(node.Name)
-
-	oc.lsManager.DeleteSwitch(oc.GetNetworkScopedName(node.Name))
-	oc.addNodeFailed.Delete(node.Name)
-	oc.mgmtPortFailed.Delete(node.Name)
-	oc.nodeClusterRouterPortFailed.Delete(node.Name)
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+	if _, local := oc.localZoneNodes.Load(node.Name); local {
+		if err := oc.deleteNode(node.Name); err != nil {
 			return err
 		}
-		oc.syncZoneICFailed.Delete(node.Name)
+
+		if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
+			return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
+		}
+		oc.gatewayManagers.Delete(node.Name)
+		oc.lsManager.DeleteSwitch(oc.GetNetworkScopedName(node.Name))
+		oc.addNodeFailed.Delete(node.Name)
+		oc.mgmtPortFailed.Delete(node.Name)
+		oc.nodeClusterRouterPortFailed.Delete(node.Name)
+	} else {
+		if config.OVNKubernetesFeature.EnableInterconnect {
+			if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+				return err
+			}
+		}
 	}
+	oc.syncZoneICFailed.Delete(node.Name)
+	oc.localZoneNodes.Delete(node.Name)
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 	return nil
 }
