@@ -174,7 +174,7 @@ func (runsvc *defaultExecRunner) RunCmd(cmd kexec.Cmd, cmdPath string, envVars [
 	return stdout, stderr, err
 }
 
-var runCmdExecRunner ExecRunner = &defaultExecRunner{}
+var RunCmdExecRunner ExecRunner = &defaultExecRunner{}
 
 // SetExec validates executable paths and saves the given exec interface
 // to be used for running various OVS and OVN utilites
@@ -301,17 +301,17 @@ func ResetRunner() {
 var runCounter uint64
 
 func runCmd(cmd kexec.Cmd, cmdPath string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
-	return runCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
+	return RunCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
 }
 
 func run(cmdPath string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
 	cmd := runner.exec.Command(cmdPath, args...)
-	return runCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
+	return RunCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
 }
 
 func runWithEnvVars(cmdPath string, envVars []string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
 	cmd := runner.exec.Command(cmdPath, args...)
-	return runCmdExecRunner.RunCmd(cmd, cmdPath, envVars, args...)
+	return RunCmdExecRunner.RunCmd(cmd, cmdPath, envVars, args...)
 }
 
 // RunOVSOfctl runs a command via ovs-ofctl.
