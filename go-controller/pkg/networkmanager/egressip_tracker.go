@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -42,7 +41,7 @@ type EgressIPTrackerController struct {
 	nadLister     nadlisters.NetworkAttachmentDefinitionLister
 	eipController controller.Controller
 	nsController  controller.Controller
-	nadController controller.Controller
+	nadReconciler controller.Reconciler
 }
 
 func NewEgressIPTrackerController(
@@ -86,26 +85,25 @@ func NewEgressIPTrackerController(
 	}
 	t.nsController = controller.NewController[corev1.Namespace]("egressip-namespace-tracker", ncfg)
 
-	nadCfg := &controller.ControllerConfig[nettypes.NetworkAttachmentDefinition]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      t.reconcileNAD,
-		ObjNeedsUpdate: t.nadNeedsUpdate,
-		MaxAttempts:    controller.InfiniteAttempts,
-		Threadiness:    1,
-		Informer:       wf.NADInformer().Informer(),
-		Lister:         wf.NADInformer().Lister().List,
-	}
-	t.nadController = controller.NewController[nettypes.NetworkAttachmentDefinition]("egressip-nad-tracker", nadCfg)
+	t.nadReconciler = controller.NewReconciler(
+		fmt.Sprintf("%s-nad-reconciler", name),
+		&controller.ReconcilerConfig{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile:   t.reconcileNAD,
+			Threadiness: 1,
+			MaxAttempts: controller.InfiniteAttempts,
+		},
+	)
 
 	return t
 }
 
 func (t *EgressIPTrackerController) Start() error {
-	return controller.StartWithInitialSync(t.syncAll, t.eipController, t.nsController, t.nadController)
+	return controller.StartWithInitialSync(t.syncAll, t.eipController, t.nsController, t.nadReconciler)
 }
 
 func (t *EgressIPTrackerController) Stop() {
-	controller.Stop(t.eipController, t.nsController, t.nadController)
+	controller.Stop(t.eipController, t.nsController, t.nadReconciler)
 }
 
 func (t *EgressIPTrackerController) NodeHasNAD(node, nad string) bool {
@@ -120,11 +118,8 @@ func (t *EgressIPTrackerController) NodeHasNAD(node, nad string) bool {
 	return true
 }
 
-func (t *EgressIPTrackerController) nadNeedsUpdate(oldObj, newObj *nettypes.NetworkAttachmentDefinition) bool {
-	if oldObj == nil {
-		return true
-	}
-	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec)
+func (t *EgressIPTrackerController) NADReconciler() controller.Reconciler {
+	return t.nadReconciler
 }
 
 func (t *EgressIPTrackerController) egressIPNeedsUpdate(oldObj, newObj *egressipv1.EgressIP) bool {

@@ -46,6 +46,7 @@ type PodTrackerController struct {
 	// callback when a node+NAD goes active/inactive
 	onNetworkRefChange func(node, nad string, active bool)
 	podController      controller.Controller
+	nadReconciler      controller.Reconciler
 	podLister          v1.PodLister
 	nadLister          nadlisters.NetworkAttachmentDefinitionLister
 	namespaceLister    v1.NamespaceLister
@@ -82,17 +83,30 @@ func NewPodTrackerController(
 		Lister:         wf.PodCoreInformer().Lister().List,
 	}
 	p.podController = controller.NewController[corev1.Pod](p.name, cfg)
+
+	// Reconciler fed by NAD controller to refresh cache when NADs change.
+	p.nadReconciler = controller.NewReconciler(
+		fmt.Sprintf("%s-nad-reconciler", name),
+		&controller.ReconcilerConfig{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile: func(key string) error {
+				return p.requeuePodsForNAD(key)
+			},
+			Threadiness: 1,
+			MaxAttempts: controller.InfiniteAttempts,
+		},
+	)
 	return p
 }
 
 func (c *PodTrackerController) Start() error {
 	klog.Infof("Starting %s controller", c.name)
-	return controller.StartWithInitialSync(c.syncAll, c.podController)
+	return controller.StartWithInitialSync(c.syncAll, c.podController, c.nadReconciler)
 }
 
 func (c *PodTrackerController) Stop() {
 	klog.Infof("Stopping %s controller", c.name)
-	controller.Stop(c.podController)
+	controller.Stop(c.podController, c.nadReconciler)
 }
 
 func (c *PodTrackerController) NodeHasNAD(node, nad string) bool {
@@ -209,6 +223,41 @@ func (c *PodTrackerController) syncAll() error {
 	}
 
 	klog.Infof("%s: cache warmup complete with %d pods", c.name, len(pods))
+	return nil
+}
+
+// NADReconciler returns the reconciler that should be registered with the NAD controller.
+func (c *PodTrackerController) NADReconciler() controller.Reconciler {
+	return c.nadReconciler
+}
+
+// requeuePodsForNAD enqueues pods in the NAD's namespace so they get retried
+// once the NAD (or its primary designation) becomes available.
+func (c *PodTrackerController) requeuePodsForNAD(key string) error {
+	namespace, _, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return fmt.Errorf("failed to split meta namespace key %q: %v", key, err)
+	}
+	if namespace == "" {
+		return nil
+	}
+
+	pods, err := c.podLister.Pods(namespace).List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list pods in namespace %q: %v", namespace, err)
+	}
+	for _, pod := range pods {
+		if pod == nil {
+			continue
+		}
+		key, err := cache.MetaNamespaceKeyFunc(pod)
+		if err != nil {
+			klog.Warningf("%s: failed to build key for pod %s/%s: %v", c.name, pod.Namespace, pod.Name, err)
+			continue
+		}
+		// Use rate-limited enqueue to avoid hot-looping on a flood of pods
+		c.podController.ReconcileRateLimited(key)
+	}
 	return nil
 }
 

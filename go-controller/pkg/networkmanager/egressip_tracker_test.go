@@ -38,7 +38,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 		labelKey      string
 		labelValue    string
 		newNodeName   string
-		updateFn      func(fakeClient *util.OVNKubeControllerClientset, g *gomega.WithT)
+		updateFn      func(fakeClient *util.OVNKubeControllerClientset, g *gomega.WithT, tracker *EgressIPTrackerController)
 		expectAdds    []callbackEvent
 		expectUpdates []callbackEvent
 	}{
@@ -49,7 +49,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			eipName:    "eip1",
 			labelKey:   "team",
 			labelValue: "a",
-			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT) {
+			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT, _ *EgressIPTrackerController) {
 				err := fc.EgressIPClient.K8sV1().EgressIPs().Delete(context.Background(), "eip1", metav1.DeleteOptions{})
 				g.Expect(err).NotTo(gomega.HaveOccurred())
 			},
@@ -67,7 +67,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			eipName:    "eip2",
 			labelKey:   "team",
 			labelValue: "b",
-			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT) {
+			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT, _ *EgressIPTrackerController) {
 				ns, err := fc.KubeClient.CoreV1().Namespaces().Get(context.Background(), "ns2", metav1.GetOptions{})
 				g.Expect(err).NotTo(gomega.HaveOccurred())
 				ns.Labels = map[string]string{"team": "x"}
@@ -89,7 +89,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			eipName:     "eip3",
 			labelKey:    "env",
 			labelValue:  "prod",
-			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT) {
+			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT, _ *EgressIPTrackerController) {
 				eip, err := fc.EgressIPClient.K8sV1().EgressIPs().Get(context.Background(), "eip3", metav1.GetOptions{})
 				g.Expect(err).NotTo(gomega.HaveOccurred())
 				eip.Status.Items = []egressipv1.EgressIPStatusItem{
@@ -114,7 +114,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			eipName:    "eip5",
 			labelKey:   "team",
 			labelValue: "blue",
-			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT) {
+			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT, tracker *EgressIPTrackerController) {
 				// Simulate primary network change by replacing the NetInfo
 				netConf := &ovncnitypes.NetConf{
 					NetConf:  cnitypes.NetConf{Name: "new-primary", Type: "ovn-k8s-cni-overlay"},
@@ -142,6 +142,11 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 					}, metav1.CreateOptions{})
 				g.Expect(err).NotTo(gomega.HaveOccurred())
 
+				// Simulate NAD controller notification
+				g.Eventually(func() (string, error) {
+					return tracker.primaryNADForNamespace("ns5")
+				}, 2*time.Second, 100*time.Millisecond).Should(gomega.Equal(util.GetNADName("ns5", "new-primary")))
+				tracker.nadReconciler.Reconcile(util.GetNADName("ns5", "new-primary"))
 			},
 			expectAdds: []callbackEvent{
 				{"node5", "ns5/primary", true},
@@ -158,7 +163,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			eipName:    "eip7a", // the first EgressIP
 			labelKey:   "team",
 			labelValue: "shared",
-			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT) {
+			updateFn: func(fc *util.OVNKubeControllerClientset, g *gomega.WithT, _ *EgressIPTrackerController) {
 				// Create a second EgressIP that selects the same namespace,
 				// has a different EgressIP name/address, but same node.
 				_, err := fc.EgressIPClient.K8sV1().EgressIPs().Create(
@@ -292,7 +297,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 
 			// Apply the update (delete EIP, change label, or reassign node)
 			if tt.updateFn != nil {
-				tt.updateFn(fakeClient, g)
+				tt.updateFn(fakeClient, g, tracker)
 			}
 
 			expectedFinal := append(tt.expectAdds, tt.expectUpdates...)
