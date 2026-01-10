@@ -52,6 +52,7 @@ type nadController struct {
 
 	name            string
 	stopChan        chan struct{}
+	stopOnce        sync.Once
 	nadLister       nadlisters.NetworkAttachmentDefinitionLister
 	udnLister       userdefinednetworklister.UserDefinedNetworkLister
 	cudnLister      userdefinednetworklister.ClusterUserDefinedNetworkLister
@@ -81,6 +82,8 @@ type nadController struct {
 
 	podTracker      *PodTrackerController
 	egressIPTracker *EgressIPTrackerController
+	podReconcilerID uint64
+	eipReconcilerID uint64
 
 	// updateSubsystemCondition is an optional callback used only in cluster-manager
 	// mode to update UDN subsystem conditions (e.g., NodesSelected).
@@ -118,8 +121,18 @@ func newController(
 
 	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		c.podTracker = NewPodTrackerController("cluster-manager-pod-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
+		podID, err := c.RegisterNADReconciler(c.podTracker.NADReconciler())
+		if err != nil {
+			return nil, fmt.Errorf("failed to register pod tracker NAD reconciler: %w", err)
+		}
+		c.podReconcilerID = podID
 		if config.OVNKubernetesFeature.EnableEgressIP {
 			c.egressIPTracker = NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
+			eipID, err := c.RegisterNADReconciler(c.egressIPTracker.NADReconciler())
+			if err != nil {
+				return nil, fmt.Errorf("failed to register egress IP tracker NAD reconciler: %w", err)
+			}
+			c.eipReconcilerID = eipID
 		}
 		c.filterNADsOnNode = filterNADsOnNode
 	}
@@ -345,11 +358,26 @@ func (c *nadController) Start() error {
 
 func (c *nadController) Stop() {
 	klog.Infof("%s: shutting down", c.name)
-	close(c.stopChan)
+	c.stopOnce.Do(func() {
+		if c.stopChan != nil {
+			close(c.stopChan)
+			c.stopChan = nil
+		}
+	})
 	controller.Stop(c.controller)
 	c.networkController.Stop()
+	if c.podReconcilerID != 0 {
+		if err := c.DeRegisterNADReconciler(c.podReconcilerID); err != nil {
+			klog.Warningf("Failed to deregister pod tracker NAD reconciler: %v", err)
+		}
+	}
 	if c.podTracker != nil {
 		c.podTracker.Stop()
+	}
+	if c.eipReconcilerID != 0 {
+		if err := c.DeRegisterNADReconciler(c.eipReconcilerID); err != nil {
+			klog.Warningf("Failed to deregister egress IP tracker NAD reconciler: %v", err)
+		}
 	}
 	if c.egressIPTracker != nil {
 		c.egressIPTracker.Stop()
