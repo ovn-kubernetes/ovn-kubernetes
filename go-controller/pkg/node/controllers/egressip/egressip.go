@@ -1534,6 +1534,12 @@ func generateIPTablesSNATRuleArg(srcIP net.IP, isIPv6 bool, infName, snatIP stri
 func isEgressIPOnLink(linkIndex, ipFamily int, assignedEIPs sets.Set[string]) (bool, error) {
 	link, err := netlink.LinkByIndex(linkIndex)
 	if err != nil {
+		// If the link doesn't exist, there can't be an EgressIP on it.
+		// This can happen when a route is added/deleted causing the interface
+		// to momentarily disappear or change its index.
+		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	addresses, err := netlink.AddrList(link, ipFamily)
