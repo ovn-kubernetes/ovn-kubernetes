@@ -1137,5 +1137,6 @@ cp ../templates/k8s.ovn.org_userdefinednetworks.yaml.j2 ${output_dir}/k8s.ovn.or
 cp ../templates/k8s.ovn.org_clusteruserdefinednetworks.yaml.j2 ${output_dir}/k8s.ovn.org_clusteruserdefinednetworks.yaml
 cp ../templates/k8s.ovn.org_routeadvertisements.yaml.j2 ${output_dir}/k8s.ovn.org_routeadvertisements.yaml
 cp ../templates/k8s.ovn.org_clusternetworkconnects.yaml.j2 ${output_dir}/k8s.ovn.org_clusternetworkconnects.yaml
+cp ../templates/k8s.ovn.org_vteps.yaml.j2 ${output_dir}/k8s.ovn.org_vteps.yaml
 
 exit 0

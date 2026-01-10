@@ -53,6 +53,10 @@ for crd in ${crds}; do
   
   api_version=$(get_crd_version "${crd}")
 
+  # Clean up previously generated files to avoid stale copies
+  echo "Cleaning up existing generated files for $crd ($api_version)"
+  rm -rf "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis
+
   echo "Generating deepcopy funcs for $crd ($api_version)"
   deepcopy-gen \
     --go-header-file hack/boilerplate.go.txt \
@@ -139,3 +143,5 @@ echo "Copying routeAdvertisements CRD"
 cp _output/crds/k8s.ovn.org_routeadvertisements.yaml ../dist/templates/k8s.ovn.org_routeadvertisements.yaml.j2
 echo "Copying clusterNetworkConnect CRD"
 cp _output/crds/k8s.ovn.org_clusternetworkconnects.yaml ../dist/templates/k8s.ovn.org_clusternetworkconnects.yaml.j2
+echo "Copying vtep CRD"
+cp _output/crds/k8s.ovn.org_vteps.yaml ../dist/templates/k8s.ovn.org_vteps.yaml.j2
