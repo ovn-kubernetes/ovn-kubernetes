@@ -136,6 +136,7 @@ echo "-rae | --enable-route-advertisements          Enable route advertisements"
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
+echo "-mve | --multi-vtep-enable                    Enable multi-VTEP feature."
 echo ""
 }
 
@@ -332,6 +333,8 @@ parse_args() {
                                                 ;;
             -mne | --multi-network-enable )     ENABLE_MULTI_NET=true
                                                 ;;
+            -mve | --multi-vtep-enable )        ENABLE_MULTI_VTEP=true
+                                                ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
             -nce | --network-connect-enable )    ENABLE_NETWORK_CONNECT=true
@@ -447,6 +450,7 @@ print_params() {
      echo "OVN_METRICS_SCALE_ENABLE = $OVN_METRICS_SCALE_ENABLE"
      echo "OVN_ISOLATED = $OVN_ISOLATED"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
+     echo "ENABLE_MULTI_VTEP = $ENABLE_MULTI_VTEP"
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
@@ -689,6 +693,7 @@ set_default_params() {
     echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"
     exit 1
   fi
+  ENABLE_MULTI_VTEP=${ENABLE_MULTI_VTEP:-false}
 
   ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
   if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
@@ -869,11 +874,11 @@ create_kind_cluster() {
   if kind get clusters | grep "${KIND_CLUSTER_NAME}"; then
     delete
   fi
-  
+
   if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
     create_local_registry
   fi
-  
+
   kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
 
   cat "${KUBECONFIG}"
@@ -975,6 +980,7 @@ create_ovn_kube_manifests() {
     --v6-transit-subnet="${TRANSIT_SUBNET_IPV6}" \
     --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
     --multi-network-enable="${ENABLE_MULTI_NET}" \
+    --multi-vtep-enable="${ENABLE_MULTI_VTEP}" \
     --network-segmentation-enable="${ENABLE_NETWORK_SEGMENTATION}" \
     --network-connect-enable="${ENABLE_NETWORK_CONNECT}" \
     --preconfigured-udn-addresses-enable="${ENABLE_PRE_CONF_UDN_ADDR}" \
@@ -1065,6 +1071,76 @@ install_ovn_multiple_nodes_zones() {
   run_kubectl apply -f ovnkube-node.yaml
 }
 
+configure_multi_vtep_encap_ips() {
+  echo "configuring encap IPs on kind nodes"
+  kubectl -n ovn-kubernetes rollout status daemonset ovs-node --timeout 3m
+  if [ $? -ne 0 ]; then
+    echo "ovs-node did not roll out successfully"
+    exit 1
+  fi
+
+  OVS_PODS=$(kubectl -n ovn-kubernetes get pods -l app=ovs-node -o name)
+  for p in $OVS_PODS; do
+    echo "configuring encap IPs on $p"
+    kubectl -n ovn-kubernetes exec -i $p -- bash -s <<'EOF'
+      set -x
+
+      vtep0=`ip -br addr show dev eth0  | awk '{print $3}' | cut -d '/' -f 1`
+      vtep1=`ip -br addr show dev vtep1 | awk '{print $3}' | cut -d '/' -f 1`
+      ovs-vsctl set open . external_ids:ovn-encap-ip=$vtep0,$vtep1
+      ovs-vsctl set open . external_ids:ovn-encap-ip-default=$vtep0
+
+      ovn-kube-util nics-to-bridge vtep1
+
+      # Below settings are required when using multi-VTEP
+      # - rp_filter=2
+      #   prevent kernal complaining about martian packet
+      # - arp_ignore=1
+      #   prevents ARP confusion - only answer ARP when target IP is assigned to the receiving interface
+      # - arp_announce=2
+      #   prevents ARP cache corruption on peers - sending ARP with wrong source IP
+
+      sysctl -w net.ipv4.conf.eth0.rp_filter=2
+      sysctl -w net.ipv4.conf.eth0.arp_ignore=1
+      sysctl -w net.ipv4.conf.eth0.arp_announce=2
+
+      sysctl -w net.ipv4.conf.brvtep1.rp_filter=2
+      sysctl -w net.ipv4.conf.brvtep1.arp_ignore=1
+      sysctl -w net.ipv4.conf.brvtep1.arp_announce=2
+EOF
+
+  done
+}
+
+
+configure_multi_vtep_routing() {
+  echo "configuring multi-VTEP routing on kind nodes"
+
+  KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort)
+  for n in $KIND_NODES; do
+    "$OCI_BIN" exec  -i "$n" bash -s <<'EOF'
+      set -x
+
+      echo "wait breth0 interface to be created..."
+      timeout 120 bash -c 'while ! ip link show breth0 &>/dev/null; do sleep 1; done'
+
+      sysctl -w net.ipv4.conf.breth0.rp_filter=2
+      sysctl -w net.ipv4.conf.breth0.arp_ignore=1
+      sysctl -w net.ipv4.conf.breth0.arp_announce=2
+
+      # add source-based routing rules for the VTEP interfaces
+      vtep0=`ip -br addr show dev breth0  | awk '{print $3}' | cut -d '/' -f 1`
+      vtep1=`ip -br addr show dev brvtep1 | awk '{print $3}' | cut -d '/' -f 1`
+      subnet=`ip -br addr show breth0 | awk '{print $3}' | xargs -I{} python3 -c "import ipaddress; n=ipaddress.ip_interface('{}'); print(f'{n.network}')"`
+      ip rule add from $vtep0 table 6081 priority 6081
+      ip route add $subnet dev breth0 table 6081 metric 800
+
+      ip rule add from $vtep1 table 6082 priority 6082
+      ip route add $subnet dev brvtep1 table 6082 metric 802
+EOF
+  done
+}
+
 install_ovn() {
   pushd ${MANIFEST_OUTPUT_DIR}
 
@@ -1106,6 +1182,10 @@ install_ovn() {
 
   run_kubectl apply -f ovs-node.yaml
 
+  if [ "$ENABLE_MULTI_VTEP" == true ]; then
+    configure_multi_vtep_encap_ips
+  fi
+
   if [ "$OVN_ENABLE_INTERCONNECT" == false ]; then
     install_ovn_global_zone
   else
@@ -1116,9 +1196,13 @@ install_ovn() {
     fi
   fi
 
+  if [ "$ENABLE_MULTI_VTEP" == true ]; then
+    configure_multi_vtep_routing
+  fi
+
   popd
 
-  # When using internal registry force pod reload just the ones with 
+  # When using internal registry force pod reload just the ones with
   # non OVS containers, restarting OVS pods breaks the cluster.
   if [ "${KIND_CREATE}" == false ] && [ "${KIND_LOCAL_REGISTRY}" == false ] ; then
     for pod in ${OVN_DEPLOY_PODS}; do
@@ -1272,6 +1356,9 @@ if [ "$KIND_CREATE" == true ]; then
       connect_local_registry
     fi
     docker_disable_ipv6
+    if [ "$ENABLE_MULTI_VTEP" == true ]; then
+      enable_multi_vtep
+    fi
     if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
       docker_create_second_interface
     fi
@@ -1293,6 +1380,9 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   deploy_frr_external_container
   deploy_bgp_external_server
 fi
+if [ "$ENABLE_MULTI_NET" == true ]; then
+  enable_multi_net
+fi
 build_ovn_image
 detect_apiserver_url
 create_ovn_kube_manifests
@@ -1301,9 +1391,7 @@ install_ovn
 if [ "$KIND_INSTALL_INGRESS" == true ]; then
   install_ingress
 fi
-if [ "$ENABLE_MULTI_NET" == true ]; then
-  enable_multi_net
-fi
+
 kubectl_wait_pods
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     kubectl_wait_dnsnameresolver_pods
