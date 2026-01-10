@@ -199,6 +199,66 @@ func (tnc *testNetworkController) GomegaString() string {
 	return format.Object(tnc.GetNetworkName(), 1)
 }
 
+func TestSyncNAD_ForceDeleteKeepsCacheForExistingNAD(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	key := "ns/nad"
+	ns := "ns"
+	nad := &nettypes.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nad",
+			Namespace: ns,
+		},
+	}
+
+	netIDAlloc := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(netIDAlloc.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+
+	c := &nadController{
+		name:               "test-nad-controller",
+		nads:               map[string]string{key: "netA"},
+		primaryNADs:        map[string]string{ns: key},
+		markedForRemoval:   map[string]time.Time{key: time.Now().Add(-time.Minute)},
+		networkIDAllocator: netIDAlloc,
+		networkController: &networkController{
+			networks:           map[string]util.MutableNetInfo{},
+			networkControllers: map[string]*networkControllerState{},
+		},
+	}
+
+	g.Expect(c.syncNAD(key, nad)).To(gomega.Succeed())
+	g.Expect(c.nads).To(gomega.HaveKeyWithValue(key, "netA"))
+	g.Expect(c.primaryNADs).To(gomega.HaveKeyWithValue(ns, key))
+	g.Expect(c.markedForRemoval).ToNot(gomega.HaveKey(key))
+}
+
+func TestSyncNAD_ForceDeleteRemovesCacheOnActualDelete(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	key := "ns/nad"
+	ns := "ns"
+
+	netIDAlloc := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(netIDAlloc.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+
+	c := &nadController{
+		name:               "test-nad-controller",
+		nads:               map[string]string{key: "netA"},
+		primaryNADs:        map[string]string{ns: key},
+		markedForRemoval:   map[string]time.Time{key: time.Now().Add(-time.Minute)},
+		networkIDAllocator: netIDAlloc,
+		networkController: &networkController{
+			networks:           map[string]util.MutableNetInfo{},
+			networkControllers: map[string]*networkControllerState{},
+		},
+	}
+
+	g.Expect(c.syncNAD(key, nil)).To(gomega.Succeed())
+	g.Expect(c.nads).ToNot(gomega.HaveKey(key))
+	g.Expect(c.primaryNADs).ToNot(gomega.HaveKey(ns))
+	g.Expect(c.markedForRemoval).ToNot(gomega.HaveKey(key))
+}
+
 func ptrTo[T any](v T) *T { return &v }
 
 func testNetworkKey(nInfo util.NetInfo) string {
