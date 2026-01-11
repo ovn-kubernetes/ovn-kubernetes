@@ -1004,16 +1004,20 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			// Also check if the node is used to be a hybrid overlay node
 			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged ||
 				switchToOvnNode || nodeEncapIPsChanged || nodePrimaryDPUHostAddrChanged
-			if syncZoneIC {
-				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
-					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)
-			}
-			// Reprovisioning the DPU (including OVS), which is pinned to a host, will change the system ID but not the node.
-			if config.OvnKubeNode.Mode == types.NodeModeDPU && nodeChassisChanged(oldNode, newNode) {
+
+			// Existing chassis record for remote node should be deleted
+			// 1. If chassisid changes, for e.g. reprovisioning the DPU (including OVS), which is pinned to a host, which will change the system ID.
+			// 2. If chassis hostname changes but chassisid remains the same for the DPU host, which should be rare.
+			if nodeChassisChanged(oldNode, newNode) || nodeChassisHostnameChanged(oldNode, newNode) {
+				klog.Infof("Remote node %q has chassis info changed. Deleting previous chassis records", newNode.Name)
 				if err := h.oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
 					aggregatedErrors = append(aggregatedErrors, err)
 				}
 				syncZoneIC = true
+			}
+			if syncZoneIC {
+				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
+					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)
 			}
 			if err := h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC); err != nil {
 				aggregatedErrors = append(aggregatedErrors, err)
