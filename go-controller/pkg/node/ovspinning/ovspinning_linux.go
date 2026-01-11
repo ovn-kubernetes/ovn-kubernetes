@@ -32,6 +32,7 @@ var getOvsVSwitchdPIDFn func() (string, error) = util.GetOvsVSwitchdPID
 var getOvsDBServerPIDFn func() (string, error) = util.GetOvsDBServerPID
 var featureEnablerFile string = "/etc/openvswitch/enable_dynamic_cpu_affinity"
 var kubeletConfigFilePath = "/host/etc/kubernetes/kubelet.conf"
+var cpuManagerCheckpointFilePath = "/var/lib/kubelet/cpu_manager_state"
 
 // Run monitors OVS daemon's processes (ovs-vswitchd and ovsdb-server) and sets their CPU affinity
 // masks to that of the current process.
@@ -54,19 +55,31 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 	klog.Infof("Starting OVS daemon CPU pinning")
 	defer klog.Infof("Stopping OVS daemon CPU pinning")
 
-	var fsnotifyEvents chan fsnotify.Event
-	var fsnotifyErrors chan error
+	// nil channels are ignored in select loops - they will be assigned if watchers are created successfully
+	var tickerChan <-chan time.Time
+	var fsnotifyEvents, checkpointFileWatcherEvents chan fsnotify.Event
+	var fsnotifyErrors, checkpointFileWatcherErrors chan error
 
 	// Watch the parent folder, as it's the only way to get events when the file is deleted and recreated.
 	fileWatcher, err := createFileWatcherFor(filepath.Dir(featureEnablerFile))
 	if err != nil {
 		klog.Warningf("Can't create a watcher for %s. Pinning will not stop by deleting it: %v", featureEnablerFile, err)
-		fsnotifyEvents = make(chan fsnotify.Event)
-		fsnotifyErrors = make(chan error)
 	} else {
 		fsnotifyEvents = fileWatcher.Events
 		fsnotifyErrors = fileWatcher.Errors
 		defer fileWatcher.Close()
+	}
+
+	checkpointFileWatcher, err := createFileWatcherFor(filepath.Dir(cpuManagerCheckpointFilePath))
+	if err != nil {
+		klog.Warningf("Can't create a watcher for %s. err=%v. Changes in pinning affinity will be triggered by timer", cpuManagerCheckpointFilePath, err)
+		ticker := time.NewTicker(tickDuration)
+		tickerChan = ticker.C
+		defer ticker.Stop()
+	} else {
+		checkpointFileWatcherEvents = checkpointFileWatcher.Events
+		checkpointFileWatcherErrors = checkpointFileWatcher.Errors
+		defer checkpointFileWatcher.Close()
 	}
 
 	// we only need to check reservedSystemCPUs once at startup.
@@ -82,9 +95,6 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 		}
 	}
 	klog.Infof("OVS CPU dynamic pinning reservedSystemCPUs set: %s", reservedCPUs)
-
-	ticker := time.NewTicker(tickDuration)
-	defer ticker.Stop()
 
 	for {
 		select {
@@ -115,29 +125,46 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 				klog.Errorf("Error watching for file [%s] changes: %s", featureEnablerFile, err)
 			}
 
-		case <-stopCh:
-			return
+		case event, ok := <-checkpointFileWatcherEvents:
+			if !isFeatureEnabled || !ok || event.Name != cpuManagerCheckpointFilePath {
+				continue
+			}
+			reconcileCPUAffinity(ctx, podResCli, reservedCPUs)
 
-		case <-ticker.C:
+		case err, ok := <-checkpointFileWatcherErrors:
+			if ok {
+				klog.Errorf("Error watching for file [%s] changes: %s", cpuManagerCheckpointFilePath, err)
+			}
+
+		case <-tickerChan:
 			if !isFeatureEnabled {
 				continue
 			}
-			cpus, err := getNonPinnedCPUs(ctx, podResCli)
-			if err != nil {
-				klog.Warningf("Error while trying to get system non pinned CPUs: %v", err)
-			}
-			// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
-			cpus = cpus.Union(reservedCPUs)
-			err = setOvsVSwitchdCPUAffinity(&cpus)
-			if err != nil {
-				klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
-			}
+			reconcileCPUAffinity(ctx, podResCli, reservedCPUs)
 
-			err = setOvsDBServerCPUAffinity(&cpus)
-			if err != nil {
-				klog.Warningf("Error while aligning ovsdb-server CPUs to current process: %v", err)
-			}
+		case <-stopCh:
+			return
 		}
+	}
+}
+
+func reconcileCPUAffinity(ctx context.Context, podResCli podresourcesapi.PodResourcesListerClient, reservedCPUs cpuset.CPUSet) {
+	cpus, err := getNonPinnedCPUs(ctx, podResCli)
+	if err != nil {
+		klog.Warningf("Error while trying to get system non pinned CPUs: %v", err)
+		// do not continue, we don't want to set a wrong CPU affinity
+		return
+	}
+	// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
+	cpus = cpus.Union(reservedCPUs)
+	err = setOvsVSwitchdCPUAffinity(&cpus)
+	if err != nil {
+		klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
+	}
+
+	err = setOvsDBServerCPUAffinity(&cpus)
+	if err != nil {
+		klog.Warningf("Error while aligning ovsdb-server CPUs to current process: %v", err)
 	}
 }
 
