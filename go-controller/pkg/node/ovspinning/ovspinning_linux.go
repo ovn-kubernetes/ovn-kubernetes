@@ -141,15 +141,15 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 	}
 }
 
-func createFileWatcherFor(filename string) (*fsnotify.Watcher, error) {
+func createFileWatcherFor(path string) (*fsnotify.Watcher, error) {
 	fileWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create filesystem watcher: %w", err)
 	}
 
-	err = fileWatcher.Add(filename)
+	err = fileWatcher.Add(path)
 	if err != nil {
-		return nil, fmt.Errorf("unable to watch [%s] file: %w", filename, err)
+		return nil, fmt.Errorf("unable to watch [%s] path: %w", path, err)
 	}
 
 	return fileWatcher, nil
