@@ -690,6 +690,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	// remove the NAD reference from the old network and delete the network if
 	// it is no longer referenced
 	if oldNetwork != nil {
+		klog.V(5).Infof("%s: removing NAD %q reference for network %q", c.name, key, oldNetwork.GetNetworkName())
 		oldNetworkName := oldNetwork.GetNetworkName()
 		oldNetwork.DeleteNADs(key)
 		if len(oldNetwork.GetNADs()) == 0 {
@@ -756,9 +757,13 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	// network, need to wait until cluster nad controller allocates an ID for
 	// the network
 	if ensureNetwork.GetNetworkID() == types.InvalidID {
-		klog.V(4).Infof("%s: will wait for cluster manager to allocate an ID before ensuring network %s", c.name, nadNetworkName)
+		klog.V(4).Infof("%s: will wait for cluster manager to allocate an ID before ensuring network %s, NAD: %s",
+			c.name, nadNetworkName, key)
 		return nil
 	}
+
+	klog.V(5).Infof("%s: ensuring NAD %q reference for network %q with id %d",
+		c.name, key, ensureNetwork.GetNetworkName(), ensureNetwork.GetNetworkID())
 
 	// ensure the network is associated with the NAD
 	ensureNetwork.AddNADs(key)
@@ -1058,6 +1063,9 @@ func (c *nadController) handleNetworkAnnotations(old util.NetInfo, new util.Muta
 	// check if in cache first
 	if new != nil {
 		id = c.networkIDAllocator.GetID(new.GetNetworkName())
+		if id != types.InvalidID {
+			klog.V(5).Infof("Previously cached network ID %d found for network: %s", id, new.GetNetworkName())
+		}
 	}
 	if nad != nil && id == types.InvalidID {
 		// check what ID is currently annotated
@@ -1067,6 +1075,7 @@ func (c *nadController) handleNetworkAnnotations(old util.NetInfo, new util.Muta
 			if err != nil {
 				return fmt.Errorf("failed to parse annotated network ID: %w", err)
 			}
+			klog.V(5).Infof("Previously annotated network ID %d found for NAD: %s/%s", id, nad.Namespace, nad.Name)
 		}
 	}
 
