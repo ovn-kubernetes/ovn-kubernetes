@@ -1034,6 +1034,14 @@ func (c *nadController) DoWithLock(f func(network util.NetInfo) error) error {
 			panic("NAD Controller broken consistency between primary NADs and cached NADs")
 		}
 		network := c.networkController.getNetwork(netName)
+		if network == nil {
+			// network may not always be rendered with Dynamic UDN
+			// otherwise this should never happen
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				continue
+			}
+			panic("NAD Controller broken consistency between primary NADs and network controller cache")
+		}
 		n := util.NewMutableNetInfo(network)
 		// update the returned netInfo copy to only have the primary NAD for this namespace
 		n.SetNADs(primaryNAD)
