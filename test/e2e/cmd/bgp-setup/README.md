@@ -46,6 +46,23 @@ Or from the repository root:
 cd test/e2e && go build -o bgp-setup ./cmd/bgp-setup
 ```
 
+### Building with `-trimpath`
+
+When building with `go build -trimpath` (common for reproducible/privacy-focused builds),
+the binary cannot automatically locate template files because source paths are stripped.
+You must provide the testdata path explicitly at runtime:
+
+```bash
+# Build with -trimpath
+go build -trimpath -o bgp-setup ./cmd/bgp-setup
+
+# Run with explicit testdata path
+./bgp-setup --testdata-path /path/to/test/e2e/testdata/routeadvertisements
+
+# Or via environment variable
+BGP_TESTDATA_PATH=/path/to/test/e2e/testdata/routeadvertisements ./bgp-setup
+```
+
 ## Usage
 
 ### Basic Usage
@@ -112,6 +129,7 @@ To remove all BGP infrastructure:
 | `--isolation-mode` | `strict` | UDN isolation mode: strict or loose |
 | `--cleanup` | `false` | Only cleanup existing BGP infrastructure |
 | `--use-direct-api` | `false` | Use direct API server address (control plane container IP) instead of kubeconfig server. Only works when Docker bridge network is routable from host. |
+| `--testdata-path` | (auto-detected) | Path to `testdata/routeadvertisements` directory containing templates. Required when built with `-trimpath`. |
 
 ### Phase Options
 
@@ -166,6 +184,7 @@ All flags can also be set via environment variables:
 | `KUBECONFIG` | `--kubeconfig` |
 | `ADVERTISE_DEFAULT_NETWORK` | `--advertise-default-network` |
 | `ADVERTISED_UDN_ISOLATION_MODE` | `--isolation-mode` |
+| `BGP_TESTDATA_PATH` | `--testdata-path` |
 
 ## Integration with kind.sh
 
@@ -216,8 +235,17 @@ and passes the appropriate configuration flags.
 ## Template Files
 
 This tool uses the shared templates from `test/e2e/testdata/routeadvertisements/`.
-The templates are loaded from the filesystem at runtime using `runtime.Caller()` to
-determine the source file location and find the templates relative to it.
+
+By default, the template path is auto-detected using `runtime.Caller()` to determine
+the source file location and find the templates relative to it. However, this approach
+has limitations:
+
+- **`-trimpath` builds**: When building with `go build -trimpath`, source file paths are
+  stripped from the binary, causing the auto-detection to fail. You must provide the
+  testdata path explicitly via `--testdata-path` or `BGP_TESTDATA_PATH`.
+
+- **Relocated binaries**: If the binary is moved to a different location than where it
+  was built, the auto-detected path may be incorrect. Use `--testdata-path` to override.
 
 The same templates are also used by the route advertisement e2e tests in
 `test/e2e/route_advertisements.go`.
