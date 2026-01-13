@@ -36,7 +36,6 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary')", message="transport 'NoOverlay' is only supported for Layer3 primary networks"
 	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || has(self.noOverlayOptions)", message="noOverlayOptions is required when transport is 'NoOverlay'"
 	// +kubebuilder:validation:XValidation:rule="self.transport == 'NoOverlay' || !has(self.noOverlayOptions)", message="noOverlayOptions is forbidden when transport is not 'NoOverlay'"
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
 }
@@ -53,6 +52,7 @@ type NetworkSpec struct {
 	//
 	// +kubebuilder:validation:Enum=Layer2;Layer3;Localnet
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Topology is immutable"
 	// +required
 	// +unionDiscriminator
 	Topology NetworkTopology `json:"topology"`
@@ -62,10 +62,12 @@ type NetworkSpec struct {
 	Layer3 *Layer3Config `json:"layer3,omitempty"`
 
 	// Layer2 is the Layer2 topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Layer2 is immutable"
 	// +optional
 	Layer2 *Layer2Config `json:"layer2,omitempty"`
 
 	// Localnet is the Localnet topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Localnet is immutable"
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
 
@@ -75,10 +77,12 @@ type NetworkSpec struct {
 	// - "Geneve": The network uses Geneve overlay.
 	// When omitted, the default behaviour is Geneve.
 	// +kubebuilder:validation:Enum=NoOverlay;Geneve
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Transport is immutable"
 	// +optional
 	Transport TransportOption `json:"transport,omitempty"`
 	// NoOverlayOptions contains configuration for no-overlay mode.
 	// This is only allowed when Transport is "NoOverlay".
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="NoOverlayOptions is immutable"
 	// +optional
 	NoOverlayOptions *NoOverlayOptions `json:"noOverlayOptions,omitempty"`
 }

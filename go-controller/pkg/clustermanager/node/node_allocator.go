@@ -122,6 +122,25 @@ func (na *NodeAllocator) CleanupStaleAnnotation() {
 	}
 }
 
+// AddSubnets adds new subnet ranges to the node allocator
+// It is used when a new subnet is added to a secondary layer3 network by updating UDN or NAD
+func (na *NodeAllocator) AddSubnets(subnets []config.CIDRNetworkEntry) error {
+	if !na.hasNodeSubnetAllocation() {
+		return nil
+	}
+
+	for _, subnet := range subnets {
+		if err := na.clusterSubnetAllocator.AddNetworkRange(subnet.CIDR, subnet.HostSubnetLength); err != nil {
+			return fmt.Errorf("failed to add network range %s/%d: %w", subnet.CIDR.String(), subnet.HostSubnetLength, err)
+		}
+		klog.V(5).Infof("Added new network range %s/%d to cluster subnet allocator for network %s",
+			subnet.CIDR.String(), subnet.HostSubnetLength, na.netInfo.GetNetworkName())
+	}
+	na.recordSubnetCount()
+
+	return nil
+}
+
 func (na *NodeAllocator) hasHybridOverlayAllocation() bool {
 	// When config.HybridOverlay.ClusterSubnets is empty, assume the subnet allocation will be managed by an external component.
 	return config.HybridOverlay.Enabled && !na.netInfo.IsUserDefinedNetwork() && len(config.HybridOverlay.ClusterSubnets) > 0
@@ -594,7 +613,7 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 }
 
 func (na *NodeAllocator) hasNodeSubnetAllocation() bool {
-	// we only allocate subnets for L3 secondary network or default network
+	// we only allocate subnets for L3 user-defined network or default network
 	return na.netInfo.TopologyType() == types.Layer3Topology || !na.netInfo.IsUserDefinedNetwork()
 }
 
