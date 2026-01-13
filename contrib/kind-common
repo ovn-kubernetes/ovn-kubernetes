@@ -318,15 +318,15 @@ delete_metallb_dir() {
   rm -rf "${METALLB_DIR}"
 }
 
-# kubectl_wait_pods will set a total timeout of 300s for IPv4 and 480s for IPv6. It will first wait for all
+# kubectl_wait_pods will set a total timeout of 360s for IPv4 and 540s for IPv6. It will first wait for all
 # DaemonSets to complete with kubectl rollout. This command will block until all pods of the DS are actually up.
 # Next, it iterates over all pods with name=ovnkube-db and ovnkube-master and waits for them to post "Ready".
 # Last, it will do the same with all pods in the kube-system namespace.
 kubectl_wait_pods() {
   # IPv6 cluster seems to take a little longer to come up, so extend the wait time.
-  OVN_TIMEOUT=300
+  OVN_TIMEOUT=360
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    OVN_TIMEOUT=480
+    OVN_TIMEOUT=540
   fi
 
   # We will make sure that we timeout all commands at current seconds + the desired timeout.
