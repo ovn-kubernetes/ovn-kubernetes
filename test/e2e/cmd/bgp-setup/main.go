@@ -35,14 +35,43 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 )
 
+// testdataPathOverride stores the user-provided testdata path (from flag or env var).
+// This is set during flag parsing and used by getTestdataPath().
+var testdataPathOverride string
+
 // getTestdataPath returns the path to the shared testdata templates.
 // These templates are used by both the route_advertisements tests and this setup tool.
-// The path is determined relative to this source file's location.
+//
+// The path is determined in the following order of precedence:
+//  1. The --testdata-path flag or BGP_TESTDATA_PATH environment variable
+//  2. Derived from this source file's location using runtime.Caller()
+//
+// Note: When building with `go build -trimpath`, the runtime.Caller() fallback will not work
+// because file paths are stripped from the binary. In this case, you must provide the
+// testdata path explicitly via the flag or environment variable.
 func getTestdataPath() string {
+	// Check if an override was provided via flag or environment variable
+	if testdataPathOverride != "" {
+		return testdataPathOverride
+	}
+
+	// Fall back to runtime.Caller() based detection
+	// Note: This will not work with `go build -trimpath`
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		panic("failed to get current file path")
+		panic("failed to get current file path via runtime.Caller(); " +
+			"this can happen when built with -trimpath. " +
+			"Please provide the testdata path via --testdata-path flag or BGP_TESTDATA_PATH environment variable")
 	}
+
+	// Validate that the path looks reasonable (not trimmed)
+	// When -trimpath is used, the path might be something like "command-line-arguments/main.go"
+	if !filepath.IsAbs(thisFile) {
+		panic(fmt.Sprintf("runtime.Caller() returned a non-absolute path %q; "+
+			"this can happen when built with -trimpath. "+
+			"Please provide the testdata path via --testdata-path flag or BGP_TESTDATA_PATH environment variable", thisFile))
+	}
+
 	// thisFile is .../test/e2e/cmd/bgp-setup/main.go
 	// We need .../test/e2e/testdata/routeadvertisements
 	// Go up 3 levels: bgp-setup -> cmd -> e2e
@@ -85,6 +114,7 @@ const (
 	envKubeconfig              = "KUBECONFIG"
 	envAdvertiseDefaultNetwork = "ADVERTISE_DEFAULT_NETWORK"
 	envIsolationMode           = "ADVERTISED_UDN_ISOLATION_MODE"
+	envTestdataPath            = "BGP_TESTDATA_PATH"
 
 	// Default configuration values
 	defaultContainerRuntime    = "docker"
@@ -131,6 +161,7 @@ type Config struct {
 	CleanupOnly             bool
 	Phase                   string
 	UseDirectAPI            bool
+	TestdataPath            string
 }
 
 // templateInputRouter contains router configuration for templates
@@ -206,8 +237,13 @@ func parseFlags() *Config {
 	flag.BoolVar(&cfg.CleanupOnly, "cleanup", false, "Only cleanup existing BGP infrastructure")
 	flag.StringVar(&cfg.Phase, "phase", PhaseAll, "Phase to run: 'all', 'deploy-containers' (FRR + BGP server), 'deploy-frr' (FRR only), 'deploy-bgp-server' (BGP server only), or 'install-frr-k8s' (frr-k8s + FRRConfiguration)")
 	flag.BoolVar(&cfg.UseDirectAPI, "use-direct-api", false, "Use direct API server address (control plane container IP) instead of kubeconfig server. Only works when Docker bridge network is routable from host.")
+	flag.StringVar(&cfg.TestdataPath, "testdata-path", getEnvOrDefault(envTestdataPath, ""), "Path to the testdata/routeadvertisements directory containing templates. Required when built with -trimpath.")
 
 	flag.Parse()
+
+	// Set the global override for getTestdataPath()
+	testdataPathOverride = cfg.TestdataPath
+
 	return cfg
 }
 
