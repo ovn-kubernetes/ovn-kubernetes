@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"errors"
 	"runtime"
 	"sync"
 
@@ -11,6 +12,7 @@ import (
 )
 
 var registerClusterManagerBaseMetrics sync.Once
+var registerClusterManagerFunctionalMetrics sync.Once
 
 // MetricClusterManagerLeader identifies whether this instance of ovnkube-cluster-manager is a leader or not
 var MetricClusterManagerLeader = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -122,7 +124,6 @@ var metricUDNNodesRendered = prometheus.NewGaugeVec(
 	},
 	[]string{
 		"network_name",
-		"network_kind",
 	},
 )
 
@@ -156,25 +157,28 @@ func RegisterClusterManagerBase() {
 // RegisterClusterManagerFunctional is a collection of metrics that help us understand ovnkube-cluster-manager functions. Call once after
 // LE is won.
 func RegisterClusterManagerFunctional() {
-	prometheus.MustRegister(metricV4HostSubnetCount)
-	prometheus.MustRegister(metricV6HostSubnetCount)
-	prometheus.MustRegister(metricV4AllocatedHostSubnetCount)
-	prometheus.MustRegister(metricV6AllocatedHostSubnetCount)
-	if config.OVNKubernetesFeature.EnableEgressIP {
-		prometheus.MustRegister(metricEgressIPNodeUnreacheableCount)
-		prometheus.MustRegister(metricEgressIPRebalanceCount)
-		prometheus.MustRegister(metricEgressIPCount)
-	}
-	prometheus.MustRegister(metricUDNCount)
-	prometheus.MustRegister(metricCUDNCount)
-	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-		prometheus.MustRegister(metricUDNNodesRendered)
-	}
-	if err := prometheus.Register(MetricResourceRetryFailuresCount); err != nil {
-		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
-			panic(err)
+	registerClusterManagerFunctionalMetrics.Do(func() {
+		prometheus.MustRegister(metricV4HostSubnetCount)
+		prometheus.MustRegister(metricV6HostSubnetCount)
+		prometheus.MustRegister(metricV4AllocatedHostSubnetCount)
+		prometheus.MustRegister(metricV6AllocatedHostSubnetCount)
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			prometheus.MustRegister(metricEgressIPNodeUnreacheableCount)
+			prometheus.MustRegister(metricEgressIPRebalanceCount)
+			prometheus.MustRegister(metricEgressIPCount)
 		}
-	}
+		prometheus.MustRegister(metricUDNCount)
+		prometheus.MustRegister(metricCUDNCount)
+		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+			prometheus.MustRegister(metricUDNNodesRendered)
+		}
+		if err := prometheus.Register(MetricResourceRetryFailuresCount); err != nil {
+			var alreadyRegistered prometheus.AlreadyRegisteredError
+			if !errors.As(err, &alreadyRegistered) {
+				panic(err)
+			}
+		}
+	})
 }
 
 // RecordSubnetUsage records the number of subnets allocated for nodes
@@ -226,12 +230,12 @@ func DecrementCUDNCount(role, topology string) {
 	metricCUDNCount.WithLabelValues(role, topology).Dec()
 }
 
-// SetDynamicUDNNodeCount sets the number of nodes currently active with a CUDN/UDN
-func SetDynamicUDNNodeCount(networkName, networkKind string, nodeCount float64) {
-	metricUDNNodesRendered.WithLabelValues(networkName, networkKind).Set(nodeCount)
+// SetDynamicUDNNodeCount sets the number of nodes currently active with a CUDN/UDN.
+func SetDynamicUDNNodeCount(networkName string, nodeCount float64) {
+	metricUDNNodesRendered.WithLabelValues(networkName).Set(nodeCount)
 }
 
-// DeleteDynamicUDNNodeCount when CUDN/UDN is deleted
-func DeleteDynamicUDNNodeCount(networkName, networkKind string) {
-	metricUDNNodesRendered.DeleteLabelValues(networkName, networkKind)
+// DeleteDynamicUDNNodeCount when CUDN/UDN is deleted.
+func DeleteDynamicUDNNodeCount(networkName string) {
+	metricUDNNodesRendered.DeleteLabelValues(networkName)
 }

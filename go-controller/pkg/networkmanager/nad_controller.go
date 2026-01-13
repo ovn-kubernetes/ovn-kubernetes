@@ -28,15 +28,11 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
 )
-
-// SubsystemConditionUpdater allows callers to update UDN subsystem conditions.
-type SubsystemConditionUpdater func(networkName string, fieldManager string, condition *metav1.Condition, events ...*util.EventDetails) error
 
 // nadController handles namespaced scoped NAD events and
 // manages cluster scoped networks defined in those NADs. NADs are mostly
@@ -88,10 +84,6 @@ type nadController struct {
 	egressIPTracker *EgressIPTrackerController
 	podReconcilerID uint64
 	eipReconcilerID uint64
-
-	// updateSubsystemCondition is an optional callback used only in cluster-manager
-	// mode to update UDN subsystem conditions (e.g., NodesSelected).
-	updateSubsystemCondition SubsystemConditionUpdater
 }
 
 type reconcilerRegistration struct {
@@ -253,55 +245,6 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 		c.updateNADState(nadNamespacedName, active)
 	}
 
-	// Update dynamic UDN metrics and status
-	if c.isClusterManagerMode() {
-		allNodes, err := c.nodeLister.List(labels.Everything())
-		if err != nil {
-			klog.Errorf("Failed getting nodes for UDN status update %q: %v", name, err)
-			return
-		}
-
-		uniqueNodes := sets.New[string]()
-		for _, node := range allNodes {
-			if c.NodeHasNAD(node.Name, util.GetNADName(nad.Namespace, nad.Name)) {
-				uniqueNodes.Insert(node.Name)
-			}
-		}
-		metrics.SetDynamicUDNNodeCount(networkName, ownerRef.Kind, float64(uniqueNodes.Len()))
-		klog.V(5).Infof("Updated metric: network=%s kind=%s nodes=%d", networkName,
-			ownerRef.Kind, uniqueNodes.Len())
-		var cond *metav1.Condition
-		if uniqueNodes.Len() == 0 {
-			msg := "no nodes currently rendered with network"
-			cond = &metav1.Condition{
-				Type:               "NodesSelected",
-				Status:             metav1.ConditionFalse,
-				Reason:             "DynamicAllocation",
-				Message:            msg,
-				LastTransitionTime: metav1.Now(),
-			}
-		} else {
-			msg := fmt.Sprintf("%d node(s) rendered with network", uniqueNodes.Len())
-			cond = &metav1.Condition{
-				Type:               "NodesSelected",
-				Status:             metav1.ConditionTrue,
-				Reason:             "DynamicAllocation",
-				Message:            msg,
-				LastTransitionTime: metav1.Now(),
-			}
-		}
-		if c.updateSubsystemCondition != nil {
-			if err := c.updateSubsystemCondition(
-				networkName,
-				"ClusterManager", // FieldManager – must be unique per subsystem
-				cond,
-			); err != nil {
-				klog.Errorf("Failed to update NodesSelected condition for %s: %v", networkName, err)
-			} else {
-				klog.V(4).Infof("Updated Dynamic Allocation NodesSelected condition for %s: %s", networkName, cond.Message)
-			}
-		}
-	}
 }
 
 // filter should only be called if cm.filterNADsOnNode is set
@@ -327,11 +270,6 @@ func (c *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool,
 
 func (c *nadController) Interface() Interface {
 	return c
-}
-
-// SetSubsystemConditionUpdater allows late injection of the UDN condition updater.
-func (c *nadController) SetSubsystemConditionUpdater(updater SubsystemConditionUpdater) {
-	c.updateSubsystemCondition = updater
 }
 
 func (c *nadController) Start() error {

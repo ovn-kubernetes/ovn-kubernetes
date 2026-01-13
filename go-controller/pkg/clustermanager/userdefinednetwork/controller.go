@@ -427,7 +427,7 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 			}
 			klog.Infof("Finalizer removed from UserDefinedNetworks [%s/%s]", udn.Namespace, udn.Name)
 			metrics.DecrementUDNCount(role, topology)
-			metrics.DeleteDynamicUDNNodeCount(util.GenerateUDNNetworkName(udn.Namespace, udn.Name), "UserDefinedNetwork")
+			metrics.DeleteDynamicUDNNodeCount(util.GenerateUDNNetworkName(udn.Namespace, udn.Name))
 		}
 
 		return nil, nil
@@ -595,7 +595,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
 			delete(c.namespaceTracker, cudnName)
 			metrics.DecrementCUDNCount(role, topology)
-			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name), "ClusterUserDefinedNetwork")
+			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
 		}
 
 		return nil, nil

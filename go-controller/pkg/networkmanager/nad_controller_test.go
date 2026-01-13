@@ -163,7 +163,8 @@ func TestSyncNAD_NotifiesReconcilers(t *testing.T) {
 
 type testNetworkController struct {
 	util.ReconcilableNetInfo
-	tcm *testControllerManager
+	tcm             *testControllerManager
+	handleRefChange func(node string, active bool)
 }
 
 func (tnc *testNetworkController) Start(context.Context) error {
@@ -191,7 +192,11 @@ func (tnc *testNetworkController) Reconcile(netInfo util.NetInfo) error {
 	return util.ReconcileNetInfo(tnc.ReconcilableNetInfo, netInfo)
 }
 
-func (tnc *testNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
+func (tnc *testNetworkController) HandleNetworkRefChange(node string, active bool) {
+	if tnc.handleRefChange != nil {
+		tnc.handleRefChange(node, active)
+	}
+}
 
 // GomegaString is used to avoid printing embedded mutexes which can cause a
 // race
@@ -267,23 +272,6 @@ func testNetworkKey(nInfo util.NetInfo) string {
 
 func networkFromTestNetworkKey(key string) string {
 	return key[:strings.LastIndex(key, " ")]
-}
-
-type fakeNodeLister struct {
-	nodes []*corev1.Node
-}
-
-func (f *fakeNodeLister) List(_ labels.Selector) ([]*corev1.Node, error) {
-	return f.nodes, nil
-}
-
-func (f *fakeNodeLister) Get(name string) (*corev1.Node, error) {
-	for _, n := range f.nodes {
-		if n.Name == name {
-			return n, nil
-		}
-	}
-	return nil, apierrors.NewNotFound(corev1.Resource("node"), name)
 }
 
 type fakeNADNamespaceLister struct {
@@ -1551,27 +1539,18 @@ func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetCon
 	return nad, nil
 }
 
-func TestOnNetworkRefChangeUpdatesStatus(t *testing.T) {
+func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 	tests := []struct {
-		name           string
-		active         bool
-		nodeHasNAD     bool
-		expectedStatus metav1.ConditionStatus
-		expectedMsg    string
+		name   string
+		active bool
 	}{
 		{
-			name:           "node selected",
-			active:         true,
-			nodeHasNAD:     true,
-			expectedStatus: metav1.ConditionTrue,
-			expectedMsg:    "1 node(s) rendered with network",
+			name:   "active",
+			active: true,
 		},
 		{
-			name:           "no nodes selected",
-			active:         true,
-			nodeHasNAD:     false,
-			expectedStatus: metav1.ConditionFalse,
-			expectedMsg:    "no nodes currently rendered with network",
+			name:   "inactive",
+			active: false,
 		},
 	}
 
@@ -1608,34 +1587,6 @@ func TestOnNetworkRefChangeUpdatesStatus(t *testing.T) {
 				},
 			}
 			nodeName := "node1"
-			nodeLister := &fakeNodeLister{
-				nodes: []*corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}},
-			}
-
-			// Fake pod tracker to control NodeHasNAD responses.
-			podCache := map[string]map[string]map[string]struct{}{}
-			if tt.nodeHasNAD {
-				podCache[nodeName] = map[string]map[string]struct{}{
-					util.GetNADName(nad.Namespace, nad.Name): {
-						"pod1": {},
-					},
-				}
-			}
-			podTracker := &PodTrackerController{
-				nodeNADToPodCache: podCache,
-			}
-
-			// Capture subsystem condition updates.
-			var gotNetwork string
-			var gotCond *metav1.Condition
-			updater := func(networkName, _ string, condition *metav1.Condition, _ ...*util.EventDetails) error {
-				gotNetwork = networkName
-				if condition != nil {
-					condCopy := *condition
-					gotCond = &condCopy
-				}
-				return nil
-			}
 
 			tcm := &testControllerManager{
 				controllers: map[string]NetworkController{},
@@ -1651,23 +1602,35 @@ func TestOnNetworkRefChangeUpdatesStatus(t *testing.T) {
 				networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
 				tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
 				nadLister:           nadLister,
-				nodeLister:          nodeLister,
-				podTracker:          podTracker,
 			}
 			err = nc.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			nc.SetSubsystemConditionUpdater(updater)
+			nadNetwork, err := util.ParseNADInfo(nad)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			networkName := nadNetwork.GetNetworkName()
+			var gotNode string
+			var gotActive bool
+			var callCount int
+			testController := &testNetworkController{
+				ReconcilableNetInfo: util.NewReconcilableNetInfo(nadNetwork),
+				tcm:                 tcm,
+				handleRefChange: func(node string, active bool) {
+					gotNode = node
+					gotActive = active
+					callCount++
+				},
+			}
+			nc.networkController.networkControllers[networkName] = &networkControllerState{
+				controller: testController,
+			}
 
 			// Trigger network ref change.
 			nc.OnNetworkRefChange(nodeName, util.GetNADName(nad.Namespace, nad.Name), tt.active)
 
-			g.Expect(gotNetwork).To(gomega.Equal("udn-net"))
-			g.Expect(gotCond).ToNot(gomega.BeNil())
-			g.Expect(gotCond.Type).To(gomega.Equal("NodesSelected"))
-			g.Expect(gotCond.Status).To(gomega.Equal(tt.expectedStatus))
-			g.Expect(gotCond.Reason).To(gomega.Equal("DynamicAllocation"))
-			g.Expect(gotCond.Message).To(gomega.Equal(tt.expectedMsg))
+			g.Expect(callCount).To(gomega.Equal(1))
+			g.Expect(gotNode).To(gomega.Equal(nodeName))
+			g.Expect(gotActive).To(gomega.Equal(tt.active))
 		})
 	}
 }

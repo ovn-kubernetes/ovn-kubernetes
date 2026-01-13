@@ -101,8 +101,6 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 
 func (fnm *FakeNetworkManager) Stop() {}
 
-func (fnm *FakeNetworkManager) SetSubsystemConditionUpdater(_ SubsystemConditionUpdater) {}
-
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
 	if network == nil {
