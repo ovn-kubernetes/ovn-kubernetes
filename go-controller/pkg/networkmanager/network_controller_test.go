@@ -240,3 +240,158 @@ func TestSetAdvertisements(t *testing.T) {
 		})
 	}
 }
+
+func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tests := []struct {
+		name       string
+		nodeHasNAD bool
+	}{
+		{
+			name:       "active",
+			nodeHasNAD: true,
+		},
+		{
+			name:       "inactive",
+			nodeHasNAD: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			tcm := &testControllerManager{
+				controllers: map[string]NetworkController{},
+				defaultNetwork: &testNetworkController{
+					ReconcilableNetInfo: &util.DefaultNetInfo{},
+				},
+			}
+			nm := newNetworkController("", "", "", tcm, nil)
+			nm.nodeHasNAD = func(_, _ string) bool { return tt.nodeHasNAD }
+
+			networkName := netInfo.GetNetworkName()
+			mutableNetInfo := util.NewMutableNetInfo(netInfo)
+			mutableNetInfo.SetNADs(netConf.NADName)
+			nm.setNetwork(networkName, mutableNetInfo)
+
+			var gotNode string
+			var gotActive bool
+			var callCount int
+			testController := &testNetworkController{
+				ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
+				tcm:                 tcm,
+				handleRefChange: func(node string, active bool) {
+					gotNode = node
+					gotActive = active
+					callCount++
+				},
+			}
+			nm.networkControllers[networkName] = &networkControllerState{
+				controller: testController,
+			}
+
+			nm.NotifyNetworkRefChange(networkName, "node1")
+			err := nm.syncNetwork(networkName)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			g.Expect(callCount).To(gomega.Equal(1))
+			g.Expect(gotNode).To(gomega.Equal("node1"))
+			g.Expect(gotActive).To(gomega.Equal(tt.nodeHasNAD))
+
+			nm.NotifyNetworkRefChange(networkName, "node1")
+			err = nm.syncNetwork(networkName)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(callCount).To(gomega.Equal(1))
+		})
+	}
+}
+
+func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+	}
+	nm := newNetworkController("", "", "", tcm, nil)
+	nm.nodeHasNAD = func(_, _ string) bool { return true }
+
+	networkName := netInfo.GetNetworkName()
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+	nm.setNetwork(networkName, mutableNetInfo)
+
+	var callCount int
+	testController := &testNetworkController{
+		ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
+		tcm:                 tcm,
+		handleRefChange: func(string, bool) {
+			callCount++
+		},
+	}
+	nm.networkControllers[networkName] = &networkControllerState{
+		controller: testController,
+	}
+
+	nm.NotifyNetworkRefChange(networkName, "node1")
+	err = nm.deleteNetwork(networkName)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(callCount).To(gomega.Equal(0))
+
+	var followupCalls int
+	followupController := &testNetworkController{
+		ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
+		tcm:                 tcm,
+		handleRefChange: func(string, bool) {
+			followupCalls++
+		},
+	}
+	nm.networkControllers[networkName] = &networkControllerState{
+		controller: followupController,
+	}
+	nm.setNetwork(networkName, mutableNetInfo)
+	err = nm.syncNetwork(networkName)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(followupCalls).To(gomega.Equal(0))
+}

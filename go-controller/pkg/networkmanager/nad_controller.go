@@ -133,6 +133,8 @@ func newController(
 		c.filterNADsOnNode = filterNADsOnNode
 	}
 
+	c.networkController.nodeHasNAD = c.NodeHasNAD
+
 	if ovnClient != nil {
 		c.nadClient = ovnClient.NetworkAttchDefClient
 	}
@@ -192,6 +194,13 @@ func (c *nadController) NodeHasNAD(node, nad string) bool {
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated.
 // Used as a callback for pod/egress IP events when dynamic UDN allocation is enabled.
+// This callback is invoked by pod/egress IP trackers and is blocking. Therefore it's work should be as lightweight
+// as possible.
+// The function handles:
+//  1. Queuing local node event NADs to the NAD Controller for reconciliation later in the NAD Controller worker.
+//  2. Queuing remote node event networks to the Network Manager for reconciliation later in the Network Manager worker.
+//
+// This function should never call into the trackers (i.e. NodeHasNAD) as it would cause deadlock.
 func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
 	klog.V(4).Infof("Network change for zone controller triggered by pod/egress IP events "+
 		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
@@ -236,9 +245,9 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 
 	isLocal := node == c.filterNADsOnNode
 	networkName := nadNetwork.GetNetworkName()
-	// Enqueue node-level reconcile on the running network controller for remote nodes (non-blocking).
+	// Enqueue a network reconcile for remote nodes (non-blocking).
 	if !isLocal {
-		c.networkController.NotifyNetworkRefChange(networkName, node, active)
+		c.networkController.NotifyNetworkRefChange(networkName, node)
 	}
 	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
 	if isLocal {
