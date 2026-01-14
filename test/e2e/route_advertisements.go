@@ -882,6 +882,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks", feature.RouteAdvertisements,
 	func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
+
 		const curlConnectionTimeoutCode = "28"
 
 		f := wrappedTestFramework("bgp-network-isolation")
@@ -893,7 +894,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 		// podNetB is in cudnB hosted on nodes[1], podNetDefault is in the default network hosted on nodes[1] - done in BeforeEach
 		var podNetB, podNetDefault *corev1.Pod
-		var svcNetA, svcNetB, svcNetDefault *corev1.Service
+		var svcNodePortNetA, svcNodePortNetB, svcNodePortNetDefault, svcNodePortETPLocalDefault, svcNodePortETPLocalNetA *corev1.Service
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
@@ -1002,7 +1003,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			familyPolicy := corev1.IPFamilyPolicyPreferDualStack
 			svc.Spec.IPFamilyPolicy = &familyPolicy
 			svc.Spec.Type = corev1.ServiceTypeNodePort
-			svcNetA, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortNetA, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			pod.Name = fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[1].Name, cudnB.Name)
@@ -1014,7 +1015,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			svc.Name = fmt.Sprintf("service-%s", cudnB.Name)
 			svc.Namespace = pod.Namespace
 			svc.Spec.Selector = pod.Labels
-			svcNetB, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortNetB, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			pod.Name = fmt.Sprintf("pod-1-%s-net-default", nodes.Items[1].Name)
@@ -1022,11 +1023,25 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod.Labels = map[string]string{"network": "default"}
 			podNetDefault = e2epod.PodClientNS(f, "default").CreateSync(context.TODO(), pod)
 
-			svc.Name = fmt.Sprintf("service-default")
+			svc.Name = "service-default"
 			svc.Namespace = "default"
 			svc.Spec.Selector = pod.Labels
 			svc.Spec.Type = corev1.ServiceTypeNodePort
-			svcNetDefault, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortNetDefault, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// create one nodePort service with externalTrafficPolicy=Local in default namespace
+			svc.Name = "nodeport-default-etp-local"
+			svc.Spec.Type = corev1.ServiceTypeNodePort
+			svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
+			svcNodePortETPLocalDefault, err = f.ClientSet.CoreV1().Services(svc.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// create one nodePort service with externalTrafficPolicy=Local in udnNamespaceA
+			svc.Name = fmt.Sprintf("nodeport-etp-local-%s", cudnA.Name)
+			svc.Namespace = udnNamespaceA.Name
+			svc.Spec.Selector = map[string]string{"network": cudnA.Name}
+			svcNodePortETPLocalNetA, err = f.ClientSet.CoreV1().Services(svc.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Expose networks")
@@ -1099,7 +1114,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				gomega.Eventually(func() bool {
 					_, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Get(context.TODO(), cudnB.Name, metav1.GetOptions{})
 					return apierrors.IsNotFound(err)
-				}, time.Second*30).Should(gomega.BeTrue())
+				}, time.Second*60).Should(gomega.BeTrue())
 				cudnB = nil
 			}
 			if cudnA != nil {
@@ -1108,7 +1123,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				gomega.Eventually(func() bool {
 					_, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Get(context.TODO(), cudnA.Name, metav1.GetOptions{})
 					return apierrors.IsNotFound(err)
-				}, time.Second*30).Should(gomega.BeTrue())
+				}, time.Second*60).Should(gomega.BeTrue())
 				cudnA = nil
 			}
 
@@ -1117,10 +1132,16 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				podNetDefault = nil
 			}
-			if svcNetDefault != nil {
-				err = f.ClientSet.CoreV1().Services(svcNetDefault.Namespace).Delete(context.Background(), svcNetDefault.Name, metav1.DeleteOptions{})
+
+			if svcNodePortNetDefault != nil {
+				err = f.ClientSet.CoreV1().Services(svcNodePortNetDefault.Namespace).Delete(context.Background(), svcNodePortNetDefault.Name, metav1.DeleteOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				svcNetDefault = nil
+				svcNodePortNetDefault = nil
+			}
+			if svcNodePortETPLocalDefault != nil {
+				err = f.ClientSet.CoreV1().Services(svcNodePortETPLocalDefault.Namespace).Delete(context.Background(), svcNodePortETPLocalDefault.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				svcNodePortETPLocalDefault = nil
 			}
 
 			raClient, err := raclientset.NewForConfig(f.ClientConfig())
@@ -1293,12 +1314,12 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}),
 			ginkgo.Entry("pod in the default network should not be able to access a UDN service",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNetA.Spec.ClusterIPs), "8080") + "/clientip",
+					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNodePortNetA.Spec.ClusterIPs), "8080") + "/clientip",
 						curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the UDN should be able to access a service in the same network",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNetA.Spec.ClusterIPs), "8080") + "/clientip", "", false
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNodePortNetA.Spec.ClusterIPs), "8080") + "/clientip", "", false
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a default network service",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1311,7 +1332,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						// this causes curl timeout with code 7 host unreachable instead of code 28
 						out = ""
 					}
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNetDefault.Spec.ClusterIPs), "8080") + "/clientip", out, err
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNodePortNetDefault.Spec.ClusterIPs), "8080") + "/clientip", out, err
 				}),
 			ginkgo.Entry("pod in the UDN should be able to access kapi in default network service",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1337,7 +1358,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNetB.Spec.ClusterIPs), "8080") + "/clientip",
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(getFirstIPStringOfFamily(ipFamily, svcNodePortNetB.Spec.ClusterIPs), "8080") + "/clientip",
 						curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("host to a local UDN pod should not work",
@@ -1413,7 +1434,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					// pod -> node traffic should use the node's IP as the source for advertised UDNs.
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(hostNetworkPort)) + "/clientip", clientNodeIP, false
 				}),
-			ginkgo.Entry("UDN pod to the same node nodeport service in default network should not work",
+			ginkgo.Entry("[ETP=Cluster] UDN pod to the same node nodeport service in default network should not work",
 				// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5410
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					clientPod := podsNetA[0]
@@ -1425,11 +1446,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if ipFamily == utilnet.IPv6 {
 						nodeIP = nodeIPv6
 					}
-					nodePort := svcNetDefault.Spec.Ports[0].NodePort
+					nodePort := svcNodePortNetDefault.Spec.Ports[0].NodePort
 
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionTimeoutCode, true
 				}),
-			ginkgo.Entry("UDN pod to a different node nodeport service in default network should work",
+			ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in default network should work",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					clientPod := podsNetA[0]
 					// podsNetA[0] is on nodes[0]. We need a different node. podNetDefault is on nodes[1].
@@ -1441,11 +1462,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if ipFamily == utilnet.IPv6 {
 						nodeIP = nodeIPv6
 					}
-					nodePort := svcNetDefault.Spec.Ports[0].NodePort
+					nodePort := svcNodePortNetDefault.Spec.Ports[0].NodePort
 
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
 				}),
-			ginkgo.Entry("UDN pod to the same node nodeport service in same UDN network should work",
+			ginkgo.Entry("[ETP=Cluster] UDN pod to the same node nodeport service in same UDN network should work",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					clientPod := podsNetA[0]
 					// The service is backed by pods in podsNetA.
@@ -1458,13 +1479,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if ipFamily == utilnet.IPv6 {
 						nodeIP = nodeIPv6
 					}
-					nodePort := svcNetA.Spec.Ports[0].NodePort
+					nodePort := svcNodePortNetA.Spec.Ports[0].NodePort
 
 					// The service can be backed by any of the pods in podsNetA, so we can't reliably check the output hostname.
 					// Just check that the connection is successful.
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
 				}),
-			ginkgo.Entry("UDN pod to a different node nodeport service in same UDN network should work",
+			ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in same UDN network should work",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					clientPod := podsNetA[0]
 					// The service is backed by pods in podsNetA.
@@ -1477,12 +1498,12 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if ipFamily == utilnet.IPv6 {
 						nodeIP = nodeIPv6
 					}
-					nodePort := svcNetA.Spec.Ports[0].NodePort
+					nodePort := svcNodePortNetA.Spec.Ports[0].NodePort
 
 					// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
 				}),
-			ginkgo.Entry("UDN pod to the same node nodeport service in different UDN network should not work",
+			ginkgo.Entry("[ETP=Cluster] UDN pod to the same node nodeport service in different UDN network should not work",
 				// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
 				// This traffic flow is expected to work eventually but doesn't work today on Layer3 (v4 and v6) and Layer2 (v4 and v6) networks.
 				// Reason it doesn't work today is because UDN networks don't have MAC bindings for masqueradeIPs of other networks.
@@ -1502,11 +1523,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if ipFamily == utilnet.IPv6 {
 						nodeIP = nodeIPv6
 					}
-					nodePort := svcNetB.Spec.Ports[0].NodePort
+					nodePort := svcNodePortNetB.Spec.Ports[0].NodePort
 					// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionTimeoutCode, true
 				}),
-			ginkgo.Entry("UDN pod to a different node nodeport service in different UDN network should work",
+			ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in different UDN network should work",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					clientPod := podsNetA[0]
 					// The service is backed by podNetB.
@@ -1519,10 +1540,151 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if ipFamily == utilnet.IPv6 {
 						nodeIP = nodeIPv6
 					}
-					nodePort := svcNetB.Spec.Ports[0].NodePort
+					nodePort := svcNodePortNetB.Spec.Ports[0].NodePort
 
 					// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
+				}),
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in same UDN network should work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					clientPod := podsNetA[0]
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", "", false
+				}),
+
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in same UDN network should work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					clientPod := podsNetA[0]
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), podsNetA[2].Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+
+					out := ""
+					errBool := false
+					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
+					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
+					if IsGatewayModeLocal(f.ClientSet) {
+						out = "56"
+						errBool = true
+					}
+
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
+				}),
+
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in different UDN network should not work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
+					clientPod := podNetB
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", curlConnectionTimeoutCode, true
+				}),
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in different UDN network should work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					clientPod := podNetB
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), podsNetA[0].Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+					out := ""
+					errBool := false
+
+					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
+					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
+					if IsGatewayModeLocal(f.ClientSet) {
+						out = "56"
+						errBool = true
+					}
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
+				}),
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in default network should not work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
+					clientPod := podNetB
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortB := svcNodePortETPLocalDefault.Spec.Ports[0].NodePort
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)) + "/hostname", curlConnectionTimeoutCode, true
+				}),
+			ginkgo.Entry("[ETP=LOCAL] UDN pod to a different node nodeport service in default network should work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// podsNetA[0] is on nodes[0]. We need a different node. podNetDefault is on nodes[1].
+					// So we hit nodeport on nodes[1].
+					clientPod := podsNetA[0]
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), podNetDefault.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortB := svcNodePortETPLocalDefault.Spec.Ports[0].NodePort
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)) + "/hostname", "", false
+				}),
+			ginkgo.Entry("[ETP=LOCAL] Default network pod to same node nodeport service in UDN network should not work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
+					clientPod := podNetDefault
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", curlConnectionTimeoutCode, true
+				}),
+			ginkgo.Entry("[ETP=LOCAL] Default network pod to different node nodeport service in UDN network should work",
+				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// podNetDefault is on nodes[1]. We need a different node. podsNetA[0] is on nodes[0].
+					// So we hit nodeport on nodes[0].
+					clientPod := podNetDefault
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), podsNetA[0].Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIPv4, nodeIPv6 := getNodeAddresses(node)
+					nodeIP := nodeIPv4
+					if ipFamily == utilnet.IPv6 {
+						nodeIP = nodeIPv6
+					}
+					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
+					out := ""
+					errBool := false
+
+					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
+					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
+					if IsGatewayModeLocal(f.ClientSet) {
+						out = "56"
+						errBool = true
+					}
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 				}),
 		)
 

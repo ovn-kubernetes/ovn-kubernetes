@@ -740,6 +740,34 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnFlows).To(Equal(16))
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
+			// Verify both IPv4 and IPv6 fwmark rules were added
+			Eventually(func() error {
+				rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+				if err != nil {
+					return err
+				}
+				var foundV4, foundV6 bool
+				for _, rule := range rules {
+					if rule.Priority == UDNMasqueradeIPRulePriority &&
+						rule.Table == udnGateway.vrfTableId &&
+						rule.Mark == uint32(udnGateway.pktMark) {
+						if rule.Family == netlink.FAMILY_V4 {
+							foundV4 = true
+						}
+						if rule.Family == netlink.FAMILY_V6 {
+							foundV6 = true
+						}
+					}
+				}
+				if !foundV4 {
+					return fmt.Errorf("IPv4 fwmark rule not found (mark=0x%x, table=%d)", udnGateway.pktMark, udnGateway.vrfTableId)
+				}
+				if !foundV6 {
+					return fmt.Errorf("IPv6 fwmark rule not found (mark=0x%x, table=%d)", udnGateway.pktMark, udnGateway.vrfTableId)
+				}
+				return nil
+			}).WithTimeout(5 * time.Second).Should(Succeed())
+
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
 				// Check flows for default network service CIDR.
 				bridgeconfig.CheckDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
