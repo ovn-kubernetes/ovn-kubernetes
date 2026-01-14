@@ -1576,14 +1576,8 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
 					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
 					if IsGatewayModeLocal(f.ClientSet) {
-						out = curlConnectionTimeoutCode
+						out = "56"
 						errBool = true
-
-						if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-							out = "56"
-							errBool = true
-						}
-
 					}
 
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
@@ -1620,14 +1614,8 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
 					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
 					if IsGatewayModeLocal(f.ClientSet) {
-						out = curlConnectionTimeoutCode
+						out = "56"
 						errBool = true
-
-						if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-							out = "56"
-							errBool = true
-						}
-
 					}
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 				}),
@@ -1693,14 +1681,8 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
 					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
 					if IsGatewayModeLocal(f.ClientSet) {
-						out = curlConnectionTimeoutCode
+						out = "56"
 						errBool = true
-
-						if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-							out = "56"
-							errBool = true
-						}
-
 					}
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 				}),
