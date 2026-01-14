@@ -82,9 +82,9 @@ type networkClusterController struct {
 	// To avoid changing that error report with every update, we store reported error node.
 	reportedErrorNode string
 
-	// dynamicUDNNodeRefs tracks active references per node for dynamic UDN allocation.
+	// dynamicUDNNodeRefs tracks active nodes for dynamic UDN allocation.
 	dynamicUDNNodeRefsLock sync.Mutex
-	dynamicUDNNodeRefs     map[string]int
+	dynamicUDNNodeRefs     map[string]bool
 	dynamicUDNNodeCount    int
 
 	util.ReconcilableNetInfo
@@ -96,7 +96,10 @@ func (ncc *networkClusterController) HandleNetworkRefChange(nodeName string, act
 		return
 	}
 
-	nodeCount := ncc.updateDynamicUDNNodeRefs(nodeName, active)
+	nodeCount, changed := ncc.updateDynamicUDNNodeRefs(nodeName, active)
+	if !changed {
+		return
+	}
 	networkName := ncc.GetNetworkName()
 	metrics.SetDynamicUDNNodeCount(networkName, float64(nodeCount))
 	klog.V(5).Infof("Updated metric: network=%s nodes=%d", networkName, nodeCount)
@@ -134,39 +137,30 @@ func (ncc *networkClusterController) HandleNetworkRefChange(nodeName string, act
 	}
 }
 
-func (ncc *networkClusterController) updateDynamicUDNNodeRefs(nodeName string, active bool) int {
+func (ncc *networkClusterController) updateDynamicUDNNodeRefs(nodeName string, active bool) (int, bool) {
 	ncc.dynamicUDNNodeRefsLock.Lock()
 	defer ncc.dynamicUDNNodeRefsLock.Unlock()
 
 	if ncc.dynamicUDNNodeRefs == nil {
-		ncc.dynamicUDNNodeRefs = map[string]int{}
+		ncc.dynamicUDNNodeRefs = map[string]bool{}
 	}
 
-	count := ncc.dynamicUDNNodeRefs[nodeName]
+	current := ncc.dynamicUDNNodeRefs[nodeName]
+	if active == current {
+		return ncc.dynamicUDNNodeCount, false
+	}
+
 	if active {
-		count++
-		ncc.dynamicUDNNodeRefs[nodeName] = count
-		if count == 1 {
-			ncc.dynamicUDNNodeCount++
-		}
-		return ncc.dynamicUDNNodeCount
+		ncc.dynamicUDNNodeRefs[nodeName] = true
+		ncc.dynamicUDNNodeCount++
+		return ncc.dynamicUDNNodeCount, true
 	}
 
-	if count == 0 {
-		klog.V(5).Infof("Ignoring negative refcount for node %s on network %s", nodeName, ncc.GetNetworkName())
-		return ncc.dynamicUDNNodeCount
+	delete(ncc.dynamicUDNNodeRefs, nodeName)
+	if ncc.dynamicUDNNodeCount > 0 {
+		ncc.dynamicUDNNodeCount--
 	}
-
-	count--
-	if count == 0 {
-		delete(ncc.dynamicUDNNodeRefs, nodeName)
-		if ncc.dynamicUDNNodeCount > 0 {
-			ncc.dynamicUDNNodeCount--
-		}
-	} else {
-		ncc.dynamicUDNNodeRefs[nodeName] = count
-	}
-	return ncc.dynamicUDNNodeCount
+	return ncc.dynamicUDNNodeCount, true
 }
 
 func newNetworkClusterController(
