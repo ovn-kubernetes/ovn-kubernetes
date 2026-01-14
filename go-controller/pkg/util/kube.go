@@ -113,6 +113,7 @@ type OVNKubeControllerClientset struct {
 	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	NetworkConnectClient      networkconnectclientset.Interface
 }
 
 type OVNNodeClientset struct {
@@ -210,6 +211,7 @@ func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClient
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		NetworkConnectClient:      cs.NetworkConnectClient,
 	}
 }
 
@@ -920,17 +922,6 @@ func ServiceNamespacedNameFromEndpointSlice(endpointSlice *discovery.EndpointSli
 				endpointSlice.Namespace, endpointSlice.Name, discovery.LabelServiceName)
 	}
 	return k8stypes.NamespacedName{Namespace: endpointSlice.Namespace, Name: svcName}, nil
-}
-
-// isHostEndpoint determines if the given endpoint ip belongs to a host networked pod
-func IsHostEndpoint(endpointIPstr string) bool {
-	endpointIP := net.ParseIP(endpointIPstr)
-	for _, clusterNet := range config.Default.ClusterSubnets {
-		if clusterNet.CIDR.Contains(endpointIP) {
-			return false
-		}
-	}
-	return true
 }
 
 func getEndpointsFromEndpointSlices(endpointSlices []*discovery.EndpointSlice) []discovery.Endpoint {

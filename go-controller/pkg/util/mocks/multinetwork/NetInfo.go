@@ -522,6 +522,24 @@ func (_m *NetInfo) GetNetworkScopedSwitchName(nodeName string) string {
 	return r0
 }
 
+// GetNetworkScopedSwitchToRouterPortName provides a mock function with given fields: nodeName
+func (_m *NetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	ret := _m.Called(nodeName)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNetworkScopedSwitchToRouterPortName")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func(string) string); ok {
+		r0 = rf(nodeName)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // GetNodeGatewayIP provides a mock function with given fields: hostSubnet
 func (_m *NetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	ret := _m.Called(hostSubnet)

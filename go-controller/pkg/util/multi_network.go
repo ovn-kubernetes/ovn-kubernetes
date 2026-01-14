@@ -100,6 +100,7 @@ type NetInfo interface {
 	GetNetworkScopedExtPortName(bridgeID, nodeName string) string
 	GetNetworkScopedLoadBalancerName(lbName string) string
 	GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string
+	GetNetworkScopedSwitchToRouterPortName(nodeName string) string
 
 	// GetNetInfo is an identity method used to get the specific NetInfo
 	// implementation
@@ -588,6 +589,10 @@ func (nInfo *DefaultNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupName s
 	return nInfo.GetNetworkScopedName(lbGroupName)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	return types.RouterToSwitchPrefix + nInfo.GetNetworkScopedSwitchName(nodeName)
+}
+
 func (nInfo *DefaultNetInfo) canReconcile(netInfo NetInfo) bool {
 	_, ok := netInfo.(*DefaultNetInfo)
 	return ok
@@ -842,6 +847,18 @@ func (nInfo *userDefinedNetInfo) GetNetworkScopedLoadBalancerName(lbName string)
 
 func (nInfo *userDefinedNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string {
 	return nInfo.GetNetworkScopedName(lbGroupName)
+}
+
+// GetNetworkScopedSwitchToRouterPortName returns the port name from switch to router.
+// For Layer2 topology, this is the transit router to switch port (trtos-).
+// For Layer3 topology, this is the router to switch port (rtos-).
+// Not Applicable for Localnet topology.
+func (nInfo *userDefinedNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	switchName := nInfo.GetNetworkScopedSwitchName(nodeName)
+	if nInfo.TopologyType() == types.Layer2Topology {
+		return types.TransitRouterToSwitchPrefix + switchName
+	}
+	return types.RouterToSwitchPrefix + switchName
 }
 
 // getPrefix returns if the logical entities prefix for this network
