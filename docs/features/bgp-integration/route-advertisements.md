@@ -905,7 +905,7 @@ Building configuration...
 
 Current configuration:
 !
-frr version 8.5.3
+frr version 10.4.1
 frr defaults traditional
 hostname ovn-worker2
 log file /etc/frr/frr.log informational
