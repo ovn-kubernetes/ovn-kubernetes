@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"net"
@@ -406,6 +407,7 @@ type KubernetesConfig struct {
 	CertDuration            time.Duration `gcfg:"cert-duration"`
 	Kubeconfig              string        `gcfg:"kubeconfig"`
 	CACert                  string        `gcfg:"cacert"`
+	CACertData              string        `gcfg:"cacert-data"`
 	CAData                  []byte
 	APIServer               string `gcfg:"apiserver"`
 	Token                   string `gcfg:"token"`
@@ -1286,6 +1288,11 @@ var K8sFlags = []cli.Flag{
 		Destination: &cliConfig.Kubernetes.CACert,
 	},
 	&cli.StringFlag{
+		Name:        "k8s-cacert-data",
+		Usage:       "the Kubernetes API CA certificate data (not required if --k8s-kubeconfig is given)",
+		Destination: &cliConfig.Kubernetes.CACertData,
+	},
+	&cli.StringFlag{
 		Name:        "k8s-token",
 		Usage:       "the Kubernetes API authentication token (not required if --k8s-kubeconfig is given)",
 		Destination: &cliConfig.Kubernetes.Token,
@@ -1852,23 +1859,27 @@ func setOVSExternalID(exec kexec.Interface, key, value string) error {
 }
 
 func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath string, defaults *Defaults) error {
-	// token adn ca.crt may be from files mounted in container.
-	saConfig := savedKubernetes
-	if data, err := os.ReadFile(filepath.Join(saPath, kubeServiceAccountFileToken)); err == nil {
-		saConfig.Token = string(data)
-		saConfig.TokenFile = filepath.Join(saPath, kubeServiceAccountFileToken)
-	}
-	if _, err2 := os.Stat(filepath.Join(saPath, kubeServiceAccountFileCACert)); err2 == nil {
-		saConfig.CACert = filepath.Join(saPath, kubeServiceAccountFileCACert)
-	}
-
-	if err := overrideFields(&Kubernetes, &saConfig, &savedKubernetes); err != nil {
-		return err
-	}
-
 	// values for token, cacert, kubeconfig, api-server may be found in several places.
 	// Priority order (highest first): OVS config, command line options, config file,
 	// environment variables, service account files
+
+	// In the case of separate cluster for DPUs, those nodes may have incluster SA fields,
+	// but we need to use the ones explicitly provided to access DPU Host cluster
+	if cli.Kubernetes.Token == "" && cli.Kubernetes.CACertData == "" {
+		// token and ca.crt may be from files mounted in container.
+		saConfig := savedKubernetes
+		if data, err := os.ReadFile(filepath.Join(saPath, kubeServiceAccountFileToken)); err == nil {
+			saConfig.Token = string(data)
+			saConfig.TokenFile = filepath.Join(saPath, kubeServiceAccountFileToken)
+		}
+		if _, err2 := os.Stat(filepath.Join(saPath, kubeServiceAccountFileCACert)); err2 == nil {
+			saConfig.CACert = filepath.Join(saPath, kubeServiceAccountFileCACert)
+		}
+
+		if err := overrideFields(&Kubernetes, &saConfig, &savedKubernetes); err != nil {
+			return err
+		}
+	}
 
 	envConfig := savedKubernetes
 	envVarsMap := map[string]string{
@@ -1876,6 +1887,7 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		"BootstrapKubeconfig":  "BOOTSTRAP_KUBECONFIG",
 		"CertDir":              "CERT_DIR",
 		"CACert":               "K8S_CACERT",
+		"CACertData":           "K8S_CACERT_DATA",
 		"APIServer":            "K8S_APISERVER",
 		"Token":                "K8S_TOKEN",
 		"TokenFile":            "K8S_TOKEN_FILE",
@@ -1920,8 +1932,15 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		return fmt.Errorf("kubernetes kubeconfig file %q not found", Kubernetes.Kubeconfig)
 	}
 
-	if Kubernetes.CACert != "" {
-		bytes, err := os.ReadFile(Kubernetes.CACert)
+	if Kubernetes.CACert != "" || Kubernetes.CACertData != "" {
+		var bytes []byte
+		var err error
+		if Kubernetes.CACert != "" {
+			bytes, err = os.ReadFile(Kubernetes.CACert)
+		} else {
+			bytes, err = base64.StdEncoding.DecodeString(Kubernetes.CACertData)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -2401,6 +2420,7 @@ func stripTokenFromK8sConfig() KubernetesConfig {
 	// Token and CAData are sensitive fields so stripping
 	// them while logging.
 	k8sConf.Token = ""
+	k8sConf.CACertData = ""
 	k8sConf.CAData = []byte{}
 	return k8sConf
 }

@@ -44,6 +44,7 @@ fi
 # OVN_DAEMONSET_VERSION - version match daemonset and image - v1.2.0
 # K8S_TOKEN - the apiserver token. Automatically detected when running in a pod - v3
 # K8S_CACERT - the apiserver CA. Automatically detected when running in a pod - v3
+# K8S_CACERT_DATA - the apiserver CA data.
 # OVN_CONTROLLER_OPTS - the options for ovn-ctl
 # OVN_NORTHD_OPTS - the options for the ovn northbound db
 # OVN_GATEWAY_MODE - the gateway mode (shared or local) - v3
@@ -2066,6 +2067,32 @@ ovnkube-controller-with-node() {
     fi
   fi
 
+  if [[ ${ovnkube_node_mode} == "dpu" ]]; then
+    if [[ ${ovn_gateway_opts} == "" ]]; then
+      # get the gateway interface
+      gw_iface=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-interface | tr -d \")
+      if [[ ${gw_iface} == "" ]]; then
+        echo "Couldn't get the required OVN Gateway Interface. Exiting..."
+        exit 1
+      fi
+      ovn_gateway_opts="--gateway-interface=${gw_iface} "
+
+      # get the gateway nexthop
+      gw_nexthop=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-nexthop | tr -d \")
+      if [[ ${gw_nexthop} == "" ]]; then
+        echo "Couldn't get the required OVN Gateway NextHop. Exiting..."
+        exit 1
+      fi
+      ovn_gateway_opts+="--gateway-nexthop=${gw_nexthop} "
+    fi
+
+    # this is required if the DPU and DPU Host are in different subnets
+    if [[ ${ovn_gateway_router_subnet} == "" ]]; then
+      # get the gateway router subnet
+      ovn_gateway_router_subnet=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-router-subnet | tr -d \")
+    fi
+  fi
+
   if [[ ${ovnkube_node_mode} != "dpu-host" && ! ${ovn_gateway_opts} =~ "gateway-vlanid" ]]; then
       # get the gateway vlanid
       gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid | tr -d \")
@@ -2209,6 +2236,20 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
+  # We need to provide k8s credentials explicitly to access an external cluster from this node
+  ovn_external_cluster_access_opts=
+  if [[ -n ${K8S_TOKEN} ]]; then
+    if [[ -z ${K8S_APISERVER} || -z ${K8S_CACERT_DATA} ]]; then
+      echo "K8S_APISERVER, K8S_TOKEN and K8S_CACERT_DATA is needed for accessing an external cluster. Exiting..."
+      exit 1
+    fi
+    ovn_external_cluster_access_opts="
+        --k8s-apiserver=${K8S_APISERVER}
+        --k8s-token=${K8S_TOKEN}
+        --k8s-cacert-data=${K8S_CACERT_DATA}
+    "
+  fi
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2264,6 +2305,7 @@ ovnkube-controller-with-node() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
+    ${ovn_external_cluster_access_opts} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
@@ -2571,17 +2613,15 @@ ovn-node() {
   check_ovn_daemonset_version "1.2.0"
   rm -f ${OVN_RUNDIR}/ovnkube.pid
 
+  # ready_to_start_node checks for the NB/SB readiness state.
+  # This is not available on the DPU host when interconnect is enabled,
+  # because the DBs will run locally on the DPU
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovn-node - (wait for ovs)"
     wait_for_event ovs_ready
-  fi
-
-  if [[ ${ovnkube_node_mode} == "dpu-host" ]] && [[ ${ovn_enable_interconnect} == "true" ]]; then
-    # ready_to_start_node checks for the NB/SB readiness state.
-    # This is not available on the DPU host when interconnect is enabled,
-    # because the DBs will run locally on the DPU
-    echo "skipping ready_to_start_node on DPU Host and when interconnect is true"
-  else
+    echo "=============== ovn-node - (wait for ready_to_start_node)"
+    wait_for_event ready_to_start_node
+  elif [[ ${ovn_enable_interconnect} != "true" ]]; then
     echo "=============== ovn-node - (wait for ready_to_start_node)"
     wait_for_event ready_to_start_node
   fi

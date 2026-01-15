@@ -1,0 +1,12 @@
+nbLogLevel: "-vconsole:info -vfile:info"
+sbLogLevel: "-vconsole:info -vfile:info"
+northdLogLevel: "-vconsole:info -vfile:info"
+northdBackoffInterval: "0"
+ovnkubeNodeLogLevel: 4
+ovnControllerLogLevel: "-vconsole:info"
+logFileMaxSize: 100
+logFileMaxBackups: 5
+logFileMaxAge: 5
+libovsdbClientLogFile: ""
+# -- TCP port serving metrics
+metricsPort: 9476
