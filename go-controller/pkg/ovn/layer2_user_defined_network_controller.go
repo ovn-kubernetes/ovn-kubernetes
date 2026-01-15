@@ -139,15 +139,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 			return h.oc.addUpdateLocalNodeEvent(node, nodeParams)
 		}
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-			nads := h.oc.GetNADs()
-			hasNad := false
-			for _, nadName := range nads {
-				if h.oc.networkManager.NodeHasNAD(node.Name, nadName) {
-					hasNad = true
-					break
-				}
-			}
-			if !hasNad {
+			if !h.oc.networkManager.NodeHasNetwork(node.Name, h.oc.GetNetworkName()) {
 				klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
 					node.Name, h.oc.GetNetworkName())
 				// store sync IC failed for the node, so if on node update if the NAD is no longer filtered, we actually
@@ -230,15 +222,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
 			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-				nads := h.oc.GetNADs()
-				hasNad := false
-				for _, nadName := range nads {
-					if h.oc.networkManager.NodeHasNAD(newNode.Name, nadName) {
-						hasNad = true
-						break
-					}
-				}
-				if !hasNad {
+				if !h.oc.networkManager.NodeHasNetwork(newNode.Name, h.oc.GetNetworkName()) {
 					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
 						newNode.Name, h.oc.GetNetworkName())
 					h.oc.syncZoneICFailed.Store(newNode.Name, true)
@@ -1439,7 +1423,6 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	}
 	foundNodeNames := sets.New[string]()
 	activeNodes := make([]*corev1.Node, 0, len(nodes))
-	nads := oc.GetNADs()
 	dynamicUDN := config.OVNKubernetesFeature.EnableDynamicUDNAllocation
 	for _, obj := range nodes {
 		node, ok := obj.(*corev1.Node)
@@ -1452,7 +1435,7 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 			continue
 		}
 		// Clean up remote nodes that went inactive
-		if dynamicUDN && !oc.nodeHasActiveNAD(node.Name, nads) {
+		if dynamicUDN && !oc.nodeHasActiveNetwork(node.Name) {
 			if err := oc.deleteNodeEvent(node); err != nil {
 				return err
 			}
@@ -1503,13 +1486,8 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	return nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) nodeHasActiveNAD(nodeName string, nads []string) bool {
-	for _, nad := range nads {
-		if oc.networkManager.NodeHasNAD(nodeName, nad) {
-			return true
-		}
-	}
-	return false
+func (oc *Layer2UserDefinedNetworkController) nodeHasActiveNetwork(nodeName string) bool {
+	return oc.networkManager.NodeHasNetwork(nodeName, oc.GetNetworkName())
 }
 
 // setRemoteNodesNoTransitRouter finds remote nodes that do not use transit router.

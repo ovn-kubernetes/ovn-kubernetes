@@ -122,7 +122,11 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 						klog.Errorf("Failed to get primary network NAD for namespace %s: %v", pod.Namespace, err)
 						return
 					}
-					if !bnnc.HasNAD(foundNamespaceNAD) {
+					if foundNamespaceNAD == types.DefaultNetworkName {
+						return
+					}
+					networkName := bnnc.networkManager.GetNetworkNameForNADKey(foundNamespaceNAD)
+					if networkName != "" && networkName != netName {
 						return
 					}
 					activeNetwork, err = bnnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
@@ -132,7 +136,12 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 					}
 				}
 
-				on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bnnc.GetNetInfo(), activeNetwork)
+				on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetworkAndResolver(
+					pod,
+					bnnc.GetNetInfo(),
+					activeNetwork,
+					bnnc.networkManager.GetNetworkNameForNADKey,
+				)
 				if err != nil || !on {
 					if err != nil {
 						// configuration error, no need to retry, do not return error

@@ -124,7 +124,12 @@ func (a *PodAllocator) getActiveNetworkForPod(pod *corev1.Pod) (util.NetInfo, er
 
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (a *PodAllocator) GetNetworkRole(pod *corev1.Pod) (string, error) {
-	role, err := util.GetNetworkRole(a.netInfo, a.networkManager.GetPrimaryNADForNamespace, pod)
+	role, err := util.GetNetworkRole(
+		a.netInfo,
+		a.networkManager.GetPrimaryNADForNamespace,
+		a.networkManager.GetNetworkNameForNADKey,
+		pod,
+	)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			a.recordPodErrorEvent(pod, err)
@@ -212,7 +217,12 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		}
 	}
 
-	onNetwork, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, a.netInfo, activeNetwork)
+	onNetwork, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetworkAndResolver(
+		pod,
+		a.netInfo,
+		activeNetwork,
+		a.networkManager.GetNetworkNameForNADKey,
+	)
 	if err != nil {
 		a.recordPodErrorEvent(pod, err)
 		return fmt.Errorf("failed to get NAD to network mapping: %w", err)

@@ -123,9 +123,9 @@ type networkController struct {
 	// This is used by Dynamic UDN to avoid calling the network controller's HandleNetworkRefChange for nodes that have
 	// not changed state.
 	networkRefStates map[string]map[string]bool
-	// nodeHasNAD is a function used to query if a node has a resource (pod or egress IP) that would inform the
-	// network controller to either add or remove the remote resources for that network
-	nodeHasNAD func(node, nad string) bool
+	// nodeHasNetwork is a function used to query if a node has a resource (pod or egress IP) that would inform the
+	// network controller to either add or remove the remote resources for that network.
+	nodeHasNetwork func(node, networkName string) bool
 }
 
 // Start will cleanup stale networks that have not been ensured via
@@ -316,11 +316,7 @@ func (c *networkController) shouldHandleNetworkRefChange(networkName, node strin
 
 func (c *networkController) reconcilePendingNetworkRefChanges(networkName string) {
 	ctrl, ok := c.getControllerForNotify(networkName)
-	if !ok || c.nodeHasNAD == nil {
-		return
-	}
-	nadNames := ctrl.GetNADs()
-	if len(nadNames) == 0 {
+	if !ok || c.nodeHasNetwork == nil {
 		return
 	}
 	nodes := c.popPendingNetworkRefNodes(networkName)
@@ -328,13 +324,7 @@ func (c *networkController) reconcilePendingNetworkRefChanges(networkName string
 		return
 	}
 	for _, node := range nodes {
-		active := false
-		for _, nadName := range nadNames {
-			if c.nodeHasNAD(node, nadName) {
-				active = true
-				break
-			}
-		}
+		active := c.nodeHasNetwork(node, networkName)
 		if !c.shouldHandleNetworkRefChange(networkName, node, active) {
 			continue
 		}

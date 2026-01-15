@@ -264,16 +264,16 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	tests := []struct {
-		name       string
-		nodeHasNAD bool
+		name           string
+		nodeHasNetwork bool
 	}{
 		{
-			name:       "active",
-			nodeHasNAD: true,
+			name:           "active",
+			nodeHasNetwork: true,
 		},
 		{
-			name:       "inactive",
-			nodeHasNAD: false,
+			name:           "inactive",
+			nodeHasNetwork: false,
 		},
 	}
 
@@ -287,7 +287,7 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 				},
 			}
 			nm := newNetworkController("", "", "", tcm, nil)
-			nm.nodeHasNAD = func(_, _ string) bool { return tt.nodeHasNAD }
+			nm.nodeHasNetwork = func(_, _ string) bool { return tt.nodeHasNetwork }
 
 			networkName := netInfo.GetNetworkName()
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
@@ -316,7 +316,7 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 
 			g.Expect(callCount).To(gomega.Equal(1))
 			g.Expect(gotNode).To(gomega.Equal("node1"))
-			g.Expect(gotActive).To(gomega.Equal(tt.nodeHasNAD))
+			g.Expect(gotActive).To(gomega.Equal(tt.nodeHasNetwork))
 
 			nm.NotifyNetworkRefChange(networkName, "node1")
 			err = nm.syncNetwork(networkName)
@@ -355,7 +355,7 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 		},
 	}
 	nm := newNetworkController("", "", "", tcm, nil)
-	nm.nodeHasNAD = func(_, _ string) bool { return true }
+	nm.nodeHasNetwork = func(_, _ string) bool { return true }
 
 	networkName := netInfo.GetNetworkName()
 	mutableNetInfo := util.NewMutableNetInfo(netInfo)

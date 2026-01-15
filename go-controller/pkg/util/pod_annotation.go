@@ -394,25 +394,25 @@ func DefaultNetworkPodIPs(pod *corev1.Pod) ([]net.IP, error) {
 
 func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo) ([]net.IP, error) {
 	ips := []net.IP{}
-	podNadKeys, err := PodNadKeys(pod, networkInfo)
+	podNADKeys, err := PodNADKeys(pod, networkInfo, nil)
 	if err != nil {
 		return nil, err
 	}
-	for _, nadKey := range podNadKeys {
+	for _, nadKey := range podNADKeys {
 		ips = append(ips, getAnnotatedPodIPs(pod, nadKey)...)
 	}
 	return ips, nil
 }
 
-// PodNadKeys returns pod's NAD keys associated with given network specified by netconf.
+// PodNADKeys returns pod's NAD keys associated with given network specified by netconf.
 // If netinfo belongs to user defined primary network, then retrieve NAD names from
 // netinfo.GetNADs() which is serving pod's namespace.
 // For all other cases, retrieve NAD names for the pod based on NetworkSelectionElement.
-func PodNadKeys(pod *corev1.Pod, netinfo NetInfo) ([]string, error) {
+func PodNADKeys(pod *corev1.Pod, netinfo NetInfo, getNetworkNameForNADKey func(nadKey string) string) ([]string, error) {
 	if netinfo.IsPrimaryNetwork() {
 		return GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(pod.Namespace, netinfo)
 	}
-	on, networkMap, err := GetPodNADToNetworkMapping(pod, netinfo)
+	on, networkMap, err := GetSecondaryPodNADToNetworkMappingWithResolver(pod, netinfo, getNetworkNameForNADKey)
 	// skip pods that are not on this network
 	if err != nil {
 		return nil, err

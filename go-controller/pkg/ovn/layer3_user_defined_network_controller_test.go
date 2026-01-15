@@ -19,6 +19,7 @@ import (
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -540,7 +541,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Create(context.TODO(), &remotePod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {
-				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netInfo.netName)
 			}).WithTimeout(3 * time.Second).Should(BeTrue())
 			By("Triggering networkRefChange callback after updating remote node as active on NAD")
 			l3Controller.HandleNetworkRefChange(remoteNode.Name, true)
@@ -561,7 +562,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Delete(context.TODO(), remotePod.Name, metav1.DeleteOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {
-				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netInfo.netName)
 			}).WithTimeout(3 * time.Second).Should(BeFalse())
 			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
 			l3Controller.HandleNetworkRefChange(remoteNode.Name, false)
@@ -651,6 +652,132 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					)
 			}).WithTimeout(3 * time.Second).Should(BeTrue())
 		})
+
+		It("activates a remote node when a CUDN NAD becomes active in another namespace", func() {
+			Expect(config.PrepareTestConfig()).To(Succeed())
+			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+			config.OVNKubernetesFeature.EnableInterconnect = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.Default.Zone = testICZone
+			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
+
+			const (
+				cudnName   = "cudn-shared"
+				nsA        = "namespace-a"
+				nsB        = "namespace-b"
+				nadAName   = "cudn-nad-a"
+				nadBName   = "cudn-nad-b"
+				remoteName = "remoteNode"
+			)
+
+			netName := util.GenerateCUDNNetworkName(cudnName)
+			netInfoA := userDefinedNetInfo{
+				netName:        netName,
+				nadName:        namespacedName(nsA, nadAName),
+				topology:       types.Layer3Topology,
+				clustersubnets: "192.168.0.0/16",
+				hostsubnets:    "192.168.1.0/24",
+				isPrimary:      true,
+			}
+			netInfoB := userDefinedNetInfo{
+				netName:        netName,
+				nadName:        namespacedName(nsB, nadBName),
+				topology:       types.Layer3Topology,
+				clustersubnets: "192.168.0.0/16",
+				hostsubnets:    "192.168.2.0/24",
+				isPrimary:      true,
+			}
+
+			nsObjA := newUDNNamespace(nsA)
+			nsObjB := newUDNNamespace(nsB)
+			nadA, err := newNetworkAttachmentDefinition(nsA, nadAName, *netInfoA.netconf())
+			Expect(err).NotTo(HaveOccurred())
+			nadA.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef(cudnName)}
+			nadB, err := newNetworkAttachmentDefinition(nsB, nadBName, *netInfoB.netconf())
+			Expect(err).NotTo(HaveOccurred())
+			nadB.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef(cudnName)}
+
+			localNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfoA)
+			Expect(err).NotTo(HaveOccurred())
+			localNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.3/16"}`
+
+			remoteNode, err := newNodeWithUserDefinedNetworks(remoteName, "192.168.127.202/24", netInfoB)
+			Expect(err).NotTo(HaveOccurred())
+			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone"
+			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
+
+			localPod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "local-pod",
+					Namespace: nsA,
+				},
+				Spec: corev1.PodSpec{
+					NodeName:   localNode.Name,
+					Containers: []corev1.Container{{Name: "c", Image: "scratch"}},
+				},
+			}
+
+			remotePod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "remote-pod",
+					Namespace: nsB,
+				},
+				Spec: corev1.PodSpec{
+					NodeName:   remoteNode.Name,
+					Containers: []corev1.Container{{Name: "c", Image: "scratch"}},
+				},
+			}
+
+			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{}, &corev1.NamespaceList{Items: []corev1.Namespace{*nsObjA, *nsObjB}},
+				&corev1.NodeList{Items: []corev1.Node{*localNode, *remoteNode}},
+				&corev1.PodList{Items: []corev1.Pod{localPod}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nadA, *nadB}},
+			)
+
+			Expect(fakeOvn.networkManager.Start()).To(Succeed())
+			defer fakeOvn.networkManager.Stop()
+
+			userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[netName]
+			Expect(ok).To(BeTrue())
+			userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+			l3Controller, ok := fakeOvn.fullL3UDNControllers[netName]
+			Expect(ok).To(BeTrue())
+
+			mutableNetInfo := util.NewMutableNetInfo(l3Controller.GetNetInfo())
+			mutableNetInfo.SetNetworkID(2)
+			err = util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(l3Controller.init()).To(Succeed())
+			Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+
+			By("Remote node should not have a port on transit subnet before activation")
+			Consistently(func() bool {
+				p := func(item *nbdb.LogicalSwitchPort) bool {
+					return item.ExternalIDs["node"] == remoteNode.Name
+				}
+				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
+				return err == nil && len(portList) > 0
+			}).WithTimeout(500 * time.Millisecond).Should(BeFalse())
+
+			By("Creating a pod on the remote node in another namespace should activate it")
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(nsB).Create(context.TODO(), &remotePod, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() bool {
+				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netName)
+			}).WithTimeout(3 * time.Second).Should(BeTrue())
+			By("Triggering networkRefChange callback after updating remote node as active on NAD")
+			l3Controller.HandleNetworkRefChange(remoteNode.Name, true)
+
+			By("Remote node should have a port created on transit subnet")
+			Eventually(func() bool {
+				p := func(item *nbdb.LogicalSwitchPort) bool {
+					return item.ExternalIDs["node"] == remoteNode.Name
+				}
+				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
+				return err == nil && len(portList) > 0
+			}).Should(BeTrue())
+		})
 	})
 
 })
@@ -703,6 +830,16 @@ func newPodWithPrimaryUDN(
 }
 
 func namespacedName(ns, name string) string { return fmt.Sprintf("%s/%s", ns, name) }
+
+func makeCUDNOwnerRef(name string) metav1.OwnerReference {
+	controller := true
+	return metav1.OwnerReference{
+		APIVersion: userdefinednetworkv1.SchemeGroupVersion.String(),
+		Kind:       "ClusterUserDefinedNetwork",
+		Name:       name,
+		Controller: &controller,
+	}
+}
 
 func (sni *userDefinedNetInfo) getNetworkRole() string {
 	return util.GetUserDefinedNetworkRole(sni.isPrimary)

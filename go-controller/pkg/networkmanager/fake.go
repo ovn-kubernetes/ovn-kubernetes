@@ -163,6 +163,19 @@ func (fnm *FakeNetworkManager) GetNetInfoForNADKey(nadKey string) util.NetInfo {
 	return nil
 }
 
+func (fnm *FakeNetworkManager) GetNetworkNameForNADKey(nadKey string) string {
+	fnm.Lock()
+	defer fnm.Unlock()
+	for _, ni := range fnm.PrimaryNetworks {
+		for _, n := range ni.GetNADs() {
+			if n == nadKey {
+				return ni.GetNetworkName()
+			}
+		}
+	}
+	return ""
+}
+
 func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
 	namespaces := make([]string, 0)
 	for namespaceName, primaryNAD := range fnm.PrimaryNetworks {
@@ -185,6 +198,6 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 	return errors.Join(errs...)
 }
 
-func (fnm *FakeNetworkManager) NodeHasNAD(_, _ string) bool {
+func (fnm *FakeNetworkManager) NodeHasNetwork(_, _ string) bool {
 	return !config.OVNKubernetesFeature.EnableDynamicUDNAllocation
 }

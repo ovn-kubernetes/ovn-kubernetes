@@ -410,7 +410,11 @@ func (oc *EFController) sync(key string) (updateErr error) {
 			return err
 		}
 	} else {
+		skipStatusUpdate := false
 		defer func() {
+			if skipStatusUpdate {
+				return
+			}
 			if statusErr := oc.setEgressFirewallStatus(ef, updateErr); statusErr != nil {
 				updateErr = utilerrors.Join(updateErr, fmt.Errorf("failed to update egress firewall status %s, error: %w",
 					GetEgressFirewallNamespacedName(ef), statusErr))
@@ -419,6 +423,11 @@ func (oc *EFController) sync(key string) (updateErr error) {
 
 		activeNetwork, netErr := oc.networkManager.GetActiveNetworkForNamespace(namespace)
 		if netErr != nil {
+			if util.IsUnprocessedActiveNetworkError(netErr) {
+				klog.V(5).Infof("Skipping egress firewall %s/%s: primary network not ready: %v", namespace, efName, netErr)
+				skipStatusUpdate = true
+				return nil
+			}
 			if util.IsInvalidPrimaryNetworkError(netErr) {
 				// Namespace requires P-UDN, but it does not exist. Remove EF config and surface error in status.
 				updateErr = netErr

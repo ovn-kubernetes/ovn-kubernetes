@@ -950,8 +950,8 @@ func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) []string {
 	if !bnc.IsUserDefinedNetwork() {
 		return []string{types.DefaultNetworkName}
 	}
-	podNadKeys, _ := util.PodNadKeys(pod, bnc.GetNetInfo())
-	return podNadKeys
+	podNADKeys, _ := util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
+	return podNADKeys
 }
 
 func (bnc *BaseNetworkController) getClusterPortGroupDbIDs(base string) *libovsdbops.DbObjectIDs {
@@ -1008,7 +1008,12 @@ func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
 
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error) {
-	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetPrimaryNADForNamespace, pod)
+	role, err := util.GetNetworkRole(
+		bnc.GetNetInfo(),
+		bnc.networkManager.GetPrimaryNADForNamespace,
+		bnc.networkManager.GetNetworkNameForNADKey,
+		pod,
+	)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			bnc.recordPodErrorEvent(pod, err)

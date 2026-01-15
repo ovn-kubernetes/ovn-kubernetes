@@ -63,6 +63,8 @@ type nadController struct {
 
 	// nads to network mapping
 	nads map[string]string
+	// nadsByNetwork tracks NAD keys grouped by network name.
+	nadsByNetwork map[string]sets.Set[string]
 
 	// primaryNADs holds a mapping of namespace to NAD of primary UDNs
 	primaryNADs map[string]string
@@ -111,6 +113,7 @@ func newController(
 		networkController: newNetworkController(name, zone, node, cm, wf),
 		reconcilers:       map[uint64]reconcilerRegistration{},
 		nads:              map[string]string{},
+		nadsByNetwork:     map[string]sets.Set[string]{},
 		primaryNADs:       map[string]string{},
 		markedForRemoval:  map[string]time.Time{},
 	}
@@ -133,7 +136,7 @@ func newController(
 		c.filterNADsOnNode = filterNADsOnNode
 	}
 
-	c.networkController.nodeHasNAD = c.NodeHasNAD
+	c.networkController.nodeHasNetwork = c.NodeHasNetwork
 
 	if ovnClient != nil {
 		c.nadClient = ovnClient.NetworkAttchDefClient
@@ -178,7 +181,7 @@ func newController(
 	return c, nil
 }
 
-func (c *nadController) NodeHasNAD(node, nad string) bool {
+func (c *nadController) nodeHasNAD(node, nad string) bool {
 	if !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		return true
 	}
@@ -191,6 +194,62 @@ func (c *nadController) NodeHasNAD(node, nad string) bool {
 	return false
 }
 
+func (c *nadController) NodeHasNetwork(node, networkName string) bool {
+	if !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		return true
+	}
+	if networkName == "" {
+		return false
+	}
+	if networkName == types.DefaultNetworkName {
+		return true
+	}
+	c.RLock()
+	nadSet := c.nadsByNetwork[networkName]
+	var nads []string
+	if len(nadSet) != 0 {
+		nads = nadSet.UnsortedList()
+	}
+	c.RUnlock()
+	for _, nad := range nads {
+		if c.nodeHasNAD(node, nad) {
+			return true
+		}
+	}
+	return false
+}
+
+// addNADToNetworkLocked must be called with nadController locked
+func (c *nadController) addNADToNetworkLocked(networkName, nadKey string) {
+	if networkName == "" {
+		return
+	}
+	if c.nadsByNetwork == nil {
+		c.nadsByNetwork = map[string]sets.Set[string]{}
+	}
+	nadSet := c.nadsByNetwork[networkName]
+	if nadSet == nil {
+		nadSet = sets.New[string]()
+		c.nadsByNetwork[networkName] = nadSet
+	}
+	nadSet.Insert(nadKey)
+}
+
+// deleteNADFromNetworkLocked must be called with nadController locked
+func (c *nadController) deleteNADFromNetworkLocked(networkName, nadKey string) {
+	if networkName == "" {
+		return
+	}
+	nadSet := c.nadsByNetwork[networkName]
+	if nadSet == nil {
+		return
+	}
+	nadSet.Delete(nadKey)
+	if len(nadSet) == 0 {
+		delete(c.nadsByNetwork, networkName)
+	}
+}
+
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated.
 // Used as a callback for pod/egress IP events when dynamic UDN allocation is enabled.
@@ -200,7 +259,7 @@ func (c *nadController) NodeHasNAD(node, nad string) bool {
 //  1. Queuing local node event NADs to the NAD Controller for reconciliation later in the NAD Controller worker.
 //  2. Queuing remote node event networks to the Network Manager for reconciliation later in the Network Manager worker.
 //
-// This function should never call into the trackers (i.e. NodeHasNAD) as it would cause deadlock.
+// This function should never call into the trackers (i.e. nodeHasNAD) as it would cause deadlock.
 func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
 	klog.V(4).Infof("Network change for zone controller triggered by pod/egress IP events "+
 		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
@@ -270,7 +329,7 @@ func (c *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool,
 	}
 
 	// we don't support multiple nodes per zone, assume zone name is node name
-	if c.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
+	if c.nodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
 		return false, nil
 	}
 
@@ -547,6 +606,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	if err != nil {
 		return fmt.Errorf("%s: failed splitting key %s: %v", c.name, key, err)
 	}
+	previousNetworkName := c.nads[key]
 
 	deleteTime, setforDeletion := c.markedForRemoval[key]
 	if setforDeletion && time.Now().After(deleteTime) {
@@ -692,8 +752,11 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 			if c.primaryNADs[namespace] == key {
 				delete(c.primaryNADs, namespace)
 			}
-			networkName := c.nads[key]
+			networkName := previousNetworkName
 			delete(c.nads, key)
+			if networkName != "" {
+				c.deleteNADFromNetworkLocked(networkName, key)
+			}
 			if networkName != "" && networkName != types.DefaultNetworkName {
 				stillReferenced := false
 				for _, existing := range c.nads {
@@ -730,7 +793,12 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 
 	// ensure the network is associated with the NAD
 	ensureNetwork.AddNADs(key)
-	c.nads[key] = ensureNetwork.GetNetworkName()
+	networkName := ensureNetwork.GetNetworkName()
+	if previousNetworkName != "" && previousNetworkName != networkName {
+		c.deleteNADFromNetworkLocked(previousNetworkName, key)
+	}
+	c.nads[key] = networkName
+	c.addNADToNetworkLocked(networkName, key)
 	// track primary NAD
 	switch {
 	case ensureNetwork.IsPrimaryNetwork():
@@ -956,6 +1024,12 @@ func (c *nadController) GetNetInfoForNADKey(nadKey string) util.NetInfo {
 	}
 	// Return a copy so callers can safely read fields without depending on controller locks.
 	return util.NewMutableNetInfo(network)
+}
+
+func (c *nadController) GetNetworkNameForNADKey(nadKey string) string {
+	c.RLock()
+	defer c.RUnlock()
+	return c.nads[nadKey]
 }
 
 func (c *nadController) GetActiveNetworkNamespaces(networkName string) ([]string, error) {

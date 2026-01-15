@@ -141,15 +141,7 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 			}
 		} else {
 			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-				nads := h.oc.GetNADs()
-				hasNad := false
-				for _, nadName := range nads {
-					if h.oc.networkManager.NodeHasNAD(node.Name, nadName) {
-						hasNad = true
-						break
-					}
-				}
-				if !hasNad {
+				if !h.oc.networkManager.NodeHasNetwork(node.Name, h.oc.GetNetworkName()) {
 					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
 						node.Name, h.oc.GetNetworkName())
 					// store sync IC failed for the node, so if on node update if the NAD is no longer filtered, we actually
@@ -230,15 +222,7 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
 			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-				nads := h.oc.GetNADs()
-				hasNad := false
-				for _, nadName := range nads {
-					if h.oc.networkManager.NodeHasNAD(newNode.Name, nadName) {
-						hasNad = true
-						break
-					}
-				}
-				if !hasNad {
+				if !h.oc.networkManager.NodeHasNetwork(newNode.Name, h.oc.GetNetworkName()) {
 					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
 						newNode.Name, h.oc.GetNetworkName())
 					h.oc.syncZoneICFailed.Store(newNode.Name, true)
@@ -1014,7 +998,6 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	foundNodes := sets.New[string]()
 	activeNodes := nodes
 	dynamicUDN := config.OVNKubernetesFeature.EnableDynamicUDNAllocation
-	nads := oc.GetNADs()
 	if dynamicUDN {
 		activeNodes = make([]interface{}, 0, len(nodes))
 	}
@@ -1037,7 +1020,7 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 			continue
 		}
 		if dynamicUDN {
-			if oc.nodeHasActiveNAD(node.Name, nads) {
+			if oc.nodeHasActiveNetwork(node.Name) {
 				foundNodes.Insert(node.Name)
 				activeNodes = append(activeNodes, node)
 			} else {
@@ -1073,13 +1056,8 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	return nil
 }
 
-func (oc *Layer3UserDefinedNetworkController) nodeHasActiveNAD(nodeName string, nads []string) bool {
-	for _, nad := range nads {
-		if oc.networkManager.NodeHasNAD(nodeName, nad) {
-			return true
-		}
-	}
-	return false
+func (oc *Layer3UserDefinedNetworkController) nodeHasActiveNetwork(nodeName string) bool {
+	return oc.networkManager.NodeHasNetwork(nodeName, oc.GetNetworkName())
 }
 
 func (oc *Layer3UserDefinedNetworkController) gatherJoinSwitchIPs() error {

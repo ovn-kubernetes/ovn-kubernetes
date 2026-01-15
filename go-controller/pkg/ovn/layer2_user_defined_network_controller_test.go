@@ -696,7 +696,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Create(context.TODO(), &remotePod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {
-				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netInfo.netName)
 			}).WithTimeout(3 * time.Second).Should(BeTrue())
 			By("Triggering networkRefChange callback after updating remote node as active on NAD")
 			l2Controller.HandleNetworkRefChange(remoteNode.Name, true)
@@ -717,7 +717,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Delete(context.TODO(), remotePod.Name, metav1.DeleteOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {
-				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netInfo.netName)
 			}).WithTimeout(3 * time.Second).Should(BeFalse())
 			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
 			l2Controller.HandleNetworkRefChange(remoteNode.Name, false)

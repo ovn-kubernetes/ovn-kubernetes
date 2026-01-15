@@ -245,7 +245,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		return nil
 	}
 
-	_, networkMap, err := util.GetPodNADToNetworkMapping(pod, oc.GetNetInfo())
+	_, networkMap, err := util.GetDefaultPodNADToNetworkMapping(pod)
 	if err != nil {
 		// multus won't add this Pod if this fails, should never happen
 		return fmt.Errorf("error getting default-network's network-attachment for pod %s/%s: %v", pod.Namespace, pod.Name, err)

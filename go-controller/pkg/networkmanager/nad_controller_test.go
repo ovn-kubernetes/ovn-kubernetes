@@ -1600,19 +1600,19 @@ func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetCon
 
 func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 	tests := []struct {
-		name             string
-		notifyActive     bool
-		nodeHasNADActive bool
+		name                 string
+		notifyActive         bool
+		nodeHasNetworkActive bool
 	}{
 		{
-			name:             "active notification with no refs",
-			notifyActive:     true,
-			nodeHasNADActive: false,
+			name:                 "active notification with no refs",
+			notifyActive:         true,
+			nodeHasNetworkActive: false,
 		},
 		{
-			name:             "inactive notification with refs",
-			notifyActive:     false,
-			nodeHasNADActive: true,
+			name:                 "inactive notification with refs",
+			notifyActive:         false,
+			nodeHasNetworkActive: true,
 		},
 	}
 
@@ -1674,7 +1674,7 @@ func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 			mutableNetInfo := util.NewMutableNetInfo(nadNetwork)
 			mutableNetInfo.SetNADs(util.GetNADName(nad.Namespace, nad.Name))
 			nc.networkController.setNetwork(networkName, mutableNetInfo)
-			nc.networkController.nodeHasNAD = func(_, _ string) bool { return tt.nodeHasNADActive }
+			nc.networkController.nodeHasNetwork = func(_, _ string) bool { return tt.nodeHasNetworkActive }
 			var gotNode string
 			var gotActive bool
 			var callCount int
@@ -1698,7 +1698,7 @@ func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 
 			g.Expect(callCount).To(gomega.Equal(1))
 			g.Expect(gotNode).To(gomega.Equal(nodeName))
-			g.Expect(gotActive).To(gomega.Equal(tt.nodeHasNADActive))
+			g.Expect(gotActive).To(gomega.Equal(tt.nodeHasNetworkActive))
 		})
 	}
 }
