@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +91,18 @@ func (c *openflowManager) setDefaultBridgeGARPDrop(isDropped bool) {
 func (c *openflowManager) updateFlowCacheEntry(key string, flows []string) {
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
+	c.groupMutex.Lock()
+	defer c.groupMutex.Unlock()
+
+	// Groups must always be created via addGroupCacheEntry before a flow referring to the group. The callers are
+	// responsible for this. To make sure that the cache is in a valid state, remove any flows that refer to invalid
+	// groups.
+	flows = c.filterFlowsByExistingGroups(key, flows)
 	c.flowCache[key] = flows
+
+	// Every time that we update the flow cache, we have to make sure that superfluous groups IDs are deleted.
+	groupsToKeep := c.extractReferencedGroups(key)
+	c.pruneUnreferencedGroups(key, groupsToKeep)
 }
 
 func (c *openflowManager) deleteFlowsByKey(key string) {
@@ -158,6 +170,103 @@ func (c *openflowManager) deleteGroupsByKey(key string) {
 	c.groupMutex.Lock()
 	defer c.groupMutex.Unlock()
 	delete(c.groupCache, key)
+}
+
+// filterFlowsByExistingGroups filters out flows that reference groups that don't exist in the group cache
+// under the service key.
+// It returns only the flows that either don't reference any groups or reference groups that exist in c.groupCache[key].
+// The groupMutex must be held by the caller.
+// Attention: this does not acquire a lock because it is a helper for updateFlowCacheEntry.
+func (c *openflowManager) filterFlowsByExistingGroups(key string, flows []string) []string {
+	// Regular expression to match group:<number> in flow strings
+	groupRegex := regexp.MustCompile(`group:(\d+)`)
+
+	var filteredFlows []string
+	for _, flow := range flows {
+		matches := groupRegex.FindAllStringSubmatch(flow, -1)
+		if len(matches) == 0 {
+			// Flow doesn't reference any groups, keep it
+			filteredFlows = append(filteredFlows, flow)
+			continue
+		}
+
+		// Check if all groups referenced in this flow exist.
+		allGroupsExist := true
+		for _, match := range matches {
+			if len(match) > 1 {
+				// Parse the group ID from the match
+				gid, err := strconv.ParseUint(match[1], 10, 32)
+				if err != nil {
+					// The gid wouldn't parse if it's too large. However, gid can never be larger than a uint32, so this
+					// error cannot occur.
+					allGroupsExist = false
+					break
+				}
+				// Check if this group exists in the group cache.
+				_, groupExists := c.groupCache[key][uint32(gid)]
+				if !groupExists {
+					allGroupsExist = false
+					break
+				}
+			}
+		}
+
+		if allGroupsExist {
+			filteredFlows = append(filteredFlows, flow)
+		}
+	}
+
+	return filteredFlows
+}
+
+// extractReferencedGroups extracts all group IDs referenced in the flows for a given key.
+// It scans the flows in c.flowCache[key] and returns a map of group IDs that are actually used.
+// The flowMutex must be held by the caller.
+// Attention: this does not acquire a lock because it is a helper for updateFlowCacheEntry.
+func (c *openflowManager) extractReferencedGroups(key string) map[uint32]bool {
+	groupsToKeep := make(map[uint32]bool)
+	flows := c.flowCache[key]
+
+	// Regular expression to match group:<number> in flow strings
+	groupRegex := regexp.MustCompile(`group:(\d+)`)
+
+	for _, flow := range flows {
+		matches := groupRegex.FindAllStringSubmatch(flow, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				// Parse the group ID from the match
+				gid, err := strconv.ParseUint(match[1], 10, 32)
+				if err != nil {
+					// The gid wouldn't parse if it's too large. However, gid can never be larger than a uint32, so this
+					// error cannot occur.
+					continue
+				}
+				groupsToKeep[uint32(gid)] = true
+			}
+		}
+	}
+
+	return groupsToKeep
+}
+
+// pruneUnreferencedGroups synchronizes the groups for a given key with the provided groupsToKeep list.
+// It deletes all groups in c.groupCache[key] that are not present in groupsToKeep.
+func (c *openflowManager) pruneUnreferencedGroups(key string, groupsToKeep map[uint32]bool) {
+	groups, exists := c.groupCache[key]
+	if !exists {
+		return
+	}
+
+	// Delete groups that are not in groupsToKeep
+	for groupID := range groups {
+		if !groupsToKeep[groupID] {
+			delete(c.groupCache[key], groupID)
+		}
+	}
+	// If there are no more groups in the groupCache, delete the entire key.
+	if len(c.groupCache[key]) == 0 {
+		delete(c.groupCache, key)
+	}
 }
 
 // getGroupsByKey retrieves all OVS groups associated with the given key from the group cache.
