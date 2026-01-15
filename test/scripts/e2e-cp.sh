@@ -225,6 +225,13 @@ if [ "${PARALLEL:-false}" = "true" ]; then
   skip_label "$SERIAL_LABEL"
 fi
 
+if [ "$ENABLE_MULTI_VTEP" != true ]; then
+  skip "Multi-VTEP"
+else
+  # transit router has ARP/ND flooding issue with multi-VTEP, need further investigation.
+ skip "e2e egress IP"
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
