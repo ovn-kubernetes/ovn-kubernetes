@@ -695,7 +695,26 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 			if c.primaryNADs[namespace] == key {
 				delete(c.primaryNADs, namespace)
 			}
+			networkName := c.nads[key]
 			delete(c.nads, key)
+			if networkName != "" && networkName != types.DefaultNetworkName {
+				stillReferenced := false
+				for _, existing := range c.nads {
+					if existing == networkName {
+						stillReferenced = true
+						break
+					}
+				}
+				// handleNetworkAnnotations will only release IDs if oldNetwork existed in network controller cache.
+				// The entry won't be present in the network controller cache if the network was filtered.
+				// Check the nads cache to see if the network exists, otherwise release its IDs.
+				if !stillReferenced {
+					c.networkIDAllocator.ReleaseID(networkName)
+					if c.isClusterManagerMode() {
+						c.tunnelKeysAllocator.ReleaseKeys(networkName)
+					}
+				}
+			}
 		}
 		return err
 	}
