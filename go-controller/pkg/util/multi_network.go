@@ -1127,7 +1127,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
-		transport:      netconf.Transport,
+		transport:      normalizeTransportValue(netconf.Transport),
 		evpn:           netconf.EVPN,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
@@ -1239,6 +1239,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		transport:           normalizeTransportValue(netconf.Transport),
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1246,6 +1247,17 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 	}
 	ni.ipv4mode, ni.ipv6mode = getIPMode(subnets)
 	return ni, nil
+}
+
+// normalizeTransportValue converts the transport value from CNI config representation
+// to the config constant representation. For example, "nooverlay" (all lowercase from CNI config)
+// becomes "no-overlay" (kebab-case matching types.NetworkTransportNoOverlay).
+func normalizeTransportValue(transport string) string {
+	// Convert "nooverlay" (from CNI config) to "no-overlay" (config constant)
+	if transport == "nooverlay" {
+		return types.NetworkTransportNoOverlay
+	}
+	return transport
 }
 
 // parseNetworkSubnets parses network subnets based on the topology, returns nil if subnets is an empty string

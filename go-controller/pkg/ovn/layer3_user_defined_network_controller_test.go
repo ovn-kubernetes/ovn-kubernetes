@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -20,10 +21,12 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -780,6 +783,333 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		})
 	})
 
+})
+
+var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
+	const (
+		node1Name  = "node1"
+		node2Name  = "node2"
+		udnName    = "test-udn"
+		udnNadName = "default/test-nad"
+		zone1      = "global"
+		zone2      = "remote"
+	)
+
+	var (
+		app       *cli.App
+		initialDB libovsdbtest.TestSetup
+	)
+
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableInterconnect = true
+
+		app = cli.NewApp()
+		app.Name = "test"
+		app.Flags = config.Flags
+
+		initialDB = libovsdbtest.TestSetup{
+			NBData: []libovsdbtest.TestData{},
+			SBData: []libovsdbtest.TestData{},
+		}
+	})
+
+	createUDNNetConf := func(transport string) *ovncnitypes.NetConf {
+		return &ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{
+				Name: udnName,
+				Type: "ovn-k8s-cni-overlay",
+			},
+			Topology:  types.Layer3Topology,
+			NADName:   udnNadName,
+			Subnets:   "192.168.0.0/16",
+			Role:      types.NetworkRolePrimary,
+			Transport: transport,
+		}
+	}
+
+	createTestNode := func(nodeName, zone string, nodeID string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets":                    `{"default":"10.128.1.0/24","` + udnName + `":"192.168.1.0/24"}`,
+					"k8s.ovn.org/zone-name":                       zone,
+					"k8s.ovn.org/node-id":                         nodeID,
+					"k8s.ovn.org/node-chassis-id":                 "test-chassis-" + nodeName,
+					"k8s.ovn.org/node-transit-switch-port-ifaddr": `{"ipv4":"100.88.0.1/16"}`,
+				},
+			},
+		}
+	}
+
+	Context("with no-overlay transport", func() {
+		It("should not create interconnect resources when addUpdateLocalNodeEvent is called", func() {
+			app.Action = func(_ *cli.Context) error {
+				netConf := createUDNNetConf(types.NetworkTransportNoOverlay)
+				netInfo, err := util.NewNetInfo(netConf)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(netInfo.Transport()).To(Equal(types.NetworkTransportNoOverlay))
+
+				node1 := createTestNode(node1Name, zone1, "1")
+				clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
+				transitSwitchName := netInfo.GetNetworkScopedName(types.TransitSwitch)
+
+				// Setup NBDB with cluster router
+				initialDB.NBData = []libovsdbtest.TestData{
+					&nbdb.LogicalRouter{
+						Name: clusterRouterName,
+						UUID: clusterRouterName + "-UUID",
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID:  udnName,
+							types.TopologyExternalID: types.Layer3Topology,
+						},
+					},
+					&nbdb.LogicalSwitch{
+						Name: netInfo.GetNetworkScopedName(node1Name),
+						UUID: netInfo.GetNetworkScopedName(node1Name) + "-UUID",
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID:     udnName,
+							types.NetworkRoleExternalID: types.NetworkRolePrimary,
+						},
+						OtherConfig: map[string]string{"subnet": "192.168.1.0/24"},
+					},
+				}
+
+				nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(initialDB)
+				Expect(err).NotTo(HaveOccurred())
+				defer libovsdbCleanup.Cleanup()
+
+				// Create the controller
+				watcher := &factory.WatchFactory{}
+				zoneICHandler := zoneic.NewZoneInterconnectHandler(netInfo, nbClient, sbClient, watcher)
+
+				cnci := &CommonNetworkControllerInfo{
+					nbClient:     nbClient,
+					sbClient:     sbClient,
+					watchFactory: watcher,
+				}
+
+				controller := &Layer3UserDefinedNetworkController{
+					BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
+						BaseNetworkController: BaseNetworkController{
+							CommonNetworkControllerInfo: *cnci,
+							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
+							zoneICHandler:               zoneICHandler,
+							localZoneNodes:              &sync.Map{},
+						},
+					},
+				}
+
+				// Call addUpdateLocalNodeEvent with syncZoneIC=true
+				nSyncs := &nodeSyncs{syncZoneIC: true}
+				_ = controller.addUpdateLocalNodeEvent(node1, nSyncs)
+				// Error is expected because we don't have full node setup, but the IC check runs first
+				// The important part is verifying no IC resources were created
+
+				// Verify no transit switch was created
+				ts := &nbdb.LogicalSwitch{Name: transitSwitchName}
+				_, err = libovsdbops.GetLogicalSwitch(nbClient, ts)
+				Expect(err).To(HaveOccurred(), "Transit switch should not exist for no-overlay transport")
+
+				// Verify no transit switch port was created
+				transitSwitchPortName := netInfo.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node1Name)
+				ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(nbClient, func(lsp *nbdb.LogicalSwitchPort) bool {
+					return lsp.Name == transitSwitchPortName
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ports).To(BeEmpty(), "No transit switch port should exist for no-overlay transport")
+
+				// Verify no router port was created
+				routerPortName := netInfo.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + node1Name)
+				rports, err := libovsdbops.FindLogicalRouterPortWithPredicate(nbClient, func(lrp *nbdb.LogicalRouterPort) bool {
+					return lrp.Name == routerPortName
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rports).To(BeEmpty(), "No router port should exist for no-overlay transport")
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should not create interconnect resources when addUpdateRemoteNodeEvent is called", func() {
+			app.Action = func(_ *cli.Context) error {
+				netConf := createUDNNetConf(types.NetworkTransportNoOverlay)
+				netInfo, err := util.NewNetInfo(netConf)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(netInfo.Transport()).To(Equal(types.NetworkTransportNoOverlay))
+
+				node2 := createTestNode(node2Name, zone2, "2")
+				clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
+				transitSwitchName := netInfo.GetNetworkScopedName(types.TransitSwitch)
+
+				// Setup NBDB with cluster router
+				initialDB.NBData = []libovsdbtest.TestData{
+					&nbdb.LogicalRouter{
+						Name: clusterRouterName,
+						UUID: clusterRouterName + "-UUID",
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID:  udnName,
+							types.TopologyExternalID: types.Layer3Topology,
+						},
+					},
+				}
+
+				nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(initialDB)
+				Expect(err).NotTo(HaveOccurred())
+				defer libovsdbCleanup.Cleanup()
+
+				// Create the controller
+				watcher := &factory.WatchFactory{}
+				zoneICHandler := zoneic.NewZoneInterconnectHandler(netInfo, nbClient, sbClient, watcher)
+
+				cnci := &CommonNetworkControllerInfo{
+					nbClient:     nbClient,
+					sbClient:     sbClient,
+					watchFactory: watcher,
+				}
+
+				controller := &Layer3UserDefinedNetworkController{
+					BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
+						BaseNetworkController: BaseNetworkController{
+							CommonNetworkControllerInfo: *cnci,
+							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
+							zoneICHandler:               zoneICHandler,
+							localZoneNodes:              &sync.Map{},
+						},
+					},
+				}
+
+				// Call addUpdateRemoteNodeEvent with syncZoneIc=true
+				err = controller.addUpdateRemoteNodeEvent(node2, true)
+				Expect(err).NotTo(HaveOccurred(), "addUpdateRemoteNodeEvent should succeed for no-overlay (skips IC operations)")
+
+				// Verify no transit switch was created
+				ts := &nbdb.LogicalSwitch{Name: transitSwitchName}
+				_, err = libovsdbops.GetLogicalSwitch(nbClient, ts)
+				Expect(err).To(HaveOccurred(), "Transit switch should not exist for no-overlay transport")
+
+				// Verify no remote ports were created
+				remotePortName := netInfo.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node2Name)
+				ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(nbClient, func(lsp *nbdb.LogicalSwitchPort) bool {
+					return lsp.Name == remotePortName
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ports).To(BeEmpty(), "No remote port should exist for no-overlay transport")
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("with overlay transport", func() {
+		It("should create interconnect resources when addUpdateLocalNodeEvent is called", func() {
+			app.Action = func(_ *cli.Context) error {
+				// Empty transport = overlay/geneve
+				netConf := createUDNNetConf("")
+				netInfo, err := util.NewNetInfo(netConf)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(netInfo.Transport()).NotTo(Equal(types.NetworkTransportNoOverlay))
+
+				node1 := createTestNode(node1Name, zone1, "1")
+				clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
+				transitSwitchName := netInfo.GetNetworkScopedName(types.TransitSwitch)
+
+				// Setup NBDB with cluster router and transit switch
+				initialDB.NBData = []libovsdbtest.TestData{
+					&nbdb.LogicalRouter{
+						Name: clusterRouterName,
+						UUID: clusterRouterName + "-UUID",
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID:  udnName,
+							types.TopologyExternalID: types.Layer3Topology,
+						},
+					},
+					&nbdb.LogicalSwitch{
+						Name: netInfo.GetNetworkScopedName(node1Name),
+						UUID: netInfo.GetNetworkScopedName(node1Name) + "-UUID",
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID:     udnName,
+							types.NetworkRoleExternalID: types.NetworkRolePrimary,
+						},
+						OtherConfig: map[string]string{"subnet": "192.168.1.0/24"},
+					},
+					// Pre-create transit switch for overlay
+					&nbdb.LogicalSwitch{
+						Name: transitSwitchName,
+						UUID: transitSwitchName + "-UUID",
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID: udnName,
+						},
+					},
+				}
+
+				nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(initialDB)
+				Expect(err).NotTo(HaveOccurred())
+				defer libovsdbCleanup.Cleanup()
+
+				// Create the controller
+				watcher := &factory.WatchFactory{}
+				zoneICHandler := zoneic.NewZoneInterconnectHandler(netInfo, nbClient, sbClient, watcher)
+
+				cnci := &CommonNetworkControllerInfo{
+					nbClient:     nbClient,
+					sbClient:     sbClient,
+					watchFactory: watcher,
+				}
+
+				controller := &Layer3UserDefinedNetworkController{
+					BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
+						BaseNetworkController: BaseNetworkController{
+							CommonNetworkControllerInfo: *cnci,
+							ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
+							zoneICHandler:               zoneICHandler,
+							localZoneNodes:              &sync.Map{},
+						},
+					},
+				}
+
+				// Call addUpdateLocalNodeEvent with syncZoneIC=true
+				nSyncs := &nodeSyncs{syncZoneIC: true}
+				_ = controller.addUpdateLocalNodeEvent(node1, nSyncs)
+				// Error may occur due to incomplete setup, but IC operations should have been attempted
+
+				// Verify transit switch still exists
+				ts := &nbdb.LogicalSwitch{Name: transitSwitchName}
+				_, err = libovsdbops.GetLogicalSwitch(nbClient, ts)
+				Expect(err).NotTo(HaveOccurred(), "Transit switch should exist for overlay transport")
+
+				// Verify transit switch port was created
+				transitSwitchPortName := netInfo.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node1Name)
+				ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(nbClient, func(lsp *nbdb.LogicalSwitchPort) bool {
+					return lsp.Name == transitSwitchPortName
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ports).To(HaveLen(1), "Transit switch port should be created for overlay transport")
+
+				// Verify router port was created
+				routerPortName := netInfo.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + node1Name)
+				rports, err := libovsdbops.FindLogicalRouterPortWithPredicate(nbClient, func(lrp *nbdb.LogicalRouterPort) bool {
+					return lrp.Name == routerPortName
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rports).To(HaveLen(1), "Router port should be created for overlay transport")
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 })
 
 func newPodWithPrimaryUDN(
