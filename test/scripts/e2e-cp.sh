@@ -225,6 +225,10 @@ if [ "${PARALLEL:-false}" = "true" ]; then
   skip_label "$SERIAL_LABEL"
 fi
 
+if [ "$ENABLE_MULTI_VTEP" != true ]; then
+  skip_label "Feature:MultiVTEP"
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock

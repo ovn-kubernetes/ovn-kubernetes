@@ -315,6 +315,8 @@ spec:
           value: {{ default "" .Values.global.enableEgressQos | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
+        - name: OVN_MULTI_VTEP_ENABLE
+          value: {{ hasKey .Values.global "enableMultiVTEP" | ternary .Values.global.enableMultiVTEP false | quote }}
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_NETWORK_CONNECT_ENABLE

@@ -61,6 +61,13 @@ const (
 	// IPAMClaim will hold the allocation for the workload.
 	// Deprecated: Use 'v1.multus-cni.io/default-network' annotation instead, specifying the 'ipam-claim-reference' attribute.
 	DeprecatedOvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
+
+	// OvnPodNetworkEncapIPMappingAnnotation is only use  for 2e testing purpose.
+	// Multi-VTEP is only supported with SR-IOV NICs, while e2e test
+	// is run in kind env which uses veth. For testing multi-VTEP in e2e test, this annotation is
+	// used to map network to a encap IP on the node.
+	// The format is: "{"red": "10.10.0.1", "blue": "10.10.0.2", ...}"
+	OvnPodNetworkEncapIPMappingAnnotation = "test.k8s.ovn.org/pod-network-encap-ip-mapping"
 )
 
 var ErrNoPodIPFound = errors.New("no pod IPs found")
@@ -103,6 +110,9 @@ type PodAnnotation struct {
 	//     is otherwise locked for all intents and purposes.
 	// At a given time a pod can have only 1 network with role:"primary"
 	Role string
+
+	// EncapIP is the IP address for encapsulation the traffic on this interface
+	EncapIP string
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -129,6 +139,7 @@ type podAnnotation struct {
 	GatewayIPv6LLA string `json:"ipv6_lla_gateway_ip,omitempty"`
 
 	TunnelID int    `json:"tunnel_id,omitempty"`
+	EncapIP  string `json:"encap_ip,omitempty"`
 	Role     string `json:"role,omitempty"`
 }
 
@@ -159,6 +170,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		Role:     podInfo.Role,
 	}
 
+	pa.EncapIP = podInfo.EncapIP
 	if len(podInfo.IPs) == 1 {
 		pa.IP = podInfo.IPs[0].String()
 		if len(podInfo.Gateways) == 1 {
@@ -303,6 +315,9 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 		podAnnotation.GatewayIPv6LLA = llaGW
 	}
 
+	if len(a.EncapIP) > 0 {
+		podAnnotation.EncapIP = a.EncapIP
+	}
 	return podAnnotation, nil
 }
 
@@ -488,6 +503,17 @@ func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionE
 	return networks, nil
 }
 
+func PodAnnotationChanged(oldPod, newPod *corev1.Pod) bool {
+	if oldPod == nil {
+		return false
+	}
+	// Only return true if annotation changed AND newPod still has the annotation.
+	// This prevents triggering re-add when annotation is removed (e.g., some test case
+	// remove annotation from pod to mimic pod deletion error case).
+	newAnnotation := newPod.Annotations[OvnPodAnnotationName]
+	return newAnnotation != "" && oldPod.Annotations[OvnPodAnnotationName] != newAnnotation
+}
+
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
 // on conflict
 func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {
@@ -549,4 +575,16 @@ func UnmarshalUDNOpenPortsAnnotation(annotations map[string]string) ([]*OpenPort
 // Ensure the IP is a valid IPv6 LLA
 func isIPv6LLA(ip net.IP) bool {
 	return utilnet.IsIPv6(ip) && ip.IsLinkLocalUnicast()
+}
+
+func UnmarshalPodNetworkEncapIPMappingAnnotation(annotations map[string]string) (map[string]string, error) {
+	encapIPs, ok := annotations[OvnPodNetworkEncapIPMappingAnnotation]
+	if !ok {
+		return nil, nil
+	}
+	result := make(map[string]string)
+	if err := yaml.Unmarshal([]byte(encapIPs), &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal OvnPodNetworkEncapIPMappingAnnotation %s: %v", encapIPs, err)
+	}
+	return result, nil
 }
