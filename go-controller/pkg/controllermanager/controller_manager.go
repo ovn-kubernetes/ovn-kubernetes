@@ -81,9 +81,11 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
+		return ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
+			cm.eIPController, cm.portCache)
 	case ovntypes.Layer2Topology:
-		return ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController)
+		return ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
+			cm.portCache, cm.eIPController)
 	case ovntypes.LocalnetTopology:
 		return ovn.NewLocalnetUserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface()), nil
 	}
@@ -494,6 +496,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to initialize advertised network isolation: %w", err)
 		}
 	}
+
 	if cm.networkManager != nil {
 		if err = cm.networkManager.Start(); err != nil {
 			return fmt.Errorf("failed to start NAD Controller :%v", err)

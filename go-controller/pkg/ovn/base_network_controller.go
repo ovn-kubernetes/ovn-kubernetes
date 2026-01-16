@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -219,7 +220,6 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
-
 	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
 
 	return nil
@@ -246,11 +246,13 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
 			continue
 		}
+		klog.V(5).Infof("Requesting to add node %s to network %s", nodeName, oc.GetNetworkName())
 		err = oc.retryNodes.AddRetryObjWithAddNoBackoff(node)
 		if err != nil {
 			klog.Errorf("Failed to retry node %s for network %s: %v", nodeName, oc.GetNetworkName(), err)
 		}
 	}
+
 	if len(reconcileNodes) > 0 {
 		oc.retryNodes.RequestRetryObjs()
 	}
@@ -948,8 +950,8 @@ func (bnc *BaseNetworkController) getPodNADKeys(pod *corev1.Pod) []string {
 	if !bnc.IsUserDefinedNetwork() {
 		return []string{types.DefaultNetworkName}
 	}
-	podNadKeys, _ := util.PodNadKeys(pod, bnc.GetNetInfo())
-	return podNadKeys
+	podNADKeys, _ := util.PodNADKeys(pod, bnc.GetNetInfo(), bnc.networkManager.GetNetworkNameForNADKey)
+	return podNADKeys
 }
 
 func (bnc *BaseNetworkController) getClusterPortGroupDbIDs(base string) *libovsdbops.DbObjectIDs {
@@ -1006,7 +1008,12 @@ func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
 
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error) {
-	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetActiveNetworkForNamespace, pod)
+	role, err := util.GetNetworkRole(
+		bnc.GetNetInfo(),
+		bnc.networkManager.GetPrimaryNADForNamespace,
+		bnc.networkManager.GetNetworkNameForNADKey,
+		pod,
+	)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			bnc.recordPodErrorEvent(pod, err)
@@ -1019,6 +1026,39 @@ func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error
 
 func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
 	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer2Topology
+}
+
+// HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.
+func (bnc *BaseNetworkController) HandleNetworkRefChange(nodeName string, active bool) {
+	if bnc.retryNodes == nil || bnc.watchFactory == nil {
+		return
+	}
+	var node *corev1.Node
+	var err error
+	if active {
+		node, err = bnc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			klog.V(4).Infof("%s: skipping network ref change for node %s: %v", bnc.controllerName, nodeName, err)
+			return
+		}
+	} else {
+		// Prefer the cached node for deletes; if it is gone, fall back to a stub with just the name.
+		node, err = bnc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			node = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+		}
+	}
+	if active {
+		if err := bnc.retryNodes.AddRetryObjWithAddNoBackoff(node); err != nil {
+			klog.V(4).Infof("%s: failed to enqueue add for node %s: %v", bnc.controllerName, nodeName, err)
+		}
+	} else {
+		if err := bnc.retryNodes.AddRetryObjWithDeleteNoBackoff(node); err != nil {
+			klog.V(4).Infof("%s: failed to enqueue delete for node %s: %v", bnc.controllerName, nodeName, err)
+		}
+	}
+	// Nudge the queue so newly enqueued work is processed promptly.
+	bnc.retryNodes.RequestRetryObjs()
 }
 
 func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev1.Node) bool {

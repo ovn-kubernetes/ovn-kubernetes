@@ -1004,7 +1004,7 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 				},
 			}
 
-			isAttachmentRequested, networkMap, err := GetPodNADToNetworkMapping(pod, netInfo)
+			isAttachmentRequested, networkMap, err := getPodNADToNetworkMapping(pod, netInfo)
 			if test.expectedError != nil {
 				g.Expect(err).To(gomega.HaveOccurred())
 				g.Expect(err).To(gomega.MatchError(test.expectedError))

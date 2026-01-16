@@ -260,13 +260,30 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 
 	var activeNetwork util.NetInfo
 	if bsnc.IsPrimaryNetwork() {
+		// check to see if the primary NAD is even applicable to our controller
+		foundNamespaceNAD, err := bsnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
+		if err != nil {
+			return fmt.Errorf("failed to get primary network namespace NAD: %w", err)
+		}
+		if foundNamespaceNAD == types.DefaultNetworkName {
+			return nil
+		}
+		networkName := bsnc.networkManager.GetNetworkNameForNADKey(foundNamespaceNAD)
+		if networkName != "" && networkName != bsnc.GetNetworkName() {
+			return nil
+		}
 		activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 		if err != nil {
 			return fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
 		}
 	}
 
-	on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.GetNetInfo(), activeNetwork)
+	on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetworkAndResolver(
+		pod,
+		bsnc.GetNetInfo(),
+		activeNetwork,
+		bsnc.networkManager.GetNetworkNameForNADKey,
+	)
 	if err != nil {
 		bsnc.recordPodErrorEvent(pod, err)
 		// configuration error, no need to retry, do not return error
@@ -550,7 +567,12 @@ func (bsnc *BaseUserDefinedNetworkController) hasIPAMClaim(pod *corev1.Pod, nadK
 		}
 	} else {
 		// secondary network the IPAM claim reference is on the network selection element
-		on, networkMap, err := util.GetPodNADToNetworkMapping(pod, bsnc)
+		on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetworkAndResolver(
+			pod,
+			bsnc.GetNetInfo(),
+			nil,
+			bsnc.networkManager.GetNetworkNameForNADKey,
+		)
 		if err != nil {
 			return false, fmt.Errorf("failed to get network mapping for pod %s/%s on network %s: %v",
 				pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
@@ -601,6 +623,18 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		var activeNetwork util.NetInfo
 		var err error
 		if bsnc.IsPrimaryNetwork() {
+			// check to see if the primary NAD is even applicable to our controller
+			foundNamespaceNAD, err := bsnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
+			if err != nil {
+				return fmt.Errorf("failed to get primary network namespace NAD: %w", err)
+			}
+			if foundNamespaceNAD == types.DefaultNetworkName {
+				continue
+			}
+			networkName := bsnc.networkManager.GetNetworkNameForNADKey(foundNamespaceNAD)
+			if networkName != "" && networkName != bsnc.GetNetworkName() {
+				continue
+			}
 			activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 			if err != nil {
 				if apierrors.IsNotFound(err) {
@@ -614,7 +648,12 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 			}
 		}
 
-		on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.GetNetInfo(), activeNetwork)
+		on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetworkAndResolver(
+			pod,
+			bsnc.GetNetInfo(),
+			activeNetwork,
+			bsnc.networkManager.GetNetworkNameForNADKey,
+		)
 		if err != nil || !on {
 			if err != nil {
 				bsnc.recordPodErrorEvent(pod, err)

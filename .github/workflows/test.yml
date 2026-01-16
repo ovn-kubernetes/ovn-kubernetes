@@ -483,7 +483,7 @@ jobs:
           - {"target": "control-plane", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
+          - {"target": "network-segmentation-dynamic", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
@@ -496,15 +496,15 @@ jobs:
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
-      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
-      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' }}"
+      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') }}"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
-      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || matrix.target == 'network-segmentation' || matrix.target == 'tools' || matrix.target == 'multi-homing-helm' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
-      ENABLE_NETWORK_SEGMENTATION: "${{ matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation' }}"
+      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'multi-homing-helm' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
@@ -520,13 +520,14 @@ jobs:
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
-      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation') }}"
-      ENABLE_NETWORK_CONNECT: "${{ matrix.target == 'network-segmentation' }}"
+      ENABLE_NETWORK_CONNECT: "${{ startsWith(matrix.target, 'network-segmentation') }}"
+      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation') }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
       # Override PARALLEL=true for Serial tests target to run Serial tests
       PARALLEL: "${{ matrix.target != 'serial' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
+      DYNAMIC_UDN_ALLOCATION: "${{ matrix.target == 'network-segmentation-dynamic' }}"
     steps:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v4
@@ -676,7 +677,7 @@ jobs:
           if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
             make -C test conformance
           fi
-        elif [ "${{ matrix.target }}" == "network-segmentation" ]; then
+        elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then

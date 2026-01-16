@@ -892,6 +892,9 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
+		if util.IsInvalidPrimaryNetworkError(err) {
+			return nil
+		}
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
 	}
 
@@ -974,6 +977,9 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
+			if util.IsInvalidPrimaryNetworkError(err) {
+				return utilerrors.Join(errors...)
+			}
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
 		}
 
@@ -1560,6 +1566,9 @@ func (npwipt *nodePortWatcherIptables) AddService(service *corev1.Service) error
 
 	netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
+		if util.IsInvalidPrimaryNetworkError(err) {
+			return nil
+		}
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
 	}
 
@@ -1588,6 +1597,9 @@ func (npwipt *nodePortWatcherIptables) UpdateService(old, new *corev1.Service) e
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
 		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
+			if util.IsInvalidPrimaryNetworkError(err) {
+				return utilerrors.Join(errors...)
+			}
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
 		}
 

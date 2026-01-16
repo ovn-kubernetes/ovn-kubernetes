@@ -104,7 +104,6 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 	return bnnc.watchFactory.AddPodHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			var activeNetwork util.NetInfo
-			var err error
 
 			pod := obj.(*corev1.Pod)
 			klog.V(5).Infof("Add for Pod: %s/%s for network %s", pod.Namespace, pod.Name, netName)
@@ -117,6 +116,19 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 			nadToDPUCDMap := map[string]*util.DPUConnectionDetails{}
 			if bnnc.IsUserDefinedNetwork() {
 				if bnnc.IsPrimaryNetwork() {
+					// check to see if the primary NAD is even applicable to our controller
+					foundNamespaceNAD, err := bnnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
+					if err != nil {
+						klog.Errorf("Failed to get primary network NAD for namespace %s: %v", pod.Namespace, err)
+						return
+					}
+					if foundNamespaceNAD == types.DefaultNetworkName {
+						return
+					}
+					networkName := bnnc.networkManager.GetNetworkNameForNADKey(foundNamespaceNAD)
+					if networkName != "" && networkName != netName {
+						return
+					}
 					activeNetwork, err = bnnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 					if err != nil {
 						klog.Errorf("Failed looking for the active network for namespace %s: %v", pod.Namespace, err)
@@ -124,7 +136,12 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 					}
 				}
 
-				on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bnnc.GetNetInfo(), activeNetwork)
+				on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetworkAndResolver(
+					pod,
+					bnnc.GetNetInfo(),
+					activeNetwork,
+					bnnc.networkManager.GetNetworkNameForNADKey,
+				)
 				if err != nil || !on {
 					if err != nil {
 						// configuration error, no need to retry, do not return error

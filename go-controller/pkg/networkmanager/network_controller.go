@@ -29,12 +29,14 @@ import (
 
 func newNetworkController(name, zone, node string, cm ControllerManager, wf watchFactory) *networkController {
 	nc := &networkController{
-		name:               fmt.Sprintf("[%s network controller]", name),
-		node:               node,
-		zone:               zone,
-		cm:                 cm,
-		networks:           map[string]util.MutableNetInfo{},
-		networkControllers: map[string]*networkControllerState{},
+		name:                   fmt.Sprintf("[%s network controller]", name),
+		node:                   node,
+		zone:                   zone,
+		cm:                     cm,
+		networks:               map[string]util.MutableNetInfo{},
+		networkControllers:     map[string]*networkControllerState{},
+		pendingNetworkRefNodes: map[string]sets.Set[string]{},
+		networkRefStates:       map[string]map[string]bool{},
 	}
 
 	// this controller does not feed from an informer, networks are manually
@@ -111,6 +113,19 @@ type networkController struct {
 	cm                 ControllerManager
 	networks           map[string]util.MutableNetInfo
 	networkControllers map[string]*networkControllerState
+
+	// networkRefLock is used to protect pendingNetworkRefNodes and networkRefStates access
+	networkRefLock sync.Mutex
+	// pendingNetworkRefNodes is used to temporarily hold network name -> nodes mapping for future reconciliation
+	// Dynamic UDN asks network controller to reconcile and stores nodes that have changed state in this map
+	pendingNetworkRefNodes map[string]sets.Set[string]
+	// networkRefStates is used to hold network name -> node (active/inactive) state as it is currently configured
+	// This is used by Dynamic UDN to avoid calling the network controller's HandleNetworkRefChange for nodes that have
+	// not changed state.
+	networkRefStates map[string]map[string]bool
+	// nodeHasNetwork is a function used to query if a node has a resource (pod or egress IP) that would inform the
+	// network controller to either add or remove the remote resources for that network.
+	nodeHasNetwork func(node, networkName string) bool
 }
 
 // Start will cleanup stale networks that have not been ensured via
@@ -215,8 +230,106 @@ func (c *networkController) getReconcilableNetworkState(network string) (Reconci
 	if network == types.DefaultNetworkName {
 		return c.cm.GetDefaultNetworkController(), false
 	}
-	state := c.getNetworkState(network)
+	c.RLock()
+	defer c.RUnlock()
+	state := c.networkControllers[network]
+	if state == nil {
+		return nil, false
+	}
 	return state.controller, state.stoppedAndDeleting
+}
+
+func (c *networkController) getControllerForNotify(networkName string) (NetworkController, bool) {
+	c.RLock()
+	defer c.RUnlock()
+	state := c.networkControllers[networkName]
+	if state == nil || state.controller == nil || state.stoppedAndDeleting {
+		return nil, false
+	}
+	return state.controller, true
+}
+
+// NotifyNetworkRefChange enqueues a network reconcile so node-level state can be recomputed.
+func (c *networkController) NotifyNetworkRefChange(networkName, node string) {
+	c.queueNetworkRefChange(networkName, node)
+	c.networkReconciler.Reconcile(networkName)
+}
+
+func (c *networkController) queueNetworkRefChange(networkName, node string) {
+	if networkName == "" || node == "" {
+		return
+	}
+	c.networkRefLock.Lock()
+	defer c.networkRefLock.Unlock()
+	if c.pendingNetworkRefNodes == nil {
+		c.pendingNetworkRefNodes = map[string]sets.Set[string]{}
+	}
+	nodes := c.pendingNetworkRefNodes[networkName]
+	if nodes == nil {
+		nodes = sets.New[string]()
+		c.pendingNetworkRefNodes[networkName] = nodes
+	}
+	nodes.Insert(node)
+}
+
+func (c *networkController) popPendingNetworkRefNodes(networkName string) []string {
+	c.networkRefLock.Lock()
+	defer c.networkRefLock.Unlock()
+	nodes := c.pendingNetworkRefNodes[networkName]
+	if len(nodes) == 0 {
+		return nil
+	}
+	delete(c.pendingNetworkRefNodes, networkName)
+	return nodes.UnsortedList()
+}
+
+func (c *networkController) clearPendingNetworkRefNodes(networkName string) {
+	c.networkRefLock.Lock()
+	defer c.networkRefLock.Unlock()
+	delete(c.pendingNetworkRefNodes, networkName)
+}
+
+func (c *networkController) clearNetworkRefState(networkName string) {
+	c.networkRefLock.Lock()
+	defer c.networkRefLock.Unlock()
+	delete(c.networkRefStates, networkName)
+}
+
+func (c *networkController) shouldHandleNetworkRefChange(networkName, node string, active bool) bool {
+	c.networkRefLock.Lock()
+	defer c.networkRefLock.Unlock()
+	if c.networkRefStates == nil {
+		c.networkRefStates = map[string]map[string]bool{}
+	}
+	nodeStates := c.networkRefStates[networkName]
+	if nodeStates == nil {
+		nodeStates = map[string]bool{}
+		c.networkRefStates[networkName] = nodeStates
+	}
+	prev, ok := nodeStates[node]
+	if ok && prev == active {
+		return false
+	}
+	nodeStates[node] = active
+	return true
+}
+
+func (c *networkController) reconcilePendingNetworkRefChanges(networkName string) {
+	ctrl, ok := c.getControllerForNotify(networkName)
+	if !ok || c.nodeHasNetwork == nil {
+		return
+	}
+	nodes := c.popPendingNetworkRefNodes(networkName)
+	if len(nodes) == 0 {
+		return
+	}
+	for _, node := range nodes {
+		active := c.nodeHasNetwork(node, networkName)
+		if !c.shouldHandleNetworkRefChange(networkName, node, active) {
+			continue
+		}
+		ctrl.HandleNetworkRefChange(node, active)
+	}
 }
 
 func (c *networkController) getAllNetworkStates() []*networkControllerState {
@@ -298,23 +411,22 @@ func (c *networkController) syncNetwork(network string) error {
 	}
 
 	ensureNetwork := !compatible || util.DoesNetworkNeedReconciliation(have, want)
-	if !ensureNetwork {
-		// no network changes
-		return nil
+	if ensureNetwork {
+		// inform controller manager of upcoming changes so other controllers are
+		// aware
+		err = c.cm.Reconcile(network, have, want)
+		if err != nil {
+			return fmt.Errorf("failed to reconcile controller manager for network %s: %w", network, err)
+		}
+
+		// ensure the network controller
+		err = c.ensureNetwork(want)
+		if err != nil {
+			return fmt.Errorf("%s: failed to ensure network %s: %w", c.name, network, err)
+		}
 	}
 
-	// inform controller manager of upcoming changes so other controllers are
-	// aware
-	err = c.cm.Reconcile(network, have, want)
-	if err != nil {
-		return fmt.Errorf("failed to reconcile controller manager for network %s: %w", network, err)
-	}
-
-	// ensure the network controller
-	err = c.ensureNetwork(want)
-	if err != nil {
-		return fmt.Errorf("%s: failed to ensure network %s: %w", c.name, network, err)
-	}
+	c.reconcilePendingNetworkRefChanges(network)
 
 	return nil
 }
@@ -352,22 +464,31 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 }
 
 func (c *networkController) deleteNetwork(network string) error {
-	have := c.getNetworkState(network)
-	if have.controller == nil {
+	c.Lock()
+	have := c.networkControllers[network]
+	if have == nil || have.controller == nil {
+		c.Unlock()
+		c.clearPendingNetworkRefNodes(network)
+		c.clearNetworkRefState(network)
 		return nil
 	}
-
-	if !have.stoppedAndDeleting {
-		have.controller.Stop()
-	}
+	ctrl := have.controller
+	alreadyStopping := have.stoppedAndDeleting
 	have.stoppedAndDeleting = true
+	c.Unlock()
 
-	err := have.controller.Cleanup()
+	if !alreadyStopping {
+		ctrl.Stop()
+	}
+
+	err := ctrl.Cleanup()
 	if err != nil {
 		return fmt.Errorf("%s: failed to cleanup network %s: %w", c.name, network, err)
 	}
 
 	c.setNetworkState(network, nil)
+	c.clearPendingNetworkRefNodes(network)
+	c.clearNetworkRefState(network)
 	return nil
 }
 

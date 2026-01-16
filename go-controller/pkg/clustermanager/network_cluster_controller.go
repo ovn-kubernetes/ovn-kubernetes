@@ -28,6 +28,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	objretry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -81,7 +82,85 @@ type networkClusterController struct {
 	// To avoid changing that error report with every update, we store reported error node.
 	reportedErrorNode string
 
+	// dynamicUDNNodeRefs tracks active nodes for dynamic UDN allocation.
+	dynamicUDNNodeRefsLock sync.Mutex
+	dynamicUDNNodeRefs     map[string]bool
+	dynamicUDNNodeCount    int
+
 	util.ReconcilableNetInfo
+}
+
+// HandleNetworkRefChange satisfies the NetworkController interface; it updates dynamic UDN metrics and status.
+func (ncc *networkClusterController) HandleNetworkRefChange(nodeName string, active bool) {
+	if !config.OVNKubernetesFeature.EnableDynamicUDNAllocation || !ncc.IsUserDefinedNetwork() {
+		return
+	}
+
+	nodeCount, changed := ncc.updateDynamicUDNNodeRefs(nodeName, active)
+	if !changed {
+		return
+	}
+	networkName := ncc.GetNetworkName()
+	metrics.SetDynamicUDNNodeCount(networkName, float64(nodeCount))
+	klog.V(5).Infof("Updated metric: network=%s nodes=%d", networkName, nodeCount)
+
+	var cond *metav1.Condition
+	if nodeCount == 0 {
+		msg := "no nodes currently rendered with network"
+		cond = &metav1.Condition{
+			Type:               "NodesSelected",
+			Status:             metav1.ConditionFalse,
+			Reason:             "DynamicAllocation",
+			Message:            msg,
+			LastTransitionTime: metav1.Now(),
+		}
+	} else {
+		msg := fmt.Sprintf("%d node(s) rendered with network", nodeCount)
+		cond = &metav1.Condition{
+			Type:               "NodesSelected",
+			Status:             metav1.ConditionTrue,
+			Reason:             "DynamicAllocation",
+			Message:            msg,
+			LastTransitionTime: metav1.Now(),
+		}
+	}
+	if ncc.statusReporter != nil {
+		if err := ncc.statusReporter(
+			networkName,
+			"ClusterManager", // FieldManager - must be unique per subsystem
+			cond,
+		); err != nil {
+			klog.Errorf("Failed to update NodesSelected condition for %s: %v", networkName, err)
+		} else {
+			klog.V(4).Infof("Updated Dynamic Allocation NodesSelected condition for %s: %s", networkName, cond.Message)
+		}
+	}
+}
+
+func (ncc *networkClusterController) updateDynamicUDNNodeRefs(nodeName string, active bool) (int, bool) {
+	ncc.dynamicUDNNodeRefsLock.Lock()
+	defer ncc.dynamicUDNNodeRefsLock.Unlock()
+
+	if ncc.dynamicUDNNodeRefs == nil {
+		ncc.dynamicUDNNodeRefs = map[string]bool{}
+	}
+
+	current := ncc.dynamicUDNNodeRefs[nodeName]
+	if active == current {
+		return ncc.dynamicUDNNodeCount, false
+	}
+
+	if active {
+		ncc.dynamicUDNNodeRefs[nodeName] = true
+		ncc.dynamicUDNNodeCount++
+		return ncc.dynamicUDNNodeCount, true
+	}
+
+	delete(ncc.dynamicUDNNodeRefs, nodeName)
+	if ncc.dynamicUDNNodeCount > 0 {
+		ncc.dynamicUDNNodeCount--
+	}
+	return ncc.dynamicUDNNodeCount, true
 }
 
 func newNetworkClusterController(
