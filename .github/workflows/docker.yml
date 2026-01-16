@@ -14,7 +14,7 @@ env:
   REPOSITORY: ovn-kubernetes
   FEDORA_IMAGE_NAME: ovn-kube-fedora
   UBUNTU_IMAGE_NAME: ovn-kube-ubuntu
-  BUILDER_IMAGE: quay.io/lib/golang:1.24
+  BUILDER_IMAGE: quay.io/projectquay/golang:1.24
 jobs:
   build:
     name: Build Images
