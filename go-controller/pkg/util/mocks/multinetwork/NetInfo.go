@@ -52,6 +52,24 @@ func (_m *NetInfo) EVPNIPVRFRouteTarget() string {
 	return r0
 }
 
+// EVPNIPVRFVID provides a mock function with no fields
+func (_m *NetInfo) EVPNIPVRFVID() int {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNIPVRFVID")
+	}
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func() int); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	return r0
+}
+
 // EVPNIPVRFVNI provides a mock function with no fields
 func (_m *NetInfo) EVPNIPVRFVNI() int32 {
 	ret := _m.Called()
@@ -83,6 +101,24 @@ func (_m *NetInfo) EVPNMACVRFRouteTarget() string {
 		r0 = rf()
 	} else {
 		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
+// EVPNMACVRFVID provides a mock function with no fields
+func (_m *NetInfo) EVPNMACVRFVID() int {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNMACVRFVID")
+	}
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func() int); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int)
 	}
 
 	return r0
