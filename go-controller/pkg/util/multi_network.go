@@ -1149,7 +1149,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
-		transport:      netconf.Transport,
+		transport:      normalizeTransportValue(netconf.Transport),
 		evpn:           netconf.EVPN,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
@@ -1226,14 +1226,8 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		allowPersistentIPs:    netconf.AllowPersistentIPs,
 		defaultGatewayIPs:     defaultGatewayIPs,
 		managementIPs:         managementIPs,
-		transport:             netconf.Transport,
-<<<<<<< HEAD
-<<<<<<< HEAD
+		transport:             normalizeTransportValue(netconf.Transport),
 		evpn:                  netconf.EVPN,
-=======
->>>>>>> afcfc64f2 (no-overlay: Implement no-overlay for the default network)
-=======
->>>>>>> afcfc64f2 (no-overlay: Implement no-overlay for the default network)
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1267,7 +1261,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
-		transport:           netconf.Transport,
+		transport:           normalizeTransportValue(netconf.Transport),
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1275,6 +1269,17 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 	}
 	ni.ipv4mode, ni.ipv6mode = getIPMode(subnets)
 	return ni, nil
+}
+
+// normalizeTransportValue converts the transport value from CNI config representation
+// to the config constant representation. For example, "noOverlay" (camelCase from CNI config)
+// becomes "no-overlay" (kebab-case matching config.TransportNoOverlay).
+func normalizeTransportValue(transport string) string {
+	// Convert "noOverlay" (from CNI config) to "no-overlay" (config constant)
+	if transport == "noOverlay" {
+		return config.TransportNoOverlay
+	}
+	return transport
 }
 
 // parseNetworkSubnets parses network subnets based on the topology, returns nil if subnets is an empty string
