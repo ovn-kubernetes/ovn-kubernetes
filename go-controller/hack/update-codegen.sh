@@ -4,6 +4,10 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+# Add GOBIN to PATH so installed tools can be found
+GOPATH=${GOPATH:-$(go env GOPATH)}
+export PATH="${GOPATH}/bin:${PATH}"
+
 crds=$(ls pkg/crd 2> /dev/null)
 if [ -z "${crds}" ]; then
   exit
