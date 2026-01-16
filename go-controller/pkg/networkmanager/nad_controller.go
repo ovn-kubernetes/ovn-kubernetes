@@ -698,40 +698,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		if len(oldNetwork.GetNADs()) == 0 {
 			c.networkController.DeleteNetwork(oldNetworkName)
 		} else {
-			networkShouldExist := true
-			if c.filterNADsOnNode != "" {
-				// We don't want to create/update NADs that map to UDNs not on our node
-				// Need to check remaining nads and see if we have a pod/egress IP on them
-				networkShouldExist = false
-				for _, nadNamespacedName := range oldNetwork.GetNADs() {
-					nadNamespace, nadName, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
-					if err != nil {
-						return fmt.Errorf("%s: failed splitting key %s: %v", c.name, nadNamespacedName, err)
-					}
-					n, err := c.nadLister.NetworkAttachmentDefinitions(nadNamespace).Get(nadName)
-					if err != nil {
-						if !apierrors.IsNotFound(err) {
-							return err
-						} else {
-							// NAD not doesn't exist, shouldn't render anyway
-							continue
-						}
-					}
-					shouldFilter, err := c.filter(n)
-					if err != nil {
-						return fmt.Errorf("%s: failed filtering NAD %s: %w", c.name, key, err)
-					}
-					if !shouldFilter {
-						networkShouldExist = true
-						break
-					}
-				}
-			}
-			if networkShouldExist {
-				c.networkController.EnsureNetwork(oldNetwork)
-			} else {
-				klog.V(4).Infof("%s: Network is filtered and will not be rendered: %s", c.name, oldNetwork.GetNetworkName())
-			}
+			c.networkController.EnsureNetwork(oldNetwork)
 		}
 		if !dynamicDelete && c.primaryNADs[namespace] == key {
 			delete(c.primaryNADs, namespace)
@@ -791,8 +758,6 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	klog.V(5).Infof("%s: ensuring NAD %q reference for network %q with id %d",
 		c.name, key, ensureNetwork.GetNetworkName(), ensureNetwork.GetNetworkID())
 
-	// ensure the network is associated with the NAD
-	ensureNetwork.AddNADs(key)
 	networkName := ensureNetwork.GetNetworkName()
 	if previousNetworkName != "" && previousNetworkName != networkName {
 		c.deleteNADFromNetworkLocked(previousNetworkName, key)
@@ -820,6 +785,8 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		}
 	}
 	if shouldNetworkExist {
+		// ensure the network is associated with the NAD
+		ensureNetwork.AddNADs(key)
 		// reconcile the network
 		c.networkController.EnsureNetwork(ensureNetwork)
 	} else {
