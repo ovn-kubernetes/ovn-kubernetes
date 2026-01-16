@@ -14,6 +14,7 @@ import (
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func TestUpdateNetworkConnectSubnetAnnotation(t *testing.T) {
@@ -317,4 +318,71 @@ func TestUpdateNetworkConnectSubnetAnnotation_PreservesExistingAnnotations(t *te
 
 	// Verify the new subnet annotation was added
 	assert.Contains(t, updatedCNC.Annotations, ovnNetworkConnectSubnetAnnotation)
+}
+
+func TestParseNetworkOwner(t *testing.T) {
+	tests := []struct {
+		name             string
+		owner            string
+		expectedTopology string
+		expectedID       int
+		expectError      bool
+	}{
+		{
+			name:             "layer3 topology with ID 1",
+			owner:            "layer3_1",
+			expectedTopology: ovntypes.Layer3Topology,
+			expectedID:       1,
+			expectError:      false,
+		},
+		{
+			name:             "layer3 topology with ID 100",
+			owner:            "layer3_100",
+			expectedTopology: ovntypes.Layer3Topology,
+			expectedID:       100,
+			expectError:      false,
+		},
+		{
+			name:             "layer2 topology with ID 1",
+			owner:            "layer2_1",
+			expectedTopology: ovntypes.Layer2Topology,
+			expectedID:       1,
+			expectError:      false,
+		},
+		{
+			name:             "layer2 topology with ID 50",
+			owner:            "layer2_50",
+			expectedTopology: ovntypes.Layer2Topology,
+			expectedID:       50,
+			expectError:      false,
+		},
+		{
+			name:        "unknown topology type",
+			owner:       "unknown_1",
+			expectError: true,
+		},
+		{
+			name:        "invalid format - no underscore",
+			owner:       "layer31",
+			expectError: true,
+		},
+		{
+			name:        "invalid format - empty",
+			owner:       "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			topology, networkID, err := ParseNetworkOwner(tt.owner)
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedTopology, topology)
+				assert.Equal(t, tt.expectedID, networkID)
+			}
+		})
+	}
 }
