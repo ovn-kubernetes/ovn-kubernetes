@@ -9,6 +9,7 @@ import (
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
@@ -16,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
@@ -87,8 +89,30 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 		}
 	}
 
-	if reflect.DeepEqual(nadCopy.Spec.Config, desiredNAD.Spec.Config) && reflect.DeepEqual(nadCopy.ObjectMeta.Labels, desiredNAD.ObjectMeta.Labels) &&
-		reflect.DeepEqual(desiredNAD.Annotations, nadCopy.Annotations) {
+	// Check if NAD update is needed
+	nadUpdateNeeded := !reflect.DeepEqual(nadCopy.Spec.Config, desiredNAD.Spec.Config) ||
+		!reflect.DeepEqual(nadCopy.ObjectMeta.Labels, desiredNAD.ObjectMeta.Labels) ||
+		!reflect.DeepEqual(desiredNAD.Annotations, nadCopy.Annotations)
+
+	// For no-overlay ClusterUserDefinedNetworks, force NAD update when TransportAccepted condition is True
+	// This ensures the network controller is notified to run syncNodes() and cleanup transit switches/
+	// interconnect resources when RouteAdvertisements become accepted, even though NAD content is unchanged
+	// (transport was already "no-overlay" from the start)
+	if !nadUpdateNeeded {
+		if cudn, isCUDN := obj.(*userdefinednetworkv1.ClusterUserDefinedNetwork); isCUDN {
+			if cudn.Spec.Network.GetTransport() == userdefinednetworkv1.TransportOptionNoOverlay {
+				if condition := meta.FindStatusCondition(cudn.Status.Conditions, conditionTypeTransportAccepted); condition != nil {
+					// Force update only when TransportAccepted is True (RouteAdvertisements accepted)
+					if condition.Status == metav1.ConditionTrue {
+						nadUpdateNeeded = true
+						klog.V(5).Infof("Forcing NAD update for no-overlay CUDN %s to trigger network controller sync", cudn.Name)
+					}
+				}
+			}
+		}
+	}
+
+	if !nadUpdateNeeded {
 		return nadCopy, nil
 	}
 
