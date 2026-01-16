@@ -482,6 +482,8 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 					MTU: 1500,
 				},
+				Transport:        udnv1.TransportOptionNoOverlay,
+				NoOverlayOptions: &udnv1.NoOverlayOptions{OutboundSNAT: udnv1.SNATDisabled, Routing: udnv1.RoutingUnmanaged},
 			},
 			`{
 				"cniVersion": "1.0.0",
@@ -492,7 +494,9 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				"topology": "layer3",
 				"joinSubnet": "100.65.0.0/16,fd99::/64",
 				"subnets": "192.168.100.0/16,2001:dbb::/60",
-				"mtu": 1500
+				"mtu": 1500,
+				"transport": "noOverlay",
+				"outboundSNAT": "disabled"
 			}`,
 		),
 		Entry("primary network, layer2",

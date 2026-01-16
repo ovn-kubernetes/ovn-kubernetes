@@ -115,6 +115,9 @@ type NetConf struct {
 	// the default value is "geneve".
 	// Note: Users must not set this field manually; OVN-Kubernetes manages it.
 	Transport string `json:"transport,omitempty"`
+
+	// OutboundSNAT defines the SNAT behavior for outbound traffic from pods.
+	OutboundSNAT string `json:"outboundSNAT"`
 }
 
 // EVPNConfig contains EVPN-specific configuration for the network.

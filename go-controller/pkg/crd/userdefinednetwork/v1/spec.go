@@ -17,6 +17,14 @@ func (s *UserDefinedNetworkSpec) GetLocalnet() *LocalnetConfig {
 	return nil
 }
 
+func (s *UserDefinedNetworkSpec) GetTransport() TransportOption {
+	return ""
+}
+
+func (s *UserDefinedNetworkSpec) GetNoOverlayOptions() *NoOverlayOptions {
+	return nil
+}
+
 func (s *NetworkSpec) GetTopology() NetworkTopology {
 	return s.Topology
 }
@@ -31,4 +39,12 @@ func (s *NetworkSpec) GetLayer2() *Layer2Config {
 
 func (s *NetworkSpec) GetLocalnet() *LocalnetConfig {
 	return s.Localnet
+}
+
+func (s *NetworkSpec) GetTransport() TransportOption {
+	return s.Transport
+}
+
+func (s *NetworkSpec) GetNoOverlayOptions() *NoOverlayOptions {
+	return s.NoOverlayOptions
 }
