@@ -1,6 +1,7 @@
 package clustermanager
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -8,9 +9,11 @@ import (
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	metaapplyv1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -19,14 +22,19 @@ import (
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	udntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnapplyconfkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
+	userdefinednetworkclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 )
 
 // validationError represents different types of validation failures
 type validationError struct {
-	errorType string
-	message   string
-	raNames   []string // Names of RAs that exist but aren't accepted (for notAccepted scenario)
+	errorType   string
+	message     string
+	raNames     []string // Names of RAs that exist but aren't accepted (for notAccepted scenario)
+	networkType string   // Type of network: "DefaultNetwork" or "ClusterUserDefinedNetwork"
+	networkName string   // Name of the network (for CUDN, empty for default network)
 }
 
 func (e *validationError) Error() string {
@@ -34,14 +42,19 @@ func (e *validationError) Error() string {
 }
 
 // noOverlayController validates no-overlay configuration with RouteAdvertisements.
-// It watches NetworkAttachmentDefinition (NAD) resources for the default network
-// and RouteAdvertisements CRs, triggering validation when relevant changes occur.
+// It watches NetworkAttachmentDefinition (NAD) resources for the default network,
+// ClusterUserDefinedNetwork resources, and RouteAdvertisements CRs, triggering
+// validation when relevant changes occur.
 type noOverlayController struct {
-	wf       *factory.WatchFactory
-	recorder record.EventRecorder
+	wf        *factory.WatchFactory
+	recorder  record.EventRecorder
+	udnClient userdefinednetworkclientset.Interface
 
 	// raController watches RouteAdvertisements resources
 	raController controllerutil.Controller
+
+	// cudnController watches ClusterUserDefinedNetwork resources
+	cudnController controllerutil.Controller
 
 	// validationLock protects validation state
 	validationLock sync.Mutex
@@ -51,12 +64,13 @@ type noOverlayController struct {
 
 // newNoOverlayController creates a new no-overlay validation controller.
 // This should only be called when config.Default.Transport == config.TransportNoOverlay.
-func newNoOverlayController(wf *factory.WatchFactory, recorder record.EventRecorder) (*noOverlayController, error) {
+func newNoOverlayController(wf *factory.WatchFactory, recorder record.EventRecorder, udnClient userdefinednetworkclientset.Interface) (*noOverlayController, error) {
 	klog.Infof("Creating no-overlay validation controller")
 
 	c := &noOverlayController{
-		wf:       wf,
-		recorder: recorder,
+		wf:        wf,
+		recorder:  recorder,
+		udnClient: udnClient,
 	}
 
 	// Create controller config with RouteAdvertisements informer
@@ -70,6 +84,19 @@ func newNoOverlayController(wf *factory.WatchFactory, recorder record.EventRecor
 	}
 	c.raController = controllerutil.NewController("no-overlay-ra-watcher", raConfig)
 
+	// Create controller config with ClusterUserDefinedNetwork informer only if network segmentation is enabled
+	if config.OVNKubernetesFeature.EnableNetworkSegmentation {
+		cudnConfig := &controllerutil.ControllerConfig[udntypes.ClusterUserDefinedNetwork]{
+			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile:      c.reconcileCUDN,
+			Threadiness:    1,
+			Informer:       wf.ClusterUserDefinedNetworkInformer().Informer(),
+			Lister:         wf.ClusterUserDefinedNetworkInformer().Lister().List,
+			ObjNeedsUpdate: c.cudnNeedsValidation,
+		}
+		c.cudnController = controllerutil.NewController("no-overlay-cudn-watcher", cudnConfig)
+	}
+
 	return c, nil
 }
 
@@ -82,10 +109,13 @@ func (c *noOverlayController) Start() error {
 	klog.Infof("Starting no-overlay validation controller")
 
 	// Run initial validation when starting to catch the case where no RouteAdvertisements
-	// exist (which won't trigger any Add events from the informer)
+	// or no ClusterUserDefinedNetworks exist (which won't trigger any Add events from the informer)
 	go c.runValidation()
 
-	// Start both controllers
+	// Start all controllers
+	if c.cudnController != nil {
+		return controllerutil.Start(c.raController, c.cudnController)
+	}
 	return controllerutil.Start(c.raController)
 }
 
@@ -97,7 +127,11 @@ func (c *noOverlayController) Stop() {
 
 	klog.Infof("Stopping no-overlay validation controller")
 
-	controllerutil.Stop(c.raController)
+	if c.cudnController != nil {
+		controllerutil.Stop(c.raController, c.cudnController)
+	} else {
+		controllerutil.Stop(c.raController)
+	}
 }
 
 // reconcileRA is called whenever a RouteAdvertisements resource changes
@@ -115,22 +149,23 @@ func (c *noOverlayController) raNeedsValidation(oldRA, newRA *ratypes.RouteAdver
 		return true
 	}
 
-	// Only care about RAs if we're in no-overlay mode
-	if config.Default.Transport != config.TransportNoOverlay {
-		return false
-	}
-
-	isRAAdvertisingDefaultNetwork := func(ra *ratypes.RouteAdvertisements) bool {
+	isRAAdvertisingNoOverlayNetwork := func(ra *ratypes.RouteAdvertisements) bool {
 		for _, networkSelector := range ra.Spec.NetworkSelectors {
-			if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
+			// Check if it's advertising default network in no-overlay mode
+			if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork &&
+				config.Default.Transport == config.TransportNoOverlay {
+				return true
+			}
+			// Check if it's advertising ClusterUserDefinedNetworks
+			if networkSelector.NetworkSelectionType == apitypes.ClusterUserDefinedNetworks {
 				return true
 			}
 		}
 		return false
 	}
 
-	// If the RA started or stopped advertising default network, validate
-	if isRAAdvertisingDefaultNetwork(oldRA) != isRAAdvertisingDefaultNetwork(newRA) {
+	// If the RA started or stopped advertising no-overlay networks, validate
+	if isRAAdvertisingNoOverlayNetwork(oldRA) != isRAAdvertisingNoOverlayNetwork(newRA) {
 		return true
 	}
 
@@ -146,6 +181,42 @@ func (c *noOverlayController) raNeedsValidation(oldRA, newRA *ratypes.RouteAdver
 
 	// Check if Accepted condition changed
 	return isRAAccepted(oldRA.Status.Conditions) != isRAAccepted(newRA.Status.Conditions)
+}
+
+// reconcileCUDN is called whenever a ClusterUserDefinedNetwork resource changes
+func (c *noOverlayController) reconcileCUDN(key string) error {
+	klog.V(5).Infof("No-overlay controller reconciling ClusterUserDefinedNetwork %q", key)
+	c.runValidation()
+	return nil
+}
+
+// cudnNeedsValidation checks if the ClusterUserDefinedNetwork update requires validation
+func (c *noOverlayController) cudnNeedsValidation(oldCUDN, newCUDN *udntypes.ClusterUserDefinedNetwork) bool {
+	klog.V(5).Infof("No-overlay controller checking if ClusterUserDefinedNetwork %q needs validation", newCUDN.Name)
+	// If either object is nil, we need to validate
+	if oldCUDN == nil || newCUDN == nil {
+		return true
+	}
+
+	// Check if transport changed to/from NoOverlay
+	oldTransport := oldCUDN.Spec.Network.GetTransport()
+	newTransport := newCUDN.Spec.Network.GetTransport()
+	if oldTransport != newTransport {
+		return true
+	}
+
+	// Only care about CUDNs with no-overlay transport
+	if newTransport != udntypes.TransportOptionNoOverlay {
+		return false
+	}
+
+	// Check if NoOverlayOptions changed (OutboundSNAT or Routing)
+	if !reflect.DeepEqual(oldCUDN.Spec.Network.NoOverlayOptions, newCUDN.Spec.Network.NoOverlayOptions) {
+		return true
+	}
+
+	// No relevant changes for no-overlay CUDN
+	return false
 }
 
 // runValidation runs validation and emits events if the state changed
@@ -174,11 +245,25 @@ func (c *noOverlayController) runValidation() {
 
 // validate checks if the no-overlay configuration is valid
 func (c *noOverlayController) validate() error {
-	// If transport is not no-overlay, validation passes (not applicable)
-	if config.Default.Transport != config.TransportNoOverlay {
-		return nil
+	// Validate default network if it's in no-overlay mode
+	if config.Default.Transport == config.TransportNoOverlay {
+		if err := c.validateDefaultNetwork(); err != nil {
+			return err
+		}
 	}
 
+	// Validate ClusterUserDefinedNetworks with no-overlay transport
+	// This runs unconditionally because CUDNs can have NoOverlay transport
+	// independently of the default network's transport mode
+	if err := c.validateClusterUserDefinedNetworks(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateDefaultNetwork checks if the default network no-overlay configuration is valid
+func (c *noOverlayController) validateDefaultNetwork() error {
 	// Get all RouteAdvertisements CRs
 	ras, err := c.wf.RouteAdvertisementsInformer().Lister().List(labels.Everything())
 	if err != nil {
@@ -219,17 +304,153 @@ func (c *noOverlayController) validate() error {
 	// Return specific error based on what we found
 	if !foundDefaultNetworkRA {
 		return &validationError{
-			errorType: "noRouteAdvertisements",
-			message:   "no RouteAdvertisements CR is advertising the default network pod networks",
+			errorType:   "noRouteAdvertisements",
+			message:     "no RouteAdvertisements CR is advertising the default network pod networks",
+			networkType: "DefaultNetwork",
 		}
 	}
 
 	// Found RAs advertising default network, but none are accepted
 	return &validationError{
-		errorType: "notAccepted",
-		message:   fmt.Sprintf("RouteAdvertisements CRs %v are advertising the default network pod networks but none have status Accepted=True", notAcceptedRANames),
-		raNames:   notAcceptedRANames,
+		errorType:   "notAccepted",
+		message:     fmt.Sprintf("RouteAdvertisements CRs %v are advertising the default network pod networks but none have status Accepted=True", notAcceptedRANames),
+		raNames:     notAcceptedRANames,
+		networkType: "DefaultNetwork",
 	}
+}
+
+// validateClusterUserDefinedNetworks checks if ClusterUserDefinedNetworks with no-overlay transport have valid RouteAdvertisements
+// and updates the TransportAccepted status condition for each CUDN
+func (c *noOverlayController) validateClusterUserDefinedNetworks() error {
+	// Skip validation if network segmentation is not enabled
+	if !config.OVNKubernetesFeature.EnableNetworkSegmentation {
+		return nil
+	}
+
+	// Get all ClusterUserDefinedNetworks
+	cudns, err := c.wf.ClusterUserDefinedNetworkInformer().Lister().List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list ClusterUserDefinedNetworks: %w", err)
+	}
+
+	// Get all RouteAdvertisements CRs (only needed if there are CUDNs)
+	var ras []*ratypes.RouteAdvertisements
+	if len(cudns) > 0 {
+		ras, err = c.wf.RouteAdvertisementsInformer().Lister().List(labels.Everything())
+		if err != nil {
+			return fmt.Errorf("failed to list RouteAdvertisements: %w", err)
+		}
+	}
+
+	// Collect any validation errors that should stop the controller
+	var validationErrors []error
+
+	// Check each CUDN and update its TransportAccepted status
+	for _, cudn := range cudns {
+		transport := cudn.Spec.Network.GetTransport()
+
+		// Handle Geneve transport (or empty, which defaults to Geneve)
+		if transport == "" || transport == udntypes.TransportOptionGeneve {
+			if err := c.updateCUDNTransportStatus(cudn, metav1.ConditionTrue, "GeneveTransportAccepted", "Geneve transport has been configured."); err != nil {
+				klog.Errorf("Failed to update TransportAccepted status for ClusterUserDefinedNetwork %q: %v", cudn.Name, err)
+			}
+			continue
+		}
+
+		// Handle NoOverlay transport
+		if transport == udntypes.TransportOptionNoOverlay {
+			klog.V(5).Infof("Validating no-overlay ClusterUserDefinedNetwork %q", cudn.Name)
+
+			// Track if we found RAs advertising this CUDN (but not accepted)
+			foundCUDNRA := false
+			var notAcceptedRANames []string
+			var acceptedRAName string
+
+			// Check if any RouteAdvertisements CR is configured for this CUDN
+			for _, ra := range ras {
+				if c.isRASelectingCUDN(ra, cudn) {
+					// Check if it advertises pod networks
+					if !slices.Contains(ra.Spec.Advertisements, ratypes.PodNetwork) {
+						continue
+					}
+
+					foundCUDNRA = true
+
+					if isRAAccepted(ra.Status.Conditions) {
+						// Valid configuration found for this CUDN
+						klog.V(5).Infof("Found valid RouteAdvertisements %q for ClusterUserDefinedNetwork %q with no-overlay transport", ra.Name, cudn.Name)
+						acceptedRAName = ra.Name
+						break
+					} else {
+						klog.Warningf("RouteAdvertisements %q selects ClusterUserDefinedNetwork %q but status is not Accepted", ra.Name, cudn.Name)
+						notAcceptedRANames = append(notAcceptedRANames, ra.Name)
+					}
+				}
+			}
+
+			// Update status based on what we found
+			if acceptedRAName != "" {
+				// Found an accepted RouteAdvertisements CR
+				if err := c.updateCUDNTransportStatus(cudn, metav1.ConditionTrue, "NoOverlayTransportAccepted", "Transport has been configured as 'no-overlay'."); err != nil {
+					klog.Errorf("Failed to update TransportAccepted status for ClusterUserDefinedNetwork %q: %v", cudn.Name, err)
+				}
+			} else if !foundCUDNRA {
+				// No RouteAdvertisements CR advertising this CUDN
+				if err := c.updateCUDNTransportStatus(cudn, metav1.ConditionFalse, "NoOverlayRouteAdvertisementsIsMissing", "No RouteAdvertisements CR is advertising the pod networks."); err != nil {
+					klog.Errorf("Failed to update TransportAccepted status for ClusterUserDefinedNetwork %q: %v", cudn.Name, err)
+				}
+				// Add to validation errors for event emission
+				validationErrors = append(validationErrors, &validationError{
+					errorType:   "noRouteAdvertisements",
+					message:     fmt.Sprintf("no RouteAdvertisements CR is advertising pod networks for ClusterUserDefinedNetwork %q", cudn.Name),
+					networkType: "ClusterUserDefinedNetwork",
+					networkName: cudn.Name,
+				})
+			} else {
+				// Found RAs advertising this CUDN, but none are accepted
+				raNamesList := strings.Join(notAcceptedRANames, ", ")
+				message := fmt.Sprintf("RouteAdvertisements CR %s advertises the pod subnets, but its status is not accepted.", raNamesList)
+				if err := c.updateCUDNTransportStatus(cudn, metav1.ConditionFalse, "NoOverlayRouteAdvertisementsNotAccepted", message); err != nil {
+					klog.Errorf("Failed to update TransportAccepted status for ClusterUserDefinedNetwork %q: %v", cudn.Name, err)
+				}
+				// Add to validation errors for event emission
+				validationErrors = append(validationErrors, &validationError{
+					errorType:   "notAccepted",
+					message:     fmt.Sprintf("RouteAdvertisements CRs %v are advertising pod networks for ClusterUserDefinedNetwork %q but none have status Accepted=True", notAcceptedRANames, cudn.Name),
+					raNames:     notAcceptedRANames,
+					networkType: "ClusterUserDefinedNetwork",
+					networkName: cudn.Name,
+				})
+			}
+		}
+	}
+
+	// If there are any validation errors, return the first one to trigger event emission
+	if len(validationErrors) > 0 {
+		return validationErrors[0]
+	}
+
+	return nil
+}
+
+// isRASelectingCUDN checks if a RouteAdvertisements CR selects a specific ClusterUserDefinedNetwork
+func (c *noOverlayController) isRASelectingCUDN(ra *ratypes.RouteAdvertisements, cudn *udntypes.ClusterUserDefinedNetwork) bool {
+	for _, networkSelector := range ra.Spec.NetworkSelectors {
+		if networkSelector.NetworkSelectionType == apitypes.ClusterUserDefinedNetworks {
+			// Check if the label selector matches this CUDN
+			if networkSelector.ClusterUserDefinedNetworkSelector != nil {
+				selector, err := metav1.LabelSelectorAsSelector(&networkSelector.ClusterUserDefinedNetworkSelector.NetworkSelector)
+				if err != nil {
+					klog.Errorf("Failed to convert label selector to selector: %v", err)
+					return false
+				}
+				if selector.Matches(labels.Set(cudn.Labels)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // emitValidationEvent emits a Kubernetes event for validation failures
@@ -242,19 +463,39 @@ func (c *noOverlayController) emitValidationEvent(err error) {
 		case "notAccepted":
 			// Scenario: RAs exist but none are accepted
 			eventReason = "RouteAdvertisementsNotAccepted"
-			if len(valErr.raNames) > 0 {
-				eventMessage = fmt.Sprintf("RouteAdvertisements CR(s) %v exist for the default network but none have status Accepted=True. "+
-					"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks.",
-					strings.Join(valErr.raNames, ", "))
+			if valErr.networkType == "ClusterUserDefinedNetwork" {
+				// Error for ClusterUserDefinedNetwork
+				if len(valErr.raNames) > 0 {
+					eventMessage = fmt.Sprintf("RouteAdvertisements CR(s) %v exist for ClusterUserDefinedNetwork %q but none have status Accepted=True. "+
+						"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks.",
+						strings.Join(valErr.raNames, ", "), valErr.networkName)
+				} else {
+					eventMessage = fmt.Sprintf("RouteAdvertisements CR(s) exist for ClusterUserDefinedNetwork %q but none have status Accepted=True. "+
+						"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks.",
+						valErr.networkName)
+				}
 			} else {
-				eventMessage = "RouteAdvertisements CR(s) exist for the default network but none have status Accepted=True. " +
-					"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks."
+				// Error for default network
+				if len(valErr.raNames) > 0 {
+					eventMessage = fmt.Sprintf("RouteAdvertisements CR(s) %v exist for the default network but none have status Accepted=True. "+
+						"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks.",
+						strings.Join(valErr.raNames, ", "))
+				} else {
+					eventMessage = "RouteAdvertisements CR(s) exist for the default network but none have status Accepted=True. " +
+						"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks."
+				}
 			}
 		case "noRouteAdvertisements":
-			// Scenario: No RAs advertising default network
+			// Scenario: No RAs advertising the network
 			eventReason = "NoRouteAdvertisements"
-			eventMessage = "No RouteAdvertisements CR is advertising the default network pod networks. " +
-				"RouteAdvertisements configuration is required when transport=no-overlay."
+			if valErr.networkType == "ClusterUserDefinedNetwork" {
+				eventMessage = fmt.Sprintf("No RouteAdvertisements CR is advertising pod networks for ClusterUserDefinedNetwork %q. "+
+					"RouteAdvertisements configuration is required when transport=no-overlay.",
+					valErr.networkName)
+			} else {
+				eventMessage = "No RouteAdvertisements CR is advertising the default network pod networks. " +
+					"RouteAdvertisements configuration is required when transport=no-overlay."
+			}
 		default:
 			// Unknown validation error type
 			eventReason = "NoOverlayConfigurationError"
@@ -295,4 +536,61 @@ func (c *noOverlayController) emitReadyEvent() {
 func isRAAccepted(conditions []metav1.Condition) bool {
 	condition := meta.FindStatusCondition(conditions, "Accepted")
 	return condition != nil && condition.Status == metav1.ConditionTrue
+}
+
+// updateCUDNTransportStatus updates the TransportAccepted status condition for a ClusterUserDefinedNetwork
+func (c *noOverlayController) updateCUDNTransportStatus(cudn *udntypes.ClusterUserDefinedNetwork, status metav1.ConditionStatus, reason, message string) error {
+	if cudn == nil {
+		return nil
+	}
+
+	// Get the current CUDN to check if update is needed
+	currentCUDN, err := c.wf.ClusterUserDefinedNetworkInformer().Lister().Get(cudn.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %q: %w", cudn.Name, err)
+	}
+
+	// Check if the condition already exists with the same values
+	existingCondition := meta.FindStatusCondition(currentCUDN.Status.Conditions, "TransportAccepted")
+	if existingCondition != nil &&
+		existingCondition.Status == status &&
+		existingCondition.Reason == reason &&
+		existingCondition.Message == message {
+		// No update needed
+		return nil
+	}
+
+	// Create the condition
+	now := metav1.Now()
+	condition := &metaapplyv1.ConditionApplyConfiguration{
+		Type:               stringPtr("TransportAccepted"),
+		Status:             (*metav1.ConditionStatus)(stringPtr(string(status))),
+		LastTransitionTime: &now,
+		Reason:             stringPtr(reason),
+		Message:            stringPtr(message),
+	}
+
+	cudnStatus := udnapplyconfkv1.ClusterUserDefinedNetworkStatus().WithConditions(condition)
+	applyCUDN := udnapplyconfkv1.ClusterUserDefinedNetwork(cudn.Name).WithStatus(cudnStatus)
+	opts := metav1.ApplyOptions{
+		FieldManager: "no-overlay-controller",
+		Force:        true,
+	}
+
+	_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(context.Background(), applyCUDN, opts)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to update ClusterUserDefinedNetwork %q status: %w", cudn.Name, err)
+	}
+	klog.Infof("Updated TransportAccepted status for ClusterUserDefinedNetwork %q: %s (reason: %s)", cudn.Name, status, reason)
+	return nil
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
