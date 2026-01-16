@@ -15,6 +15,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -191,13 +192,13 @@ func (zic *ZoneInterconnectHandler) ensureTransitSwitch(nodes []*corev1.Node) er
 // AddLocalZoneNode creates the interconnect resources in OVN NB DB for the local zone node.
 // See createLocalZoneNodeResources() below for more details.
 func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
-	klog.Infof("Creating interconnect resources for local zone node %s for the network %s", node.Name, zic.GetNetworkName())
 	nodeID, _ := util.GetNodeID(node)
 	if nodeID == -1 {
 		// Don't consider this node as cluster-manager has not allocated node id yet.
 		return fmt.Errorf("failed to get node id for node - %s", node.Name)
 	}
 
+	klog.Infof("Creating interconnect resources for local zone node %s for the network %s", node.Name, zic.GetNetworkName())
 	if err := zic.createLocalZoneNodeResources(node, nodeID); err != nil {
 		return fmt.Errorf("creating interconnect resources for local zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
 	}
@@ -342,8 +343,19 @@ func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error 
 
 // SyncNodes ensures a transit switch exists and cleans up the interconnect
 // resources present in the OVN Northbound db for the stale nodes.
-// This is used for overlay mode where we need to ensure interconnect infrastructure exists.
+// For no-overlay transport, this is a no-op since no transit switch or
+// interconnect resources are created for no-overlay networks.
 func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
+	// For no-overlay transport, skip all interconnect operations.
+	// Since CUDN is immutable, transport mode won't change, so if it's
+	// no-overlay from the start, no transit switch or IC resources are
+	// ever created (AddLocalZoneNode skips creation). No cleanup needed.
+	if zic.GetNetworkTransport() == config.TransportNoOverlay {
+		klog.V(5).Infof("Skipping interconnect sync for network %s (no-overlay transport)", zic.GetNetworkName())
+		return nil
+	}
+
+	// For overlay transport, ensure transit switch exists and cleanup stale nodes
 	foundNodes := make([]*corev1.Node, len(objs))
 	for i, obj := range objs {
 		node, ok := obj.(*corev1.Node)
