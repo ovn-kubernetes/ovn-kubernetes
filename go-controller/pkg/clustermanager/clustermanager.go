@@ -183,7 +183,7 @@ func NewClusterManager(
 
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
-		cm.noOverlayController, err = newNoOverlayController(wf, recorder)
+		cm.noOverlayController, err = newNoOverlayController(wf, recorder, ovnClient.UserDefinedNetworkClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create no-overlay validation controller: %w", err)
 		}

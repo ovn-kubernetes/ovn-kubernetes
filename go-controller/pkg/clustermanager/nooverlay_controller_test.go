@@ -18,6 +18,8 @@ import (
 	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	rafake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	udntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -65,6 +67,70 @@ func (tra testRA) RouteAdvertisements() *ratypes.RouteAdvertisements {
 	return ra
 }
 
+type testCUDN struct {
+	Name            string
+	Labels          map[string]string
+	Transport       udntypes.TransportOption
+	OutboundSNAT    udntypes.SNATOption
+	Routing         udntypes.RoutingOption
+	NetworkTopology udntypes.NetworkTopology
+	NetworkRole     udntypes.NetworkRole
+	Layer3Subnets   []string
+	JoinSubnet      string
+	MTU             int32
+}
+
+func (tcudn testCUDN) ClusterUserDefinedNetwork() *udntypes.ClusterUserDefinedNetwork {
+	cudn := &udntypes.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   tcudn.Name,
+			Labels: tcudn.Labels,
+		},
+		Spec: udntypes.ClusterUserDefinedNetworkSpec{
+			NamespaceSelector: metav1.LabelSelector{},
+			Network: udntypes.NetworkSpec{
+				Topology: tcudn.NetworkTopology,
+			},
+		},
+	}
+
+	// Set transport
+	if tcudn.Transport != "" {
+		cudn.Spec.Network.Transport = tcudn.Transport
+	}
+
+	// Set no-overlay options if transport is NoOverlay
+	if tcudn.Transport == udntypes.TransportOptionNoOverlay {
+		cudn.Spec.Network.NoOverlay = &udntypes.NoOverlayConfig{
+			OutboundSNAT: tcudn.OutboundSNAT,
+			Routing:      tcudn.Routing,
+		}
+	}
+
+	// Set Layer3 config if topology is Layer3
+	if tcudn.NetworkTopology == udntypes.NetworkTopologyLayer3 {
+		layer3Config := &udntypes.Layer3Config{
+			Role: tcudn.NetworkRole,
+		}
+		if len(tcudn.Layer3Subnets) > 0 {
+			for _, subnet := range tcudn.Layer3Subnets {
+				layer3Config.Subnets = append(layer3Config.Subnets, udntypes.Layer3Subnet{
+					CIDR: udntypes.CIDR(subnet),
+				})
+			}
+		}
+		if tcudn.JoinSubnet != "" {
+			layer3Config.JoinSubnets = udntypes.DualStackCIDRs{udntypes.CIDR(tcudn.JoinSubnet)}
+		}
+		if tcudn.MTU > 0 {
+			layer3Config.MTU = tcudn.MTU
+		}
+		cudn.Spec.Network.Layer3 = layer3Config
+	}
+
+	return cudn
+}
+
 var _ = ginkgo.Describe("No-Overlay Controller", func() {
 	var (
 		recorder *record.FakeRecorder
@@ -74,9 +140,10 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		recorder = record.NewFakeRecorder(100)
-		// Enable multi-network and route advertisements features
+		// Enable multi-network, network segmentation, and route advertisements features
 		// These are required for the no-overlay controller to function
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 	})
 
@@ -89,17 +156,20 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
 
-			controller, err := newNoOverlayController(wf, recorder)
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(controller).NotTo(gomega.BeNil())
 			gomega.Expect(controller.wf).To(gomega.Equal(wf))
 			gomega.Expect(controller.recorder).To(gomega.Equal(recorder))
+			gomega.Expect(controller.udnClient).To(gomega.Equal(fakeClient.UserDefinedNetworkClient))
 			gomega.Expect(controller.raController).NotTo(gomega.BeNil())
+			gomega.Expect(controller.cudnController).NotTo(gomega.BeNil())
 		})
 
 		ginkgo.It("should have empty last validation error on creation", func() {
@@ -110,12 +180,13 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
 
-			controller, err := newNoOverlayController(wf, recorder)
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(controller.lastValidationError).To(gomega.BeEmpty())
 		})
@@ -204,6 +275,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 					NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 					RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 					FRRClient:                 frrfake.NewSimpleClientset(),
+					UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 				}
 
 				// Create RAs with both spec and status
@@ -234,7 +306,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				err = wf.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				controller, err := newNoOverlayController(wf, recorder)
+				controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// Give time for informers to sync
@@ -266,11 +338,12 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller, err = newNoOverlayController(wf, recorder)
+			controller, err = newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
@@ -362,6 +435,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -369,7 +443,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller, err := newNoOverlayController(wf, localRecorder)
+			controller, err := newNoOverlayController(wf, localRecorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Start controller which will run initial validation
@@ -400,6 +474,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -407,7 +482,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller, err := newNoOverlayController(wf, localRecorder)
+			controller, err := newNoOverlayController(wf, localRecorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Run validation multiple times with the same error
@@ -430,6 +505,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -437,7 +513,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller, err := newNoOverlayController(wf, localRecorder)
+			controller, err := newNoOverlayController(wf, localRecorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// First validation will fail (no RouteAdvertisements)
@@ -491,6 +567,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: rafake.NewSimpleClientset(ra.RouteAdvertisements()),
 				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -498,7 +575,7 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			gomega.Expect(wf.Start()).To(gomega.Succeed())
 
-			controller, err := newNoOverlayController(wf, recorder)
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			err = controller.Start()
@@ -506,6 +583,959 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 			// Stop should not panic
 			gomega.Expect(func() { controller.Stop() }).NotTo(gomega.Panic())
+		})
+	})
+
+	ginkgo.Context("ClusterUserDefinedNetwork validation", func() {
+		tests := []struct {
+			name                 string
+			cudns                []*testCUDN
+			ras                  []*testRA
+			expectError          bool
+			expectErrorSubstring string
+		}{
+			{
+				name: "should pass when no CUDNs with no-overlay transport exist",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-geneve",
+						Labels:          map[string]string{"app": "test"},
+						Transport:       udntypes.TransportOptionGeneve,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras:         []*testRA{},
+				expectError: false,
+			},
+			{
+				name: "should fail when CUDN with no-overlay has no RouteAdvertisements",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-nooverlay",
+						Labels:          map[string]string{"app": "test"},
+						Transport:       udntypes.TransportOptionNoOverlay,
+						OutboundSNAT:    udntypes.SNATEnabled,
+						Routing:         udntypes.RoutingManaged,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras:                  []*testRA{},
+				expectError:          true,
+				expectErrorSubstring: "no RouteAdvertisements CR is advertising pod networks for ClusterUserDefinedNetwork",
+			},
+			{
+				name: "should pass when CUDN with no-overlay has accepted RouteAdvertisements",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-nooverlay",
+						Labels:          map[string]string{"app": "test"},
+						Transport:       udntypes.TransportOptionNoOverlay,
+						OutboundSNAT:    udntypes.SNATEnabled,
+						Routing:         udntypes.RoutingManaged,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras: []*testRA{
+					{
+						Name: "test-ra",
+						NetworkSelectors: []apitypes.NetworkSelector{
+							{
+								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+									NetworkSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "test"},
+									},
+								},
+							},
+						},
+						AdvertisePods:  true,
+						AcceptedStatus: ptr.To(metav1.ConditionTrue),
+					},
+				},
+				expectError: false,
+			},
+			{
+				name: "should fail when CUDN with no-overlay has RouteAdvertisements but not accepted",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-nooverlay",
+						Labels:          map[string]string{"app": "test"},
+						Transport:       udntypes.TransportOptionNoOverlay,
+						OutboundSNAT:    udntypes.SNATEnabled,
+						Routing:         udntypes.RoutingManaged,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras: []*testRA{
+					{
+						Name: "test-ra",
+						NetworkSelectors: []apitypes.NetworkSelector{
+							{
+								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+									NetworkSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "test"},
+									},
+								},
+							},
+						},
+						AdvertisePods:  true,
+						AcceptedStatus: ptr.To(metav1.ConditionFalse),
+					},
+				},
+				expectError:          true,
+				expectErrorSubstring: "but none have status Accepted=True",
+			},
+			{
+				name: "should fail when CUDN RouteAdvertisements doesn't advertise PodNetwork",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-nooverlay",
+						Labels:          map[string]string{"app": "test"},
+						Transport:       udntypes.TransportOptionNoOverlay,
+						OutboundSNAT:    udntypes.SNATEnabled,
+						Routing:         udntypes.RoutingManaged,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras: []*testRA{
+					{
+						Name: "test-ra",
+						NetworkSelectors: []apitypes.NetworkSelector{
+							{
+								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+									NetworkSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{"app": "test"},
+									},
+								},
+							},
+						},
+						Advertisements: []ratypes.AdvertisementType{ratypes.EgressIP},
+						AcceptedStatus: ptr.To(metav1.ConditionTrue),
+					},
+				},
+				expectError:          true,
+				expectErrorSubstring: "no RouteAdvertisements CR is advertising pod networks for ClusterUserDefinedNetwork",
+			},
+			{
+				name: "should pass when RouteAdvertisements matches CUDN via label selector",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-1",
+						Labels:          map[string]string{"env": "prod", "team": "backend"},
+						Transport:       udntypes.TransportOptionNoOverlay,
+						OutboundSNAT:    udntypes.SNATEnabled,
+						Routing:         udntypes.RoutingManaged,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras: []*testRA{
+					{
+						Name: "test-ra",
+						NetworkSelectors: []apitypes.NetworkSelector{
+							{
+								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+									NetworkSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{"env": "prod"},
+									},
+								},
+							},
+						},
+						AdvertisePods:  true,
+						AcceptedStatus: ptr.To(metav1.ConditionTrue),
+					},
+				},
+				expectError: false,
+			},
+			{
+				name: "should fail when RouteAdvertisements doesn't match CUDN labels",
+				cudns: []*testCUDN{
+					{
+						Name:            "test-cudn-1",
+						Labels:          map[string]string{"env": "dev"},
+						Transport:       udntypes.TransportOptionNoOverlay,
+						OutboundSNAT:    udntypes.SNATEnabled,
+						Routing:         udntypes.RoutingManaged,
+						NetworkTopology: udntypes.NetworkTopologyLayer3,
+						NetworkRole:     udntypes.NetworkRolePrimary,
+					},
+				},
+				ras: []*testRA{
+					{
+						Name: "test-ra",
+						NetworkSelectors: []apitypes.NetworkSelector{
+							{
+								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+									NetworkSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{"env": "prod"},
+									},
+								},
+							},
+						},
+						AdvertisePods:  true,
+						AcceptedStatus: ptr.To(metav1.ConditionTrue),
+					},
+				},
+				expectError:          true,
+				expectErrorSubstring: "no RouteAdvertisements CR is advertising pod networks for ClusterUserDefinedNetwork",
+			},
+		}
+
+		for _, tt := range tests {
+			ginkgo.It(tt.name, func() {
+				// No need to set config.Default.Transport for CUDN tests
+				// CUDNs can have NoOverlay transport independently
+
+				fakeClient := &util.OVNClusterManagerClientset{
+					KubeClient:                fake.NewSimpleClientset(),
+					NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+					RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+					FRRClient:                 frrfake.NewSimpleClientset(),
+					UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				}
+
+				// Create CUDNs
+				for _, tcudn := range tt.cudns {
+					cudn := tcudn.ClusterUserDefinedNetwork()
+					_, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Create(
+						context.Background(), cudn, metav1.CreateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+
+				// Create RAs
+				for _, tra := range tt.ras {
+					ra := tra.RouteAdvertisements()
+					_, err := fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(
+						context.Background(), ra, metav1.CreateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					// Update status separately if it exists
+					if tra.AcceptedStatus != nil {
+						ra.Status.Conditions = []metav1.Condition{
+							{
+								Type:   "Accepted",
+								Status: *tra.AcceptedStatus,
+							},
+						}
+						_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().UpdateStatus(
+							context.Background(), ra, metav1.UpdateOptions{})
+						gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					}
+				}
+
+				wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				defer wf.Shutdown()
+
+				err = wf.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Give time for informers to sync
+				gomega.Eventually(func() bool {
+					return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced() &&
+						wf.RouteAdvertisementsInformer().Informer().HasSynced()
+				}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+				err = controller.validate()
+				if tt.expectError {
+					gomega.Expect(err).To(gomega.HaveOccurred())
+					if tt.expectErrorSubstring != "" {
+						gomega.Expect(err.Error()).To(gomega.ContainSubstring(tt.expectErrorSubstring))
+					}
+				} else {
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+			})
+		}
+	})
+
+	ginkgo.Context("CUDN needsValidation logic", func() {
+		var controller *noOverlayController
+
+		ginkgo.BeforeEach(func() {
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			controller, err = newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		tests := []struct {
+			name           string
+			oldCUDN        *testCUDN
+			newCUDN        *testCUDN
+			expectValidate bool
+		}{
+			{
+				name: "should return true when transport changes to NoOverlay",
+				oldCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionGeneve,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				newCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATEnabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				expectValidate: true,
+			},
+			{
+				name: "should return true when transport changes from NoOverlay",
+				oldCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATEnabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				newCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionGeneve,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				expectValidate: true,
+			},
+			{
+				name: "should return true when NoOverlay config changes",
+				oldCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATEnabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				newCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATDisabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				expectValidate: true,
+			},
+			{
+				name: "should return false when neither transport nor NoOverlay config change for Geneve",
+				oldCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionGeneve,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				newCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionGeneve,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				expectValidate: false,
+			},
+			{
+				name:    "should return true when old CUDN is nil",
+				oldCUDN: nil,
+				newCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATEnabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				expectValidate: true,
+			},
+			{
+				name: "should return false when no-overlay CUDN doesn't change",
+				oldCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATEnabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				newCUDN: &testCUDN{
+					Name:            "test-cudn",
+					Transport:       udntypes.TransportOptionNoOverlay,
+					OutboundSNAT:    udntypes.SNATEnabled,
+					Routing:         udntypes.RoutingManaged,
+					NetworkTopology: udntypes.NetworkTopologyLayer3,
+					NetworkRole:     udntypes.NetworkRolePrimary,
+				},
+				expectValidate: false,
+			},
+		}
+
+		for _, tt := range tests {
+			tt := tt // capture range variable
+			ginkgo.It(tt.name, func() {
+				var oldCUDN, newCUDN *udntypes.ClusterUserDefinedNetwork
+				if tt.oldCUDN != nil {
+					oldCUDN = tt.oldCUDN.ClusterUserDefinedNetwork()
+				}
+				if tt.newCUDN != nil {
+					newCUDN = tt.newCUDN.ClusterUserDefinedNetwork()
+				}
+				result := controller.cudnNeedsValidation(oldCUDN, newCUDN)
+				gomega.Expect(result).To(gomega.Equal(tt.expectValidate))
+			})
+		}
+	})
+
+	ginkgo.Context("isRASelectingCUDN logic", func() {
+		var controller *noOverlayController
+
+		ginkgo.BeforeEach(func() {
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			controller, err = newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should return true when RA label selector matches CUDN labels", func() {
+			cudn := testCUDN{
+				Name:   "test-cudn",
+				Labels: map[string]string{"env": "prod", "team": "backend"},
+			}.ClusterUserDefinedNetwork()
+
+			ra := testRA{
+				Name: "test-ra",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"env": "prod"},
+							},
+						},
+					},
+				},
+			}.RouteAdvertisements()
+
+			result := controller.isRASelectingCUDN(ra, cudn)
+			gomega.Expect(result).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should return false when RA label selector doesn't match CUDN labels", func() {
+			cudn := testCUDN{
+				Name:   "test-cudn",
+				Labels: map[string]string{"env": "dev"},
+			}.ClusterUserDefinedNetwork()
+
+			ra := testRA{
+				Name: "test-ra",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"env": "prod"},
+							},
+						},
+					},
+				},
+			}.RouteAdvertisements()
+
+			result := controller.isRASelectingCUDN(ra, cudn)
+			gomega.Expect(result).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should return false when RA doesn't select ClusterUserDefinedNetworks", func() {
+			cudn := testCUDN{
+				Name:   "test-cudn",
+				Labels: map[string]string{"env": "prod"},
+			}.ClusterUserDefinedNetwork()
+
+			ra := testRA{
+				Name:           "test-ra",
+				SelectsDefault: true,
+			}.RouteAdvertisements()
+
+			result := controller.isRASelectingCUDN(ra, cudn)
+			gomega.Expect(result).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should return true with empty label selector (matches all)", func() {
+			cudn := testCUDN{
+				Name:   "test-cudn",
+				Labels: map[string]string{"env": "prod"},
+			}.ClusterUserDefinedNetwork()
+
+			ra := testRA{
+				Name: "test-ra",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{},
+						},
+					},
+				},
+			}.RouteAdvertisements()
+
+			result := controller.isRASelectingCUDN(ra, cudn)
+			gomega.Expect(result).To(gomega.BeTrue())
+		})
+	})
+
+	ginkgo.Context("CUDN event emission", func() {
+		ginkgo.It("should emit event for CUDN validation failure", func() {
+			localRecorder := record.NewFakeRecorder(100)
+
+			cudn := testCUDN{
+				Name:            "test-cudn-nooverlay",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       udntypes.TransportOptionNoOverlay,
+				OutboundSNAT:    udntypes.SNATEnabled,
+				Routing:         udntypes.RoutingManaged,
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, localRecorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Start controller which will run initial validation
+			err = controller.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer controller.Stop()
+
+			// Wait a bit for the event to be emitted
+			gomega.Eventually(func() int {
+				return len(localRecorder.Events)
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeNumerically(">", 0))
+
+			// Check event was emitted
+			event := <-localRecorder.Events
+			gomega.Expect(event).To(gomega.ContainSubstring("Warning"))
+			gomega.Expect(event).To(gomega.ContainSubstring("NoRouteAdvertisements"))
+			gomega.Expect(event).To(gomega.ContainSubstring("ClusterUserDefinedNetwork"))
+			gomega.Expect(event).To(gomega.ContainSubstring("test-cudn-nooverlay"))
+		})
+	})
+
+	ginkgo.Context("CUDN TransportAccepted status updates", func() {
+		ginkgo.It("should update status to True with GeneveTransportAccepted for Geneve transport", func() {
+			cudn := testCUDN{
+				Name:            "test-cudn-geneve",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       udntypes.TransportOptionGeneve,
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Give time for informers to sync
+			gomega.Eventually(func() bool {
+				return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced()
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+			// Run validation which should update status
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Check that the status was updated
+			gomega.Eventually(func() bool {
+				updatedCUDN, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+					context.Background(), "test-cudn-geneve", metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				for _, cond := range updatedCUDN.Status.Conditions {
+					if cond.Type == "TransportAccepted" &&
+						cond.Status == metav1.ConditionTrue &&
+						cond.Reason == "GeneveTransportAccepted" &&
+						cond.Message == "Geneve transport has been configured." {
+						return true
+					}
+				}
+				return false
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should update status to True for empty transport (defaults to Geneve)", func() {
+			cudn := testCUDN{
+				Name:            "test-cudn-default",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       "",
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Give time for informers to sync
+			gomega.Eventually(func() bool {
+				return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced()
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+			// Run validation which should update status
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Check that the status was updated
+			gomega.Eventually(func() bool {
+				updatedCUDN, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+					context.Background(), "test-cudn-default", metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				for _, cond := range updatedCUDN.Status.Conditions {
+					if cond.Type == "TransportAccepted" &&
+						cond.Status == metav1.ConditionTrue &&
+						cond.Reason == "GeneveTransportAccepted" {
+						return true
+					}
+				}
+				return false
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should update status to True with NoOverlayTransportAccepted when RA is accepted", func() {
+			cudn := testCUDN{
+				Name:            "test-cudn-nooverlay",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       udntypes.TransportOptionNoOverlay,
+				OutboundSNAT:    udntypes.SNATEnabled,
+				Routing:         udntypes.RoutingManaged,
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			ra := testRA{
+				Name: "test-ra",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"app": "test"},
+							},
+						},
+					},
+				},
+				AdvertisePods:  true,
+				AcceptedStatus: ptr.To(metav1.ConditionTrue),
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+
+			// Create RA
+			_, err := fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(
+				context.Background(), ra.RouteAdvertisements(), metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().UpdateStatus(
+				context.Background(), ra.RouteAdvertisements(), metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Give time for informers to sync
+			gomega.Eventually(func() bool {
+				return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced() &&
+					wf.RouteAdvertisementsInformer().Informer().HasSynced()
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+			// Run validation which should update status
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Check that the status was updated
+			gomega.Eventually(func() bool {
+				updatedCUDN, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+					context.Background(), "test-cudn-nooverlay", metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				for _, cond := range updatedCUDN.Status.Conditions {
+					if cond.Type == "TransportAccepted" &&
+						cond.Status == metav1.ConditionTrue &&
+						cond.Reason == "NoOverlayTransportAccepted" &&
+						cond.Message == "Transport has been configured as 'no-overlay'." {
+						return true
+					}
+				}
+				return false
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should update status to False when no RouteAdvertisements exists", func() {
+			cudn := testCUDN{
+				Name:            "test-cudn-nooverlay",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       udntypes.TransportOptionNoOverlay,
+				OutboundSNAT:    udntypes.SNATEnabled,
+				Routing:         udntypes.RoutingManaged,
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Give time for informers to sync
+			gomega.Eventually(func() bool {
+				return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced()
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+			// Run validation which should update status
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).To(gomega.HaveOccurred()) // Should return error
+
+			// Check that the status was updated
+			gomega.Eventually(func() bool {
+				updatedCUDN, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+					context.Background(), "test-cudn-nooverlay", metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				for _, cond := range updatedCUDN.Status.Conditions {
+					if cond.Type == "TransportAccepted" &&
+						cond.Status == metav1.ConditionFalse &&
+						cond.Reason == "NoOverlayRouteAdvertisementsIsMissing" &&
+						cond.Message == "No RouteAdvertisements CR is advertising the pod networks." {
+						return true
+					}
+				}
+				return false
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should update status to False when RouteAdvertisements exists but not accepted", func() {
+			cudn := testCUDN{
+				Name:            "test-cudn-nooverlay",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       udntypes.TransportOptionNoOverlay,
+				OutboundSNAT:    udntypes.SNATEnabled,
+				Routing:         udntypes.RoutingManaged,
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			ra := testRA{
+				Name: "test-ra",
+				NetworkSelectors: []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"app": "test"},
+							},
+						},
+					},
+				},
+				AdvertisePods:  true,
+				AcceptedStatus: ptr.To(metav1.ConditionFalse),
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+
+			// Create RA
+			_, err := fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(
+				context.Background(), ra.RouteAdvertisements(), metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().UpdateStatus(
+				context.Background(), ra.RouteAdvertisements(), metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Give time for informers to sync
+			gomega.Eventually(func() bool {
+				return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced() &&
+					wf.RouteAdvertisementsInformer().Informer().HasSynced()
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+			// Run validation which should update status
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).To(gomega.HaveOccurred()) // Should return error
+
+			// Check that the status was updated
+			gomega.Eventually(func() bool {
+				updatedCUDN, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+					context.Background(), "test-cudn-nooverlay", metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				for _, cond := range updatedCUDN.Status.Conditions {
+					if cond.Type == "TransportAccepted" &&
+						cond.Status == metav1.ConditionFalse &&
+						cond.Reason == "NoOverlayRouteAdvertisementsNotAccepted" {
+						return true
+					}
+				}
+				return false
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should not update status when condition already matches", func() {
+			cudn := testCUDN{
+				Name:            "test-cudn-geneve",
+				Labels:          map[string]string{"app": "test"},
+				Transport:       udntypes.TransportOptionGeneve,
+				NetworkTopology: udntypes.NetworkTopologyLayer3,
+				NetworkRole:     udntypes.NetworkRolePrimary,
+			}
+
+			fakeClient := &util.OVNClusterManagerClientset{
+				KubeClient:                fake.NewSimpleClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(cudn.ClusterUserDefinedNetwork()),
+			}
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			gomega.Expect(wf.Start()).To(gomega.Succeed())
+
+			controller, err := newNoOverlayController(wf, recorder, fakeClient.UserDefinedNetworkClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Give time for informers to sync
+			gomega.Eventually(func() bool {
+				return wf.ClusterUserDefinedNetworkInformer().Informer().HasSynced()
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+
+			// Run validation first time
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Get the updated CUDN
+			updatedCUDN, err := fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+				context.Background(), "test-cudn-geneve", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Get the resource version after first update
+			firstResourceVersion := updatedCUDN.ResourceVersion
+
+			// Run validation second time
+			err = controller.validateClusterUserDefinedNetworks()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Get the updated CUDN again
+			updatedCUDN, err = fakeClient.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+				context.Background(), "test-cudn-geneve", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Resource version should be the same (no update happened)
+			gomega.Expect(updatedCUDN.ResourceVersion).To(gomega.Equal(firstResourceVersion))
 		})
 	})
 })
