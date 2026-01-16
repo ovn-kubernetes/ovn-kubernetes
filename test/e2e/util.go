@@ -1709,8 +1709,8 @@ func waitForPodNotFoundInNamespace(ctx context.Context, c kubernetes.Interface, 
 	return nil
 }
 
-func isDefaultNetworkAdvertised() bool {
-	podNetworkValue, err := e2ekubectl.RunKubectl("default", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+func isDefaultNetworkAdvertised(raName string) bool {
+	podNetworkValue, err := e2ekubectl.RunKubectl("default", "get", "ra", raName, "--template={{index .spec.advertisements 0}}")
 	if err != nil {
 		return false
 	}
