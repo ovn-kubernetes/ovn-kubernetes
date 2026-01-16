@@ -25,6 +25,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
@@ -79,7 +81,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
-			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), f.VTEPInformer(), nil,
+			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), f.VTEPInformer(), f.RouteAdvertisementsInformer(), nil,
 		)
 	}
 
@@ -102,7 +104,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		}
 		return New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
-			renderNADStub, nm.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), vtepInformer, nil,
+			renderNADStub, nm.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), vtepInformer, f.RouteAdvertisementsInformer(), nil,
 		)
 	}
 
@@ -468,7 +470,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					var err error
 					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -494,7 +496,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					var err error
 					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -523,7 +525,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					var err error
 					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -553,7 +555,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					var err error
 					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -921,7 +923,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -953,7 +955,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -1116,7 +1118,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -1141,7 +1143,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -1169,7 +1171,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -1190,7 +1192,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -1244,7 +1246,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -1265,7 +1267,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -1290,7 +1292,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				Eventually(func() []metav1.Condition {
 					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -1408,7 +1410,7 @@ var _ = Describe("User Defined Network Controller", func() {
 						var err error
 						cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Equal([]metav1.Condition{{
 						Type:    "NetworkCreated",
 						Status:  "True",
@@ -1467,7 +1469,7 @@ var _ = Describe("User Defined Network Controller", func() {
 						var err error
 						cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Equal([]metav1.Condition{{
 						Type:    "NetworkCreated",
 						Status:  "True",
@@ -1496,7 +1498,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Eventually(func() []metav1.Condition {
 						cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Equal([]metav1.Condition{{
 						Type:    "NetworkCreated",
 						Status:  "True",
@@ -1588,7 +1590,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Eventually(func() []metav1.Condition {
 						cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Equal([]metav1.Condition{{
 						Type:    "NetworkCreated",
 						Status:  "True",
@@ -1615,7 +1617,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Eventually(func() []metav1.Condition {
 						cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Or(
 						Equal([]metav1.Condition{{
 							Type:   "NetworkCreated",
@@ -1659,7 +1661,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Eventually(func() []metav1.Condition {
 						cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Equal([]metav1.Condition{{
 						Type:    "NetworkCreated",
 						Status:  "True",
@@ -1688,7 +1690,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Eventually(func() []metav1.Condition {
 						cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						return normalizeConditions(cudn.Status.Conditions)
+						return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 					}).Should(Equal([]metav1.Condition{{
 						Type:    "NetworkCreated",
 						Status:  "True",
@@ -1739,7 +1741,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					var err error
 					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					return normalizeConditions(cudn.Status.Conditions)
+					return normalizeConditions(filterTransportConditions(cudn.Status.Conditions))
 				}, 50*time.Millisecond).Should(Equal([]metav1.Condition{{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -2162,7 +2164,7 @@ var _ = Describe("User Defined Network Controller", func() {
 	Context("ClusterUserDefinedNetwork status update", func() {
 		It("should succeed given no CR", func() {
 			c := newTestController(noopRenderNadStub())
-			Expect(c.updateClusterUDNStatus(nil, nil, nil)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(nil, nil, nil, false)).To(Succeed())
 		})
 		It("should fail when CR apply status fails", func() {
 			cudn := testClusterUDN("test")
@@ -2173,7 +2175,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				return true, nil, expectedErr
 			})
 
-			Expect(c.updateClusterUDNStatus(cudn, nil, nil)).ToNot(Succeed())
+			Expect(c.updateClusterUDNStatus(cudn, nil, nil, false)).ToNot(Succeed())
 		})
 		It("should reflect active namespaces", func() {
 			testNsNames := []string{"red", "green"}
@@ -2186,11 +2188,11 @@ var _ = Describe("User Defined Network Controller", func() {
 				testNADs = append(testNADs, *testClusterUdnNAD(cudn.Name, nsName))
 			}
 
-			Expect(c.updateClusterUDNStatus(cudn, testNADs, nil)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(cudn, testNADs, nil, false)).To(Succeed())
 
 			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(normalizeConditions(cudn.Status.Conditions)).To(ConsistOf([]metav1.Condition{
+			Expect(normalizeConditions(filterTransportConditions(cudn.Status.Conditions))).To(ConsistOf([]metav1.Condition{
 				{
 					Type:    "NetworkCreated",
 					Status:  "True",
@@ -2212,11 +2214,11 @@ var _ = Describe("User Defined Network Controller", func() {
 			nadGreen.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 			testNADs = append(testNADs, nadGreen)
 
-			Expect(c.updateClusterUDNStatus(cudn, testNADs, nil)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(cudn, testNADs, nil, false)).To(Succeed())
 
 			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(normalizeConditions(cudn.Status.Conditions)).To(ConsistOf([]metav1.Condition{
+			Expect(normalizeConditions(filterTransportConditions(cudn.Status.Conditions))).To(ConsistOf([]metav1.Condition{
 				{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -2237,11 +2239,11 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 
 			testErr := errors.New("test sync NAD error")
-			Expect(c.updateClusterUDNStatus(cudn, testNADs, testErr)).To(Succeed())
+			Expect(c.updateClusterUDNStatus(cudn, testNADs, testErr, false)).To(Succeed())
 
 			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
 			Expect(err).ToNot(HaveOccurred())
-			Expect(normalizeConditions(cudn.Status.Conditions)).To(ConsistOf([]metav1.Condition{
+			Expect(normalizeConditions(filterTransportConditions(cudn.Status.Conditions))).To(ConsistOf([]metav1.Condition{
 				{
 					Type:    "NetworkCreated",
 					Status:  "False",
@@ -2249,6 +2251,219 @@ var _ = Describe("User Defined Network Controller", func() {
 					Message: "test sync NAD error",
 				},
 			}))
+		})
+	})
+
+	newCUDNWithTransport := func(name string, labels map[string]string, transport udnv1.TransportOption) *udnv1.ClusterUserDefinedNetwork {
+		cudn := &udnv1.ClusterUserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   name,
+				Labels: labels,
+			},
+			Spec: udnv1.ClusterUserDefinedNetworkSpec{
+				Network: udnv1.NetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer3,
+					Layer3: &udnv1.Layer3Config{
+						Role:    udnv1.NetworkRolePrimary,
+						Subnets: []udnv1.Layer3Subnet{{CIDR: "10.100.0.0/16"}},
+					},
+				},
+			},
+		}
+		switch transport {
+		case udnv1.TransportOptionNoOverlay:
+			cudn.Spec.Network.Transport = udnv1.TransportOptionNoOverlay
+			cudn.Spec.Network.NoOverlay = &udnv1.NoOverlayConfig{
+				OutboundSNAT: udnv1.SNATEnabled,
+				Routing:      udnv1.RoutingManaged,
+			}
+		case udnv1.TransportOptionEVPN:
+			cudn.Spec.Network.Transport = udnv1.TransportOptionEVPN
+			cudn.Spec.Network.EVPN = &udnv1.EVPNConfig{
+				VTEP:  "test-vtep",
+				IPVRF: &udnv1.VRFConfig{VNI: 100},
+			}
+		}
+		return cudn
+	}
+
+	createAcceptedRA := func(name string, matchLabels map[string]string) {
+		ra := &ratypes.RouteAdvertisements{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: ratypes.RouteAdvertisementsSpec{
+				NetworkSelectors: []apitypes.NetworkSelector{{
+					NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+					ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+						NetworkSelector: metav1.LabelSelector{MatchLabels: matchLabels},
+					},
+				}},
+				Advertisements: []ratypes.AdvertisementType{ratypes.PodNetwork},
+			},
+		}
+		_, err := cs.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		ra.Status = ratypes.RouteAdvertisementsStatus{
+			Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionTrue}},
+		}
+		_, err = cs.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().UpdateStatus(context.Background(), ra, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	createNotAcceptedRA := func(name string, matchLabels map[string]string) {
+		ra := &ratypes.RouteAdvertisements{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: ratypes.RouteAdvertisementsSpec{
+				NetworkSelectors: []apitypes.NetworkSelector{{
+					NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+					ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+						NetworkSelector: metav1.LabelSelector{MatchLabels: matchLabels},
+					},
+				}},
+				Advertisements: []ratypes.AdvertisementType{ratypes.PodNetwork},
+			},
+		}
+		_, err := cs.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		ra.Status = ratypes.RouteAdvertisementsStatus{
+			Conditions: []metav1.Condition{{Type: "Accepted", Status: metav1.ConditionFalse}},
+		}
+		_, err = cs.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().UpdateStatus(context.Background(), ra, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	expectTransportCondition := func(cudnName string, status metav1.ConditionStatus, reason, message string) {
+		Eventually(func() bool {
+			cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudnName, metav1.GetOptions{})
+			if err != nil {
+				return false
+			}
+			for _, cond := range cudn.Status.Conditions {
+				if cond.Type == "TransportAccepted" && cond.Status == status && cond.Reason == reason {
+					if message == "" || cond.Message == message {
+						return true
+					}
+				}
+			}
+			return false
+		}, 2*time.Second, 100*time.Millisecond).Should(BeTrue())
+	}
+
+	Context("CUDN Transport Validation", func() {
+		var c *Controller
+
+		AfterEach(func() {
+			if c != nil {
+				c.Shutdown()
+			}
+		})
+
+		It("should update status to True with DefaultTransportAccepted for Geneve transport", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, "")
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			Expect(c.Run()).To(Succeed())
+			expectTransportCondition("test-cudn", metav1.ConditionTrue, "DefaultTransportAccepted", "Default transport has been configured.")
+		})
+
+		It("should update status to True for empty transport (defaults to Geneve)", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, "")
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			Expect(c.Run()).To(Succeed())
+			expectTransportCondition("test-cudn", metav1.ConditionTrue, "DefaultTransportAccepted", "Default transport has been configured.")
+		})
+
+		It("should update status to True with NoOverlayTransportAccepted when RA is accepted", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, udnv1.TransportOptionNoOverlay)
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			createAcceptedRA("test-ra", map[string]string{"app": "test"})
+			Expect(c.Run()).To(Succeed())
+			expectTransportCondition("test-cudn", metav1.ConditionTrue, "NoOverlayTransportAccepted", "Transport has been configured as 'no-overlay'.")
+		})
+
+		It("should update status to False when no RouteAdvertisements exists", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, udnv1.TransportOptionNoOverlay)
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			Expect(c.Run()).To(Succeed())
+			expectTransportCondition("test-cudn", metav1.ConditionFalse, "NoOverlayRouteAdvertisementsIsMissing", "No RouteAdvertisements CR is advertising the pod networks.")
+		})
+
+		It("should update status to False when RouteAdvertisements exists but not accepted", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, udnv1.TransportOptionNoOverlay)
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			createNotAcceptedRA("test-ra", map[string]string{"app": "test"})
+			Expect(c.Run()).To(Succeed())
+			expectTransportCondition("test-cudn", metav1.ConditionFalse, "NoOverlayRouteAdvertisementsNotAccepted", "RouteAdvertisements CR test-ra advertises the pod subnets, but its status is not accepted.")
+		})
+
+		It("should update status to True with EVPNTransportAccepted when RA is accepted", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, udnv1.TransportOptionEVPN)
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			createAcceptedRA("test-ra", map[string]string{"app": "test"})
+			Expect(c.Run()).To(Succeed())
+			expectTransportCondition("test-cudn", metav1.ConditionTrue, "EVPNTransportAccepted", "Transport has been configured as 'EVPN'.")
+		})
+
+		It("should not update status when condition already matches", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, "")
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			Expect(c.Run()).To(Succeed())
+
+			var initialResourceVersion string
+			Eventually(func() bool {
+				updatedCUDN, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), "test-cudn", metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				for _, cond := range updatedCUDN.Status.Conditions {
+					if cond.Type == "TransportAccepted" && cond.Status == metav1.ConditionTrue {
+						initialResourceVersion = updatedCUDN.ResourceVersion
+						return true
+					}
+				}
+				return false
+			}, 2*time.Second, 100*time.Millisecond).Should(BeTrue())
+
+			cudnObj, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), "test-cudn", metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = c.syncClusterUDN(cudnObj)
+			Expect(err).NotTo(HaveOccurred())
+
+			Consistently(func() string {
+				updatedCUDN, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), "test-cudn", metav1.GetOptions{})
+				if err != nil {
+					return ""
+				}
+				return updatedCUDN.ResourceVersion
+			}, 500*time.Millisecond, 100*time.Millisecond).Should(Equal(initialResourceVersion))
+		})
+
+		It("should update status from False to True when RouteAdvertisements is created after CUDN (NoOverlay)", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, udnv1.TransportOptionNoOverlay)
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			Expect(c.Run()).To(Succeed())
+
+			// Verify initial status is False (no RA exists)
+			expectTransportCondition("test-cudn", metav1.ConditionFalse, "NoOverlayRouteAdvertisementsIsMissing", "No RouteAdvertisements CR is advertising the pod networks.")
+
+			// Now create the RouteAdvertisements CR
+			createAcceptedRA("test-ra", map[string]string{"app": "test"})
+
+			// Verify status updates to True
+			expectTransportCondition("test-cudn", metav1.ConditionTrue, "NoOverlayTransportAccepted", "Transport has been configured as 'no-overlay'.")
+		})
+
+		It("should update status from False to True when RouteAdvertisements is created after CUDN (EVPN)", func() {
+			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, udnv1.TransportOptionEVPN)
+			c = newTestController(template.RenderNetAttachDefManifest, cudn)
+			Expect(c.Run()).To(Succeed())
+
+			// Verify initial status is False (no RA exists)
+			expectTransportCondition("test-cudn", metav1.ConditionFalse, "EVPNRouteAdvertisementsIsMissing", "No RouteAdvertisements CR is advertising the pod networks.")
+
+			// Now create the RouteAdvertisements CR
+			createAcceptedRA("test-ra", map[string]string{"app": "test"})
+
+			// Verify status updates to True
+			expectTransportCondition("test-cudn", metav1.ConditionTrue, "EVPNTransportAccepted", "Transport has been configured as 'EVPN'.")
 		})
 	})
 })
@@ -2259,6 +2474,7 @@ func assertConditionReportNetworkInUse(conditions []metav1.Condition, messageNAD
 	// Gomega Expect is not being used; as they would make Eventually fail immediately.
 	// In addition, Gomega equality matcher cannot be used since condition message namespaces order is inconsistent.
 
+	conditions = filterTransportConditions(conditions)
 	if len(conditions) != 1 {
 		return fmt.Errorf("expeced conditions to have len 1, got: %d", len(conditions))
 	}
@@ -2331,6 +2547,16 @@ func normalizeConditions(conditions []metav1.Condition) []metav1.Condition {
 		conditions[i].LastTransitionTime = t
 	}
 	return conditions
+}
+
+func filterTransportConditions(conditions []metav1.Condition) []metav1.Condition {
+	var filtered []metav1.Condition
+	for _, cond := range conditions {
+		if cond.Type != "TransportAccepted" {
+			filtered = append(filtered, cond)
+		}
+	}
+	return filtered
 }
 
 func testPrimaryUDN() *udnv1.UserDefinedNetwork {
