@@ -504,3 +504,67 @@ func createEVPNIPVRFServer(
 
 	return server, nil
 }
+
+// extendExistingFRRWithEVPN extends an existing FRR container (from BGP tests) with EVPN support.
+// This adds br0/vxlan0 and configures l2vpn evpn address-family via vtysh.
+//
+// This function is useful when the FRR container already exists from BGP RouteAdvertisements
+// tests and we want to add EVPN functionality on top.
+//
+// Parameters:
+//   - frr: Reference to the existing FRR container
+//   - localIP: The FRR container's IP to use as local VTEP endpoint
+//
+// Returns error if setup fails.
+func extendExistingFRRWithEVPN(frr infraapi.ExternalContainer, localIP string) error {
+	provider := infraprovider.Get()
+
+	// Check if br0 already exists
+	out, err := provider.ExecExternalContainerCommand(frr, []string{
+		"ip", "link", "show", "br0",
+	})
+	if err != nil || !strings.Contains(out, "br0") {
+		// br0 doesn't exist, set it up
+		err = setupExternalFRRWithEVPNBridge(frr, localIP)
+		if err != nil {
+			return fmt.Errorf("failed to setup EVPN bridge: %w", err)
+		}
+	}
+
+	// Add l2vpn evpn address-family via vtysh
+	// This is idempotent - if already configured, it won't fail
+	_, err = provider.ExecExternalContainerCommand(frr, []string{
+		"vtysh", "-c", "configure terminal",
+		"-c", "router bgp 64512",
+		"-c", "address-family l2vpn evpn",
+		"-c", "advertise-all-vni",
+		"-c", "end",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to configure l2vpn evpn: %w", err)
+	}
+
+	return nil
+}
+
+// deriveGatewayIP derives a gateway IP from a server IP by using .1 as the last octet.
+// For example, "10.0.0.100/24" becomes "10.0.0.1/24".
+func deriveGatewayIP(serverIP string) string {
+	// Split IP and prefix
+	parts := strings.Split(serverIP, "/")
+	if len(parts) != 2 {
+		return ""
+	}
+	ip := parts[0]
+	prefix := parts[1]
+
+	// Split IP into octets
+	octets := strings.Split(ip, ".")
+	if len(octets) != 4 {
+		return ""
+	}
+
+	// Replace last octet with 1
+	octets[3] = "1"
+	return strings.Join(octets, ".") + "/" + prefix
+}
