@@ -401,3 +401,106 @@ func createEVPNMACVRFServer(
 
 	return server, nil
 }
+
+// createEVPNIPVRFServer creates an agnhost server container and connects it to
+// the external FRR's IP-VRF.
+//
+// The function:
+// 1. Creates a docker network for the agnhost-FRR connection
+// 2. Creates the agnhost container on that network
+// 3. Attaches FRR to the network
+// 4. Moves FRR's new interface to the IP-VRF
+// 5. Configures the agnhost with the specified IP address
+//
+// Returns the created server container.
+func createEVPNIPVRFServer(
+	ictx infraapi.Context,
+	frr infraapi.ExternalContainer,
+	serverName string,
+	serverIP string, // IP address with prefix, e.g., "10.0.0.100/24"
+	vrfCfg EVPNVRFConfig,
+) (infraapi.ExternalContainer, error) {
+	provider := infraprovider.Get()
+
+	// Create a network for the agnhost-FRR connection
+	// This network is just used to establish the veth pair between containers
+	networkName := serverName + "-net"
+	network, err := ictx.CreateNetwork(networkName)
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to create network %s: %w", networkName, err)
+	}
+
+	// Create agnhost server on the network
+	server := infraapi.ExternalContainer{
+		Name:    serverName,
+		Image:   images.AgnHost(),
+		CmdArgs: []string{"netexec", "--http-port=8080"},
+		Network: network,
+	}
+	server, err = ictx.CreateExternalContainer(server)
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to create server container %s: %w", serverName, err)
+	}
+
+	// Attach FRR to the same network to create the connection
+	frrIface, err := ictx.AttachNetwork(network, frr.Name)
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to attach FRR to network %s: %w", networkName, err)
+	}
+
+	// Get the interface name inside FRR for this network
+	frrIfaceName := frrIface.InfName
+	if frrIfaceName == "" {
+		// If not provided, we need to find the interface by looking for the newest eth interface
+		out, err := provider.ExecExternalContainerCommand(frr, []string{
+			"sh", "-c", "ip -j link show | jq -r '.[].ifname' | grep eth | sort -t 'h' -k2 -n | tail -1",
+		})
+		if err != nil {
+			return infraapi.ExternalContainer{}, fmt.Errorf("failed to find FRR interface for network %s: %w", networkName, err)
+		}
+		frrIfaceName = strings.TrimSpace(out)
+	}
+
+	// Attach the FRR interface to the IP-VRF
+	_, err = provider.ExecExternalContainerCommand(frr, []string{
+		"ip", "link", "set", frrIfaceName, "master", vrfCfg.Name,
+	})
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to attach %s to VRF %s: %w", frrIfaceName, vrfCfg.Name, err)
+	}
+
+	// Bring interface up
+	_, err = provider.ExecExternalContainerCommand(frr, []string{
+		"ip", "link", "set", frrIfaceName, "up",
+	})
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to bring up %s: %w", frrIfaceName, err)
+	}
+
+	// Configure the agnhost server IP
+	// First, clear any auto-assigned IP from docker
+	_, err = provider.ExecExternalContainerCommand(server, []string{
+		"ip", "addr", "flush", "dev", "eth0",
+	})
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to flush server IP: %w", err)
+	}
+
+	// Set the desired IP address
+	_, err = provider.ExecExternalContainerCommand(server, []string{
+		"ip", "addr", "add", serverIP, "dev", "eth0",
+	})
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to set server IP %s: %w", serverIP, err)
+	}
+
+	// Bring interface back up (in case flush brought it down)
+	_, err = provider.ExecExternalContainerCommand(server, []string{
+		"ip", "link", "set", "eth0", "up",
+	})
+	if err != nil {
+		return infraapi.ExternalContainer{}, fmt.Errorf("failed to bring up server interface: %w", err)
+	}
+
+	return server, nil
+}
