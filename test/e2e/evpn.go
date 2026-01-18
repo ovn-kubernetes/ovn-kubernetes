@@ -1,12 +1,17 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/test/e2e/framework"
 )
 
 // EVPNVRFConfig holds configuration for an EVPN VRF (MAC-VRF or IP-VRF) on the external FRR.
@@ -567,4 +572,51 @@ func deriveGatewayIP(serverIP string) string {
 	// Replace last octet with 1
 	octets[3] = "1"
 	return strings.Join(octets, ".") + "/" + prefix
+}
+
+// createVTEP creates a VTEP (VXLAN Tunnel Endpoint) Custom Resource for EVPN.
+// The VTEP CR configures VTEP IP allocation for EVPN on cluster nodes.
+//
+// Parameters:
+//   - f: Test framework
+//   - ictx: Infrastructure context for cleanup registration
+//   - name: Name of the VTEP CR
+//   - cidrs: CIDR ranges for VTEP IP allocation (1 for single-stack, 2 for dual-stack)
+func createVTEP(
+	f *framework.Framework,
+	ictx infraapi.Context,
+	name string,
+	cidrs []string,
+) error {
+	vtepClient, err := vtepclientset.NewForConfig(f.ClientConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create VTEP client: %w", err)
+	}
+
+	// Convert string CIDRs to vtepv1.CIDR type
+	vtepCIDRs := make(vtepv1.DualStackCIDRs, len(cidrs))
+	for i, cidr := range cidrs {
+		vtepCIDRs[i] = vtepv1.CIDR(cidr)
+	}
+
+	vtep := &vtepv1.VTEP{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: vtepv1.VTEPSpec{
+			CIDRs: vtepCIDRs,
+			Mode:  vtepv1.VTEPModeManaged,
+		},
+	}
+
+	_, err = vtepClient.K8sV1().VTEPs().Create(context.Background(), vtep, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create VTEP %s: %w", name, err)
+	}
+
+	ictx.AddCleanUpFn(func() error {
+		return vtepClient.K8sV1().VTEPs().Delete(context.Background(), name, metav1.DeleteOptions{})
+	})
+
+	return nil
 }
