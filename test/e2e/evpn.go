@@ -3,15 +3,25 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
+	"time"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 )
 
 // EVPNVRFConfig holds configuration for an EVPN VRF (MAC-VRF or IP-VRF) on the external FRR.
@@ -620,3 +630,226 @@ func createVTEP(
 
 	return nil
 }
+
+// EVPN e2e tests
+var _ = ginkgo.Describe("EVPN: Pod connectivity to external servers via EVPN", func() {
+	const (
+		timeout        = 240 * time.Second
+		netexecPort    = 8080
+		vtepSubnetIPv4 = "100.64.0.0/24"
+	)
+	var netexecPortStr = fmt.Sprintf("%d", netexecPort)
+
+	f := wrappedTestFramework("evpn")
+
+	var ictx infraapi.Context
+	var testBaseName string
+
+	ginkgo.BeforeEach(func() {
+		if !isLocalGWModeEnabled() {
+			e2eskipper.Skipf("EVPN test cases only supported in Local Gateway mode")
+		}
+		ictx = infraprovider.Get().NewTestContext()
+		testBaseName = "evpn-" + framework.RandomSuffix()
+	})
+
+	ginkgo.AfterEach(func() {
+		// Cleanup is handled by ictx
+	})
+
+	// Helper to test connectivity from pod to external server
+	testPodToServer := func(pod *corev1.Pod, serverIP string) {
+		ginkgo.GinkgoHelper()
+		url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(serverIP, netexecPortStr))
+		_, err := e2epodoutput.RunHostCmdWithRetries(
+			pod.Namespace,
+			pod.Name,
+			fmt.Sprintf("curl --max-time 5 -g -q -s %s", url),
+			framework.Poll,
+			timeout,
+		)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+
+	ginkgo.DescribeTable("EVPN connectivity",
+		func(networkSpec *udnv1.NetworkSpec, macvrfCfg *EVPNServerConfig, ipvrfCfg *EVPNServerConfig) {
+			// Use the existing FRR container from BGP RouteAdvertisements tests
+			// This container is already connected to the KIND primary network
+			const existingFRRName = "frr"
+
+			ginkgo.By("Getting reference to existing FRR container")
+			providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			frr := infraapi.ExternalContainer{Name: existingFRRName}
+			frrNetIface, err := infraprovider.Get().GetExternalContainerNetworkInterface(frr, providerPrimaryNetwork)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			frrIP := frrNetIface.IPv4
+			framework.Logf("Using existing FRR container %s with IP %s", existingFRRName, frrIP)
+
+			ginkgo.By("Extending existing FRR with EVPN support (br0/vxlan0 + l2vpn evpn)")
+			err = extendExistingFRRWithEVPN(frr, frrIP)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Configure MAC-VRF and create external server if specified
+			if macvrfCfg != nil {
+				ginkgo.By("Configuring MAC-VRF on FRR")
+				err = configureExternalFRRMACVRF(frr, macvrfCfg.EVPNVRFConfig)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("Creating MAC-VRF agnhost server")
+				serverName := fmt.Sprintf("agnhost-%s-macvrf", testBaseName)
+				_, err = createEVPNMACVRFServer(ictx, frr, serverName, macvrfCfg.ServerIP, macvrfCfg.EVPNVRFConfig)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+
+			// Configure IP-VRF and create external server if specified
+			if ipvrfCfg != nil {
+				ginkgo.By("Configuring IP-VRF on FRR")
+				gatewayIP := deriveGatewayIP(ipvrfCfg.ServerIP)
+				err = configureExternalFRRIPVRF(frr, ipvrfCfg.EVPNVRFConfig, gatewayIP)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Add IP-VRF config to FRR via vtysh
+				ginkgo.By("Adding IP-VRF BGP configuration")
+				err = addIPVRFBGPConfig(frr, ipvrfCfg.EVPNVRFConfig)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("Creating IP-VRF agnhost server")
+				serverName := fmt.Sprintf("agnhost-%s-ipvrf", testBaseName)
+				_, err = createEVPNIPVRFServer(ictx, frr, serverName, ipvrfCfg.ServerIP, ipvrfCfg.EVPNVRFConfig)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+
+			ginkgo.By("Creating VTEP CR")
+			vtepName := testBaseName + "-vtep"
+			err = createVTEP(f, ictx, vtepName, []string{vtepSubnetIPv4})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Update VTEP name in network spec
+			networkSpec.EVPN.VTEP = vtepName
+
+			ginkgo.By("Creating CUDN with EVPN transport")
+			networkLabels := map[string]string{"network": testBaseName}
+			err = createUserDefinedNetwork(f, ictx, f.Namespace, testBaseName, true, networkSpec, networkLabels)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Creating RouteAdvertisements")
+			err = createRouteAdvertisements(f, ictx, testBaseName, testBaseName, networkLabels, networkLabels)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Creating test pod on CUDN")
+			testPod := e2epod.CreateExecPodOrFail(
+				context.Background(),
+				f.ClientSet,
+				f.Namespace.Name,
+				testBaseName+"-pod",
+				func(pod *corev1.Pod) {
+					pod.Spec.Containers[0].Image = images.AgnHost()
+				},
+			)
+
+			// Test connectivity based on which servers are configured
+			if macvrfCfg != nil {
+				ginkgo.By("Testing connectivity to external MAC-VRF server")
+				serverIP := strings.Split(macvrfCfg.ServerIP, "/")[0] // Remove prefix
+				testPodToServer(testPod, serverIP)
+			}
+			if ipvrfCfg != nil {
+				ginkgo.By("Testing connectivity to external IP-VRF server")
+				serverIP := strings.Split(ipvrfCfg.ServerIP, "/")[0] // Remove prefix
+				testPodToServer(testPod, serverIP)
+			}
+		},
+		// Layer2 with MAC-VRF only - L2 broadcast domain extended via EVPN
+		ginkgo.Entry("Layer2 network with MAC-VRF",
+			&udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{udnv1.CIDR("10.100.0.0/16")},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "", // Will be set dynamically
+					MACVRF: &udnv1.VRFConfig{
+						VNI: 10100,
+					},
+				},
+			},
+			&EVPNServerConfig{
+				EVPNVRFConfig: EVPNVRFConfig{
+					Name: "macvrf-l2",
+					VID:  100,
+					VNI:  10100,
+				},
+				ServerIP: "10.100.0.250/16",
+			},
+			nil, // No IP-VRF
+		),
+		// Layer2 with MAC-VRF + IP-VRF - L2 domain with L3 routing to external networks
+		ginkgo.Entry("Layer2 network with MAC-VRF and IP-VRF",
+			&udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{udnv1.CIDR("10.101.0.0/16")},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "", // Will be set dynamically
+					MACVRF: &udnv1.VRFConfig{
+						VNI: 10101,
+					},
+					IPVRF: &udnv1.VRFConfig{
+						VNI: 20101,
+					},
+				},
+			},
+			&EVPNServerConfig{
+				EVPNVRFConfig: EVPNVRFConfig{
+					Name: "macvrf-l2l3",
+					VID:  101,
+					VNI:  10101,
+				},
+				ServerIP: "10.101.0.250/16",
+			},
+			&EVPNServerConfig{
+				EVPNVRFConfig: EVPNVRFConfig{
+					Name: "ipvrf-l2l3",
+					VID:  201,
+					VNI:  20101,
+				},
+				ServerIP: "172.20.101.100/24",
+			},
+		),
+		// Layer3 with IP-VRF only - L3 routing via EVPN Type-5 routes
+		ginkgo.Entry("Layer3 network with IP-VRF",
+			&udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3,
+				Layer3: &udnv1.Layer3Config{
+					Role: udnv1.NetworkRolePrimary,
+					Subnets: []udnv1.Layer3Subnet{{
+						CIDR: udnv1.CIDR("10.102.0.0/16"),
+					}},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "", // Will be set dynamically
+					IPVRF: &udnv1.VRFConfig{
+						VNI: 20102,
+					},
+				},
+			},
+			nil, // No MAC-VRF
+			&EVPNServerConfig{
+				EVPNVRFConfig: EVPNVRFConfig{
+					Name: "ipvrf-l3",
+					VID:  202,
+					VNI:  20102,
+				},
+				ServerIP: "172.20.102.100/24",
+			},
+		),
+	)
+})
