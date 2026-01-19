@@ -40,6 +40,8 @@ import (
 	userdefinednetworkscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
 	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
+	vtepinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
+	vteplister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -51,6 +53,7 @@ const (
 	// Condition reasons
 	reasonNADCreated   = "NetworkAttachmentDefinitionCreated"
 	reasonSyncError    = "SyncError"
+	reasonVTEPNotFound = "VTEPNotFound"
 	reasonNADDeleted   = "NetworkAttachmentDefinitionDeleted"
 	reasonNADSyncError = "NetworkAttachmentDefinitionSyncError"
 
@@ -80,6 +83,15 @@ type networkInUseError struct {
 
 func (n *networkInUseError) Error() string {
 	return n.err.Error()
+}
+
+// vtepNotFoundError indicates that a required VTEP CR does not exist.
+type vtepNotFoundError struct {
+	vtepName string
+}
+
+func (e *vtepNotFoundError) Error() string {
+	return fmt.Sprintf("VTEP %q does not exist", e.vtepName)
 }
 
 type Controller struct {
@@ -114,6 +126,10 @@ type Controller struct {
 	nadLister         netv1lister.NetworkAttachmentDefinitionLister
 	podInformer       corev1informer.PodInformer
 	namespaceInformer corev1informer.NamespaceInformer
+	// vtepLister provides read access to VTEP CRs for validating EVPN configuration.
+	vtepLister vteplister.VTEPLister
+	// vtepNotifier notifies subscribing controllers about VTEP events.
+	vtepNotifier *notifier.VTEPNotifier
 
 	networkInUseRequeueInterval time.Duration
 	eventRecorder               record.EventRecorder
@@ -129,6 +145,7 @@ func New(
 	networkManager networkmanager.Interface,
 	podInformer corev1informer.PodInformer,
 	namespaceInformer corev1informer.NamespaceInformer,
+	vtepInformer vtepinformer.VTEPInformer,
 	eventRecorder record.EventRecorder,
 ) *Controller {
 	udnLister := udnInformer.Lister()
@@ -174,6 +191,10 @@ func New(
 	c.nadNotifier = notifier.NewNetAttachDefNotifier(nadInfomer, c)
 	c.namespaceNotifier = notifier.NewNamespaceNotifier(namespaceInformer, c)
 
+	// Setup VTEP watching for EVPN support.
+	c.vtepLister = vtepInformer.Lister()
+	c.vtepNotifier = notifier.NewVTEPNotifier(vtepInformer, c)
+
 	return c
 }
 
@@ -186,6 +207,7 @@ func (c *Controller) Run() error {
 		c.udnController,
 		c.nadNotifier.Controller,
 		c.namespaceNotifier.Controller,
+		c.vtepNotifier.Controller,
 	); err != nil {
 		return fmt.Errorf("unable to start user-defined network controller: %v", err)
 	}
@@ -419,6 +441,7 @@ func (c *Controller) Shutdown() {
 		c.udnController,
 		c.nadNotifier.Controller,
 		c.namespaceNotifier.Controller,
+		c.vtepNotifier.Controller,
 	)
 }
 
@@ -746,6 +769,14 @@ func (c *Controller) reconcileCUDN(key string) error {
 		return updateStatusErr
 	}
 
+	// vtepNotFoundError is non-fatal: the status has been updated to reflect
+	// the missing VTEP, and the VTEPNotifier will re-queue this CUDN when
+	// the VTEP is created. No need to return an error that would cause retries.
+	var vtepNotFound *vtepNotFoundError
+	if errors.As(syncErr, &vtepNotFound) {
+		return updateStatusErr
+	}
+
 	return errors.Join(syncErr, updateStatusErr)
 }
 
@@ -822,6 +853,10 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 		}
 		klog.Infof("Added Finalizer to ClusterUserDefinedNetwork %q", cudnName)
 		metrics.IncrementCUDNCount(role, topology)
+	}
+
+	if err := c.validateEVPNVTEP(cudn); err != nil {
+		return nil, err
 	}
 
 	selectedNamespaces, err := c.getSelectedNamespaces(cudn.Spec.NamespaceSelector)
@@ -948,9 +983,70 @@ func newClusterNetworkCreatedCondition(nads []netv1.NetworkAttachmentDefinition,
 
 	if syncError != nil {
 		condition.Status = metav1.ConditionFalse
-		condition.Reason = reasonNADSyncError
-		condition.Message = syncError.Error()
+
+		// Check for specific error types to provide better status reasons
+		var vtepNotFound *vtepNotFoundError
+		if errors.As(syncError, &vtepNotFound) {
+			condition.Reason = reasonVTEPNotFound
+			condition.Message = fmt.Sprintf("Cannot create network: VTEP '%s' does not exist. "+
+				"Create the VTEP CR first or update the CUDN to reference an existing VTEP.",
+				vtepNotFound.vtepName)
+		} else {
+			condition.Reason = reasonNADSyncError
+			condition.Message = syncError.Error()
+		}
 	}
 
 	return condition
+}
+
+// validateEVPNVTEP validates EVPN configuration for a CUDN.
+// Returns an error if the referenced VTEP doesn't exist, nil otherwise.
+func (c *Controller) validateEVPNVTEP(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
+	if cudn.Spec.Network.Transport != userdefinednetworkv1.TransportOptionEVPN {
+		return nil // Not an EVPN network
+	}
+
+	// CEL validation ensures EVPN is set when transport is EVPN.
+	vtepName := cudn.Spec.Network.EVPN.VTEP
+	_, err := c.vtepLister.Get(vtepName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return &vtepNotFoundError{vtepName: vtepName}
+		}
+		return fmt.Errorf("failed to get VTEP %q: %w", vtepName, err)
+	}
+
+	return nil
+}
+
+// ReconcileVTEP handles VTEP events by re-queuing all CUDNs that reference the VTEP.
+//
+// This uses O(n) iteration over all CUDNs rather than maintaining an index because:
+// VTEP create/delete events are expected to be rare; scanning all CUDNs from the
+// informer cache keeps the logic simple. If this becomes a hot path at large
+// CUDN counts, add an informer indexer keyed by VTEP.
+func (c *Controller) ReconcileVTEP(vtepName string) error {
+	cudns, err := c.cudnLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list CUDNs: %w", err)
+	}
+
+	for _, cudn := range cudns {
+		if cudnReferencesVTEP(cudn, vtepName) {
+			klog.V(4).InfoS("Re-queueing CUDN following VTEP event", "cudn", cudn.Name, "vtep", vtepName)
+			c.cudnController.Reconcile(cudn.Name)
+		}
+	}
+
+	return nil
+}
+
+// cudnReferencesVTEP returns true if the CUDN is an EVPN network referencing the given VTEP.
+// CEL validation ensures EVPN is set when transport is EVPN.
+func cudnReferencesVTEP(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, vtepName string) bool {
+	if cudn.Spec.Network.Transport != userdefinednetworkv1.TransportOptionEVPN {
+		return false
+	}
+	return cudn.Spec.Network.EVPN.VTEP == vtepName
 }
