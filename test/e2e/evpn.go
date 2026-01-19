@@ -631,6 +631,26 @@ func createVTEP(
 	return nil
 }
 
+// EVPN Test Infrastructure:
+//
+//	+---------------------------------------+                 +------------------+
+//	|           KIND Cluster                |  KIND Primary   | External FRR     |
+//	|                                       |  Network        | (reused from BGP)|
+//	| +-------------+ +-------------+       |  (BGP/EVPN)     |                  |
+//	| | Node 1      | | Node 2      |       |<--------------->| eth0 (primary)   |
+//	| | - FRR-K8s   | | - FRR-K8s   |       |                 | br0  (EVPN)      |
+//	| | - OVN VTEP  | | - OVN VTEP  |       |                 | vxlan0 (VTEP)    |
+//	| +-------------+ +-------------+       |                 +------------------+
+//	|                                       |                        |
+//	| +-------------+  +----------------+   |        +------------------+------------------+
+//	| | Node 3      |  | Pod (on CUDN)  |   |        | <serverName>-net   | <serverName>-net
+//	| | - FRR-K8s   |  | (on any node)  |   |        v                    v
+//	| | - OVN VTEP  |  +----------------+   |    +------------------+  +------------------+
+//	| +-------------+                       |    | agnhost-macvrf   |  | agnhost-ipvrf    |
+//	+---------------------------------------+    | (L2 via br0      |  | (L3 via VRF)     |
+//	                                             |  access port)    |  |                  |
+//	                                             +------------------+  +------------------+
+
 // EVPN e2e tests
 var _ = ginkgo.Describe("EVPN: Pod connectivity to external servers via EVPN", func() {
 	const (
