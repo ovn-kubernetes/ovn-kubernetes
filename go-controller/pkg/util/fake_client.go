@@ -39,6 +39,8 @@ import (
 	routeadvertisementsfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 )
 
 func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
@@ -58,6 +60,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 	raObjects := []runtime.Object{}
 	frrObjects := []runtime.Object{}
 	networkConnectObjects := []runtime.Object{}
+	vtepObjects := []runtime.Object{}
 	for _, object := range objects {
 		switch object.(type) {
 		case *egressip.EgressIP:
@@ -90,6 +93,8 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 			networkQoSObjects = append(networkQoSObjects, object)
 		case *networkconnect.ClusterNetworkConnect:
 			networkConnectObjects = append(networkConnectObjects, object)
+		case *vtepv1.VTEP:
+			vtepObjects = append(vtepObjects, object)
 		default:
 			v1Objects = append(v1Objects, object)
 		}
@@ -119,6 +124,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 		FRRClient:                 frrfake.NewSimpleClientset(frrObjects...),
 		NetworkQoSClient:          networkqosfake.NewSimpleClientset(networkQoSObjects...),
 		NetworkConnectClient:      networkconnectfake.NewSimpleClientset(networkConnectObjects...),
+		VTEPClient:                vtepfake.NewSimpleClientset(vtepObjects...),
 	}
 }
 
