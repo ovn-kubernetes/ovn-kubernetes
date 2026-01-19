@@ -827,38 +827,14 @@ func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoi
 		}
 		nftElems := getGatewayNFTRules(service, localEndpoints, true)
 		nftElems = append(nftElems, getGatewayNFTRules(service, localEndpoints, false)...)
+		if util.IsNetworkSegmentationSupportEnabled() {
+			nftElems = append(nftElems, getUDNNFTRules(service, nil)...)
+		}
 		if len(nftElems) > 0 {
 			if err := nodenft.DeleteNFTElements(nftElems); err != nil {
 				err = fmt.Errorf("failed to delete nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
-			}
-		}
-
-		if util.IsNetworkSegmentationSupportEnabled() {
-			// NOTE: The code below is not using nodenft.DeleteNFTElements because it first adds elements
-			// before removing them, which fails for UDN NFT rules. These rules only have map keys,
-			// not key-value pairs, making it impossible to add.
-			// Attempt to delete the elements directly and handle the IsNotFound error.
-			//
-			// TODO: Switch to `nft destroy` when supported.
-			nftElems = getUDNNFTRules(service, nil)
-			if len(nftElems) > 0 {
-				nft, err := nodenft.GetNFTablesHelper()
-				if err != nil {
-					return utilerrors.Join(append(errors, err)...)
-				}
-
-				tx := nft.NewTransaction()
-				for _, elem := range nftElems {
-					tx.Delete(elem)
-				}
-
-				if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
-					err = fmt.Errorf("failed to delete nftables rules for UDN service %s/%s: %v",
-						service.Namespace, service.Name, err)
-					errors = append(errors, err)
-				}
 			}
 		}
 	}
