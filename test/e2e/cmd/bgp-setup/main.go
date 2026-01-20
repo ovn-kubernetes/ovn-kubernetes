@@ -326,6 +326,12 @@ func createK8sClient(kubeconfig string) (*kubernetes.Clientset, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config from kubeconfig %q: %w", kubeconfig, err)
 	}
+
+	// Override the API server address when using direct API access.
+	if kubectlServer != "" {
+		config.Host = kubectlServer
+	}
+
 	return kubernetes.NewForConfig(config)
 }
 
