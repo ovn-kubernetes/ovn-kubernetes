@@ -124,6 +124,7 @@ To remove all BGP infrastructure:
 | `--ipv6` | `false` | Enable IPv6 support |
 | `--frr-k8s-version` | `v0.0.21` | Version of frr-k8s to use |
 | `--network-name` | `default` | Name for the BGP network |
+| `--cluster-name` | `ovn` | Kind cluster name |
 | `--kubeconfig` | `~/.kube/config` | Path to kubeconfig file |
 | `--advertise-default-network` | `true` | Advertise the default network |
 | `--isolation-mode` | `strict` | UDN isolation mode: strict or loose |
@@ -185,6 +186,7 @@ All flags can also be set via environment variables:
 | `ADVERTISE_DEFAULT_NETWORK` | `--advertise-default-network` |
 | `ADVERTISED_UDN_ISOLATION_MODE` | `--isolation-mode` |
 | `BGP_TESTDATA_PATH` | `--testdata-path` |
+| `KIND_CLUSTER_NAME` | `--cluster-name` |
 
 ## Integration with kind.sh
 
