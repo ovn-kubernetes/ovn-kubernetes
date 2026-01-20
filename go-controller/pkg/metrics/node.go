@@ -10,6 +10,19 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
+// RESEARCH: registerPodToPodMetricsIfAvailable registers pod-to-pod metrics if available
+// This function checks at runtime if the Linux-specific functions are available
+func registerPodToPodMetricsIfAvailable() {
+	// Check if we're on Linux where OVS is available
+	if runtime.GOOS != "linux" {
+		return
+	}
+	// The functions will be available via build tags on Linux
+	// This is a compile-time check, but we add runtime check for safety
+	RegisterPodToPodMetrics()
+	EnablePodToPodMetrics(true)
+}
+
 // MetricCNIRequestDuration is a prometheus metric that tracks the duration
 // of CNI requests
 var MetricCNIRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -81,5 +94,11 @@ func RegisterNodeMetrics(stopChan <-chan struct{}) {
 		}
 		prometheus.MustRegister(metricOvnKubeNodeLogFileSize)
 		go ovnKubeLogFileSizeMetricsUpdater(metricOvnKubeNodeLogFileSize, stopChan)
+
+		// RESEARCH: Register pod-to-pod traffic metrics if enabled
+		// Note: These functions are only available on Linux (see pod_to_pod.go)
+		if config.Metrics.EnablePodToPodMetrics {
+			registerPodToPodMetricsIfAvailable()
+		}
 	})
 }

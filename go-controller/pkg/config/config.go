@@ -445,6 +445,8 @@ type MetricsConfig struct {
 	// configuration duration and optionally, its application to all nodes
 	EnableConfigDuration bool `gcfg:"enable-config-duration"`
 	EnableScaleMetrics   bool `gcfg:"enable-scale-metrics"`
+	// RESEARCH: EnablePodToPodMetrics enables instrumentation to measure same-node vs cross-node pod-to-pod traffic
+	EnablePodToPodMetrics bool `gcfg:"enable-pod-to-pod-metrics"`
 }
 
 // OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
@@ -1398,6 +1400,11 @@ var MetricsFlags = []cli.Flag{
 		Name:        "metrics-enable-scale",
 		Usage:       "Enables metrics related to scaling",
 		Destination: &cliConfig.Metrics.EnableScaleMetrics,
+	},
+	&cli.BoolFlag{
+		Name:        "metrics-enable-pod-to-pod",
+		Usage:       "RESEARCH: Enables pod-to-pod traffic metrics (same-node vs cross-node)",
+		Destination: &cliConfig.Metrics.EnablePodToPodMetrics,
 	},
 }
 

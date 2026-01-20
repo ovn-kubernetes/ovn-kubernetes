@@ -563,6 +563,11 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			// register ovnkube node specific prometheus metrics exported by the node
 			metrics.RegisterNodeMetrics(ctx.Done())
 
+			// RESEARCH: Start pod-to-pod traffic metrics collector if enabled
+			if config.Metrics.EnablePodToPodMetrics && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+				metrics.StartPodToPodMetricsCollector(runMode.identity, ctx.Done())
+			}
+
 			// OVS is not running on dpu-host nodes
 			if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 				ovsClient, err = libovsdb.NewOVSClient(ctx.Done())
