@@ -156,10 +156,7 @@ type Config struct {
 	Phase                   string
 	UseDirectAPI            bool
 	TestdataPath            string
-<<<<<<< HEAD
 	ClusterName             string
-=======
->>>>>>> 3fc6d6e73 (add a flag/environment variable to override the template directory at runtime)
 }
 
 func main() {
@@ -224,10 +221,7 @@ func parseFlags() *Config {
 	flag.StringVar(&cfg.Phase, "phase", PhaseAll, "Phase to run: 'all', 'deploy-containers' (FRR + BGP server), 'deploy-frr' (FRR only), 'deploy-bgp-server' (BGP server only), or 'install-frr-k8s' (frr-k8s + FRRConfiguration)")
 	flag.BoolVar(&cfg.UseDirectAPI, "use-direct-api", false, "Use direct API server address (control plane container IP) instead of kubeconfig server. Only works when Docker bridge network is routable from host.")
 	flag.StringVar(&cfg.TestdataPath, "testdata-path", getEnvOrDefault(envTestdataPath, ""), "Path to the testdata/routeadvertisements directory containing templates. Required when built with -trimpath.")
-<<<<<<< HEAD
 	flag.StringVar(&cfg.ClusterName, "cluster-name", getEnvOrDefault(envClusterName, defaultClusterName), "Kind cluster name. Used to derive control-plane container name (${cluster-name}-control-plane)")
-=======
->>>>>>> 3fc6d6e73 (add a flag/environment variable to override the template directory at runtime)
 
 	flag.Parse()
 
@@ -280,6 +274,10 @@ func run(cfg *Config) error {
 	runDeployBGPServer := cfg.Phase == PhaseAll || cfg.Phase == PhaseDeployContainers || cfg.Phase == PhaseDeployBGPServer
 	runInstallFRRK8s := cfg.Phase == PhaseAll || cfg.Phase == PhaseInstallFRRK8s
 
+	if !runDeployFRR && !runDeployBGPServer && !runInstallFRRK8s {
+		return fmt.Errorf("invalid phase %q (expected: %s, %s, %s, %s, %s)",
+			cfg.Phase, PhaseAll, PhaseDeployContainers, PhaseDeployFRR, PhaseDeployBGPServer, PhaseInstallFRRK8s)
+	}
 	// Phase 1a: Deploy FRR external container
 	if runDeployFRR {
 		fmt.Println("\n====================== Deploying FRR external container ======================")
@@ -1011,7 +1009,7 @@ func addPodNetworkRoutes(cfg *Config, clientset *kubernetes.Clientset) error {
 		}
 
 		// Parse subnet annotation (JSON format like {"default":["10.244.0.0/24"]})
-		subnets := parseSubnetAnnotation(subnetAnnotation)
+		subnets := parseSubnetAnnotation(subnetAnnotation, cfg.NetworkName)
 
 		for _, subnet := range subnets {
 			_, ipNet, err := net.ParseCIDR(subnet)
@@ -1044,7 +1042,7 @@ func addPodNetworkRoutes(cfg *Config, clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-func parseSubnetAnnotation(annotation string) []string {
+func parseSubnetAnnotation(annotation, networkName string) []string {
 	var subnets []string
 
 	// Parse the JSON annotation which has format: {"default":["10.244.0.0/24"]}
@@ -1054,8 +1052,8 @@ func parseSubnetAnnotation(annotation string) []string {
 		return subnets
 	}
 
-	// Collect all subnets from all networks
-	for _, nets := range networkSubnets {
+	// Collect subnets only for the requested network
+	if nets, ok := networkSubnets[networkName]; ok {
 		subnets = append(subnets, nets...)
 	}
 
