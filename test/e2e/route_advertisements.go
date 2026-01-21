@@ -341,7 +341,6 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				}
 				return reason
 			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
-
 			ginkgo.By("all 3 node's podSubnet routes are exported correctly to external FRR router by frr-k8s speakers")
 			// sample
 			//10.244.0.0/24 nhid 27 via 172.18.0.3 dev eth0 proto bgp metric 20
@@ -538,7 +537,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 			// Make sure default RA is deleted
 			_, err = e2ekubectl.RunKubectl("", "get", "ra", "default")
-			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "RA should be deleted")
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client pod again, egressing packets should be SNATed to pod's host nodeIP")
 			testPodToExternalConnectivity(clientPod.Namespace, clientPod.Name, serverContainerIPs, clientPodNodeIPs, strconv.Itoa(netexecPort), "After default network is toggled to unadvertised, pod to external server test failed")
@@ -546,8 +545,14 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the second node from client pod, egressing packets should be SNATed to pod's host nodeIP")
 			testPodToExternalConnectivity(clientPod.Namespace, clientPod.Name, hostNetworkedPodNodeIPs, clientPodNodeIPs, strconv.Itoa(hostNetPort), "After default network is toggled to unadvertised, pod to second node test failed")
 
+			if isNoOverlayEnabled() {
+				ginkgo.By("Verifying warning event is emitted after default network is toggled to unadvertised")
+				found := checkNoOverlayEvent(f, "NoRouteAdvertisements", corev1.EventTypeWarning, 30*time.Second)
+				gomega.Expect(found).To(gomega.BeTrue(), "Should emit warning event after RA deletion")
+			}
 		})
 	})
+
 })
 
 var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advertised", feature.RouteAdvertisements, func() {
@@ -2973,4 +2978,31 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		framework.Logf("Routes in FRR for %s: %s", podCIDR, routes)
 		return strings.Contains(routes, nodeIP[0])
 	}, 30*time.Second).Should(gomega.BeTrue(), "route for %s via %s not found on %s", podCIDR, nodeIP[0], routerContainerName)
+}
+
+// checkNoOverlayEvent checks if a specific event exists in the ovn-kubernetes namespace
+func checkNoOverlayEvent(f *framework.Framework, eventReason string, eventType string, timeout time.Duration) bool {
+	found := false
+	err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		events, err := f.ClientSet.CoreV1().Events(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			framework.Logf("Failed to list events: %v", err)
+			return false, nil
+		}
+
+		for _, event := range events.Items {
+			if event.Reason == eventReason && event.Type == eventType {
+				framework.Logf("Found expected event: Reason=%s Type=%s Message=%s", event.Reason, event.Type, event.Message)
+				found = true
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil && !wait.Interrupted(err) {
+		framework.Logf("Error while polling for event: %v", err)
+	}
+
+	return found
 }

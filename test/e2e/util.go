@@ -20,6 +20,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
@@ -1826,6 +1827,28 @@ func getHostSubnetsForNode(cs clientset.Interface, nodeName string) ([]string, e
 	return hostSubnets, nil
 }
 
+// getNodePodSubnets retrieves the pod subnets for a node from the k8s.ovn.org/node-subnets annotation.
+// This returns the actual pod CIDRs that OVN uses for routing.
+func getNodePodSubnets(node *v1.Node) ([]string, error) {
+	nodeSubnetsAnnotation, ok := node.Annotations[ovnNodeSubnets]
+	if !ok {
+		return nil, fmt.Errorf("node %s missing %s annotation", node.Name, ovnNodeSubnets)
+	}
+
+	// The annotation is JSON like: {"default":["10.244.1.0/24","fd00:10:244:2::/64"]}
+	var nodeSubnets map[string][]string
+	if err := json.Unmarshal([]byte(nodeSubnetsAnnotation), &nodeSubnets); err != nil {
+		return nil, fmt.Errorf("failed to parse node-subnets annotation for node %s: %w", node.Name, err)
+	}
+
+	subnets, ok := nodeSubnets[ovntypes.DefaultNetworkName]
+	if !ok || len(subnets) == 0 {
+		return nil, fmt.Errorf("node %s has no subnets for network %s", node.Name, ovntypes.DefaultNetworkName)
+	}
+
+	return subnets, nil
+}
+
 // normalizeIP removes CIDR notation from an IP address if present and validates/normalizes the IP format.
 // For example, "10.0.0.2/24" becomes "10.0.0.2".
 func normalizeIP(s string) (string, error) {
@@ -2083,6 +2106,22 @@ func isOutboundSNATEnabled() bool {
 	// Simplistic check for outbound-snat = enable
 	if strings.Contains(conf, "outbound-snat = enable") || strings.Contains(conf, "outbound-snat=enable") {
 		framework.Logf("Outbound SNAT is enabled in ovnkube-config")
+		return true
+	}
+	return false
+}
+
+func isManagedRoutingEnabled() bool {
+	if !isNoOverlayEnabled() {
+		return false
+	}
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	args := []string{"get", "configmap", "ovnkube-config", "-o=jsonpath={.data.ovnkube\\.conf}"}
+	conf := e2ekubectl.RunKubectlOrDie(ovnKubeNamespace, args...)
+
+	// Simplistic check for routing = managed
+	if strings.Contains(conf, "routing = managed") || strings.Contains(conf, "routing=managed") {
+		framework.Logf("Managed routing is enabled in ovnkube-config")
 		return true
 	}
 	return false
