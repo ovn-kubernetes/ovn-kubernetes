@@ -610,24 +610,36 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 			err = json.Unmarshal([]byte(pod2Networks), &pod2NetworksData)
 			Expect(err).NotTo(HaveOccurred(), "Should parse pod-2 networks annotation")
 
-			// Extract secondary network IPs
-			var pod1SecondaryIP, pod2SecondaryIP string
-			for netName, netData := range pod1NetworksData {
-				if strings.Contains(netName, udnName) {
-					netDataMap := netData.(map[string]interface{})
-					if ipAddresses, ok := netDataMap["ip_addresses"].([]interface{}); ok && len(ipAddresses) > 0 {
-						pod1SecondaryIP = strings.Split(ipAddresses[0].(string), "/")[0]
+		// Extract secondary network IPs
+		var pod1SecondaryIP, pod2SecondaryIP string
+		for netName, netData := range pod1NetworksData {
+			if strings.Contains(netName, udnName) {
+				netDataMap, ok := netData.(map[string]interface{})
+				if !ok {
+					framework.Logf("Warning: unexpected format for network data in pod-1, netName: %s", netName)
+					continue
+				}
+				if ipAddresses, ok := netDataMap["ip_addresses"].([]interface{}); ok && len(ipAddresses) > 0 {
+					if ipAddr, ok := ipAddresses[0].(string); ok {
+						pod1SecondaryIP = strings.Split(ipAddr, "/")[0]
 					}
 				}
 			}
-			for netName, netData := range pod2NetworksData {
-				if strings.Contains(netName, udnName) {
-					netDataMap := netData.(map[string]interface{})
-					if ipAddresses, ok := netDataMap["ip_addresses"].([]interface{}); ok && len(ipAddresses) > 0 {
-						pod2SecondaryIP = strings.Split(ipAddresses[0].(string), "/")[0]
+		}
+		for netName, netData := range pod2NetworksData {
+			if strings.Contains(netName, udnName) {
+				netDataMap, ok := netData.(map[string]interface{})
+				if !ok {
+					framework.Logf("Warning: unexpected format for network data in pod-2, netName: %s", netName)
+					continue
+				}
+				if ipAddresses, ok := netDataMap["ip_addresses"].([]interface{}); ok && len(ipAddresses) > 0 {
+					if ipAddr, ok := ipAddresses[0].(string); ok {
+						pod2SecondaryIP = strings.Split(ipAddr, "/")[0]
 					}
 				}
 			}
+		}
 			Expect(pod1SecondaryIP).NotTo(BeEmpty(), "pod-1 should have secondary network IP")
 			Expect(pod2SecondaryIP).NotTo(BeEmpty(), "pod-2 should have secondary network IP")
 
