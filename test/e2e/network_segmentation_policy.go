@@ -456,7 +456,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				}
 			})
 
-			// OCP-84026: Verify ingress network policies with static IP and MAC assignments
+			// Verify ingress network policies with static IP and MAC assignments
 			ginkgo.DescribeTable(
 				"ingress network policies in L2 primary UDN with static IP and MAC",
 				func(
@@ -697,7 +697,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				),
 			)
 
-			// OCP-84817: Verify egress network policies with static IP and MAC assignments
+			// Verify egress network policies with static IP and MAC assignments
 			ginkgo.DescribeTable(
 				"egress network policies in L2 primary UDN with static IP and MAC",
 				func(
