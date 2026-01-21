@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	utilnet "k8s.io/utils/net"
 
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
@@ -391,17 +392,25 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 				}
 			}
 
-			// Connectivity Validation
-			pod1StaticIP := strings.Split(pod1IPs[0], "/")[0]
-			pod2StaticIP := strings.Split(pod2IPs[0], "/")[0]
+		// Connectivity Validation
+		pod1StaticIP := strings.Split(pod1IPs[0], "/")[0]
+		pod2StaticIP := strings.Split(pod2IPs[0], "/")[0]
 
-			By(fmt.Sprintf("Testing connectivity from pod-1 to pod-2 via IP %s", pod2StaticIP))
-			_, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod2StaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
+		By(fmt.Sprintf("Testing connectivity from pod-1 to pod-2 via IP %s", pod2StaticIP))
+		pingCmd := "ping"
+		if utilnet.IsIPv6String(pod2StaticIP) {
+			pingCmd = "ping6"
+		}
+		_, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod2StaticIP))
+		Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
 
-			By(fmt.Sprintf("Testing connectivity from pod-2 to pod-1 via IP %s", pod1StaticIP))
-			_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod1StaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
+		By(fmt.Sprintf("Testing connectivity from pod-2 to pod-1 via IP %s", pod1StaticIP))
+		pingCmd = "ping"
+		if utilnet.IsIPv6String(pod1StaticIP) {
+			pingCmd = "ping6"
+		}
+		_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1StaticIP))
+		Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
 		})
 
 		It("should attach pods to both CUDN primary with static IP/MAC and UDN secondary", func() {
@@ -651,26 +660,42 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 				}
 			}
 
-			// Connectivity Validation on Primary Network (static IPs)
-			pod1StaticIP := strings.Split(pod1IPs[0], "/")[0]
-			pod2StaticIP := strings.Split(pod2IPs[0], "/")[0]
+		// Connectivity Validation on Primary Network (static IPs)
+		pod1StaticIP := strings.Split(pod1IPs[0], "/")[0]
+		pod2StaticIP := strings.Split(pod2IPs[0], "/")[0]
 
-			By(fmt.Sprintf("Testing primary network connectivity from pod-1 to pod-2 via IP %s", pod2StaticIP))
-			_, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod2StaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
+		By(fmt.Sprintf("Testing primary network connectivity from pod-1 to pod-2 via IP %s", pod2StaticIP))
+		pingCmd := "ping"
+		if utilnet.IsIPv6String(pod2StaticIP) {
+			pingCmd = "ping6"
+		}
+		_, stderr, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod2StaticIP))
+		Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
 
-			By(fmt.Sprintf("Testing primary network connectivity from pod-2 to pod-1 via IP %s", pod1StaticIP))
-			_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod1StaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
+		By(fmt.Sprintf("Testing primary network connectivity from pod-2 to pod-1 via IP %s", pod1StaticIP))
+		pingCmd = "ping"
+		if utilnet.IsIPv6String(pod1StaticIP) {
+			pingCmd = "ping6"
+		}
+		_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1StaticIP))
+		Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
 
-			// Connectivity Validation on Secondary Network (dynamic IPs)
-			By(fmt.Sprintf("Testing secondary network connectivity from pod-1 to pod-2 via IP %s", pod2SecondaryIP))
-			_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod2SecondaryIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed on secondary network: %s", stderr)
+		// Connectivity Validation on Secondary Network (dynamic IPs)
+		By(fmt.Sprintf("Testing secondary network connectivity from pod-1 to pod-2 via IP %s", pod2SecondaryIP))
+		pingCmd = "ping"
+		if utilnet.IsIPv6String(pod2SecondaryIP) {
+			pingCmd = "ping6"
+		}
+		_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod2SecondaryIP))
+		Expect(err).NotTo(HaveOccurred(), "Ping failed on secondary network: %s", stderr)
 
-			By(fmt.Sprintf("Testing secondary network connectivity from pod-2 to pod-1 via IP %s", pod1SecondaryIP))
-			_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod1SecondaryIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed on secondary network: %s", stderr)
+		By(fmt.Sprintf("Testing secondary network connectivity from pod-2 to pod-1 via IP %s", pod1SecondaryIP))
+		pingCmd = "ping"
+		if utilnet.IsIPv6String(pod1SecondaryIP) {
+			pingCmd = "ping6"
+		}
+		_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1SecondaryIP))
+		Expect(err).NotTo(HaveOccurred(), "Ping failed on secondary network: %s", stderr)
 		})
 
 		It("should configure pods with overlapping static IP/MAC across multiple CUDNs", func() {
@@ -965,23 +990,39 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 				Expect(strings.ToLower(stdout)).To(ContainSubstring(strings.ToLower(p.mac)), "MAC %s not found in red namespace", p.mac)
 			}
 
-			// Test connectivity within blue namespace
-			By(fmt.Sprintf("Testing connectivity within blue namespace: pod-1 (%s) to pod-2 (%s)", pod1BlueStaticIP, pod2BlueStaticIP))
-			_, stderr, err := ExecShellInPodWithFullOutput(f, namespaceBlue.Name, podBlue1.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod2BlueStaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed in blue namespace: %s", stderr)
+	// Test connectivity within blue namespace
+	By(fmt.Sprintf("Testing connectivity within blue namespace: pod-1 (%s) to pod-2 (%s)", pod1BlueStaticIP, pod2BlueStaticIP))
+	pingCmd := "ping"
+	if utilnet.IsIPv6String(pod2BlueStaticIP) {
+		pingCmd = "ping6"
+	}
+	_, stderr, err := ExecShellInPodWithFullOutput(f, namespaceBlue.Name, podBlue1.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod2BlueStaticIP))
+	Expect(err).NotTo(HaveOccurred(), "Ping failed in blue namespace: %s", stderr)
 
-			By(fmt.Sprintf("Testing connectivity within blue namespace: pod-2 (%s) to pod-1 (%s)", pod2BlueStaticIP, pod1BlueStaticIP))
-			_, stderr, err = ExecShellInPodWithFullOutput(f, namespaceBlue.Name, podBlue2.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod1BlueStaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed in blue namespace: %s", stderr)
+	By(fmt.Sprintf("Testing connectivity within blue namespace: pod-2 (%s) to pod-1 (%s)", pod2BlueStaticIP, pod1BlueStaticIP))
+	pingCmd = "ping"
+	if utilnet.IsIPv6String(pod1BlueStaticIP) {
+		pingCmd = "ping6"
+	}
+	_, stderr, err = ExecShellInPodWithFullOutput(f, namespaceBlue.Name, podBlue2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1BlueStaticIP))
+	Expect(err).NotTo(HaveOccurred(), "Ping failed in blue namespace: %s", stderr)
 
-			// Test connectivity within red namespace
-			By(fmt.Sprintf("Testing connectivity within red namespace: pod-1 (%s) to pod-2 (%s)", pod1RedStaticIP, pod2RedStaticIP))
-			_, stderr, err = ExecShellInPodWithFullOutput(f, namespaceRed.Name, podRed1.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod2RedStaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed in red namespace: %s", stderr)
+	// Test connectivity within red namespace
+	By(fmt.Sprintf("Testing connectivity within red namespace: pod-1 (%s) to pod-2 (%s)", pod1RedStaticIP, pod2RedStaticIP))
+	pingCmd = "ping"
+	if utilnet.IsIPv6String(pod2RedStaticIP) {
+		pingCmd = "ping6"
+	}
+	_, stderr, err = ExecShellInPodWithFullOutput(f, namespaceRed.Name, podRed1.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod2RedStaticIP))
+	Expect(err).NotTo(HaveOccurred(), "Ping failed in red namespace: %s", stderr)
 
-			By(fmt.Sprintf("Testing connectivity within red namespace: pod-2 (%s) to pod-1 (%s)", pod2RedStaticIP, pod1RedStaticIP))
-			_, stderr, err = ExecShellInPodWithFullOutput(f, namespaceRed.Name, podRed2.Name, fmt.Sprintf("ping -c 3 -W 2 %s", pod1RedStaticIP))
-			Expect(err).NotTo(HaveOccurred(), "Ping failed in red namespace: %s", stderr)
+	By(fmt.Sprintf("Testing connectivity within red namespace: pod-2 (%s) to pod-1 (%s)", pod2RedStaticIP, pod1RedStaticIP))
+	pingCmd = "ping"
+	if utilnet.IsIPv6String(pod1RedStaticIP) {
+		pingCmd = "ping6"
+	}
+	_, stderr, err = ExecShellInPodWithFullOutput(f, namespaceRed.Name, podRed2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1RedStaticIP))
+	Expect(err).NotTo(HaveOccurred(), "Ping failed in red namespace: %s", stderr)
 		})
 	})
 })
