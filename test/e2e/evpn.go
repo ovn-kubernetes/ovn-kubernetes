@@ -361,3 +361,95 @@ func setupMACVRFOnExternalFRR(vni, vid int) error {
 	framework.Logf("MAC-VRF setup complete on %s (VNI %d, VID %d)", externalFRRContainerName, vni, vid)
 	return nil
 }
+
+// setupIPVRFOnExternalFRR configures IP-VRF (Layer 3 EVPN) on the external FRR container.
+// This creates a Linux VRF with SVI for L3 routing via EVPN Type-5 routes.
+//
+// Requires: setupEVPNBridgeOnExternalFRR must be called first to create br0 and vxlan0.
+//
+// Parameters:
+//   - vrfName: Name of the Linux VRF (e.g., "vrf202")
+//   - vni: VXLAN Network Identifier (e.g., 20102)
+//   - vid: VLAN ID for the SVI (e.g., 202)
+//
+// Cleanup is automatically registered via ictx.AddCleanUpFn().
+// Note: VLAN/VNI mappings are cleaned up when br0/vxlan0 are deleted.
+func setupIPVRFOnExternalFRR(ictx infraapi.Context, vrfName string, vni, vid int) error {
+	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+	vidStr := fmt.Sprintf("%d", vid)
+	vniStr := fmt.Sprintf("%d", vni)
+
+	// Create Linux VRF with routing table = VNI
+	_, err := infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"ip", "link", "add", vrfName, "type", "vrf", "table", vniStr})
+	if err != nil {
+		return fmt.Errorf("failed to create VRF %s: %w", vrfName, err)
+	}
+
+	// Bring up VRF
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"ip", "link", "set", vrfName, "up"})
+	if err != nil {
+		return fmt.Errorf("failed to bring up VRF %s: %w", vrfName, err)
+	}
+
+	// Configure VLAN/VNI mapping (reuse MAC-VRF setup for this part)
+	if err := setupMACVRFOnExternalFRR(vni, vid); err != nil {
+		return fmt.Errorf("failed to configure VLAN/VNI mapping: %w", err)
+	}
+
+	// Create SVI (VLAN sub-interface on br0)
+	sviName := fmt.Sprintf("br0.%d", vid)
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"ip", "link", "add", sviName, "link", "br0", "type", "vlan", "id", vidStr})
+	if err != nil {
+		return fmt.Errorf("failed to create SVI %s: %w", sviName, err)
+	}
+
+	// Bind SVI to VRF
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"ip", "link", "set", sviName, "master", vrfName})
+	if err != nil {
+		return fmt.Errorf("failed to bind SVI %s to VRF %s: %w", sviName, vrfName, err)
+	}
+
+	// Bring up SVI
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"ip", "link", "set", sviName, "up"})
+	if err != nil {
+		return fmt.Errorf("failed to bring up SVI %s: %w", sviName, err)
+	}
+
+	// Register cleanup to remove SVI, Linux VRF, and FRR VRF definition
+	ictx.AddCleanUpFn(func() error {
+		frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+
+		// Delete SVI
+		sviName := fmt.Sprintf("br0.%d", vid)
+		_, err := infraprovider.Get().ExecExternalContainerCommand(frr,
+			[]string{"ip", "link", "del", sviName})
+		if err != nil {
+			framework.Logf("Warning: failed to delete SVI %s: %v", sviName, err)
+		}
+
+		// Delete Linux VRF
+		_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+			[]string{"ip", "link", "del", vrfName})
+		if err != nil {
+			framework.Logf("Warning: failed to delete Linux VRF %s: %v", vrfName, err)
+		}
+
+		// Delete FRR VRF definition (now that Linux VRF is gone, FRR should allow this)
+		cmd := []string{"vtysh", "-c", "configure terminal", "-c", fmt.Sprintf("no vrf %s", vrfName), "-c", "end"}
+		_, err = infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
+		if err != nil {
+			framework.Logf("Warning: failed to delete FRR VRF definition %s: %v", vrfName, err)
+		}
+
+		framework.Logf("IP-VRF cleanup complete on %s (VRF %s, VID %d)", externalFRRContainerName, vrfName, vid)
+		return nil
+	})
+
+	framework.Logf("IP-VRF setup complete on %s (VRF %s, VNI %d, VID %d)", externalFRRContainerName, vrfName, vni, vid)
+	return nil
+}
