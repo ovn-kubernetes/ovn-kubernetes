@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -121,6 +122,25 @@ func (k *kind) RunOneShotContainer(image string, cmd []string, runtimeArgs []str
 		return "", fmt.Errorf("failed to run one-shot container (%s): err: %v, stdout: %q", strings.Join(args, " "), err, out)
 	}
 	return string(out), nil
+}
+
+func (k *kind) GetExternalContainerPID(containerName string) (int, error) {
+	exists, err := doesContainerNameExist(containerName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check if container %q exists: %w", containerName, err)
+	}
+	if !exists {
+		return 0, fmt.Errorf("container %q does not exist: %w", containerName, api.NotFound)
+	}
+	out, err := exec.Command(containerengine.Get().String(), "inspect", "--format", "{{.State.Pid}}", containerName).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get PID for container %q: %w (output: %s)", containerName, err, out)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse PID for container %q: %w", containerName, err)
+	}
+	return pid, nil
 }
 
 func (k *kind) GetExternalContainerLogs(container api.ExternalContainer) (string, error) {
