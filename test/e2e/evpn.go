@@ -6,6 +6,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"k8s.io/kubernetes/test/e2e/framework"
+	utilnet "k8s.io/utils/net"
 )
 
 // =============================================================================
@@ -451,5 +452,188 @@ func setupIPVRFOnExternalFRR(ictx infraapi.Context, vrfName string, vni, vid int
 	})
 
 	framework.Logf("IP-VRF setup complete on %s (VRF %s, VNI %d, VID %d)", externalFRRContainerName, vrfName, vni, vid)
+	return nil
+}
+
+// setupEVPNBGPOnExternalFRR configures the global BGP settings for EVPN on the external FRR container.
+// This enables the l2vpn evpn address-family, advertise-all-vni, and activates neighbors.
+//
+// This is required for ALL EVPN scenarios (MAC-VRF and IP-VRF).
+// advertise-all-vni automatically handles MAC-VRF route advertisement.
+//
+// Parameters:
+//   - asn: BGP Autonomous System Number (e.g., 64512)
+//   - neighborIPs: List of cluster node IPs to peer with
+//
+// Cleanup is automatically registered via ictx.AddCleanUpFn().
+func setupEVPNBGPOnExternalFRR(ictx infraapi.Context, asn int, neighborIPs []string) error {
+	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+
+	// Build vtysh command with all the -c arguments
+	cmd := []string{"vtysh"}
+	cmd = append(cmd, "-c", "configure terminal")
+	cmd = append(cmd, "-c", fmt.Sprintf("router bgp %d", asn))
+	cmd = append(cmd, "-c", "address-family l2vpn evpn")
+	cmd = append(cmd, "-c", "advertise-all-vni")
+
+	// Activate each neighbor in the l2vpn evpn address-family
+	for _, ip := range neighborIPs {
+		cmd = append(cmd, "-c", fmt.Sprintf("neighbor %s activate", ip))
+	}
+
+	cmd = append(cmd, "-c", "exit-address-family")
+	cmd = append(cmd, "-c", "end")
+
+	_, err := infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to configure EVPN BGP: %w", err)
+	}
+
+	// Register cleanup to remove advertise-all-vni and deactivate neighbors
+	ictx.AddCleanUpFn(func() error {
+		frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+
+		cmd := []string{"vtysh"}
+		cmd = append(cmd, "-c", "configure terminal")
+		cmd = append(cmd, "-c", fmt.Sprintf("router bgp %d", asn))
+		cmd = append(cmd, "-c", "address-family l2vpn evpn")
+		cmd = append(cmd, "-c", "no advertise-all-vni")
+		// Deactivate each neighbor in the l2vpn evpn address-family
+		for _, ip := range neighborIPs {
+			cmd = append(cmd, "-c", fmt.Sprintf("no neighbor %s activate", ip))
+		}
+		cmd = append(cmd, "-c", "exit-address-family")
+		cmd = append(cmd, "-c", "end")
+
+		_, err := infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
+		if err != nil {
+			return fmt.Errorf("failed to cleanup EVPN BGP: %w", err)
+		}
+
+		framework.Logf("EVPN BGP cleanup complete on %s", externalFRRContainerName)
+		return nil
+	})
+
+	framework.Logf("EVPN BGP setup complete on %s (ASN %d, neighbors: %v)", externalFRRContainerName, asn, neighborIPs)
+	return nil
+}
+
+// setupIPVRFBGPOnExternalFRR configures BGP for an IP-VRF on the external FRR container.
+// This binds the VRF to a VNI and configures route-targets for Type-5 route exchange.
+//
+// Requires: setupEVPNBGPOnExternalFRR must be called first for global EVPN BGP config.
+//
+// Parameters:
+//   - vrfName: Name of the Linux VRF (must match the VRF created by setupIPVRFOnExternalFRR)
+//   - asn: BGP Autonomous System Number (e.g., 64512)
+//   - vni: VXLAN Network Identifier for route-target (e.g., 20102)
+//   - ipFamilies: IP families to configure (e.g., []utilnet.IPFamily{utilnet.IPv4} or {utilnet.IPv4, utilnet.IPv6})
+//   - subnets: Subnets to advertise via BGP (e.g., []string{"172.27.102.0/24"} or {"172.27.102.0/24", "fd00:102::/64"})
+//
+// Cleanup is automatically registered via ictx.AddCleanUpFn().
+func setupIPVRFBGPOnExternalFRR(ictx infraapi.Context, vrfName string, asn, vni int, ipFamilies []utilnet.IPFamily, subnets []string) error {
+	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+	rt := fmt.Sprintf("%d:%d", asn, vni)
+
+	// Build vtysh command
+	cmd := []string{"vtysh"}
+	cmd = append(cmd, "-c", "configure terminal")
+
+	// Bind VRF to VNI
+	cmd = append(cmd, "-c", fmt.Sprintf("vrf %s", vrfName))
+	cmd = append(cmd, "-c", fmt.Sprintf("vni %d", vni))
+	cmd = append(cmd, "-c", "exit-vrf")
+
+	// Configure BGP for the VRF
+	cmd = append(cmd, "-c", fmt.Sprintf("router bgp %d vrf %s", asn, vrfName))
+
+	// Configure address-families based on ipFamilies with explicit network statements
+	// (Using explicit 'network' statements instead of 'redistribute connected' to align
+	// with how OVN-K advertises routes via RouteAdvertisements/FRRConfiguration Prefixes)
+	for _, family := range ipFamilies {
+		switch family {
+		case utilnet.IPv4:
+			cmd = append(cmd, "-c", "address-family ipv4 unicast")
+			for _, subnet := range subnets {
+				if !strings.Contains(subnet, ":") { // IPv4 subnet
+					cmd = append(cmd, "-c", fmt.Sprintf("network %s", subnet))
+				}
+			}
+			cmd = append(cmd, "-c", "exit-address-family")
+		case utilnet.IPv6:
+			cmd = append(cmd, "-c", "address-family ipv6 unicast")
+			for _, subnet := range subnets {
+				if strings.Contains(subnet, ":") { // IPv6 subnet
+					cmd = append(cmd, "-c", fmt.Sprintf("network %s", subnet))
+				}
+			}
+			cmd = append(cmd, "-c", "exit-address-family")
+		}
+	}
+
+	// l2vpn evpn - configure RD, RT, and advertise unicast routes
+	cmd = append(cmd, "-c", "address-family l2vpn evpn")
+	cmd = append(cmd, "-c", fmt.Sprintf("rd %s", rt))
+	cmd = append(cmd, "-c", fmt.Sprintf("route-target import %s", rt))
+	cmd = append(cmd, "-c", fmt.Sprintf("route-target export %s", rt))
+	for _, family := range ipFamilies {
+		switch family {
+		case utilnet.IPv4:
+			cmd = append(cmd, "-c", "advertise ipv4 unicast")
+		case utilnet.IPv6:
+			cmd = append(cmd, "-c", "advertise ipv6 unicast")
+		}
+	}
+	cmd = append(cmd, "-c", "exit-address-family")
+
+	cmd = append(cmd, "-c", "end")
+
+	_, err := infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to configure IP-VRF BGP for %s: %w", vrfName, err)
+	}
+
+	// Register cleanup to remove BGP VRF instance and VRF-VNI binding
+	// NOTE: This cleanup may run after setupIPVRFOnExternalFRR cleanup has already deleted
+	// the Linux VRF device, which triggers FRR to auto-cleanup the VRF config. In that case,
+	// these commands may fail - that's OK, we just log warnings and won't retry that.
+	ictx.AddCleanUpFn(func() error {
+		frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+
+		// Try to remove the VNI binding from VRF context
+		cmd := []string{"vtysh"}
+		cmd = append(cmd, "-c", "configure terminal")
+		cmd = append(cmd, "-c", fmt.Sprintf("vrf %s", vrfName))
+		cmd = append(cmd, "-c", fmt.Sprintf("no vni %d", vni))
+		cmd = append(cmd, "-c", "exit-vrf")
+		cmd = append(cmd, "-c", "end")
+
+		_, err := infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
+		if err != nil {
+			framework.Logf("Warning: failed to remove VNI binding (may already be cleaned up): %v", err)
+		}
+
+		// Remove BGP VRF instance
+		cmd = []string{"vtysh"}
+		cmd = append(cmd, "-c", "configure terminal")
+		cmd = append(cmd, "-c", fmt.Sprintf("no router bgp %d vrf %s", asn, vrfName))
+		cmd = append(cmd, "-c", "end")
+
+		_, err = infraprovider.Get().ExecExternalContainerCommand(frr, cmd)
+		if err != nil {
+			framework.Logf("Warning: failed to remove BGP VRF (may already be cleaned up): %v", err)
+		}
+
+		// NOTE: We intentionally do NOT run "no vrf" here.
+		// FRR's VRF definition is tied to the Linux VRF and will auto-cleanup
+		// when the Linux VRF is deleted by setupIPVRFOnExternalFRR's cleanup.
+		// Trying to delete the FRR VRF while the Linux VRF still has interfaces
+		// attached causes "Only inactive VRFs can be deleted" errors.
+
+		framework.Logf("IP-VRF BGP cleanup complete on %s (VRF %s)", externalFRRContainerName, vrfName)
+		return nil
+	})
+
+	framework.Logf("IP-VRF BGP setup complete on %s (VRF %s, ASN %d, VNI %d, RT %s, families %v)", externalFRRContainerName, vrfName, asn, vni, rt, ipFamilies)
 	return nil
 }
