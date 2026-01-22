@@ -464,6 +464,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableNetworkConnect            bool `gcfg:"enable-network-connect"`
 	EnablePreconfiguredUDNAddresses bool `gcfg:"enable-preconfigured-udn-addresses"`
 	EnableRouteAdvertisements       bool `gcfg:"enable-route-advertisements"`
+	EnableEVPN                      bool `gcfg:"enable-evpn"`
 	EnableMultiNetworkPolicy        bool `gcfg:"enable-multi-networkpolicy"`
 	EnableStatelessNetPol           bool `gcfg:"enable-stateless-netpol"`
 	EnableInterconnect              bool `gcfg:"enable-interconnect"`
@@ -1169,6 +1170,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Use route advertisements feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableRouteAdvertisements,
 		Value:       OVNKubernetesFeature.EnableRouteAdvertisements,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-evpn",
+		Usage:       "Use EVPN feature with ovn-kubernetes. Requires route advertisements.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableEVPN,
+		Value:       OVNKubernetesFeature.EnableEVPN,
 	},
 	&cli.StringFlag{
 		Name:        "advertised-udn-isolation-mode",
@@ -2122,6 +2129,9 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 		return fmt.Errorf("invalid advertised-udn-isolation-mode %q: expect one of %s or %s",
 			OVNKubernetesFeature.AdvertisedUDNIsolationMode, AdvertisedUDNIsolationModeStrict, AdvertisedUDNIsolationModeLoose)
 	}
+	if OVNKubernetesFeature.EnableEVPN && !OVNKubernetesFeature.EnableRouteAdvertisements {
+		return fmt.Errorf("invalid feature configuration: EVPN requires route advertisements but route advertisements are disabled")
+	}
 	return nil
 }
 
@@ -2572,6 +2582,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
+	klog.V(5).Infof("Features config: %+v", OVNKubernetesFeature)
 	klog.V(5).Infof("Default config: %+v", Default)
 	klog.V(5).Infof("Logging config: %+v", Logging)
 	klog.V(5).Infof("Monitoring config: %+v", Monitoring)

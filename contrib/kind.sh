@@ -53,7 +53,8 @@ usage() {
     echo "                 [-ic | --enable-interconnect]"
     echo "                 [-nce | --network-connect-enable]"
     echo "                 [-uae | --preconfigured-udn-addresses-enable]"
-    echo "                 [-rae | --enable-route-advertisements]"
+    echo "                 [-rae | --route-advertisements-enable]"
+    echo "                 [-evpn | --evpn-enable]"
     echo "                 [-rud | --routed-udn-isolation-disable]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
@@ -132,7 +133,8 @@ echo "--add-nodes                                   Adds nodes to an existing cl
 echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
 echo "-obs | --observability                        Enable OVN Observability feature."
 echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks"
-echo "-rae | --enable-route-advertisements          Enable route advertisements"
+echo "-rae | --route-advertisements-enable          Enable route advertisements"
+echo "-evpn | --evpn-enable                         Enable EVPN"
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
@@ -340,6 +342,8 @@ parse_args() {
                                                   ;;
             -rae | --route-advertisements-enable) ENABLE_ROUTE_ADVERTISEMENTS=true
                                                   ;;
+            -evpn | --evpn-enable)              ENABLE_EVPN=true
+                                                  ;;
             -adv | --advertise-default-network) ADVERTISE_DEFAULT_NETWORK=true
                                                   ;;
             -rud | --routed-udn-isolation-disable) ADVERTISED_UDN_ISOLATION_MODE=loose
@@ -450,6 +454,7 @@ print_params() {
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
+     echo "ENABLE_EVPN= $ENABLE_EVPN"
      echo "ADVERTISED_UDN_ISOLATION_MODE= $ADVERTISED_UDN_ISOLATION_MODE"
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
@@ -697,6 +702,12 @@ set_default_params() {
   fi
   if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
     echo "Route advertisements requires interconnect to be enabled (-ic)"
+    exit 1
+  fi
+
+  ENABLE_EVPN=${ENABLE_EVPN:-false}
+  if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+    echo "EVPN requires Route advertisements to be enabled (-rae)"
     exit 1
   fi
 
@@ -979,6 +990,7 @@ create_ovn_kube_manifests() {
     --network-connect-enable="${ENABLE_NETWORK_CONNECT}" \
     --preconfigured-udn-addresses-enable="${ENABLE_PRE_CONF_UDN_ADDR}" \
     --route-advertisements-enable="${ENABLE_ROUTE_ADVERTISEMENTS}" \
+    --evpn-enable="${ENABLE_EVPN}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \

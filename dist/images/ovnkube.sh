@@ -271,8 +271,10 @@ ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
 ovn_network_connect_enable=${OVN_NETWORK_CONNECT_ENABLE:=false}
 #OVN_PRE_CONF_UDN_ADDR_ENABLE - enable connecting workloads with custom network configuration to UDNs
 ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
-#OVN_NROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
+#OVN_ROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
+#OVN_EVPN_ENABLE - enable EVPN for ovn-kubernetes
+ovn_evpn_enable=${OVN_EVPN_ENABLE:=false}
 #OVN_ADVERTISED_UDN_ISOLATION_MODE - pod network isolation between advertised UDN networks.
 ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:=strict}
 ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
@@ -1308,6 +1310,12 @@ ovn-master() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  evpn_enabled_flag=
+  if [[ ${ovn_evpn_enable} == "true" ]]; then
+	  evpn_enabled_flag="--enable-evpn"
+  fi
+  echo "evpn_enabled_flag=${evpn_enabled_flag}"
+
   advertised_udn_isolation_flag=
   if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
@@ -1419,6 +1427,7 @@ ovn-master() {
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${route_advertisements_enabled_flag} \
+    ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_enable_svc_template_support_flag} \
@@ -1628,6 +1637,12 @@ ovnkube-controller() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  evpn_enabled_flag=
+  if [[ ${ovn_evpn_enable} == "true" ]]; then
+	  evpn_enabled_flag="--enable-evpn"
+  fi
+  echo "evpn_enabled_flag=${evpn_enabled_flag}"
+
   advertised_udn_isolation_flag=
   if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
@@ -1751,6 +1766,7 @@ ovnkube-controller() {
     ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
+    ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
@@ -1972,6 +1988,12 @@ ovnkube-controller-with-node() {
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
+
+  evpn_enabled_flag=
+  if [[ ${ovn_evpn_enable} == "true" ]]; then
+	  evpn_enabled_flag="--enable-evpn"
+  fi
+  echo "evpn_enabled_flag=${evpn_enabled_flag}"
 
   advertised_udn_isolation_flag=
   if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
@@ -2236,6 +2258,7 @@ ovnkube-controller-with-node() {
     ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
+    ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
@@ -2421,6 +2444,12 @@ ovn-cluster-manager() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  evpn_enabled_flag=
+  if [[ ${ovn_evpn_enable} == "true" ]]; then
+	  evpn_enabled_flag="--enable-evpn"
+  fi
+  echo "evpn_enabled_flag=${evpn_enabled_flag}"
+
   advertised_udn_isolation_flag=
   if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
@@ -2490,6 +2519,7 @@ ovn-cluster-manager() {
     ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
+    ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
     ${persistent_ips_enabled_flag} \
     ${ovnkube_enable_interconnect_flag} \
@@ -2676,6 +2706,11 @@ ovn-node() {
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
+  fi
+
+  evpn_enabled_flag=
+  if [[ ${ovn_evpn_enable} == "true" ]]; then
+	  evpn_enabled_flag="--enable-evpn"
   fi
 
   advertised_udn_isolation_flag=
@@ -2915,6 +2950,7 @@ ovn-node() {
         ${network_connect_enabled_flag} \
         ${pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
+        ${evpn_enabled_flag} \
         ${advertised_udn_isolation_flag} \
         ${netflow_targets} \
         ${ofctrl_wait_before_clear} \

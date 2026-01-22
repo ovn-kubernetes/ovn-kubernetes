@@ -519,6 +519,7 @@ jobs:
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
+      ENABLE_EVPN: "${{ matrix.routeadvertisements != '' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
       ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation') }}"
       ENABLE_NETWORK_CONNECT: "${{ matrix.target == 'network-segmentation' }}"
