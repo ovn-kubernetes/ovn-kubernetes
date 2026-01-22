@@ -292,6 +292,8 @@ func setupEVPNBridgeOnExternalFRR(ictx infraapi.Context, frrVTEPIPAddress string
 	}
 
 	// Register cleanup to remove br0 and vxlan0
+	// Note: Deleting br0 also removes all associated bridge vlan and vni entries,
+	// so explicit MAC-VRF cleanup is not needed.
 	ictx.AddCleanUpFn(func() error {
 		frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
 
@@ -312,5 +314,50 @@ func setupEVPNBridgeOnExternalFRR(ictx infraapi.Context, frrVTEPIPAddress string
 	})
 
 	framework.Logf("EVPN bridge setup complete on %s (br0 + vxlan0 with local IP %s)", externalFRRContainerName, frrVTEPIPAddress)
+	return nil
+}
+
+// setupMACVRFOnExternalFRR configures MAC-VRF (Layer 2 EVPN) on the external FRR container.
+// This adds the VLAN/VNI mapping to extend the L2 domain via EVPN Type-2/Type-3 routes.
+//
+// Requires: setupEVPNBridgeOnExternalFRR must be called first to create br0 and vxlan0.
+//
+// Parameters:
+//   - vni: VXLAN Network Identifier (e.g., 10100)
+//   - vid: VLAN ID for local bridging (e.g., 100)
+func setupMACVRFOnExternalFRR(vni, vid int) error {
+	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+	vidStr := fmt.Sprintf("%d", vid)
+	vniStr := fmt.Sprintf("%d", vni)
+
+	// Add VLAN to bridge
+	_, err := infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"bridge", "vlan", "add", "dev", "br0", "vid", vidStr, "self"})
+	if err != nil {
+		return fmt.Errorf("failed to add VLAN %d to br0: %w", vid, err)
+	}
+
+	// Add VLAN to vxlan0
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"bridge", "vlan", "add", "dev", "vxlan0", "vid", vidStr})
+	if err != nil {
+		return fmt.Errorf("failed to add VLAN %d to vxlan0: %w", vid, err)
+	}
+
+	// Add VNI to vxlan0
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"bridge", "vni", "add", "dev", "vxlan0", "vni", vniStr})
+	if err != nil {
+		return fmt.Errorf("failed to add VNI %d to vxlan0: %w", vni, err)
+	}
+
+	// Map VLAN to VNI (tunnel_info)
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"bridge", "vlan", "add", "dev", "vxlan0", "vid", vidStr, "tunnel_info", "id", vniStr})
+	if err != nil {
+		return fmt.Errorf("failed to map VLAN %d to VNI %d: %w", vid, vni, err)
+	}
+
+	framework.Logf("MAC-VRF setup complete on %s (VNI %d, VID %d)", externalFRRContainerName, vni, vid)
 	return nil
 }
