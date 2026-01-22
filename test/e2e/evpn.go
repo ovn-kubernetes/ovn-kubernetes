@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
@@ -12,6 +13,7 @@ import (
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -995,5 +997,88 @@ func createVTEP(f *framework.Framework, ictx infraapi.Context, name string, cidr
 
 	// TODO: Add status check once VTEP controller implements status conditions
 	framework.Logf("VTEP created: %s (CIDRs: %v, Mode: %s)", name, cidrs, mode)
+	return nil
+}
+
+// =============================================================================
+// FRRConfiguration Utilities
+// =============================================================================
+
+// createFRRConfiguration creates an FRRConfiguration CR for BGP peering with the external FRR.
+// This is used by RouteAdvertisements to determine which neighbors to advertise routes to.
+//
+// For EVPN L3 IP-VRF, we don't need toReceive because:
+// - External routes come via EVPN Type-5 and are imported via route-target matching in the VRF
+// - The FRRConfiguration just provides the BGP neighbor definition and label for RA selector
+//
+// Parameters:
+//   - ictx: Infrastructure context for cleanup registration
+//   - name: Name of the FRRConfiguration CR
+//   - namespace: Namespace for the FRRConfiguration (typically frr-k8s-system)
+//   - asn: BGP Autonomous System Number (e.g., 64512)
+//   - neighborIP: IP address of the external FRR to peer with
+//   - labels: Labels to apply to the FRRConfiguration (used by RouteAdvertisements selector)
+func createFRRConfiguration(ictx infraapi.Context,
+	name, namespace string,
+	asn int,
+	neighborIP string,
+	labels map[string]string) error {
+
+	// Build labels string for YAML
+	labelsYAML := ""
+	for k, v := range labels {
+		labelsYAML += fmt.Sprintf("    %s: %s\n", k, v)
+	}
+
+	// Generate FRRConfiguration YAML
+	// No toReceive needed - EVPN routes come via l2vpn evpn address-family
+	// and are imported via route-target matching in the VRF
+	yaml := fmt.Sprintf(`apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+%sspec:
+  bgp:
+    routers:
+    - asn: %d
+      neighbors:
+      - address: %s
+        asn: %d
+        disableMP: true
+`, name, namespace, labelsYAML, asn, neighborIP, asn)
+
+	// Write to temp file
+	tmpFile, err := os.CreateTemp("", "frrconfig-*.yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(yaml); err != nil {
+		return fmt.Errorf("failed to write FRRConfiguration YAML: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Apply via kubectl
+	_, err = e2ekubectl.RunKubectl(namespace, "create", "-f", tmpFile.Name())
+	if err != nil {
+		return fmt.Errorf("failed to create FRRConfiguration: %w", err)
+	}
+
+	// Register cleanup
+	ictx.AddCleanUpFn(func() error {
+		_, err := e2ekubectl.RunKubectl(namespace, "delete", "frrconfiguration", name, "--ignore-not-found")
+		if err != nil {
+			return fmt.Errorf("failed to delete FRRConfiguration %s: %w", name, err)
+		}
+		framework.Logf("FRRConfiguration deleted: %s", name)
+		return nil
+	})
+
+	framework.Logf("FRRConfiguration created: %s (neighbor: %s)", name, neighborIP)
 	return nil
 }
