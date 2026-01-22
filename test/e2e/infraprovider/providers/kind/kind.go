@@ -111,6 +111,18 @@ func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd
 	return string(out), nil
 }
 
+func (k *kind) RunOneShotContainer(image string, cmd []string, runtimeArgs []string) (string, error) {
+	args := []string{"run", "--rm"}
+	args = append(args, runtimeArgs...)
+	args = append(args, image)
+	args = append(args, cmd...)
+	out, err := exec.Command(containerengine.Get().String(), args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to run one-shot container (%s): err: %v, stdout: %q", strings.Join(args, " "), err, out)
+	}
+	return string(out), nil
+}
+
 func (k *kind) GetExternalContainerLogs(container api.ExternalContainer) (string, error) {
 	exists, err := doesContainerNameExist(container.Name)
 	if err != nil {
