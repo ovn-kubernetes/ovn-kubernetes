@@ -27,6 +27,14 @@ type Provider interface {
 	// ExecK8NodeCommand executes a command on a K8 Node host network namespace and filesystem
 	ExecK8NodeCommand(nodeName string, cmd []string) (string, error)
 	ExecExternalContainerCommand(container ExternalContainer, cmd []string) (string, error)
+	// RunOneShotContainer runs a container that executes a command and exits (docker run --rm).
+	// This is useful for one-shot operations like creating veth pairs with host namespace access.
+	// Parameters:
+	//   - image: Container image to run
+	//   - cmd: Command and arguments to execute
+	//   - runtimeArgs: Additional runtime arguments (e.g., "--privileged", "--pid=host", "--network=host")
+	// Returns the command output.
+	RunOneShotContainer(image string, cmd []string, runtimeArgs []string) (string, error)
 	GetExternalContainerLogs(container ExternalContainer) (string, error)
 	// GetExternalContainerPort returns a port. Requesting a port that maybe exposed in tests to avoid multiple parallel
 	// tests utilizing conflicting ports. It also allows infra provider implementations to set the external containers
