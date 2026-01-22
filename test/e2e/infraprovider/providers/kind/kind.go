@@ -231,7 +231,13 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 	if exists {
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
-	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--hostname", container.Name}
+	// Handle --network none (nil Network) vs regular networks
+	if container.Network != nil {
+		cmd = append(cmd, "--network", container.Network.Name())
+	} else {
+		cmd = append(cmd, "--network", "none")
+	}
 	if container.Entrypoint != "" {
 		cmd = append(cmd, "--entrypoint", container.Entrypoint)
 	}
@@ -249,8 +255,8 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 	if err != nil {
 		return container, fmt.Errorf("failed to create container %s: %s (%s)", container, err, stdOut)
 	}
-	// fetch IPs for the attached container network. Host networked containers do not expose IP information.
-	if !isHostNetworked(container.Network.Name()) {
+	// fetch IPs for the attached container network. Host networked and --network none containers do not expose IP information.
+	if container.Network != nil && !isHostNetworked(container.Network.Name()) {
 		err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 360*time.Second, true, func(ctx context.Context) (done bool, err error) {
 			ni, err := getNetworkInterface(container.Name, container.Network.Name())
 			if err != nil {
