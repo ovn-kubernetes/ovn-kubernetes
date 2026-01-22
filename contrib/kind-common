@@ -668,7 +668,7 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.21
+readonly FRR_K8S_VERSION=v0.0.20
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -682,7 +682,7 @@ clone_frr() {
 
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
-    git apply ../patches/*
+    git apply --exclude hack/kind.sh ../patches/*
     popd
 
     popd || exit 1
@@ -822,27 +822,59 @@ destroy_bgp() {
   fi
 }
 
-install_ffr_k8s() {
+install_frr_k8s() {
+  local bgp_port=${1:-0}
   echo "Installing frr-k8s ..."
   clone_frr
 
   # apply frr-k8s
+  if [ "${bgp_port}" -ne 0 ]; then
+    sed -i "s/bgpd_options=\"\(.*\)-p 0\(.*\)\"/bgpd_options=\"\1-p ${bgp_port}\2\"/g" "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+  fi
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
-  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
 
+wait_for_frr_k8s() {
+  kubectl wait -n frr-k8s-system deployment frr-k8s-webhook-server --for condition=Available --timeout 2m
+  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
+
+configure_frr_k8s() {
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
   sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
-  # Allow receiving the bgp external server's prefix
-  sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  if [ "$ENABLE_NO_OVERLAY" == true ]; then
+    # Allow receiving the bgp external server's prefix and the pod network's prefix(es)
+    # Build the IPv4 prefix list - NET_CIDR_IPV4 can be single CIDR or comma-separated list
+    IPV4_PREFIX_LIST="            prefixes:\n            - prefix: ${BGP_SERVER_NET_SUBNET_IPV4}"
+    IFS=',' read -ra IPV4_CIDRS <<< "$NET_CIDR_IPV4"
+    for cidr in "${IPV4_CIDRS[@]}"; do
+      cidr=$(echo "$cidr" | xargs | cut -d'/' -f1,2)  # trim whitespace and strip host subnet mask
+      IPV4_PREFIX_LIST="${IPV4_PREFIX_LIST}\n            - ge: 24\n              prefix: ${cidr}"
+    done
+    sed -i '/mode: filtered/a\'"${IPV4_PREFIX_LIST}" receive_filtered.yaml
+  else
+    # Allow receiving the bgp external server's prefix
+    sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  fi
   # If IPv6 is enabled, add the IPv6 prefix as well
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
-    IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
-    # Process each occurrence of the IPv4 prefix
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+    if [ "$ENABLE_NO_OVERLAY" == true ]; then
+      # Build the IPv6 prefix list - NET_CIDR_IPV6 can be single CIDR or comma-separated list
+      IPV6_PREFIX_LIST="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
+      IFS=',' read -ra IPV6_CIDRS <<< "$NET_CIDR_IPV6"
+      for cidr in "${IPV6_CIDRS[@]}"; do
+        cidr=$(echo "$cidr" | xargs | cut -d'/' -f1,2)  # trim whitespace and strip host subnet mask
+        IPV6_PREFIX_LIST="${IPV6_PREFIX_LIST}\n            - ge: 64\n              prefix: ${cidr}"
+      done
+      IPv6_LINE="${IPV6_PREFIX_LIST}"
+    else
+      IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
+    fi
+    # Process each occurrence of the IPv4 prefix in reverse order to avoid line number shifting
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
       # Insert the IPv6 prefix after each IPv4 prefix line
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done

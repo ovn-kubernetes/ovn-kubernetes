@@ -64,6 +64,9 @@ type NetInfo interface {
 	EVPNIPVRFRouteTarget() string
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
+	// GetNetworkTransport returns the transport technology used by this network.
+	GetNetworkTransport() string
+	GetOutboundSNAT() string
 
 	// dynamic information, can change over time
 	GetNADs() []string
@@ -403,6 +406,14 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	return maps.Keys(nInfo.eipAdvertisements)
 }
 
+func (nInfo *mutableNetInfo) GetNetworkTransport() string {
+	return ""
+}
+
+func (nInfo *mutableNetInfo) GetOutboundSNAT() string {
+	return ""
+}
+
 // GetNADs returns all the NADs associated with this network
 func (nInfo *mutableNetInfo) GetNADs() []string {
 	nInfo.RLock()
@@ -734,6 +745,14 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkTransport() string {
+	return config.Default.Transport
+}
+
+func (nInfo *DefaultNetInfo) GetOutboundSNAT() string {
+	return config.NoOverlay.OutboundSNAT
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -746,6 +765,7 @@ type userDefinedNetInfo struct {
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
+	transport          string
 
 	ipv4mode, ipv6mode    bool
 	subnets               []config.CIDRNetworkEntry
@@ -759,8 +779,7 @@ type userDefinedNetInfo struct {
 	defaultGatewayIPs   []net.IP
 	managementIPs       []net.IP
 
-	transport string
-	evpn      *ovncnitypes.EVPNConfig
+	evpn *ovncnitypes.EVPNConfig
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -1016,6 +1035,14 @@ func (nInfo *userDefinedNetInfo) TransitSubnets() []*net.IPNet {
 	return nInfo.transitSubnets
 }
 
+func (nInfo *userDefinedNetInfo) GetNetworkTransport() string {
+	return nInfo.transport
+}
+
+func (nInfo *userDefinedNetInfo) GetOutboundSNAT() string {
+	return ""
+}
+
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
@@ -1068,6 +1095,9 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 		return false
 	}
 
+	if nInfo.transport != other.GetNetworkTransport() {
+		return false
+	}
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.subnets, other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
 		return false
@@ -1246,6 +1276,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		transport:           netconf.Transport,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
