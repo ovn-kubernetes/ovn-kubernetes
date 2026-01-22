@@ -35,6 +35,9 @@ type Provider interface {
 	//   - runtimeArgs: Additional runtime arguments (e.g., "--privileged", "--pid=host", "--network=host")
 	// Returns the command output.
 	RunOneShotContainer(image string, cmd []string, runtimeArgs []string) (string, error)
+	// GetExternalContainerPID returns the PID of an external container. This is useful for namespace
+	// manipulation operations like moving network interfaces between namespaces.
+	GetExternalContainerPID(containerName string) (int, error)
 	GetExternalContainerLogs(container ExternalContainer) (string, error)
 	// GetExternalContainerPort returns a port. Requesting a port that maybe exposed in tests to avoid multiple parallel
 	// tests utilizing conflicting ports. It also allows infra provider implementations to set the external containers
