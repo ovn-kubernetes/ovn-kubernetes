@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -207,6 +208,14 @@ const (
 	// externalFRRContainerName is the name of the external FRR container
 	// created during KIND cluster setup with BGP enabled (./contrib/kind.sh -rae)
 	externalFRRContainerName = "frr"
+	// agnhostHTTPPort is the HTTP port for agnhost netexec
+	agnhostHTTPPort = 8080
+	// netshootImage is a network troubleshooting container with tools like 'ip'.
+	// We use it to create veth pairs in the host namespace and move them into
+	// container namespaces. Running 'docker run --privileged' gives us CAP_NET_ADMIN
+	// without requiring sudo on the test machine - only Docker permissions are needed.
+	// The container runs with --network host --pid host to access host namespaces.
+	netshootImage = "ghcr.io/nicolaka/netshoot:v0.13"
 )
 
 // setupEVPNBridgeOnExternalFRR creates the EVPN bridge (br0) and VXLAN device (vxlan0)
@@ -635,5 +644,148 @@ func setupIPVRFBGPOnExternalFRR(ictx infraapi.Context, vrfName string, asn, vni 
 	})
 
 	framework.Logf("IP-VRF BGP setup complete on %s (VRF %s, ASN %d, VNI %d, RT %s, families %v)", externalFRRContainerName, vrfName, asn, vni, rt, ipFamilies)
+	return nil
+}
+
+// =============================================================================
+// MAC-VRF Agnhost Utilities
+// =============================================================================
+
+// setupMACVRFAgnhost creates an agnhost container connected to the EVPN bridge
+// for MAC-VRF (Layer 2) connectivity testing.
+//
+// This function:
+//  1. Creates an agnhost container with --network none
+//  2. Creates a veth pair using netshoot (requires host network/PID access)
+//  3. Moves veth ends into agnhost and FRR container namespaces
+//  4. Configures the FRR-side interface as an access port on br0
+//  5. Assigns an IP address to the agnhost
+//
+// Requires: setupEVPNBridgeOnExternalFRR and setupMACVRFOnExternalFRR must be called first.
+//
+// The agnhost will be on the same L2 segment as pods on the CUDN, allowing
+// direct Layer 2 communication via EVPN Type-2/Type-3 routes.
+//
+// Names are derived from VID to support multiple MAC-VRF agnhosts:
+//   - Container: agnhost-macvrf-<vid> (e.g., agnhost-macvrf-100)
+//   - FRR interface: macvrf<vid> (e.g., macvrf100)
+//
+// Parameters:
+//   - vid: VLAN ID for the access port on br0 (e.g., 100)
+//   - ipAddresses: IP addresses with prefix to assign to the agnhost (e.g., []string{"10.100.0.250/16", "fd00:100::250/64"})
+func setupMACVRFAgnhost(ictx infraapi.Context, vid int, ipAddresses []string) error {
+	// Derive names from VID to support multiple MAC-VRF agnhosts
+	containerName := fmt.Sprintf("agnhost-macvrf-%d", vid)
+	macvrfInterface := fmt.Sprintf("macvrf%d", vid)
+	vethAgnhost := fmt.Sprintf("veth%da", vid)
+	vethFRR := fmt.Sprintf("veth%df", vid)
+
+	// Step 1: Create agnhost container with --network none
+	agnhostContainer := infraapi.ExternalContainer{
+		Name:        containerName,
+		Image:       images.AgnHost(),
+		Network:     nil, // --network none
+		CmdArgs:     []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
+		RuntimeArgs: []string{"--cap-add=NET_ADMIN"},
+	}
+	_, err := ictx.CreateExternalContainer(agnhostContainer)
+	if err != nil {
+		return fmt.Errorf("failed to create agnhost container %s: %w", containerName, err)
+	}
+
+	// Step 2: Get container PIDs for namespace manipulation
+	agnhostPID, err := infraprovider.Get().GetExternalContainerPID(containerName)
+	if err != nil {
+		return fmt.Errorf("failed to get agnhost PID: %w", err)
+	}
+
+	frrPID, err := infraprovider.Get().GetExternalContainerPID(externalFRRContainerName)
+	if err != nil {
+		return fmt.Errorf("failed to get FRR PID: %w", err)
+	}
+
+	framework.Logf("Container PIDs - Agnhost (%s): %d, FRR: %d", containerName, agnhostPID, frrPID)
+
+	// Step 3: Create veth pair using netshoot helper
+	// netshoot runs with --network host --pid host to access host namespaces
+	netshootRuntimeArgs := []string{"--privileged", "--pid=host", "--network=host"}
+
+	// Create veth pair in host namespace
+	_, err = infraprovider.Get().RunOneShotContainer(netshootImage,
+		[]string{"ip", "link", "add", vethAgnhost, "type", "veth", "peer", "name", vethFRR},
+		netshootRuntimeArgs)
+	if err != nil {
+		return fmt.Errorf("failed to create veth pair: %w", err)
+	}
+
+	// Move agnhost end to agnhost container namespace
+	_, err = infraprovider.Get().RunOneShotContainer(netshootImage,
+		[]string{"ip", "link", "set", vethAgnhost, "netns", fmt.Sprintf("%d", agnhostPID)},
+		netshootRuntimeArgs)
+	if err != nil {
+		return fmt.Errorf("failed to move veth to agnhost namespace: %w", err)
+	}
+
+	// Move FRR end to FRR container namespace
+	_, err = infraprovider.Get().RunOneShotContainer(netshootImage,
+		[]string{"ip", "link", "set", vethFRR, "netns", fmt.Sprintf("%d", frrPID)},
+		netshootRuntimeArgs)
+	if err != nil {
+		return fmt.Errorf("failed to move veth to FRR namespace: %w", err)
+	}
+
+	// Step 4: Rename and configure interfaces inside containers
+	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+	agnhost := infraapi.ExternalContainer{Name: containerName}
+
+	// Rename in agnhost: veth<vid>a -> eth0
+	_, err = infraprovider.Get().ExecExternalContainerCommand(agnhost, []string{"ip", "link", "set", vethAgnhost, "name", "eth0"})
+	if err != nil {
+		return fmt.Errorf("failed to rename interface in agnhost: %w", err)
+	}
+
+	// Rename in FRR: veth<vid>f -> macvrf<vid>
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr, []string{"ip", "link", "set", vethFRR, "name", macvrfInterface})
+	if err != nil {
+		return fmt.Errorf("failed to rename interface in FRR: %w", err)
+	}
+
+	// Bring up interfaces
+	_, err = infraprovider.Get().ExecExternalContainerCommand(agnhost, []string{"ip", "link", "set", "eth0", "up"})
+	if err != nil {
+		return fmt.Errorf("failed to bring up eth0 in agnhost: %w", err)
+	}
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr, []string{"ip", "link", "set", macvrfInterface, "up"})
+	if err != nil {
+		return fmt.Errorf("failed to bring up %s in FRR: %w", macvrfInterface, err)
+	}
+
+	// Step 5: Add FRR's interface to br0 as access port for the MAC-VRF VLAN
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr, []string{"ip", "link", "set", macvrfInterface, "master", "br0"})
+	if err != nil {
+		return fmt.Errorf("failed to add %s to br0: %w", macvrfInterface, err)
+	}
+
+	// Configure as access port with PVID
+	vidStr := fmt.Sprintf("%d", vid)
+	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"bridge", "vlan", "add", "dev", macvrfInterface, "vid", vidStr, "pvid", "untagged"})
+	if err != nil {
+		return fmt.Errorf("failed to configure %s as access port: %w", macvrfInterface, err)
+	}
+
+	// Step 6: Configure agnhost IP addresses (supports dual-stack)
+	for _, ipWithPrefix := range ipAddresses {
+		_, err = infraprovider.Get().ExecExternalContainerCommand(agnhost, []string{"ip", "addr", "add", ipWithPrefix, "dev", "eth0"})
+		if err != nil {
+			return fmt.Errorf("failed to configure IP %s on agnhost: %w", ipWithPrefix, err)
+		}
+	}
+
+	// Cleanup is handled automatically:
+	// - ictx.CreateExternalContainer() registers container deletion
+	// - Veth pair is auto-deleted when the agnhost container is removed
+
+	framework.Logf("MAC-VRF agnhost setup complete: %s (IPs: %v, VID: %d, interface: %s)", containerName, ipAddresses, vid, macvrfInterface)
 	return nil
 }
