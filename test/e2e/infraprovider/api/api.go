@@ -254,8 +254,9 @@ func (ec ExternalContainer) IsValidPreCreateContainer() (bool, error) {
 	if ec.Image == "" {
 		errs = append(errs, errors.New("image is not set"))
 	}
-	if ec.Network.String() == "" {
-		errs = append(errs, errors.New("network is not set"))
+	// Network can be nil for --network none containers
+	if ec.Network != nil && ec.Network.String() == "" {
+		errs = append(errs, errors.New("network name is empty"))
 	}
 	if len(errs) == 0 {
 		return true, nil
@@ -265,7 +266,8 @@ func (ec ExternalContainer) IsValidPreCreateContainer() (bool, error) {
 
 func (ec ExternalContainer) IsValidPostCreate() (bool, error) {
 	var errs []error
-	if ec.IPv4 == "" && ec.IPv6 == "" {
+	// Skip IP validation for --network none containers (Network is nil)
+	if ec.Network != nil && ec.IPv4 == "" && ec.IPv6 == "" {
 		errs = append(errs, errors.New("provider did not populate an IPv4 or an IPv6 address"))
 	}
 	if len(errs) == 0 {
@@ -275,7 +277,8 @@ func (ec ExternalContainer) IsValidPostCreate() (bool, error) {
 }
 
 func (ec ExternalContainer) IsValidPreDelete() (bool, error) {
-	if ec.IPv4 == "" && ec.IPv6 == "" {
+	// Skip IP validation for --network none containers (Network is nil)
+	if ec.Network != nil && ec.IPv4 == "" && ec.IPv6 == "" {
 		return false, fmt.Errorf("IPv4 or IPv6 must be set")
 	}
 	return true, nil
