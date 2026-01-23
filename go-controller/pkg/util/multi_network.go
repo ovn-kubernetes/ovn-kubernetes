@@ -1552,11 +1552,11 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		netconf.Transport != types.NetworkTransportGeneve &&
 		netconf.Transport != types.NetworkTransportNoOverlay &&
 		netconf.Transport != types.NetworkTransportEVPN {
-		return fmt.Errorf("invalid transport %q: must be one of %q, %q, or %q",
-			netconf.Transport,
+		return fmt.Errorf("invalid transport %q: must be one of %q", netconf.Transport, []string{
 			types.NetworkTransportGeneve,
 			types.NetworkTransportNoOverlay,
-			types.NetworkTransportEVPN)
+			types.NetworkTransportEVPN,
+		})
 	}
 
 	if netconf.JoinSubnet != "" && netconf.Topology == types.LocalnetTopology {

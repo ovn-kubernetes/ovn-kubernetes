@@ -1424,8 +1424,8 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 }
 
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big
-// enough to carry the `config.Default.MTU` and the Geneve header. If the MTU is not big
-// enough, it will return an error
+// enough to carry the `config.Default.MTU` and the Geneve header (if overlay transport is used).
+// If the MTU is not big enough, it will return an error
 func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 	// OVN allows `external_ids:ovn-encap-ip` to be a list of IPs separated by comma
 	ovnEncapIps := strings.Split(config.Default.EffectiveEncapIP, ",")
@@ -1441,7 +1441,7 @@ func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 
 		// calc required MTU
 		var requiredMTU int
-		if config.Gateway.SingleNode {
+		if config.Gateway.SingleNode || config.Default.Transport == types.NetworkTransportNoOverlay {
 			requiredMTU = config.Default.MTU
 		} else {
 			if config.IPv4Mode && !config.IPv6Mode {
