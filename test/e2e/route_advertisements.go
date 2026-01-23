@@ -1981,7 +1981,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 				}
 
 				ginkgo.By("Configuring the namespace and network")
-				testNamespace, err = createNamespaceWithPrimaryNetworkOfType(f, ictx, testBaseName, testNetworkName, cudnAdvertisedVRFLite, networkSpec)
+				testNamespace, err = createNamespaceWithPrimaryNetworkOfType(f, ictx, testBaseName, testNetworkName, cudnAdvertisedVRFLiteOrEVPN, networkSpec)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				f.Namespace = testNamespace
 
@@ -2260,8 +2260,8 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 
 					otherNetworksToTest := []ginkgo.TableEntry{
 						ginkgo.Entry("Default", defaultNetwork, nil),
-						ginkgo.Entry("Layer 3 CUDN advertised VRF-Lite", cudnAdvertisedVRFLite, otherLayer3NetworkSpec),
-						ginkgo.Entry("Layer 2 CUDN advertised VRF-Lite", cudnAdvertisedVRFLite, otherLayer2NetworkSpec),
+						ginkgo.Entry("Layer 3 CUDN advertised VRF-Lite", cudnAdvertisedVRFLiteOrEVPN, otherLayer3NetworkSpec),
+						ginkgo.Entry("Layer 2 CUDN advertised VRF-Lite", cudnAdvertisedVRFLiteOrEVPN, otherLayer2NetworkSpec),
 						// The following testcases are labeled as extended,
 						// might not be run on all jobs
 						ginkgo.Entry("Layer 3 UDN non advertised", udn, otherLayer3NetworkSpec, label.Extended()),
@@ -2290,7 +2290,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 
 								// we will create a agnhost server on an extra network peered with BGP
 								switch networkType {
-								case cudnAdvertisedVRFLite:
+								case cudnAdvertisedVRFLiteOrEVPN:
 									ginkgo.By("Running other BGP network with an agnhost server")
 									otherBGPServerName := otherNetworkName + "-bgpserver"
 									bgpPeerCIDRs := []string{otherBGPPeerSubnetIPv4, otherBGPPeerSubnetIPv6}
@@ -2684,11 +2684,11 @@ func runBGPNetworkAndServer(
 type networkType string
 
 const (
-	defaultNetwork        networkType = "DEFAULT"
-	udn                   networkType = "UDN"
-	cudn                  networkType = "CUDN"
-	cudnAdvertised        networkType = "CUDN_ADVERTISED"
-	cudnAdvertisedVRFLite networkType = "CUDN_ADVERTISED_VRFLITE"
+	defaultNetwork              networkType = "DEFAULT"
+	udn                         networkType = "UDN"
+	cudn                        networkType = "CUDN"
+	cudnAdvertised              networkType = "CUDN_ADVERTISED"
+	cudnAdvertisedVRFLiteOrEVPN networkType = "CUDN_ADVERTISED_VRFLITE_OR_EVPN"
 )
 
 // createNamespaceWithPrimaryNetworkOfType helper function configures a
@@ -2710,7 +2710,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 	case cudnAdvertised:
 		networkLabels = map[string]string{"advertise": name}
 		frrConfigurationLabels = map[string]string{"name": "receive-all"}
-	case cudnAdvertisedVRFLite:
+	case cudnAdvertisedVRFLiteOrEVPN:
 		targetVRF = name
 		networkLabels = map[string]string{"advertise": name}
 		frrConfigurationLabels = map[string]string{"network": name}
