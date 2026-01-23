@@ -15,7 +15,9 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -129,10 +131,13 @@ type ZoneInterconnectHandler struct {
 	networkClusterRouterName string
 	// transit switch name for the network
 	networkTransitSwitchName string
+	// Transit switch IP generators for deriving transit switch port IPs from tunnel IDs
+	transitSwitchIPv4Generator *ipgenerator.IPGenerator
+	transitSwitchIPv6Generator *ipgenerator.IPGenerator
 }
 
 // NewZoneInterconnectHandler returns a new ZoneInterconnectHandler object
-func NewZoneInterconnectHandler(nInfo util.NetInfo, nbClient, sbClient libovsdbclient.Client, watchFactory *factory.WatchFactory) *ZoneInterconnectHandler {
+func NewZoneInterconnectHandler(nInfo util.NetInfo, nbClient, sbClient libovsdbclient.Client, watchFactory *factory.WatchFactory) (*ZoneInterconnectHandler, error) {
 	zic := &ZoneInterconnectHandler{
 		NetInfo:      nInfo,
 		nbClient:     nbClient,
@@ -142,7 +147,23 @@ func NewZoneInterconnectHandler(nInfo util.NetInfo, nbClient, sbClient libovsdbc
 
 	zic.networkClusterRouterName = zic.GetNetworkScopedName(types.OVNClusterRouter)
 	zic.networkTransitSwitchName = getTransitSwitchName(nInfo)
-	return zic
+
+	// Initialize IP generators for deriving transit switch port IPs from tunnel IDs
+	var err error
+	if config.IPv4Mode {
+		zic.transitSwitchIPv4Generator, err = ipgenerator.NewIPGenerator(config.ClusterManager.V4TransitSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("error creating IP Generator for v4 transit subnet %s: %w", config.ClusterManager.V4TransitSubnet, err)
+		}
+	}
+	if config.IPv6Mode {
+		zic.transitSwitchIPv6Generator, err = ipgenerator.NewIPGenerator(config.ClusterManager.V6TransitSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("error creating IP Generator for v6 transit subnet %s: %w", config.ClusterManager.V6TransitSubnet, err)
+		}
+	}
+
+	return zic, nil
 }
 
 func getTransitSwitchName(nInfo util.NetInfo) string {
@@ -152,6 +173,52 @@ func getTransitSwitchName(nInfo util.NetInfo) string {
 	default:
 		return nInfo.GetNetworkScopedName(types.TransitSwitch)
 	}
+}
+
+func (zic *ZoneInterconnectHandler) getTransitSwitchToRouterPortName(nodeName string, index int) string {
+	baseName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + nodeName)
+	if index == 0 {
+		return baseName
+	}
+
+	return fmt.Sprintf("%s_encap%d", baseName, index)
+}
+
+func (zic *ZoneInterconnectHandler) getRouterToTransitSwitchPortName(nodeName string, index int) string {
+	baseName := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + nodeName)
+	if index == 0 {
+		return baseName
+	}
+
+	return fmt.Sprintf("%s_encap%d", baseName, index)
+}
+
+// deriveTransitSwitchPortIPs derives the transit switch port IP addresses from a tunnel ID
+// using the configured transit switch subnet. For example, with subnet 100.88.0.0/16 and
+// tunnel ID 7, this returns 100.88.0.7/16.
+func (zic *ZoneInterconnectHandler) deriveTransitSwitchPortIPs(tunnelID int) ([]*net.IPNet, error) {
+	var ips []*net.IPNet
+	var err error
+
+	if config.IPv4Mode && zic.transitSwitchIPv4Generator != nil {
+		var ip *net.IPNet
+		ip, err = zic.transitSwitchIPv4Generator.GenerateIP(tunnelID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate transit switch port IPv4 address for tunnel ID %d: %w", tunnelID, err)
+		}
+		ips = append(ips, ip)
+	}
+
+	if config.IPv6Mode && zic.transitSwitchIPv6Generator != nil {
+		var ip *net.IPNet
+		ip, err = zic.transitSwitchIPv6Generator.GenerateIP(tunnelID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate transit switch port IPv6 address for tunnel ID %d: %w", tunnelID, err)
+		}
+		ips = append(ips, ip)
+	}
+
+	return ips, nil
 }
 
 func (zic *ZoneInterconnectHandler) createOrUpdateTransitSwitch(networkID int) error {
@@ -383,34 +450,39 @@ func (zic *ZoneInterconnectHandler) addTransitSwitchConfig(sw *nbdb.LogicalSwitc
 	sw.OtherConfig["mcast_flood_unregistered"] = "true"
 }
 
-// createLocalZoneNodeResources creates the local zone node resources for interconnect
-//   - creates Transit switch if it doesn't yet exit
-//   - creates a logical switch port of type "router" in the transit switch with the name as - <network_name>.tstor-<node_name>
-//     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor-ovn-worker
-//     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor-ovn-worker
-//   - creates a logical router port in the ovn_cluster_router with the name - <network_name>.rtots-<node_name> and connects
-//     to the node logical switch port in the transit switch
-//   - remove any stale static routes in the ovn_cluster_router for the node
-func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.Node, nodeID int) error {
-	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
-	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
-		return fmt.Errorf("failed to get the node transit switch port ips for node %s: %w", node.Name, err)
+// createLocalNodeTransitSwitchPort creates a transit switch port for a specific tunnel ID
+// and connects it to the cluster router. This is called:
+// - For single-VTEP nodes: once during node initialization
+// - For multi-VTEP nodes: on-demand when the first pod using a specific encap IP is scheduled
+func (zic *ZoneInterconnectHandler) createLocalNodeTransitSwitchPort(node *corev1.Node, tunnelID int, encapIp string, encapIndex int) error {
+	// Derive transit switch port IPs from tunnel ID
+	nodeTransitSwitchPortIPs, err := zic.deriveTransitSwitchPortIPs(tunnelID)
+	if err != nil {
+		return fmt.Errorf("failed to derive transit switch port IPs for node %s tunnel ID %d: %w", node.Name, tunnelID, err)
+	}
+	if len(nodeTransitSwitchPortIPs) == 0 {
+		return fmt.Errorf("no transit switch port IPs derived for node %s tunnel ID %d", node.Name, tunnelID)
 	}
 
+	// Generate MAC address from first IP
 	transitRouterPortMac := util.IPAddrToHWAddr(nodeTransitSwitchPortIPs[0].IP)
 	var transitRouterPortNetworks []string
 	for _, ip := range nodeTransitSwitchPortIPs {
 		transitRouterPortNetworks = append(transitRouterPortNetworks, ip.String())
 	}
 
-	// Connect transit switch to the cluster router by creating a pair of logical switch port - logical router port
-	logicalRouterPortName := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + node.Name)
+	// Create logical router port name with appropriate suffix for multi-VTEP
+	logicalRouterPortName := zic.getRouterToTransitSwitchPortName(node.Name, encapIndex)
 	logicalRouterPort := nbdb.LogicalRouterPort{
 		Name:     logicalRouterPortName,
 		MAC:      transitRouterPortMac.String(),
 		Networks: transitRouterPortNetworks,
 		Options: map[string]string{
 			"mcast_flood": "true",
+		},
+		ExternalIDs: map[string]string{
+			types.NetworkExternalID: zic.GetNetworkName(),
+			types.NodeExternalID:    node.Name,
 		},
 	}
 	logicalRouter := nbdb.LogicalRouter{
@@ -423,16 +495,174 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 
 	lspOptions := map[string]string{
 		libovsdbops.RouterPort:      logicalRouterPortName,
-		libovsdbops.RequestedTnlKey: strconv.Itoa(nodeID),
+		libovsdbops.RequestedTnlKey: strconv.Itoa(tunnelID),
 	}
 
-	// Store the node name in the external_ids column for book keeping
+	// Store the node name and network name in the external_ids column for book keeping
 	externalIDs := map[string]string{
-		"node": node.Name,
+		types.NetworkExternalID: zic.GetNetworkName(),
+		"node":                  node.Name,
 	}
-	err = zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name),
+
+	// Create transit switch port name with appropriate suffix
+	transitSwitchPortName := zic.getTransitSwitchToRouterPortName(node.Name, encapIndex)
+	err = zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, transitSwitchPortName,
 		lportTypeRouter, []string{lportTypeRouterAddr}, lspOptions, externalIDs)
 	if err != nil {
+		return err
+	}
+
+	if encapIp != "" {
+		klog.V(5).Infof("Updating port binding for local LSP %s with encap ip %s", transitSwitchPortName, encapIp)
+		chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+		if err != nil || chassisID == "" {
+			return fmt.Errorf("failed to parse chassis ID for node %s: %w", node.Name, err)
+		}
+		if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, transitSwitchPortName, chassisID, encapIp); err != nil {
+			return fmt.Errorf("failed to update port binding for %s: %w", transitSwitchPortName, err)
+		}
+	}
+
+	// Its possible that node is moved from a remote zone to the local zone. Check and delete the remote zone routes
+	// for this node as it's no longer needed.
+	return zic.deleteLocalNodeStaticRoutes(node, nodeTransitSwitchPortIPs)
+}
+
+// EnsureLocalNodeTransitSwitchPortForPod ensures that a transit switch port exists for the
+// pod's encap IP on a multi-VTEP local node. This is called when adding a pod on a multi-VTEP node
+// to create the transit switch port on-demand.
+//
+// For single-VTEP nodes, this function does nothing as the port is already created during node initialization.
+func (zic *ZoneInterconnectHandler) EnsureLocalNodeTransitSwitchPortForPod(pod *corev1.Pod, podAnnotation *util.PodAnnotation) error {
+
+	if !util.IsMultiVTEPEnabled() {
+		return nil
+	}
+
+	node, err := zic.watchFactory.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
+	}
+
+	// If annotation doesn't exist, treat as single-VTEP node
+	encapIPs, err := util.ParseNodeEncapIPsAnnotation(node)
+	if err != nil && !util.IsAnnotationNotSetError(err) {
+		return err
+	}
+
+	if len(encapIPs) <= 1 {
+		// Single-VTEP node or multi-VTEP not enabled, port already created during node initialization
+		return nil
+	}
+
+	nodeID, err := util.GetNodeID(node)
+	if err != nil || nodeID == util.InvalidNodeID {
+		return fmt.Errorf("failed to get node ID for node %s: %w", node.Name, err)
+	}
+
+	// Get tunnel IDs and encap IPs for the node
+	tunnelIds, err := util.GetNodeTransitSwitchPortTunnelIDs(node)
+	if err != nil {
+		return fmt.Errorf("failed to get tunnel IDs for node %s: %w", node.Name, err)
+	}
+
+	if len(tunnelIds) != len(encapIPs) {
+		return fmt.Errorf("number of encap IPs (%d) and transit switch port tunnel IDs (%d) for node %s do not match",
+			len(encapIPs), len(tunnelIds), node.Name)
+	}
+
+	// Multi-VTEP node: find which tunnel ID corresponds to the pod's encap IP
+	encapIndex := -1
+	tunnelID := -1
+	encapIP := podAnnotation.EncapIP
+	if encapIP == "" {
+		// If a network is configured to use SR-IOV VF interfaces, all pods on the network will have `encap_ip` set.
+		// Otherwise, the Pod will use veth interface and don't have `encap_ip` specified in `k8s.ovn.org/pod-networks`.
+		// In this case, the first VTEP on local node will be used to create the local transit switch port.
+		encapIP = encapIPs[0]
+		encapIndex = 0
+		tunnelID = tunnelIds[0]
+	} else {
+		for i, ip := range encapIPs {
+			if ip == encapIP {
+				encapIndex = i
+				tunnelID = tunnelIds[i]
+				break
+			}
+		}
+	}
+
+	if encapIndex == -1 {
+		return fmt.Errorf("pod %s/%s encap IP %s not found in node %s encap IPs %v",
+			pod.Namespace, pod.Name, encapIP, node.Name, encapIPs)
+	}
+
+	klog.V(5).Infof("Local pod %s/%s on node %s using encap IP %v, tunnel ID %d, index %d",
+		pod.Namespace, pod.Name, node.Name, encapIP, tunnelID, encapIndex)
+
+	// Check if transit switch port already exists for this tunnel ID
+	transitSwitchPortName := zic.getTransitSwitchToRouterPortName(node.Name, encapIndex)
+	lsp := &nbdb.LogicalSwitchPort{Name: transitSwitchPortName}
+	lsp, err = libovsdbops.GetLogicalSwitchPort(zic.nbClient, lsp)
+	if err == nil && lsp != nil {
+		// Port already exists
+		return nil
+	}
+
+	// Port doesn't exist, create it
+	klog.Infof("Creating local transit switch port for node %s encap IP %s (tunnel ID %d, index %d)",
+		node.Name, encapIP, tunnelID, encapIndex)
+
+	return zic.createLocalNodeTransitSwitchPort(node, tunnelID, encapIP, encapIndex)
+}
+
+// createLocalZoneNodeResources creates the local zone node resources for interconnect
+//
+//   - creates Transit switch if it doesn't yet exit
+//
+//   - if node has only one encap IP, the below steps are performed:
+//
+//     creates a logical switch port of type "router" in the transit switch with the name as - <network_name>.tstor-<node_name>
+//     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor-ovn-worker
+//     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor-ovn-worker
+//
+//     creates a logical router port in the ovn_cluster_router with the name - <network_name>.rtots-<node_name> and connects
+//     to the node logical switch port in the transit switch
+//
+//   - if node has multiple encap IPs, no logical switch port and logical router port are created here, they will be when a Pod
+//     is scheduled on the node.
+//
+//   - remove any stale static routes in the ovn_cluster_router for the node
+func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.Node, nodeID int) error {
+	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+		return fmt.Errorf("failed to get the node transit switch port ips for node %s: %w", node.Name, err)
+	}
+
+	tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+	if len(tunnelIds) == 0 {
+		// use the node ID as the first transit switch port tunnel id, which is always allocated.
+		tunnelIds = append(tunnelIds, nodeID)
+	}
+
+	encapIPs, _ := util.ParseNodeEncapIPsAnnotation(node)
+	if len(encapIPs) > 0 && len(tunnelIds) != len(encapIPs) {
+		return fmt.Errorf("number of encap IPs (%d) and tunnel IDs (%d) for node %s do not match",
+			len(encapIPs), len(tunnelIds), node.Name)
+	}
+
+	if util.IsMultiVTEPEnabled() && len(encapIPs) > 1 {
+		// If node has multiple encap IPs, the logical router port will be created when a pod is scheduled on the node.
+		return zic.deleteLocalNodeStaticRoutes(node, nodeTransitSwitchPortIPs)
+	}
+	// node may don't have `k8s.ovn.org/node-encap-ips` annotation, set encapIP to empty string in this case.
+	encapIP := ""
+	if len(encapIPs) > 0 {
+		encapIP = encapIPs[0]
+	}
+
+	// for single-VTEP node, create transit switch port for the single encap IP
+	if err := zic.createLocalNodeTransitSwitchPort(node, nodeID, encapIP, 0); err != nil {
 		return err
 	}
 
@@ -441,36 +671,291 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 	return zic.deleteLocalNodeStaticRoutes(node, nodeTransitSwitchPortIPs)
 }
 
-// createRemoteZoneNodeResources creates the remote zone node resources
-//   - creates Transit switch if it doesn't yet exit
-//   - creates a logical port of type "remote" in the transit switch with the name as - <network_name>.tstor.<node_name>
-//     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor.ovn-worker
-//     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor.ovn-worker
-//   - binds the remote port to the node remote chassis in SBDB
-//   - adds static routes for the remote node via the remote port ip in the ovn_cluster_router
-func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
+// createRemoteNodeTransitSwitchPort creates a remote transit switch port for a specific tunnel ID.
+// This is called:
+// - For single-VTEP nodes: once during node initialization
+// - For multi-VTEP nodes: on-demand when the first pod using a specific encap IP is scheduled on the remote node
+func (zic *ZoneInterconnectHandler) createRemoteNodeTransitSwitchPort(node *corev1.Node, tunnelID int, encapIp string, encapIndex int) error {
+	// Derive transit switch port IPs from tunnel ID
+	nodeTransitSwitchPortIPs, err := zic.deriveTransitSwitchPortIPs(tunnelID)
+	if err != nil {
+		return fmt.Errorf("failed to derive transit switch port IPs for remote node %s tunnel ID %d: %w", node.Name, tunnelID, err)
+	}
+	if len(nodeTransitSwitchPortIPs) == 0 {
+		return fmt.Errorf("no transit switch port IPs derived for remote node %s tunnel ID %d", node.Name, tunnelID)
+	}
+
+	// Generate MAC address from first IP
 	transitRouterPortMac := util.IPAddrToHWAddr(nodeTransitSwitchPortIPs[0].IP)
 	var transitRouterPortNetworks []string
 	for _, ip := range nodeTransitSwitchPortIPs {
 		transitRouterPortNetworks = append(transitRouterPortNetworks, ip.String())
 	}
 
+	// Build remote port addresses
 	remotePortAddr := transitRouterPortMac.String()
 	for _, tsNetwork := range transitRouterPortNetworks {
 		remotePortAddr = remotePortAddr + " " + tsNetwork
 	}
 
 	lspOptions := map[string]string{
-		libovsdbops.RequestedTnlKey:  strconv.Itoa(nodeID),
+		libovsdbops.RequestedTnlKey:  strconv.Itoa(tunnelID),
 		libovsdbops.RequestedChassis: node.Name,
 	}
-	// Store the node name in the external_ids column for book keeping
+
+	// Store the node name and network name in the external_ids column for book keeping
 	externalIDs := map[string]string{
-		"node": node.Name,
+		types.NetworkExternalID: zic.GetNetworkName(),
+		"node":                  node.Name,
 	}
 
-	remotePortName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node.Name)
+	// Create remote port name with appropriate suffix
+	remotePortName := GetNodeTransitSwitchPortName(zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name), encapIndex)
 	if err := zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs); err != nil {
+		return err
+	}
+
+	if encapIp != "" {
+		klog.V(5).Infof("Updating port binding for remote TSP %s with encap ip %s", remotePortName, encapIp)
+		chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+		if err != nil || chassisID == "" {
+			return fmt.Errorf("failed to parse chassis ID for node %s: %w", node.Name, err)
+		}
+		if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, remotePortName, chassisID, encapIp); err != nil {
+			return fmt.Errorf("failed to update port binding for %s: %w", remotePortName, err)
+		}
+	}
+
+	return nil
+}
+
+// EnsureRemoteNodeTransitSwitchPortForPod ensures that a remote transit switch port exists for the
+// pod's encap IP on a multi-VTEP remote node. This is called when adding a pod on a multi-VTEP remote node
+// to create the remote transit switch port on-demand.
+//
+// For single-VTEP nodes, this function does nothing as the port is already created during node initialization.
+func (zic *ZoneInterconnectHandler) EnsureRemoteNodeTransitSwitchPortForPod(pod *corev1.Pod, podAnnotation *util.PodAnnotation) error {
+
+	if !util.IsMultiVTEPEnabled() {
+		return nil
+	}
+
+	node, err := zic.watchFactory.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
+	}
+
+	// If annotation doesn't exist, treat as single-VTEP node
+	encapIPs, err := util.ParseNodeEncapIPsAnnotation(node)
+	if err != nil && !util.IsAnnotationNotSetError(err) {
+		return err
+	}
+
+	if len(encapIPs) <= 1 {
+		// Single-VTEP node, port already created during node initialization
+		return nil
+	}
+
+	nodeID, err := util.GetNodeID(node)
+	if err != nil || nodeID == util.InvalidNodeID {
+		return fmt.Errorf("failed to get node ID for node %s: %w", node.Name, err)
+	}
+
+	// Get tunnel IDs for the node
+	tunnelIds, err := util.GetNodeTransitSwitchPortTunnelIDs(node)
+	if err != nil {
+		return fmt.Errorf("failed to get tunnel IDs for node %s: %w", node.Name, err)
+	}
+	if len(tunnelIds) == 0 {
+		tunnelIds = append(tunnelIds, nodeID)
+	}
+
+	if len(tunnelIds) != len(encapIPs) {
+		return fmt.Errorf("number of encap IPs (%d) and tunnel IDs (%d) for node %s do not match",
+			len(encapIPs), len(tunnelIds), node.Name)
+	}
+
+	// Multi-VTEP node: find which tunnel ID corresponds to the pod's encap IP
+	encapIndex := -1
+	tunnelID := -1
+	encapIP := podAnnotation.EncapIP
+	if encapIP == "" {
+		// If a network is configured to use SR-IOV VF interfaces, all pods on the network will have `encap_ip` set.
+		// Otherwise, the Pod will use veth interface and don't have `encap_ip` specified in `k8s.ovn.org/pod-networks`.
+		// In this case, the first VTEP on remote node will be used to create the remote transit switch port.
+		encapIP = encapIPs[0]
+		encapIndex = 0
+		tunnelID = tunnelIds[0]
+	} else {
+		for i, ip := range encapIPs {
+			if ip == encapIP {
+				encapIndex = i
+				tunnelID = tunnelIds[i]
+				break
+			}
+		}
+	}
+
+	if encapIndex == -1 {
+		return fmt.Errorf("pod %s/%s encap IP %s not found in node %s encap IPs %v",
+			pod.Namespace, pod.Name, encapIP, node.Name, encapIPs)
+	}
+
+	klog.V(5).Infof("Remote pod %s/%s on node %s using encap IP %v, tunnel ID %d, encap IP index %d",
+		pod.Namespace, pod.Name, node.Name, encapIP, tunnelID, encapIndex)
+
+	// Check if remote transit switch port already exists for this pod's encap IP
+	tspNamePrefix := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node.Name)
+	remotePortName := GetNodeTransitSwitchPortName(tspNamePrefix, encapIndex)
+
+	lsp := &nbdb.LogicalSwitchPort{Name: remotePortName}
+	lsp, err = libovsdbops.GetLogicalSwitchPort(zic.nbClient, lsp)
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to check if transit switch port %s exists: %w", remotePortName, err)
+	}
+
+	// Create TSP if it doesn't exist
+	if lsp == nil {
+		klog.Infof("Creating remote transit switch port %s for node %s, tunnel ID %d, encap IP %s, encap IP index %d",
+			remotePortName, node.Name, tunnelID, encapIP, encapIndex)
+		if err := zic.createRemoteNodeTransitSwitchPort(node, tunnelID, encapIP, encapIndex); err != nil {
+			return err
+		}
+	} else {
+		klog.V(5).Infof("Transit switch port %s already exists for node %s encap index %d",
+			remotePortName, node.Name, encapIndex)
+		// Ensure port binding is updated with encap even if port already exists
+		if encapIP != "" {
+			klog.V(5).Infof("Updating port binding for existing remote TSP %s with encap ip %s", remotePortName, encapIP)
+			chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+			if err != nil || chassisID == "" {
+				return fmt.Errorf("failed to parse chassis ID for node %s: %w", node.Name, err)
+			}
+			if err = libovsdbops.UpdatePortBindingSetEncap(zic.sbClient, remotePortName, chassisID, encapIP); err != nil {
+				return fmt.Errorf("failed to update port binding for %s: %w", remotePortName, err)
+			}
+		}
+	}
+
+	// Derive transit switch port IPs for the nexthop
+	nodeTransitSwitchPortIPs, err := zic.deriveTransitSwitchPortIPs(tunnelID)
+	if err != nil {
+		return fmt.Errorf("failed to derive transit switch port IPs for tunnel ID %d: %w", tunnelID, err)
+	}
+
+	// Add static routes based on whether this is the first pod on node
+	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		return lrsr.ExternalIDs["ic-node"] == node.Name &&
+			lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName()
+	}
+	lr := &nbdb.LogicalRouter{Name: zic.networkClusterRouterName}
+	logicalRouterStaticRoutes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(zic.nbClient, lr, p)
+	if err != nil {
+		return fmt.Errorf("unable to get logical router static routes with predicate on router %s: %w", zic.networkClusterRouterName, err)
+	}
+
+	nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(node, zic.GetNetworkName())
+	if err != nil {
+		return fmt.Errorf("failed to parse node %s subnets annotation: %w", node.Name, err)
+	}
+	nodeSubnetStaticRoutes := []*nbdb.LogicalRouterStaticRoute{}
+	for _, r := range logicalRouterStaticRoutes {
+		for _, ns := range nodeSubnets {
+			if r.IPPrefix == ns.String() {
+				nodeSubnetStaticRoutes = append(nodeSubnetStaticRoutes, r)
+			}
+		}
+	}
+
+	if len(nodeSubnetStaticRoutes) == 0 {
+		// First pod on this remote node: add /24 node subnet route
+		klog.Infof("Adding node subnet route for first pod on remote node %s", node.Name)
+
+		var nodeGRPIPs []*net.IPNet
+		// only primary networks have cluster router connected to join switch+GR
+		// used for adding routes to GR
+		if !zic.IsUserDefinedNetwork() || (util.IsNetworkSegmentationSupportEnabled() && zic.IsPrimaryNetwork()) {
+			nodeGRPIPs, err = udn.GetGWRouterIPs(node, zic.GetNetInfo())
+			if err != nil {
+				return err
+			}
+		}
+
+		if err := zic.addRemoteNodeStaticRoutes(node, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	canUseNodeSubnetRoute := false
+	for _, r := range nodeSubnetStaticRoutes {
+		for _, nexthop := range nodeTransitSwitchPortIPs {
+			if r.Nexthop == nexthop.IP.String() {
+				canUseNodeSubnetRoute = true
+				break
+			}
+		}
+	}
+
+	if !canUseNodeSubnetRoute {
+		// a pod uses a differnt VTEP on remote node: add /32 host route for this pod
+		klog.Infof("Adding /32 host route for pod %s/%s on remote node %s", pod.Namespace, pod.Name, node.Name)
+
+		// Convert pod IPs to /32 (or /128 for IPv6) host routes
+		podIps := make([]*net.IPNet, 0, len(podAnnotation.IPs))
+		for _, podIP := range podAnnotation.IPs {
+			podIps = append(podIps, &net.IPNet{
+				IP:   podIP.IP,
+				Mask: util.GetIPFullMask(podIP.IP),
+			})
+		}
+
+		if err := zic.addRemoteNodeStaticRoutes(node, nodeTransitSwitchPortIPs, podIps, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// createRemoteZoneNodeResources creates the remote zone node resources
+//   - creates Transit switch if it doesn't yet exit
+//   - creates a logical port of type "remote" in the transit switch with the name as - <network_name>_tstor-<node_name>
+//     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor-ovn-worker
+//     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue_tstor-ovn-worker
+//   - binds the remote port to the node remote chassis in SBDB
+//   - adds static routes for the remote node via the remote port ip in the ovn_cluster_router
+func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
+	tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+	if len(tunnelIds) == 0 {
+		// use the node ID as the first transit switch port tunnel id, which is always allocated.
+		tunnelIds = append(tunnelIds, nodeID)
+	}
+
+	encapIPs, _ := util.ParseNodeEncapIPsAnnotation(node)
+	if len(encapIPs) > 0 && len(tunnelIds) != len(encapIPs) {
+		return fmt.Errorf("number of encap IPs (%d) and tunnel IDs (%d) for node %s do not match",
+			len(encapIPs), len(tunnelIds), node.Name)
+	}
+
+	// if remote node has multiple encap IPs, no remote logical switch port needs to be created, the remote logical switch port
+	// and static route will be created on-demand.
+	if util.IsMultiVTEPEnabled() && len(encapIPs) > 1 {
+		klog.Infof("Postpone remote multi-VTEP node %s resources creation", node.Name)
+		// for Multi-VTEP node, the remote transit switch port and static route for node subnet
+		// will be created when a pod is scheduled on the node.
+		// if err := zic.addRemoteNodeStaticRoutes(node, nodeTransitSwitchPortIPs, nil, nodeGRPIPs); err != nil {
+		// 	return err
+		// }
+		return zic.cleanupNodeClusterRouterPort(node.Name)
+	}
+	encapIP := ""
+	if len(encapIPs) > 0 {
+		encapIP = encapIPs[0]
+	}
+
+	// Single-VTEP node: create remote transit switch port
+	if err := zic.createRemoteNodeTransitSwitchPort(node, nodeID, encapIP, 0); err != nil {
 		return err
 	}
 
@@ -531,36 +1016,60 @@ func (zic *ZoneInterconnectHandler) cleanupNode(nodeName string) error {
 }
 
 func (zic *ZoneInterconnectHandler) cleanupNodeClusterRouterPort(nodeName string) error {
-	lrp := nbdb.LogicalRouterPort{
-		Name: zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + nodeName),
+
+	p := func(lrp *nbdb.LogicalRouterPort) bool {
+		// In multi-VTEP case, a local node may have multiple logical router ports.
+		// Match by network and node external_ids to ensure all corresponding ports are cleaned up.
+		if lrp.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName() &&
+			lrp.ExternalIDs[types.NodeExternalID] == nodeName {
+			return true
+		}
+		// Backward compatibility: legacy ports without external_ids
+		// use exact name matching to avoid collision (ovn-worker vs ovn-worker2)
+		lrpName := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + nodeName)
+		return lrp.Name == lrpName
 	}
-	logicalRouterPort, err := libovsdbops.GetLogicalRouterPort(zic.nbClient, &lrp)
+	lrps, err := libovsdbops.FindLogicalRouterPortWithPredicate(zic.nbClient, p)
 	if err != nil {
-		// logical router port doesn't exist. So nothing to cleanup.
-		return nil
+		return fmt.Errorf("failed to find logical router port for the node %s: %w", nodeName, err)
 	}
 
 	logicalRouter := nbdb.LogicalRouter{
 		Name: zic.networkClusterRouterName,
 	}
 
-	if err := libovsdbops.DeleteLogicalRouterPorts(zic.nbClient, &logicalRouter, logicalRouterPort); err != nil {
-		return fmt.Errorf("failed to delete logical router port %s from router %s for the node %s, error: %w", logicalRouterPort.Name, zic.networkClusterRouterName, nodeName, err)
+	if err := libovsdbops.DeleteLogicalRouterPorts(zic.nbClient, &logicalRouter, lrps...); err != nil {
+		return fmt.Errorf("failed to delete logical router port %v from router %s for the node %s, error: %w", lrps, zic.networkClusterRouterName, nodeName, err)
 	}
 
 	return nil
 }
 
 func (zic *ZoneInterconnectHandler) cleanupNodeTransitSwitchPort(nodeName string) error {
+
+	p := func(lsp *nbdb.LogicalSwitchPort) bool {
+		// In multi-VTEP case, a remote node may have multiple remote transit switch ports.
+		// Match by network and node external_ids to ensure all corresponding ports are cleaned up.
+		if lsp.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName() &&
+			lsp.ExternalIDs["node"] == nodeName {
+			return true
+		}
+		// Backward compatibility: legacy ports without external_ids
+		// use exact name matching to avoid collision (ovn-worker vs ovn-worker2)
+		lspName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + nodeName)
+		return lsp.Name == lspName
+	}
+	lsps, err := libovsdbops.FindLogicalSwitchPortWithPredicate(zic.nbClient, p)
+	if err != nil {
+		return fmt.Errorf("failed to find logical router port for the node %s: %w", nodeName, err)
+	}
+
 	logicalSwitch := &nbdb.LogicalSwitch{
 		Name: zic.networkTransitSwitchName,
 	}
-	logicalSwitchPort := &nbdb.LogicalSwitchPort{
-		Name: zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + nodeName),
-	}
 
-	if err := libovsdbops.DeleteLogicalSwitchPorts(zic.nbClient, logicalSwitch, logicalSwitchPort); err != nil {
-		return fmt.Errorf("failed to delete logical switch port %s from transit switch %s for the node %s, error: %w", logicalSwitchPort.Name, zic.networkTransitSwitchName, nodeName, err)
+	if err := libovsdbops.DeleteLogicalSwitchPorts(zic.nbClient, logicalSwitch, lsps...); err != nil {
+		return fmt.Errorf("failed to delete logical switch port %v from transit switch %s for the node %s, error: %w", lsps, zic.networkTransitSwitchName, nodeName, err)
 	}
 	return nil
 }
@@ -588,7 +1097,6 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 		// with correct external-ids on an upgrade scenario.
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
-				lrsr.Nexthop == nexthop &&
 				lrsr.ExternalIDs["ic-node"] == node.Name
 		}
 		var err error
@@ -679,6 +1187,34 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 	return nil
 }
 
+func (zic *ZoneInterconnectHandler) DeleteRemotePod(pod *corev1.Pod, podAnnotation *util.PodAnnotation) error {
+	node, err := zic.watchFactory.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return fmt.Errorf("failed to find node %s: %w", pod.Spec.NodeName, err)
+	}
+	encapIPs, _ := util.ParseNodeEncapIPsAnnotation(node)
+	if !util.IsMultiVTEPEnabled() || len(encapIPs) <= 1 {
+		// For remote node with single VTEP, no pod IP /32 static routes are added, so nothing to delete
+		return nil
+	}
+
+	// delete the /32 static routes for the pod's IP addresses if they exist
+	for _, podIP := range podAnnotation.IPs {
+		ipNet := util.GetIPNetFullMaskFromIP(podIP.IP)
+		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+			return lrsr.IPPrefix == ipNet.String() &&
+				lrsr.ExternalIDs["ic-node"] == pod.Spec.NodeName &&
+				lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName()
+		}
+
+		if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); err != nil {
+			return fmt.Errorf("failed to delete static route for pod IP %s: %w", podIP.String(), err)
+		}
+	}
+
+	return nil
+}
+
 // interconnectStaticRoute represents a static route
 type interconnectStaticRoute struct {
 	prefix  string
@@ -726,4 +1262,13 @@ func getUserDefinedNetTransitSwitchExtIDs(networkName, topology string, isPrimar
 		types.NetworkRoleExternalID: util.GetUserDefinedNetworkRole(isPrimaryUDN),
 		types.TopologyExternalID:    topology,
 	}
+}
+
+// GetNodeTransitSwitchPortName returns the transit switch port name corresponding to
+// the encap IP at the given `index` in the k8s.ovn.org/node-encap-ips annotation.
+func GetNodeTransitSwitchPortName(baseName string, index int) string {
+	if index == 0 {
+		return baseName
+	}
+	return fmt.Sprintf("%s_encap%d", baseName, index)
 }

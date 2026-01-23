@@ -229,6 +229,8 @@ spec:
           value: {{ default "" .Values.global.lFlowCacheLimitKb | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
+        - name: OVN_MULTI_VTEP_ENABLE
+          value: {{ hasKey .Values.global "enableMultiVTEP" | ternary .Values.global.enableMultiVTEP false | quote }}
         - name: OVN_ENABLE_INTERCONNECT
           value: {{ hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false | quote }}
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY

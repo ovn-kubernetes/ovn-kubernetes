@@ -119,6 +119,13 @@ func TestMarshalPodAnnotation(t *testing.T) {
 			},
 			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","ipv6_lla_gateway_ip":"fe80::"}}`},
 		},
+		{
+			desc: "encap IP is set for pod",
+			inpPodAnnot: PodAnnotation{
+				EncapIP: "10.0.0.5",
+			},
+			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","encap_ip":"10.0.0.5"}}`},
+		},
 	}
 
 	for i, tc := range tests {
@@ -252,6 +259,11 @@ func TestUnmarshalPodAnnotation(t *testing.T) {
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"test_ns/l2":{"mac_address":"0a:58:fd:98:00:01","ipv6_lla_gateway_ip":"192.168.0.5"}}`},
 			errMatch:    fmt.Errorf(`failed to parse pod ipv6 lla gateway, or non ipv6 lla "192.168.0.5"`),
 			nadName:     "test_ns/l2",
+		},
+		{
+			desc:        "verify successful unmarshal of pod annotation when encap_ip field is present",
+			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"192.168.1.0/24","nextHop":"192.168.1.1"}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1","encap_ip":"10.0.0.5"}}`},
+			nadName:     "default",
 		},
 	}
 	for i, tc := range tests {

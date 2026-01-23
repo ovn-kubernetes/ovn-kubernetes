@@ -1411,6 +1411,11 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
 
+				// Wait for all events (ADD and UPDATE) to complete successfully before
+				// injecting NBDB failure. The annotation update during ADD triggers an
+				// UPDATE event, and we need to ensure it completes.
+				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
+
 				// inject transient problem, nbdb is down
 				fakeOvn.controller.nbClient.Close()
 				gomega.Eventually(func() bool {

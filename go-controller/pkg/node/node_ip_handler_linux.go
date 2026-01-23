@@ -568,7 +568,7 @@ func (c *addressManager) updateOVNEncapIPAndReconnect(newIP net.IP) {
 	}
 
 	// Update node-encap-ips annotation
-	encapIPList := sets.New[string](config.Default.EffectiveEncapIP)
+	encapIPList := []string{config.Default.EffectiveEncapIP}
 	if err := util.SetNodeEncapIPs(c.nodeAnnotator, encapIPList); err != nil {
 		klog.Errorf("Failed to set node-encap-ips annotation for node %s: %v", c.nodeName, err)
 		return

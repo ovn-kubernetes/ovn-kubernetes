@@ -151,7 +151,7 @@ func NewSBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Reg
 		cancel()
 		c.Close()
 	}()
-
+	defer cancel()
 	// Only Monitor Required SBDB tables to reduce memory overhead
 	chassisPrivate := sbdb.ChassisPrivate{}
 	igmpGroup := sbdb.IGMPGroup{}

@@ -239,6 +239,16 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(oldPod, pod *corev1.Pod,
 		return err
 	}
 
+	// For Layer 3 interconnect with multi-VTEP, ensure remote transit switch port exists for this pod's encap IP
+	if oc.isLayer3Interconnect() {
+		podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, ovntypes.DefaultNetworkName)
+		if err == nil {
+			if err = oc.zoneICHandler.EnsureRemoteNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
+				return fmt.Errorf("failed to ensure remote transit switch port for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			}
+		}
+	}
+
 	//FIXME: Update comments & reduce code duplication.
 	// check if this remote pod is serving as an external GW.
 	if oldPod != nil && (exGatewayAnnotationsChanged(oldPod, pod) || networkStatusAnnotationsChanged(oldPod, pod)) {
@@ -316,6 +326,16 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 // It removes the remote pod ips from the namespace address set and if its an external gw pod, removes
 // its routes.
 func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
+	// For Layer 3 interconnect with multi-VTEP, delete /32 static routes for this pod if they exist
+	if oc.isLayer3Interconnect() {
+		podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, ovntypes.DefaultNetworkName)
+		if err == nil {
+			if err = oc.zoneICHandler.DeleteRemotePod(pod, podAnnotation); err != nil {
+				klog.Infof("Failed to delete remote pod %s/%s static routes: %v", pod.Namespace, pod.Name, err)
+			}
+		}
+	}
+
 	// Delete the routes in the namespace associated with this remote pod if it was acting as an external GW
 	if err := oc.deletePodExternalGW(pod); err != nil {
 		return fmt.Errorf("unable to delete external gateway routes for remote pod %s: %w",

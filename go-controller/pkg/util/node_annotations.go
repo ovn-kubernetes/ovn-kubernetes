@@ -137,6 +137,11 @@ const (
 	// It is set by cluster manager.
 	OvnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 
+	// In multi-vteps case, the node will have multiple transit switch ports.
+	// This annotation will store all the transit switch port tunnel ids.
+	// Its length and order must match k8s.ovn.org/node-encap-ips.
+	OvnTransitSwitchPortTunnelIDs = "k8s.ovn.org/node-transit-switch-port-tunnel-ids"
+
 	// OvnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
 	OvnNodeID = "k8s.ovn.org/node-id"
 
@@ -617,6 +622,10 @@ func createPrimaryIfAddrAnnotation(annotationName string, nodeAnnotation map[str
 func CreateNodeTransitSwitchPortAddrAnnotation(nodeAnnotation map[string]interface{}, nodeIPNetv4,
 	nodeIPNetv6 *net.IPNet) (map[string]interface{}, error) {
 	return createPrimaryIfAddrAnnotation(OvnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
+}
+
+func NodeTransitSwitchPortTunnelIDsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OvnTransitSwitchPortTunnelIDs] != newNode.Annotations[OvnTransitSwitchPortTunnelIDs]
 }
 
 func NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode *corev1.Node) bool {
@@ -1136,6 +1145,45 @@ func UpdateNodeIDAnnotation(annotations map[string]interface{}, nodeID int) map[
 	return annotations
 }
 
+func UpdateNodeTransitSwitchPortTunnelIDsAnnotation(annotations map[string]interface{}, tunnelIds []int) (map[string]interface{}, error) {
+	if annotations == nil {
+		annotations = make(map[string]interface{})
+	}
+
+	data, err := json.Marshal(tunnelIds)
+	if err != nil {
+		return nil, err
+	}
+
+	annotations[OvnTransitSwitchPortTunnelIDs] = string(data)
+	return annotations, nil
+}
+
+// GetNodeIdName returns the node ID name corresponding to the encap IP at the given `index`
+// in the k8s.ovn.org/node-encap-ips annotation.
+func GetNodeIdName(nodeName string, index int) string {
+	if index < 1 {
+		return nodeName
+	}
+	// when the index of the encap IPs in the node > 1, using below naming convention:
+	// <node>_encap<i>
+	return fmt.Sprintf("%s_encap%d", nodeName, index)
+}
+
+func GetNodeTransitSwitchPortTunnelIDs(node *corev1.Node) ([]int, error) {
+	tunnelIdsString, ok := node.Annotations[OvnTransitSwitchPortTunnelIDs]
+	if !ok {
+		return nil, nil
+	}
+
+	var tunnelIds []int
+	if err := json.Unmarshal([]byte(tunnelIdsString), &tunnelIds); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tunnel ids for node %s: %v", node.Name, err)
+	}
+
+	return tunnelIds, nil
+}
+
 // GetNodeID returns the id of the node set in the 'OvnNodeID' node annotation.
 // Returns InvalidNodeID (-1) if the 'OvnNodeID' node annotation is not set or if the value is
 // not an integer value. On error also returns:
@@ -1349,8 +1397,8 @@ func filterIPVersion(cidrs []netip.Prefix, v6 bool) []netip.Prefix {
 	return validCIDRs
 }
 
-func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips sets.Set[string]) error {
-	return nodeAnnotator.Set(OVNNodeEncapIPs, sets.List(encapips))
+func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips []string) error {
+	return nodeAnnotator.Set(OVNNodeEncapIPs, encapips)
 }
 
 // ParseNodeEncapIPsAnnotation returns the encap IPs set on a node

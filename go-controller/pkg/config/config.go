@@ -460,6 +460,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableEgressService             bool `gcfg:"enable-egress-service"`
 	EgressIPNodeHealthCheckPort     int  `gcfg:"egressip-node-healthcheck-port"`
 	EnableMultiNetwork              bool `gcfg:"enable-multi-network"`
+	EnableMultiVTEP                 bool `gcfg:"enable-multi-vtep"`
 	EnableNetworkSegmentation       bool `gcfg:"enable-network-segmentation"`
 	EnableNetworkConnect            bool `gcfg:"enable-network-connect"`
 	EnablePreconfiguredUDNAddresses bool `gcfg:"enable-preconfigured-udn-addresses"`
@@ -1140,6 +1141,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Use multiple NetworkAttachmentDefinition CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableMultiNetwork,
 		Value:       OVNKubernetesFeature.EnableMultiNetwork,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-multi-vtep",
+		Usage:       "Enable multiple VTEP support for ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableMultiVTEP,
+		Value:       OVNKubernetesFeature.EnableMultiVTEP,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-multi-networkpolicy",
