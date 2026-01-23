@@ -45,6 +45,7 @@ usage() {
     echo "       [-adv | --advertise-default-network]"
     echo "       [-rud | --routed-udn-isolation-disable]"
     echo "       [ -nqe | --network-qos-enable ]"
+    echo "       [ -noe | --no-overlay-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
@@ -53,6 +54,7 @@ usage() {
     echo "       [ -ovg | --ovn-gitref <ref> ]"
     echo "       [ -cn  | --cluster-name ]"
     echo "       [ -mip | --metrics-ip <ip> ]"
+    echo "       [ -mtu <mtu> ]"
     echo "       [ --enable-coredumps ]"
     echo "       [ -h ]"
     echo ""
@@ -80,6 +82,7 @@ usage() {
     echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
     echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
+    echo "-noe | --no-overlay-enable                    Enable no-overlay mode for the default network. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-ov  | --ovn-image                            Use the specified docker image instead of building locally. DEFAULT: local build."
@@ -87,6 +90,7 @@ usage() {
     echo "-ovg | --ovn-gitref                           Specify the branch, tag or commit id to build OVN from, it can be a pattern like 'branch-*' it will order results and use the first one"
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
     echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
+    echo "-mtu                                          Define the overlay mtu. DEFAULT: 1400 (1500 for no-overlay mode)"
     echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
     echo "-ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)"
@@ -159,6 +163,8 @@ parse_args() {
                                                   ;;
             -nqe | --network-qos-enable )         OVN_NETWORK_QOS_ENABLE=true
                                                   ;;
+            -noe | --no-overlay-enable )          ENABLE_NO_OVERLAY=true
+                                                  ;;
             -ha | --ha-enabled )                  OVN_HA=true
                                                   KIND_NUM_MASTER=3
                                                   ;;
@@ -206,6 +212,9 @@ parse_args() {
             -mip | --metrics-ip ) shift
                                                   METRICS_IP="$1"
                                                   ;;
+            -mtu )                                shift
+                                                  OVN_MTU=$1
+                                                  ;;
             --enable-coredumps )                  ENABLE_COREDUMPS=true
                                                   ;;
             * )                                   usage
@@ -246,6 +255,8 @@ print_params() {
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
      echo "ADVERTISED_UDN_ISOLATION_MODE = $ADVERTISED_UDN_ISOLATION_MODE"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
+     echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
+     echo "OVN_MTU = $OVN_MTU"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "OVN_REPO = $OVN_REPO"
      echo "OVN_GITREF = $OVN_GITREF"
@@ -337,6 +348,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set k8sAPIServer=${API_URL} \
           --set podNetwork="${ESCAPED_NET_CIDR_IPV4}" \
           --set serviceNetwork=${SVC_CIDR_IPV4} \
+          --set mtu=${OVN_MTU} \
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
           --set global.image.repository=${OVN_IMAGE%%:*} \
           --set global.image.tag=${OVN_IMAGE##*:} \
@@ -357,6 +369,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableNoOverlay=$(if [ "${ENABLE_NO_OVERLAY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF
