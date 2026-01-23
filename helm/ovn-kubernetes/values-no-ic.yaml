@@ -78,6 +78,8 @@ global:
   advertiseDefaultNetwork: false
   # -- Pod network isolation between advertised UDN networks. (strict or loose)
   advertisedUDNIsolationMode: "strict"
+  # -- Configure to enable no-overlay mode for the default network
+  enableNoOverlay: false
   # -- Configure to enable IPsec
   enableIpsec: false
   # -- Use SSL transport to NB/SB db and northd

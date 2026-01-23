@@ -64,6 +64,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -125,6 +128,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -190,6 +196,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -270,6 +279,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
@@ -433,6 +445,8 @@ spec:
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
         - name: OVN_EMPTY_LB_EVENTS
@@ -491,6 +505,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -608,6 +625,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
