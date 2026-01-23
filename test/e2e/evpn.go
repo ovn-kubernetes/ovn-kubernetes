@@ -3,17 +3,30 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -1082,3 +1095,354 @@ metadata:
 	framework.Logf("FRRConfiguration created: %s (neighbor: %s)", name, neighborIP)
 	return nil
 }
+
+// =============================================================================
+// EVPN Test Helpers
+// =============================================================================
+
+// getMACVRFAgnhostIPsFromSubnets derives MAC-VRF agnhost IPs from CUDN subnets.
+// For each subnet, it returns an IP with host portion set to .250 (IPv4) or ::fa (IPv6).
+// Example: "10.100.0.0/16" -> "10.100.0.250/16", "fd00:100::/64" -> "fd00:100::fa/64"
+func getMACVRFAgnhostIPsFromSubnets(subnets []string) []string {
+	var ips []string
+	for _, subnet := range subnets {
+		ip, ipNet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			continue
+		}
+		// Get the network address and set host portion to .250 (IPv4) or ::fa (IPv6)
+		if ip.To4() != nil {
+			// IPv4: set last octet to 250
+			networkIP := ipNet.IP.To4()
+			agnhostIP := net.IPv4(networkIP[0], networkIP[1], networkIP[2], 250)
+			ones, _ := ipNet.Mask.Size()
+			ips = append(ips, fmt.Sprintf("%s/%d", agnhostIP.String(), ones))
+		} else {
+			// IPv6: set last 16 bits to 0xfa (250)
+			networkIP := ipNet.IP.To16()
+			agnhostIP := make(net.IP, 16)
+			copy(agnhostIP, networkIP)
+			agnhostIP[15] = 0xfa // ::fa = 250
+			ones, _ := ipNet.Mask.Size()
+			ips = append(ips, fmt.Sprintf("%s/%d", agnhostIP.String(), ones))
+		}
+	}
+	return ips
+}
+
+// =============================================================================
+// EVPN Tests
+// =============================================================================
+
+var _ = ginkgo.Describe("EVPN", func() {
+	const baseName = "evpn"
+	f := wrappedTestFramework(baseName)
+	f.SkipNamespaceCreation = true
+
+	// Common test parameters
+	const (
+		bgpASN = 64512
+
+		// MAC-VRF parameters
+		macVRFVNI = 10100
+		// FIXME: VID should be derived from the NAD once the implementation is done
+		macVRFVID = 100
+
+		// IP-VRF parameters
+		ipVRFVNI = 20102
+		// FIXME: VID should be derived from the NAD once the implementation is done
+		ipVRFVID = 202
+
+		// CUDN subnet - pods in the CUDN and MAC-VRF agnhost share this subnet
+		// IPv4: /16 allows /24 per-node slices (256 nodes)
+		// IPv6: /48 allows /64 per-node slices (65536 nodes)
+		cudnSubnetIPv4 = "10.100.0.0/16"
+		cudnSubnetIPv6 = "fd00:100::/48"
+
+		// IP-VRF agnhost subnet - external network for L3 connectivity testing
+		ipVRFAgnhostSubnetIPv4 = "172.27.102.0/24"
+		ipVRFAgnhostSubnetIPv6 = "fd00:102::/64"
+
+		// VTEP subnet for VTEP IP allocation
+		vtepSubnetIPv4 = "100.64.0.0/24"
+		vtepSubnetIPv6 = "fd00:64::/112"
+
+		// Connectivity test parameters
+		timeout = 60 * time.Second
+	)
+	netexecPortStr := fmt.Sprintf("%d", agnhostHTTPPort)
+
+	var (
+		ictx infraapi.Context
+
+		// Test identifiers (set in BeforeEach with unique suffix)
+		testBaseName string
+
+		// External FRR IP (discovered in BeforeEach)
+		externalFRRIP string
+
+		// IP families supported by cluster (populated in BeforeEach)
+		ipFamilies []utilnet.IPFamily
+
+		// Subnets (dual-stack aware, populated in BeforeEach based on cluster IP family support)
+		cudnSubnets         []string
+		ipVRFAgnhostSubnets []string
+		vtepSubnets         []string
+
+		// Node IPs for BGP neighbors (populated in BeforeEach)
+		nodeIPs []string
+	)
+
+	ginkgo.BeforeEach(func() {
+		if !isLocalGWModeEnabled() {
+			e2eskipper.Skipf("EVPN test cases only supported in Local Gateway mode")
+		}
+		if !isIPv4Supported(f.ClientSet) {
+			// FRR does not support IPv6 underlay for EVPN VXLAN tunnels.
+			// See: https://github.com/FRRouting/frr/issues/5885
+			e2eskipper.Skipf("EVPN test cases require IPv4 for VXLAN underlay (FRR limitation)")
+		}
+		// Initialize infrastructure context (cleanup is automatic via ginkgo.DeferCleanup)
+		ictx = infraprovider.Get().NewTestContext()
+
+		// Generate unique test name with suffix
+		testBaseName = baseName + framework.RandomSuffix()
+
+		// Discover cluster IP family support
+		ipFamilies = getSupportedIPFamiliesSlice(f.ClientSet)
+
+		// Reset slices for each test
+		cudnSubnets = nil
+		ipVRFAgnhostSubnets = nil
+		vtepSubnets = nil
+		nodeIPs = nil
+
+		// Configure subnets based on cluster IP family support
+		for _, family := range ipFamilies {
+			switch family {
+			case utilnet.IPv4:
+				cudnSubnets = append(cudnSubnets, cudnSubnetIPv4)
+				ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostSubnetIPv4)
+				vtepSubnets = append(vtepSubnets, vtepSubnetIPv4)
+			case utilnet.IPv6:
+				cudnSubnets = append(cudnSubnets, cudnSubnetIPv6)
+				ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostSubnetIPv6)
+				vtepSubnets = append(vtepSubnets, vtepSubnetIPv6)
+			}
+		}
+
+		// Discover external FRR IP
+		kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		frrNetIf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+			infraapi.ExternalContainer{Name: externalFRRContainerName}, kindNetwork)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Use IPv4 or IPv6 based on cluster support (prefer IPv4 if both available)
+		if isIPv4Supported(f.ClientSet) && frrNetIf.IPv4 != "" {
+			externalFRRIP = frrNetIf.IPv4
+		} else if isIPv6Supported(f.ClientSet) && frrNetIf.IPv6 != "" {
+			externalFRRIP = frrNetIf.IPv6
+		}
+		gomega.Expect(externalFRRIP).NotTo(gomega.BeEmpty(), "External FRR must have an IP on kind network")
+		framework.Logf("External FRR IP: %s", externalFRRIP)
+
+		// Collect node IPs for BGP neighbors
+		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		for _, node := range nodes.Items {
+			for _, family := range ipFamilies {
+				var protocol corev1.NodeAddressType = corev1.NodeInternalIP
+				var ipProtocol corev1.IPFamily
+				switch family {
+				case utilnet.IPv4:
+					ipProtocol = corev1.IPv4Protocol
+				case utilnet.IPv6:
+					ipProtocol = corev1.IPv6Protocol
+				}
+				addrs := e2enode.GetAddressesByTypeAndFamily(&node, protocol, ipProtocol)
+				nodeIPs = append(nodeIPs, addrs...)
+			}
+		}
+		framework.Logf("Node IPs for BGP: %v", nodeIPs)
+	})
+
+	// Helper to test connectivity from pod to external server (handles both IPv4 and IPv6)
+	testPodToServers := func(pod *corev1.Pod, serverIPs []string) {
+		ginkgo.GinkgoHelper()
+		for _, serverIP := range serverIPs {
+			// Strip prefix length if present (e.g., "10.100.0.250/16" -> "10.100.0.250")
+			ip := strings.Split(serverIP, "/")[0]
+			url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(ip, netexecPortStr))
+			framework.Logf("Testing connectivity to %s", url)
+			_, err := e2epodoutput.RunHostCmdWithRetries(
+				pod.Namespace,
+				pod.Name,
+				fmt.Sprintf("curl --max-time 5 -g -q -s %s", url),
+				framework.Poll,
+				timeout,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Failed to connect to %s", serverIP)
+		}
+	}
+
+	// Note: Cleanup is automatic via ginkgo.DeferCleanup registered in NewTestContext()
+	// All functions using ictx.AddCleanUpFn() will be cleaned up in LIFO order
+
+	ginkgo.DescribeTable("EVPN connectivity", feature.RouteAdvertisements, feature.EVPN,
+		func(networkSpec *udnv1.NetworkSpec) {
+			// Derive what to setup from networkSpec
+			hasMACVRF := networkSpec.EVPN != nil && networkSpec.EVPN.MACVRF != nil
+			hasIPVRF := networkSpec.EVPN != nil && networkSpec.EVPN.IPVRF != nil
+
+			// Filter networkSpec subnets based on cluster IP family support
+			if networkSpec.Layer2 != nil {
+				networkSpec.Layer2.Subnets = filterDualStackCIDRs(f.ClientSet, networkSpec.Layer2.Subnets)
+			}
+			if networkSpec.Layer3 != nil {
+				networkSpec.Layer3.Subnets = filterL3Subnets(f.ClientSet, networkSpec.Layer3.Subnets)
+			}
+
+			// Extract subnets from networkSpec for MAC-VRF agnhost IP derivation
+			var cudnSubnetsFromSpec []string
+			if networkSpec.Layer2 != nil {
+				for _, cidr := range networkSpec.Layer2.Subnets {
+					cudnSubnetsFromSpec = append(cudnSubnetsFromSpec, string(cidr))
+				}
+			} else if networkSpec.Layer3 != nil {
+				for _, subnet := range networkSpec.Layer3.Subnets {
+					cudnSubnetsFromSpec = append(cudnSubnetsFromSpec, string(subnet.CIDR))
+				}
+			}
+
+			ginkgo.By("Setting up EVPN bridge on external FRR")
+			gomega.Expect(setupEVPNBridgeOnExternalFRR(ictx, externalFRRIP)).To(gomega.Succeed())
+
+			var macVRFAgnhostIPs []string
+			if hasMACVRF {
+				ginkgo.By("Setting up MAC-VRF on external FRR")
+				gomega.Expect(setupMACVRFOnExternalFRR(int(networkSpec.EVPN.MACVRF.VNI), macVRFVID)).To(gomega.Succeed())
+
+				// Derive agnhost IPs from CUDN subnets
+				macVRFAgnhostIPs = getMACVRFAgnhostIPsFromSubnets(cudnSubnetsFromSpec)
+				gomega.Expect(macVRFAgnhostIPs).NotTo(gomega.BeEmpty(), "Failed to derive MAC-VRF agnhost IPs from subnets")
+
+				ginkgo.By("Creating MAC-VRF agnhost")
+				gomega.Expect(setupMACVRFAgnhost(ictx, macVRFVID, macVRFAgnhostIPs)).To(gomega.Succeed())
+			}
+			ginkgo.By("Setting up EVPN BGP on external FRR")
+			gomega.Expect(setupEVPNBGPOnExternalFRR(ictx, bgpASN, nodeIPs)).To(gomega.Succeed())
+
+			var ipVRFAgnhostIPs []string
+			if hasIPVRF {
+				// Derive VRF name from VNI (unique per IP-VRF)
+				ipVRFName := fmt.Sprintf("vrf%d", networkSpec.EVPN.IPVRF.VNI)
+
+				ginkgo.By("Setting up IP-VRF on external FRR")
+				gomega.Expect(setupIPVRFOnExternalFRR(ictx, ipVRFName, int(networkSpec.EVPN.IPVRF.VNI), ipVRFVID)).To(gomega.Succeed())
+				ginkgo.By("Creating IP-VRF agnhost")
+				var err error
+				ipVRFAgnhostIPs, err = setupIPVRFAgnhost(ictx, ipVRFVID, ipVRFName, ipFamilies, ipVRFAgnhostSubnets...)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ipVRFAgnhostIPs).NotTo(gomega.BeEmpty())
+				// Configure BGP AFTER agnhost so FRR's interface is in the VRF
+				// and has a connected route for the subnet we want to advertise
+				ginkgo.By("Setting up IP-VRF BGP on external FRR")
+				gomega.Expect(setupIPVRFBGPOnExternalFRR(ictx, ipVRFName, bgpASN, int(networkSpec.EVPN.IPVRF.VNI), ipFamilies, ipVRFAgnhostSubnets)).To(gomega.Succeed())
+			}
+
+			ginkgo.By("Creating VTEP CR")
+			testVTEPName := testBaseName + "-vtep"
+			err := createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeManaged)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Update VTEP name in network spec
+			networkSpec.EVPN.VTEP = testVTEPName
+
+			ginkgo.By("Creating FRRConfiguration for EVPN")
+			frrConfigLabels := map[string]string{"network": testBaseName}
+			err = createFRRConfiguration(ictx, testBaseName, deploymentconfig.Get().FRRK8sNamespace(), bgpASN, externalFRRIP, frrConfigLabels)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ginkgo.By("Creating namespace, CUDN, and RouteAdvertisements")
+			testNamespace, err := createNamespaceWithPrimaryNetworkOfType(f, ictx, baseName, testBaseName, cudnAdvertisedVRFLiteOrEVPN, networkSpec)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			f.Namespace = testNamespace
+
+			ginkgo.By("Creating test pod on CUDN")
+			testPod := e2epod.CreateExecPodOrFail(
+				context.Background(),
+				f.ClientSet,
+				f.Namespace.Name,
+				f.Namespace.Name+"-netexec-pod",
+				func(p *corev1.Pod) {
+					p.Spec.Containers[0].Args = []string{"netexec"}
+				},
+			)
+
+			// Test connectivity to external servers
+			if hasMACVRF {
+				framework.Logf("Testing L2 connectivity to MAC-VRF agnhost IPs: %v", macVRFAgnhostIPs)
+				testPodToServers(testPod, macVRFAgnhostIPs)
+			}
+			if hasIPVRF {
+				framework.Logf("Testing L3 connectivity to IP-VRF agnhost IPs: %v", ipVRFAgnhostIPs)
+				testPodToServers(testPod, ipVRFAgnhostIPs)
+			}
+		},
+		// Layer2 with MAC-VRF only - L2 broadcast domain extended via EVPN
+		ginkgo.Entry("Layer2 network with MAC-VRF",
+			&udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{udnv1.CIDR(cudnSubnetIPv4), udnv1.CIDR(cudnSubnetIPv6)},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					MACVRF: &udnv1.VRFConfig{
+						VNI: macVRFVNI,
+					},
+				},
+			},
+		),
+		// Layer2 with MAC-VRF + IP-VRF - L2 domain with L3 routing to external
+		ginkgo.Entry("Layer2 network with MAC-VRF and IP-VRF",
+			&udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{udnv1.CIDR(cudnSubnetIPv4), udnv1.CIDR(cudnSubnetIPv6)},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					MACVRF: &udnv1.VRFConfig{
+						VNI: macVRFVNI,
+					},
+					IPVRF: &udnv1.VRFConfig{
+						VNI: ipVRFVNI,
+					},
+				},
+			},
+		),
+		// Layer3 with IP-VRF only - L3 routing via EVPN Type-5 routes
+		ginkgo.Entry("Layer3 network with IP-VRF",
+			&udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3,
+				Layer3: &udnv1.Layer3Config{
+					Role: udnv1.NetworkRolePrimary,
+					Subnets: []udnv1.Layer3Subnet{
+						{CIDR: udnv1.CIDR(cudnSubnetIPv4)},
+						{CIDR: udnv1.CIDR(cudnSubnetIPv6)},
+					},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					IPVRF: &udnv1.VRFConfig{
+						VNI: ipVRFVNI,
+					},
+				},
+			},
+		),
+	)
+})
