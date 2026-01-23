@@ -359,7 +359,7 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		if ok {
 			return false
 		}
-		nodeName := strings.TrimPrefix(item.Name, types.GWRouterPrefix)
+		nodeName := util.GetWorkerFromGatewayRouter(item.Name)
 		if nodeName != item.Name && len(nodeName) > 0 && !foundNodes.Has(nodeName) {
 			staleSwitches.Insert(nodeName)
 			return true

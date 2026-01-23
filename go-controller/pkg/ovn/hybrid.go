@@ -279,7 +279,7 @@ func (oc *DefaultNetworkController) setupHybridLRPolicySharedGw(nodeSubnets []*n
 				}, &clusterRouterStaticRoutes.Nexthop); err != nil {
 				return fmt.Errorf("failed to add policy route static '%s %s' for on %s , error: %w",
 					clusterRouterStaticRoutes.IPPrefix, clusterRouterStaticRoutes.Nexthop,
-					oc.GetNetworkScopedGWRouterName(nodeName), err)
+					ovntypes.OVNClusterRouter, err)
 			}
 			klog.Infof("Created hybrid overlay logical route static route at cluster router for node %s", nodeName)
 
