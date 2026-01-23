@@ -43,7 +43,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const conditionTypeNetworkCreated = "NetworkCreated"
+const (
+	conditionTypeNetworkCreated    = "NetworkCreated"
+	conditionTypeTransportAccepted = "TransportAccepted"
+)
 
 type RenderNetAttachDefManifest func(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error)
 

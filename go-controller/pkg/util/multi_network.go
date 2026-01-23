@@ -85,6 +85,8 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
+	// GetNetworkTransport returns the transport technology used by this network.
+	GetNetworkTransport() string
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -401,6 +403,10 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	nInfo.RLock()
 	defer nInfo.RUnlock()
 	return maps.Keys(nInfo.eipAdvertisements)
+}
+
+func (nInfo *mutableNetInfo) GetNetworkTransport() string {
+	return ""
 }
 
 // GetNADs returns all the NADs associated with this network
@@ -734,6 +740,10 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkTransport() string {
+	return config.Default.Transport
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -746,6 +756,7 @@ type userDefinedNetInfo struct {
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
+	transport          string
 
 	ipv4mode, ipv6mode    bool
 	subnets               []config.CIDRNetworkEntry
@@ -1016,6 +1027,10 @@ func (nInfo *userDefinedNetInfo) TransitSubnets() []*net.IPNet {
 	return nInfo.transitSubnets
 }
 
+func (nInfo *userDefinedNetInfo) GetNetworkTransport() string {
+	return nInfo.transport
+}
+
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
@@ -1134,7 +1149,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
-		transport:      netconf.Transport,
+		transport:      normalizeTransportValue(netconf.Transport),
 		evpn:           netconf.EVPN,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
@@ -1211,7 +1226,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		allowPersistentIPs:    netconf.AllowPersistentIPs,
 		defaultGatewayIPs:     defaultGatewayIPs,
 		managementIPs:         managementIPs,
-		transport:             netconf.Transport,
+		transport:             normalizeTransportValue(netconf.Transport),
 		evpn:                  netconf.EVPN,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
@@ -1246,6 +1261,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		transport:           normalizeTransportValue(netconf.Transport),
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1253,6 +1269,17 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 	}
 	ni.ipv4mode, ni.ipv6mode = getIPMode(subnets)
 	return ni, nil
+}
+
+// normalizeTransportValue converts the transport value from CNI config representation
+// to the config constant representation. For example, "noOverlay" (camelCase from CNI config)
+// becomes "no-overlay" (kebab-case matching config.TransportNoOverlay).
+func normalizeTransportValue(transport string) string {
+	// Convert "noOverlay" (from CNI config) to "no-overlay" (config constant)
+	if transport == "noOverlay" {
+		return config.TransportNoOverlay
+	}
+	return transport
 }
 
 // parseNetworkSubnets parses network subnets based on the topology, returns nil if subnets is an empty string

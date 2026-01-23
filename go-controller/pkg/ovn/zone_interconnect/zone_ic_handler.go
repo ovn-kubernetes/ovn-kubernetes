@@ -15,6 +15,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -189,15 +190,24 @@ func (zic *ZoneInterconnectHandler) ensureTransitSwitch(nodes []*corev1.Node) er
 }
 
 // AddLocalZoneNode creates the interconnect resources in OVN NB DB for the local zone node.
+// For no-overlay transport, it cleans up any existing interconnect resources instead.
 // See createLocalZoneNodeResources() below for more details.
 func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
-	klog.Infof("Creating interconnect resources for local zone node %s for the network %s", node.Name, zic.GetNetworkName())
 	nodeID, _ := util.GetNodeID(node)
 	if nodeID == -1 {
 		// Don't consider this node as cluster-manager has not allocated node id yet.
 		return fmt.Errorf("failed to get node id for node - %s", node.Name)
 	}
 
+	if zic.GetNetworkTransport() == config.TransportNoOverlay {
+		klog.Infof("Removing interconnect resources for local zone node %s for the network %s", node.Name, zic.GetNetworkName())
+		if err := zic.cleanupNode(node.Name); err != nil {
+			return fmt.Errorf("failed to cleanup interconnect resources for local zone node %s for the network %s: %w", node.Name, zic.GetNetworkName(), err)
+		}
+		return nil
+	}
+
+	klog.Infof("Creating interconnect resources for local zone node %s for the network %s", node.Name, zic.GetNetworkName())
 	if err := zic.createLocalZoneNodeResources(node, nodeID); err != nil {
 		return fmt.Errorf("creating interconnect resources for local zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
 	}
@@ -209,6 +219,13 @@ func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
 // // See createRemoteZoneNodeResources() below for more details.
 func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	start := time.Now()
+
+	if zic.GetNetworkTransport() == config.TransportNoOverlay {
+		klog.Infof("Removing interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
+		if err := zic.cleanupNode(node.Name); err != nil {
+			return fmt.Errorf("failed to cleanup interconnect resources for remote zone node %s for the network %s: %w", node.Name, zic.GetNetworkName(), err)
+		}
+	}
 
 	nodeID, _ := util.GetNodeID(node)
 	if nodeID == -1 {
@@ -258,11 +275,11 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	}
 
 	klog.Infof("Creating interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
-
 	if err := zic.createRemoteZoneNodeResources(node, nodeID, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs); err != nil {
 		return fmt.Errorf("creating interconnect resources for remote zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
 	}
 	klog.Infof("Creating Interconnect resources for node %q on network %q took: %s", node.Name, zic.GetNetworkName(), time.Since(start))
+
 	return nil
 }
 
@@ -274,8 +291,56 @@ func (zic *ZoneInterconnectHandler) DeleteNode(node *corev1.Node) error {
 }
 
 // SyncNodes ensures a transit switch exists and cleans up the interconnect
-// resources present in the OVN Northbound db for the stale nodes
+// resources present in the OVN Northbound db for the stale nodes.
+// For no-overlay transport, it cleans up all interconnect resources.
 func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
+	// For no-overlay transport, cleanup all interconnect resources
+	if zic.GetNetworkTransport() == config.TransportNoOverlay {
+		klog.Infof("Cleaning up all interconnect resources for network %s (no-overlay transport)", zic.GetNetworkName())
+
+		// Get the transit switch
+		ts := &nbdb.LogicalSwitch{
+			Name: zic.networkTransitSwitchName,
+		}
+
+		ts, err := libovsdbops.GetLogicalSwitch(zic.nbClient, ts)
+		if err != nil {
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				// Transit switch doesn't exist, nothing to cleanup
+				return nil
+			}
+			return err
+		}
+
+		// Cleanup all nodes that have ports on the transit switch
+		for _, p := range ts.Ports {
+			lp := &nbdb.LogicalSwitchPort{
+				UUID: p,
+			}
+
+			lp, err = libovsdbops.GetLogicalSwitchPort(zic.nbClient, lp)
+			if err != nil {
+				continue
+			}
+
+			if lp.ExternalIDs != nil {
+				lportNode := lp.ExternalIDs["node"]
+				if lportNode != "" {
+					if err := zic.cleanupNode(lportNode); err != nil {
+						klog.Errorf("Failed to cleanup interconnect resources for node %s: %v", lportNode, err)
+					}
+				}
+			}
+		}
+
+		// Delete the transit switch
+		if err := libovsdbops.DeleteLogicalSwitch(zic.nbClient, zic.networkTransitSwitchName); err != nil {
+			klog.Errorf("Failed to delete transit switch %s: %v", zic.networkTransitSwitchName, err)
+		}
+
+		return nil
+	}
+
 	foundNodeNames := sets.New[string]()
 	foundNodes := make([]*corev1.Node, len(objs))
 	for i, obj := range objs {

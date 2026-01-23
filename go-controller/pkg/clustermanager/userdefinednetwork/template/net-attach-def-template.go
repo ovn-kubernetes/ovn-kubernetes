@@ -33,6 +33,8 @@ type SpecGetter interface {
 	GetLayer3() *userdefinednetworkv1.Layer3Config
 	GetLayer2() *userdefinednetworkv1.Layer2Config
 	GetLocalnet() *userdefinednetworkv1.LocalnetConfig
+	GetTransport() userdefinednetworkv1.TransportOption
+	GetNoOverlayOptions() *userdefinednetworkv1.NoOverlayOptions
 }
 
 func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
@@ -152,6 +154,10 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		netConfSpec.MTU = int(cfg.MTU)
 		netConfSpec.Subnets = layer3SubnetsString(cfg.Subnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
+		netConfSpec.Transport = lowerFirst(string(spec.GetTransport()))
+		if spec.GetNoOverlayOptions() != nil {
+			netConfSpec.OutboundSNAT = strings.ToLower(string(spec.GetNoOverlayOptions().OutboundSNAT))
+		}
 	case userdefinednetworkv1.NetworkTopologyLayer2:
 		cfg := spec.GetLayer2()
 		if err := validateIPAM(cfg.IPAM); err != nil {
@@ -256,6 +262,11 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
 		}
 	}
+	if netConfSpec.Transport != "" && netConfSpec.Transport != lowerFirst(string(userdefinednetworkv1.TransportOptionGeneve)) {
+		cniNetConf["transport"] = netConfSpec.Transport
+		cniNetConf["outboundSNAT"] = netConfSpec.OutboundSNAT
+	}
+	// Transport field will be set when CRD supports it
 	return cniNetConf, nil
 }
 
@@ -330,6 +341,16 @@ func ipString(ips userdefinednetworkv1.DualStackIPs) string {
 		ipStrings = append(ipStrings, string(ip))
 	}
 	return strings.Join(ipStrings, ",")
+}
+
+// lowerFirst converts the first character of a string to lowercase
+// while preserving the rest of the string. This is useful for converting
+// enum values like "NoOverlay" to "noOverlay" for the CNI config.
+func lowerFirst(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToLower(s[:1]) + s[1:]
 }
 
 func GetSpec(obj client.Object) SpecGetter {
