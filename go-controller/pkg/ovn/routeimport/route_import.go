@@ -343,11 +343,13 @@ func (c *controller) syncNetwork(network string) error {
 	c.setTableForNetworkUnlocked(info.GetNetworkID(), table)
 	c.Unlock()
 
-	// skip routes in the pod network
-	// TODO do not skip these routes in no overlay mode
-	ignoreSubnets := make([]*net.IPNet, len(info.Subnets()))
-	for i, subnet := range info.Subnets() {
-		ignoreSubnets[i] = subnet.CIDR
+	var ignoreSubnets []*net.IPNet
+	if info.GetNetworkTransport() != types.NetworkTransportNoOverlay {
+		// if the network is overlay mode, skip routes to the pod network
+		ignoreSubnets = make([]*net.IPNet, len(info.Subnets()))
+		for i, subnet := range info.Subnets() {
+			ignoreSubnets[i] = subnet.CIDR
+		}
 	}
 
 	expected, err := c.getBGPRoutes(table, ignoreSubnets)
@@ -431,6 +433,7 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet) (sets.S
 	routes := sets.New[route]()
 	for _, nlroute := range nlroutes {
 		if util.IsContainedInAnyCIDR(nlroute.Dst, ignoreSubnets...) {
+			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
 			continue
 		}
 		routes.Insert(routesFromNetlinkRoute(&nlroute)...)
