@@ -562,13 +562,119 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// Call ICHandler SyncNodes function removing the testNode3 from the list of nodes
+				// Call ICHandler CleanupStaleNodes function removing the testNode3 from the list of nodes
 				var kNodes []interface{}
 				kNodes = append(kNodes, &testNode1)
 				kNodes = append(kNodes, &testNode2)
-				err = zoneICHandler.SyncNodes(kNodes)
+				err = zoneICHandler.CleanupStaleNodes(kNodes)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("CleanupStaleNodes with nil should cleanup all transit switch ports for no-overlay migration", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
+
+				// Create transit switch and add nodes (simulating previous overlay configuration)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify transit switch exists with ports
+				ts, err := libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ts.Ports).NotTo(gomega.BeEmpty(), "Transit switch should have ports before cleanup")
+
+				// Call CleanupStaleNodes with nil to simulate no-overlay sync
+				// This should mark all nodes as stale and clean them up
+				err = zoneICHandler.CleanupStaleNodes(nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify all transit switch ports are cleaned up
+				ts, err = libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ts.Ports).To(gomega.BeEmpty(), "Transit switch ports should be cleaned up")
+
+				// Now call Cleanup to remove all interconnect resources (transit switch and any remaining nodes)
+				err = zoneICHandler.Cleanup()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify transit switch is deleted
+				_, err = libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound))
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("CleanupStaleNodes should be a no-op when no transit switch exists", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
+
+				// Verify no transit switch exists
+				_, err = libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound))
+
+				// Call CleanupStaleNodes with nil - should be a no-op
+				err = zoneICHandler.CleanupStaleNodes(nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Call Cleanup - should also be a no-op (transit switch doesn't exist)
+				err = zoneICHandler.Cleanup()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				return nil
@@ -718,11 +824,11 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = checkInterconnectResources("global", "blue", libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// Call ICHandler SyncNodes function removing the testNode3 from the list of nodes
+				// Call ICHandler CleanupStaleNodes function removing the testNode3 from the list of nodes
 				var kNodes []interface{}
 				kNodes = append(kNodes, &testNode1)
 				kNodes = append(kNodes, &testNode2)
-				err = zoneICHandler.SyncNodes(kNodes)
+				err = zoneICHandler.CleanupStaleNodes(kNodes)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = checkInterconnectResources("global", "blue", libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
