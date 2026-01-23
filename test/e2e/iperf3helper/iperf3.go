@@ -9,6 +9,7 @@ import (
 type Iperf3Result struct {
 	SumSent           Iperf3TestRun `json:"sum_sent"`
 	SumReceived       Iperf3TestRun `json:"sum_received"`
+	Error             string        `json:"error"`
 	IsBytesEqual      bool
 	IsZeroRetransmits bool
 }
@@ -41,8 +42,10 @@ func (i Iperf3TestRun) String() string {
 
 // iperf3Output represents the iperf3 JSON structure specifically for parsing json output "end" key. "end" map contains
 // "sum_sent" and "sum_received" which contain data about the data send and received during test time.
+// The "error" field is present when iperf3 encounters an error during the test.
 type iperf3Output struct {
-	End struct {
+	Error string `json:"error"`
+	End   struct {
 		SumSent     Iperf3TestRun `json:"sum_sent"`
 		SumReceived Iperf3TestRun `json:"sum_received"`
 	} `json:"end"`
@@ -50,6 +53,7 @@ type iperf3Output struct {
 
 // ParseIperf3JSON parses iperf3 JSON output and extracts sum_sent and sum_received from the "end" key. Arg jsonOutput must be
 // supplied from an iperf3 client with the --json flag specified.
+// If iperf3 encountered an error, the Error field will be populated.
 func ParseIperf3JSON(jsonOutput string) (*Iperf3Result, error) {
 	var output iperf3Output
 
@@ -60,6 +64,7 @@ func ParseIperf3JSON(jsonOutput string) (*Iperf3Result, error) {
 	result := &Iperf3Result{
 		SumSent:     output.End.SumSent,
 		SumReceived: output.End.SumReceived,
+		Error:       output.Error,
 	}
 
 	// Check if bytes sent equals bytes received
@@ -83,4 +88,19 @@ func (r *Iperf3Result) GetSendReceivedBytesDifference() int64 {
 // GetRetransmissions returns the total amount of re-transmissions seen over the test run
 func (r *Iperf3Result) GetRetransmissions() int {
 	return r.SumSent.Retransmits
+}
+
+// HasError returns true if iperf3 encountered an error during the test
+func (r *Iperf3Result) HasError() bool {
+	return r.Error != ""
+}
+
+// GetError returns the error message from iperf3, or empty string if no error
+func (r *Iperf3Result) GetError() string {
+	return r.Error
+}
+
+// IsTestCompleteWithoutError returns true if the test completed successfully with data transferred
+func (r *Iperf3Result) IsTestCompleteWithoutError() bool {
+	return !r.HasError() && (r.SumSent.Bytes > 0 || r.SumReceived.Bytes > 0)
 }
