@@ -180,9 +180,9 @@ ovn_gateway_mode=${OVN_GATEWAY_MODE:-"shared"}
 ovn_gateway_opts=${OVN_GATEWAY_OPTS:-""}
 ovn_gateway_router_subnet=${OVN_GATEWAY_ROUTER_SUBNET:-""}
 
-net_cidr=${OVN_NET_CIDR:-10.128.0.0/14/23}
+net_cidr=${OVN_NET_CIDR:-}
 svc_cidr=${OVN_SVC_CIDR:-172.30.0.0/16}
-mtu=${OVN_MTU:-1400}
+mtu=${OVN_MTU:-}
 routable_mtu=${OVN_ROUTABLE_MTU:-}
 
 # set metrics endpoint to METRICS_IP. if METRICS_IP not set K8S_NODE_IP or default to 0.0.0.0
@@ -218,7 +218,7 @@ ovn_nb_raft_port=${OVN_NB_RAFT_PORT:-6643}
 # OVN_SB_RAFT_PORT - ovn south db port used for raft communication (default 6644)
 ovn_sb_raft_port=${OVN_SB_RAFT_PORT:-6644}
 # OVN_ENCAP_PORT - GENEVE UDP port (default 6081)
-ovn_encap_port=${OVN_ENCAP_PORT:-6081}
+ovn_encap_port=${OVN_ENCAP_PORT:-}
 # OVN_NB_RAFT_ELECTION_TIMER - ovn north db election timer in ms (default 1000)
 ovn_nb_raft_election_timer=${OVN_NB_RAFT_ELECTION_TIMER:-1000}
 # OVN_SB_RAFT_ELECTION_TIMER - ovn south db election timer in ms (default 1000)
@@ -243,7 +243,7 @@ ovn_v4_transit_subnet=${OVN_V4_TRANSIT_SUBNET:-}
 # OVN_V6_TRANSIT_SUBNET - v6 Transit subnet
 ovn_v6_transit_subnet=${OVN_V6_TRANSIT_SUBNET:-}
 #OVN_REMOTE_PROBE_INTERVAL - ovn remote probe interval in ms (default 100000)
-ovn_remote_probe_interval=${OVN_REMOTE_PROBE_INTERVAL:-100000}
+ovn_remote_probe_interval=${OVN_REMOTE_PROBE_INTERVAL:-}
 #OVN_MONITOR_ALL - ovn-controller monitor all data in SB DB
 ovn_monitor_all=${OVN_MONITOR_ALL:-}
 #OVN_OFCTRL_WAIT_BEFORE_CLEAR - ovn-controller wait time in ms before clearing OpenFlow rules during start up
@@ -276,8 +276,8 @@ ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
 #OVN_EVPN_ENABLE - enable EVPN for ovn-kubernetes
 ovn_evpn_enable=${OVN_EVPN_ENABLE:=false}
 #OVN_ADVERTISED_UDN_ISOLATION_MODE - pod network isolation between advertised UDN networks.
-ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:=strict}
-ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
+ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:-}
+ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-}
 ovn_netflow_targets=${OVN_NETFLOW_TARGETS:-}
 ovn_sflow_targets=${OVN_SFLOW_TARGETS:-}
 ovn_ipfix_targets=${OVN_IPFIX_TARGETS:-}
@@ -307,7 +307,7 @@ ovnkube_metrics_scale_enable=${OVNKUBE_METRICS_SCALE_ENABLE:-false}
 # OVN_ENCAP_IP - encap IP to be used for OVN traffic on the node
 ovn_encap_ip=${OVN_ENCAP_IP:-}
 # OVN_KUBERNETES_CONNTRACK_ZONE - conntrack zone number used for openflow rules (default 64000)
-ovn_conntrack_zone=${OVN_KUBERNETES_CONNTRACK_ZONE:-64000}
+ovn_conntrack_zone=${OVN_KUBERNETES_CONNTRACK_ZONE:-}
 
 ovn_ex_gw_network_interface=${OVN_EX_GW_NETWORK_INTERFACE:-}
 # OVNKUBE_COMPACT_MODE_ENABLE indicate if ovnkube run master and node in one process
@@ -2231,6 +2231,11 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
+  if [[ -n ${ovn_remote_probe_interval} ]]; then
+    ovn_remote_probe_interval_opt="--inactivity-probe=${ovn_remote_probe_interval}"
+  fi
+  echo "ovn_remote_probe_interval_opt=${ovn_remote_probe_interval_opt}"
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2287,12 +2292,12 @@ ovnkube-controller-with-node() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
+    ${ovn_remote_probe_interval_opt} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --gateway-router-subnet=${ovn_gateway_router_subnet} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --inactivity-probe=${ovn_remote_probe_interval} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
@@ -2927,6 +2932,10 @@ ovn-node() {
     ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
 
+  if [[ -n ${ovn_remote_probe_interval} ]]; then
+    ovn_remote_probe_interval_opt="--inactivity-probe=${ovn_remote_probe_interval}"
+  fi
+
   echo "=============== ovn-node   --init-node"
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
@@ -2971,12 +2980,12 @@ ovn-node() {
         ${routable_mtu_flag} \
         ${sflow_targets} \
         ${network_qos_enabled_flag} \
+        ${ovn_remote_probe_interval_opt} \
         --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
         --export-ovs-metrics \
         --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
         --gateway-router-subnet=${ovn_gateway_router_subnet} \
         --host-network-namespace ${ovn_host_network_namespace} \
-        --inactivity-probe=${ovn_remote_probe_interval} \
         --logfile-maxage=${ovnkube_logfile_maxage} \
         --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
         --logfile-maxsize=${ovnkube_logfile_maxsize} \
