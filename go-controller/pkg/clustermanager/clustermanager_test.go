@@ -1284,7 +1284,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 			err := app.Run([]string{
 				app.Name,
 				"-cluster-subnets=" + clusterCIDR + "," + clusterv6CIDR,
-				"-k8s-service-cidr=10.96.0.0/16,fd00:10:96::/112",
+				"-k8s-service-cidrs=10.96.0.0/16,fd00:10:96::/112",
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
@@ -1384,7 +1384,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 			err := app.Run([]string{
 				app.Name,
 				"-cluster-subnets=" + clusterCIDR + "," + clusterv6CIDR,
-				"-k8s-service-cidr=10.96.0.0/16,fd00:10:96::/112",
+				"-k8s-service-cidrs=10.96.0.0/16,fd00:10:96::/112",
 				"--enable-interconnect",
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
