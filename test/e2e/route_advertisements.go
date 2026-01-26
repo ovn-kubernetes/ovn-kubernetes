@@ -2446,7 +2446,7 @@ var frrTemplateSource = frr.NewEmbeddedSource(ratestdata, "testdata/routeadverti
 // towards the provided neighbors, configured to advertise the provided networks.
 // Returns a temporary directory where the configuration is generated.
 func generateFRRConfiguration(neighborIPs, advertiseNetworks []string) (string, error) {
-	return frr.GenerateConfiguration(frrTemplateSource, neighborIPs, advertiseNetworks)
+	return frr.GenerateFRRDaemonConfig(frrTemplateSource, neighborIPs, advertiseNetworks)
 }
 
 // generateFRRk8sConfiguration generates an FRRConfiguration CRD for the provided network
@@ -2456,7 +2456,7 @@ func generateFRRConfiguration(neighborIPs, advertiseNetworks []string) (string, 
 // Returns a temporary directory where the configuration is generated.
 func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetworks []string) (string, error) {
 	labels := map[string]string{"network": networkName}
-	return frr.GenerateK8sConfiguration(frrTemplateSource, networkName, labels, neighborIPs, receiveNetworks)
+	return frr.GenerateFRRK8sConfig(frrTemplateSource, networkName, labels, neighborIPs, receiveNetworks)
 }
 
 // runBGPNetworkAndServer configures a topology appropriate to be used with
