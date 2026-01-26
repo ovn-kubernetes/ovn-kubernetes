@@ -3008,13 +3008,15 @@ func getReRouteStaticRouteForController(clusterSubnet, nextHop, network string) 
 }
 
 func getReRoutePolicyForController(eIPName, podNamespace, podName, podIP string, mark int, ipFamily egressIPFamilyValue, nextHops []string, network, controller string) *nbdb.LogicalRouterPolicy {
+	options := getMarkOptions(mark)
+	options["ecmp_symmetric_reply"] = "true"
 	return &nbdb.LogicalRouterPolicy{
 		Priority:    ovntypes.EgressIPReroutePriority,
 		Match:       fmt.Sprintf("%s.src == %s", ipFamily, podIP),
 		Action:      nbdb.LogicalRouterPolicyActionReroute,
 		Nexthops:    nextHops,
 		ExternalIDs: getEgressIPLRPReRouteDbIDs(eIPName, podNamespace, podName, ipFamily, network, controller).GetExternalIDs(),
-		Options:     getMarkOptions(mark),
+		Options:     options,
 		UUID:        getReRoutePolicyUUID(podNamespace, podName, ipFamily, network),
 	}
 }
