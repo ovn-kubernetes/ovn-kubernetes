@@ -64,6 +64,23 @@ metadata:
   name: {{ $hostNetworkNamespace }}
 {{- end }}
 
+{{- if and (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "advertiseDefaultNetwork" | ternary .Values.global.advertiseDefaultNetwork false) true) }}
+---
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: default
+spec:
+  networkSelectors:
+    - networkSelectionType: DefaultNetwork
+  nodeSelector: {}
+  frrConfigurationSelector:
+    matchLabels:
+      name: receive-all
+  advertisements:
+    - "PodNetwork"
+{{- end }}
+
 {{- if (and .Values.global.dockerConfigSecret .Values.global.dockerConfigSecret.create) }}
 ---
 apiVersion: v1

@@ -29,6 +29,10 @@ set_default_params() {
   export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
   export ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
   export ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
+  export ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
+  export ENABLE_EVPN=${ENABLE_EVPN:-false}
+  export ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
+  export ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
   export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
@@ -93,6 +97,19 @@ set_default_params() {
   export MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
   export ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
   export METRICS_IP=${METRICS_IP:-""}
+
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
+    echo "Route advertisements requires multi-network to be enabled (-mne)"
+    exit 1
+  fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
+    echo "Route advertisements requires interconnect to be enabled (-ic)"
+    exit 1
+  fi
+  if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+    echo "EVPN requires Route advertisements to be enabled (-rae)"
+    exit 1
+  fi
 }
 
 usage() {
@@ -111,8 +128,12 @@ usage() {
     echo "       [ -nse | --network-segmentation-enable ]"
     echo "       [ -nce | --network-connect-enable ]"
     echo "       [ -uae | --preconfigured-udn-addresses-enable ]"
+    echo "       [ -rae | --route-advertisements-enable ]"
+    echo "       [ -evpn | --evpn-enable ]"
     echo "       [-dudn | --dynamic-udn-allocation]"
     echo "       [-dug | --dynamic-udn-removal-grace-period]"
+    echo "       [-adv | --advertise-default-network]"
+    echo "       [-rud | --routed-udn-isolation-disable]"
     echo "       [ -nqe | --network-qos-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
@@ -139,8 +160,12 @@ usage() {
     echo "-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled"
     echo "-nce | --network-connect-enable               Enable network connect (requires network segmentation). DEFAULT: Disabled"
     echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled"
+    echo "-rae | --route-advertisements-enable          Enable route advertisements"
+    echo "-evpn | --evpn-enable                         Enable EVPN"
     echo "-dudn | --dynamic-udn-allocation              Enable dynamic UDN allocation. DEFAULT: Disabled"
     echo "-dug | --dynamic-udn-removal-grace-period     Configure the grace period in seconds for dynamic UDN removal. DEFAULT: 120 seconds"
+    echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
+    echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
@@ -194,6 +219,14 @@ parse_args() {
             -nce | --network-connect-enable )     ENABLE_NETWORK_CONNECT=true
                                                   ;;
             -uae | --preconfigured-udn-addresses-enable)    ENABLE_PRE_CONF_UDN_ADDR=true
+                                                  ;;
+            -rae | --route-advertisements-enable) ENABLE_ROUTE_ADVERTISEMENTS=true
+                                                  ;;
+            -evpn | --evpn-enable)                ENABLE_EVPN=true
+                                                  ;;
+            -adv | --advertise-default-network)   ADVERTISE_DEFAULT_NETWORK=true
+                                                  ;;
+            -rud | --routed-udn-isolation-disable) ADVERTISED_UDN_ISOLATION_MODE=loose
                                                   ;;
             -dudn | --dynamic-udn-allocation)     DYNAMIC_UDN_ALLOCATION=true
                                                   ;;
@@ -282,6 +315,10 @@ print_params() {
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
+     echo "ENABLE_ROUTE_ADVERTISEMENTS = $ENABLE_ROUTE_ADVERTISEMENTS"
+     echo "ENABLE_EVPN = $ENABLE_EVPN"
+     echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
+     echo "ADVERTISED_UDN_ISOLATION_MODE = $ADVERTISED_UDN_ISOLATION_MODE"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
@@ -491,6 +528,10 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableDynamicUDNAllocation=$(if [ "${DYNAMIC_UDN_ALLOCATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
           $( [ -n "$DYNAMIC_UDN_GRACE_PERIOD" ] && echo "--set global.dynamicUDNGracePeriod=$DYNAMIC_UDN_GRACE_PERIOD" ) \
           --set global.enablePreconfiguredUDNAddresses=$(if [ "${ENABLE_PRE_CONF_UDN_ADDR}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableRouteAdvertisements=$(if [ "${ENABLE_ROUTE_ADVERTISEMENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableEVPN=$(if [ "${ENABLE_EVPN}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.advertiseDefaultNetwork=$(if [ "${ADVERTISE_DEFAULT_NETWORK}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.advertisedUDNIsolationMode="${ADVERTISED_UDN_ISOLATION_MODE}" \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -507,6 +548,9 @@ EOF
 delete() {
   if [ "$KIND_INSTALL_METALLB" == true ]; then
     destroy_metallb
+  fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+    destroy_bgp
   fi
   helm uninstall ovn-kubernetes && sleep 5 ||:
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
@@ -538,6 +582,10 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_clusterrole_coredns
     add_ocp_dnsnameresolver_to_coredns_config
     update_coredns_deployment_image
+fi
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  deploy_frr_external_container
+  deploy_bgp_external_server
 fi
 create_ovn_kubernetes
 

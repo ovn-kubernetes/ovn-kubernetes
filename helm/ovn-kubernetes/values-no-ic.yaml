@@ -70,6 +70,14 @@ global:
   enableMultiNetwork: false
   # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
   enableNetworkSegmentation: false
+  # -- Configure to use route advertisements feature with ovn-kubernetes
+  enableRouteAdvertisements: false
+  # -- Configure to use EVPN feature with ovn-kubernetes
+  enableEVPN: false
+  # -- Advertise default network on all nodes with a default RouteAdvertisements configuration
+  advertiseDefaultNetwork: false
+  # -- Pod network isolation between advertised UDN networks. (strict or loose)
+  advertisedUDNIsolationMode: "strict"
   # -- Configure to enable IPsec
   enableIpsec: false
   # -- Use SSL transport to NB/SB db and northd
@@ -183,4 +191,3 @@ monitoring:
   enableServiceMonitor: false
   # -- deploy PrometheusRules for specific metric collection using the Prometheus Operator
   enablePrometheusRule: false
-

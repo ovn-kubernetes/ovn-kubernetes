@@ -162,6 +162,7 @@ rules:
           - egressfirewalls/status
           - adminpolicybasedexternalroutes/status
           - egressqoses/status
+          - routeadvertisements/status
           - networkqoses/status
       verbs: [ "patch", "update" ]
     - apiGroups: ["policy.networking.k8s.io"]
@@ -184,6 +185,7 @@ rules:
           - adminpolicybasedexternalroutes
           - userdefinednetworks
           - clusteruserdefinednetworks
+          - routeadvertisements
           - networkqoses
           - clusternetworkconnects
       verbs: [ "get", "list", "watch" ]
