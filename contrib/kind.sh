@@ -915,42 +915,6 @@ create_kind_cluster() {
   cat "${KUBECONFIG}"
 }
 
-set_ovn_image() {
-  # if we're using the local registry and still need to build, push to local registry
-  if [ "$KIND_LOCAL_REGISTRY" == true ];then
-    OVN_IMAGE="localhost:5000/ovn-daemonset-fedora:latest"
-  else
-    OVN_IMAGE="localhost/ovn-daemonset-fedora:dev"
-  fi
-}
-
-build_ovn_image() {
-  local push_args=""
-  if [ "$OCI_BIN" == "podman" ]; then
-    # docker doesn't perform tls check by default only podman does, hence we need to disable it for podman.
-    push_args="--tls-verify=false"
-  fi
-
-  if [ "$OVN_IMAGE" == local ]; then
-    set_ovn_image
-
-    # Build image
-    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" fedora-image
-
-    # store in local registry
-    if [ "$KIND_LOCAL_REGISTRY" == true ];then
-      echo "Pushing built image to local $OCI_BIN registry"
-      $OCI_BIN push $push_args "$OVN_IMAGE"
-    fi
-  # We should push to local registry if image is not remote
-  elif [ "${OVN_IMAGE}" != "" -a "${KIND_LOCAL_REGISTRY}" == true ] && (echo "$OVN_IMAGE" | grep / -vq); then
-    local local_registry_ovn_image="localhost:5000/${OVN_IMAGE}"
-    $OCI_BIN tag "$OVN_IMAGE" $local_registry_ovn_image
-    OVN_IMAGE=$local_registry_ovn_image
-    $OCI_BIN push $push_args "$OVN_IMAGE"
-  fi
-}
-
 create_ovn_kube_manifests() {
     local ovnkube_image=${OVN_IMAGE}
     if [ "$KIND_LOCAL_REGISTRY" == true ];then

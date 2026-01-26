@@ -20,6 +20,7 @@ set_default_params() {
   export KIND_INSTALL_PLUGINS=${KIND_INSTALL_PLUGINS:-false}
   export KIND_INSTALL_KUBEVIRT=${KIND_INSTALL_KUBEVIRT:-false}
   export OVN_HA=${OVN_HA:-false}
+  export KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
   export OVN_MULTICAST_ENABLE=${OVN_MULTICAST_ENABLE:-false}
   export OVN_HYBRID_OVERLAY_ENABLE=${OVN_HYBRID_OVERLAY_ENABLE:-false}
   export OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
@@ -36,7 +37,9 @@ set_default_params() {
   export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  export OVN_IMAGE=${OVN_IMAGE:-'ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:helm'}
+  export OVN_IMAGE=${OVN_IMAGE:-local}
+  export OVN_REPO=${OVN_REPO:-""}
+  export OVN_GITREF=${OVN_GITREF:-""}
 
   # Setup KUBECONFIG patch based on cluster-name
   export KUBECONFIG=${KUBECONFIG:-${HOME}/${KIND_CLUSTER_NAME}.conf}
@@ -138,6 +141,9 @@ usage() {
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
+    echo "       [ -ov  | --ovn-image <image> ]"
+    echo "       [ -ovr | --ovn-repo <repo> ]"
+    echo "       [ -ovg | --ovn-gitref <ref> ]"
     echo "       [ -cn  | --cluster-name ]"
     echo "       [ -mip | --metrics-ip <ip> ]"
     echo "       [ --enable-coredumps ]"
@@ -169,6 +175,9 @@ usage() {
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
+    echo "-ov  | --ovn-image                            Use the specified docker image instead of building locally. DEFAULT: local build."
+    echo "-ovr | --ovn-repo                             Specify the repository to build OVN from"
+    echo "-ovg | --ovn-gitref                           Specify the branch, tag or commit id to build OVN from, it can be a pattern like 'branch-*' it will order results and use the first one"
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
     echo "-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0"
     echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
@@ -254,6 +263,15 @@ parse_args() {
                                                   fi
                                                   KIND_NUM_WORKER=$1
                                                   ;;
+            -ov | --ovn-image )                   shift
+                                                  OVN_IMAGE=$1
+                                                  ;;
+            -ovr | --ovn-repo )                   shift
+                                                  OVN_REPO=$1
+                                                  ;;
+            -ovg | --ovn-gitref )                 shift
+                                                  OVN_GITREF=$1
+                                                  ;;
             -cn | --cluster-name )                shift
                                                   KIND_CLUSTER_NAME=$1
                                                   # Setup KUBECONFIG
@@ -321,6 +339,8 @@ print_params() {
      echo "ADVERTISED_UDN_ISOLATION_MODE = $ADVERTISED_UDN_ISOLATION_MODE"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "OVN_IMAGE = $OVN_IMAGE"
+     echo "OVN_REPO = $OVN_REPO"
+     echo "OVN_GITREF = $OVN_GITREF"
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
@@ -363,18 +383,6 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_watches=524288
     # increase fs.inotify.max_user_instances
     sudo sysctl fs.inotify.max_user_instances=512
-}
-
-build_ovn_image() {
-    if [ "${SKIP_OVN_IMAGE_REBUILD}" == "true" ]; then
-      echo "Explicitly instructed not to rebuild ovn image: ${OVN_IMAGE}"
-      return
-    fi
-
-    # Build ovn kube image
-    pushd ${DIR}/../dist/images
-    make fedora-image
-    popd
 }
 
 get_image() {
