@@ -7,8 +7,8 @@ export DIR="$( cd -- "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )
 
 export OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
 
-# Source the kind-common file from the same directory where this script is located
-source "${DIR}/kind-common"
+# Source the kind-common.sh file from the same directory where this script is located
+source "${DIR}/kind-common.sh"
 
 set_default_params() {
   set_common_default_params

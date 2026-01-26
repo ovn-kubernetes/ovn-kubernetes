@@ -3,8 +3,8 @@
 # Returns the full directory name of the script
 DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
-# Source the kind-common file from the same directory where this script is located
-source "${DIR}/kind-common"
+# Source the kind-common.sh file from the same directory where this script is located
+source "${DIR}/kind-common.sh"
 
 # Some environments (Fedora32,31 on desktop), have problems when the cluster
 # is deleted directly with kind `kind delete cluster --name ovn`, it restarts the host.
