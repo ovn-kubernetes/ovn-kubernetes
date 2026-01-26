@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -110,6 +111,8 @@ var ovnNorthdStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 	"ovnsb_db_run":     {},
 }
 
+var registerOvnNorthdMetricsOnce sync.Once
+
 func RegisterOvnNorthdMetrics(
 	waitTimeoutFunc func() bool,
 	stopChan <-chan struct{},
@@ -118,79 +121,81 @@ func RegisterOvnNorthdMetrics(
 		klog.Info("OVN northd metrics registration skipped: readiness gate not satisfied")
 		return
 	}
-	klog.Info("Registering OVN northd metrics")
+	registerOvnNorthdMetricsOnce.Do(func() {
+		klog.Info("Registering OVN northd metrics")
 
-	// ovn-northd metrics
-	getOvnNorthdVersionInfo()
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "build_info",
-			Help: "A metric with a constant '1' value labeled by version and library " +
-				"from which ovn binaries were built",
-			ConstLabels: prometheus.Labels{
-				"version":         ovnNorthdVersion,
-				"ovs_lib_version": ovnNorthdOvsLibVersion,
+		// ovn-northd metrics
+		getOvnNorthdVersionInfo()
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemNorthd,
+				Name:      "build_info",
+				Help: "A metric with a constant '1' value labeled by version and library " +
+					"from which ovn binaries were built",
+				ConstLabels: prometheus.Labels{
+					"version":         ovnNorthdVersion,
+					"ovs_lib_version": ovnNorthdOvsLibVersion,
+				},
 			},
-		},
-		func() float64 { return 1 },
-	))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "status",
-			Help:      "Specifies whether this instance of ovn-northd is standby(0) or active(1) or paused(2).",
-		}, func() float64 {
-			stdout, stderr, err := util.RunOVNNorthAppCtl("status")
-			if err != nil {
-				klog.Errorf("Failed to get ovn-northd status "+
-					"stderr(%s) :(%v)", stderr, err)
-				return -1
-			}
-			northdStatusMap := map[string]float64{
-				"standby": 0,
-				"active":  1,
-				"paused":  2,
-			}
-			if strings.HasPrefix(stdout, "Status:") {
-				output := strings.TrimSpace(strings.Split(stdout, ":")[1])
-				if value, ok := northdStatusMap[output]; ok {
-					return value
+			func() float64 { return 1 },
+		))
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemNorthd,
+				Name:      "status",
+				Help:      "Specifies whether this instance of ovn-northd is standby(0) or active(1) or paused(2).",
+			}, func() float64 {
+				stdout, stderr, err := util.RunOVNNorthAppCtl("status")
+				if err != nil {
+					klog.Errorf("Failed to get ovn-northd status "+
+						"stderr(%s) :(%v)", stderr, err)
+					return -1
 				}
-			}
-			return -1
-		},
-	))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "nb_connection_status",
-			Help:      "Specifies nb-connection-status of ovn-northd, not connected(0) or connected(1).",
-		}, func() float64 {
-			return getOvnNorthdConnectionStatusInfo(nbConnectionStatus)
-		},
-	))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemNorthd,
-			Name:      "sb_connection_status",
-			Help:      "Specifies sb-connection-status of ovn-northd, not connected(0) or connected(1).",
-		}, func() float64 {
-			return getOvnNorthdConnectionStatusInfo(sbConnectionStatus)
-		},
-	))
+				northdStatusMap := map[string]float64{
+					"standby": 0,
+					"active":  1,
+					"paused":  2,
+				}
+				if strings.HasPrefix(stdout, "Status:") {
+					output := strings.TrimSpace(strings.Split(stdout, ":")[1])
+					if value, ok := northdStatusMap[output]; ok {
+						return value
+					}
+				}
+				return -1
+			},
+		))
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemNorthd,
+				Name:      "nb_connection_status",
+				Help:      "Specifies nb-connection-status of ovn-northd, not connected(0) or connected(1).",
+			}, func() float64 {
+				return getOvnNorthdConnectionStatusInfo(nbConnectionStatus)
+			},
+		))
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemNorthd,
+				Name:      "sb_connection_status",
+				Help:      "Specifies sb-connection-status of ovn-northd, not connected(0) or connected(1).",
+			}, func() float64 {
+				return getOvnNorthdConnectionStatusInfo(sbConnectionStatus)
+			},
+		))
 
-	// Register the ovn-northd coverage/show metrics with prometheus
-	componentCoverageShowMetricsMap[ovnNorthd] = ovnNorthdCoverageShowMetricsMap
-	registerCoverageShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
-	go coverageShowMetricsUpdater(ovnNorthd, stopChan)
+		// Register the ovn-northd coverage/show metrics with prometheus
+		componentCoverageShowMetricsMap[ovnNorthd] = ovnNorthdCoverageShowMetricsMap
+		registerCoverageShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
+		go coverageShowMetricsUpdater(ovnNorthd, stopChan)
 
-	// Register the ovn-northd stopwatch/show metrics with prometheus
-	componentStopwatchShowMetricsMap[ovnNorthd] = ovnNorthdStopwatchShowMetricsMap
-	registerStopwatchShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
-	go stopwatchShowMetricsUpdater(ovnNorthd, stopChan)
+		// Register the ovn-northd stopwatch/show metrics with prometheus
+		componentStopwatchShowMetricsMap[ovnNorthd] = ovnNorthdStopwatchShowMetricsMap
+		registerStopwatchShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
+		go stopwatchShowMetricsUpdater(ovnNorthd, stopChan)
+	})
 }
