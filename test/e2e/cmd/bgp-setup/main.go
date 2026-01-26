@@ -80,9 +80,14 @@ func getTestdataPath() string {
 	return filepath.Join(e2eDir, "testdata", "routeadvertisements")
 }
 
+// getTemplateSource returns a FilesystemSource for FRR templates from the testdata directory.
+// This is shared by FRR daemon config generation and FRR-k8s configuration generation.
+func getTemplateSource() *frr.FilesystemSource {
+	return frr.NewFilesystemSource(getTestdataPath())
+}
+
 const (
 	// Container and network names
-	frrImage                 = "quay.io/frrouting/frr:10.4.1"
 	kindNetwork              = "kind"
 	frrK8sNS                 = "frr-k8s-system"
 	frrK8sDeploymentName     = "frr-k8s-statuscleaner"
@@ -207,21 +212,21 @@ func main() {
 func parseFlags() *Config {
 	cfg := &Config{}
 
+	flag.StringVar(&cfg.Phase, "phase", PhaseAll, "Phase to run: 'all', 'deploy-containers' (FRR + BGP server), 'deploy-frr' (FRR only), 'deploy-bgp-server' (BGP server only), or 'install-frr-k8s' (frr-k8s + FRRConfiguration)")
 	flag.StringVar(&cfg.ContainerRuntime, "container-runtime", getEnvOrDefault(envContainerRuntime, defaultContainerRuntime), "Container runtime to use (docker/podman)")
-	flag.StringVar(&cfg.BGPServerSubnetIPv4, "bgp-server-subnet-ipv4", getEnvOrDefault(envBGPServerSubnetIPv4, defaultBGPServerSubnetIPv4), "IPv4 CIDR for BGP server network")
-	flag.StringVar(&cfg.BGPServerSubnetIPv6, "bgp-server-subnet-ipv6", getEnvOrDefault(envBGPServerSubnetIPv6, defaultBGPServerSubnetIPv6), "IPv6 CIDR for BGP server network")
 	flag.BoolVar(&cfg.IPv4Enabled, "ipv4", getBoolEnvOrDefault(envIPv4Support, true), "Enable IPv4 support")
 	flag.BoolVar(&cfg.IPv6Enabled, "ipv6", getBoolEnvOrDefault(envIPv6Support, false), "Enable IPv6 support")
+	flag.StringVar(&cfg.BGPServerSubnetIPv4, "bgp-server-subnet-ipv4", getEnvOrDefault(envBGPServerSubnetIPv4, defaultBGPServerSubnetIPv4), "IPv4 CIDR for BGP server network")
+	flag.StringVar(&cfg.BGPServerSubnetIPv6, "bgp-server-subnet-ipv6", getEnvOrDefault(envBGPServerSubnetIPv6, defaultBGPServerSubnetIPv6), "IPv6 CIDR for BGP server network")
 	flag.StringVar(&cfg.FRRK8sVersion, "frr-k8s-version", getEnvOrDefault(envFRRK8sVersion, defaultFRRK8sVersion), "Version of frr-k8s to use")
 	flag.StringVar(&cfg.NetworkName, "network-name", getEnvOrDefault(envNetworkName, defaultNetworkName), "Name for the BGP network")
-	flag.StringVar(&cfg.Kubeconfig, "kubeconfig", getEnvOrDefault(envKubeconfig, filepath.Join(os.Getenv("HOME"), ".kube", "config")), "Path to kubeconfig file")
-	flag.BoolVar(&cfg.AdvertiseDefaultNetwork, "advertise-default-network", getBoolEnvOrDefault(envAdvertiseDefaultNetwork, true), "Add pod network routes for default network advertisement")
 	flag.StringVar(&cfg.IsolationMode, "isolation-mode", getEnvOrDefault(envIsolationMode, defaultIsolationMode), "UDN isolation mode: strict or loose")
+	flag.BoolVar(&cfg.AdvertiseDefaultNetwork, "advertise-default-network", getBoolEnvOrDefault(envAdvertiseDefaultNetwork, true), "Add pod network routes for default network advertisement")
+	flag.StringVar(&cfg.Kubeconfig, "kubeconfig", getEnvOrDefault(envKubeconfig, filepath.Join(os.Getenv("HOME"), ".kube", "config")), "Path to kubeconfig file")
+	flag.StringVar(&cfg.ClusterName, "cluster-name", getEnvOrDefault(envClusterName, defaultClusterName), "Kind cluster name. Used to derive control-plane container name (${cluster-name}-control-plane)")
 	flag.BoolVar(&cfg.CleanupOnly, "cleanup", false, "Only cleanup existing BGP infrastructure")
-	flag.StringVar(&cfg.Phase, "phase", PhaseAll, "Phase to run: 'all', 'deploy-containers' (FRR + BGP server), 'deploy-frr' (FRR only), 'deploy-bgp-server' (BGP server only), or 'install-frr-k8s' (frr-k8s + FRRConfiguration)")
 	flag.BoolVar(&cfg.UseDirectAPI, "use-direct-api", false, "Use direct API server address (control plane container IP) instead of kubeconfig server. Only works when Docker bridge network is routable from host.")
 	flag.StringVar(&cfg.TestdataPath, "testdata-path", getEnvOrDefault(envTestdataPath, ""), "Path to the testdata/routeadvertisements directory containing templates. Required when built with -trimpath.")
-	flag.StringVar(&cfg.ClusterName, "cluster-name", getEnvOrDefault(envClusterName, defaultClusterName), "Kind cluster name. Used to derive control-plane container name (${cluster-name}-control-plane)")
 
 	flag.Parse()
 
@@ -573,7 +578,7 @@ func deployFRRExternalContainer(cfg *Config, nodes []corev1.Node) error {
 		return fmt.Errorf("API server not ready: %w", err)
 	}
 
-	// Apply FRR-K8s CRDs from remote URL (no need to clone the repo)
+	// Apply FRR-K8s CRDs from remote URL
 	crdURL := frrK8sRemoteURL(cfg.FRRK8sVersion, "charts/frr-k8s/charts/crds/templates/frrk8s.metallb.io_frrconfigurations.yaml")
 	fmt.Printf("Applying FRR-K8s CRDs from %s...\n", crdURL)
 	if err := runKubectlWithRetry(3, "apply", "--validate=false", "-f", crdURL); err != nil {
@@ -628,7 +633,7 @@ func deployFRRExternalContainer(cfg *Config, nodes []corev1.Node) error {
 	if cfg.IPv6Enabled {
 		args = append(args, "--sysctl", "net.ipv6.conf.all.forwarding=1")
 	}
-	args = append(args, frrImage)
+	args = append(args, frr.Image)
 	if err := runCmd(runtime, args...); err != nil {
 		return fmt.Errorf("failed to create FRR container: %w", err)
 	}
@@ -677,10 +682,6 @@ func getContainerNetworkIPs(containerName, networkName string) (ipv4, ipv6 strin
 
 // generateFRRConfigFiles generates FRR configuration files in the specified directory
 func generateFRRConfigFiles(cfg *Config, neighborsIPv4, neighborsIPv6 []string, outputDir string) error {
-	// Create a FilesystemSource to read templates from the testdata directory
-	testdataPath := getTestdataPath()
-	source := frr.NewFilesystemSource(testdataPath)
-
 	// Combine neighbor IPs
 	neighborIPs := append(neighborsIPv4, neighborsIPv6...)
 
@@ -693,7 +694,7 @@ func generateFRRConfigFiles(cfg *Config, neighborsIPv4, neighborsIPv6 []string, 
 		advertiseNetworks = append(advertiseNetworks, cfg.BGPServerSubnetIPv6)
 	}
 
-	if err := frr.WriteConfigToDir(source, outputDir, neighborIPs, advertiseNetworks); err != nil {
+	if err := frr.WriteConfigToDir(getTemplateSource(), outputDir, neighborIPs, advertiseNetworks); err != nil {
 		return err
 	}
 
@@ -813,13 +814,13 @@ func deployBGPExternalServer(cfg *Config, nodes []corev1.Node) error {
 
 		for _, node := range nodes {
 			if cfg.IPv4Enabled && frrKindIPv4 != "" {
-				fmt.Printf("Setting node %s default IPv4 gateway to FRR (%s)...\n", node.Name, frrKindIPv4)
+				fmt.Printf("In loose mode, setting node %s default IPv4 gateway to FRR (%s)...\n", node.Name, frrKindIPv4)
 				if err := runCmd(runtime, "exec", node.Name, "ip", "route", "replace", "default", "via", frrKindIPv4); err != nil {
 					fmt.Printf("Warning: failed to set IPv4 default gateway on node %s: %v\n", node.Name, err)
 				}
 			}
 			if cfg.IPv6Enabled && frrKindIPv6 != "" {
-				fmt.Printf("Setting node %s default IPv6 gateway to FRR (%s)...\n", node.Name, frrKindIPv6)
+				fmt.Printf("In loose mode, setting node %s default IPv6 gateway to FRR (%s)...\n", node.Name, frrKindIPv6)
 				if err := runCmd(runtime, "exec", node.Name, "ip", "-6", "route", "replace", "default", "via", frrKindIPv6); err != nil {
 					fmt.Printf("Warning: failed to set IPv6 default gateway on node %s: %v\n", node.Name, err)
 				}
@@ -867,7 +868,7 @@ func installFRRK8s(cfg *Config) error {
 		return fmt.Errorf("frr-k8s daemon rollout failed: %w", err)
 	}
 
-	// Wait for webhook endpoint to be actually serving
+	// Wait for frr-k8s webhook endpoint to be actually serving
 	fmt.Println("Probing frr-k8s webhook endpoint...")
 	if err := waitForFRRK8sWebhook(); err != nil {
 		fmt.Printf("Warning: webhook probe failed: %v\n", err)
@@ -951,10 +952,6 @@ func createFRRConfiguration(cfg *Config) error {
 }
 
 func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetworks []string) (string, error) {
-	// Create a FilesystemSource to read templates from the testdata directory
-	testdataPath := getTestdataPath()
-	source := frr.NewFilesystemSource(testdataPath)
-
 	// Labels must include "name: receive-all" to match the RouteAdvertisements selector
 	// which expects frrConfigurationSelector.matchLabels.name: receive-all
 	labels := map[string]string{
@@ -969,7 +966,7 @@ func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetwork
 		vrf = networkName
 	}
 
-	tmpDir, err := frr.GenerateK8sConfigurationWithVRF(source, networkName, vrf, labels, neighborIPs, receiveNetworks)
+	tmpDir, err := frr.GenerateFRRK8sConfigWithVRF(getTemplateSource(), networkName, vrf, labels, neighborIPs, receiveNetworks)
 	if err != nil {
 		return "", err
 	}

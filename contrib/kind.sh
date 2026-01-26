@@ -39,7 +39,7 @@ delete() {
   fi
 }
 
-# Build and run the bgp-setup tool from test/e2e/cmd/bgp-setup
+# Build and run the bgp-setup tool from test/e2e/_output/bin/bgp-setup
 # Arguments:
 #   $1 - phase: "deploy-frr", "deploy-bgp-server", "deploy-containers", "install-frr-k8s", or "all"
 run_bgp_setup() {
