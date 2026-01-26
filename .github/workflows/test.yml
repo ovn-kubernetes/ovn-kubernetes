@@ -488,6 +488,7 @@ jobs:
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "bgp-helm", "ha": "noHA", "gateway-mode": "shared",  "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation" }
           - {"target": "bgp-loose-isolation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
           - {"target": "traffic-flow-test-only","ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
@@ -496,8 +497,8 @@ jobs:
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
-      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
-      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
+      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'bgp') }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
       KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') }}"
@@ -514,7 +515,7 @@ jobs:
       KIND_NUM_WORKER: "${{ matrix.num-workers }}"
       KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
       OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
-      USE_HELM: "${{ matrix.target == 'control-plane-helm' || matrix.target == 'multi-homing-helm' }}"
+      USE_HELM: "${{ matrix.target == 'control-plane-helm' || matrix.target == 'multi-homing-helm' || matrix.target == 'bgp-helm' }}"
       OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
@@ -656,7 +657,7 @@ jobs:
       # set 3 hours for control-plane tests as these might take a while
       # give 10m extra to give ginkgo chance to timeout before github so that we
       # get its output
-      timeout-minutes: ${{ matrix.target == 'bgp-loose-isolation' && 190 || matrix.target == 'bgp' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
+      timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
       run: |
         # used by e2e diagnostics package
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
@@ -681,7 +682,7 @@ jobs:
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
-        elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
+        elif [[ "${{ matrix.target }}" == bgp* ]]; then
           make -C test control-plane
         elif [ "${{ matrix.target }}" == "serial" ]; then
           # Run only Serial tests with ginkgo focus
