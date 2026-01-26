@@ -118,16 +118,16 @@ To remove all BGP infrastructure:
 |------|---------|-------------|
 | `--phase` | `all` | Phase to run: `all`, `deploy-frr`, `deploy-bgp-server`, `deploy-containers`, or `install-frr-k8s` |
 | `--container-runtime` | `docker` | Container runtime to use (docker/podman) |
-| `--bgp-server-subnet-ipv4` | `172.26.0.0/16` | IPv4 CIDR for `bgpnet` network (where bgpserver resides) |
-| `--bgp-server-subnet-ipv6` | `fc00:f853:ccd:e796::/64` | IPv6 CIDR for `bgpnet` network (where bgpserver resides) |
 | `--ipv4` | `true` | Enable IPv4 support |
 | `--ipv6` | `false` | Enable IPv6 support |
+| `--bgp-server-subnet-ipv4` | `172.26.0.0/16` | IPv4 CIDR for `bgpnet` network (where bgpserver resides) |
+| `--bgp-server-subnet-ipv6` | `fc00:f853:ccd:e796::/64` | IPv6 CIDR for `bgpnet` network (where bgpserver resides) |
 | `--frr-k8s-version` | `v0.0.21` | Version of frr-k8s to use |
 | `--network-name` | `default` | Name for the BGP network |
-| `--cluster-name` | `ovn` | Kind cluster name |
-| `--kubeconfig` | `~/.kube/config` | Path to kubeconfig file |
-| `--advertise-default-network` | `true` | Advertise the default network |
 | `--isolation-mode` | `strict` | UDN isolation mode: strict or loose |
+| `--advertise-default-network` | `true` | Advertise the default network |
+| `--kubeconfig` | `~/.kube/config` | Path to kubeconfig file |
+| `--cluster-name` | `ovn` | Kind cluster name |
 | `--cleanup` | `false` | Only cleanup existing BGP infrastructure |
 | `--use-direct-api` | `false` | Use direct API server address (control plane container IP) instead of kubeconfig server. Only works when Docker bridge network is routable from host. |
 | `--testdata-path` | (auto-detected) | Path to `testdata/routeadvertisements` directory containing templates. Required when built with `-trimpath`. |
@@ -176,17 +176,17 @@ All flags can also be set via environment variables:
 | Environment Variable | Flag |
 |---------------------|------|
 | `CONTAINER_RUNTIME` | `--container-runtime` |
-| `BGP_SERVER_NET_SUBNET_IPV4` | `--bgp-server-subnet-ipv4` |
-| `BGP_SERVER_NET_SUBNET_IPV6` | `--bgp-server-subnet-ipv6` |
 | `PLATFORM_IPV4_SUPPORT` | `--ipv4` |
 | `PLATFORM_IPV6_SUPPORT` | `--ipv6` |
+| `BGP_SERVER_NET_SUBNET_IPV4` | `--bgp-server-subnet-ipv4` |
+| `BGP_SERVER_NET_SUBNET_IPV6` | `--bgp-server-subnet-ipv6` |
 | `FRR_K8S_VERSION` | `--frr-k8s-version` |
 | `NETWORK_NAME` | `--network-name` |
-| `KUBECONFIG` | `--kubeconfig` |
-| `ADVERTISE_DEFAULT_NETWORK` | `--advertise-default-network` |
 | `ADVERTISED_UDN_ISOLATION_MODE` | `--isolation-mode` |
-| `BGP_TESTDATA_PATH` | `--testdata-path` |
+| `ADVERTISE_DEFAULT_NETWORK` | `--advertise-default-network` |
+| `KUBECONFIG` | `--kubeconfig` |
 | `KIND_CLUSTER_NAME` | `--cluster-name` |
+| `BGP_TESTDATA_PATH` | `--testdata-path` |
 
 ## Integration with kind.sh
 

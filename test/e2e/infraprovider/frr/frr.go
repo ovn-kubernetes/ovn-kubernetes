@@ -121,10 +121,10 @@ func WriteConfigToDir(source TemplateSource, outputDir string, neighborIPs, adve
 	return nil
 }
 
-// GenerateConfiguration generates FRR daemon configuration files in a temporary directory.
+// GenerateFRRDaemonConfig generates FRR daemon configuration files in a temporary directory.
 // Returns the path to the temporary directory containing the configuration files.
 // The caller is responsible for cleaning up the directory.
-func GenerateConfiguration(source TemplateSource, neighborIPs, advertiseNetworks []string) (string, error) {
+func GenerateFRRDaemonConfig(source TemplateSource, neighborIPs, advertiseNetworks []string) (string, error) {
 	dir, err := os.MkdirTemp("", "frrconf-")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
@@ -138,19 +138,19 @@ func GenerateConfiguration(source TemplateSource, neighborIPs, advertiseNetworks
 	return dir, nil
 }
 
-// GenerateK8sConfiguration generates an FRRConfiguration CRD YAML file for frr-k8s.
+// GenerateFRRK8sConfig generates an FRRConfiguration CRD YAML file for frr-k8s.
 // networkName is used as the resource name and VRF name.
 // Returns the path to a temporary directory containing the frrconf.yaml file.
 // The caller is responsible for cleaning up the directory.
-func GenerateK8sConfiguration(source TemplateSource, networkName string, labels map[string]string, neighborIPs, receiveNetworks []string) (string, error) {
-	return GenerateK8sConfigurationWithVRF(source, networkName, networkName, labels, neighborIPs, receiveNetworks)
+func GenerateFRRK8sConfig(source TemplateSource, networkName string, labels map[string]string, neighborIPs, receiveNetworks []string) (string, error) {
+	return GenerateFRRK8sConfigWithVRF(source, networkName, networkName, labels, neighborIPs, receiveNetworks)
 }
 
-// GenerateK8sConfigurationWithVRF generates an FRRConfiguration CRD YAML file for frr-k8s
+// GenerateFRRK8sConfigWithVRF generates an FRRConfiguration CRD YAML file for frr-k8s
 // with an explicit VRF name (which can be different from networkName or empty for default network).
 // Returns the path to a temporary directory containing the frrconf.yaml file.
 // The caller is responsible for cleaning up the directory.
-func GenerateK8sConfigurationWithVRF(source TemplateSource, networkName, vrf string, labels map[string]string, neighborIPs, receiveNetworks []string) (string, error) {
+func GenerateFRRK8sConfigWithVRF(source TemplateSource, networkName, vrf string, labels map[string]string, neighborIPs, receiveNetworks []string) (string, error) {
 	templates, err := source.ParseFRRK8sTemplates()
 	if err != nil {
 		return "", fmt.Errorf("failed to parse FRR-k8s templates: %w", err)
