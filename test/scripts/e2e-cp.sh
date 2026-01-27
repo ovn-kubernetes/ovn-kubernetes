@@ -187,6 +187,11 @@ else
       # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5569
       skip "Multi Homing"
     fi
+    if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
+      # Skip IPv6/dual-stack multihoming secondary network tests in IPv4-only clusters.
+      skip "Multi Homing.*L3 - routed - secondary network with IPv6 subnet"
+      skip "Multi Homing.*L3 - routed - secondary network with a dual stack configuration"
+    fi
     # these tests require metallb but the configuration we do for it is not compatible with the configuration we do to advertise the default network
     # TODO: consolidate configuration
     skip "Load Balancer Service Tests with MetalLB"
