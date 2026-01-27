@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -359,117 +360,121 @@ func getOvnDbVersionInfo() {
 	}
 }
 
+var registerOvnDBMetricsOnce sync.Once
+
 func RegisterOvnDBMetrics(waitTimeoutFunc func() bool, stopChan <-chan struct{}) {
 	if ok := waitTimeoutFunc(); !ok {
 		klog.Info("OVN DB metrics registration skipped: readiness gate not satisfied")
 		return
 	}
 
-	klog.Info("Found OVN DB Pod running on this node. Registering OVN DB Metrics")
+	registerOvnDBMetricsOnce.Do(func() {
+		klog.Info("Found OVN DB Pod running on this node. Registering OVN DB Metrics")
 
-	// get the ovsdb server version info
-	getOvnDbVersionInfo()
-	// register metrics that will be served off of /metrics path
-	ovnRegistry.MustRegister(metricOVNDBMonitor)
-	ovnRegistry.MustRegister(metricOVNDBSessions)
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemDB,
-			Name:      "build_info",
-			Help: "A metric with a constant '1' value labeled by ovsdb-server version and " +
-				"NB and SB schema version",
-			ConstLabels: prometheus.Labels{
-				"version":           ovnDbVersion,
-				"nb_schema_version": nbDbSchemaVersion,
-				"sb_schema_version": sbDbSchemaVersion,
+		// get the ovsdb server version info
+		getOvnDbVersionInfo()
+		// register metrics that will be served off of /metrics path
+		ovnRegistry.MustRegister(metricOVNDBMonitor)
+		ovnRegistry.MustRegister(metricOVNDBSessions)
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemDB,
+				Name:      "build_info",
+				Help: "A metric with a constant '1' value labeled by ovsdb-server version and " +
+					"NB and SB schema version",
+				ConstLabels: prometheus.Labels{
+					"version":           ovnDbVersion,
+					"nb_schema_version": nbDbSchemaVersion,
+					"sb_schema_version": sbDbSchemaVersion,
+				},
 			},
-		},
-		func() float64 { return 1 },
-	))
-	var dbProperties []*util.OvsDbProperties
-	nbdbProps, err := util.GetOvsDbProperties(config.OvnNorth.DbLocation)
-	if err != nil {
-		klog.Errorf("Failed to init nbdb properties: %s", err)
-	} else {
-		dbProperties = append(dbProperties, nbdbProps)
-	}
-	sbdbProps, err := util.GetOvsDbProperties(config.OvnSouth.DbLocation)
-	if err != nil {
-		klog.Errorf("Failed to init sbdb properties: %s", err)
-	} else {
-		dbProperties = append(dbProperties, sbdbProps)
-	}
-	if len(dbProperties) == 0 {
-		klog.Errorf("Failed to init properties for all databases")
-		return
-	}
-	// check if DB is clustered or not
-	// the usual way would be to call `ovsdb-tool db-is-standalone`,
-	// but that command requires access to the db, and we don't always have it.
-	// Therefore, we check cluster/status output for "not valid command" error
-	dbIsClustered := true
-	_, stderr, err := dbProperties[0].AppCtl(5, "cluster/status", dbProperties[0].DbName)
-	if err != nil && strings.Contains(stderr, "is not a valid command") {
-		dbIsClustered = false
-		klog.Info("Found db is standalone, don't register db_cluster metrics")
-	}
-	if dbIsClustered {
-		klog.Info("Found db is clustered, register db_cluster metrics")
-		ovnRegistry.MustRegister(metricDBClusterCID)
-		ovnRegistry.MustRegister(metricDBClusterSID)
-		ovnRegistry.MustRegister(metricDBClusterServerStatus)
-		ovnRegistry.MustRegister(metricDBClusterTerm)
-		ovnRegistry.MustRegister(metricDBClusterServerRole)
-		ovnRegistry.MustRegister(metricDBClusterServerVote)
-		ovnRegistry.MustRegister(metricDBClusterElectionTimer)
-		ovnRegistry.MustRegister(metricDBClusterLogIndexStart)
-		ovnRegistry.MustRegister(metricDBClusterLogIndexNext)
-		ovnRegistry.MustRegister(metricDBClusterLogNotCommitted)
-		ovnRegistry.MustRegister(metricDBClusterLogNotApplied)
-		ovnRegistry.MustRegister(metricDBClusterConnIn)
-		ovnRegistry.MustRegister(metricDBClusterConnOut)
-		ovnRegistry.MustRegister(metricDBClusterConnInErr)
-		ovnRegistry.MustRegister(metricDBClusterConnOutErr)
-	}
+			func() float64 { return 1 },
+		))
+		var dbProperties []*util.OvsDbProperties
+		nbdbProps, err := util.GetOvsDbProperties(config.OvnNorth.DbLocation)
+		if err != nil {
+			klog.Errorf("Failed to init nbdb properties: %s", err)
+		} else {
+			dbProperties = append(dbProperties, nbdbProps)
+		}
+		sbdbProps, err := util.GetOvsDbProperties(config.OvnSouth.DbLocation)
+		if err != nil {
+			klog.Errorf("Failed to init sbdb properties: %s", err)
+		} else {
+			dbProperties = append(dbProperties, sbdbProps)
+		}
+		if len(dbProperties) == 0 {
+			klog.Errorf("Failed to init properties for all databases")
+			return
+		}
+		// check if DB is clustered or not
+		// the usual way would be to call `ovsdb-tool db-is-standalone`,
+		// but that command requires access to the db, and we don't always have it.
+		// Therefore, we check cluster/status output for "not valid command" error
+		dbIsClustered := true
+		_, stderr, err := dbProperties[0].AppCtl(5, "cluster/status", dbProperties[0].DbName)
+		if err != nil && strings.Contains(stderr, "is not a valid command") {
+			dbIsClustered = false
+			klog.Info("Found db is standalone, don't register db_cluster metrics")
+		}
+		if dbIsClustered {
+			klog.Info("Found db is clustered, register db_cluster metrics")
+			ovnRegistry.MustRegister(metricDBClusterCID)
+			ovnRegistry.MustRegister(metricDBClusterSID)
+			ovnRegistry.MustRegister(metricDBClusterServerStatus)
+			ovnRegistry.MustRegister(metricDBClusterTerm)
+			ovnRegistry.MustRegister(metricDBClusterServerRole)
+			ovnRegistry.MustRegister(metricDBClusterServerVote)
+			ovnRegistry.MustRegister(metricDBClusterElectionTimer)
+			ovnRegistry.MustRegister(metricDBClusterLogIndexStart)
+			ovnRegistry.MustRegister(metricDBClusterLogIndexNext)
+			ovnRegistry.MustRegister(metricDBClusterLogNotCommitted)
+			ovnRegistry.MustRegister(metricDBClusterLogNotApplied)
+			ovnRegistry.MustRegister(metricDBClusterConnIn)
+			ovnRegistry.MustRegister(metricDBClusterConnOut)
+			ovnRegistry.MustRegister(metricDBClusterConnInErr)
+			ovnRegistry.MustRegister(metricDBClusterConnOutErr)
+		}
 
-	dbFoundViaPath := isOvnDBFoundViaPath(dbProperties)
+		dbFoundViaPath := isOvnDBFoundViaPath(dbProperties)
 
-	if dbFoundViaPath {
-		ovnRegistry.MustRegister(metricDBSize)
-	} else {
-		klog.Infof("Unable to enable OVN DB size metric because no OVN DBs found")
-	}
+		if dbFoundViaPath {
+			ovnRegistry.MustRegister(metricDBSize)
+		} else {
+			klog.Infof("Unable to enable OVN DB size metric because no OVN DBs found")
+		}
 
-	// functions responsible for collecting the values and updating the prometheus metrics
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				// To update not only values but also labels for metrics, we use Reset() to delete previous labels+value
-				if dbIsClustered {
-					resetOvnDbClusterMetrics()
-				}
-				if dbFoundViaPath {
-					resetOvnDbSizeMetric()
-				}
-				resetOvnDbMemoryMetrics()
-				for _, dbProperty := range dbProperties {
+		// functions responsible for collecting the values and updating the prometheus metrics
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					// To update not only values but also labels for metrics, we use Reset() to delete previous labels+value
 					if dbIsClustered {
-						ovnDBClusterStatusMetricsUpdater(dbProperty)
+						resetOvnDbClusterMetrics()
 					}
 					if dbFoundViaPath {
-						ovnDBSizeMetricsUpdater(dbProperty)
+						resetOvnDbSizeMetric()
 					}
-					ovnDBMemoryMetricsUpdater(dbProperty)
+					resetOvnDbMemoryMetrics()
+					for _, dbProperty := range dbProperties {
+						if dbIsClustered {
+							ovnDBClusterStatusMetricsUpdater(dbProperty)
+						}
+						if dbFoundViaPath {
+							ovnDBSizeMetricsUpdater(dbProperty)
+						}
+						ovnDBMemoryMetricsUpdater(dbProperty)
+					}
+				case <-stopChan:
+					return
 				}
-			case <-stopChan:
-				return
 			}
-		}
-	}()
+		}()
+	})
 }
 
 type OVNDBClusterStatus struct {

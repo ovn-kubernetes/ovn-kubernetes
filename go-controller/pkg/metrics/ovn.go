@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -409,93 +410,97 @@ func updateSBDBConnectionMetric(ovsAppctl ovsClient, retry int, retrySleep time.
 	}
 }
 
+var registerOvnControllerMetricsOnce sync.Once
+
 func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client,
 	metricsScrapeInterval int, stopChan <-chan struct{}) {
-	getOvnControllerVersionInfo()
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemController,
-			Name:      "build_info",
-			Help: "A metric with a constant '1' value labeled by version and library " +
-				"from which ovn binaries were built",
-			ConstLabels: prometheus.Labels{
-				"version":         ovnControllerVersion,
-				"ovs_lib_version": ovnControllerOvsLibVersion,
+	registerOvnControllerMetricsOnce.Do(func() {
+		getOvnControllerVersionInfo()
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemController,
+				Name:      "build_info",
+				Help: "A metric with a constant '1' value labeled by version and library " +
+					"from which ovn binaries were built",
+				ConstLabels: prometheus.Labels{
+					"version":         ovnControllerVersion,
+					"ovs_lib_version": ovnControllerOvsLibVersion,
+				},
 			},
-		},
-		func() float64 { return 1 },
-	))
+			func() float64 { return 1 },
+		))
 
-	// ovn-controller metrics
-	ovnRegistry.MustRegister(metricOVNControllerSBDBConnection)
-	ovnRegistry.MustRegister(prometheus.NewCounterFunc(
-		prometheus.CounterOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemController,
-			Name:      "integration_bridge_openflow_total",
-			Help:      "The total number of OpenFlow flows in the integration bridge.",
-		}, func() float64 {
-			stdout, stderr, err := util.RunOVSOfctl("-t", "5", "dump-aggregate", "br-int")
-			if err != nil {
-				klog.Errorf("Failed to get flow count for br-int, stderr(%s): (%v)",
-					stderr, err)
-				return 0
-			}
-			for _, kvPair := range strings.Fields(stdout) {
-				if strings.HasPrefix(kvPair, "flow_count=") {
-					value := strings.Split(kvPair, "=")[1]
-					return parseMetricToFloat(types.MetricOvnSubsystemController, "integration_bridge_openflow_total",
-						value)
+		// ovn-controller metrics
+		ovnRegistry.MustRegister(metricOVNControllerSBDBConnection)
+		ovnRegistry.MustRegister(prometheus.NewCounterFunc(
+			prometheus.CounterOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemController,
+				Name:      "integration_bridge_openflow_total",
+				Help:      "The total number of OpenFlow flows in the integration bridge.",
+			}, func() float64 {
+				stdout, stderr, err := util.RunOVSOfctl("-t", "5", "dump-aggregate", "br-int")
+				if err != nil {
+					klog.Errorf("Failed to get flow count for br-int, stderr(%s): (%v)",
+						stderr, err)
+					return 0
 				}
-			}
-			return 0
-		}))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemController,
-			Name:      "integration_bridge_patch_ports",
-			Help: "Captures the number of patch ports that connect br-int OVS " +
-				"bridge to physical OVS bridge and br-local OVS bridge.",
-		},
-		func() float64 {
-			return getPortCount(ovsDBClient, "patch")
-		}))
-	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
-		prometheus.GaugeOpts{
-			Namespace: types.MetricOvnNamespace,
-			Subsystem: types.MetricOvnSubsystemController,
-			Name:      "integration_bridge_geneve_ports",
-			Help:      "Captures the number of geneve ports that are on br-int OVS bridge.",
-		},
-		func() float64 {
-			return getPortCount(ovsDBClient, "geneve")
-		}))
+				for _, kvPair := range strings.Fields(stdout) {
+					if strings.HasPrefix(kvPair, "flow_count=") {
+						value := strings.Split(kvPair, "=")[1]
+						return parseMetricToFloat(types.MetricOvnSubsystemController, "integration_bridge_openflow_total",
+							value)
+					}
+				}
+				return 0
+			}))
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemController,
+				Name:      "integration_bridge_patch_ports",
+				Help: "Captures the number of patch ports that connect br-int OVS " +
+					"bridge to physical OVS bridge and br-local OVS bridge.",
+			},
+			func() float64 {
+				return getPortCount(ovsDBClient, "patch")
+			}))
+		ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
+			prometheus.GaugeOpts{
+				Namespace: types.MetricOvnNamespace,
+				Subsystem: types.MetricOvnSubsystemController,
+				Name:      "integration_bridge_geneve_ports",
+				Help:      "Captures the number of geneve ports that are on br-int OVS bridge.",
+			},
+			func() float64 {
+				return getPortCount(ovsDBClient, "geneve")
+			}))
 
-	// register ovn-controller configuration metrics
-	ovnRegistry.MustRegister(metricRemoteProbeInterval)
-	ovnRegistry.MustRegister(metricOpenFlowProbeInterval)
-	ovnRegistry.MustRegister(metricMonitorAll)
-	ovnRegistry.MustRegister(metricEncapIP)
-	ovnRegistry.MustRegister(metricSbConnectionMethod)
-	ovnRegistry.MustRegister(metricEncapType)
-	ovnRegistry.MustRegister(metricBridgeMappings)
-	// Register the ovn-controller coverage/show metrics
-	componentCoverageShowMetricsMap[ovnController] = ovnControllerCoverageShowMetricsMap
-	registerCoverageShowMetrics(ovnController, types.MetricOvnNamespace, types.MetricOvnSubsystemController)
+		// register ovn-controller configuration metrics
+		ovnRegistry.MustRegister(metricRemoteProbeInterval)
+		ovnRegistry.MustRegister(metricOpenFlowProbeInterval)
+		ovnRegistry.MustRegister(metricMonitorAll)
+		ovnRegistry.MustRegister(metricEncapIP)
+		ovnRegistry.MustRegister(metricSbConnectionMethod)
+		ovnRegistry.MustRegister(metricEncapType)
+		ovnRegistry.MustRegister(metricBridgeMappings)
+		// Register the ovn-controller coverage/show metrics
+		componentCoverageShowMetricsMap[ovnController] = ovnControllerCoverageShowMetricsMap
+		registerCoverageShowMetrics(ovnController, types.MetricOvnNamespace, types.MetricOvnSubsystemController)
 
-	// Register the ovn-controller coverage/show metrics
-	componentStopwatchShowMetricsMap[ovnController] = ovnControllerStopwatchShowMetricsMap
-	registerStopwatchShowMetrics(ovnController, types.MetricOvnNamespace, types.MetricOvnSubsystemController)
+		// Register the ovn-controller coverage/show metrics
+		componentStopwatchShowMetricsMap[ovnController] = ovnControllerStopwatchShowMetricsMap
+		registerStopwatchShowMetrics(ovnController, types.MetricOvnNamespace, types.MetricOvnSubsystemController)
 
-	// ovn-controller configuration metrics updater
-	go ovnControllerConfigurationMetricsUpdater(ovsDBClient,
-		metricsScrapeInterval, stopChan)
-	// ovn-controller coverage show metrics updater
-	go coverageShowMetricsUpdater(ovnController, stopChan)
-	// ovn-controller stopwatch show metrics updater
-	go stopwatchShowMetricsUpdater(ovnController, stopChan)
-	// ovn-controller southbound database connection status updater
-	go ovnControllerSBDBConnectionCheckUpdater(stopChan, util.RunOVNControllerAppCtl, time.Minute*2)
+		// ovn-controller configuration metrics updater
+		go ovnControllerConfigurationMetricsUpdater(ovsDBClient,
+			metricsScrapeInterval, stopChan)
+		// ovn-controller coverage show metrics updater
+		go coverageShowMetricsUpdater(ovnController, stopChan)
+		// ovn-controller stopwatch show metrics updater
+		go stopwatchShowMetricsUpdater(ovnController, stopChan)
+		// ovn-controller southbound database connection status updater
+		go ovnControllerSBDBConnectionCheckUpdater(stopChan, util.RunOVNControllerAppCtl, time.Minute*2)
+	})
 }
