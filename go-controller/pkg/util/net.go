@@ -506,3 +506,14 @@ func GetLastIPOfSubnet(subnet *net.IPNet, indexFromLast int) *net.IPNet {
 	lastIP := net.IP(r[len(r)-16:])
 	return &net.IPNet{IP: lastIP, Mask: subnet.Mask}
 }
+
+func NetworksOverlap(n1, n2 []*net.IPNet) bool {
+	for _, s1 := range n1 {
+		for _, s2 := range n2 {
+			if s1.Contains(s2.IP) || s2.Contains(s1.IP) {
+				return true
+			}
+		}
+	}
+	return false
+}

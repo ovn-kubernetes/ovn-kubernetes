@@ -2,6 +2,7 @@ package networkconnect
 
 import (
 	"fmt"
+	"net"
 	"reflect"
 	"sync"
 	"time"
@@ -45,6 +46,8 @@ type clusterNetworkConnectState struct {
 	name string
 	// allocator for this CNC's subnet allocation
 	allocator HybridConnectSubnetAllocator
+	// connectSubnets are used for overlap check across multiple CNCs
+	connectSubnets []*net.IPNet
 	// map of NADs currently selected by this CNC's network selectors
 	// {value: NAD namespace/name key}
 	// this cache is mainly required to be able to detect when a
@@ -218,6 +221,13 @@ func (c *Controller) initialSync() error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize subnet allocator for CNC %s: %w", cnc.Name, err)
 		}
+		connectSubnets := []*net.IPNet{}
+		for _, cs := range cnc.Spec.ConnectSubnets {
+			// ignore error, this was already parsed for NewHybridConnectSubnetAllocator
+			_, cidr, _ := net.ParseCIDR(string(cs.CIDR))
+			connectSubnets = append(connectSubnets, cidr)
+		}
+		cncState.connectSubnets = connectSubnets
 		cncState.allocator = connectSubnetAllocator
 		c.cncCache[cnc.Name] = cncState
 

@@ -2273,3 +2273,61 @@ func getFirstNonOverlappingSubnet(subnet1, subnet2 *net.IPNet, netMask net.IPMas
 	nextIP := iputils.NextIP(baseSubnetLastIP.IP)
 	return &net.IPNet{IP: nextIP, Mask: netMask}
 }
+
+func CheckNetworksOverlap(netInfos []NetInfo) error {
+	subnets := make([][]*net.IPNet, len(netInfos))
+	for i, ni := range netInfos {
+		subnets[i] = GetAllClusterSubnetsFromEntries(ni.Subnets())
+	}
+	for i, si := range subnets {
+		for j := 0; j < i; j++ {
+			sj := subnets[j]
+			if NetworksOverlap(si, sj) {
+				return fmt.Errorf("network %s with subnets %v and network %s with subnets %v",
+					netInfos[i].GetNetworkName(), si, netInfos[j].GetNetworkName(), sj)
+			}
+		}
+	}
+	return nil
+}
+
+// CheckSubnetOverlapWithNetworks checks whether the given subnets overlap with
+// any of the given networks' subnets, transit subnets, or join subnets.
+// subnetsName is used in the error message to explain where those subnets are coming from.
+func CheckSubnetOverlapWithNetworks(subnets []*net.IPNet, subnetsName string, networks []NetInfo) error {
+	for _, network := range networks {
+		if NetworksOverlap(subnets, GetAllClusterSubnetsFromEntries(network.Subnets())) {
+			return fmt.Errorf("network %s with subnets %v and %s with subnets %v",
+				network.GetNetworkName(), network.Subnets(), subnetsName, subnets)
+		}
+		if NetworksOverlap(subnets, network.TransitSubnets()) {
+			return fmt.Errorf("network %s with transit subnets %v and %s with subnets %v",
+				network.GetNetworkName(), network.TransitSubnets(), subnetsName, subnets)
+		}
+		if NetworksOverlap(subnets, network.JoinSubnets()) {
+			return fmt.Errorf("network %s with join subnets %v and %s with subnets %v",
+				network.GetNetworkName(), network.JoinSubnets(), subnetsName, subnets)
+		}
+	}
+	return nil
+}
+
+// CheckSubnetOverlapWithClusterSubnets checks whether the given subnet overlaps with
+// cluster service CIDRs, or masquerade subnets.
+// subnetsName is used in the error message to explain where those subnets are coming from.
+func CheckSubnetOverlapWithClusterSubnets(subnets []*net.IPNet, subnetsName string) error {
+	if NetworksOverlap(subnets, config.Kubernetes.ServiceCIDRs) {
+		return fmt.Errorf("%s with subnets %v and %s with subnets %v",
+			config.ConfigSubnetService, config.Kubernetes.ServiceCIDRs,
+			subnetsName, subnets)
+	}
+	_, v4MasqueradeCIDR, _ := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+	_, v6MasqueradeCIDR, _ := net.ParseCIDR(config.Gateway.V6MasqueradeSubnet)
+
+	if NetworksOverlap(subnets, []*net.IPNet{v4MasqueradeCIDR, v6MasqueradeCIDR}) {
+		return fmt.Errorf("%s with subnets %v and %s with subnets %v",
+			config.ConfigSubnetMasquerade, []*net.IPNet{v4MasqueradeCIDR, v6MasqueradeCIDR},
+			subnetsName, subnets)
+	}
+	return nil
+}

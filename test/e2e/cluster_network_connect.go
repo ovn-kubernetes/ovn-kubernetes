@@ -351,6 +351,40 @@ func getCNCTunnelID(cncName string) string {
 	return annotations[ovnConnectRouterTunnelKeyAnnotation]
 }
 
+type cncStatusPayload struct {
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// getCNCCondition returns the requested CNC status condition (or nil if missing).
+func getCNCCondition(cncName, conditionType string) (*metav1.Condition, error) {
+	out, err := e2ekubectl.RunKubectl("", "get", "clusternetworkconnect", cncName, "-o", "jsonpath={.status}")
+	if err != nil {
+		return nil, err
+	}
+	var payload cncStatusPayload
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return nil, err
+	}
+	for i := range payload.Conditions {
+		if payload.Conditions[i].Type == conditionType {
+			return &payload.Conditions[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func verifyCNCAcceptedConditionFailed(cncName, errorSubstring string) {
+	Expect(errorSubstring).NotTo(BeEmpty(), "verifyCNCAcceptedConditionFailed requires a non-empty error substring")
+	Eventually(func(g Gomega) {
+		cond, err := getCNCCondition(cncName, "Accepted")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(cond).NotTo(BeNil(), "CNC should have an Accepted condition")
+		g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+		g.Expect(cond.Reason).To(Equal("ResourceAllocationFailed"))
+		g.Expect(cond.Message).To(ContainSubstring(errorSubstring))
+	}, 5*time.Second, 500*time.Millisecond).Should(Succeed())
+}
+
 // verifyCNCHasOnlyTunnelIDAnnotation verifies CNC has only tunnel ID annotation
 func verifyCNCHasOnlyTunnelIDAnnotation(cncName string) {
 	Eventually(func(g Gomega) {
@@ -1980,6 +2014,42 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			By("Deleting CNC")
 			deleteCNC(cncName)
 		})
+	})
+
+	It("reports error on selected networks subnet overlap", func() {
+		cncName := generateCNCName()
+		testLabel := map[string]string{"test-udn": "true"}
+
+		topology := "Layer3"
+		udnName1 := fmt.Sprintf("test-udn-a-%s", rand.String(5))
+		udnName2 := fmt.Sprintf("test-udn-b-%s", rand.String(5))
+		// Use the same subnet(s) for both UDNs to force overlap across selected networks.
+		overlapV4Subnet := "10.250.0.0/16"
+		overlapV6Subnet := "fd98:1:1::/60"
+
+		ns1 := createUDNNamespace(cs, "test-udn-a", testLabel)
+		ns2 := createUDNNamespace(cs, "test-udn-b", testLabel)
+		DeferCleanup(func() {
+			deleteCNC(cncName)
+			deleteUDN(ns1.Name, udnName1)
+			deleteUDN(ns2.Name, udnName2)
+			deleteNamespace(cs, ns1.Name)
+			deleteNamespace(cs, ns2.Name)
+		})
+
+		By(fmt.Sprintf("creating 2 %s primary UDNs with overlapping subnets", topology))
+		createPrimaryUDNWithSubnets(cs, ns1.Name, udnName1, topology, overlapV4Subnet, overlapV6Subnet)
+		createPrimaryUDNWithSubnets(cs, ns2.Name, udnName2, topology, overlapV4Subnet, overlapV6Subnet)
+
+		By("waiting for UDNs to be ready")
+		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
+		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
+
+		By("creating a CNC with PUDN selector matching both namespaces")
+		createOrUpdateCNC(cs, cncName, nil, testLabel)
+
+		By("verifying CNC status reports selected networks subnet overlap")
+		verifyCNCAcceptedConditionFailed(cncName, "selected networks have overlapping subnets")
 	})
 })
 
