@@ -1118,3 +1118,21 @@ setup_coredumps() {
     ${OCI_BIN} exec "$node" sysctl -w kernel.core_pattern="|/bin/dd of=/tmp/kind/logs/coredumps/core.%P.%e.%h.%s bs=1M status=none"
   done
 }
+
+# Some environments (Fedora32,31 on desktop), have problems when the cluster
+# is deleted directly with kind `kind delete cluster --name ovn`, it restarts the host.
+# The root cause is unknown, this also can not be reproduced in Ubuntu 20.04 or
+# with Fedora32 Cloud, but it does not happen if we clean first the ovn-kubernetes resources.
+delete() {
+  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
+
+  if [ "$KIND_INSTALL_METALLB" == true ]; then
+    destroy_metallb
+  fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+    destroy_bgp
+  fi
+  timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
+  sleep 5
+  kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
+}

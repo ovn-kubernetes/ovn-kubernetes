@@ -6,24 +6,6 @@ DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # Source the kind-common.sh file from the same directory where this script is located
 source "${DIR}/kind-common.sh"
 
-# Some environments (Fedora32,31 on desktop), have problems when the cluster
-# is deleted directly with kind `kind delete cluster --name ovn`, it restarts the host.
-# The root cause is unknown, this also can not be reproduced in Ubuntu 20.04 or
-# with Fedora32 Cloud, but it does not happen if we clean first the ovn-kubernetes resources.
-delete() {
-  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
-
-  if [ "$KIND_INSTALL_METALLB" == true ]; then
-    destroy_metallb
-  fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-    destroy_bgp
-  fi
-  timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
-  sleep 5
-  kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
-}
-
 usage() {
     echo "usage: kind.sh [[[-cf |--config-file <file>] [-kt|--keep-taint] [-ha|--ha-enabled]"
     echo "                 [-ho |--hybrid-enabled] [-ii|--install-ingress] [-n4|--no-ipv4]"

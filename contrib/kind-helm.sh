@@ -453,17 +453,6 @@ EOF
     eval "${cmd}"
 }
 
-delete() {
-  if [ "$KIND_INSTALL_METALLB" == true ]; then
-    destroy_metallb
-  fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-    destroy_bgp
-  fi
-  helm uninstall ovn-kubernetes && sleep 5 ||:
-  kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
-}
-
 install_online_ovn_kubernetes_crds() {
   # NOTE: When you update vendoring versions for the ANP & BANP APIs, we must update the version of the CRD we pull from in the below URL
   run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_adminnetworkpolicies.yaml
