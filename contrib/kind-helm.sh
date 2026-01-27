@@ -297,18 +297,6 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_instances=512
 }
 
-get_image() {
-    local image_and_tag="${1:-$OVN_IMAGE}"  # Use $1 if provided, otherwise use $OVN_IMAGE
-    local image="${image_and_tag%%:*}"  # Extract everything before the first colon
-    echo "$image"
-}
-
-get_tag() {
-    local image_and_tag="${1:-$OVN_IMAGE}"  # Use $1 if provided, otherwise use $OVN_IMAGE
-    local tag="${image_and_tag##*:}"  # Extract everything after the last colon
-    echo "$tag"
-}
-
 create_kind_cluster() {
   [ -n "${KIND_CONFIG}" ] || {
     KIND_CONFIG='/tmp/kind.yaml'
@@ -438,8 +426,8 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set podNetwork="${ESCAPED_NET_CIDR_IPV4}" \
           --set serviceNetwork=${SVC_CIDR_IPV4} \
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
-          --set global.image.repository=$(get_image) \
-          --set global.image.tag=$(get_tag) \
+          --set global.image.repository=${OVN_IMAGE%%:*} \
+          --set global.image.tag=${OVN_IMAGE##*:} \
           --set global.enableAdminNetworkPolicy=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
