@@ -29,6 +29,7 @@ import (
 	udnclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	udnfakeclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -49,6 +50,9 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		// Enable EVPN for EVPN-related tests
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.OVNKubernetesFeature.EnableEVPN = true
 	})
 
 	AfterEach(func() {
@@ -85,9 +89,13 @@ var _ = Describe("User Defined Network Controller", func() {
 		// Start NetworkManager - it will process existing NADs and cache their VIDs
 		Expect(nm.Start()).To(Succeed())
 
+		var vtepInformer vtepinformer.VTEPInformer
+		if util.IsEVPNEnabled() {
+			vtepInformer = f.VTEPInformer()
+		}
 		return New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
-			renderNADStub, nm.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), f.VTEPInformer(), nil,
+			renderNADStub, nm.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), vtepInformer, nil,
 		)
 	}
 
@@ -1257,6 +1265,35 @@ var _ = Describe("User Defined Network Controller", func() {
 					Reason:  "VTEPNotFound",
 					Message: "Cannot create network: VTEP '" + vtep.Name + "' does not exist. Create the VTEP CR first or update the CUDN to reference an existing VTEP.",
 				}}), "should report VTEPNotFound after VTEP is deleted")
+			})
+
+			It("should fail when EVPN transport is requested but EVPN feature is disabled", func() {
+				// Disable EVPN feature flag for this test.
+				// No defer needed - BeforeEach resets config via PrepareTestConfig().
+				config.OVNKubernetesFeature.EnableEVPN = false
+
+				testNs := testNamespace("evpn-disabled-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-disabled-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// CUDN should report error with message about EVPN flag
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "False",
+					Reason:  "NetworkAttachmentDefinitionSyncError",
+					Message: "EVPN transport requested but enable-evpn flag is not set",
+				}}), "should report error when EVPN flag is disabled")
+
+				// NAD should not be created when EVPN is disabled
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when EVPN is disabled")
 			})
 
 			It("should update NAD annotations and preserve internal OVNK annotations on UDN update", func() {

@@ -152,18 +152,20 @@ func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 
 // allocateEVPNVIDsIfNeeded checks if the object is an EVPN network and allocates VIDs if needed.
 // Returns render options containing the allocated VIDs, or empty options for non-EVPN networks.
+// Returns an error if EVPN transport is requested but the feature flag is disabled.
 //
 // This function relies on the idempotency of AllocateID: if a VID was already allocated for a key
 // (either during recovery or a previous reconciliation), AllocateID returns the same VID.
 // This means VIDs are stable across reconciliations without needing to parse the existing NAD.
 func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.RenderOption, error) {
-	if c.vidAllocator == nil {
-		return nil, nil
-	}
-
 	spec := template.GetSpec(obj)
 	if spec.GetTransport() != userdefinednetworkv1.TransportOptionEVPN {
 		return nil, nil
+	}
+
+	// EVPN transport is requested - ensure the feature is enabled.
+	if !util.IsEVPNEnabled() {
+		return nil, fmt.Errorf("EVPN transport requested but enable-evpn flag is not set")
 	}
 
 	evpnCfg := spec.GetEVPN()

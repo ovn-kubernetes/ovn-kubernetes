@@ -22,10 +22,15 @@ import (
 
 var _ = Describe("NetAttachDefTemplate", func() {
 
-	// before each test, set the IPv4Mode and IPv6Mode to true
 	BeforeEach(func() {
+		// Restore global default values before each testcase
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.IPv4Mode = true
 		config.IPv6Mode = true
+		// Enable EVPN for tests that use EVPN transport
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.OVNKubernetesFeature.EnableEVPN = true
 	})
 
 	DescribeTable("should fail to render NAD spec given",
@@ -934,6 +939,37 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			Expect(func() {
 				_, _ = RenderNetAttachDefManifest(cudn, "test-ns", nilOpt, WithEVPNVIDs(1, 2))
 			}).NotTo(Panic())
+		})
+
+		It("should fail when EVPN transport is requested but EVPN feature is disabled", func() {
+			// Disable EVPN feature flag for this test.
+			// No defer needed - BeforeEach resets config via PrepareTestConfig().
+			config.OVNKubernetesFeature.EnableEVPN = false
+
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-evpn-disabled", UID: "1"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    udnv1.NetworkRolePrimary,
+							Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+						},
+						Transport: udnv1.TransportOptionEVPN,
+						EVPN: &udnv1.EVPNConfig{
+							VTEP: "my-vtep",
+							MACVRF: &udnv1.VRFConfig{
+								VNI:         100,
+								RouteTarget: "65000:100",
+							},
+						},
+					},
+				},
+			}
+
+			_, err := RenderNetAttachDefManifest(cudn, "test-ns")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("EVPN transport requested but enable-evpn flag is not set"))
 		})
 	})
 

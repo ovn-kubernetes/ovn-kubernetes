@@ -23,6 +23,7 @@ import (
 	udntemplate "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
+	vtepinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -160,6 +161,10 @@ func NewClusterManager(
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() {
+		var vtepInformer vtepinformer.VTEPInformer
+		if util.IsEVPNEnabled() {
+			vtepInformer = wf.VTEPInformer()
+		}
 		udnController := udncontroller.New(
 			ovnClient.NetworkAttchDefClient, wf.NADInformer(),
 			ovnClient.UserDefinedNetworkClient,
@@ -168,7 +173,7 @@ func NewClusterManager(
 			cm.networkManager.Interface(),
 			wf.PodCoreInformer(),
 			wf.NamespaceInformer(),
-			wf.VTEPInformer(),
+			vtepInformer,
 			cm.recorder,
 		)
 		cm.userDefinedNetworkController = udnController

@@ -286,8 +286,7 @@ func NewMasterWatchFactory(ovnClientset *util.OVNMasterClientset) (*WatchFactory
 	}
 
 	// Initialize VTEP factory for EVPN support in combined mode (cluster-manager + ovnkube-controller).
-	// NOTE: VTEP CRD must be deployed when Network Segmentation is enabled.
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if util.IsEVPNEnabled() {
 		wf.vtepFactory = vtepinformerfactory.NewSharedInformerFactory(ovnClientset.VTEPClient, resyncInterval)
 		// make sure shared informer is created for a factory, so on wf.vtepFactory.Start() it is initialized and caches are synced.
 		wf.vtepFactory.K8s().V1().VTEPs().Informer()
@@ -1102,9 +1101,10 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 
 		// make sure pod informer cache is initialized and synced when on Start().
 		wf.iFactory.Core().V1().Pods().Informer()
+	}
 
-		// Initialize VTEP factory for EVPN support.
-		// NOTE: VTEP CRD must be deployed when Network Segmentation is enabled.
+	// Initialize VTEP factory for EVPN support.
+	if util.IsEVPNEnabled() {
 		wf.vtepFactory = vtepinformerfactory.NewSharedInformerFactory(ovnClientset.VTEPClient, resyncInterval)
 		// make sure shared informer is created for a factory, so on wf.vtepFactory.Start() it is initialized and caches are synced.
 		wf.vtepFactory.K8s().V1().VTEPs().Informer()

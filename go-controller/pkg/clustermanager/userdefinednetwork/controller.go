@@ -191,9 +191,12 @@ func New(
 	c.nadNotifier = notifier.NewNetAttachDefNotifier(nadInfomer, c)
 	c.namespaceNotifier = notifier.NewNamespaceNotifier(namespaceInformer, c)
 
-	// Setup VTEP watching for EVPN support.
-	c.vtepLister = vtepInformer.Lister()
-	c.vtepNotifier = notifier.NewVTEPNotifier(vtepInformer, c)
+	// Setup EVPN components only when EVPN is enabled.
+	if util.IsEVPNEnabled() && vtepInformer != nil {
+		// Setup VTEP watching for EVPN support.
+		c.vtepLister = vtepInformer.Lister()
+		c.vtepNotifier = notifier.NewVTEPNotifier(vtepInformer, c)
+	}
 
 	return c
 }
@@ -201,14 +204,17 @@ func New(
 func (c *Controller) Run() error {
 	klog.Infof("Starting user-defined network controllers")
 
-	if err := controller.StartWithInitialSync(
-		c.initializeController,
+	controllers := []controller.Reconciler{
 		c.cudnController,
 		c.udnController,
 		c.nadNotifier.Controller,
 		c.namespaceNotifier.Controller,
-		c.vtepNotifier.Controller,
-	); err != nil {
+	}
+	if c.vtepNotifier != nil {
+		controllers = append(controllers, c.vtepNotifier.Controller)
+	}
+
+	if err := controller.StartWithInitialSync(c.initializeController, controllers...); err != nil {
 		return fmt.Errorf("unable to start user-defined network controller: %v", err)
 	}
 
@@ -242,11 +248,13 @@ func (c *Controller) initializeController() error {
 	}
 
 	c.initializeNamespaceTracker(cudnNADs)
-	// Recover VID allocations from existing EVPN CUDNs.
-	// Recovery failures are logged and the affected CUDNs are enqueued for reconciliation,
-	// but don't block startup - this prevents a DoS where a malicious NAD could
-	// crash the entire cluster-manager.
-	c.recoverEVPNVIDs(cudnNADs)
+	if util.IsEVPNEnabled() {
+		// Recover VID allocations from existing EVPN CUDNs.
+		// Recovery failures are logged and the affected CUDNs are enqueued for reconciliation,
+		// but don't block startup - this prevents a DoS where a malicious NAD could
+		// crash the entire cluster-manager.
+		c.recoverEVPNVIDs(cudnNADs)
+	}
 
 	return nil
 }
@@ -436,13 +444,16 @@ func (c *Controller) releaseVIDForNetwork(networkName string) {
 }
 
 func (c *Controller) Shutdown() {
-	controller.Stop(
+	controllers := []controller.Reconciler{
 		c.cudnController,
 		c.udnController,
 		c.nadNotifier.Controller,
 		c.namespaceNotifier.Controller,
-		c.vtepNotifier.Controller,
-	)
+	}
+	if c.vtepNotifier != nil {
+		controllers = append(controllers, c.vtepNotifier.Controller)
+	}
+	controller.Stop(controllers...)
 }
 
 // ReconcileNetAttachDef enqueue NAD requests following NAD events.
@@ -1001,10 +1012,14 @@ func newClusterNetworkCreatedCondition(nads []netv1.NetworkAttachmentDefinition,
 }
 
 // validateEVPNVTEP validates EVPN configuration for a CUDN.
-// Returns an error if the referenced VTEP doesn't exist, nil otherwise.
+// Returns an error if EVPN is requested but disabled, or if the referenced VTEP doesn't exist.
 func (c *Controller) validateEVPNVTEP(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
 	if cudn.Spec.Network.Transport != userdefinednetworkv1.TransportOptionEVPN {
 		return nil // Not an EVPN network
+	}
+
+	if !util.IsEVPNEnabled() {
+		return fmt.Errorf("EVPN transport requested but enable-evpn flag is not set")
 	}
 
 	// CEL validation ensures EVPN is set when transport is EVPN.

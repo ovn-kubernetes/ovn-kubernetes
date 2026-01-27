@@ -199,6 +199,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 	}
 
 	if spec.GetTransport() == userdefinednetworkv1.TransportOptionEVPN {
+		if !util.IsEVPNEnabled() {
+			return nil, fmt.Errorf("EVPN transport requested but enable-evpn flag is not set")
+		}
 		netConfSpec.EVPN = renderEVPNConfig(spec, opts)
 	}
 
