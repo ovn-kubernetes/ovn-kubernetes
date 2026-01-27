@@ -417,6 +417,7 @@ print_params() {
      echo "KIND_INSTALL_PLUGINS = $KIND_INSTALL_PLUGINS"
      echo "KIND_INSTALL_KUBEVIRT = $KIND_INSTALL_KUBEVIRT"
      echo "KIND_OPT_OUT_KUBEVIRT_IPAM = $KIND_OPT_OUT_KUBEVIRT_IPAM"
+     echo "OCI_BIN = $OCI_BIN"
      echo "OVN_HA = $OVN_HA"
      echo "RUN_IN_CONTAINER = $RUN_IN_CONTAINER"
      echo "KIND_CLUSTER_NAME = $KIND_CLUSTER_NAME"
@@ -580,47 +581,25 @@ set_default_params() {
 
   # Set default values
   # Used for multi cluster setups
-  KIND_CREATE=${KIND_CREATE:-true}
   KIND_ADD_NODES=${KIND_ADD_NODES:-false}
-  KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  # Setup KUBECONFIG patch based on cluster-name
-  export KUBECONFIG=${KUBECONFIG:-${HOME}/${KIND_CLUSTER_NAME}.conf}
-  # Scrub any existing kubeconfigs at the path
-  if [ "${KIND_CREATE}" == true ]; then
-    rm -f ${KUBECONFIG}
-  fi
   MANIFEST_OUTPUT_DIR=${MANIFEST_OUTPUT_DIR:-${DIR}/../dist/yaml}
   if [ ${KIND_CLUSTER_NAME} != "ovn" ]; then
     MANIFEST_OUTPUT_DIR="${DIR}/../dist/yaml/${KIND_CLUSTER_NAME}"
   fi
   RUN_IN_CONTAINER=${RUN_IN_CONTAINER:-false}
   OVN_GATEWAY_MODE=${OVN_GATEWAY_MODE:-shared}
-  KIND_INSTALL_INGRESS=${KIND_INSTALL_INGRESS:-false}
-  KIND_INSTALL_METALLB=${KIND_INSTALL_METALLB:-false}
-  KIND_INSTALL_PLUGINS=${KIND_INSTALL_PLUGINS:-false}
-  KIND_INSTALL_KUBEVIRT=${KIND_INSTALL_KUBEVIRT:-false}
   KIND_OPT_OUT_KUBEVIRT_IPAM=${KIND_OPT_OUT_KUBEVIRT_IPAM:-false}
-  OVN_HA=${OVN_HA:-false}
-  KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
   KIND_LOCAL_REGISTRY_NAME=${KIND_LOCAL_REGISTRY_NAME:-kind-registry}
   KIND_LOCAL_REGISTRY_PORT=${KIND_LOCAL_REGISTRY_PORT:-5000}
   KIND_DNS_DOMAIN=${KIND_DNS_DOMAIN:-"cluster.local"}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
-  KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
-  PLATFORM_IPV4_SUPPORT=${PLATFORM_IPV4_SUPPORT:-true}
-  PLATFORM_IPV6_SUPPORT=${PLATFORM_IPV6_SUPPORT:-false}
   ENABLE_IPSEC=${ENABLE_IPSEC:-false}
-  OVN_HYBRID_OVERLAY_ENABLE=${OVN_HYBRID_OVERLAY_ENABLE:-false}
   OVN_DISABLE_SNAT_MULTIPLE_GWS=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-false}
   OVN_DISABLE_FORWARDING=${OVN_DISABLE_FORWARDING:=false}
   OVN_ENCAP_PORT=${OVN_ENCAP_PORT:-""}
   OVN_DISABLE_PKT_MTU_CHECK=${OVN_DISABLE_PKT_MTU_CHECK:-false}
-  OVN_EMPTY_LB_EVENTS=${OVN_EMPTY_LB_EVENTS:-false}
-  OVN_MULTICAST_ENABLE=${OVN_MULTICAST_ENABLE:-false}
   KIND_ALLOW_SYSTEM_WRITES=${KIND_ALLOW_SYSTEM_WRITES:-false}
-  OVN_IMAGE=${OVN_IMAGE:-local}
-  OVN_REPO=${OVN_REPO:-""}
-  OVN_GITREF=${OVN_GITREF:-""}
+
   MASTER_LOG_LEVEL=${MASTER_LOG_LEVEL:-5}
   NODE_LOG_LEVEL=${NODE_LOG_LEVEL:-5}
   DBCHECKER_LOG_LEVEL=${DBCHECKER_LOG_LEVEL:-5}
@@ -635,65 +614,14 @@ set_default_params() {
   if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
     OVN_EX_GW_NETWORK_INTERFACE="eth1"
   fi
-  MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
-  # Input not currently validated. Modify outside script at your own risk.
-  # These are the same values defaulted to in KIND code (kind/default.go).
-  # NOTE: KIND NET_CIDR_IPV6 default use a /64 but OVN have a /64 per host
-  # so it needs to use a larger subnet
-  #  Upstream - NET_CIDR_IPV6=fd00:10:244::/64 SVC_CIDR_IPV6=fd00:10:96::/112
-  NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
-  NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
-  if [ "$MULTI_POD_SUBNET" == true ]; then
-    NET_CIDR_IPV4="10.243.0.0/23/24,10.244.0.0/16"
-    NET_CIDR_IPV6="fd00:10:243::/63/64,fd00:10:244::/48"
-  fi
-  NET_SECOND_CIDR_IPV4=${NET_SECOND_CIDR_IPV4:-172.19.0.0/16}
-  SVC_CIDR_IPV4=${SVC_CIDR_IPV4:-10.96.0.0/16}
-  SVC_CIDR_IPV6=${SVC_CIDR_IPV6:-fd00:10:96::/112}
-  JOIN_SUBNET_IPV4=${JOIN_SUBNET_IPV4:-100.64.0.0/16}
-  JOIN_SUBNET_IPV6=${JOIN_SUBNET_IPV6:-fd98::/64}
-  MASQUERADE_SUBNET_IPV4=${MASQUERADE_SUBNET_IPV4:-169.254.0.0/17}
-  MASQUERADE_SUBNET_IPV6=${MASQUERADE_SUBNET_IPV6:-fd69::/112}
-  TRANSIT_SUBNET_IPV4=${TRANSIT_SUBNET_IPV4:-100.88.0.0/16}
-  TRANSIT_SUBNET_IPV6=${TRANSIT_SUBNET_IPV6:-fd97::/64}
-  METALLB_CLIENT_NET_SUBNET_IPV4=${METALLB_CLIENT_NET_SUBNET_IPV4:-172.22.0.0/16}
-  METALLB_CLIENT_NET_SUBNET_IPV6=${METALLB_CLIENT_NET_SUBNET_IPV6:-fc00:f853:ccd:e792::/64}
 
-  KIND_NUM_MASTER=1
-  OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-true}
   OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
-  OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
-
-
-  if [ "$OVN_COMPACT_MODE" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != false ]; then
-     echo "Compact mode cannot be used together with Interconnect"
-     exit 1
-  fi
-
-  if [ "$OVN_HA" == true ]; then
-    KIND_NUM_MASTER=3
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-0}
-  else
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
-  fi
 
   KIND_NUM_INFRA=${KIND_NUM_INFRA:-0}
   KIND_INSTALL_PROMETHEUS=${KIND_INSTALL_PROMETHEUS:-false}
 
-  if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
-    KIND_NUM_NODES_PER_ZONE=${KIND_NUM_NODES_PER_ZONE:-1}
-
-    TOTAL_NODES=$((KIND_NUM_WORKER + KIND_NUM_MASTER))
-    if [[ ${KIND_NUM_NODES_PER_ZONE} -gt 1 ]] && [[ $((TOTAL_NODES % KIND_NUM_NODES_PER_ZONE)) -ne 0 ]]; then
-      echo "(Total k8s nodes / number of nodes per zone) should be zero"
-      exit 1
-    fi
-  fi
-
   OVN_HOST_NETWORK_NAMESPACE=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
   OVN_EGRESSIP_HEALTHCHECK_PORT=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
-  METRICS_IP=${METRICS_IP:-""}
-  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
   OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
   OVN_METRICS_SCALE_ENABLE=${OVN_METRICS_SCALE_ENABLE:-false}
   OVN_ISOLATED=${OVN_ISOLATED:-false}
@@ -705,43 +633,8 @@ set_default_params() {
   if [ "$OVN_DUMMY_GATEWAY_BRIDGE" == true ]; then
     OVN_GATEWAY_OPTS="--allow-no-uplink --gateway-interface=br-ex"
   fi
-  ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
-  ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
-  if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
-    echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"
-    exit 1
-  fi
 
-  ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
-  if [[ $ENABLE_PRE_CONF_UDN_ADDR == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
-    echo "Preconfigured UDN addresses requires network-segmentation to be enabled (-nse)"
-    exit 1
-  fi
-  if [[ $ENABLE_PRE_CONF_UDN_ADDR == true && $OVN_ENABLE_INTERCONNECT != true ]]; then
-    echo "Preconfigured UDN addresses requires interconnect to be enabled (-ic)"
-    exit 1
-  fi
-
-  ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
-  if [[ $ENABLE_NETWORK_CONNECT == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
-    echo "Network connect requires network-segmentation to be enabled (-nse)"
-    exit 1
-  fi
-
-  DYNAMIC_UDN_ALLOCATION=${DYNAMIC_UDN_ALLOCATION:-false}
-  if [[ $DYNAMIC_UDN_ALLOCATION == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
-      echo "Dynamic UDN allocation requires network-segmentation to be enabled (-nse)"
-      exit 1
-  fi
-  DYNAMIC_UDN_GRACE_PERIOD=${DYNAMIC_UDN_GRACE_PERIOD:-120s}
-  OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
-  if [ "$OVN_COMPACT_MODE" == true ]; then
-    KIND_NUM_WORKER=0
-  fi
   OVN_MTU=${OVN_MTU:-1400}
-  OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
-  OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
-  ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
 }
 
 check_ipv6() {

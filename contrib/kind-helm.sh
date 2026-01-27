@@ -5,8 +5,6 @@ set -eo pipefail
 # Returns the full directory name of the script
 export DIR="$( cd -- "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-export OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
-
 # Source the kind-common.sh file from the same directory where this script is located
 source "${DIR}/kind-common.sh"
 
@@ -15,87 +13,17 @@ set_default_params() {
 
   # Set default values
   export KIND_CONFIG=${KIND_CONFIG:-}
-  export KIND_INSTALL_INGRESS=${KIND_INSTALL_INGRESS:-false}
-  export KIND_INSTALL_METALLB=${KIND_INSTALL_METALLB:-false}
-  export KIND_INSTALL_PLUGINS=${KIND_INSTALL_PLUGINS:-false}
-  export KIND_INSTALL_KUBEVIRT=${KIND_INSTALL_KUBEVIRT:-false}
-  export OVN_HA=${OVN_HA:-false}
-  export KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
-  export OVN_MULTICAST_ENABLE=${OVN_MULTICAST_ENABLE:-false}
-  export OVN_HYBRID_OVERLAY_ENABLE=${OVN_HYBRID_OVERLAY_ENABLE:-false}
-  export OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
-  export OVN_EMPTY_LB_EVENTS=${OVN_EMPTY_LB_EVENTS:-false}
-  export KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
-  export ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
-  export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
-  export ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
-  export ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
-  export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
-  export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
-  export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  export OVN_IMAGE=${OVN_IMAGE:-local}
-  export OVN_REPO=${OVN_REPO:-""}
-  export OVN_GITREF=${OVN_GITREF:-""}
-
-  # Setup KUBECONFIG patch based on cluster-name
-  export KUBECONFIG=${KUBECONFIG:-${HOME}/${KIND_CLUSTER_NAME}.conf}
-
   # Validated params that work
-  export MASQUERADE_SUBNET_IPV4=${MASQUERADE_SUBNET_IPV4:-169.254.0.0/17}
-  export MASQUERADE_SUBNET_IPV6=${MASQUERADE_SUBNET_IPV6:-fd69::/112}
-
-  # Input not currently validated. Modify outside script at your own risk.
-  # These are the same values defaulted to in KIND code (kind/default.go).
-  # NOTE: KIND NET_CIDR_IPV6 default use a /64 but OVN have a /64 per host
-  # so it needs to use a larger subnet
-  #  Upstream - NET_CIDR_IPV6=fd00:10:244::/64 SVC_CIDR_IPV6=fd00:10:96::/112
-  export NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
-  if [ "$MULTI_POD_SUBNET" == true ]; then
-      NET_CIDR_IPV4="10.243.0.0/23/24,10.244.0.0/16"
-  fi
-  export NET_SECOND_CIDR_IPV4=${NET_SECOND_CIDR_IPV4:-172.19.0.0/16}
-  export SVC_CIDR_IPV4=${SVC_CIDR_IPV4:-10.96.0.0/16}
-  export NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
-  export SVC_CIDR_IPV6=${SVC_CIDR_IPV6:-fd00:10:96::/112}
-  export JOIN_SUBNET_IPV4=${JOIN_SUBNET_IPV4:-100.64.0.0/16}
-  export JOIN_SUBNET_IPV6=${JOIN_SUBNET_IPV6:-fd98::/64}
-  export TRANSIT_SUBNET_IPV4=${TRANSIT_SUBNET_IPV4:-100.88.0.0/16}
-  export TRANSIT_SUBNET_IPV6=${TRANSIT_SUBNET_IPV6:-fd97::/64}
-  export METALLB_CLIENT_NET_SUBNET_IPV4=${METALLB_CLIENT_NET_SUBNET_IPV4:-172.22.0.0/16}
-  export METALLB_CLIENT_NET_SUBNET_IPV6=${METALLB_CLIENT_NET_SUBNET_IPV6:-fc00:f853:ccd:e792::/64}
-  export DYNAMIC_UDN_ALLOCATION=${DYNAMIC_UDN_ALLOCATION:-false}
-  export DYNAMIC_UDN_GRACE_PERIOD=${DYNAMIC_UDN_GRACE_PERIOD:-}
-
-  export KIND_NUM_MASTER=1
-  if [ "$OVN_HA" == true ]; then
-    KIND_NUM_MASTER=3
-  fi
-
-  OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-true}
-  if [ "$OVN_COMPACT_MODE" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != false ]; then
-     echo "Compact mode cannot be used together with Interconnect"
-     exit 1
-  fi
-
-
-  if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
-    KIND_NUM_NODES_PER_ZONE=${KIND_NUM_NODES_PER_ZONE:-1}
-    TOTAL_NODES=$((KIND_NUM_WORKER + KIND_NUM_MASTER))
-    if [[ ${KIND_NUM_NODES_PER_ZONE} -gt 1 ]] && [[ $((TOTAL_NODES % KIND_NUM_NODES_PER_ZONE)) -ne 0 ]]; then
-      echo "(Total k8s nodes / number of nodes per zone) should be zero"
-      exit 1
-    fi
-  else
-    KIND_NUM_NODES_PER_ZONE=0
-  fi
 
   # Hard code ipv4 support until IPv6 is implemented
-  export PLATFORM_IPV4_SUPPORT=true
-
-  export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
-  export MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
-  export ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
-  export METRICS_IP=${METRICS_IP:-""}
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
+    echo "kind-helm.sh does not support IPv6 yet"
+    exit 1
+  fi
+  if [ "$PLATFORM_IPV4_SUPPORT" != true ]; then
+    echo "kind-helm.sh only supports IPv4, must set PLATFORM_IPV4_SUPPORT to true "
+    exit 1
+  fi
 }
 
 usage() {
@@ -301,6 +229,7 @@ print_params() {
      echo ""
      echo "KIND_CONFIG_FILE = $KIND_CONFIG"
      echo "KUBECONFIG = $KUBECONFIG"
+     echo "OCI_BIN = $OCI_BIN"
      echo "KIND_INSTALL_INGRESS = $KIND_INSTALL_INGRESS"
      echo "KIND_INSTALL_METALLB = $KIND_INSTALL_METALLB"
      echo "KIND_INSTALL_PLUGINS = $KIND_INSTALL_PLUGINS"
