@@ -37,8 +37,29 @@ set_common_default_params() {
   K8S_VERSION=${K8S_VERSION:-v1.34.0}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
 
+  ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
+  ENABLE_EVPN=${ENABLE_EVPN:-false}
+  ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
+  ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
   BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.26.0.0/16}
   BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e796::/64}
+
+
+  ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
+    echo "Route advertisements requires multi-network to be enabled (-mne)"
+    exit 1
+  fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
+    echo "Route advertisements requires interconnect to be enabled (-ic)"
+    exit 1
+  fi
+
+  ENABLE_EVPN=${ENABLE_EVPN:-false}
+  if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+    echo "EVPN requires Route advertisements to be enabled (-rae)"
+    exit 1
+  fi
 }
 
 set_ovn_image() {

@@ -30,10 +30,6 @@ set_default_params() {
   export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
   export ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
   export ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
-  export ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
-  export ENABLE_EVPN=${ENABLE_EVPN:-false}
-  export ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
-  export ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
   export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
@@ -100,19 +96,6 @@ set_default_params() {
   export MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
   export ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
   export METRICS_IP=${METRICS_IP:-""}
-
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
-    echo "Route advertisements requires multi-network to be enabled (-mne)"
-    exit 1
-  fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
-    echo "Route advertisements requires interconnect to be enabled (-ic)"
-    exit 1
-  fi
-  if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
-    echo "EVPN requires Route advertisements to be enabled (-rae)"
-    exit 1
-  fi
 }
 
 usage() {

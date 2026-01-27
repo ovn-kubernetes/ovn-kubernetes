@@ -712,22 +712,6 @@ set_default_params() {
     exit 1
   fi
 
-  ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
-    echo "Route advertisements requires multi-network to be enabled (-mne)"
-    exit 1
-  fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
-    echo "Route advertisements requires interconnect to be enabled (-ic)"
-    exit 1
-  fi
-
-  ENABLE_EVPN=${ENABLE_EVPN:-false}
-  if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
-    echo "EVPN requires Route advertisements to be enabled (-rae)"
-    exit 1
-  fi
-
   ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
   if [[ $ENABLE_PRE_CONF_UDN_ADDR == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
     echo "Preconfigured UDN addresses requires network-segmentation to be enabled (-nse)"
@@ -750,8 +734,6 @@ set_default_params() {
       exit 1
   fi
   DYNAMIC_UDN_GRACE_PERIOD=${DYNAMIC_UDN_GRACE_PERIOD:-120s}
-  ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
-  ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
   if [ "$OVN_COMPACT_MODE" == true ]; then
     KIND_NUM_WORKER=0
