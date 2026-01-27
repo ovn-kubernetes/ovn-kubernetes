@@ -60,6 +60,7 @@ usage() {
     echo "                 [-dug | --dynamic-udn-removal-grace-period <seconds>]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
+    echo "                 [-noe | --no-overlay-enable]"
     echo "                 [--isolated]"
     echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
@@ -142,6 +143,7 @@ echo "-dug | --dynamic-udn-removal-grace-period <seconds>     Configure the grac
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
+echo "-noe | --no-overlay-enable                    Enable no overlay"
 echo ""
 }
 
@@ -372,6 +374,8 @@ parse_args() {
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
                                                   IC_ARG_PROVIDED=true
                                                   ;;
+            -noe | --no-overlay-enable)         ENABLE_NO_OVERLAY=true
+                                                  ;;
             --disable-ovnkube-identity)         OVN_ENABLE_OVNKUBE_IDENTITY=false
                                                 ;;
             -mtu  )                             shift
@@ -477,6 +481,7 @@ print_params() {
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "DYNAMIC_UDN_ALLOCATION = $DYNAMIC_UDN_ALLOCATION"
      echo "DYNAMIC_UDN_GRACE_PERIOD =  $DYNAMIC_UDN_GRACE_PERIOD"
+     echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -754,6 +759,18 @@ set_default_params() {
   DYNAMIC_UDN_GRACE_PERIOD=${DYNAMIC_UDN_GRACE_PERIOD:-120s}
   ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
   ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
+  ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+    echo "No-overlay mode requires route advertisement to be enabled (-rae)"
+    exit 1
+  fi
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
+    echo "No-overlay mode requires advertise the default network (-adv)"
+    exit 1
+  fi
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ -z "$OVN_MTU" ]; then
+    OVN_MTU=1500
+  fi
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
   if [ "$OVN_COMPACT_MODE" == true ]; then
     KIND_NUM_WORKER=0
@@ -1022,6 +1039,7 @@ create_ovn_kube_manifests() {
     --evpn-enable="${ENABLE_EVPN}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
+    --no-overlay-enable="${ENABLE_NO_OVERLAY}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
     --metrics-ip="${METRICS_IP}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
@@ -1372,7 +1390,7 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   fi
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_ffr_k8s
+  install_frr_k8s
 fi
 
 interconnect_arg_check
