@@ -479,67 +479,6 @@ print_params() {
      echo ""
 }
 
-install_jinjanator_renderer() {
-  # ensure jinjanator renderer installed
-  pipx install jinjanator[yaml]
-  pipx ensurepath --force >/dev/null
-  export PATH=~/.local/bin:$PATH
-}
-
-check_dependencies() {
-  if ! command_exists curl ; then
-    echo "Dependency not met: Command not found 'curl'"
-    exit 1
-  fi
-
-  if ! command_exists kubectl ; then
-    echo "'kubectl' not found, installing"
-    setup_kubectl_bin
-  fi
-
-  if ! command_exists kind ; then
-    echo "Dependency not met: Command not found 'kind'"
-    exit 1
-  fi
-
-  local kind_min="0.27.0"
-  local kind_cur
-  kind_cur=$(kind version -q)
-  if [ "$(echo -e "$kind_min\n$kind_cur" | sort -V | head -1)" != "$kind_min" ]; then
-    echo "Dependency not met: expected kind version >= $kind_min but have $kind_cur"
-    exit 1
-  fi
-
-  if ! command_exists jq ; then
-    echo "Dependency not met: Command not found 'jq'"
-    exit 1
-  fi
-
-  if ! command_exists awk ; then
-    echo "Dependency not met: Command not found 'awk'"
-    exit 1
-  fi
-
-  if ! command_exists jinjanate ; then
-    if ! command_exists pipx ; then
-      echo "Dependency not met: 'jinjanator' not installed and cannot install with 'pipx'"
-      exit 1
-    fi
-    echo "'jinjanate' not found, installing with 'pipx'"
-    install_jinjanator_renderer
-  fi
-
-  if ! command_exists docker && ! command_exists podman; then
-  	  echo "Dependency not met: Neither docker nor podman found"
-  	  exit 1
-  fi
-
-  if command_exists podman && ! command_exists skopeo; then
-    echo "Dependency not met: skopeo not installed. Run the following command to install it: 'sudo dnf install skopeo'"
-    exit 1
-  fi
-}
-
 OPENSSL=""
 set_openssl_binary() {
   for s in openssl openssl3; do
@@ -1061,7 +1000,7 @@ add_dns_hostnames() {
   done
 }
 
-check_dependencies
+check_common_dependencies
 # In order to allow providing arguments with spaces, e.g. "-vconsole:info -vfile:info"
 # the original command <parse_args $*> was replaced by <parse_args "$@">
 parse_args "$@"

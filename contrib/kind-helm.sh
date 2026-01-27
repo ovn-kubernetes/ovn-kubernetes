@@ -267,23 +267,11 @@ print_params() {
 }
 
 check_dependencies() {
-    if ! command_exists kubectl ; then
-      echo "'kubectl' not found, installing"
-      setup_kubectl_bin
-    fi
-
-    for cmd in "$OCI_BIN" kind helm go ; do \
-         if ! command_exists "$cmd" ; then
-           echo "Dependency not met: $cmd"
-           exit 1
-        fi
-    done
-
-    # check for currently unsupported features
-    if [ "${PLATFORM_IPV6_SUPPORT:-}" = "true" ]; then
-        echo "Fatal: PLATFORM_IPV6_SUPPORT support not implemented yet"
-        exit 1
-    fi
+  check_common_dependencies
+  if ! command_exists helm ; then
+    echo "'helm' not found, exiting"
+    exit 1
+  fi
 }
 
 helm_prereqs() {
