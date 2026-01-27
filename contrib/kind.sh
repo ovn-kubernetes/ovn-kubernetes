@@ -1334,7 +1334,7 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   fi
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_ffr_k8s
+  install_frr_k8s
 fi
 
 interconnect_arg_check

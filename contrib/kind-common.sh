@@ -860,7 +860,7 @@ destroy_bgp() {
   fi
 }
 
-install_ffr_k8s() {
+install_frr_k8s() {
   echo "Installing frr-k8s ..."
   clone_frr
 
