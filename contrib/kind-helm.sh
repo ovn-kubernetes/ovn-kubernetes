@@ -11,10 +11,6 @@ source "${DIR}/kind-common.sh"
 set_default_params() {
   set_common_default_params
 
-  # Set default values
-  export KIND_CONFIG=${KIND_CONFIG:-}
-  # Validated params that work
-
   # Hard code ipv4 support until IPv6 is implemented
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     echo "kind-helm.sh does not support IPv6 yet"
@@ -297,79 +293,6 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_instances=512
 }
 
-create_kind_cluster() {
-  [ -n "${KIND_CONFIG}" ] || {
-    KIND_CONFIG='/tmp/kind.yaml'
-
-    # Start of the kind configuration
-    cat <<EOT > /tmp/kind.yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        node-labels: "ingress-ready=true"
-        authorization-mode: "AlwaysAllow"
-EOT
-  }
-
-    # Add control-plane nodes based on OVN_HA status. If there are 2 or more worker nodes, use
-    # 2 of them them to host databases instead of creating additional control plane nodes.
-    if [ "$OVN_HA" == true ] && [ "$KIND_NUM_WORKER" -lt 2 ]; then
-        for i in {2..3}; do  # Have 3 control-plane nodes for HA
-            echo "- role: control-plane" >> /tmp/kind.yaml
-        done
-    fi
-
-    # Add worker nodes based on KIND_NUM_WORKER
-    for i in $(seq 1 $KIND_NUM_WORKER); do
-        echo "- role: worker" >> /tmp/kind.yaml
-    done
-    # kind only allows single subnet for pod network, while ovn-kubernetes supports multiple subnets.
-    # So we pick the first subnet from the provided list for kind configuration and store it in KIND_CIDR.
-    # remove host subnet mask info for kind configuration (when the subnet is set as 10.0.0.0/16/14)
-    KIND_CIDR_IPV4=$(echo "${NET_CIDR_IPV4}"| cut -d',' -f1 | cut -d'/' -f1,2 )
-
-    # Add networking configuration
-    cat <<EOT >> /tmp/kind.yaml
-networking:
-  disableDefaultCNI: true
-  kubeProxyMode: none
-  podSubnet: $KIND_CIDR_IPV4
-  serviceSubnet: $SVC_CIDR_IPV4
-EOT
-
-    kind delete clusters $KIND_CLUSTER_NAME ||:
-    kind create cluster --name $KIND_CLUSTER_NAME --image "${KIND_IMAGE}":"${K8S_VERSION}" --config "${KIND_CONFIG}" --retain
-    kind load docker-image --name $KIND_CLUSTER_NAME $OVN_IMAGE
-
-    # When using HA, label nodes to host db.
-    if [ "$OVN_HA" == true ]; then
-      kubectl label nodes k8s.ovn.org/ovnkube-db=true --overwrite \
-              -l node-role.kubernetes.io/control-plane
-      if [ "$KIND_NUM_WORKER" -ge 2 ]; then
-        for n in ovn-worker ovn-worker2; do
-            # We want OVN HA not Kubernetes HA
-            # leverage the kubeadm well-known label node-role.kubernetes.io/control-plane=
-            # to choose the nodes where ovn master components will be placed
-            kubectl label node "$n" k8s.ovn.org/ovnkube-db=true node-role.kubernetes.io/control-plane="" --overwrite
-        done
-      fi
-    fi
-
-    # Remove taint, so control-plane nodes can also schedule regular pods
-    if [ "$KIND_REMOVE_TAINT" == true ]; then
-      kubectl taint node "$n" node-role.kubernetes.io/master:NoSchedule- \
-              -l node-role.kubernetes.io/control-plane ||:
-      kubectl taint node "$n" node-role.kubernetes.io/control-plane:NoSchedule- \
-              -l node-role.kubernetes.io/control-plane ||:
-    fi
-}
-
 label_ovn_single_node_zones() {
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
@@ -470,6 +393,7 @@ if [ "$ENABLE_COREDUMPS" == true ]; then
   setup_coredumps
 fi
 detect_apiserver_url
+install_ovn_image
 docker_disable_ipv6
 coredns_patch
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then

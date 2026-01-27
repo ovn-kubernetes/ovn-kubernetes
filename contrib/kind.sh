@@ -574,7 +574,6 @@ set_default_params() {
   KIND_LOCAL_REGISTRY_NAME=${KIND_LOCAL_REGISTRY_NAME:-kind-registry}
   KIND_LOCAL_REGISTRY_PORT=${KIND_LOCAL_REGISTRY_PORT:-5000}
   KIND_DNS_DOMAIN=${KIND_DNS_DOMAIN:-"cluster.local"}
-  KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   ENABLE_IPSEC=${ENABLE_IPSEC:-false}
   OVN_DISABLE_SNAT_MULTIPLE_GWS=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-false}
   OVN_DISABLE_FORWARDING=${OVN_DISABLE_FORWARDING:=false}
@@ -740,38 +739,6 @@ scale_kind_cluster() {
   fi
 }
 
-create_kind_cluster() {
-  # Output of the jinjanate command
-  KIND_CONFIG_LCL=${DIR}/kind-${KIND_CLUSTER_NAME}.yaml
-
-  ovn_ip_family=${IP_FAMILY} \
-  ovn_ha=${OVN_HA} \
-  net_cidr="${KIND_CIDR}" \
-  svc_cidr=${SVC_CIDR} \
-  use_local_registy=${KIND_LOCAL_REGISTRY} \
-  dns_domain=${KIND_DNS_DOMAIN} \
-  ovn_num_master=${KIND_NUM_MASTER} \
-  ovn_num_worker=${KIND_NUM_WORKER} \
-  kind_num_infra=${KIND_NUM_INFRA} \
-  cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
-  kind_local_registry_port=${KIND_LOCAL_REGISTRY_PORT} \
-  kind_local_registry_name=${KIND_LOCAL_REGISTRY_NAME} \
-  jinjanate "${KIND_CONFIG}" -o "${KIND_CONFIG_LCL}"
-
-  # Create KIND cluster. For additional debug, add '--verbosity <int>': 0 None .. 3 Debug
-  if kind get clusters | grep "${KIND_CLUSTER_NAME}"; then
-    delete
-  fi
-  
-  if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
-    create_local_registry
-  fi
-  
-  kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
-
-  cat "${KUBECONFIG}"
-}
-
 create_ovn_kube_manifests() {
     local ovnkube_image=${OVN_IMAGE}
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
@@ -854,10 +821,6 @@ create_ovn_kube_manifests() {
     --mtu="${OVN_MTU}" \
     --enable-observ="${OVN_OBSERV_ENABLE}"
   popd
-}
-
-install_ovn_image() {
-  install_image ${OVN_IMAGE}
 }
 
 install_ovn_global_zone() {
