@@ -2,11 +2,9 @@ package metrics
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/pprof"
 	"os"
 	"path"
 	"regexp"
@@ -16,11 +14,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	utilwait "k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -417,26 +412,6 @@ func CheckPodRunsOnGivenNode(clientset kubernetes.Interface, labels []string, k8
 		strings.Join(labels, ","), k8sNodeName)
 }
 
-// using the cyrpto/tls module's GetCertificate() callback function helps in picking up
-// the latest certificate (due to cert rotation on cert expiry)
-func getTLSServer(addr, certFile, privKeyFile string, handler http.Handler) *http.Server {
-	tlsConfig := &tls.Config{
-		GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert, err := tls.LoadX509KeyPair(certFile, privKeyFile)
-			if err != nil {
-				return nil, fmt.Errorf("error generating x509 certs for metrics TLS endpoint: %v", err)
-			}
-			return &cert, nil
-		},
-	}
-	server := &http.Server{
-		Addr:      addr,
-		Handler:   handler,
-		TLSConfig: tlsConfig,
-	}
-	return server
-}
-
 // stringFlagSetterFunc is a func used for setting string type flag.
 type stringFlagSetterFunc func(string) (string, error)
 
@@ -482,25 +457,28 @@ func writePlainText(statusCode int, text string, w http.ResponseWriter) {
 	fmt.Fprintln(w, text)
 }
 
-// StartMetricsServer runs the prometheus listener so that OVN K8s metrics can be collected
-// It puts the endpoint behind TLS if certFile and keyFile are defined.
+// StartMetricsServer runs the prometheus listener so that OVN K8s metrics can be collected.
+// It now reuses the unified MetricServer implementation so it can share plumbing with the
+// OVN/OVS metrics server. TLS and pprof behaviour remain unchanged.
 func StartMetricsServer(bindAddress string, enablePprof bool, certFile string, keyFile string,
 	stopChan <-chan struct{}, wg *sync.WaitGroup) {
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-
-	if enablePprof {
-		mux.HandleFunc("/debug/pprof/", pprof.Index)
-		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
-		// Allow changes to log level at runtime
-		mux.HandleFunc("/debug/flags/v", stringFlagPutHandler(klogSetter))
+	opts := MetricServerOptions{
+		BindAddress: bindAddress,
+		CertFile:    certFile,
+		KeyFile:     keyFile,
+		EnablePprof: enablePprof,
+		// Use default registry/gatherer so existing metric registrations keep working.
+		Registerer: prometheus.DefaultRegisterer,
+		Gatherer:   prometheus.DefaultGatherer,
 	}
 
-	startMetricsServer(bindAddress, certFile, keyFile, mux, stopChan, wg)
+	server := NewMetricServer(opts, nil, nil)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		server.Run(stopChan)
+	}()
 }
 
 // StartOVNMetricsServer runs the prometheus listener so that OVN metrics can be collected
@@ -521,41 +499,4 @@ func StartOVNMetricsServer(opts MetricServerOptions,
 	}()
 
 	return metricsServer
-}
-
-func startMetricsServer(bindAddress, certFile, keyFile string, handler http.Handler, stopChan <-chan struct{}, wg *sync.WaitGroup) {
-	var server *http.Server
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		utilwait.Until(func() {
-			klog.Infof("Starting metrics server at address %q", bindAddress)
-			var listenAndServe func() error
-			if certFile != "" && keyFile != "" {
-				server = getTLSServer(bindAddress, certFile, keyFile, handler)
-				listenAndServe = func() error { return server.ListenAndServeTLS("", "") }
-			} else {
-				server = &http.Server{Addr: bindAddress, Handler: handler}
-				listenAndServe = func() error { return server.ListenAndServe() }
-			}
-
-			errCh := make(chan error)
-			go func() {
-				errCh <- listenAndServe()
-			}()
-			var err error
-			select {
-			case err = <-errCh:
-				err = fmt.Errorf("failed while running metrics server at address %q: %w", bindAddress, err)
-				utilruntime.HandleError(err)
-			case <-stopChan:
-				klog.Infof("Stopping metrics server at address %q", bindAddress)
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := server.Shutdown(shutdownCtx); err != nil {
-					klog.Errorf("Error stopping metrics server at address %q: %v", bindAddress, err)
-				}
-			}
-		}, 5*time.Second, stopChan)
-	}()
 }
