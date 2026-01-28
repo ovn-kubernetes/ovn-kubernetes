@@ -322,6 +322,10 @@ func SyncConntrackForExternalGateways(gwIPsToKeep sets.Set[string], isPodInLocal
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete conntrack entry for pod %s: %v", podIP.String(), err))
 			}
+			_, err = DeleteConntrack(podIP.String(), 0, "", netlink.ConntrackOrigSrcIP, validNextHopMACs)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to delete conntrack entry for pod %s: %v", podIP.String(), err))
+			}
 		}
 	}
 
