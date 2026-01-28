@@ -39,6 +39,7 @@ set_common_default_params() {
 }
 
 run_kubectl() {
+  kind export kubeconfig --name ovn
   local retries=0
   local attempts=10
   while true; do
