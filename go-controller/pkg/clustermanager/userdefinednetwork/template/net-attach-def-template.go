@@ -174,12 +174,14 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			netConfSpec.DefaultGatewayIPs = ipString(cfg.DefaultGatewayIPs)
 		}
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
-		// now generate transit subnet for layer2 topology
 		if cfg.Role == userdefinednetworkv1.NetworkRolePrimary {
+			// now generate transit subnet for layer2 topology
 			err := util.SetTransitSubnets(netConfSpec)
 			if err != nil {
 				return nil, err
 			}
+			// Only set join subnet for primary networks; secondary Layer2 networks don't need join subnets
+			netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
 		}
 	case userdefinednetworkv1.NetworkTopologyLocalnet:
 		cfg := spec.GetLocalnet()
