@@ -50,7 +50,6 @@ func TestNewMetricServerRunAndShutdown(t *testing.T) {
 	require.NotNil(t, server, "Server should not be nil")
 	require.NotNil(t, server.mux, "Server mux should not be nil")
 	require.NotNil(t, server.registerer, "Server registerer should not be nil")
-	require.NotNil(t, server.gatherer, "Server gatherer should not be nil")
 
 	// Start server in background
 	serverDone := make(chan struct{})
@@ -112,7 +111,6 @@ func TestNewMetricServerRunAndFailOnFatalError(t *testing.T) {
 	require.NotNil(t, server, "Server should not be nil")
 	require.NotNil(t, server.mux, "Server mux should not be nil")
 	require.NotNil(t, server.registerer, "Server registerer should not be nil")
-	require.NotNil(t, server.gatherer, "Server gatherer should not be nil")
 
 	// Start server in background
 	serverDone := make(chan struct{})
@@ -873,8 +871,8 @@ func TestHandleMetrics(t *testing.T) {
 			server := NewMetricServer(opts, ovsDBClient, kubeClient)
 			server.registerMetrics()
 
-			// iterate s.ovnRegistry to list all registered metrics' names
-			regMetrics, err := server.gatherer.Gather()
+			// Iterate server registry to list all registered metric names.
+			regMetrics, err := server.registerer.(prometheus.Gatherer).Gather()
 			if err != nil {
 				t.Fatalf("Failed to gather metrics: %v", err)
 			}

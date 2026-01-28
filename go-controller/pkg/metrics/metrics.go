@@ -467,9 +467,8 @@ func StartMetricsServer(bindAddress string, enablePprof bool, certFile string, k
 		CertFile:    certFile,
 		KeyFile:     keyFile,
 		EnablePprof: enablePprof,
-		// Use default registry/gatherer so existing metric registrations keep working.
+		// Use default registry so existing metric registrations keep working.
 		Registerer: prometheus.DefaultRegisterer,
-		Gatherer:   prometheus.DefaultGatherer,
 	}
 
 	server := NewMetricServer(opts, nil, nil)

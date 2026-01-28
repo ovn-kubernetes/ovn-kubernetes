@@ -44,7 +44,6 @@ type MetricServerOptions struct {
 
 	// Prometheus plumbing
 	Registerer prometheus.Registerer
-	Gatherer   prometheus.Gatherer
 
 	// Kubernetes integration
 	K8sClient   kubernetes.Interface
@@ -69,9 +68,8 @@ type MetricServer struct {
 	server *http.Server
 	mux    *http.ServeMux
 
-	// Prometheus registry / gatherer
+	// Prometheus registry
 	registerer prometheus.Registerer
-	gatherer   prometheus.Gatherer
 }
 
 // NewMetricServer creates a new MetricServer instance
@@ -80,26 +78,16 @@ func NewMetricServer(opts MetricServerOptions, ovsDBClient libovsdbclient.Client
 	if registerer == nil {
 		registerer = prometheus.NewRegistry()
 	}
-	gatherer := opts.Gatherer
-	if gatherer == nil {
-		if reg, ok := registerer.(prometheus.Gatherer); ok {
-			gatherer = reg
-		} else {
-			gatherer = prometheus.DefaultGatherer
-		}
-	}
 
-	// Create server instance
 	server := &MetricServer{
 		opts:        opts,
 		ovsDBClient: ovsDBClient,
 		registerer:  registerer,
-		gatherer:    gatherer,
 		kubeClient:  kubeClient,
 	}
 
 	server.mux = http.NewServeMux()
-	tg := prometheus.ToTransactionalGatherer(server.gatherer)
+	tg := prometheus.ToTransactionalGatherer(server.registerer.(prometheus.Gatherer))
 	metricsHandler := promhttp.HandlerForTransactional(tg, promhttp.HandlerOpts{})
 
 	server.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
