@@ -696,7 +696,7 @@ set_default_params() {
   OVN_EGRESSIP_HEALTHCHECK_PORT=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
   METRICS_IP=${METRICS_IP:-""}
   OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
-  OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
+  OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node ovs-node"}
   OVN_METRICS_SCALE_ENABLE=${OVN_METRICS_SCALE_ENABLE:-false}
   OVN_ISOLATED=${OVN_ISOLATED:-false}
   OVN_GATEWAY_OPTS=${OVN_GATEWAY_OPTS:-""}
