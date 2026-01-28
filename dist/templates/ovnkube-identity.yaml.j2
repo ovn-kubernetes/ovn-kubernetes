@@ -127,3 +127,23 @@ webhooks:
         resources: ["pods/status"] # Using /status subresource doesn't protect from other users changing the annotations
         scope: "*"
 {%- endif %}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ovn-kubernetes-admission-webhook-egressip
+webhooks:
+  - name: ovn-kubernetes-admission-webhook-egressip.k8s.io
+    clientConfig:
+      url: https://localhost:9443/egressip
+      caBundle: {{ webhook_ca_bundle }}
+    admissionReviewVersions: ['v1']
+    sideEffects: None
+    rules:
+      - operations: [ "CREATE", "UPDATE" ]
+        apiGroups: ["*"]
+        apiVersions: ["*"]
+        resources: ["egressip/status"] # Using /status subresource doesn't protect from other users changing the annotations
+        scope: "*"
+
