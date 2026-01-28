@@ -475,6 +475,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableServiceTemplateSupport    bool `gcfg:"enable-svc-template-support"`
 	EnableObservability             bool `gcfg:"enable-observability"`
 	EnableNetworkQoS                bool `gcfg:"enable-network-qos"`
+	AllowICMPNetPol                 bool `gcfg:"allow-icmp-netpol"`
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
@@ -1193,6 +1194,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Use stateless network policy feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableStatelessNetPol,
 		Value:       OVNKubernetesFeature.EnableStatelessNetPol,
+	},
+	&cli.BoolFlag{
+		Name:        "allow-icmp-netpol",
+		Usage:       "Configure to use enable ICMP and ICMPv6 traffic to not be denied by network policy.",
+		Destination: &cliConfig.OVNKubernetesFeature.AllowICMPNetPol,
+		Value:       OVNKubernetesFeature.AllowICMPNetPol,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-interconnect",
