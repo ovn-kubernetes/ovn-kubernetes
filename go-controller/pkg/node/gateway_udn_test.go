@@ -197,6 +197,9 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Output: "7",
 	})
 	fexec.AddFakeCmdsNoOutputNoError([]string{
+		"ovs-ofctl -O OpenFlow13 del-groups breth0",
+	})
+	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
 	})
 }

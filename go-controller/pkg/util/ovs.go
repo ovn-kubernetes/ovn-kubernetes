@@ -3,11 +3,13 @@ package util
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,24 +28,25 @@ const (
 	// adding internal ports on a non Hyper-V enabled host will call
 	// external Powershell commandlets.
 	// TODO: Decrease the timeout once port adding is improved on Windows
-	ovsCommandTimeout  = 15
-	ovsVsctlCommand    = "ovs-vsctl"
-	ovsOfctlCommand    = "ovs-ofctl"
-	ovsAppctlCommand   = "ovs-appctl"
-	ovnNbctlCommand    = "ovn-nbctl"
-	ovnSbctlCommand    = "ovn-sbctl"
-	ovnAppctlCommand   = "ovn-appctl"
-	ovsdbClientCommand = "ovsdb-client"
-	ovsdbToolCommand   = "ovsdb-tool"
-	ipCommand          = "ip"
-	powershellCommand  = "powershell"
-	netshCommand       = "netsh"
-	routeCommand       = "route"
-	sysctlCommand      = "sysctl"
-	osRelease          = "/etc/os-release"
-	rhel               = "RHEL"
-	ubuntu             = "Ubuntu"
-	windowsOS          = "windows"
+	ovsCommandTimeout         = 15
+	ovsVsctlCommand           = "ovs-vsctl"
+	ovsOfctlCommand           = "ovs-ofctl"
+	ovsAppctlCommand          = "ovs-appctl"
+	ovnNbctlCommand           = "ovn-nbctl"
+	ovnSbctlCommand           = "ovn-sbctl"
+	ovnAppctlCommand          = "ovn-appctl"
+	ovsdbClientCommand        = "ovsdb-client"
+	ovsdbToolCommand          = "ovsdb-tool"
+	ipCommand                 = "ip"
+	powershellCommand         = "powershell"
+	netshCommand              = "netsh"
+	routeCommand              = "route"
+	sysctlCommand             = "sysctl"
+	osRelease                 = "/etc/os-release"
+	rhel                      = "RHEL"
+	ubuntu                    = "Ubuntu"
+	windowsOS                 = "windows"
+	MaxOVSGroups       uint32 = 4294967040 // see https://docs.openvswitch.org/en/latest/ref/ovs-actions.7/
 )
 
 const (
@@ -697,6 +700,138 @@ func GetOFFlows(bridgeName string) ([]string, error) {
 	}
 
 	return flows, nil
+}
+
+// getOFGroups returns all available groups on bridge bridgeName.
+// On success, it will return a map like this:
+//
+//		1: type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)), \
+//	        bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8888))
+//		2: type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)), \
+//	        bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8888))]
+//
+// It is currently only used by ReplaceOFGroups.
+func getOFGroups(bridgeName string) (map[uint32]string, error) {
+	stdout, stderr, err := RunOVSOfctl("-O", "OpenFlow13", "dump-groups", bridgeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get groups on bridge %q:, stderr: %q, error: %w",
+			bridgeName, stderr, err)
+	}
+
+	groups := map[uint32]string{}
+	re := regexp.MustCompile(`group_id=([0-9]+),(.*)`)
+	for _, line := range strings.Split(stdout, "\n") {
+		matches := re.FindStringSubmatch(line)
+		// Don't throw an error here - instead, if the line doesn't match, ignore it (e.g., there are leading lines
+		// in the output that we're not interested in).
+		if len(matches) != 3 {
+			continue
+		}
+		groupID := matches[1]
+		groupIDInt, err := strconv.ParseUint(groupID, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get groups on bridge %q, "+
+				"could not convert group ID %q from line %q, err: %w", bridgeName, groupID, line, err)
+		}
+		groups[uint32(groupIDInt)] = strings.TrimSpace(matches[2])
+	}
+
+	return groups, nil
+}
+
+// delOFGroup deletes a group from the bridge if it exists.
+// It is currently only used by ReplaceOFGroups.
+func delOFGroup(bridgeName string, groupID uint32) error {
+	// We should never reach this ceiling.
+	if groupID >= MaxOVSGroups {
+		return fmt.Errorf("could not delete OF group, "+
+			"maximum number of existing groups is %d "+
+			"(bridge: %q, groupID: %d)",
+			MaxOVSGroups, bridgeName, groupID)
+	}
+
+	stdout, stderr, err := RunOVSOfctl("-O", "OpenFlow13", "del-groups", bridgeName, fmt.Sprintf("group_id=%d", groupID))
+	if err != nil {
+		return fmt.Errorf("failed to delete group %d on bridge %q:, stdout: %q, stderr: %q, error: %w",
+			groupID, bridgeName, stdout, stderr, err)
+	}
+	return nil
+}
+
+// flushOFGroups deletes all groups from the bridge.
+// It is currently only used by ReplaceOFGroups.
+func flushOFGroups(bridgeName string) error {
+	stdout, stderr, err := RunOVSOfctl("-O", "OpenFlow13", "del-groups", bridgeName)
+	if err != nil {
+		return fmt.Errorf("failed to flush all groups from bridge %q:, stdout: %q, stderr: %q, error: %w",
+			bridgeName, stdout, stderr, err)
+	}
+	return nil
+}
+
+// ReplaceOFGroups takes a map of group IDs to group strings and either modifies
+// existing groups or adds new groups with the provided group IDs. Groups that exist
+// on the bridge but are not in the provided map will be deleted.
+// The group strings should NOT contain group_id=<id>; it will be added automatically
+// based on the map key.
+func ReplaceOFGroups(bridgeName string, groups map[uint32]string) error {
+	// If an empty list of groups is provided, we can take a shortcut and flush all existing rules on the bridge.
+	if len(groups) == 0 {
+		return flushOFGroups(bridgeName)
+	}
+
+	existingGroups, err := getOFGroups(bridgeName)
+	if err != nil {
+		return err
+	}
+
+	// Validate that group strings do not contain group_id
+	for groupID, groupString := range groups {
+		if strings.Contains(groupString, "group_id=") {
+			return fmt.Errorf("group string for group %d should not contain 'group_id=', it will be added automatically: %q", groupID, groupString)
+		}
+	}
+
+	var errs []error
+
+	// Delete groups that exist but are not in the provided map.
+	for existingGroupID := range existingGroups {
+		if _, shouldKeep := groups[existingGroupID]; !shouldKeep {
+			if err := delOFGroup(bridgeName, existingGroupID); err != nil {
+				errs = append(errs, fmt.Errorf("could not delete group %d on bridge %q: %w", existingGroupID, bridgeName, err))
+				continue
+			}
+		}
+	}
+
+	// Apply the changes (add or modify groups).
+	for groupID, groupString := range groups {
+		var operation string
+		if _, exists := existingGroups[groupID]; exists {
+			operation = "mod-group"
+		} else {
+			operation = "add-group"
+		}
+
+		// Prepend group_id to the group string
+		fullGroupString := fmt.Sprintf("group_id=%d,%s", groupID, groupString)
+
+		args := []string{"-O", "OpenFlow13", operation, bridgeName, "-"}
+		stdin := &bytes.Buffer{}
+		stdin.Write([]byte(fullGroupString))
+
+		cmd := runner.exec.Command(runner.ofctlPath, args...)
+		cmd.SetStdin(stdin)
+		stdout, stderr, err := runCmd(cmd, runner.ofctlPath, args...)
+		if err != nil {
+			errs = append(errs,
+				fmt.Errorf("could not %s for group %d on bridge %q: stdout: %q, stderr: %q, err: %w",
+					operation, groupID, bridgeName, stdout, stderr, err))
+			continue
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // GetOpenFlowPorts names or numbers for a given bridge
