@@ -10,6 +10,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
+	"k8s.io/klog/v2"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1315,6 +1316,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
 			mutableNetInfo.AddNADs(namespace + "/" + udnName)
+			klog.Info("DEBUG: adding primary UDN to fake NM:", namespace, udnName)
 			fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
 			fakeNM.NADNetworks[namespace+"/"+udnName] = netInfo
 		}

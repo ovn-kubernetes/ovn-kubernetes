@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -106,6 +107,7 @@ func (fnm *FakeNetworkManager) Stop() {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
+	klog.Info("FakeNetworkManager:GetActiveNetworkForNamespace: ", namespace, " -> ", network)
 	if network == nil {
 		return nil, util.NewInvalidPrimaryNetworkError(namespace)
 	}
