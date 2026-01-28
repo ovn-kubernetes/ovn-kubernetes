@@ -990,11 +990,6 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 		statusToRemove = append(statusToRemove, status)
 		ipsToRemove.Insert(status.EgressIP)
 	}
-	// Adding the mark to annotations is bundled with status update in-order to minimise updates, cover the case where there is no update to status
-	// and mark annotation has been modified / removed. This should only occur for an update and the mark was previous set.
-	if ipsToAssign.Len() == 0 && ipsToRemove.Len() == 0 {
-		eIPC.ensureMark(old, new)
-	}
 
 	if ipsToRemove.Len() > 0 {
 		// The following is added as to ensure that we only add after having
@@ -1878,22 +1873,6 @@ var (
 
 func getEgressIPMarkAllocator() id.Allocator {
 	return id.NewIDAllocator("eip_mark", eipMarkMax-eipMarkMin)
-}
-
-// ensureMark ensures that if a mark was remove or changed value, then restore the mark.
-func (eIPC *egressIPClusterController) ensureMark(old, new *egressipv1.EgressIP) {
-	// Adding the mark to annotations is bundled with status update in-order to minimise updates, cover the case where there is no update to status
-	// and mark annotation has been modified / removed. This should only occur for an update and the mark was previous set.
-	if old != nil && new != nil {
-		if util.IsEgressIPMarkSet(old.Annotations) && util.EgressIPMarkAnnotationChanged(old.Annotations, new.Annotations) {
-			mark, _, err := eIPC.getOrAllocMark(new.Name)
-			if err != nil {
-				klog.Errorf("Failed to restore EgressIP %s mark because unable to retrieve mark: %v", new.Name, err)
-			} else if err = eIPC.patchEgressIP(new.Name, generateMarkPatchOp(mark)); err != nil {
-				klog.Errorf("Failed to restore EgressIP %s mark because patching failed: %v", new.Name, err)
-			}
-		}
-	}
 }
 
 // getOrAllocMark allocates a new mark integer for name using round-robin strategy if none was already allocated for name otherwise
