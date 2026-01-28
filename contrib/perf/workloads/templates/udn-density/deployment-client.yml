@@ -1,0 +1,57 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: client-{{.Replica}}
+spec:
+  replicas: 1 
+  selector:
+    matchLabels:
+      name: client-{{.Replica}}
+  template:
+    metadata:
+      labels:
+        name: client-{{.Replica}}
+        app: client
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: client
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/worker
+                operator: Exists
+              - key: node-role.kubernetes.io/infra
+                operator: DoesNotExist
+              - key: node-role.kubernetes.io/workload
+                operator: DoesNotExist
+      containers:
+      - name: client-app
+        image: quay.io/cloud-bulldozer/curl:latest
+        command: ["sleep", "inf"]
+        resources:
+          requests:
+            memory: "10Mi"
+            cpu: "10m"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: false
+        volumeMounts:
+        - name: podinfo
+          mountPath: /etc/podlabels
+      volumes:
+      - name: podinfo
+        downwardAPI:
+          items:
+            - path: "labels"
+              fieldRef:
+                fieldPath: metadata.labels
+      restartPolicy: Always
+  strategy:
+    type: RollingUpdate
