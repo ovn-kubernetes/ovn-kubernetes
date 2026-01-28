@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -16,6 +17,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -98,26 +100,14 @@ func (c *Controller) deleteConnectRouter(cncName string) error {
 	return nil
 }
 
-// syncNetworkConnections syncs all network connections for a CNC.
-// STEP2: Create the patch ports connecting network router's to the connect router
-// using IPs from the network subnet CNC annotation.
-// STEP3: If PodNetworkConnect is enabled, create the logical router policies on network router's
-// to steer traffic to the connect router for other connected networks.
-// STEP4: If PodNetworkConnect is enabled, add static routes to connect router towards
-// each of the connected networks.
-func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetworkConnect, allocatedSubnets map[string][]*net.IPNet) error {
-	cncName := cnc.Name
-	cncState, exists := c.cncCache[cncName]
-	if !exists || cncState == nil {
-		return fmt.Errorf("CNC %s not found in cache", cncName)
-	}
-
-	// Get all nodes - the connect-router needs static routes to ALL node subnets
+// computeNodeInfo lists all nodes and returns them along with a set of current node IDs.
+// It also updates c.localZoneNode for use by other functions.
+func (c *Controller) computeNodeInfo() ([]*corev1.Node, sets.Set[string], error) {
 	allNodes, err := c.nodeLister.List(labels.Everything())
 	if err != nil {
-		return fmt.Errorf("failed to list nodes: %v", err)
+		return nil, nil, fmt.Errorf("failed to list nodes: %v", err)
 	}
-	// Build set of current node IDs for comparison. (used for deleting ports for nodes that no longer exist)
+
 	currentNodeIDs := sets.New[string]()
 	var localNode *corev1.Node
 	for _, node := range allNodes {
@@ -127,9 +117,38 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		}
 		nodeID, err := util.GetNodeID(node)
 		if err != nil {
+			klog.Warningf("Failed to get node ID for node %s, skipping: %v", node.Name, err)
 			continue
 		}
 		currentNodeIDs.Insert(strconv.Itoa(nodeID))
+	}
+
+	c.localZoneNode = localNode
+	return allNodes, currentNodeIDs, nil
+}
+
+// syncNetworkConnections syncs all network connections for a CNC.
+// STEP2: Handle partial connectivity ACLs BEFORE creating network connections
+// This ensures drop rules are in place before connectivity is established (security)
+// STEP3: Create the patch ports connecting network router's to the connect router
+// using IPs from the network subnet CNC annotation.
+// STEP4: If PodNetworkConnect is enabled, create the logical router policies on network router's
+// to steer traffic to the connect router for other connected networks.
+// STEP5: If PodNetworkConnect is enabled, add static routes to connect router towards
+// each of the connected networks.
+// STEP6: If ClusterIPServiceNetwork connectivity if enabled, add load balancers of connected networks
+// to all other connected networks' switches.
+func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetworkConnect, allocatedSubnets map[string][]*net.IPNet) error {
+	cncName := cnc.Name
+	cncState, exists := c.cncCache[cncName]
+	if !exists || cncState == nil {
+		return fmt.Errorf("CNC %s not found in cache", cncName)
+	}
+
+	// Get all nodes - the connect-router needs static routes to ALL node subnets
+	allNodes, currentNodeIDs, err := c.computeNodeInfo()
+	if err != nil {
+		return fmt.Errorf("failed to compute node info for CNC %s: %w", cncName, err)
 	}
 
 	desiredNetworks := sets.New[string]()
@@ -143,7 +162,21 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		cncName, desiredNetworks.UnsortedList(), cncState.connectedNetworks.UnsortedList(),
 		networksToCreate.UnsortedList(), networksToDelete.UnsortedList())
 
+	serviceConnectivityDesired := serviceConnectivityEnabled(cnc)
+	podConnectivityDesired := podConnectivityEnabled(cnc)
+	partialConnectivityWasEnabled := cncState.clusterIPServiceNetworkEnabled && !cncState.podNetworkConnectEnabled
+	partialConnectivityDesired := serviceConnectivityDesired && !podConnectivityDesired
 	var errs []error
+
+	// Prepare partial connectivity ACLs if needed (service connectivity without pod connectivity)
+	var partialConnState *partialConnectivityState
+	if partialConnectivityDesired {
+		partialConnState, err = c.preparePartialConnectivityACLs(cncName, allocatedSubnets)
+		if err != nil {
+			klog.Warningf("CNC %s: failed to prepare partial connectivity ACLs: %v", cncName, err)
+			errs = append(errs, fmt.Errorf("CNC %s: failed to prepare partial connectivity ACLs: %w", cncName, err))
+		}
+	}
 
 	// Ensure ports, routing policies and static routes for ALL desired networks.
 	// All operations are idempotent (CreateOrUpdate), so we reconcile them on every sync.
@@ -167,7 +200,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			klog.V(4).Infof("Network with ID %d not found, skipping", networkID)
 			continue
 		}
-		localActive := localNode != nil && c.networkManager.NodeHasNetwork(localNode.Name, netInfo.GetNetworkName())
+		localActive := c.localZoneNode != nil && c.networkManager.NodeHasNetwork(c.localZoneNode.Name, netInfo.GetNetworkName())
 
 		// Check if the network router exists before trying to create ports on it.
 		// The network might be registered in the network manager but not yet created in OVN NB.
@@ -187,6 +220,19 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		// Build ops per network to keep transaction sizes bounded
 		var createOps []ovsdb.Operation
 
+		// Add partial connectivity ACLs to this network's switch
+		// This creates the ACLs (idempotent) and adds them to the switch
+		if partialConnectivityDesired {
+			switchName, ok := partialConnState.networkSwitches[networkID]
+			if ok {
+				createOps, err = c.ensurePartialConnectivityACLsOps(createOps, partialConnState, networkID, switchName)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("CNC %s: failed to ensure partial connectivity ACLs for network %s: %w", cncName, netInfo.GetNetworkName(), err))
+					continue
+				}
+			}
+		}
+
 		// Create/update ports connecting the connect router and network router
 		// Local node: full port pair with peer; Remote nodes: connect-router port only
 		// This is idempotent - existing ports are unchanged, new node ports are created
@@ -198,7 +244,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 
 		// Ensure routing policies on the network router (local-active networks only)
 		if localActive {
-			createOps, err = c.ensureRoutingPoliciesOps(createOps, cncName, netInfo, allocatedSubnets, localNode)
+			createOps, err = c.ensureRoutingPoliciesOps(createOps, cncName, netInfo, allocatedSubnets)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure routing policies for network %s: %w", cncName, netInfo.GetNetworkName(), err))
 				continue
@@ -214,7 +260,18 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			}
 		}
 
-		// Transact per network to keep transaction sizes bounded
+		// If ClusterIPServiceNetwork is enabled, add LB attachment ops to the same transaction
+		// This attaches this network's LBs to all other networks' switches in allocatedSubnets.
+		// Over the full loop, all pairs get covered (like routes and policies).
+		if serviceConnectivityDesired {
+			createOps, err = c.ensureLoadBalancersOps(createOps, netInfo, allocatedSubnets)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure load balancers for network %s: %w", cncName, netInfo.GetNetworkName(), err))
+				continue
+			}
+		}
+
+		// Transact all ops (ports, policies, routes, LBs, ACLs) in a single transaction per network
 		if len(createOps) > 0 {
 			if _, err := libovsdbops.TransactAndCheck(c.nbClient, createOps); err != nil {
 				errs = append(errs, fmt.Errorf("CNC %s: failed to execute create operations for network %s: %w", cncName, netInfo.GetNetworkName(), err))
@@ -223,7 +280,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			klog.Infof("CNC %s: executed %d create operations for network %s", cncName, len(createOps), netInfo.GetNetworkName())
 		}
 
-		// Update cache after successful transact for this network
+		// Update cache only after successful transaction (both network and service connectivity)
 		if isNewNetwork {
 			cncState.connectedNetworks.Insert(owner)
 		}
@@ -286,6 +343,8 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			klog.Warningf("Failed to parse owner key %s: %v", owner, err)
 			continue
 		}
+		// Build delete ops for this network
+		var deleteOps []ovsdb.Operation
 
 		// Find all ports matching this CNC and network ID (across all routers)
 		// This allows cleanup even if the network has been deleted from the network manager
@@ -309,8 +368,6 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			routerNames.Insert(routerName)
 		}
 
-		// Build delete ops for this network
-		var deleteOps []ovsdb.Operation
 		for routerName := range routerNames {
 			deleteOps, err = libovsdbops.DeleteLogicalRouterPortWithPredicateOps(c.nbClient, deleteOps, routerName,
 				func(item *nbdb.LogicalRouterPort) bool {
@@ -378,6 +435,38 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			continue
 		}
 
+		// If ClusterIPServiceNetwork is enabled, cleanup LB attachments for this network.
+		// Unlike the add case where bidirectionality happens naturally via the outer loop
+		// (each network attaches its LBs to others, covering all pairs), in delete the
+		// deleted network won't be iterated again. So we must explicitly cleanup both
+		// directions: remove this network's LBs from remaining switches AND remove
+		// remaining networks' LBs from this network's switch.
+		if serviceConnectivityDesired {
+			remainingNetworks := cncState.connectedNetworks.Clone()
+			remainingNetworks.Delete(owner)
+			deleteOps, err = c.cleanupLoadBalancersOps(deleteOps, networkID, remainingNetworks)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup service connectivity for network %s: %w", cncName, owner, err))
+			}
+		}
+
+		// Cleanup partial connectivity ACLs from this network's switch
+		// Try to get the switch name - network might still exist in network manager
+		if partialConnectivityWasEnabled {
+			deletedNetInfo := c.networkManager.GetNetworkByID(networkID)
+			if deletedNetInfo != nil {
+				deletedSwitchName, err := c.getNetworkSwitchName(deletedNetInfo)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("CNC %s: failed to get switch name for network %s during ACL cleanup: %w", cncName, owner, err))
+				} else {
+					deleteOps, err = c.cleanupPartialConnectivityACLsOps(deleteOps, cncName, networkID, deletedSwitchName)
+					if err != nil {
+						errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup partial connectivity ACLs for network %s: %w", cncName, owner, err))
+					}
+				}
+			}
+		}
+
 		// Transact per network to keep transaction sizes bounded
 		if len(deleteOps) > 0 {
 			if _, err := libovsdbops.TransactAndCheck(c.nbClient, deleteOps); err != nil {
@@ -391,14 +480,54 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		cncState.connectedNetworks.Delete(owner)
 	}
 
+	// If ClusterIPServiceNetwork was enabled but now disabled, cleanup all cross-network LB attachments
+	if !serviceConnectivityDesired && cncState.clusterIPServiceNetworkEnabled {
+		klog.V(4).Infof("CNC %s: ClusterIPServiceNetwork disabled, cleaning up cross-network LB attachments", cncName)
+		if err := c.cleanupServiceConnections(cncName); err != nil {
+			errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup service connectivity: %w", cncName, err))
+		}
+	}
+
+	// Cleanup partial connectivity ACLs if transitioning away from partial connectivity mode.
+	// Partial = service enabled && pod disabled. Cleanup needed when:
+	// - Service was enabled && pod was disabled (partial was active)
+	// - AND now either service is disabled OR pod is enabled
+	if partialConnectivityWasEnabled && !partialConnectivityDesired {
+		klog.V(4).Infof("CNC %s: partial connectivity disabled, cleaning up ACLs", cncName)
+		if err := c.cleanupPartialConnectivity(cncName); err != nil {
+			errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup partial connectivity: %w", cncName, err))
+		}
+	}
+
+	// Update state
+	cncState.clusterIPServiceNetworkEnabled = serviceConnectivityDesired
+	cncState.podNetworkConnectEnabled = podConnectivityDesired
+
 	return utilerrors.Join(errs...)
 }
 
 // cleanupNetworkConnections removes all network connections for a CNC.
 // This is called when a CNC is being deleted.
-// 1. First delete network router ports from the network routers for this CNC
-// 2. Then delete routing policies on the network routers for this CNC
-func (c *Controller) cleanupNetworkConnections(cncName string) error {
+// 1. If ClusterIPServiceNetwork was enabled, cleanup cross-network LB attachments for this CNC
+// 2. If partial connectivity was enabled (service && !pod), cleanup ACLs and address sets
+// 3. Then delete network router ports from the network routers for this CNC
+// 4. Then delete routing policies on the network routers for this CNC
+func (c *Controller) cleanupNetworkConnections(cncName string, serviceConnectivityWasEnabled, podConnectivityWasEnabled bool) error {
+	// Cleanup cross-network LB attachments if ClusterIPServiceNetwork was enabled
+	if serviceConnectivityWasEnabled {
+		if err := c.cleanupServiceConnections(cncName); err != nil {
+			return fmt.Errorf("failed to cleanup service connectivity for CNC %s: %v", cncName, err)
+		}
+	}
+
+	// Cleanup partial connectivity ACLs if partial was enabled (service enabled && pod disabled)
+	partialConnectivityWasEnabled := serviceConnectivityWasEnabled && !podConnectivityWasEnabled
+	if partialConnectivityWasEnabled {
+		if err := c.cleanupPartialConnectivity(cncName); err != nil {
+			return fmt.Errorf("failed to cleanup partial connectivity for CNC %s: %v", cncName, err)
+		}
+	}
+
 	var ops []ovsdb.Operation
 
 	// Find all ports owned by this CNC (across all routers and networks)
@@ -467,7 +596,6 @@ func (c *Controller) cleanupNetworkConnections(cncName string) error {
 			return fmt.Errorf("failed to delete routing policies from router %s: %w", routerName, err)
 		}
 	}
-
 	// Execute all delete operations
 	if len(ops) > 0 {
 		if _, err := libovsdbops.TransactAndCheck(c.nbClient, ops); err != nil {
@@ -677,7 +805,7 @@ func (c *Controller) createRouterPortOps(ops []ovsdb.Operation, routerName, port
 // For Layer3: creates policy for the local node only (each zone handles its own node)
 // For Layer2: creates a single policy (transit router is distributed)
 func (c *Controller) ensureRoutingPoliciesOps(ops []ovsdb.Operation, cncName string, srcNetwork util.NetInfo,
-	allocatedSubnets map[string][]*net.IPNet, localNode *corev1.Node) ([]ovsdb.Operation, error) {
+	allocatedSubnets map[string][]*net.IPNet) ([]ovsdb.Operation, error) {
 	networkRouterName := srcNetwork.GetNetworkScopedClusterRouterName()
 
 	// Get the source network's subnets to build the inport match
@@ -704,21 +832,21 @@ func (c *Controller) ensureRoutingPoliciesOps(ops []ovsdb.Operation, cncName str
 		// For Layer3, create policy for the local node
 		// If there's no local node (node moved to different zone), skip policy creation.
 		// The controller in the node's zone will handle its policies.
-		if localNode == nil {
+		if c.localZoneNode == nil {
 			klog.Infof("No local node found for zone %s, skipping routing policy "+
 				"creation for Layer3 network %s (node moved to different zone)", c.zone, srcNetwork.GetNetworkName())
 			return ops, nil
 		}
-		nodeID, err := util.GetNodeID(localNode)
+		nodeID, err := util.GetNodeID(c.localZoneNode)
 		if err != nil {
-			return nil, fmt.Errorf("local node %s does not have node ID: %v", localNode.Name, err)
+			return nil, fmt.Errorf("local node %s does not have node ID: %v", c.localZoneNode.Name, err)
 		}
 
-		inportName = srcNetwork.GetNetworkScopedRouterToSwitchPortName(localNode.Name)
+		inportName = srcNetwork.GetNetworkScopedRouterToSwitchPortName(c.localZoneNode.Name)
 
 		portPairInfo, err := GetP2PAddresses(srcConnectSubnets, nodeID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to calculate P2P IP addresses for node %s: %v", localNode.Name, err)
+			return nil, fmt.Errorf("failed to calculate P2P IP addresses for node %s: %v", c.localZoneNode.Name, err)
 		}
 		nexthops = util.IPNetsToIPs(portPairInfo.connectPortIPs)
 	} else if srcNetwork.TopologyType() == ovntypes.Layer2Topology {
@@ -962,4 +1090,590 @@ func (c *Controller) getNodeSubnet(netInfo util.NetInfo, nodeName string) ([]*ne
 		return nil, fmt.Errorf("failed to parse node subnet for network %s: %v", netInfo.GetNetworkName(), err)
 	}
 	return nodeSubnets, nil
+}
+
+// findClusterIPLoadBalancers finds all ClusterIP service load balancers for a network.
+// ClusterIP LBs have names ending with "_cluster" and are tagged with the network name.
+func (c *Controller) findClusterIPLoadBalancers(netInfo util.NetInfo) ([]*nbdb.LoadBalancer, error) {
+	networkName := netInfo.GetNetworkName()
+	result, err := c.findClusterIPLoadBalancersForNetworks(sets.New(networkName))
+	if err != nil {
+		return nil, err
+	}
+	return result[networkName], nil
+}
+
+// findClusterIPLoadBalancersForNetworks finds all ClusterIP service load balancers for multiple networks
+// in a single DB scan. Returns a map of networkName -> []*nbdb.LoadBalancer.
+// Each service maps to one load balancer per protocol (TCP/UDP/SCTP) for clusterIPs, externalIPs and loadbalancerVIPs.
+// So that's maximum 3 clusterIPload balancers per service. See services/loadbalancer.go for more details
+// (https://github.com/ovn-kubernetes/ovn-kubernetes/blob/9156a8259dc7c0a9f2150113f313219c643fa866/go-controller/pkg/ovn/controller/services/lb_config.go#L121).
+func (c *Controller) findClusterIPLoadBalancersForNetworks(networkNames sets.Set[string]) (map[string][]*nbdb.LoadBalancer, error) {
+	predicate := func(lb *nbdb.LoadBalancer) bool {
+		// Must be a Service LB
+		if lb.ExternalIDs[ovntypes.LoadBalancerKindExternalID] != "Service" {
+			return false
+		}
+		// Must belong to one of the networks
+		if !networkNames.Has(lb.ExternalIDs[ovntypes.NetworkExternalID]) {
+			return false
+		}
+		// Must be a ClusterIP LB (name contains "_cluster")
+		return strings.Contains(lb.Name, "_cluster")
+	}
+
+	lbs, err := libovsdbops.FindLoadBalancersWithPredicate(c.nbClient, predicate)
+	if err != nil {
+		return nil, err
+	}
+
+	// Group LBs by network name
+	result := make(map[string][]*nbdb.LoadBalancer)
+	for _, lb := range lbs {
+		networkName := lb.ExternalIDs[ovntypes.NetworkExternalID]
+		result[networkName] = append(result[networkName], lb)
+	}
+
+	return result, nil
+}
+
+// getNetworkSwitchName returns the logical switch name for a network for the local zone node.
+// For Layer2, there's a single distributed switch (localZoneNode is ignored).
+// For Layer3, there's a switch per node, and we use direct lookup by constructing
+// the switch name from the node name (avoiding predicate scan over all switches).
+// We only support 1 node per zone for this feature.
+func (c *Controller) getNetworkSwitchName(netInfo util.NetInfo) (string, error) {
+	switch netInfo.TopologyType() {
+	case ovntypes.Layer2Topology:
+		return netInfo.GetNetworkScopedSwitchName(""), nil
+	case ovntypes.Layer3Topology:
+		if c.localZoneNode == nil {
+			return "", fmt.Errorf("no local zone node found for layer3 network %s", netInfo.GetNetworkName())
+		}
+		return netInfo.GetNetworkScopedSwitchName(c.localZoneNode.Name), nil
+	default:
+		return "", fmt.Errorf("unsupported topology type: %s", netInfo.TopologyType())
+	}
+}
+
+// ensureLoadBalancersOps builds ops to attach this network's LBs to all other connectednetworks' switches.
+// This is called for each network in allocatedSubnets, so over the full reconciliation loop,
+// all pairs of networks get LB attachments in both directions (like routes and policies).
+// It finds ClusterIP LBs from each connected network and attaches them to the
+// switches of all OTHER connected networks.
+// NOTE: Service deletions are handled automatically by OVN weak references.
+// When an LB is deleted by the services controller, OVSDB automatically removes
+// the LB UUID from all LogicalSwitch.load_balancer columns (weak ref with min=0).
+func (c *Controller) ensureLoadBalancersOps(ops []ovsdb.Operation, netInfo util.NetInfo,
+	allocatedSubnets map[string][]*net.IPNet) ([]ovsdb.Operation, error) {
+
+	// Get this network's LBs
+	thisnetworkLBs, err := c.findClusterIPLoadBalancers(netInfo)
+	if err != nil {
+		return ops, fmt.Errorf("failed to find ClusterIP LBs for network %s: %w", netInfo.GetNetworkName(), err)
+	}
+
+	if len(thisnetworkLBs) == 0 {
+		klog.V(5).Infof("No ClusterIP LBs found for network %s, skipping service connectivity", netInfo.GetNetworkName())
+		return ops, nil
+	}
+
+	thisNetworkID := netInfo.GetNetworkID()
+	klog.V(5).Infof("Ensuring service connectivity for network %s (ID=%d): %d LBs",
+		netInfo.GetNetworkName(), thisNetworkID, len(thisnetworkLBs))
+
+	// Attach this network's LBs to all OTHER networks' switches.
+	// Note: We iterate allocatedSubnets again here (it's also iterated by the caller) because
+	// this creates the full mesh of LB attachments. The outer loop in syncNetworkConnections selects
+	// the SOURCE network (whose LBs are attached), while this inner loop finds all
+	// DESTINATION networks (whose switches receive the LBs). This is O(N²) which is intentional
+	// for a full mesh connectivity between N networks.
+	// This is typically fine since number of networks that are expected to be connected by a CNC is small, eg. 10.
+	for otherOwner := range allocatedSubnets {
+		_, otherNetworkID, err := util.ParseNetworkOwner(otherOwner)
+		if err != nil {
+			klog.Warningf("Failed to parse network owner key %s: %v", otherOwner, err)
+			continue
+		}
+
+		// Skip same network - LBs are already attached by services controller
+		if otherNetworkID == thisNetworkID {
+			continue
+		}
+
+		otherNetInfo := c.networkManager.GetNetworkByID(otherNetworkID)
+		if otherNetInfo == nil {
+			klog.Warningf("Network with ID %d not found", otherNetworkID)
+			continue
+		}
+
+		otherSwitchName, err := c.getNetworkSwitchName(otherNetInfo)
+		if err != nil {
+			klog.Warningf("Failed to get switch name for network %s: %v", otherNetInfo.GetNetworkName(), err)
+			continue
+		}
+
+		// Attach this network's LBs to other network's switch
+		otherSwitch := &nbdb.LogicalSwitch{Name: otherSwitchName}
+		addOps, err := libovsdbops.AddLoadBalancersToLogicalSwitchOps(c.nbClient, nil, otherSwitch, thisnetworkLBs...)
+		if err != nil {
+			return ops, fmt.Errorf("failed to create ops to attach LBs to switch %s: %w", otherSwitchName, err)
+		}
+		ops = append(ops, addOps...)
+		klog.V(5).Infof("Adding %d LBs from network %d to switch %s (network %d)",
+			len(thisnetworkLBs), thisNetworkID, otherSwitchName, otherNetworkID)
+	}
+
+	return ops, nil
+}
+
+// cleanupServiceConnections removes all cross-network LB attachments for a CNC.
+// Called when ClusterIPServiceNetwork is disabled on the CNC or when CNC is deleted.
+// Uses the cache to determine which networks had LB attachments (stale cache is correct
+// here since we want to clean up what was previously connected).
+// Since cleanupLoadBalancersOps is bidirectional (removes A's LBs from B AND B's LBs from A),
+// we only need to iterate each network once with "remaining" being networks after it in the list.
+// This covers all pairs exactly once: A↔B, A↔C, B↔C for networks [A, B, C].
+func (c *Controller) cleanupServiceConnections(cncName string) error {
+	cncState, exists := c.cncCache[cncName]
+	if !exists || cncState == nil {
+		return fmt.Errorf("CNC %s state not found in cache", cncName)
+	}
+
+	networkList := cncState.connectedNetworks.UnsortedList()
+	var ops []ovsdb.Operation
+
+	for i, owner := range networkList {
+		_, networkID, err := util.ParseNetworkOwner(owner)
+		if err != nil {
+			klog.Warningf("Failed to parse network owner key %s: %v", owner, err)
+			continue
+		}
+
+		// Only pass networks AFTER this one as "remaining"
+		// Since cleanupLoadBalancersOps is bidirectional, this covers all pairs without redundancy
+		remaining := sets.New[string]()
+		for j := i + 1; j < len(networkList); j++ {
+			remaining.Insert(networkList[j])
+		}
+
+		if remaining.Len() == 0 {
+			continue // Last network, all pairs already handled
+		}
+
+		ops, err = c.cleanupLoadBalancersOps(ops, networkID, remaining)
+		if err != nil {
+			klog.Warningf("Failed to cleanup LBs for network %d: %v", networkID, err)
+		}
+	}
+
+	if len(ops) > 0 {
+		if _, err := libovsdbops.TransactAndCheck(c.nbClient, ops); err != nil {
+			return fmt.Errorf("failed to cleanup service connectivity: %w", err)
+		}
+		klog.Infof("CNC %s: cleaned up %d cross-network LB attachment operations", cncName, len(ops))
+	}
+
+	return nil
+}
+
+// cleanupLoadBalancersOps creates ops to cleanup cross-network LB attachments
+// when a network is disconnected from a CNC with ClusterIPServiceNetwork enabled.
+// This removes:
+// 1. Disconnected network's LBs from remaining connected networks' switches
+// 2. Remaining connected networks' LBs from disconnected network's switches
+func (c *Controller) cleanupLoadBalancersOps(ops []ovsdb.Operation,
+	disconnectedNetworkID int, remainingNetworks sets.Set[string]) ([]ovsdb.Operation, error) {
+
+	// Try to get the disconnected network's info - it might still exist in network manager
+	disconnectedNetInfo := c.networkManager.GetNetworkByID(disconnectedNetworkID)
+	if disconnectedNetInfo == nil {
+		// Network no longer exists in network manager - we can't find its LBs or switches
+		// But the LBs belonging to this network will be deleted by services controller when
+		// the network is fully removed, and weak refs will auto-cleanup
+		klog.V(4).Infof("Disconnected network ID %d not found in network manager, skipping LB cleanup", disconnectedNetworkID)
+		return ops, nil
+	}
+
+	// Find LBs for the disconnected network
+	disconnectedLBs, err := c.findClusterIPLoadBalancers(disconnectedNetInfo)
+	if err != nil {
+		return ops, fmt.Errorf("failed to find LBs for disconnected network: %w", err)
+	}
+
+	// Find switch for the disconnected network
+	disconnectedSwitchName, err := c.getNetworkSwitchName(disconnectedNetInfo)
+	if err != nil {
+		return ops, fmt.Errorf("failed to get switch name for disconnected network: %w", err)
+	}
+
+	// First pass: collect remaining network info (names and switch names)
+	remainingNetworkNames := sets.New[string]()
+	remainingSwitchNames := make(map[string]string) // networkName -> switchName
+	for remainingOwner := range remainingNetworks {
+		_, networkID, err := util.ParseNetworkOwner(remainingOwner)
+		if err != nil {
+			klog.Warningf("Failed to parse remaining network owner key %s: %v", remainingOwner, err)
+			continue
+		}
+		remainingNetInfo := c.networkManager.GetNetworkByID(networkID)
+		if remainingNetInfo == nil {
+			klog.Warningf("Network with ID %d not found", networkID)
+			continue
+		}
+
+		switchName, err := c.getNetworkSwitchName(remainingNetInfo)
+		if err != nil {
+			klog.Warningf("Failed to get switch name for remaining network %s: %v", remainingNetInfo.GetNetworkName(), err)
+			continue
+		}
+
+		networkName := remainingNetInfo.GetNetworkName()
+		remainingNetworkNames.Insert(networkName)
+		remainingSwitchNames[networkName] = switchName
+	}
+
+	// Find all LBs for remaining networks in a single DB scan
+	remainingLBsByNetwork, err := c.findClusterIPLoadBalancersForNetworks(remainingNetworkNames)
+	if err != nil {
+		return ops, fmt.Errorf("failed to find LBs for remaining networks: %w", err)
+	}
+
+	// Build ops for each remaining network
+	for networkName, switchName := range remainingSwitchNames {
+		// Remove disconnected network's LBs from remaining network's switch
+		if len(disconnectedLBs) > 0 {
+			sw := &nbdb.LogicalSwitch{Name: switchName}
+			removeOps, err := libovsdbops.RemoveLoadBalancersFromLogicalSwitchOps(c.nbClient, nil, sw, disconnectedLBs...)
+			if err != nil {
+				klog.Warningf("Failed to create ops to remove LBs from switch %s: %v", switchName, err)
+				continue
+			}
+			ops = append(ops, removeOps...)
+			klog.V(5).Infof("Removing %d LBs from disconnected network %s from switch %s",
+				len(disconnectedLBs), disconnectedNetInfo.GetNetworkName(), switchName)
+		}
+
+		// Remove remaining network's LBs from disconnected network's switch
+		remainingLBs := remainingLBsByNetwork[networkName]
+		if len(remainingLBs) > 0 {
+			sw := &nbdb.LogicalSwitch{Name: disconnectedSwitchName}
+			removeOps, err := libovsdbops.RemoveLoadBalancersFromLogicalSwitchOps(c.nbClient, nil, sw, remainingLBs...)
+			if err != nil {
+				klog.Warningf("Failed to create ops to remove LBs from switch %s: %v", disconnectedSwitchName, err)
+				continue
+			}
+			ops = append(ops, removeOps...)
+			klog.V(5).Infof("Removing %d LBs of remaining network %s from disconnected switch %s",
+				len(remainingLBs), networkName, disconnectedSwitchName)
+		}
+	}
+
+	return ops, nil
+}
+
+// getConnectedUDNSubnetsAddressSetDbIDs returns DbObjectIDs for a partial connectivity address set.
+func getConnectedUDNSubnetsAddressSetDbIDs(cncName string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+		})
+}
+
+// partialConnectivityState holds pre-computed ACLs for partial connectivity.
+// This is built once at the start of syncNetworkConnections and reused per-network.
+type partialConnectivityState struct {
+	sharedACLs      []*nbdb.ACL       // allow-service + drop-pod (same for all switches)
+	perNetworkACLs  map[int]*nbdb.ACL // networkID -> allow-same-network ACL
+	networkSwitches map[int]string    // networkID -> switch name
+}
+
+// preparePartialConnectivityACLs creates the address set and builds the shared ACLs, and per-network ACLs.
+// This is called once before the network creation loop.
+// Returns nil if there are fewer than 2 networks (no partial connectivity needed).
+func (c *Controller) preparePartialConnectivityACLs(cncName string, allocatedSubnets map[string][]*net.IPNet) (*partialConnectivityState, error) {
+
+	state := &partialConnectivityState{
+		perNetworkACLs:  make(map[int]*nbdb.ACL),
+		networkSwitches: make(map[int]string),
+	}
+
+	// Collect all subnets for the address set, and build per-network ACLs
+	var allSubnets []string
+	for owner := range allocatedSubnets {
+		_, networkID, err := util.ParseNetworkOwner(owner)
+		if err != nil {
+			klog.Warningf("Failed to parse owner key %s: %v", owner, err)
+			continue
+		}
+
+		netInfo := c.networkManager.GetNetworkByID(networkID)
+		if netInfo == nil {
+			klog.Warningf("Network with ID %d not found", networkID)
+			continue
+		}
+
+		// Get switch name for this network
+		switchName, err := c.getNetworkSwitchName(netInfo)
+		if err != nil {
+			klog.Warningf("Failed to get switch name for network %s: %v", netInfo.GetNetworkName(), err)
+			continue
+		}
+		state.networkSwitches[networkID] = switchName
+
+		// Get the actual network subnets (pod subnets) for the address set
+		var networkSubnets []string
+		for _, subnet := range netInfo.Subnets() {
+			if subnet.CIDR != nil {
+				subnetStr := subnet.CIDR.String()
+				allSubnets = append(allSubnets, subnetStr)
+				networkSubnets = append(networkSubnets, subnetStr)
+			}
+		}
+
+		// Build allow-same-network ACL for this network (priority 475)
+		if len(networkSubnets) > 0 {
+			acl := c.buildAllowSameNetworkACL(cncName, networkID, networkSubnets)
+			if acl != nil {
+				state.perNetworkACLs[networkID] = acl
+			}
+		}
+	}
+
+	// Create address set directly (not as ops) - this is simpler than passing ops around
+	dbIDs := getConnectedUDNSubnetsAddressSetDbIDs(cncName)
+	as, err := c.addressSetFactory.NewAddressSet(dbIDs, allSubnets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create address set: %w", err)
+	}
+
+	// Get the hashed address set names for ACL matches
+	hashNameV4, hashNameV6 := as.GetASHashNames()
+
+	// Build shared ACLs (allow-service at 500, drop at 450)
+	state.sharedACLs = c.buildSharedPartialConnectivityACLs(cncName, hashNameV4, hashNameV6)
+
+	return state, nil
+}
+
+// ensurePartialConnectivityACLsOps builds ops to add partial connectivity ACLs to a network's switch.
+// The ACLs are created/updated first, then added to the switch.
+// Note: Address set is already created in preparePartialConnectivityACLs.
+func (c *Controller) ensurePartialConnectivityACLsOps(ops []ovsdb.Operation, state *partialConnectivityState,
+	networkID int, switchName string) ([]ovsdb.Operation, error) {
+
+	if state == nil {
+		return ops, nil
+	}
+
+	// Build the ACL list for this switch: shared ACLs + this network's allow-same-network ACL
+	switchACLs := append([]*nbdb.ACL{}, state.sharedACLs...)
+	if perNetACL, exists := state.perNetworkACLs[networkID]; exists {
+		switchACLs = append(switchACLs, perNetACL)
+	}
+
+	// Create/update ACLs (idempotent - first network creates them, others are no-op)
+	var err error
+	ops, err = libovsdbops.CreateOrUpdateACLsOps(c.nbClient, ops, nil, switchACLs...)
+	if err != nil {
+		return ops, fmt.Errorf("failed to create ACL ops: %w", err)
+	}
+
+	// Add ACLs to this switch
+	ops, err = libovsdbops.AddACLsToLogicalSwitchOps(c.nbClient, ops, switchName, switchACLs...)
+	if err != nil {
+		return ops, fmt.Errorf("failed to add ACLs to switch %s: %w", switchName, err)
+	}
+
+	return ops, nil
+}
+
+// cleanupPartialConnectivityACLsOps builds ops to remove partial connectivity ACLs from a network's switch.
+// Called when a network is disconnected.
+func (c *Controller) cleanupPartialConnectivityACLsOps(ops []ovsdb.Operation, cncName string,
+	networkID int, switchName string) ([]ovsdb.Operation, error) {
+
+	// Find all ACLs owned by this CNC
+	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+		})
+	aclPredicate := libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil)
+	acls, err := libovsdbops.FindACLsWithPredicate(c.nbClient, aclPredicate)
+	if err != nil {
+		return ops, fmt.Errorf("failed to find ACLs for CNC %s: %w", cncName, err)
+	}
+
+	if len(acls) == 0 {
+		return ops, nil
+	}
+
+	// Remove all CNC ACLs from this switch
+	// ACLs are owned by switches, so removing from switches will garbage-collect the ACL rows
+	ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(c.nbClient, ops,
+		func(sw *nbdb.LogicalSwitch) bool {
+			return sw.Name == switchName
+		}, acls...)
+	if err != nil {
+		return ops, fmt.Errorf("failed to remove ACLs from switch %s: %w", switchName, err)
+	}
+
+	return ops, nil
+}
+
+// buildSharedPartialConnectivityACLs builds the shared ACLs for partial connectivity.
+// These ACLs are identical across all switches: allow-service (500) and drop-pod (450).
+// The allow-same-network ACLs (475) are built separately per-network.
+func (c *Controller) buildSharedPartialConnectivityACLs(cncName, addressSetNameV4, addressSetNameV6 string) []*nbdb.ACL {
+	var acls []*nbdb.ACL
+
+	// Build allow-service ACL match combining all service CIDRs (single ACL)
+	var serviceMatches []string
+	for _, serviceCIDR := range config.Kubernetes.ServiceCIDRs {
+		ipPrefix := "ip4"
+		if utilnet.IsIPv6CIDR(serviceCIDR) {
+			ipPrefix = "ip6"
+		}
+		serviceMatches = append(serviceMatches, fmt.Sprintf("%s.dst == %s", ipPrefix, serviceCIDR.String()))
+	}
+
+	if len(serviceMatches) > 0 {
+		allowMatch := fmt.Sprintf("(%s)", strings.Join(serviceMatches, " || "))
+		dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+			map[libovsdbops.ExternalIDKey]string{
+				libovsdbops.ObjectNameKey: cncName,
+				libovsdbops.TypeKey:       "allow-service",
+			})
+		allowServiceACL := libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectAllowServiceTrafficPriority,
+			allowMatch, nbdb.ACLActionPass, nil, libovsdbutil.LportEgress, 0)
+		acls = append(acls, allowServiceACL)
+	}
+
+	// Build drop-pod ACL match based on IP mode (single ACL)
+	// This drops any new connections to connected networks' pod subnets.
+	// Same-network traffic is allowed by the per-network allow-same-network ACLs
+	// at higher priority (475). Service traffic is allowed by allow-service ACL (500).
+	// We only match on dst (not src) because:
+	// 1. This ACL is on egress (from-lport), so it only evaluates outbound pod traffic
+	// 2. Matching only dst is more restrictive - blocks traffic regardless of source
+	var dropMatch string
+	switch {
+	case config.IPv4Mode && config.IPv6Mode:
+		dropMatch = fmt.Sprintf("(ip4.dst == $%s || ip6.dst == $%s) && ct.new",
+			addressSetNameV4, addressSetNameV6)
+	case config.IPv4Mode:
+		dropMatch = fmt.Sprintf("ip4.dst == $%s && ct.new", addressSetNameV4)
+	case config.IPv6Mode:
+		dropMatch = fmt.Sprintf("ip6.dst == $%s && ct.new", addressSetNameV6)
+	}
+
+	if dropMatch != "" {
+		dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+			map[libovsdbops.ExternalIDKey]string{
+				libovsdbops.ObjectNameKey: cncName,
+				libovsdbops.TypeKey:       "drop-pod",
+			})
+		dropPodACL := libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectDropPodTrafficPriority,
+			dropMatch, nbdb.ACLActionDrop, nil, libovsdbutil.LportEgress, 0)
+		acls = append(acls, dropPodACL)
+	}
+
+	return acls
+}
+
+// buildAllowSameNetworkACL builds an ACL that allows traffic within the same network.
+// This ACL has priority 475, sitting between allow-service (500) and drop-pod (450).
+// It prevents the drop ACL from blocking intra-network communication when only
+// ClusterIPServiceNetwork connectivity is requested (without PodNetwork).
+func (c *Controller) buildAllowSameNetworkACL(cncName string, networkID int, subnets []string) *nbdb.ACL {
+	// Separate subnets by IP family
+	var v4Subnets, v6Subnets []string
+	for _, subnet := range subnets {
+		_, ipNet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			klog.Warningf("Failed to parse subnet %s: %v", subnet, err)
+			continue
+		}
+		if ipNet.IP.To4() != nil {
+			v4Subnets = append(v4Subnets, subnet)
+		} else {
+			v6Subnets = append(v6Subnets, subnet)
+		}
+	}
+
+	// Build match for same-network traffic (src and dst both in this network's subnets)
+	var matches []string
+	for _, v4Subnet := range v4Subnets {
+		matches = append(matches, fmt.Sprintf("(ip4.src == %s && ip4.dst == %s)", v4Subnet, v4Subnet))
+	}
+	for _, v6Subnet := range v6Subnets {
+		matches = append(matches, fmt.Sprintf("(ip6.src == %s && ip6.dst == %s)", v6Subnet, v6Subnet))
+	}
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	allowMatch := strings.Join(matches, " || ")
+
+	dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+			libovsdbops.TypeKey:       fmt.Sprintf("allow-same-network-%d", networkID),
+		})
+
+	return libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectAllowSameNetworkPriority,
+		allowMatch, nbdb.ACLActionPass, nil, libovsdbutil.LportEgress, 0)
+}
+
+// cleanupPartialConnectivity removes partial connectivity ACLs and address sets for a CNC.
+func (c *Controller) cleanupPartialConnectivity(cncName string) error {
+	// Find all ACLs owned by this CNC using proper DbObjectIDs predicate
+	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+		})
+	aclPredicate := libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil)
+	acls, err := libovsdbops.FindACLsWithPredicate(c.nbClient, aclPredicate)
+	if err != nil {
+		return fmt.Errorf("failed to find ACLs for CNC %s: %w", cncName, err)
+	}
+
+	if len(acls) == 0 {
+		// No ACLs to clean up, but still try to clean address sets
+		goto cleanupAddressSets
+	}
+
+	// Remove ACLs from all switches that have them
+	// ACLs are owned by switches, so removing from switches will garbage-collect the ACL rows
+	err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(c.nbClient,
+		func(sw *nbdb.LogicalSwitch) bool {
+			// Check if any of the ACLs are on this switch
+			for _, aclUUID := range sw.ACLs {
+				for _, acl := range acls {
+					if aclUUID == acl.UUID {
+						return true
+					}
+				}
+			}
+			return false
+		}, acls...)
+	if err != nil {
+		return fmt.Errorf("failed to remove ACLs from switches: %w", err)
+	}
+
+cleanupAddressSets:
+	// Delete address sets using proper DbObjectIDs predicate
+	asPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+		})
+	asPredicate := libovsdbops.GetPredicate[*nbdb.AddressSet](asPredicateIDs, nil)
+	err = libovsdbops.DeleteAddressSetsWithPredicate(c.nbClient, asPredicate)
+	if err != nil {
+		return fmt.Errorf("failed to delete address sets for CNC %s: %w", cncName, err)
+	}
+
+	klog.V(4).Infof("CNC %s: cleaned up partial connectivity ACLs", cncName)
+	return nil
 }

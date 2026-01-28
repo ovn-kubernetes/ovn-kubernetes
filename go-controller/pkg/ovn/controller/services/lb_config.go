@@ -131,7 +131,7 @@ var protos = []corev1.Protocol{
 //   - services with NodePort set but *without* ExternalTrafficPolicy=Local or
 //     affinity timeout set.
 func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.EndpointSlice, nodeInfos []nodeInfo,
-	useLBGroup, useTemplates bool) (perNodeConfigs, templateConfigs, clusterConfigs []lbConfig) {
+	useLBGroup, useTemplates bool, netInfo util.NetInfo) (perNodeConfigs, templateConfigs, clusterConfigs []lbConfig) {
 
 	needsAffinityTimeout := hasSessionAffinityTimeOut(service)
 
@@ -225,7 +225,7 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 		// - ETP=local service backed by non-local-host-networked endpoints
 		//
 		// In that case, we need to create per-node LBs.
-		if hasHostEndpoints(clusterEndpoints.V4IPs) || hasHostEndpoints(clusterEndpoints.V6IPs) || internalTrafficLocal {
+		if hasHostEndpoints(clusterEndpoints.V4IPs, netInfo) || hasHostEndpoints(clusterEndpoints.V6IPs, netInfo) || internalTrafficLocal {
 			perNodeConfigs = append(perNodeConfigs, clusterIPConfig)
 		} else {
 			clusterConfigs = append(clusterConfigs, clusterIPConfig)
