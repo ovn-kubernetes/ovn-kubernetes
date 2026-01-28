@@ -21,7 +21,6 @@ spec:
 {{- range .NeighborsIPv4 }}
       - address: {{ . }}
         asn: 64512
-        disableMP: true
         toReceive:
           allowed:
             mode: filtered
@@ -33,7 +32,6 @@ spec:
 {{- range .NeighborsIPv6 }}
       - address: {{ . }}
         asn: 64512
-        disableMP: true
         toReceive:
           allowed:
             mode: filtered
