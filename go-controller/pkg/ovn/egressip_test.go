@@ -382,6 +382,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					Nexthops:    nodeLogicalRouterIPv4,
 					ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					UUID:        "reroute-UUID",
+					Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 				},
 				&nbdb.LogicalRouterPolicy{
 					Priority:    types.DefaultNoRereoutePriority,
@@ -598,6 +599,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					Nexthops:    []string{node1MgntIP.To4().String()},
 					ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					UUID:        "reroute-UUID",
+					Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 				},
 				&nbdb.LogicalRouterPolicy{
 					Priority:    types.DefaultNoRereoutePriority,
@@ -862,6 +864,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							Nexthops:    node2LogicalRouterIPv4,
 							ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 							UUID:        "reroute-UUID",
+							Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 						},
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.DefaultNoRereoutePriority,
@@ -1219,6 +1222,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							Nexthops:    node2LogicalRouterIPv4,
 							ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 							UUID:        "reroute-UUID",
+							Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 						},
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.DefaultNoRereoutePriority,
@@ -1640,6 +1644,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							Nexthops:    []string{node2MgntIP.To4().String()},
 							ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 							UUID:        "reroute-UUID",
+							Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 						},
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.DefaultNoRereoutePriority,
@@ -4239,6 +4244,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    nodeLogicalRouterIPv6,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouter{
 						Name:     types.OVNClusterRouter,
@@ -6228,6 +6234,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    node2LogicalRouterIPv6,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouter{
 						Name:     types.OVNClusterRouter,
@@ -6976,6 +6983,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    nodeLogicalRouterIPv4,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouter{
 						Name: types.OVNClusterRouter,
@@ -7305,6 +7313,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					Nexthops:    nodeLogicalRouterIPv4,
 					ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					UUID:        "reroute-UUID1",
+					Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 				}
 				node1GR := &nbdb.LogicalRouter{
 					Name:    types.GWRouterPrefix + node1.Name,
@@ -7735,6 +7744,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    nodeLogicalRouterIPv4,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(pas.egressIPName, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					}
 					node1GR.Nat = []string{"egressip-nat-UUID1"}
 
@@ -9052,6 +9062,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    node2LogicalRouterIPv4,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID",
@@ -9197,6 +9208,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								Match:       "ip.src == 10.128.3.8",
 								Priority:    types.EgressIPReroutePriority,
 								Action:      nbdb.LogicalRouterPolicyActionReroute,
+								Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 							},
 							&nbdb.LogicalRouter{
 								Name:     types.OVNClusterRouter,
@@ -10663,6 +10675,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					Nexthops:    nodeLogicalRouterIPv4,
 					ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					UUID:        "reroute-UUID1",
+					Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 				}
 				node1GR.Nat = []string{"egressip-nat-UUID1"}
 				egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
@@ -11002,6 +11015,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    nodeLogicalRouterIPv4,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, ipfamily, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					}
 					if isEgressIPv6 {
 						podReRoutePolicy.Nexthops = nodeLogicalRouterIPv6
@@ -11354,6 +11368,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    []string{node2IPv4TranSwitchIP},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouter{
 						Name:     types.OVNClusterRouter,
@@ -11731,6 +11746,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 									Nexthops:    []string{"100.64.0.2"},
 									ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, eipNamespace, "egress-pod2", IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs(),
 									UUID:        "hostnet-pod-reroute-UUID1",
+									Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 								},
 								&nbdb.NAT{
 									UUID:        "hostnet-pod-egressip-nat-UUID1",
@@ -11967,6 +11983,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								Nexthops:    []string{"100.64.0.2"},
 								ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod3.Namespace, egressPod3.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 								UUID:        "reroute-UUID1",
+								Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 							},
 							&nbdb.LogicalRouterPolicy{
 								Priority:    types.EgressIPReroutePriority,
@@ -11975,6 +11992,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								Nexthops:    []string{"100.64.0.2"},
 								ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod4.Namespace, egressPod4.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 								UUID:        "reroute-UUID2",
+								Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 							},
 							&nbdb.LogicalRouter{
 								Name:     types.OVNClusterRouter,
@@ -12350,6 +12368,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							Nexthops:    node2LogicalRouterIPv4,
 							ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 							UUID:        "reroute-UUID",
+							Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 						},
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.EgressIPReroutePriority,
@@ -12358,6 +12377,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							Nexthops:    nodeLogicalRouterIPv4,
 							ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP2.Name, egressPod2.Namespace, egressPod2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 							UUID:        "eip2-reroute-UUID",
+							Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 						},
 						&nbdb.LogicalRouterPolicy{
 							Priority:    types.DefaultNoRereoutePriority,
@@ -12861,6 +12881,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    []string{"100.64.0.2"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouterPolicy{
 						Priority:    types.EgressIPReroutePriority,
@@ -12869,6 +12890,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    []string{"100.64.0.2"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod2.Namespace, egressPod2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID2",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouter{
 						Name: types.OVNClusterRouter,
@@ -13018,6 +13040,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    []string{"100.64.0.2", "100.64.0.3"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouterPolicy{
 						Priority:    types.EgressIPReroutePriority,
@@ -13026,6 +13049,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    []string{"100.64.0.2", "100.64.0.3"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod2.Namespace, egressPod2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID2",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID1",
@@ -13179,6 +13203,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    nodeLogicalRouterIPv4,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID1",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.LogicalRouterPolicy{
 						Priority:    types.EgressIPReroutePriority,
@@ -13187,6 +13212,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops:    nodeLogicalRouterIPv4,
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod2.Namespace, egressPod2.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 						UUID:        "reroute-UUID2",
+						Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID1",
@@ -14060,7 +14086,8 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops: []string{"100.64.0.2", "100.64.0.4"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, egressPod1.Namespace, egressPod1.Name,
 							"ip4", types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
-						UUID: "reroute-UUID1",
+						UUID:    "reroute-UUID1",
+						Options: map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID1",
@@ -14246,7 +14273,8 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Nexthops: []string{"100.64.0.2", "100.64.0.3"},
 						ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, egressPod1.Namespace, egressPod1.Name,
 							"ip4", types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
-						UUID: "reroute-UUID1",
+						UUID:    "reroute-UUID1",
+						Options: map[string]string{"ecmp_symmetric_reply": "true"},
 					},
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID1",
@@ -15224,6 +15252,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					Nexthops:    []string{"100.64.0.2"},
 					ExternalIDs: getEgressIPLRPReRouteDbIDs(eipName, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
 					UUID:        reroutePolicyUUID,
+					Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 				})
 				data = append(data, &nbdb.NAT{
 					UUID:        podNatUUID,
@@ -15668,6 +15697,7 @@ func getReRoutePolicy(podIP, ipFamily, uuid string, nextHops []string, externalI
 		Nexthops:    nextHops,
 		ExternalIDs: externalID,
 		UUID:        uuid,
+		Options:     map[string]string{"ecmp_symmetric_reply": "true"},
 	}
 }
 
