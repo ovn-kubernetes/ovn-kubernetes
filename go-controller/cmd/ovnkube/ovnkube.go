@@ -14,6 +14,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -261,6 +262,13 @@ func determineOvnkubeRunMode(ctx *cli.Context) (*ovnkubeRunMode, error) {
 	return mode, nil
 }
 
+// Determine if we should serve both opvnkube-node and OVN/OVS metrics on a single endpoint.
+func combineMetricsEndpoints() bool {
+	return config.Metrics.BindAddress != "" &&
+		config.Metrics.BindAddress == config.Metrics.OVNMetricsBindAddress &&
+		config.OvnKubeNode.Mode != types.NodeModeDPUHost
+}
+
 func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 	pidfile := ctx.String("pidfile")
 	if pidfile != "" {
@@ -311,9 +319,9 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 
 	eventRecorder := util.EventRecorder(ovnClientset.KubeClient)
 
-	// Start metric server for master and node. Expose the metrics HTTP endpoint if configured.
+	// Start the general metrics server only when not combined.
 	// Non LE master instances also are required to expose the metrics server.
-	if config.Metrics.BindAddress != "" {
+	if config.Metrics.BindAddress != "" && !combineMetricsEndpoints() {
 		metrics.StartMetricsServer(config.Metrics.BindAddress, config.Metrics.EnablePprof,
 			config.Metrics.NodeServerCert, config.Metrics.NodeServerPrivKey, ctx.Done(), ovnKubeStartWg)
 	}
@@ -621,6 +629,13 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				EnableOVNControllerMetrics: true,
 				EnableOVNNorthdMetrics:     true,
 				EnableOVNDBMetrics:         true,
+			}
+
+			if combineMetricsEndpoints() {
+				// Reuse the default registry/gatherer so ovnkube-node metrics and OVN metrics share one endpoint.
+				opts.Registerer = prometheus.DefaultRegisterer
+				opts.Gatherer = prometheus.DefaultGatherer
+				opts.EnablePprof = config.Metrics.EnablePprof
 			}
 
 			if !config.OVNKubernetesFeature.EnableInterconnect {
