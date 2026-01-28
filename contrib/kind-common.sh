@@ -1234,3 +1234,21 @@ create_kind_cluster() {
 
   cat "${KUBECONFIG}"
 }
+
+remove_no_schedule_taint() {
+  KIND_NODES=$(kind_get_nodes | sort)
+  for n in $KIND_NODES; do
+    # do not error if it fails to remove the taint
+    kubectl taint node "$n" node-role.kubernetes.io/control-plane:NoSchedule- || true
+  done
+}
+
+label_ovn_ha() {
+  MASTER_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort | head -n "${KIND_NUM_MASTER}")
+  # We want OVN HA not Kubernetes HA
+  # leverage the kubeadm well-known label node-role.kubernetes.io/control-plane=
+  # to choose the nodes where ovn master components will be placed
+  for n in $MASTER_NODES; do
+    kubectl label node "$n" k8s.ovn.org/ovnkube-db=true node-role.kubernetes.io/control-plane="" --overwrite
+  done
+}

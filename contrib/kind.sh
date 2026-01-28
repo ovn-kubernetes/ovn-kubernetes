@@ -852,20 +852,12 @@ install_ovn() {
   run_kubectl apply -f rbac-ovnkube-master.yaml
   run_kubectl apply -f rbac-ovnkube-node.yaml
   run_kubectl apply -f rbac-ovnkube-db.yaml
-  MASTER_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort | head -n "${KIND_NUM_MASTER}")
-  # We want OVN HA not Kubernetes HA
-  # leverage the kubeadm well-known label node-role.kubernetes.io/control-plane=
-  # to choose the nodes where ovn master components will be placed
-  for n in $MASTER_NODES; do
-    kubectl label node "$n" k8s.ovn.org/ovnkube-db=true node-role.kubernetes.io/control-plane="" --overwrite
-    if [ "$KIND_REMOVE_TAINT" == true ]; then
-      # do not error if it fails to remove the taint
-      # remove both master and control-plane taints until master is removed from 1.25
-      # // https://github.com/kubernetes/kubernetes/pull/107533
-      kubectl taint node "$n" node-role.kubernetes.io/master:NoSchedule- || true
-      kubectl taint node "$n" node-role.kubernetes.io/control-plane:NoSchedule- || true
-    fi
-  done
+  if [ "${OVN_HA}" == "true" ]; then
+    label_ovn_ha
+  fi
+  if [ "$KIND_REMOVE_TAINT" == true ]; then
+    remove_no_schedule_taint
+  fi
 
   run_kubectl apply -f ovs-node.yaml
 

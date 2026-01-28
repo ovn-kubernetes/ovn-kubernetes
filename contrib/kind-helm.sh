@@ -311,7 +311,6 @@ label_ovn_multiple_nodes_zones() {
 
 create_ovn_kubernetes() {
     cd ${DIR}/../helm/ovn-kubernetes
-    MASTER_REPLICAS=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l)
     if [[ $KIND_NUM_NODES_PER_ZONE == 1 ]]; then
       label_ovn_single_node_zones
       value_file="values-single-node-zone.yaml"
@@ -321,10 +320,12 @@ create_ovn_kubernetes() {
       value_file="values-multi-node-zone.yaml"
       ovnkube_db_options=""
     else
+      label_ovn_ha
       value_file="values-no-ic.yaml"
       ovnkube_db_options="--set tags.ovnkube-db-raft=$(if [ "${OVN_HA}" == "true" ]; then echo "true"; else echo "false"; fi) \
                           --set tags.ovnkube-db=$(if [ "${OVN_HA}" == "false" ]; then echo "true"; else echo "false"; fi)"
     fi
+    MASTER_REPLICAS=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l)
     echo "value_file=${value_file}"
     # For multi-pod-subnet case, NET_CIDR_IPV4 is a list of CIDRs separated by comma.
     # When Helm encounters a comma within a string value in a --set argument, it attempts to parse the comma as a separator
@@ -395,6 +396,9 @@ fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   deploy_frr_external_container
   deploy_bgp_external_server
+fi
+if [ "$KIND_REMOVE_TAINT" == true ]; then
+  remove_no_schedule_taint
 fi
 create_ovn_kubernetes
 
