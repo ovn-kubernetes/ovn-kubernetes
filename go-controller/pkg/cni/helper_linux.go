@@ -22,6 +22,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -817,6 +818,10 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 				if err != nil {
 					return fmt.Errorf("failed to bring down container interface %s %s: %v", pr.IfName, podDesc, err)
 				}
+				err = util.GetNetLinkOps().LinkSetMTU(link, config.DefaultVFMTU)
+				if err != nil {
+					return fmt.Errorf("failed to reset MTU on the container interface %s %s: %v", pr.IfName, podDesc, err)
+				}
 				// rename netdevice to make sure it is unique in the host namespace:
 				// if original name of netdevice is empty, sandbox id and a '0' letter prefix is used to make up the unique name.
 				oldName := ifInfo.NetdevName
@@ -925,11 +930,21 @@ func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
 		// DEL should be idempotent; don't return an error just log it
 		klog.Warningf("Failed to delete pod %q OVS port %s: %v\n  %q", podDesc, ifaceName, err, string(out))
 	}
-	// skip deleting representor ports
-	if pr.CNIConf.DeviceID == "" {
-		if err = util.LinkDelete(ifaceName); err != nil {
-			klog.Warningf("Failed to delete pod %q interface %s: %v", podDesc, ifaceName, err)
+
+	link, err := util.GetNetLinkOps().LinkByName(ifaceName)
+	if err == nil {
+		// skip deleting representor ports
+		if pr.CNIConf.DeviceID == "" {
+			if err = util.GetNetLinkOps().LinkDelete(link); err != nil {
+				klog.Warningf("Failed to delete pod %q interface %s: %v", podDesc, ifaceName, err)
+			}
+		} else {
+			if err = util.GetNetLinkOps().LinkSetMTU(link, config.DefaultVFMTU); err != nil {
+				klog.Warningf("Failed to reset MTU of pod %q interface %s: %v", podDesc, ifaceName, err)
+			}
 		}
+	} else {
+		klog.Warningf("Failed to reset MTU and/or delete the host-side link %s: %v", ifaceName, err)
 	}
 }
 
