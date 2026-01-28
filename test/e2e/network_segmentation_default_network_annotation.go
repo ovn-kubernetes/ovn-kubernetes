@@ -272,7 +272,6 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 								"103.0.0.2",
 								"2014:100:200::2",
 							}),
-							MTU:  1500,
 							IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled},
 						},
 					},
@@ -411,6 +410,19 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 		}
 		_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1StaticIP))
 		Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
+
+		// North-South traffic validation: test egress from static IP pods to external host
+		By("Validating north-south egress traffic from pod-1 with static IP")
+		Eventually(func() error {
+			_, _, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, "curl -s --connect-timeout 5 ifconfig.me")
+			return err
+		}, 2*time.Minute, 6*time.Second).Should(Succeed(), "Egress traffic from pod-1 to external host should succeed")
+
+		By("Validating north-south egress traffic from pod-2 with static IP")
+		Eventually(func() error {
+			_, _, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, "curl -s --connect-timeout 5 ifconfig.me")
+			return err
+		}, 2*time.Minute, 6*time.Second).Should(Succeed(), "Egress traffic from pod-2 to external host should succeed")
 		})
 
 		It("should attach pods to both CUDN primary with static IP/MAC and UDN secondary", func() {
@@ -456,7 +468,6 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 								"103.0.0.2",
 								"2014:100:200::2",
 							}),
-							MTU:  1500,
 							IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled},
 						},
 					},
@@ -500,7 +511,6 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 							"104.0.0.0/16",
 							"2014:100:300::0/60",
 						}),
-						MTU:  1400,
 						IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled},
 					},
 				},
@@ -770,7 +780,6 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 								"103.0.0.2",
 								"2014:100:200::2",
 							}),
-							MTU:  1500,
 							IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled},
 						},
 					},
@@ -800,7 +809,6 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 								"103.0.0.2",
 								"2014:100:200::2",
 							}),
-							MTU:  1500,
 							IPAM: &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled},
 						},
 					},
