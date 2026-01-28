@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -35,10 +36,15 @@ type MetricServerOptions struct {
 	EnableOVNDBMetrics         bool
 	EnableOVNControllerMetrics bool
 	EnableOVNNorthdMetrics     bool
+	EnablePprof                bool
 
 	// OnFatalError is called when an unrecoverable error occurs (e.g., failed to bind to address).
 	// If set, it allows the caller to trigger a graceful shutdown.
 	OnFatalError func()
+
+	// Prometheus plumbing
+	Registerer prometheus.Registerer
+	Gatherer   prometheus.Gatherer
 
 	// Kubernetes integration
 	K8sClient   kubernetes.Interface
@@ -63,34 +69,58 @@ type MetricServer struct {
 	server *http.Server
 	mux    *http.ServeMux
 
-	// Prometheus registries
-	ovnRegistry *prometheus.Registry
+	// Prometheus registry / gatherer
+	registerer prometheus.Registerer
+	gatherer   prometheus.Gatherer
 }
 
 // NewMetricServer creates a new MetricServer instance
 func NewMetricServer(opts MetricServerOptions, ovsDBClient libovsdbclient.Client, kubeClient kubernetes.Interface) *MetricServer {
+	registerer := opts.Registerer
+	if registerer == nil {
+		registerer = prometheus.NewRegistry()
+	}
+	gatherer := opts.Gatherer
+	if gatherer == nil {
+		if reg, ok := registerer.(prometheus.Gatherer); ok {
+			gatherer = reg
+		} else {
+			gatherer = prometheus.DefaultGatherer
+		}
+	}
+
 	// Create server instance
 	server := &MetricServer{
 		opts:        opts,
 		ovsDBClient: ovsDBClient,
-		ovnRegistry: prometheus.NewRegistry(),
+		registerer:  registerer,
+		gatherer:    gatherer,
 		kubeClient:  kubeClient,
 	}
 
 	server.mux = http.NewServeMux()
-	metricsHandler := promhttp.HandlerForTransactional(
-		prometheus.ToTransactionalGatherer(server.ovnRegistry),
-		promhttp.HandlerOpts{},
-	)
+	tg := prometheus.ToTransactionalGatherer(server.gatherer)
+	metricsHandler := promhttp.HandlerForTransactional(tg, promhttp.HandlerOpts{})
+
 	server.mux.Handle("/metrics", promhttp.InstrumentMetricHandler(
-		server.ovnRegistry,
+		server.registerer,
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Update metrics in the registry before emitting them.
 			server.handleMetrics(r)
-			// Emit the updated metrics using the transactional handler.
 			metricsHandler.ServeHTTP(w, r)
 		}),
 	))
+
+	if opts.EnablePprof {
+		server.mux.HandleFunc("/debug/pprof/", pprof.Index)
+		server.mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		server.mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		server.mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		server.mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+		// Allow changes to log level at runtime
+		server.mux.HandleFunc("/debug/flags/v", stringFlagPutHandler(klogSetter))
+	}
 
 	return server
 }
@@ -99,32 +129,32 @@ func NewMetricServer(opts MetricServerOptions, ovsDBClient libovsdbclient.Client
 func (s *MetricServer) registerMetrics() {
 	if s.opts.EnableOVSMetrics {
 		klog.Infof("MetricServer registers OVS metrics")
-		registerOvsMetrics(s.ovsDBClient, s.ovnRegistry)
+		registerOvsMetrics(s.ovsDBClient, s.registerer)
 	}
 	if s.opts.EnableOVNDBMetrics {
 		klog.Infof("MetricServer registers OVN DB metrics")
-		s.ovsDbProperties, s.opts.dbIsClustered, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.ovnRegistry)
+		s.ovsDbProperties, s.opts.dbIsClustered, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.registerer)
 	}
 	if s.opts.EnableOVNControllerMetrics {
 		klog.Infof("MetricServer registers OVN Controller metrics")
-		RegisterOvnControllerMetrics(s.ovsDBClient, s.ovnRegistry)
+		RegisterOvnControllerMetrics(s.ovsDBClient, s.registerer)
 	}
 	if s.opts.EnableOVNNorthdMetrics {
 		klog.Infof("MetricServer registers OVN Northd metrics")
-		RegisterOvnNorthdMetrics(s.ovnRegistry)
+		RegisterOvnNorthdMetrics(s.registerer)
 	}
 }
 
 func (s *MetricServer) EnableOVNNorthdMetrics() {
 	s.opts.EnableOVNNorthdMetrics = true
 	klog.Infof("MetricServer registers OVN Northd metrics")
-	RegisterOvnNorthdMetrics(s.ovnRegistry)
+	RegisterOvnNorthdMetrics(s.registerer)
 }
 
 func (s *MetricServer) EnableOVNDBMetrics() {
 	s.opts.EnableOVNDBMetrics = true
 	klog.Infof("MetricServer registers OVN DB metrics")
-	s.ovsDbProperties, s.opts.dbIsClustered, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.ovnRegistry)
+	s.ovsDbProperties, s.opts.dbIsClustered, s.opts.dbFoundViaPath = RegisterOvnDBMetrics(s.registerer)
 }
 
 // updateOvsMetrics updates the OVS metrics
@@ -226,6 +256,7 @@ func (s *MetricServer) Run(stopChan <-chan struct{}) {
 
 		errCh := make(chan error)
 		go func() {
+			klog.Infof("Metric Server starts to listen on %s", s.opts.BindAddress)
 			errCh <- listenAndServe()
 		}()
 
