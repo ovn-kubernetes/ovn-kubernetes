@@ -263,14 +263,13 @@ func (c *Controller) ReconcileNetAttachDef(key string) error {
 // ReconcileNamespace enqueue relevant Cluster UDN CR requests following namespace events.
 func (c *Controller) ReconcileNamespace(key string) error {
 	namespace, err := c.namespaceInformer.Lister().Get(key)
-	if err != nil {
-		// Ignore removed namespaces
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get namespace %q from cache: %w", key, err)
 	}
-	namespaceLabels := labels.Set(namespace.Labels)
+	namespaceLabels := labels.Set(map[string]string{})
+	if namespace != nil {
+		namespaceLabels = namespace.Labels
+	}
 
 	c.namespaceTrackerLock.RLock()
 	defer c.namespaceTrackerLock.RUnlock()
@@ -658,6 +657,10 @@ func (c *Controller) getSelectedNamespaces(sel metav1.LabelSelector) (sets.Set[s
 		return nil, fmt.Errorf("failed to list namespaces: %w", err)
 	}
 	for _, selectedNs := range selectedNamespacesList {
+		if selectedNs.DeletionTimestamp != nil {
+			klog.V(5).Infof("Namespace %s is being deleted, skipping", selectedNs.Name)
+			continue
+		}
 		selectedNamespaces.Insert(selectedNs.Name)
 	}
 	return selectedNamespaces, nil
