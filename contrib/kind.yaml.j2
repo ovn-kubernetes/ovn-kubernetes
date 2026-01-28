@@ -14,7 +14,7 @@ networking:
 {%- if ovn_ip_family %}
   ipFamily: {{ ovn_ip_family }}
 {%- endif %}
-{%- if use_local_registy == "true"%}
+{%- if use_local_registry == "true"%}
 containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:{{ kind_local_registry_port }}"]

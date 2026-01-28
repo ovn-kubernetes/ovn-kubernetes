@@ -3,26 +3,8 @@
 # Returns the full directory name of the script
 DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
-# Source the kind-common file from the same directory where this script is located
-source "${DIR}/kind-common"
-
-# Some environments (Fedora32,31 on desktop), have problems when the cluster
-# is deleted directly with kind `kind delete cluster --name ovn`, it restarts the host.
-# The root cause is unknown, this also can not be reproduced in Ubuntu 20.04 or
-# with Fedora32 Cloud, but it does not happen if we clean first the ovn-kubernetes resources.
-delete() {
-  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
-
-  if [ "$KIND_INSTALL_METALLB" == true ]; then
-    destroy_metallb
-  fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-    destroy_bgp
-  fi
-  timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
-  sleep 5
-  kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
-}
+# Source the kind-common.sh file from the same directory where this script is located
+source "${DIR}/kind-common.sh"
 
 usage() {
     echo "usage: kind.sh [[[-cf |--config-file <file>] [-kt|--keep-taint] [-ha|--ha-enabled]"
@@ -417,6 +399,7 @@ print_params() {
      echo "KIND_INSTALL_PLUGINS = $KIND_INSTALL_PLUGINS"
      echo "KIND_INSTALL_KUBEVIRT = $KIND_INSTALL_KUBEVIRT"
      echo "KIND_OPT_OUT_KUBEVIRT_IPAM = $KIND_OPT_OUT_KUBEVIRT_IPAM"
+     echo "OCI_BIN = $OCI_BIN"
      echo "OVN_HA = $OVN_HA"
      echo "RUN_IN_CONTAINER = $RUN_IN_CONTAINER"
      echo "KIND_CLUSTER_NAME = $KIND_CLUSTER_NAME"
@@ -496,67 +479,6 @@ print_params() {
      echo ""
 }
 
-install_jinjanator_renderer() {
-  # ensure jinjanator renderer installed
-  pipx install jinjanator[yaml]
-  pipx ensurepath --force >/dev/null
-  export PATH=~/.local/bin:$PATH
-}
-
-check_dependencies() {
-  if ! command_exists curl ; then
-    echo "Dependency not met: Command not found 'curl'"
-    exit 1
-  fi
-
-  if ! command_exists kubectl ; then
-    echo "'kubectl' not found, installing"
-    setup_kubectl_bin
-  fi
-
-  if ! command_exists kind ; then
-    echo "Dependency not met: Command not found 'kind'"
-    exit 1
-  fi
-
-  local kind_min="0.27.0"
-  local kind_cur
-  kind_cur=$(kind version -q)
-  if [ "$(echo -e "$kind_min\n$kind_cur" | sort -V | head -1)" != "$kind_min" ]; then
-    echo "Dependency not met: expected kind version >= $kind_min but have $kind_cur"
-    exit 1
-  fi
-
-  if ! command_exists jq ; then
-    echo "Dependency not met: Command not found 'jq'"
-    exit 1
-  fi
-
-  if ! command_exists awk ; then
-    echo "Dependency not met: Command not found 'awk'"
-    exit 1
-  fi
-
-  if ! command_exists jinjanate ; then
-    if ! command_exists pipx ; then
-      echo "Dependency not met: 'jinjanator' not installed and cannot install with 'pipx'"
-      exit 1
-    fi
-    echo "'jinjanate' not found, installing with 'pipx'"
-    install_jinjanator_renderer
-  fi
-
-  if ! command_exists docker && ! command_exists podman; then
-  	  echo "Dependency not met: Neither docker nor podman found"
-  	  exit 1
-  fi
-
-  if command_exists podman && ! command_exists skopeo; then
-    echo "Dependency not met: skopeo not installed. Run the following command to install it: 'sudo dnf install skopeo'"
-    exit 1
-  fi
-}
-
 OPENSSL=""
 set_openssl_binary() {
   for s in openssl openssl3; do
@@ -580,47 +502,24 @@ set_default_params() {
 
   # Set default values
   # Used for multi cluster setups
-  KIND_CREATE=${KIND_CREATE:-true}
   KIND_ADD_NODES=${KIND_ADD_NODES:-false}
-  KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  # Setup KUBECONFIG patch based on cluster-name
-  export KUBECONFIG=${KUBECONFIG:-${HOME}/${KIND_CLUSTER_NAME}.conf}
-  # Scrub any existing kubeconfigs at the path
-  if [ "${KIND_CREATE}" == true ]; then
-    rm -f ${KUBECONFIG}
-  fi
   MANIFEST_OUTPUT_DIR=${MANIFEST_OUTPUT_DIR:-${DIR}/../dist/yaml}
   if [ ${KIND_CLUSTER_NAME} != "ovn" ]; then
     MANIFEST_OUTPUT_DIR="${DIR}/../dist/yaml/${KIND_CLUSTER_NAME}"
   fi
   RUN_IN_CONTAINER=${RUN_IN_CONTAINER:-false}
   OVN_GATEWAY_MODE=${OVN_GATEWAY_MODE:-shared}
-  KIND_INSTALL_INGRESS=${KIND_INSTALL_INGRESS:-false}
-  KIND_INSTALL_METALLB=${KIND_INSTALL_METALLB:-false}
-  KIND_INSTALL_PLUGINS=${KIND_INSTALL_PLUGINS:-false}
-  KIND_INSTALL_KUBEVIRT=${KIND_INSTALL_KUBEVIRT:-false}
   KIND_OPT_OUT_KUBEVIRT_IPAM=${KIND_OPT_OUT_KUBEVIRT_IPAM:-false}
-  OVN_HA=${OVN_HA:-false}
-  KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
   KIND_LOCAL_REGISTRY_NAME=${KIND_LOCAL_REGISTRY_NAME:-kind-registry}
   KIND_LOCAL_REGISTRY_PORT=${KIND_LOCAL_REGISTRY_PORT:-5000}
   KIND_DNS_DOMAIN=${KIND_DNS_DOMAIN:-"cluster.local"}
-  KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
-  KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
-  PLATFORM_IPV4_SUPPORT=${PLATFORM_IPV4_SUPPORT:-true}
-  PLATFORM_IPV6_SUPPORT=${PLATFORM_IPV6_SUPPORT:-false}
   ENABLE_IPSEC=${ENABLE_IPSEC:-false}
-  OVN_HYBRID_OVERLAY_ENABLE=${OVN_HYBRID_OVERLAY_ENABLE:-false}
   OVN_DISABLE_SNAT_MULTIPLE_GWS=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-false}
   OVN_DISABLE_FORWARDING=${OVN_DISABLE_FORWARDING:=false}
   OVN_ENCAP_PORT=${OVN_ENCAP_PORT:-""}
   OVN_DISABLE_PKT_MTU_CHECK=${OVN_DISABLE_PKT_MTU_CHECK:-false}
-  OVN_EMPTY_LB_EVENTS=${OVN_EMPTY_LB_EVENTS:-false}
-  OVN_MULTICAST_ENABLE=${OVN_MULTICAST_ENABLE:-false}
   KIND_ALLOW_SYSTEM_WRITES=${KIND_ALLOW_SYSTEM_WRITES:-false}
-  OVN_IMAGE=${OVN_IMAGE:-local}
-  OVN_REPO=${OVN_REPO:-""}
-  OVN_GITREF=${OVN_GITREF:-""}
+
   MASTER_LOG_LEVEL=${MASTER_LOG_LEVEL:-5}
   NODE_LOG_LEVEL=${NODE_LOG_LEVEL:-5}
   DBCHECKER_LOG_LEVEL=${DBCHECKER_LOG_LEVEL:-5}
@@ -635,67 +534,14 @@ set_default_params() {
   if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
     OVN_EX_GW_NETWORK_INTERFACE="eth1"
   fi
-  MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
-  # Input not currently validated. Modify outside script at your own risk.
-  # These are the same values defaulted to in KIND code (kind/default.go).
-  # NOTE: KIND NET_CIDR_IPV6 default use a /64 but OVN have a /64 per host
-  # so it needs to use a larger subnet
-  #  Upstream - NET_CIDR_IPV6=fd00:10:244::/64 SVC_CIDR_IPV6=fd00:10:96::/112
-  NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
-  NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
-  if [ "$MULTI_POD_SUBNET" == true ]; then
-    NET_CIDR_IPV4="10.243.0.0/23/24,10.244.0.0/16"
-    NET_CIDR_IPV6="fd00:10:243::/63/64,fd00:10:244::/48"
-  fi
-  NET_SECOND_CIDR_IPV4=${NET_SECOND_CIDR_IPV4:-172.19.0.0/16}
-  SVC_CIDR_IPV4=${SVC_CIDR_IPV4:-10.96.0.0/16}
-  SVC_CIDR_IPV6=${SVC_CIDR_IPV6:-fd00:10:96::/112}
-  JOIN_SUBNET_IPV4=${JOIN_SUBNET_IPV4:-100.64.0.0/16}
-  JOIN_SUBNET_IPV6=${JOIN_SUBNET_IPV6:-fd98::/64}
-  MASQUERADE_SUBNET_IPV4=${MASQUERADE_SUBNET_IPV4:-169.254.0.0/17}
-  MASQUERADE_SUBNET_IPV6=${MASQUERADE_SUBNET_IPV6:-fd69::/112}
-  TRANSIT_SUBNET_IPV4=${TRANSIT_SUBNET_IPV4:-100.88.0.0/16}
-  TRANSIT_SUBNET_IPV6=${TRANSIT_SUBNET_IPV6:-fd97::/64}
-  METALLB_CLIENT_NET_SUBNET_IPV4=${METALLB_CLIENT_NET_SUBNET_IPV4:-172.22.0.0/16}
-  METALLB_CLIENT_NET_SUBNET_IPV6=${METALLB_CLIENT_NET_SUBNET_IPV6:-fc00:f853:ccd:e792::/64}
-  BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.26.0.0/16}
-  BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e796::/64}
 
-  KIND_NUM_MASTER=1
-  OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-true}
   OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
-  OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
-
-
-  if [ "$OVN_COMPACT_MODE" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != false ]; then
-     echo "Compact mode cannot be used together with Interconnect"
-     exit 1
-  fi
-
-  if [ "$OVN_HA" == true ]; then
-    KIND_NUM_MASTER=3
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-0}
-  else
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
-  fi
 
   KIND_NUM_INFRA=${KIND_NUM_INFRA:-0}
   KIND_INSTALL_PROMETHEUS=${KIND_INSTALL_PROMETHEUS:-false}
 
-  if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
-    KIND_NUM_NODES_PER_ZONE=${KIND_NUM_NODES_PER_ZONE:-1}
-
-    TOTAL_NODES=$((KIND_NUM_WORKER + KIND_NUM_MASTER))
-    if [[ ${KIND_NUM_NODES_PER_ZONE} -gt 1 ]] && [[ $((TOTAL_NODES % KIND_NUM_NODES_PER_ZONE)) -ne 0 ]]; then
-      echo "(Total k8s nodes / number of nodes per zone) should be zero"
-      exit 1
-    fi
-  fi
-
   OVN_HOST_NETWORK_NAMESPACE=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
   OVN_EGRESSIP_HEALTHCHECK_PORT=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
-  METRICS_IP=${METRICS_IP:-""}
-  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
   OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
   OVN_METRICS_SCALE_ENABLE=${OVN_METRICS_SCALE_ENABLE:-false}
   OVN_ISOLATED=${OVN_ISOLATED:-false}
@@ -707,61 +553,8 @@ set_default_params() {
   if [ "$OVN_DUMMY_GATEWAY_BRIDGE" == true ]; then
     OVN_GATEWAY_OPTS="--allow-no-uplink --gateway-interface=br-ex"
   fi
-  ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
-  ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
-  if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
-    echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"
-    exit 1
-  fi
 
-  ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
-    echo "Route advertisements requires multi-network to be enabled (-mne)"
-    exit 1
-  fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
-    echo "Route advertisements requires interconnect to be enabled (-ic)"
-    exit 1
-  fi
-
-  ENABLE_EVPN=${ENABLE_EVPN:-false}
-  if [ "$ENABLE_EVPN" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
-    echo "EVPN requires Route advertisements to be enabled (-rae)"
-    exit 1
-  fi
-
-  ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
-  if [[ $ENABLE_PRE_CONF_UDN_ADDR == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
-    echo "Preconfigured UDN addresses requires network-segmentation to be enabled (-nse)"
-    exit 1
-  fi
-  if [[ $ENABLE_PRE_CONF_UDN_ADDR == true && $OVN_ENABLE_INTERCONNECT != true ]]; then
-    echo "Preconfigured UDN addresses requires interconnect to be enabled (-ic)"
-    exit 1
-  fi
-
-  ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
-  if [[ $ENABLE_NETWORK_CONNECT == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
-    echo "Network connect requires network-segmentation to be enabled (-nse)"
-    exit 1
-  fi
-
-  DYNAMIC_UDN_ALLOCATION=${DYNAMIC_UDN_ALLOCATION:-false}
-  if [[ $DYNAMIC_UDN_ALLOCATION == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
-      echo "Dynamic UDN allocation requires network-segmentation to be enabled (-nse)"
-      exit 1
-  fi
-  DYNAMIC_UDN_GRACE_PERIOD=${DYNAMIC_UDN_GRACE_PERIOD:-120s}
-  ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
-  ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
-  OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
-  if [ "$OVN_COMPACT_MODE" == true ]; then
-    KIND_NUM_WORKER=0
-  fi
   OVN_MTU=${OVN_MTU:-1400}
-  OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
-  OVN_OBSERV_ENABLE=${OVN_OBSERV_ENABLE:-false}
-  ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
 }
 
 check_ipv6() {
@@ -885,74 +678,6 @@ scale_kind_cluster() {
   fi
 }
 
-create_kind_cluster() {
-  # Output of the jinjanate command
-  KIND_CONFIG_LCL=${DIR}/kind-${KIND_CLUSTER_NAME}.yaml
-
-  ovn_ip_family=${IP_FAMILY} \
-  ovn_ha=${OVN_HA} \
-  net_cidr="${KIND_CIDR}" \
-  svc_cidr=${SVC_CIDR} \
-  use_local_registy=${KIND_LOCAL_REGISTRY} \
-  dns_domain=${KIND_DNS_DOMAIN} \
-  ovn_num_master=${KIND_NUM_MASTER} \
-  ovn_num_worker=${KIND_NUM_WORKER} \
-  kind_num_infra=${KIND_NUM_INFRA} \
-  cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
-  kind_local_registry_port=${KIND_LOCAL_REGISTRY_PORT} \
-  kind_local_registry_name=${KIND_LOCAL_REGISTRY_NAME} \
-  jinjanate "${KIND_CONFIG}" -o "${KIND_CONFIG_LCL}"
-
-  # Create KIND cluster. For additional debug, add '--verbosity <int>': 0 None .. 3 Debug
-  if kind get clusters | grep "${KIND_CLUSTER_NAME}"; then
-    delete
-  fi
-  
-  if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
-    create_local_registry
-  fi
-  
-  kind create cluster --name "${KIND_CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --image "${KIND_IMAGE}":"${K8S_VERSION}" --config=${KIND_CONFIG_LCL} --retain
-
-  cat "${KUBECONFIG}"
-}
-
-set_ovn_image() {
-  # if we're using the local registry and still need to build, push to local registry
-  if [ "$KIND_LOCAL_REGISTRY" == true ];then
-    OVN_IMAGE="localhost:5000/ovn-daemonset-fedora:latest"
-  else
-    OVN_IMAGE="localhost/ovn-daemonset-fedora:dev"
-  fi
-}
-
-build_ovn_image() {
-  local push_args=""
-  if [ "$OCI_BIN" == "podman" ]; then
-    # docker doesn't perform tls check by default only podman does, hence we need to disable it for podman.
-    push_args="--tls-verify=false"
-  fi
-
-  if [ "$OVN_IMAGE" == local ]; then
-    set_ovn_image
-
-    # Build image
-    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" fedora-image
-
-    # store in local registry
-    if [ "$KIND_LOCAL_REGISTRY" == true ];then
-      echo "Pushing built image to local $OCI_BIN registry"
-      $OCI_BIN push $push_args "$OVN_IMAGE"
-    fi
-  # We should push to local registry if image is not remote
-  elif [ "${OVN_IMAGE}" != "" -a "${KIND_LOCAL_REGISTRY}" == true ] && (echo "$OVN_IMAGE" | grep / -vq); then
-    local local_registry_ovn_image="localhost:5000/${OVN_IMAGE}"
-    $OCI_BIN tag "$OVN_IMAGE" $local_registry_ovn_image
-    OVN_IMAGE=$local_registry_ovn_image
-    $OCI_BIN push $push_args "$OVN_IMAGE"
-  fi
-}
-
 create_ovn_kube_manifests() {
     local ovnkube_image=${OVN_IMAGE}
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
@@ -1035,10 +760,6 @@ create_ovn_kube_manifests() {
     --mtu="${OVN_MTU}" \
     --enable-observ="${OVN_OBSERV_ENABLE}"
   popd
-}
-
-install_ovn_image() {
-  install_image ${OVN_IMAGE}
 }
 
 install_ovn_global_zone() {
@@ -1131,20 +852,12 @@ install_ovn() {
   run_kubectl apply -f rbac-ovnkube-master.yaml
   run_kubectl apply -f rbac-ovnkube-node.yaml
   run_kubectl apply -f rbac-ovnkube-db.yaml
-  MASTER_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort | head -n "${KIND_NUM_MASTER}")
-  # We want OVN HA not Kubernetes HA
-  # leverage the kubeadm well-known label node-role.kubernetes.io/control-plane=
-  # to choose the nodes where ovn master components will be placed
-  for n in $MASTER_NODES; do
-    kubectl label node "$n" k8s.ovn.org/ovnkube-db=true node-role.kubernetes.io/control-plane="" --overwrite
-    if [ "$KIND_REMOVE_TAINT" == true ]; then
-      # do not error if it fails to remove the taint
-      # remove both master and control-plane taints until master is removed from 1.25
-      # // https://github.com/kubernetes/kubernetes/pull/107533
-      kubectl taint node "$n" node-role.kubernetes.io/master:NoSchedule- || true
-      kubectl taint node "$n" node-role.kubernetes.io/control-plane:NoSchedule- || true
-    fi
-  done
+  if [ "${OVN_HA}" == "true" ]; then
+    label_ovn_ha
+  fi
+  if [ "$KIND_REMOVE_TAINT" == true ]; then
+    remove_no_schedule_taint
+  fi
 
   run_kubectl apply -f ovs-node.yaml
 
@@ -1279,7 +992,7 @@ add_dns_hostnames() {
   done
 }
 
-check_dependencies
+check_common_dependencies
 # In order to allow providing arguments with spaces, e.g. "-vconsole:info -vfile:info"
 # the original command <parse_args $*> was replaced by <parse_args "$@">
 parse_args "$@"
@@ -1372,7 +1085,7 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   fi
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_ffr_k8s
+  install_frr_k8s
 fi
 
 interconnect_arg_check
