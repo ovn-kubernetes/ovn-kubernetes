@@ -847,12 +847,24 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 
 	// Set the node-encap-ips annotation with the configured encap IP.
-	// This encap IP is unavailable on the DPU host mode, so we don't need to set it there.
+	// On DPU-hosts this annotation will be set by the associated DPU.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		encapIPList := sets.New[string]()
 		encapIPList.Insert(strings.Split(config.Default.EffectiveEncapIP, ",")...)
 		if err := util.SetNodeEncapIPs(nodeAnnotator, encapIPList); err != nil {
 			return fmt.Errorf("failed to set node-encap-ips annotation for node %s: %w", nc.name, err)
+		}
+	}
+
+	// We need to annotate DPU-Host with DPU's chassis hostname in IC mode
+	// For nodes in full mode this is programmatically set to be their nodename and don't need an annotation
+	if config.OvnKubeNode.Mode == types.NodeModeDPU && config.OVNKubernetesFeature.EnableInterconnect {
+		chassisHostname, err := util.GetNodeChassisHostnameFromOVS()
+		if err != nil {
+			return fmt.Errorf("failed to get chassis hostname for node %s: %w", nc.name, err)
+		}
+		if err := util.SetNodeChassisHostnameAnnotation(nodeAnnotator, chassisHostname); err != nil {
+			return fmt.Errorf("failed to set node-chassis-hostname annotation for node %s: %w", nc.name, err)
 		}
 	}
 

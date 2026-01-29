@@ -1,26 +1,26 @@
-# ovnkube-node
+# ovnkube-node-dpu
 # daemonset version 3
-# starts node daemons for single node zone ovn stack, each in a separate container
+# starts node daemons for single node zone ovn stack, each in a separate container on DPU
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  name: ovnkube-node
+  name: ovnkube-node-dpu
   # namespace set up by install
   namespace: ovn-kubernetes
   annotations:
     kubernetes.io/description: |
-      This DaemonSet launches the ovn-kubernetes networking components for worker nodes.
+      This DaemonSet launches the ovn-kubernetes networking components on dpus in IC mode.
 spec:
   selector:
     matchLabels:
-      app: ovnkube-node
+      app: ovnkube-node-dpu
   updateStrategy:
     type: RollingUpdate
   template:
     metadata:
       labels:
-        app: ovnkube-node
-        name: ovnkube-node
+        app: ovnkube-node-dpu
+        name: ovnkube-node-dpu
         component: network
         type: infra
         kubernetes.io/os: "linux"
@@ -41,8 +41,8 @@ spec:
       containers:
       # nb-ovsdb - v3
       - name: nb-ovsdb
-        image: {{ include "getImage" . }}
-        imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
+        image: {{ include "getDPUImage" . }}
+        imagePullPolicy: {{ default "IfNotPresent" .Values.global.dpuImage.pullPolicy }}
         command: ["/root/ovnkube.sh", "local-nb-ovsdb"]
         securityContext:
           runAsUser: 0
@@ -75,13 +75,12 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.2.0"
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel | quote }}
-        - name: K8S_APISERVER
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: k8s_apiserver
+        - name: OVN_NORTHD_BACKOFF_INTERVAL
+          value: {{ default "0" .Values.northdBackoffInterval | quote }}
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:
@@ -90,20 +89,16 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
-        - name: K8S_NODE
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnnb-db"]
           initialDelaySeconds: 30
           timeoutSeconds: 30
           periodSeconds: 60
-      # end of container
+      # end of nb-ovsdb container
       # sb-ovsdb - v3
       - name: sb-ovsdb
-        image: {{ include "getImage" . }}
+        image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
         command: ["/root/ovnkube.sh", "local-sb-ovsdb"]
         securityContext:
@@ -137,13 +132,10 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.2.0"
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_SB
           value: {{ default "-vconsole:info -vfile:info" .Values.sbLogLevel | quote }}
-        - name: K8S_APISERVER
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: k8s_apiserver
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:
@@ -152,10 +144,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
-        - name: K8S_NODE
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
         - name: OVN_SSL_ENABLE
           value: {{ include "isSslEnabled" . | quote }}
         readinessProbe:
@@ -164,10 +152,10 @@ spec:
           initialDelaySeconds: 30
           timeoutSeconds: 30
           periodSeconds: 60
-      # end of container
+      # end of sb-ovsdb container
       # ovn-northd - v3
       - name: ovn-northd
-        image: {{ include "getImage" . }}
+        image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
         command: ["/root/ovnkube.sh", "run-ovn-northd"]
         securityContext:
@@ -198,17 +186,10 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.2.0"
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_NORTHD
           value: {{ default "-vconsole:info -vfile:info" .Values.northdLogLevel | quote }}
-        - name: K8S_APISERVER
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: k8s_apiserver
-        - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
         - name: OVN_SSL_ENABLE
           value: {{ include "isSslEnabled" . | quote }}
         - name: OVN_NORTH
@@ -221,9 +202,10 @@ spec:
           initialDelaySeconds: 30
           timeoutSeconds: 30
           periodSeconds: 60
-      # end of container
+      # end of ovn-northd container
+      # ovnkube-controller
       - name: ovnkube-controller
-        image: {{ include "getImage" . }}
+        image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
         command: ["/root/ovnkube.sh", "ovnkube-controller-with-node"]
         securityContext:
@@ -281,18 +263,13 @@ spec:
           name: run-systemd
           subPath: private
           readOnly: true
-        - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
-          name: host-devinfo-dp
-          readOnly: true
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
         env:
-        {{ if .Values.global.enableCoredumps -}}
-        - name: GOTRACEBACK
-          value: "crash"
-        {{ end -}}
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_DAEMONSET_VERSION
@@ -306,49 +283,27 @@ spec:
         - name: OVNKUBE_LOGFILE_MAXAGE
           value: {{ default 5 .Values.logFileMaxAge | quote }}
         - name: OVNKUBE_LIBOVSDB_CLIENT_LOGFILE
-          value: {{ default "" .Values.global.libovsdbClientLogFile | quote }}
+          value: {{ default "" .Values.libovsdbClientLogFile | quote }}
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
           value: {{ default "" .Values.global.enableConfigDuration | quote }}
         - name: OVNKUBE_METRICS_SCALE_ENABLE
           value: {{ default "" .Values.global.enableMetricsScale | quote }}
         - name: OVN_NET_CIDR
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: net_cidr
+          value: {{ default "" .Values.global.dpuHostClusterNetworkCIDR | quote }}
         - name: OVN_SVC_CIDR
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: svc_cidr
+          value: {{ default "" .Values.global.dpuHostClusterServiceCIDR | quote }}
         - name: K8S_APISERVER
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: k8s_apiserver
+          value: {{ default "" .Values.global.dpuHostClusterK8sAPIServer | quote }}
+        - name: K8S_TOKEN
+          value: {{ default "" .Values.global.dpuHostClusterK8sToken | quote }}
+        - name: K8S_CACERT_DATA
+          value: {{ default "" .Values.global.dpuHostClusterK8sCACertData | quote }}
+        - name: K8S_TOKEN_FILE
+          value: {{ default "" .Values.global.dpuHostClusterK8sTokenFile | quote }}
+        - name: K8S_CACERT
+          value: {{ default "" .Values.global.dpuHostClusterK8sCACert | quote }}
         - name: OVN_MTU
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: mtu
-        - name: OVN_ROUTABLE_MTU
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: routable_mtu
-              optional: true
-        - name: K8S_NODE
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: K8S_NODE_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.hostIP
-        - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+          value: {{ default "" .Values.global.mtu | quote }}
         - name: OVN_GATEWAY_MODE
           value: {{ default "shared" .Values.global.gatewayMode }}
         - name: OVN_GATEWAY_OPTS
@@ -423,23 +378,12 @@ spec:
           value: {{ default "" .Values.global.enableNetworkConnect | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
-        - name: OVN_DYNAMIC_UDN_ALLOCATION
-          value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
-        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
-          value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
-        - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
-          value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
         - name: OVN_EMPTY_LB_EVENTS
           value: {{ default "" .Values.global.emptyLbEvents | quote }}
         - name: OVN_ACL_LOGGING_RATE_LIMIT
           value: {{ default 20 .Values.global.aclLoggingRateLimit | quote }}
-        - name: OVN_HOST_NETWORK_NAMESPACE
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: host_network_namespace
         - name: OVN_NORTH
           value: "local"
         - name: OVN_SOUTH
@@ -458,14 +402,22 @@ spec:
           value: {{ hasKey .Values.global "enableObservability" | ternary .Values.global.enableObservability false | quote }}
         - name: OVN_NETWORK_QOS_ENABLE
           value: {{ hasKey .Values.global "enableNetworkQos" | ternary .Values.global.enableNetworkQos false | quote }}
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
         readinessProbe:
-          exec:
-            command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnkube-node"]
+          httpGet:
+            path: /metrics
+            port: {{ .Values.metricsPort }}
+            scheme: HTTP
           initialDelaySeconds: 30
-          timeoutSeconds: 30
-          periodSeconds: 60
+          timeoutSeconds: 5
+          periodSeconds: 30
+      # end of ovnkube-controller container
+      # ovn-controller
       - name: ovn-controller
-        image: {{ include "getImage" . }}
+        image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
         command: ["/root/ovnkube.sh", "ovn-controller"]
         securityContext:
@@ -495,17 +447,10 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.2.0"
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: {{ default "-vconsole:info" .Values.ovnControllerLogLevel | quote }}
-        - name: K8S_APISERVER
-          valueFrom:
-            configMapKeyRef:
-              name: ovn-config
-              key: k8s_apiserver
-        - name: OVN_KUBERNETES_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
         - name: OVN_SSL_ENABLE
           value: {{ default "" .Values.global.enableSsl | quote }}
         - name: OVN_NORTH
@@ -520,7 +465,7 @@ spec:
           periodSeconds: 60
         # ovs-metrics-exporter - v3
       - name: ovs-metrics-exporter
-        image: {{ include "getImage" . }}
+        image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
         command: ["/root/ovnkube.sh", "ovs-metrics"]
         securityContext:
@@ -544,10 +489,8 @@ spec:
         env:
         - name: OVN_DAEMONSET_VERSION
           value: "1.2.0"
-        - name: K8S_NODE_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.hostIP
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu"
         - name: OVN_NORTH
           value: "local"
         - name: OVN_SOUTH
@@ -555,15 +498,7 @@ spec:
         # end of container
       nodeSelector:
         kubernetes.io/os: "linux"
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: k8s.ovn.org/dpu-host
-                operator: DoesNotExist
-              - key: k8s.ovn.org/dpu
-                operator: DoesNotExist
+        k8s.ovn.org/dpu: ""
       volumes:
       # Common volumes
       - name: host-var-run-dbus
@@ -596,9 +531,6 @@ spec:
       - name: host-var-log-ovs
         hostPath:
           path: /var/log/openvswitch
-      - name: host-run-ovs
-        hostPath:
-          path: /run/openvswitch
       - name: host-var-run-ovs
         hostPath:
           path: /var/run/openvswitch
@@ -615,8 +547,5 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
-      - name: host-devinfo-dp
-        hostPath:
-          path: /var/run/k8s.cni.cncf.io/devinfo/dp
       tolerations:
       - operator: "Exists"

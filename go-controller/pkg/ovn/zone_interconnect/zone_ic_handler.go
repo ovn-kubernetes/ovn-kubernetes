@@ -460,9 +460,14 @@ func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.N
 		remotePortAddr = remotePortAddr + " " + tsNetwork
 	}
 
+	chassisHostname, err := util.GetNodeChassisHostname(node)
+	if err != nil {
+		return err
+	}
+
 	lspOptions := map[string]string{
 		libovsdbops.RequestedTnlKey:  strconv.Itoa(nodeID),
-		libovsdbops.RequestedChassis: node.Name,
+		libovsdbops.RequestedChassis: chassisHostname,
 	}
 	// Store the node name in the external_ids column for book keeping
 	externalIDs := map[string]string{

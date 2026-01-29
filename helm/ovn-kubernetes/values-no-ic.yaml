@@ -8,6 +8,7 @@ tags:
   ovnkube-node-dpu: false
   ovnkube-node-dpu-host: false
   ovnkube-single-node-zone: false
+  ovnkube-single-node-zone-dpu: false
   ovnkube-zone-controller: false
 
 # -- Endpoint of Kubernetes api server

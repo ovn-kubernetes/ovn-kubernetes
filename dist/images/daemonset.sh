@@ -403,8 +403,32 @@ while [ "$1" != "" ]; do
   --no-hostsubnet-label)
     OVN_NOHOSTSUBNET_LABEL=$VALUE
     ;;
-  --ovn_disable_requestedchassis)
+  --ovn-disable-requestedchassis)
     OVN_DISABLE_REQUESTEDCHASSIS=$value
+    ;;
+  --metrics-port)
+    METRICS_PORT=$value
+    ;;
+  --dpuhost-cluster-net-cidr)
+    DPUHOST_CLUSTER_NET_CIDR=$value
+    ;;
+  --dpuhost-cluster-svc-cidr)
+    DPUHOST_CLUSTER_SVC_CIDR=$value
+    ;;
+  --dpuhost-cluster-k8s-apiserver)
+    DPUHOST_CLUSTER_K8S_APISERVER=$value
+    ;;
+  --dpuhost-cluster-k8s-token)
+    DPUHOST_CLUSTER_K8S_TOKEN=$value
+    ;;
+  --dpuhost-cluster-k8s-cacert-data)
+    DPUHOST_CLUSTER_K8S_CACERT_DATA=$value
+    ;;
+  --dpuhost-cluster-k8s-token-file)
+    DPUHOST_CLUSTER_K8S_TOKEN_FILE=$value
+    ;;
+  --dpuhost-cluster-k8s-cacert)
+    DPUHOST_CLUSTER_K8S_CACERT=$value
     ;;
   *)
     echo "WARNING: unknown parameter \"$PARAM\""
@@ -790,6 +814,7 @@ ovn_image=${image} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
   metrics_ip=${metrics_ip} \
+  ovn_enable_interconnect=${ovn_enable_interconnect} \
   ovnkube_app_name=ovnkube-node-dpu-host \
   jinjanate ../templates/ovnkube-node.yaml.j2 -o ${output_dir}/ovnkube-node-dpu-host.yaml
 
@@ -1011,6 +1036,101 @@ ovn_image=${ovnkube_image} \
   ovn_observ_enable=${ovn_observ_enable} \
   enable_coredumps=${enable_coredumps} \
   jinjanate ../templates/ovnkube-single-node-zone.yaml.j2 -o ${output_dir}/ovnkube-single-node-zone.yaml
+
+# ovnkube-single-node-zone-dpu
+dpuhost_cluster_net_cidr=${DPUHOST_CLUSTER_NET_CIDR:-"10.244.0.0/16/24"}
+dpuhost_cluster_svc_cidr=${DPUHOST_CLUSTER_SVC_CIDR:-"10.96.0.0/16"}
+dpuhost_cluster_k8s_apiserver=${DPUHOST_CLUSTER_K8S_APISERVER:-"https://172.25.0.2:6443"}
+dpuhost_cluster_k8s_token=${DPUHOST_CLUSTER_K8S_TOKEN:-""}
+dpuhost_cluster_k8s_cacert_data=${DPUHOST_CLUSTER_K8S_CACERT_DATA:-""}
+dpuhost_cluster_k8s_token_file=${DPUHOST_CLUSTER_K8S_TOKEN_FILE:-""}
+dpuhost_cluster_k8s_cacert=${DPUHOST_CLUSTER_K8S_CACERT:-""}
+mtu=${OVN_MTU:-1400}
+metrics_port=${METRICS_PORT:-9476}
+echo "dpuhost_cluster_net_cidr: ${dpuhost_cluster_net_cidr}"
+echo "dpuhost_cluster_svc_cidr: ${dpuhost_cluster_svc_cidr}"
+echo "dpuhost_cluster_k8s_apiserver: ${dpuhost_cluster_k8s_apiserver}"
+echo "dpuhost_cluster_k8s_token: ${dpuhost_cluster_k8s_token}"
+echo "dpuhost_cluster_k8s_cacert_data: ${dpuhost_cluster_k8s_cacert_data}"
+echo "dpuhost_cluster_k8s_token_file: ${dpuhost_cluster_k8s_token_file}"
+echo "dpuhost_cluster_k8s_cacert: ${dpuhost_cluster_k8s_cacert}"
+echo "mtu: ${mtu}"
+echo "metrics_port: ${metrics_port}"
+
+ovn_image=${ovnkube_image} \
+  ovn_image_pull_policy=${image_pull_policy} \
+  ovn_unprivileged_mode=${ovn_unprivileged_mode} \
+  ovn_gateway_mode=${ovn_gateway_mode} \
+  ovn_gateway_opts=${ovn_gateway_opts} \
+  ovn_loglevel_nb=${ovn_loglevel_nb} ovn_loglevel_sb=${ovn_loglevel_sb} \
+  ovn_northd_backoff_interval=${ovn_northd_backoff_interval} \
+  ovn_loglevel_northd=${ovn_loglevel_northd} \
+  ovnkube_node_loglevel=${node_loglevel} \
+  ovn_loglevel_controller=${ovn_loglevel_controller} \
+  ovnkube_logfile_maxsize=${ovnkube_logfile_maxsize} \
+  ovnkube_logfile_maxbackups=${ovnkube_logfile_maxbackups} \
+  ovnkube_logfile_maxage=${ovnkube_logfile_maxage} \
+  ovnkube_libovsdb_client_logfile=${ovnkube_libovsdb_client_logfile} \
+  ovnkube_config_duration_enable=${ovnkube_config_duration_enable} \
+  ovnkube_metrics_scale_enable=${ovnkube_metrics_scale_enable} \
+  metrics_ip=${metrics_ip} \
+  ovn_hybrid_overlay_net_cidr=${ovn_hybrid_overlay_net_cidr} \
+  ovn_hybrid_overlay_enable=${ovn_hybrid_overlay_enable} \
+  ovn_disable_snat_multiple_gws=${ovn_disable_snat_multiple_gws} \
+  ovn_disable_forwarding=${ovn_disable_forwarding} \
+  ovn_encap_port=${ovn_encap_port} \
+  ovn_disable_pkt_mtu_check=${ovn_disable_pkt_mtu_check} \
+  ovn_v4_join_subnet=${ovn_v4_join_subnet} \
+  ovn_v6_join_subnet=${ovn_v6_join_subnet} \
+  ovn_v4_masquerade_subnet=${ovn_v4_masquerade_subnet} \
+  ovn_v6_masquerade_subnet=${ovn_v6_masquerade_subnet} \
+  ovn_multicast_enable=${ovn_multicast_enable} \
+  ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
+  ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
+  ovn_egress_firewall_enable=${ovn_egress_firewall_enable} \
+  ovn_egress_qos_enable=${ovn_egress_qos_enable} \
+  ovn_multi_network_enable=${ovn_multi_network_enable} \
+  ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
+  ovn_network_connect_enable=${ovn_network_connect_enable} \
+  ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
+  ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_egress_service_enable=${ovn_egress_service_enable} \
+  ovn_ssl_en=${ovn_ssl_en} \
+  ovn_remote_probe_interval=${ovn_remote_probe_interval} \
+  ovn_monitor_all=${ovn_monitor_all} \
+  ovn_ofctrl_wait_before_clear=${ovn_ofctrl_wait_before_clear} \
+  ovn_enable_lflow_cache=${ovn_enable_lflow_cache} \
+  ovn_lflow_cache_limit=${ovn_lflow_cache_limit} \
+  ovn_lflow_cache_limit_kb=${ovn_lflow_cache_limit_kb} \
+  ovn_netflow_targets=${ovn_netflow_targets} \
+  ovn_sflow_targets=${ovn_sflow_targets} \
+  ovn_ipfix_targets=${ovn_ipfix_targets} \
+  ovn_ipfix_sampling=${ovn_ipfix_sampling} \
+  ovn_ipfix_cache_max_flows=${ovn_ipfix_cache_max_flows} \
+  ovn_ipfix_cache_max_flows=${ovn_ipfix_cache_max_flows} \
+  ovn_ipfix_cache_active_timeout=${ovn_ipfix_cache_active_timeout} \
+  ovn_ex_gw_networking_interface=${ovn_ex_gw_networking_interface} \
+  ovn_acl_logging_rate_limit=${ovn_acl_logging_rate_limit} \
+  ovn_empty_lb_events=${ovn_empty_lb_events} \
+  ovn_enable_interconnect=${ovn_enable_interconnect} \
+  ovn_enable_multi_external_gateway=${ovn_enable_multi_external_gateway} \
+  ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
+  ovn_network_qos_enable=${ovn_network_qos_enable} \
+  ovn_enable_persistent_ips=${ovn_enable_persistent_ips} \
+  ovn_enable_svc_template_support=${ovn_enable_svc_template_support} \
+  ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
+  ovn_observ_enable=${ovn_observ_enable} \
+  mtu_value=${mtu} \
+  metrics_port=${metrics_port} \
+  dpuhost_cluster_net_cidr=${dpuhost_cluster_net_cidr} \
+  dpuhost_cluster_svc_cidr=${dpuhost_cluster_svc_cidr} \
+  dpuhost_cluster_k8s_apiserver=${dpuhost_cluster_k8s_apiserver} \
+  dpuhost_cluster_k8s_token=${dpuhost_cluster_k8s_token} \
+  dpuhost_cluster_k8s_cacert_data=${dpuhost_cluster_k8s_cacert_data} \
+  dpuhost_cluster_k8s_token_file=${dpuhost_cluster_k8s_token_file} \
+  dpuhost_cluster_k8s_cacert=${dpuhost_cluster_k8s_cacert} \
+  jinjanate ../templates/ovnkube-single-node-zone-dpu.yaml.j2 -o ${output_dir}/ovnkube-single-node-zone-dpu.yaml
 
 ovn_image=${ovnkube_image} \
   ovn_image_pull_policy=${image_pull_policy} \
