@@ -863,6 +863,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 	ginkgo.AfterEach(func() {
 		// ensure all nodes are ready and reachable before any other cleanup;
 		// tests may have left nodes NotReady or unreachable intentionally
+		// Skip restoration if test was skipped in BeforeEach (node names won't be initialized)
+		if egress1Node.name == "" || egress2Node.name == "" {
+			framework.Logf("Skipping node restoration as test was skipped in BeforeEach")
+			return
+		}
 		for _, node := range []string{egress1Node.name, egress2Node.name} {
 			setNodeReady(providerCtx, node, true)
 			setNodeReachable(node, true)
@@ -2970,6 +2975,221 @@ spec:
 			podNamespace.Name, pod1Name, true, []string{egressIP1}))
 		framework.ExpectNoError(err, "5. Check connectivity a pod to an external \"node\" hosted on a secondary host network "+
 			"and verify the expected IP, failed for EgressIP %s: %v", egressIPName, err)
+	})
+
+	/* This case is mainly to test egressIP failover scenario when egress node reboots".
+	0. Label one node as egress node and create an EgressIP object with one egress IP defined
+	1. Create one pod matching the EgressIP and verify the connectivity works with EgressIP on node1 before shutdown
+	2. Add the \"k8s.ovn.org/egress-assignable\" label to seondary node,let's say egress node2
+	3. Install tcpdump and start tcpdump to capture garp packet in external container
+	4. Get primary interface for two egress nodes
+	5. Shutdown egress node1
+	6. Waiting for egress node1 to be marked as NotReady
+	7. Verify EgressIP failover to egress node2
+	8. Verify connectivity works after EIP failover to egress node2
+	9. Start egress node1
+	10. Wait for egrss node1 to become ready
+	11. Verify no GARP/ND sent out from egress node 1 which was shutdown and started
+	12. Verify the EIP remains on egress node2 after node 1 becomes ready
+	13. Check connectivity again after node 1 becomes ready from pod to an external node and verify that the srcIP is the expected egressIP
+	14. Create a new pod matching the EgressIP
+	15. Verify connectivity works with EgressIP for the new create pod after node reboot
+	*/
+	ginkgo.It("should failover correctly when egress node reboots", func() {
+		// 1. When restarting a node with docker restart, any secondary network (like xgw) loses its OVS configuration
+		// which would make the node in NotReady status
+		// 2. Skipping node reboot test for BGP route advertisements - Kind infrastructure limitation.
+		// 'docker restart' (simulating node reboot) does not restore the runtime network
+		// configuration set by the test infrastructure, like but not limited to "Default gateway route to FRR router reverted"
+		if os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" || os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" || os.Getenv("ENABLE_NETWORK_SEGMENTATION") == "true" {
+			ginkgo.Skip("Skipped for noSnatGW env and Skipping node reboot test for BGP route advertisements - Kind infrastructure limitation")
+		}
+
+		var (
+			nodeShutdownTimeout = 5 * time.Minute
+			nodeStartupTimeout  = 10 * time.Minute
+		)
+
+		//Secondary network is created and attached to the nodes in beforeEach function, however, when the node is rebooted with secondary network attached,
+		//There is a race condtion that Kubelet picks wrong IP which is secondary interface IP as node IP
+		//so detach secondary network from all nodes which was not needed in this case
+		framework.Logf("Detach secondary network from all nodes")
+		secondaryProviderNetwork, err := infraprovider.Get().GetNetwork(secondaryNetworkName)
+		framework.ExpectNoError(err, "network %s must exist", secondaryNetworkName)
+		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+		framework.ExpectNoError(err, "must list all Nodes")
+		for _, node := range nodes.Items {
+			err = providerCtx.DetachNetwork(secondaryProviderNetwork, node.Name)
+			framework.ExpectNoError(err, "network %s must detach from node %s", secondaryProviderNetwork.Name, node.Name)
+		}
+
+		ginkgo.By("0. Label one node as egress node and create an EgressIP object with one egress IP defined")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+
+		podNamespace := f.Namespace
+		labels := map[string]string{
+			"name": f.Namespace.Name,
+		}
+		updateNamespaceLabels(f, podNamespace, labels)
+
+		var egressIP net.IP
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
+
+		egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
+
+		ginkgo.By("1. Create one pod matching the EgressIP and verify the connectivity works with EgressIP on node1 before shutdown")
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		framework.Logf("Created pod %s on node %s", pod1Name, pod1Node.name)
+		err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP.String()}).WithContext())
+		framework.ExpectNoError(err, "Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
+		ginkgo.By("2. Add the \"k8s.ovn.org/egress-assignable\" label to secondary node")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		defer e2enode.RemoveLabelOffNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable")
+
+		ginkgo.By("3. Install tcpdump in external container for later use")
+		_, err = infraprovider.Get().ExecExternalContainerCommand(primaryTargetExternalContainer, []string{
+			"bash", "-c", "which tcpdump >/dev/null 2>&1 || (apk update && apk add tcpdump)",
+		})
+		framework.ExpectNoError(err, "failed to install tcpdump in external container %v", primaryTargetExternalContainer)
+
+		ginkgo.By("4. Get primary interface for two egress nodes")
+		// Get primary provider network and interface info for later tcpdump use
+		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "failed to get primary provider network")
+		externalContainerInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(primaryTargetExternalContainer, primaryProviderNetwork)
+		framework.ExpectNoError(err, "failed to get external container network interface")
+		egress1NodeInf, err := infraprovider.Get().GetK8NodeNetworkInterface(egress1Node.name, primaryProviderNetwork)
+		framework.ExpectNoError(err, "failed to get primary network interface from node %s", egress1Node.name)
+		egress2NodeInf, err := infraprovider.Get().GetK8NodeNetworkInterface(egress2Node.name, primaryProviderNetwork)
+		framework.ExpectNoError(err, "failed to get primary network interface from node %s", egress2Node.name)
+
+		ginkgo.By("5. Start tcpdump to capture any GARP/ND packets sent after node shutdown")
+		var tcpdumpcmd string
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			tcpdumpcmd = fmt.Sprintf("nohup tcpdump -i  %s -nn -vv \"icmp6 and icmp6[0] == 136\"", externalContainerInf.InfName)
+		} else {
+			tcpdumpcmd = fmt.Sprintf("nohup tcpdump -i %s -vv -e \"arp and arp[14:4] == arp[24:4]\" ", externalContainerInf.InfName)
+		}
+		tcpdumpFilePath := "/tmp/tcpdump.log"
+		tcpdumpCommand := fmt.Sprintf("%s > %s 2>&1 &", tcpdumpcmd, tcpdumpFilePath)
+		framework.Logf("Starting tcpdump command: %s", tcpdumpCommand)
+		_, err = infraprovider.Get().ExecExternalContainerCommand(primaryTargetExternalContainer, []string{
+			"bash", "-c", tcpdumpCommand,
+		})
+		framework.ExpectNoError(err, "failed to start tcpdump in external container %v", primaryTargetExternalContainer)
+
+		ginkgo.By(fmt.Sprintf("6. Shut down the egress node %s", egress1Node.name))
+		framework.Logf("Shutting down node %s", egress1Node.name)
+		err = infraprovider.Get().ShutdownNode(egress1Node.name)
+		framework.ExpectNoError(err, "Failed to shutdown node %s", egress1Node.name)
+
+		// Wait for the node to be marked as NotReady
+		ginkgo.By("7. Waiting for node to be marked as NotReady")
+		waitForNodeReadyState(f, egress1Node.name, nodeShutdownTimeout, false)
+
+		ginkgo.By(fmt.Sprintf("8. Verify EgressIP failover to egress node 2 %s", egress2Node.name))
+		verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+			return statuses[0].Node == egress2Node.name
+		})
+
+		ginkgo.By("9. Verify connectivity works after failover to egress node2")
+		err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP.String()}).WithContext())
+		framework.ExpectNoError(err, "Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
+		ginkgo.By(fmt.Sprintf("10. Start the node %s", egress1Node.name))
+		err = infraprovider.Get().StartNode(egress1Node.name)
+		framework.ExpectNoError(err, "Failed to start node %s", egress1Node.name)
+
+		// Wait for the node to become Ready again
+		ginkgo.By(fmt.Sprintf("11. Waiting for node %s to become Ready", egress1Node.name))
+		waitForNodeReadyState(f, egress1Node.name, nodeStartupTimeout, true)
+		waitForNoTaint(egress1Node.name, "node.kubernetes.io/unreachable")
+
+		ginkgo.By("12. Verify no GARP/ND sent out from egress node 1 which was shutdown and started")
+		getTcpdumpLogsCMD := fmt.Sprintf("cat  %s ", tcpdumpFilePath)
+		tcpdumpLogs, err := infraprovider.Get().ExecExternalContainerCommand(primaryTargetExternalContainer, []string{
+			"bash", "-c", getTcpdumpLogsCMD,
+		})
+		framework.ExpectNoError(err, "failed to get tcpdump output %s from external container %v",
+			tcpdumpLogs, primaryTargetExternalContainer)
+
+		framework.Logf("Get the MACs of two egress nodes, MAC of egress node1 is %s, MAC of egress node2 is %s", egress1NodeInf.MAC, egress2NodeInf.MAC)
+		matchedAdverts := 0
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			// For IPv6, packets span multiple lines. Split by timestamp.
+			packetPattern := regexp.MustCompile(`\d{2}:\d{2}:\d{2}\.\d+`)
+			indices := packetPattern.FindAllStringIndex(tcpdumpLogs, -1)
+			for i := 0; i < len(indices); i++ {
+				var packet string
+				if i < len(indices)-1 {
+					packet = tcpdumpLogs[indices[i][0]:indices[i+1][0]]
+				} else {
+					packet = tcpdumpLogs[indices[i][0]:]
+				}
+				// Check if this packet is a neighbor advertisement for egressIP
+				if strings.Contains(packet, "neighbor advertisement") &&
+					strings.Contains(packet, fmt.Sprintf("tgt is %s", egressIP.String())) {
+					matchedAdverts++
+					framework.Logf("Found Neighbor Advertisement packet:\n%s", packet)
+					// Packet should contain MAC of egress node 2, not egress node 1
+					gomega.Expect(packet).Should(gomega.ContainSubstring(egress2NodeInf.MAC), "tcpdump logs do not have NA from new egress node.")
+					gomega.Expect(packet).ShouldNot(gomega.ContainSubstring(egress1NodeInf.MAC), "tcpdump logs have NA from old egress node which is not expected.")
+				}
+			}
+		} else {
+			// For IPv4 GARP, each packet is on a single line
+			re := regexp.MustCompile(fmt.Sprintf(`Request who-has %s tell %s`, egressIP.String(), egressIP.String()))
+			lines := strings.Split(tcpdumpLogs, "\n")
+			for _, line := range lines {
+				if re.MatchString(line) {
+					matchedAdverts++
+					framework.Logf("GARP packet: %s", line)
+
+					gomega.Expect(line).Should(gomega.ContainSubstring(egress2NodeInf.MAC), "tcpdump logs do not have GARP from new egress node.")
+					gomega.Expect(line).ShouldNot(gomega.ContainSubstring(egress1NodeInf.MAC), "tcpdump logs have GARP from old egress node which is not expected.")
+				}
+			}
+		}
+		gomega.Expect(matchedAdverts).To(gomega.BeNumerically(">", 0),
+			"did not capture any GARP/NA packet for EgressIP %s", egressIP.String())
+
+		ginkgo.By("13. Verify the EIP remains on egress node2 after node 1 becomes ready")
+		verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+			return statuses[0].Node == egress2Node.name
+		})
+
+		ginkgo.By("14. Check connectivity again after node 1 becomes ready from pod to an external node and verify that the srcIP is the expected egressIP ")
+		err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP.String()}).WithContext())
+		framework.ExpectNoError(err, "Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
+		ginkgo.By("15. Create a new pod matching the EgressIP")
+		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
+		framework.Logf("Created pod %s on node %s", pod2Name, pod2Node.name)
+
+		ginkgo.By("16. Verify connectivity works with EgressIP for the new create pod after node reboot")
+		err = wait.PollUntilContextTimeout(context.TODO(), retryInterval, retryTimeout, true, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod2Name, true, []string{egressIP.String()}).WithContext())
+		framework.ExpectNoError(err, "Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
 	})
 
 	ginkgo.It("[secondary-host-eip] should send address advertisements for EgressIP", func() {
