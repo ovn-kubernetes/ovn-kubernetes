@@ -22,6 +22,9 @@ import (
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 var _ = Describe("Network Segmentation: Default network multus annotation", feature.NetworkSegmentation, func() {
@@ -230,6 +233,30 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 	})
 
 	Context("Pod connectivity with static IP and MAC", func() {
+		const (
+			externalContainerName = "cudn-egress-test-helper"
+		)
+		var (
+			providerCtx       infraapi.Context
+			externalContainer infraapi.ExternalContainer
+		)
+
+		BeforeEach(func() {
+			providerCtx = infraprovider.Get().NewTestContext()
+			providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+			framework.ExpectNoError(err, "provider primary network must be available")
+			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
+			externalContainerSpec := infraapi.ExternalContainer{
+				Name:    externalContainerName,
+				Image:   images.AgnHost(),
+				Network: providerPrimaryNetwork,
+				CmdArgs: httpServerContainerCmd(uint16(externalContainerPort)),
+				ExtPort: externalContainerPort,
+			}
+			externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
+			framework.ExpectNoError(err, "external container must succeed")
+		})
+
 		It("should configure pods with static IP/MAC on CUDN primary network", func() {
 			if !isPreConfiguredUdnAddressesEnabled() {
 				Skip("ENABLE_PRE_CONF_UDN_ADDR not configured")
@@ -411,18 +438,24 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 		_, stderr, err = e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, fmt.Sprintf("%s -c 3 -W 2 %s", pingCmd, pod1StaticIP))
 		Expect(err).NotTo(HaveOccurred(), "Ping failed: %s", stderr)
 
-		// North-South traffic validation: test egress from static IP pods to external host
-		By("Validating north-south egress traffic from pod-1 with static IP")
-		Eventually(func() error {
-			_, _, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod1.Name, "curl -s --connect-timeout 5 ifconfig.me")
-			return err
-		}, 2*time.Minute, 6*time.Second).Should(Succeed(), "Egress traffic from pod-1 to external host should succeed")
+		// North-South traffic validation: test egress from static IP pods to external container
+		By("Validating north-south egress traffic from pods with static IP to external container")
+		externalPort := externalContainer.GetPort()
 
-		By("Validating north-south egress traffic from pod-2 with static IP")
-		Eventually(func() error {
-			_, _, err := e2epod.ExecShellInPodWithFullOutput(context.TODO(), f, pod2.Name, "curl -s --connect-timeout 5 ifconfig.me")
-			return err
-		}, 2*time.Minute, 6*time.Second).Should(Succeed(), "Egress traffic from pod-2 to external host should succeed")
+		for _, testPod := range []*corev1.Pod{pod1, pod2} {
+			if isIPv4Supported(f.ClientSet) {
+				By(fmt.Sprintf("Testing egress from %s to external container IPv4", testPod.Name))
+				Eventually(func() error {
+					return connectToServer(podConfiguration{namespace: testPod.Namespace, name: testPod.Name}, externalContainer.GetIPv4(), externalPort)
+				}, 2*time.Minute, 6*time.Second).Should(Succeed(), "Egress traffic from %s to external IPv4 should succeed", testPod.Name)
+			}
+			if isIPv6Supported(f.ClientSet) {
+				By(fmt.Sprintf("Testing egress from %s to external container IPv6", testPod.Name))
+				Eventually(func() error {
+					return connectToServer(podConfiguration{namespace: testPod.Namespace, name: testPod.Name}, externalContainer.GetIPv6(), externalPort)
+				}, 2*time.Minute, 6*time.Second).Should(Succeed(), "Egress traffic from %s to external IPv6 should succeed", testPod.Name)
+			}
+		}
 		})
 
 		It("should attach pods to both CUDN primary with static IP/MAC and UDN secondary", func() {
