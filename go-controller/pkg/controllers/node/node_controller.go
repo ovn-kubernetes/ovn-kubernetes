@@ -42,20 +42,12 @@ type NodeHandler interface {
 	SyncNodes(nodes []*corev1.Node) error
 }
 
-// NetworkFilteringPolicy defines behavior differences for users of the shared node controller.
-// Basically for Cluster manager we do not filter for dynamic UDN, and for UDN controllers we do.
-// This will change in the future.
-type NetworkFilteringPolicy interface {
-	NodeHasNetwork(nodeName, netName string) bool
-	ShouldFilterByRemoteNetworkActivity(node *corev1.Node, netName string) bool
-}
-
 // NodeController reconciles node topology for all registered networks.
 type NodeController struct {
 	name string
 
 	nodeController controller.Controller
-	policy         NetworkFilteringPolicy
+	networkManager networkmanager.Interface
 	nodeLister     v1.NodeLister
 
 	// handlers maps network name to node handler.
@@ -93,15 +85,15 @@ type NodeController struct {
 
 const scopedNodeQueueKeySeparator = "|"
 
-// NewController builds a shared node controller with an injected behavior policy.
-func NewController(wf *factory.WatchFactory, name string, policy NetworkFilteringPolicy) *NodeController {
-	if policy == nil {
-		panic("node controller policy must not be nil")
+// NewController builds a shared node controller.
+func NewController(wf *factory.WatchFactory, name string, networkManager networkmanager.Interface) *NodeController {
+	if networkManager == nil {
+		panic("node controller network manager must not be nil")
 	}
 	nodeInformer := wf.NodeCoreInformer()
 	c := &NodeController{
 		name:                    name,
-		policy:                  policy,
+		networkManager:          networkManager,
 		nodeLister:              nodeInformer.Lister(),
 		handlers:                syncmap.NewSyncMap[NodeHandler](),
 		nodeReconciliation:      map[string]map[string]bool{},
@@ -128,7 +120,7 @@ func NewController(wf *factory.WatchFactory, name string, policy NetworkFilterin
 
 // NewNodeController builds a controller that handles node events for all UDNs.
 func NewNodeController(wf *factory.WatchFactory, networkManager networkmanager.Interface) *NodeController {
-	return NewController(wf, "node-topology", &udnPolicy{networkManager: networkManager})
+	return NewController(wf, "node-topology", networkManager)
 }
 
 // Start starts the node worker.
@@ -255,7 +247,7 @@ func (c *NodeController) reconcileNode(key string) error {
 
 		oldNode := c.getCachedNode(netName, nodeName)
 		nodeHadNetwork := c.nodeHasNetwork(netName, nodeName)
-		nodeHasNetwork := c.policy.NodeHasNetwork(nodeName, netName)
+		nodeHasNetwork := c.networkManager.NodeHasNetwork(nodeName, netName)
 
 		if c.shouldFilterByRemoteNetworkActivity(newNode, netName) || c.shouldFilterByRemoteNetworkActivity(oldNode, netName) {
 			// If the node is going inactive we need to delete it and not update
@@ -546,18 +538,6 @@ func (c *NodeController) deleteNodeActive(netName, nodeName string) {
 // filtering should be applied for the node. This is limited to remote-zone
 // nodes; local-zone nodes always run unfiltered reconciliation.
 func (c *NodeController) shouldFilterByRemoteNetworkActivity(node *corev1.Node, netName string) bool {
-	return c.policy.ShouldFilterByRemoteNetworkActivity(node, netName)
-}
-
-type udnPolicy struct {
-	networkManager networkmanager.Interface
-}
-
-func (p *udnPolicy) NodeHasNetwork(nodeName, netName string) bool {
-	return p.networkManager.NodeHasNetwork(nodeName, netName)
-}
-
-func (p *udnPolicy) ShouldFilterByRemoteNetworkActivity(node *corev1.Node, netName string) bool {
 	if node == nil || netName == types.DefaultNetworkName || !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		return false
 	}

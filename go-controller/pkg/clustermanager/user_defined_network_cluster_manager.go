@@ -12,6 +12,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -31,7 +32,7 @@ type userDefinedNetworkClusterManager struct {
 	recorder record.EventRecorder
 
 	errorReporter  NetworkStatusReporter
-	nodeReconciler *clusterManagerNodeController
+	nodeReconciler *nodecontroller.NodeController
 }
 
 func newUserDefinedNetworkClusterManager(
@@ -39,7 +40,7 @@ func newUserDefinedNetworkClusterManager(
 	wf *factory.WatchFactory,
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
-	nodeReconciler *clusterManagerNodeController,
+	nodeReconciler *nodecontroller.NodeController,
 ) (*userDefinedNetworkClusterManager, error) {
 	klog.Infof("Creating user-defined network cluster manager")
 	sncm := &userDefinedNetworkClusterManager{

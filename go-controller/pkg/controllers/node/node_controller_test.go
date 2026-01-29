@@ -92,7 +92,7 @@ func newNodeControllerForTest(threadiness int, reconcileAllCounter *int) control
 func TestNodeControllerStartFailure(t *testing.T) {
 	c := &NodeController{
 		name:               "topology-test",
-		policy:             &udnPolicy{networkManager: networkmanager.Default().Interface()},
+		networkManager:     networkmanager.Default().Interface(),
 		nodeController:     newNodeControllerForTest(0, nil),
 		handlers:           syncmap.NewSyncMap[NodeHandler](),
 		nodeReconciliation: map[string]map[string]bool{},
@@ -117,7 +117,7 @@ func TestRegisterNetworkControllerBootstrapFailure(t *testing.T) {
 	}
 	c := &NodeController{
 		name:               "topology-test",
-		policy:             &udnPolicy{networkManager: networkmanager.Default().Interface()},
+		networkManager:     networkmanager.Default().Interface(),
 		nodeController:     newNodeControllerForTest(1, nil),
 		nodeLister:         newNodeLister(t, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}),
 		handlers:           syncmap.NewSyncMap[NodeHandler](),
@@ -142,7 +142,7 @@ func TestRegisterNetworkControllerBootstrapFailure(t *testing.T) {
 func TestRegisterNetworkControllerPanicsOnDuplicateNetworkHandler(t *testing.T) {
 	c := &NodeController{
 		name:               "topology-test",
-		policy:             &udnPolicy{networkManager: networkmanager.Default().Interface()},
+		networkManager:     networkmanager.Default().Interface(),
 		nodeController:     newNodeControllerForTest(1, nil),
 		nodeLister:         newNodeLister(t, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}),
 		handlers:           syncmap.NewSyncMap[NodeHandler](),
@@ -171,8 +171,8 @@ func TestDeregisterNetworkControllerClearsNetworkState(t *testing.T) {
 	handlers := syncmap.NewSyncMap[NodeHandler]()
 	handlers.Store(handler.netName, handler)
 	c := &NodeController{
-		policy:   &udnPolicy{networkManager: networkmanager.Default().Interface()},
-		handlers: handlers,
+		networkManager: networkmanager.Default().Interface(),
+		handlers:       handlers,
 		nodeReconciliation: map[string]map[string]bool{
 			handler.netName: {"node-a": false},
 		},
@@ -210,7 +210,7 @@ func TestReconcileUpdateScopedNetworkOnly(t *testing.T) {
 	handlers.Store(handlerB.netName, handlerB)
 
 	c := &NodeController{
-		policy:             &udnPolicy{networkManager: networkmanager.Default().Interface()},
+		networkManager:     networkmanager.Default().Interface(),
 		handlers:           handlers,
 		nodeReconciliation: map[string]map[string]bool{},
 		nodeActive:         map[string]map[string]struct{}{},
@@ -231,14 +231,14 @@ func TestReconcileUpdateScopedNetworkOnly(t *testing.T) {
 	}
 }
 
-func TestUDNPolicyDoesNotFilterDefaultNetwork(t *testing.T) {
+func TestNodeControllerDoesNotFilterDefaultNetwork(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 	config.Default.Zone = "local-zone"
 
-	policy := &udnPolicy{networkManager: networkmanager.Default().Interface()}
+	controller := &NodeController{networkManager: networkmanager.Default().Interface()}
 	remoteNode := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-a",
@@ -248,10 +248,10 @@ func TestUDNPolicyDoesNotFilterDefaultNetwork(t *testing.T) {
 		},
 	}
 
-	if policy.ShouldFilterByRemoteNetworkActivity(remoteNode, "default") {
+	if controller.shouldFilterByRemoteNetworkActivity(remoteNode, "default") {
 		t.Fatal("expected default network to skip dynamic UDN remote activity filtering")
 	}
-	if !policy.ShouldFilterByRemoteNetworkActivity(remoteNode, "net-a") {
+	if !controller.shouldFilterByRemoteNetworkActivity(remoteNode, "net-a") {
 		t.Fatal("expected non-default network to apply dynamic UDN remote activity filtering")
 	}
 }
@@ -265,7 +265,7 @@ func TestReconcileUpdateFailureKeepsConfiguredCacheAndStoresLatestInformerNode(t
 	newNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Annotations: map[string]string{"v": "new"}}}
 
 	c := &NodeController{
-		policy:             &udnPolicy{networkManager: networkmanager.Default().Interface()},
+		networkManager:     networkmanager.Default().Interface(),
 		handlers:           syncmap.NewSyncMap[NodeHandler](),
 		nodeReconciliation: map[string]map[string]bool{},
 		nodeActive:         map[string]map[string]struct{}{},
@@ -302,7 +302,7 @@ func TestReconcileDeleteFallsBackToLatestInformerNode(t *testing.T) {
 	}
 
 	c := &NodeController{
-		policy:             &udnPolicy{networkManager: networkmanager.Default().Interface()},
+		networkManager:     networkmanager.Default().Interface(),
 		handlers:           syncmap.NewSyncMap[NodeHandler](),
 		nodeReconciliation: map[string]map[string]bool{},
 		nodeActive:         map[string]map[string]struct{}{},
@@ -338,7 +338,7 @@ func TestReconcileNodeRemoteNodeBecomesActiveTreatsAsAdd(t *testing.T) {
 
 	fakeNM := &fakeNodeActivityNetworkManager{active: true}
 	c := &NodeController{
-		policy:             &udnPolicy{networkManager: fakeNM},
+		networkManager:     fakeNM,
 		handlers:           handlers,
 		nodeReconciliation: map[string]map[string]bool{},
 		nodeActive:         map[string]map[string]struct{}{},
@@ -393,7 +393,7 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 	}
 
 	c := &NodeController{
-		policy:             &udnPolicy{networkManager: &fakeNodeActivityNetworkManager{active: false}},
+		networkManager:     &fakeNodeActivityNetworkManager{active: false},
 		handlers:           handlers,
 		nodeReconciliation: map[string]map[string]bool{},
 		nodeActive: map[string]map[string]struct{}{
@@ -438,7 +438,7 @@ func TestReconcileNodeDeleteCacheMissStillClearsState(t *testing.T) {
 
 	c := &NodeController{
 		name:               "topology-test",
-		policy:             &udnPolicy{networkManager: &fakeNodeActivityNetworkManager{active: false}},
+		networkManager:     &fakeNodeActivityNetworkManager{active: false},
 		nodeLister:         newNodeLister(t),
 		handlers:           handlers,
 		nodeReconciliation: map[string]map[string]bool{handler.netName: {"node-a": true}},

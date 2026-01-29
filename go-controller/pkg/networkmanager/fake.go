@@ -66,6 +66,8 @@ type FakeNetworkManager struct {
 	nextID      uint64
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
+	// ActiveNodes tracks node activity for Dynamic UDN tests.
+	ActiveNodes map[string]bool
 }
 
 func (fnm *FakeNetworkManager) RegisterNADReconciler(r NADReconciler) uint64 {
@@ -243,6 +245,27 @@ func (fnm *FakeNetworkManager) GetNetworkByID(id int) util.NetInfo {
 	return nil
 }
 
-func (fnm *FakeNetworkManager) NodeHasNetwork(_, _ string) bool {
-	return !config.OVNKubernetesFeature.EnableDynamicUDNAllocation
+func (fnm *FakeNetworkManager) NodeHasNetwork(node, networkName string) bool {
+	if !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		return true
+	}
+	if networkName == types.DefaultNetworkName {
+		return true
+	}
+	fnm.Lock()
+	defer fnm.Unlock()
+	if fnm.ActiveNodes == nil {
+		return false
+	}
+	return fnm.ActiveNodes[node]
+}
+
+// SetNodeActive marks a node as active/inactive for Dynamic UDN tests.
+func (fnm *FakeNetworkManager) SetNodeActive(nodeName string, active bool) {
+	fnm.Lock()
+	defer fnm.Unlock()
+	if fnm.ActiveNodes == nil {
+		fnm.ActiveNodes = map[string]bool{}
+	}
+	fnm.ActiveNodes[nodeName] = active
 }
