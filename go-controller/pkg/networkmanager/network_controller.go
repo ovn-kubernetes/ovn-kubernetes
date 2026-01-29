@@ -373,10 +373,6 @@ func (c *networkController) syncAll() error {
 	klog.Infof("%s: syncing all networks", c.name)
 	for _, network := range validNetworks {
 		err := c.syncNetwork(network.GetNetworkName())
-		if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
-			klog.V(5).Infof("Ignoring network %q since %q does not manage it", network.GetNetworkName(), c.name)
-			continue
-		}
 		if err != nil {
 			return fmt.Errorf("failed to sync network %s: %w", network.GetNetworkName(), err)
 		}
@@ -465,6 +461,11 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 	// otherwise setup & start the new network controller
 	nc, err := c.cm.NewNetworkController(network)
 	if err != nil {
+		if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
+			klog.V(5).Infof("Network %q of topology %s is not managed by %s, skipping it",
+				networkName, network.TopologyType(), c.name)
+			return nil
+		}
 		return fmt.Errorf("failed to create network %s: %w", networkName, err)
 	}
 
