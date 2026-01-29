@@ -2005,8 +2005,10 @@ func TestEVPNConfig(t *testing.T) {
 		expectedVTEPName          string
 		expectedMACVRFVNI         int32
 		expectedMACVRFRouteTarget string
+		expectedMACVRFVID         int
 		expectedIPVRFVNI          int32
 		expectedIPVRFRouteTarget  string
+		expectedIPVRFVID          int
 	}
 
 	tests := []testConfig{
@@ -2104,6 +2106,35 @@ func TestEVPNConfig(t *testing.T) {
 			expectedIPVRFRouteTarget:  "65000:1000",
 		},
 		{
+			desc: "layer2 network with EVPN transport including VIDs (allocated by controller)",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:   cnitypes.NetConf{Name: "evpn-with-vids"},
+				Topology:  ovntypes.Layer2Topology,
+				Transport: "evpn",
+				EVPN: &ovncnitypes.EVPNConfig{
+					VTEP: "vid-vtep",
+					MACVRF: &ovncnitypes.VRFConfig{
+						VNI:         100,
+						RouteTarget: "65000:100",
+						VID:         12,
+					},
+					IPVRF: &ovncnitypes.VRFConfig{
+						VNI:         1000,
+						RouteTarget: "65000:1000",
+						VID:         13,
+					},
+				},
+			},
+			expectedTransport:         "evpn",
+			expectedVTEPName:          "vid-vtep",
+			expectedMACVRFVNI:         100,
+			expectedMACVRFRouteTarget: "65000:100",
+			expectedMACVRFVID:         12,
+			expectedIPVRFVNI:          1000,
+			expectedIPVRFRouteTarget:  "65000:1000",
+			expectedIPVRFVID:          13,
+		},
+		{
 			desc: "layer2 network with nooverlay transport",
 			inputNetConf: &ovncnitypes.NetConf{
 				NetConf:   cnitypes.NetConf{Name: "nooverlay-network"},
@@ -2114,8 +2145,10 @@ func TestEVPNConfig(t *testing.T) {
 			expectedVTEPName:          "",
 			expectedMACVRFVNI:         0,
 			expectedMACVRFRouteTarget: "",
+			expectedMACVRFVID:         0,
 			expectedIPVRFVNI:          0,
 			expectedIPVRFRouteTarget:  "",
+			expectedIPVRFVID:          0,
 		},
 		{
 			desc: "EVPN config with VNI only (no route target)",
@@ -2149,8 +2182,10 @@ func TestEVPNConfig(t *testing.T) {
 			g.Expect(netInfo.EVPNVTEPName()).To(gomega.Equal(test.expectedVTEPName), "VTEP name mismatch")
 			g.Expect(netInfo.EVPNMACVRFVNI()).To(gomega.Equal(test.expectedMACVRFVNI), "MAC-VRF VNI mismatch")
 			g.Expect(netInfo.EVPNMACVRFRouteTarget()).To(gomega.Equal(test.expectedMACVRFRouteTarget), "MAC-VRF RouteTarget mismatch")
+			g.Expect(netInfo.EVPNMACVRFVID()).To(gomega.Equal(test.expectedMACVRFVID), "MAC-VRF VID mismatch")
 			g.Expect(netInfo.EVPNIPVRFVNI()).To(gomega.Equal(test.expectedIPVRFVNI), "IP-VRF VNI mismatch")
 			g.Expect(netInfo.EVPNIPVRFRouteTarget()).To(gomega.Equal(test.expectedIPVRFRouteTarget), "IP-VRF RouteTarget mismatch")
+			g.Expect(netInfo.EVPNIPVRFVID()).To(gomega.Equal(test.expectedIPVRFVID), "IP-VRF VID mismatch")
 		})
 	}
 }

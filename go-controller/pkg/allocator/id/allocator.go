@@ -16,7 +16,7 @@ const (
 type Allocator interface {
 	AllocateID(name string) (int, error)
 	ReserveID(name string, id int) error
-	ReleaseID(name string)
+	ReleaseID(name string) int
 	ForName(name string) NamedAllocator
 	GetID(name string) int
 }
@@ -25,7 +25,7 @@ type Allocator interface {
 type NamedAllocator interface {
 	AllocateID() (int, error)
 	ReserveID(int) error
-	ReleaseID()
+	ReleaseID() int
 }
 
 // idAllocator is used to allocate id for a resource and store the resource - id in a map
@@ -90,15 +90,18 @@ func (idAllocator *idAllocator) ReserveID(name string, id int) error {
 	return nil
 }
 
-// ReleaseID releases the id allocated for the resource 'name'
-func (idAllocator *idAllocator) ReleaseID(name string) {
+// ReleaseID releases the id allocated for the resource 'name'.
+// Returns the released id, or -1 if no id was allocated for that name.
+func (idAllocator *idAllocator) ReleaseID(name string) int {
 	idAllocator.nameIdMap.LockKey(name)
 	defer idAllocator.nameIdMap.UnlockKey(name)
 	v, ok := idAllocator.nameIdMap.Load(name)
 	if ok {
 		idAllocator.idBitmap.Release(v)
 		idAllocator.nameIdMap.Delete(name)
+		return v
 	}
+	return invalidID
 }
 
 func (idAllocator *idAllocator) ForName(name string) NamedAllocator {
@@ -129,8 +132,8 @@ func (allocator *namedAllocator) ReserveID(id int) error {
 	return allocator.allocator.ReserveID(allocator.name, id)
 }
 
-func (allocator *namedAllocator) ReleaseID() {
-	allocator.allocator.ReleaseID(allocator.name)
+func (allocator *namedAllocator) ReleaseID() int {
+	return allocator.allocator.ReleaseID(allocator.name)
 }
 
 // idsAllocator is used to allocate multiple ids for a resource and store the resource - ids in a map
