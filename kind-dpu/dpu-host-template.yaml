@@ -1,0 +1,201 @@
+---
+# DPU Host Template - Production CNI-Only (Top Half)
+# Based on production dpu-host.yaml
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: ovnkube-node-dpu-host
+  namespace: ovn-kubernetes
+  annotations:
+    kubernetes.io/description: |
+      This DaemonSet launches the ovn-kubernetes CNI components for DPU host nodes.
+spec:
+  selector:
+    matchLabels:
+      app: ovnkube-node-dpu-host
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: ovnkube-node-dpu-host
+        name: ovnkube-node-dpu-host
+        component: network
+        type: infra
+        kubernetes.io/os: "linux"
+    spec:
+      priorityClassName: "system-cluster-critical"
+      serviceAccountName: ovnkube-node
+      hostNetwork: true
+      dnsPolicy: Default
+      hostPID: true
+      containers:
+      # Single container for CNI-only functionality
+      - name: ovnkube-controller
+        image: "localhost/ovn-daemonset-fedora:dev"
+        imagePullPolicy: "IfNotPresent"
+
+        # Use standard ovnkube.sh approach like all other nodes
+        command: ["/root/ovnkube.sh", "ovn-node"]
+
+        securityContext:
+          runAsUser: 0
+          privileged: true
+
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        # Common CNI mounts
+        - mountPath: /host
+          name: host-slash
+          readOnly: true
+        - mountPath: /var/run/dbus/
+          name: host-var-run-dbus
+          readOnly: true
+        - mountPath: /var/lib/kubelet
+          name: host-kubelet
+          readOnly: true
+        - mountPath: /var/log/ovn-kubernetes/
+          name: host-var-log-ovnkube
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
+        # CNI related mounts
+        - mountPath: /opt/cni/bin
+          name: host-opt-cni-bin
+        - mountPath: /etc/cni/net.d
+          name: host-etc-cni-netd
+        - mountPath: /var/run/netns
+          name: host-netns
+          mountPropagation: Bidirectional
+        - mountPath: /run/systemd/private
+          name: run-systemd
+          subPath: private
+          readOnly: true
+        # DPU host specific mounts (no OVS volumes)
+        - mountPath: /var/run/ovn
+          name: var-run-ovn
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: "1.2.0"
+        - name: OVN_KUBE_LOG_LEVEL
+          value: "4"
+        - name: OVNKUBE_LOGLEVEL
+          value: "4"
+        - name: OVNKUBE_LOGFILE_MAXSIZE
+          value: "100"
+        - name: OVNKUBE_LOGFILE_MAXBACKUPS
+          value: "5"
+        - name: OVNKUBE_LOGFILE_MAXAGE
+          value: "5"
+        - name: OVN_NET_CIDR
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: net_cidr
+        - name: OVN_SVC_CIDR
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: svc_cidr
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: k8s_apiserver
+        - name: OVN_MTU
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: mtu
+        - name: OVN_ROUTABLE_MTU
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: routable_mtu
+              optional: true
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OVN_GATEWAY_MODE
+          value: "shared"
+        - name: OVN_GATEWAY_OPTS
+          value: ""
+        # CRITICAL: Standard ovnkube node mode environment variable
+        - name: OVNKUBE_NODE_MODE
+          value: "dpu-host"
+        # CRITICAL: Must match DPU node setting - use veth provider to avoid sysfs PCI lookups
+        - name: OVNKUBE_DPU_PROVIDER
+          value: "veth"
+        # Management interface for DPU-host mode
+        # This is the host-side veth end that pairs with rep0-0 (ovn-k8s-mp0) on the DPU
+        - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
+          value: "eth0-0"
+        # CRITICAL: Must match DPU node setting - enables IC mode and skips
+        # ready_to_start_node check (OVN DBs run on the DPU, not on the host)
+        - name: OVN_ENABLE_INTERCONNECT
+          value: "true"
+        - name: OVN_HOST_NETWORK_NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: host_network_namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+
+        readinessProbe:
+          exec:
+            command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnkube-node"]
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+          periodSeconds: 60
+
+      # Target DPU host nodes only
+      nodeSelector:
+        kubernetes.io/os: "linux"
+        k8s.ovn.org/dpu-host: ""
+      volumes:
+      # Common volumes
+      - name: host-var-run-dbus
+        hostPath:
+          path: /var/run/dbus
+      - name: host-kubelet
+        hostPath:
+          path: /var/lib/kubelet
+      - name: host-var-log-ovnkube
+        hostPath:
+          path: /var/log/ovn-kubernetes
+      - name: host-var-run-ovn-kubernetes
+        hostPath:
+          path: /var/run/ovn-kubernetes
+      - name: host-opt-cni-bin
+        hostPath:
+          path: /opt/cni/bin
+      - name: host-etc-cni-netd
+        hostPath:
+          path: /etc/cni/net.d
+      - name: host-slash
+        hostPath:
+          path: /
+      - name: host-netns
+        hostPath:
+          path: /var/run/netns
+      - name: run-systemd
+        hostPath:
+          path: /run/systemd
+      - name: var-run-ovn
+        emptyDir: {}
+
+      tolerations:
+      - operator: "Exists"

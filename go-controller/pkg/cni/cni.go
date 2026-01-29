@@ -118,7 +118,7 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, networ
 
 // primaryDPUReady makes sure previous annotation condition is ready, then if primary UDN interface is needed and it is
 // in the DPU-HOST/DPU setup, checks if DPU connection annotations for primary UDN interface are ready.
-func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork, k kube.Interface, podLister corev1listers.PodLister, annotCondFn podAnnotWaitCond) podAnnotWaitCond {
+func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork, k kube.Interface, podLister corev1listers.PodLister, annotCondFn podAnnotWaitCond, dpuProvider util.DPUProvider) podAnnotWaitCond {
 	return func(pod *corev1.Pod, nadKey string) (*util.PodAnnotation, bool, error) {
 		// First, check the original annotation condition
 		annotation, isReady, err := annotCondFn(pod, nadKey)
@@ -131,7 +131,7 @@ func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork,
 		if config.OvnKubeNode.Mode == types.NodeModeDPUHost &&
 			primaryUDNPodRequest != nil && primaryUDNPodRequest.CNIConf.DeviceID != "" {
 			netdevName := primaryUDN.NetworkDevice()
-			if err := primaryUDNPodRequest.addDPUConnectionDetailsAnnot(k, podLister, netdevName); err != nil {
+			if err := primaryUDNPodRequest.addDPUConnectionDetailsAnnot(k, podLister, netdevName, dpuProvider); err != nil {
 				return annotation, false, err
 			}
 			// Check if DPU status annotation is ready (passing nil as we've already checked annotation)
@@ -156,6 +156,9 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	}
 
 	kubecli := &kube.Kube{KClient: clientset.kclient}
+
+	// Create DPU provider once for both UDN and default network use
+	dpuProvider := util.NewSriovDPUProvider()
 
 	pod, _, _, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, "",
 		func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
@@ -190,7 +193,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 			// Add DPU connection-details annotation so ovnkube-node running on DPU
 			// performs the needed network plumbing.
-			if err = pr.addDPUConnectionDetailsAnnot(kubecli, clientset.podLister, netdevName); err != nil {
+			if err = pr.addDPUConnectionDetailsAnnot(kubecli, clientset.podLister, netdevName, dpuProvider); err != nil {
 				return nil, err
 			}
 			// Defer default-network DPU readiness gating so the primary UDN annotation/DPU readiness can progress in parallel when present.
@@ -205,7 +208,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	if util.IsNetworkSegmentationSupportEnabled() {
 		annotCondFn = primaryUDN.WaitForPrimaryAnnotationFn(annotCondFn)
 		// checks for primary UDN network's DPU connections status
-		annotCondFn = pr.primaryDPUReady(primaryUDN, kubecli, clientset.podLister, annotCondFn)
+		annotCondFn = pr.primaryDPUReady(primaryUDN, kubecli, clientset.podLister, annotCondFn, dpuProvider)
 	}
 
 	// now checks for default network's DPU connection status

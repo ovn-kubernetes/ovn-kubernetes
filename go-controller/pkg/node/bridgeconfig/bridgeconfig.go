@@ -179,6 +179,21 @@ func NewBridgeConfiguration(intfName, nodeName,
 		res.gwIface = bridgeName
 		res.uplinkName = intfName
 		gwIntf = bridgeName
+
+		// For veth DPU mode, also add the representor interface to the bridge
+		if config.OvnKubeNode.Mode == types.NodeModeDPU {
+			hostRep, err := util.GetDPUHostInterface("")
+			if err != nil {
+				return nil, err
+			}
+
+			// Add representor to the bridge (matches SR-IOV pattern)
+			if _, _, err := util.RunOVSVsctl("add-port", res.bridgeName, hostRep); err != nil {
+				return nil, fmt.Errorf("failed to add representor %s to bridge %s: %w", hostRep, res.bridgeName, err)
+			}
+
+			klog.Infof("DPU mode: added representor %s to bridge %s", hostRep, res.bridgeName)
+		}
 	} else {
 		// gateway interface is an OVS bridge
 		uplinkName, err := getIntfName(intfName)
@@ -229,7 +244,7 @@ func NewBridgeConfiguration(intfName, nodeName,
 		if err != nil {
 			return nil, err
 		}
-		res.macAddress, err = util.GetSriovnetOps().GetRepresentorPeerMacAddress(hostRep)
+		res.macAddress, err = util.GetDPUProvider().GetRepresentorPeerMacAddress(hostRep)
 		if err != nil {
 			return nil, err
 		}

@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# error-cni: A CNI plugin that intentionally fails for testing purposes
+# This script follows the CNI specification for error responses
+#
+# Use case: Test scenarios where only host-networked pods should work
+# - Host-networked pods bypass CNI completely (they work)
+# - Regular pods invoke CNI and get this error (they fail)
+
+# CNI Environment Variables (for debugging/logging purposes)
+# CNI_COMMAND, CNI_CONTAINERID, CNI_NETNS, CNI_IFNAME, CNI_ARGS, CNI_PATH
+
+# Output a CNI-compliant error response as JSON to stdout
+cat <<EOF
+{
+    "code": 999,
+    "msg": "error-cni: intentional failure for testing",
+    "details": "This is a test CNI plugin designed to always fail. Command: ${CNI_COMMAND:-unknown}, Container: ${CNI_CONTAINERID:-unknown}, Interface: ${CNI_IFNAME:-unknown}"
+}
+EOF
+
+# Exit with non-zero status code as required by CNI spec
+exit 1

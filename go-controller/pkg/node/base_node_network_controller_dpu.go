@@ -43,7 +43,7 @@ func (bnnc *BaseNodeNetworkController) podReadyToAddDPU(pod *corev1.Pod, nadKey 
 }
 
 func (bnnc *BaseNodeNetworkController) addDPUPodForNAD(pod *corev1.Pod, dpuCD *util.DPUConnectionDetails,
-	netName, nadKey string, getter cni.PodInfoGetter) error {
+	netName, nadKey string, getter cni.PodInfoGetter, dpuProvider util.DPUProvider) error {
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
 	klog.Infof("Adding %s on DPU", podDesc)
 	podInterfaceInfo, err := cni.PodAnnotation2PodInfo(pod.Annotations, nil,
@@ -51,14 +51,14 @@ func (bnnc *BaseNodeNetworkController) addDPUPodForNAD(pod *corev1.Pod, dpuCD *u
 	if err != nil {
 		return fmt.Errorf("failed to get pod interface information of %s: %v. retrying", podDesc, err)
 	}
-	err = bnnc.addRepPort(pod, dpuCD, podInterfaceInfo, getter)
+	err = bnnc.addRepPort(pod, dpuCD, podInterfaceInfo, getter, dpuProvider)
 	if err != nil {
 		return fmt.Errorf("failed to add rep port for %s, %v. retrying", podDesc, err)
 	}
 	return nil
 }
 
-func (bnnc *BaseNodeNetworkController) delDPUPodForNAD(pod *corev1.Pod, dpuCD *util.DPUConnectionDetails, nadKey string, podDeleted bool) error {
+func (bnnc *BaseNodeNetworkController) delDPUPodForNAD(pod *corev1.Pod, dpuCD *util.DPUConnectionDetails, nadKey string, podDeleted bool, dpuProvider util.DPUProvider) error {
 	var errs []error
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
 	klog.Infof("Deleting %s from DPU", podDesc)
@@ -70,7 +70,7 @@ func (bnnc *BaseNodeNetworkController) delDPUPodForNAD(pod *corev1.Pod, dpuCD *u
 			errs = append(errs, fmt.Errorf("failed to remove the old DPU connection status annotation for %s: %v", podDesc, err))
 		}
 	}
-	vfRepName, err := util.GetSriovnetOps().GetVfRepresentorDPU(dpuCD.PfId, dpuCD.VfId)
+	vfRepName, _, err := dpuProvider.GetRepresentorInfo(dpuCD)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to get old VF representor for %s, dpuConnDetail %+v Representor port may have been deleted: %v", podDesc, dpuCD, err))
 	} else {
@@ -146,7 +146,8 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 			for nadKey := range nadToDPUCDMap {
 				dpuCD := bnnc.podReadyToAddDPU(pod, nadKey)
 				if dpuCD != nil {
-					err := bnnc.addDPUPodForNAD(pod, dpuCD, netName, nadKey, clientSet)
+					dpuProvider := util.NewSriovDPUProvider()
+					err := bnnc.addDPUPodForNAD(pod, dpuCD, netName, nadKey, clientSet, dpuProvider)
 					if err != nil {
 						klog.Errorf("Error adding pod %s/%s for for network %s: %v", pod.Namespace, pod.Name, bnnc.GetNetworkName(), err)
 					} else {
@@ -178,7 +179,8 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 					klog.Infof("Deleting the old VF since either kubelet issued cmdDEL or assigned a new VF or "+
 						"the sandbox id itself changed. Old connection details (%v), New connection details (%v)",
 						oldDPUCD, newDPUCD)
-					err := bnnc.delDPUPodForNAD(oldPod, oldDPUCD, nadKey, false)
+					dpuProvider := util.NewSriovDPUProvider()
+					err := bnnc.delDPUPodForNAD(oldPod, oldDPUCD, nadKey, false, dpuProvider)
 					if err != nil {
 						klog.Errorf("Error deleting pod %s/%s for for network %s: %v", oldPod.Namespace, oldPod.Name, bnnc.GetNetworkName(), err)
 					}
@@ -188,7 +190,8 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 					klog.Infof("Adding VF during update because either during Pod Add we failed to add VF or "+
 						"connection details weren't present or the VF ID has changed. Old connection details (%v), "+
 						"New connection details (%v)", oldDPUCD, newDPUCD)
-					err := bnnc.addDPUPodForNAD(newPod, newDPUCD, netName, nadKey, clientSet)
+					dpuProvider := util.NewSriovDPUProvider()
+					err := bnnc.addDPUPodForNAD(newPod, newDPUCD, netName, nadKey, clientSet, dpuProvider)
 					if err != nil {
 						klog.Errorf("Error adding pod %s/%s for for network %s: %v", newPod.Namespace, newPod.Name, bnnc.GetNetworkName(), err)
 					} else {
@@ -211,7 +214,8 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 			bnnc.podNADToDPUCDMap.Delete(pod.UID)
 			for nadKey, dpuCD := range nadToDPUCDMap {
 				if dpuCD != nil {
-					err := bnnc.delDPUPodForNAD(pod, dpuCD, nadKey, true)
+					dpuProvider := util.NewSriovDPUProvider()
+					err := bnnc.delDPUPodForNAD(pod, dpuCD, nadKey, true, dpuProvider)
 					if err != nil {
 						klog.Errorf("Error deleting pod %s/%s for for network %s: %v", pod.Namespace, pod.Name, bnnc.GetNetworkName(), err)
 					}
@@ -241,24 +245,19 @@ func (bnnc *BaseNodeNetworkController) updatePodDPUConnStatusWithRetry(origPod *
 }
 
 // addRepPort adds the representor of the VF to the ovs bridge
-func (bnnc *BaseNodeNetworkController) addRepPort(pod *corev1.Pod, dpuCD *util.DPUConnectionDetails, ifInfo *cni.PodInterfaceInfo, getter cni.PodInfoGetter) error {
+func (bnnc *BaseNodeNetworkController) addRepPort(pod *corev1.Pod, dpuCD *util.DPUConnectionDetails, ifInfo *cni.PodInterfaceInfo, getter cni.PodInfoGetter, dpuProvider util.DPUProvider) error {
 
 	nadKey := ifInfo.NADKey
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadKey)
-	vfRepName, err := util.GetSriovnetOps().GetVfRepresentorDPU(dpuCD.PfId, dpuCD.VfId)
+	vfRepName, vfPciAddress, err := dpuProvider.GetRepresentorInfo(dpuCD)
 	if err != nil {
-		klog.Infof("Failed to get VF representor for %s dpuConnDetail %+v: %v", podDesc, dpuCD, err)
+		klog.Infof("Failed to get representor info for %s dpuConnDetail %+v: %v", podDesc, dpuCD, err)
 		return err
 	}
 
 	// set netdevName so OVS interface can be added with external_ids:vf-netdev-name, and is able to
 	// be part of healthcheck.
 	ifInfo.NetdevName = vfRepName
-	vfPciAddress, err := util.GetSriovnetOps().GetPCIFromDeviceName(vfRepName)
-	if err != nil {
-		klog.Infof("Failed to get PCI address of VF rep %s: %v", vfRepName, err)
-		return err
-	}
 
 	klog.Infof("Adding VF representor %s for %s", vfRepName, podDesc)
 	err = cni.ConfigureOVS(context.TODO(), pod.Namespace, pod.Name, "", vfRepName, ifInfo, dpuCD.SandboxId, vfPciAddress, getter)

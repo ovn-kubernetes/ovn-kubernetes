@@ -1,0 +1,54 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  # kube proxy will be disabled
+  kubeProxyMode: "none"
+  # the default CNI will not be installed
+  disableDefaultCNI: true
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/16"
+kubeadmConfigPatches:
+- |
+  kind: ClusterConfiguration
+  metadata:
+    name: config
+  apiServer:
+    extraArgs:
+      "v": "4"
+  controllerManager:
+    extraArgs:
+      "v": "4"
+      # Disable service-lb-controller for now
+      # https://github.com/kubernetes/kubernetes/issues/128121
+      # Once the upstream issue is fixed we can remove this controller
+      # customization fully. Tracked with
+      # https://github.com/ovn-org/ovn-kubernetes/issues/4785
+      "controllers": "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
+  scheduler:
+    extraArgs:
+      "v": "4"
+  networking: 
+    dnsDomain: cluster.local
+  ---
+  kind: InitConfiguration
+  nodeRegistration:
+    kubeletExtraArgs:
+      "v": "4"
+  ---
+  kind: JoinConfiguration
+  nodeRegistration:
+    kubeletExtraArgs:
+      "v": "4"
+nodes:
+ - role: control-plane
+   kubeadmConfigPatches:
+   - |
+     kind: InitConfiguration
+     nodeRegistration:
+       kubeletExtraArgs:
+         node-labels: "ingress-ready=true"
+         authorization-mode: "AlwaysAllow"
+ - role: worker
+ - role: worker
+ - role: worker
+ - role: worker

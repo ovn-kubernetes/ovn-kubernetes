@@ -1185,8 +1185,10 @@ ovn-master() {
   wait_for_event process_ready ovn-northd
 
   # wait for ovs-servers to start since ovn-master sets some fields in OVS DB
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
   echo "=============== ovn-master - (wait for ovs)"
   wait_for_event ovs_ready
+  fi
 
   hybrid_overlay_flags=
   if [[ ${ovn_hybrid_overlay_enable} == "true" ]]; then
@@ -1477,8 +1479,10 @@ ovnkube-controller() {
   wait_for_event process_ready ovn-northd
 
   # wait for ovs-servers to start since ovn-master sets some fields in OVS DB
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
   echo "=============== ovnkube-controller - (wait for ovs)"
   wait_for_event ovs_ready
+  fi
 
   hybrid_overlay_flags=
   if [[ ${ovn_hybrid_overlay_enable} == "true" ]]; then
@@ -1812,8 +1816,10 @@ ovnkube-controller-with-node() {
   wait_for_event process_ready ovn-northd
 
   # wait for ovs-servers to start since ovn-master sets some fields in OVS DB
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
   echo "=============== ovnkube-controller-with-node - (wait for ovs)"
   wait_for_event ovs_ready
+  fi
 
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovnkube-controller-with-node - (ovn-node  wait for ovn-controller.pid)"

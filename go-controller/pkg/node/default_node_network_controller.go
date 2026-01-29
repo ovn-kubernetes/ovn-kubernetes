@@ -571,13 +571,9 @@ func configureGatewayInterfaceFromMgmtPort() error {
 	return nil
 }
 
-func exportManagementPortAnnotation(netdevName string, nodeAnnotator kube.Annotator) error {
+func exportManagementPortAnnotation(netdevName string, nodeAnnotator kube.Annotator, dpuProvider util.DPUProvider) error {
 	klog.Infof("Exporting management port annotation for default network: netdev '%v'", netdevName)
-	deviceID, err := util.GetDeviceIDFromNetdevice(netdevName)
-	if err != nil {
-		return err
-	}
-	cfg, err := util.GetNetworkDeviceDetails(deviceID)
+	cfg, err := dpuProvider.CreateManagementPortDetails(netdevName)
 	if err != nil {
 		return err
 	}
@@ -628,7 +624,7 @@ func getMgmtPortAndRepNameModeFull() (string, string, error) {
 
 // In DPU mode, read the annotation from the host side which should have been
 // exported by ovn-k running in DPU host mode.
-func getMgmtPortAndRepNameModeDPU(node *corev1.Node) (string, string, error) {
+func getMgmtPortAndRepNameModeDPU(node *corev1.Node, dpuProvider util.DPUProvider) (string, string, error) {
 	cfgs, err := util.ParseNodeManagementPortAnnotation(node)
 	if err != nil {
 		return "", "", err
@@ -637,7 +633,7 @@ func getMgmtPortAndRepNameModeDPU(node *corev1.Node) (string, string, error) {
 	if !ok {
 		return "", "", fmt.Errorf("failed to find management port details for %s network", types.DefaultNetworkName)
 	}
-	rep, err := util.GetSriovnetOps().GetVfRepresentorDPU(fmt.Sprintf("%d", cfg.PfId), fmt.Sprintf("%d", cfg.FuncId))
+	rep, err := dpuProvider.GetManagementPortRepresentor(cfg)
 	return "", rep, err
 }
 
@@ -649,12 +645,12 @@ func getMgmtPortAndRepNameModeDPUHost() (string, string, error) {
 	return netdevName, "", nil
 }
 
-func getMgmtPortAndRepName(node *corev1.Node) (string, string, error) {
+func getMgmtPortAndRepName(node *corev1.Node, dpuProvider util.DPUProvider) (string, string, error) {
 	switch config.OvnKubeNode.Mode {
 	case types.NodeModeFull:
 		return getMgmtPortAndRepNameModeFull()
 	case types.NodeModeDPU:
-		return getMgmtPortAndRepNameModeDPU(node)
+		return getMgmtPortAndRepNameModeDPU(node, dpuProvider)
 	case types.NodeModeDPUHost:
 		return getMgmtPortAndRepNameModeDPUHost()
 	default:
@@ -668,8 +664,9 @@ func createNodeManagementPortController(
 	nodeAnnotator kube.Annotator,
 	routeManager *routemanager.Controller,
 	netInfo util.NetInfo,
+	dpuProvider util.DPUProvider,
 ) (managementport.Controller, error) {
-	netdevName, rep, err := getMgmtPortAndRepName(node)
+	netdevName, rep, err := getMgmtPortAndRepName(node, dpuProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +676,7 @@ func createNodeManagementPortController(
 		// 1. If config.OvnKubeNode.MgmtPortDPResourceName is not empty, management port annotation is taken care
 		//    of by node controller manage.
 		// 2. In full mode, representor interface is returned by calling getMgmtPortAndRepName(), not from the annotation.
-		err := exportManagementPortAnnotation(netdevName, nodeAnnotator)
+		err := exportManagementPortAnnotation(netdevName, nodeAnnotator, dpuProvider)
 		if err != nil {
 			return nil, err
 		}
@@ -886,12 +883,19 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 
 	// Setup management ports
+	var dpuProvider util.DPUProvider
+	if config.Default.DPUProviderMode == "veth" {
+		dpuProvider = util.NewVethRepresentorProvider()
+	} else {
+		dpuProvider = util.NewSriovDPUProvider() // default for backward compatibility
+	}
 	nc.mgmtPortController, err = createNodeManagementPortController(
 		node,
 		subnets,
 		nodeAnnotator,
 		nc.routeManager,
 		nc.GetNetInfo(),
+		dpuProvider,
 	)
 	if err != nil {
 		return err
@@ -1014,7 +1018,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	//        plumbing (takes 80ms based on what we saw in CI runs so we might still have that small window of disruption).
 	// NOTE: ovnkube-node in DPU host mode doesn't go through upgrades for OVN-IC and has no SBDB to connect to. Thus this part shall be skipped.
 	var syncNodes, syncServices, syncPods bool
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OvnKubeNode.Mode != types.NodeModeDPU && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
 		klog.Info("Upgrade Hack: Interconnect is enabled")
 		var err1 error
 		start := time.Now()

@@ -1,0 +1,44 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  # Disable default CNI so we can test with error-cni or manual setup
+  disableDefaultCNI: true
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+nodes:
+# Control plane node
+- role: control-plane
+  image: kindest/node:v1.29.0
+  extraMounts:
+  - hostPath: ./error-cni
+    containerPath: /opt/cni/bin/error-cni
+# Host nodes (2)
+- role: worker
+  image: kindest/node:v1.29.0
+  labels:
+    node-type: host
+  extraMounts:
+  - hostPath: ./error-cni
+    containerPath: /opt/cni/bin/error-cni
+- role: worker
+  image: kindest/node:v1.29.0
+  labels:
+    node-type: host
+  extraMounts:
+  - hostPath: ./error-cni
+    containerPath: /opt/cni/bin/error-cni
+# DPU nodes (2)
+- role: worker
+  image: kindest/node:v1.29.0
+  labels:
+    node-type: dpu
+  extraMounts:
+  - hostPath: ./error-cni
+    containerPath: /opt/cni/bin/error-cni
+- role: worker
+  image: kindest/node:v1.29.0
+  labels:
+    node-type: dpu
+  extraMounts:
+  - hostPath: ./error-cni
+    containerPath: /opt/cni/bin/error-cni

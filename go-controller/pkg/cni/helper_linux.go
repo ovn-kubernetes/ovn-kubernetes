@@ -627,7 +627,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 	}
 
 	if br_type == types.DatapathUserspace {
-		_, err := util.GetSriovnetOps().GetRepresentorPortFlavour(hostIfaceName)
+		_, err := util.GetDPUProvider().GetRepresentorPortFlavour(hostIfaceName)
 		if err != nil {
 			// The error is not important: the given port is not a switchdev one and won't
 			// be used with DPDK. It can happen for legitimate reason. Keep a trace of the

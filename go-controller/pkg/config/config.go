@@ -101,6 +101,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		DPUProviderMode:              "sriov", // Default to SR-IOV for backward compatibility
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -335,6 +336,9 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// DPUProviderMode specifies the DPU provider mode: "sriov" (default) or "veth"
+	DPUProviderMode string
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -1729,6 +1733,12 @@ var OvnKubeNodeFlags = []cli.Flag{
 		Value:       OvnKubeNode.MgmtPortDPResourceName,
 		Destination: &cliConfig.OvnKubeNode.MgmtPortDPResourceName,
 	},
+	&cli.StringFlag{
+		Name:        "dpu-provider",
+		Usage:       "DPU provider mode: sriov (default) or veth",
+		Value:       Default.DPUProviderMode,
+		Destination: &cliConfig.Default.DPUProviderMode,
+	},
 }
 
 // ClusterManagerFlags captures ovnkube-cluster-manager specific configurations
@@ -2568,6 +2578,12 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	}
 	OvnSouth = *tmpAuth
 
+	// Process environment variable overrides
+	if dpuProvider := os.Getenv("OVNKUBE_DPU_PROVIDER"); dpuProvider != "" {
+		klog.V(2).Infof("Override DPU provider from environment: %s", dpuProvider)
+		Default.DPUProviderMode = dpuProvider
+	}
+
 	if err := completeConfig(); err != nil {
 		return "", err
 	}
@@ -2920,5 +2936,14 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 	if OVNKubernetesFeature.EnableNetworkSegmentation && OvnKubeNode.Mode == types.NodeModeDPUHost && OvnKubeNode.MgmtPortDPResourceName == "" {
 		return fmt.Errorf("ovnkube-node-mgmt-port-dp-resource-name must be provided on dpu-host mode if network segmentation is enabled")
 	}
+
+	// Warn if database addresses were provided in DPU-host mode but will be ignored
+	if OvnKubeNode.Mode == types.NodeModeDPUHost {
+		if OvnNorth.Address != "" || OvnSouth.Address != "" {
+			klog.Warningf("DPU-host mode: ignoring provided database addresses (nb: %s, sb: %s) - databases run on DPU side only",
+				OvnNorth.Address, OvnSouth.Address)
+		}
+	}
+
 	return nil
 }

@@ -1,0 +1,288 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+    deprecated.daemonset.template.generation: "16"
+    kubernetes.io/description: |
+      This daemonset launches the ovn-kubernetes per node networking components.
+    networkoperator.openshift.io/default-masquerade-network-cidrs: 169.254.0.0/17,fd69::/112
+    release.openshift.io/version: 4.20.4
+  creationTimestamp: "2026-01-28T00:39:22Z"
+  generation: 16
+  labels:
+    networkoperator.openshift.io/generates-operator-status: stand-alone
+  name: ovnkube-node-dpu-host
+  namespace: openshift-ovn-kubernetes
+  ownerReferences:
+  - apiVersion: operator.openshift.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: Network
+    name: cluster
+    uid: d0dbe556-5517-4c03-9c64-9936c578a94f
+  resourceVersion: "5126735"
+  uid: 90495b4c-844a-49c6-a590-0b5b786524dc
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: ovnkube-node-dpu-host
+  template:
+    metadata:
+      annotations:
+        cluster-autoscaler.kubernetes.io/enable-ds-eviction: "false"
+        network.operator.openshift.io/ovnkube-script-lib-hash: abb120bf3f179b02d48b101000dbb18d7a8c9011
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+      creationTimestamp: null
+      labels:
+        app: ovnkube-node-dpu-host
+        component: network
+        kubernetes.io/os: linux
+        openshift.io/component: network
+        ovn-db-pod: "true"
+        type: infra
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: feature.node.kubernetes.io/dpu-enabled
+                operator: Exists
+              - key: network.operator.openshift.io/smart-nic
+                operator: DoesNotExist
+              - key: network.operator.openshift.io/dpu
+                operator: DoesNotExist
+      containers:
+      - command:
+        - /bin/bash
+        - -c
+        - |
+          #!/bin/bash
+          set -euo pipefail
+          . /ovnkube-lib/ovnkube-lib.sh || exit 1
+          start-rbac-proxy-node ovn-node-metrics 9103 29103 /etc/pki/tls/metrics-cert/tls.key /etc/pki/tls/metrics-cert/tls.crt
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:8670caccf8fd94dc6d568dafd47a5cb5312a74ab5cd9d40daee38fdbce23e400
+        imagePullPolicy: IfNotPresent
+        name: kube-rbac-proxy-node
+        ports:
+        - containerPort: 9103
+          name: https
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 10m
+            memory: 20Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /ovnkube-lib
+          name: ovnkube-script-lib
+        - mountPath: /etc/pki/tls/metrics-cert
+          name: ovn-node-metrics-cert
+          readOnly: true
+      - command:
+        - /bin/bash
+        - -c
+        - |
+          set -xe
+          . /ovnkube-lib/ovnkube-lib.sh || exit 1
+          start-ovnkube-node ${OVN_KUBE_LOG_LEVEL} 29103 29105
+        env:
+        - name: KUBERNETES_SERVICE_PORT
+          value: "6443"
+        - name: KUBERNETES_SERVICE_HOST
+          value: api-int.doca4.nvidia.eng.rdu2.dc.redhat.com
+        - name: OVN_CONTROLLER_INACTIVITY_PROBE
+          value: "180000"
+        - name: OVN_KUBE_LOG_LEVEL
+          value: "4"
+        - name: OVN_NODE_MODE
+          value: dpu-host
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: openshift.io/bf3-p0-vfs-mgmt
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:b3a1b19106a0b56e4755b13d2b331c0ecab00365cbeccaeb6a30123068898187
+        imagePullPolicy: IfNotPresent
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - rm
+              - -f
+              - /etc/cni/net.d/10-ovn-kubernetes.conf
+        name: ovnkube-controller
+        ports:
+        - containerPort: 29105
+          name: ovnmetrics-port
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              #!/bin/bash
+              test -f /etc/cni/net.d/10-ovn-kubernetes.conf
+          failureThreshold: 3
+          initialDelaySeconds: 5
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            openshift.io/bf3-p0-vfs-mgmt: "1"
+          requests:
+            cpu: 10m
+            memory: 600Mi
+            openshift.io/bf3-p0-vfs-mgmt: "1"
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /ovnkube-lib
+          name: ovnkube-script-lib
+        - mountPath: /etc/systemd/system
+          name: systemd-units
+          readOnly: true
+        - mountPath: /host
+          mountPropagation: HostToContainer
+          name: host-slash
+          readOnly: true
+        - mountPath: /run/ovn-kubernetes/
+          name: host-run-ovn-kubernetes
+        - mountPath: /run/netns
+          mountPropagation: HostToContainer
+          name: host-run-netns
+          readOnly: true
+        - mountPath: /run/systemd/private
+          mountPropagation: HostToContainer
+          name: run-systemd
+          readOnly: true
+          subPath: private
+        - mountPath: /cni-bin-dir
+          name: host-cni-bin
+        - mountPath: /etc/cni/net.d
+          name: host-cni-netd
+        - mountPath: /var/lib/cni/networks/ovn-k8s-cni-overlay
+          name: host-var-lib-cni-networks-ovn-kubernetes
+        - mountPath: /run/openvswitch
+          name: run-openvswitch
+        - mountPath: /var/log/ovnkube/
+          name: etc-openvswitch
+        - mountPath: /run/ovn/
+          name: run-ovn
+        - mountPath: /etc/openvswitch
+          name: etc-openvswitch
+        - mountPath: /etc/ovn/
+          name: etc-openvswitch
+        - mountPath: /var/lib/openvswitch
+          name: var-lib-openvswitch
+        - mountPath: /run/ovnkube-config/
+          name: ovnkube-config
+        - mountPath: /env
+          name: env-overrides
+      dnsPolicy: Default
+      hostNetwork: true
+      hostPID: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      priorityClassName: system-node-critical
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: ovn-kubernetes-node
+      serviceAccountName: ovn-kubernetes-node
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+      volumes:
+      - hostPath:
+          path: /etc/systemd/system
+          type: ""
+        name: systemd-units
+      - hostPath:
+          path: /
+          type: ""
+        name: host-slash
+      - hostPath:
+          path: /run/netns
+          type: ""
+        name: host-run-netns
+      - hostPath:
+          path: /run/systemd
+          type: ""
+        name: run-systemd
+      - hostPath:
+          path: /var/lib/openvswitch/data
+          type: ""
+        name: var-lib-openvswitch
+      - hostPath:
+          path: /var/lib/ovn-ic/etc
+          type: ""
+        name: etc-openvswitch
+      - hostPath:
+          path: /var/run/openvswitch
+          type: ""
+        name: run-openvswitch
+      - hostPath:
+          path: /var/run/ovn-ic
+          type: ""
+        name: run-ovn
+      - hostPath:
+          path: /run/ovn-kubernetes
+          type: ""
+        name: host-run-ovn-kubernetes
+      - hostPath:
+          path: /var/lib/cni/bin
+          type: ""
+        name: host-cni-bin
+      - hostPath:
+          path: /var/run/multus/cni/net.d
+          type: ""
+        name: host-cni-netd
+      - hostPath:
+          path: /var/lib/cni/networks/ovn-k8s-cni-overlay
+          type: ""
+        name: host-var-lib-cni-networks-ovn-kubernetes
+      - configMap:
+          defaultMode: 420
+          name: ovnkube-config
+        name: ovnkube-config
+      - configMap:
+          defaultMode: 420
+          name: env-overrides
+          optional: true
+        name: env-overrides
+      - name: ovn-node-metrics-cert
+        secret:
+          defaultMode: 420
+          optional: true
+          secretName: ovn-node-metrics-cert
+      - configMap:
+          defaultMode: 484
+          name: ovnkube-script-lib
+        name: ovnkube-script-lib
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 10%
+    type: RollingUpdate
+status:
+  currentNumberScheduled: 1
+  desiredNumberScheduled: 1
+  numberAvailable: 1
+  numberMisscheduled: 0
+  numberReady: 1
+  observedGeneration: 16
+  updatedNumberScheduled: 1

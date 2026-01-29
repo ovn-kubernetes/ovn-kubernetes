@@ -1,8 +1,6 @@
 package cni
 
 import (
-	"fmt"
-
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -30,27 +28,11 @@ func (pr *PodRequest) updatePodDPUConnDetailsWithRetry(kube kube.Interface, podL
 	return err
 }
 
-func (pr *PodRequest) addDPUConnectionDetailsAnnot(k kube.Interface, podLister corev1listers.PodLister, vfNetdevName string) error {
-	if pr.CNIConf.DeviceID == "" {
-		return fmt.Errorf("DeviceID must be set for Pod request with DPU")
-	}
-	pciAddress := pr.CNIConf.DeviceID
-
-	vfindex, err := util.GetSriovnetOps().GetVfIndexByPciAddress(pciAddress)
-	if err != nil {
-		return err
-	}
-	pfindex, err := util.GetSriovnetOps().GetPfIndexByVfPciAddress(pciAddress)
+func (pr *PodRequest) addDPUConnectionDetailsAnnot(k kube.Interface, podLister corev1listers.PodLister, vfNetdevName string, dpuProvider util.DPUProvider) error {
+	dpuConnDetails, err := dpuProvider.CreateConnectionDetails(pr.CNIConf.DeviceID, pr.SandboxID, vfNetdevName)
 	if err != nil {
 		return err
 	}
 
-	dpuConnDetails := util.DPUConnectionDetails{
-		PfId:         fmt.Sprint(pfindex),
-		VfId:         fmt.Sprint(vfindex),
-		SandboxId:    pr.SandboxID,
-		VfNetdevName: vfNetdevName,
-	}
-
-	return pr.updatePodDPUConnDetailsWithRetry(k, podLister, &dpuConnDetails)
+	return pr.updatePodDPUConnDetailsWithRetry(k, podLister, dpuConnDetails)
 }

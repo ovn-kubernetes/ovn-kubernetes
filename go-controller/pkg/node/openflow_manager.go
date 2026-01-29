@@ -328,7 +328,7 @@ func bootstrapOVSFlows(nodeName string) error {
 		if err != nil {
 			return err
 		}
-		bridgeMACAddress, err = util.GetSriovnetOps().GetRepresentorPeerMacAddress(hostRep)
+		bridgeMACAddress, err = util.GetDPUProvider().GetRepresentorPeerMacAddress(hostRep)
 		if err != nil {
 			return err
 		}

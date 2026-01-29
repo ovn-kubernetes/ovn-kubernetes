@@ -1,0 +1,833 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+    deprecated.daemonset.template.generation: "1"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"DaemonSet","metadata":{"annotations":{"kubernetes.io/description":"This DaemonSet launches the ovn-kubernetes networking components for worker nodes.\n"},"labels":{"app.kubernetes.io/instance":"cluster-ovn-fkpms","svc.dpu.nvidia.com/service":"dpudeployment_dpudeployment_ovn"},"name":"cluster-ovn-fkpms-ovn-kubernetes-node","namespace":"dpf-operator-system"},"spec":{"selector":{"matchLabels":{"app.kubernetes.io/component":"ovnkube-node","app.kubernetes.io/instance":"cluster-ovn-fkpms","app.kubernetes.io/name":"ovn-kubernetes","svc.dpu.nvidia.com/service":"dpudeployment_dpudeployment_ovn"}},"template":{"metadata":{"annotations":{"dpf.nvidia.com/ip-requests":"[\n  {\n    \"name\": \"vtep\",\n    \"poolName\": \"pool1\",\n    \"poolType\": \"cidrpool\",\n    \"allocateIPWithIndex\": 0\n  },\n  {\n    \"name\": \"pf\",\n    \"poolName\": \"pool1\",\n    \"poolType\": \"cidrpool\",\n    \"allocateIPWithIndex\": 1\n  }\n]"},"labels":{"app.kubernetes.io/component":"ovnkube-node","app.kubernetes.io/instance":"cluster-ovn-fkpms","app.kubernetes.io/name":"ovn-kubernetes","kubernetes.io/os":"linux","svc.dpu.nvidia.com/service":"dpudeployment_dpudeployment_ovn"}},"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"svc.dpu.nvidia.com/dpuservice-ovn-version","operator":"In","values":["ovn-fkpms"]},{"key":"svc.dpu.nvidia.com/owned-by-dpudeployment","operator":"In","values":["dpf-operator-system_dpudeployment"]}]}]}}},"automountServiceAccountToken":false,"containers":[{"command":["/root/ovnkube.sh","local-nb-ovsdb"],"env":[{"name":"OVN_DAEMONSET_VERSION","value":"1.1.0"},{"name":"OVN_LOGLEVEL_NB","value":"-vconsole:info -vfile:info"},{"name":"K8S_APISERVER","valueFrom":{"configMapKeyRef":{"key":"k8s_apiserver","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_KUBERNETES_NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}},{"name":"K8S_NODE_IP","valueFrom":{"fieldRef":{"fieldPath":"status.hostIP"}}},{"name":"K8S_NODE","valueFrom":{"fieldRef":{"fieldPath":"spec.nodeName"}}}],"image":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62","imagePullPolicy":"IfNotPresent","name":"nb-ovsdb","readinessProbe":{"exec":{"command":["/usr/bin/ovn-kube-util","readiness-probe","-t","ovnnb-db"]},"initialDelaySeconds":30,"periodSeconds":60,"timeoutSeconds":30},"resources":{"requests":{"cpu":"100m","memory":"300Mi"}},"securityContext":{"capabilities":{"add":["NET_ADMIN"]},"runAsUser":0},"terminationMessagePolicy":"FallbackToLogsOnError","volumeMounts":[{"mountPath":"/etc/openvswitch/","name":"host-etc-ovs"},{"mountPath":"/etc/ovn/","name":"host-var-lib-ovs"},{"mountPath":"/var/log/openvswitch/","name":"host-var-log-ovs"},{"mountPath":"/var/log/ovn/","name":"host-var-log-ovs"},{"mountPath":"/ovn-cert","name":"host-ovn-cert","readOnly":true},{"mountPath":"/var/run/ovn/","name":"host-var-run-ovs"},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"}]},{"command":["/root/ovnkube.sh","local-sb-ovsdb"],"env":[{"name":"OVN_DAEMONSET_VERSION","value":"1.1.0"},{"name":"OVN_LOGLEVEL_SB","value":"-vconsole:info -vfile:info"},{"name":"K8S_APISERVER","valueFrom":{"configMapKeyRef":{"key":"k8s_apiserver","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_KUBERNETES_NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}},{"name":"K8S_NODE_IP","valueFrom":{"fieldRef":{"fieldPath":"status.hostIP"}}},{"name":"K8S_NODE","valueFrom":{"fieldRef":{"fieldPath":"spec.nodeName"}}},{"name":"OVN_SSL_ENABLE","value":"no"}],"image":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62","imagePullPolicy":"IfNotPresent","name":"sb-ovsdb","readinessProbe":{"exec":{"command":["/usr/bin/ovn-kube-util","readiness-probe","-t","ovnsb-db"]},"initialDelaySeconds":30,"periodSeconds":60,"timeoutSeconds":30},"resources":{"requests":{"cpu":"100m","memory":"300Mi"}},"securityContext":{"capabilities":{"add":["NET_ADMIN"]},"runAsUser":0},"terminationMessagePolicy":"FallbackToLogsOnError","volumeMounts":[{"mountPath":"/etc/openvswitch/","name":"host-etc-ovs"},{"mountPath":"/etc/ovn/","name":"host-var-lib-ovs"},{"mountPath":"/var/log/openvswitch/","name":"host-var-log-ovs"},{"mountPath":"/var/log/ovn/","name":"host-var-log-ovs"},{"mountPath":"/ovn-cert","name":"host-ovn-cert","readOnly":true},{"mountPath":"/var/run/ovn/","name":"host-var-run-ovs"},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"}]},{"command":["/root/ovnkube.sh","run-ovn-northd"],"env":[{"name":"OVN_DAEMONSET_VERSION","value":"1.1.0"},{"name":"OVN_LOGLEVEL_NORTHD","value":"-vconsole:info -vfile:info"},{"name":"K8S_APISERVER","valueFrom":{"configMapKeyRef":{"key":"k8s_apiserver","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_KUBERNETES_NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}},{"name":"OVN_SSL_ENABLE","value":"no"},{"name":"OVN_NORTH","value":"local"},{"name":"OVN_SOUTH","value":"local"}],"image":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62","imagePullPolicy":"IfNotPresent","name":"ovn-northd","readinessProbe":{"exec":{"command":["/usr/bin/ovn-kube-util","readiness-probe","-t","ovn-northd"]},"initialDelaySeconds":30,"periodSeconds":60,"timeoutSeconds":30},"resources":{"requests":{"cpu":"100m","memory":"300Mi"}},"securityContext":{"capabilities":{"add":["SYS_NICE"]},"runAsUser":0},"terminationMessagePolicy":"FallbackToLogsOnError","volumeMounts":[{"mountPath":"/var/run/dbus/","name":"host-var-run-dbus","readOnly":true},{"mountPath":"/var/log/openvswitch/","name":"host-var-log-ovs"},{"mountPath":"/var/log/ovn/","name":"host-var-log-ovs"},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"},{"mountPath":"/var/run/ovn/","name":"host-var-run-ovs"},{"mountPath":"/ovn-cert","name":"host-ovn-cert","readOnly":true}]},{"command":["/root/ovnkube.sh","ovnkube-controller-with-node"],"env":[{"name":"OVN_EGRESSSERVICE_ENABLE","value":"false"},{"name":"OVN_DAEMONSET_VERSION","value":"1.1.0"},{"name":"OVNKUBE_LOGLEVEL","value":"4"},{"name":"OVNKUBE_LOGFILE_MAXSIZE","value":"100"},{"name":"OVNKUBE_LOGFILE_MAXBACKUPS","value":"5"},{"name":"OVNKUBE_LOGFILE_MAXAGE","value":"5"},{"name":"OVNKUBE_LIBOVSDB_CLIENT_LOGFILE","value":""},{"name":"OVNKUBE_CONFIG_DURATION_ENABLE","value":""},{"name":"OVNKUBE_METRICS_SCALE_ENABLE","value":""},{"name":"OVN_GATEWAY_ROUTER_SUBNET","value":""},{"name":"OVN_NET_CIDR","valueFrom":{"configMapKeyRef":{"key":"net_cidr","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_SVC_CIDR","valueFrom":{"configMapKeyRef":{"key":"svc_cidr","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"K8S_APISERVER","valueFrom":{"configMapKeyRef":{"key":"k8s_apiserver","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_MTU","valueFrom":{"configMapKeyRef":{"key":"mtu","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_ROUTABLE_MTU","valueFrom":{"configMapKeyRef":{"key":"routable_mtu","name":"cluster-ovn-fkpms-ovn-kubernetes-config","optional":true}}},{"name":"K8S_NODE","valueFrom":{"fieldRef":{"fieldPath":"spec.nodeName"}}},{"name":"K8S_NODE_IP","valueFrom":{"fieldRef":{"fieldPath":"status.hostIP"}}},{"name":"OVN_KUBERNETES_NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}},{"name":"OVN_GATEWAY_MODE","value":"shared"},{"name":"OVN_GATEWAY_OPTS","value":"--gateway-interface=br-dpu"},{"name":"OVN_HYBRID_OVERLAY_ENABLE","value":""},{"name":"OVN_ADMIN_NETWORK_POLICY_ENABLE","value":"true"},{"name":"OVN_EGRESSIP_ENABLE","value":"false"},{"name":"OVN_EGRESSIP_HEALTHCHECK_PORT","value":"9107"},{"name":"OVN_EGRESSFIREWALL_ENABLE","value":"false"},{"name":"OVN_EGRESSQOS_ENABLE","value":"false"},{"name":"OVN_NETWORK_QOS_ENABLE","value":"true"},{"name":"OVN_HYBRID_OVERLAY_NET_CIDR","value":""},{"name":"OVN_DISABLE_SNAT_MULTIPLE_GWS","value":""},{"name":"OVN_DISABLE_FORWARDING","value":""},{"name":"OVN_ENCAP_PORT","value":"6081"},{"name":"OVN_DISABLE_PKT_MTU_CHECK","value":""},{"name":"OVN_NETFLOW_TARGETS","value":""},{"name":"OVN_SFLOW_TARGETS","value":""},{"name":"OVN_IPFIX_TARGETS","value":""},{"name":"OVN_IPFIX_SAMPLING","value":""},{"name":"OVN_IPFIX_CACHE_MAX_FLOWS","value":""},{"name":"OVN_IPFIX_CACHE_ACTIVE_TIMEOUT","value":""},{"name":"OVN_V4_JOIN_SUBNET","value":"100.64.0.0/16"},{"name":"OVN_V6_JOIN_SUBNET","value":"fd98::/64"},{"name":"OVN_V4_MASQUERADE_SUBNET","value":"169.254.0.0/17"},{"name":"OVN_V6_MASQUERADE_SUBNET","value":"fd69::/112"},{"name":"OVN_MULTICAST_ENABLE","value":"true"},{"name":"OVN_UNPRIVILEGED_MODE","value":"no"},{"name":"OVN_EX_GW_NETWORK_INTERFACE","value":""},{"name":"OVN_SSL_ENABLE","value":"no"},{"name":"OVN_DISABLE_OVN_IFACE_ID_VER","value":"false"},{"name":"OVN_REMOTE_PROBE_INTERVAL","value":"100000"},{"name":"OVN_MONITOR_ALL","value":""},{"name":"OVN_OFCTRL_WAIT_BEFORE_CLEAR","value":""},{"name":"OVN_ENABLE_LFLOW_CACHE","value":"false"},{"name":"OVN_LFLOW_CACHE_LIMIT","value":""},{"name":"OVN_LFLOW_CACHE_LIMIT_KB","value":""},{"name":"OVN_MULTI_NETWORK_ENABLE","value":"true"},{"name":"OVN_EMPTY_LB_EVENTS","value":""},{"name":"OVN_ACL_LOGGING_RATE_LIMIT","value":"20"},{"name":"OVN_STATELESS_NETPOL_ENABLE","value":"true"},{"name":"OVN_HOST_NETWORK_NAMESPACE","valueFrom":{"configMapKeyRef":{"key":"host_network_namespace","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_NORTH","value":"local"},{"name":"OVN_SOUTH","value":"local"},{"name":"OVN_ENABLE_INTERCONNECT","value":"true"},{"name":"OVN_ENABLE_MULTI_EXTERNAL_GATEWAY","value":"false"},{"name":"OVN_ENABLE_OVNKUBE_IDENTITY","value":"false"},{"name":"OVN_DISABLE_REQUESTEDCHASSIS","value":"true"},{"name":"OVN_ENABLE_SVC_TEMPLATE_SUPPORT","value":"false"},{"name":"OVN_ENABLE_DNSNAMERESOLVER","value":"false"},{"name":"OVN_NOHOSTSUBNET_LABEL","value":"k8s.ovn.org/ovn-managed=false"},{"name":"OVNKUBE_NODE_MODE","value":"dpu"},{"name":"OVNKUBE_NODE_LEASE_NAMESPACE","value":"openshift-ovn-kubernetes"}],"image":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62","imagePullPolicy":"IfNotPresent","name":"doca-ovnkube-controller","readinessProbe":{"httpGet":{"path":"/metrics","port":9476,"scheme":"HTTP"},"initialDelaySeconds":30,"periodSeconds":30,"timeoutSeconds":5},"resources":{"requests":{"cpu":"100m","memory":"300Mi"}},"securityContext":{"privileged":true,"runAsUser":0},"terminationMessagePolicy":"FallbackToLogsOnError","volumeMounts":[{"mountPath":"/host","name":"host-slash","readOnly":true},{"mountPath":"/var/lib/kubelet","name":"host-kubelet","readOnly":true},{"mountPath":"/host-kubernetes","name":"host-kubeconfig","readOnly":true},{"mountPath":"/var/run/dbus/","name":"host-var-run-dbus","readOnly":true},{"mountPath":"/var/log/ovn-kubernetes/","name":"host-var-log-ovnkube"},{"mountPath":"/var/run/ovn-kubernetes","name":"host-var-run-ovn-kubernetes"},{"mountPath":"/opt/cni/bin","name":"host-opt-cni-bin"},{"mountPath":"/etc/cni/net.d","name":"host-etc-cni-netd"},{"mountPath":"/var/run/netns","mountPropagation":"Bidirectional","name":"host-netns"},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"},{"mountPath":"/var/run/ovn/","name":"host-var-run-ovs"},{"mountPath":"/ovn-cert","name":"host-ovn-cert","readOnly":true},{"mountPath":"/etc/openvswitch/","name":"host-etc-ovs"},{"mountPath":"/etc/openvswitch/ovn_k8s.conf","name":"init-output","subPath":"ovn_k8s.conf"},{"mountPath":"/etc/ovn/","name":"host-var-lib-ovs","readOnly":true},{"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount","name":"tenant-cluster-access-secret","readOnly":true}]},{"command":["/root/ovnkube.sh","ovn-controller"],"env":[{"name":"OVN_DAEMONSET_VERSION","value":"1.1.0"},{"name":"OVN_LOGLEVEL_CONTROLLER","value":"-vconsole:info"},{"name":"K8S_APISERVER","valueFrom":{"configMapKeyRef":{"key":"k8s_apiserver","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"OVN_KUBERNETES_NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}},{"name":"OVN_SSL_ENABLE","value":""},{"name":"OVN_NORTH","value":"local"},{"name":"OVN_SOUTH","value":"local"}],"image":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62","imagePullPolicy":"IfNotPresent","name":"ovn-controller","readinessProbe":{"exec":{"command":["/usr/bin/ovn-kube-util","readiness-probe","-t","ovn-controller"]},"initialDelaySeconds":30,"periodSeconds":60,"timeoutSeconds":30},"resources":{"requests":{"cpu":"100m","memory":"300Mi"}},"securityContext":{"capabilities":{"add":["SYS_NICE"]},"runAsUser":0},"terminationMessagePolicy":"FallbackToLogsOnError","volumeMounts":[{"mountPath":"/var/run/dbus/","name":"host-var-run-dbus","readOnly":true},{"mountPath":"/var/log/openvswitch/","name":"host-var-log-ovs"},{"mountPath":"/var/log/ovn/","name":"host-var-log-ovs"},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"},{"mountPath":"/var/run/ovn/","name":"host-var-run-ovs"},{"mountPath":"/ovn-cert","name":"host-ovn-cert","readOnly":true}]},{"command":["/root/ovnkube.sh","ovs-metrics"],"env":[{"name":"OVN_DAEMONSET_VERSION","value":"1.1.0"},{"name":"K8S_NODE_IP","valueFrom":{"fieldRef":{"fieldPath":"status.hostIP"}}}],"image":"quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62","imagePullPolicy":"IfNotPresent","name":"ovs-metrics-exporter","resources":{"requests":{"cpu":"100m","memory":"300Mi"}},"securityContext":{"capabilities":{"add":["NET_ADMIN"]},"runAsUser":0},"terminationMessagePolicy":"FallbackToLogsOnError","volumeMounts":[{"mountPath":"/var/run/dbus/","name":"host-var-run-dbus","readOnly":true},{"mountPath":"/var/log/openvswitch/","name":"host-var-log-ovs"},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"}]}],"dnsPolicy":"Default","hostNetwork":true,"hostPID":true,"imagePullSecrets":[{"name":"dpf-pull-secret"}],"initContainers":[{"command":["/ipallocator","allocator"],"env":[{"name":"IP_ALLOCATOR_REQUESTS","valueFrom":{"fieldRef":{"fieldPath":"metadata.annotations['dpf.nvidia.com/ip-requests']"}}},{"name":"K8S_POD_NAME","valueFrom":{"fieldRef":{"fieldPath":"metadata.name"}}},{"name":"K8S_POD_NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}},{"name":"K8S_POD_UID","valueFrom":{"fieldRef":{"fieldPath":"metadata.uid"}}}],"image":"ghcr.io/mellanox/ovn-kubernetes-dpf-utils:v0.1.0-latest-alin","imagePullPolicy":"IfNotPresent","lifecycle":{"preStop":{"exec":{"command":["/ipallocator","deallocator"]}}},"name":"ipallocator","readinessProbe":{"exec":{"command":["cat","/var/run/readyz"]}},"restartPolicy":"Always","securityContext":{"runAsUser":0},"startupProbe":{"exec":{"command":["cat","/var/run/readyz"]}},"volumeMounts":[{"mountPath":"/opt/cni/bin","name":"cni-bin-dir","readOnly":true},{"mountPath":"/var/lib/cni/nv-ipam","name":"nvipam-daemon-socket-dir","readOnly":true},{"mountPath":"/tmp/ips","name":"ips"},{"mountPath":"/var/lib/cni","name":"cni-cache"}]},{"args":["internal-ipam"],"command":["/cniprovisioner"],"env":[{"name":"NODE_NAME","valueFrom":{"fieldRef":{"fieldPath":"spec.nodeName"}}},{"name":"OVN_MTU","valueFrom":{"configMapKeyRef":{"key":"mtu","name":"cluster-ovn-fkpms-ovn-kubernetes-config"}}},{"name":"VTEP_CIDR","value":"10.6.156.208/28"},{"name":"HOST_CIDR","value":"10.6.135.0/24"}],"image":"ghcr.io/mellanox/ovn-kubernetes-dpf-utils:v0.1.0-latest-alin","imagePullPolicy":"IfNotPresent","name":"cniprovisioner","readinessProbe":{"exec":{"command":["cat","/var/run/readyz"]}},"restartPolicy":"Always","securityContext":{"privileged":true,"runAsUser":0},"startupProbe":{"exec":{"command":["cat","/var/run/readyz"]},"initialDelaySeconds":30},"volumeMounts":[{"mountPath":"/tmp/ips","name":"ips"},{"mountPath":"/etc/openvswitch","name":"init-output"},{"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount","name":"incluster","readOnly":true},{"mountPath":"/var/run/openvswitch/","name":"host-var-run-ovs"}]}],"priorityClassName":"system-cluster-critical","serviceAccountName":"cluster-ovn-fkpms-ovn-kubernetes-node","tolerations":[{"operator":"Exists"}],"volumes":[{"emptyDir":{},"name":"ips"},{"hostPath":{"path":"/var/lib/cni/bin/","type":"Directory"},"name":"cni-bin-dir"},{"hostPath":{"path":"/var/lib/cni/nv-ipam","type":"Directory"},"name":"nvipam-daemon-socket-dir"},{"emptyDir":{},"name":"cni-cache"},{"emptyDir":{},"name":"init-output"},{"hostPath":{"path":"/var/run/dbus"},"name":"host-var-run-dbus"},{"hostPath":{"path":"/etc/kubernetes/"},"name":"host-kubeconfig"},{"hostPath":{"path":"/var/lib/kubelet"},"name":"host-kubelet"},{"hostPath":{"path":"/var/log/ovn-kubernetes"},"name":"host-var-log-ovnkube"},{"hostPath":{"path":"/var/run/ovn-kubernetes"},"name":"host-var-run-ovn-kubernetes"},{"hostPath":{"path":"/var/lib/cni/bin/"},"name":"host-opt-cni-bin"},{"hostPath":{"path":"/run/multus/cni/net.d"},"name":"host-etc-cni-netd"},{"hostPath":{"path":"/"},"name":"host-slash"},{"hostPath":{"path":"/var/run/netns"},"name":"host-netns"},{"hostPath":{"path":"/var/log/openvswitch"},"name":"host-var-log-ovs"},{"hostPath":{"path":"/run/openvswitch"},"name":"host-run-ovs"},{"hostPath":{"path":"/var/run/openvswitch"},"name":"host-var-run-ovs"},{"hostPath":{"path":"/etc/ovn","type":"DirectoryOrCreate"},"name":"host-ovn-cert"},{"hostPath":{"path":"/var/lib/openvswitch"},"name":"host-var-lib-ovs"},{"hostPath":{"path":"/etc/openvswitch"},"name":"host-etc-ovs"},{"name":"tenant-cluster-access-secret","secret":{"defaultMode":420,"items":[{"key":"KUBERNETES_CA_DATA","path":"ca.crt"},{"key":"TOKEN_FILE","path":"token"}],"secretName":"ovn-dpu"}},{"name":"incluster","projected":{"sources":[{"secret":{"items":[{"key":"ca.crt","path":"ca.crt"},{"key":"token","path":"token"}],"name":"cluster-ovn-fkpms-ovn-kubernetes-dpucniprovisioner-token"}}]}}]}}}}
+    kubernetes.io/description: |
+      This DaemonSet launches the ovn-kubernetes networking components for worker nodes.
+  creationTimestamp: "2026-02-03T12:38:43Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/instance: cluster-ovn-fkpms
+    svc.dpu.nvidia.com/service: dpudeployment_dpudeployment_ovn
+  name: cluster-ovn-fkpms-ovn-kubernetes-node
+  namespace: dpf-operator-system
+  resourceVersion: "1406941"
+  uid: f877b235-1953-403f-9421-c3fe34a5567b
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ovnkube-node
+      app.kubernetes.io/instance: cluster-ovn-fkpms
+      app.kubernetes.io/name: ovn-kubernetes
+      svc.dpu.nvidia.com/service: dpudeployment_dpudeployment_ovn
+  template:
+    metadata:
+      annotations:
+        dpf.nvidia.com/ip-requests: |-
+          [
+            {
+              "name": "vtep",
+              "poolName": "pool1",
+              "poolType": "cidrpool",
+              "allocateIPWithIndex": 0
+            },
+            {
+              "name": "pf",
+              "poolName": "pool1",
+              "poolType": "cidrpool",
+              "allocateIPWithIndex": 1
+            }
+          ]
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: ovnkube-node
+        app.kubernetes.io/instance: cluster-ovn-fkpms
+        app.kubernetes.io/name: ovn-kubernetes
+        kubernetes.io/os: linux
+        svc.dpu.nvidia.com/service: dpudeployment_dpudeployment_ovn
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: svc.dpu.nvidia.com/dpuservice-ovn-version
+                operator: In
+                values:
+                - ovn-fkpms
+              - key: svc.dpu.nvidia.com/owned-by-dpudeployment
+                operator: In
+                values:
+                - dpf-operator-system_dpudeployment
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - /root/ovnkube.sh
+        - local-nb-ovsdb
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: 1.1.0
+        - name: OVN_LOGLEVEL_NB
+          value: -vconsole:info -vfile:info
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              key: k8s_apiserver
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62
+        imagePullPolicy: IfNotPresent
+        name: nb-ovsdb
+        readinessProbe:
+          exec:
+            command:
+            - /usr/bin/ovn-kube-util
+            - readiness-probe
+            - -t
+            - ovnnb-db
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/openvswitch/
+          name: host-etc-ovs
+        - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/log/openvswitch/
+          name: host-var-log-ovs
+        - mountPath: /var/log/ovn/
+          name: host-var-log-ovs
+        - mountPath: /ovn-cert
+          name: host-ovn-cert
+          readOnly: true
+        - mountPath: /var/run/ovn/
+          name: host-var-run-ovs
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+      - command:
+        - /root/ovnkube.sh
+        - local-sb-ovsdb
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: 1.1.0
+        - name: OVN_LOGLEVEL_SB
+          value: -vconsole:info -vfile:info
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              key: k8s_apiserver
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: OVN_SSL_ENABLE
+          value: "no"
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62
+        imagePullPolicy: IfNotPresent
+        name: sb-ovsdb
+        readinessProbe:
+          exec:
+            command:
+            - /usr/bin/ovn-kube-util
+            - readiness-probe
+            - -t
+            - ovnsb-db
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/openvswitch/
+          name: host-etc-ovs
+        - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/log/openvswitch/
+          name: host-var-log-ovs
+        - mountPath: /var/log/ovn/
+          name: host-var-log-ovs
+        - mountPath: /ovn-cert
+          name: host-ovn-cert
+          readOnly: true
+        - mountPath: /var/run/ovn/
+          name: host-var-run-ovs
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+      - command:
+        - /root/ovnkube.sh
+        - run-ovn-northd
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: 1.1.0
+        - name: OVN_LOGLEVEL_NORTHD
+          value: -vconsole:info -vfile:info
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              key: k8s_apiserver
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: OVN_SSL_ENABLE
+          value: "no"
+        - name: OVN_NORTH
+          value: local
+        - name: OVN_SOUTH
+          value: local
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62
+        imagePullPolicy: IfNotPresent
+        name: ovn-northd
+        readinessProbe:
+          exec:
+            command:
+            - /usr/bin/ovn-kube-util
+            - readiness-probe
+            - -t
+            - ovn-northd
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - SYS_NICE
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /var/run/dbus/
+          name: host-var-run-dbus
+          readOnly: true
+        - mountPath: /var/log/openvswitch/
+          name: host-var-log-ovs
+        - mountPath: /var/log/ovn/
+          name: host-var-log-ovs
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+        - mountPath: /var/run/ovn/
+          name: host-var-run-ovs
+        - mountPath: /ovn-cert
+          name: host-ovn-cert
+          readOnly: true
+      - command:
+        - /root/ovnkube.sh
+        - ovnkube-controller-with-node
+        env:
+        - name: OVN_EGRESSSERVICE_ENABLE
+          value: "false"
+        - name: OVN_DAEMONSET_VERSION
+          value: 1.1.0
+        - name: OVNKUBE_LOGLEVEL
+          value: "4"
+        - name: OVNKUBE_LOGFILE_MAXSIZE
+          value: "100"
+        - name: OVNKUBE_LOGFILE_MAXBACKUPS
+          value: "5"
+        - name: OVNKUBE_LOGFILE_MAXAGE
+          value: "5"
+        - name: OVNKUBE_LIBOVSDB_CLIENT_LOGFILE
+        - name: OVNKUBE_CONFIG_DURATION_ENABLE
+        - name: OVNKUBE_METRICS_SCALE_ENABLE
+        - name: OVN_GATEWAY_ROUTER_SUBNET
+        - name: OVN_NET_CIDR
+          valueFrom:
+            configMapKeyRef:
+              key: net_cidr
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_SVC_CIDR
+          valueFrom:
+            configMapKeyRef:
+              key: svc_cidr
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              key: k8s_apiserver
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_MTU
+          valueFrom:
+            configMapKeyRef:
+              key: mtu
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_ROUTABLE_MTU
+          valueFrom:
+            configMapKeyRef:
+              key: routable_mtu
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+              optional: true
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        - name: OVN_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: OVN_GATEWAY_MODE
+          value: shared
+        - name: OVN_GATEWAY_OPTS
+          value: --gateway-interface=br-dpu
+        - name: OVN_HYBRID_OVERLAY_ENABLE
+        - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
+          value: "true"
+        - name: OVN_EGRESSIP_ENABLE
+          value: "false"
+        - name: OVN_EGRESSIP_HEALTHCHECK_PORT
+          value: "9107"
+        - name: OVN_EGRESSFIREWALL_ENABLE
+          value: "false"
+        - name: OVN_EGRESSQOS_ENABLE
+          value: "false"
+        - name: OVN_NETWORK_QOS_ENABLE
+          value: "true"
+        - name: OVN_HYBRID_OVERLAY_NET_CIDR
+        - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
+        - name: OVN_DISABLE_FORWARDING
+        - name: OVN_ENCAP_PORT
+          value: "6081"
+        - name: OVN_DISABLE_PKT_MTU_CHECK
+        - name: OVN_NETFLOW_TARGETS
+        - name: OVN_SFLOW_TARGETS
+        - name: OVN_IPFIX_TARGETS
+        - name: OVN_IPFIX_SAMPLING
+        - name: OVN_IPFIX_CACHE_MAX_FLOWS
+        - name: OVN_IPFIX_CACHE_ACTIVE_TIMEOUT
+        - name: OVN_V4_JOIN_SUBNET
+          value: 100.64.0.0/16
+        - name: OVN_V6_JOIN_SUBNET
+          value: fd98::/64
+        - name: OVN_V4_MASQUERADE_SUBNET
+          value: 169.254.0.0/17
+        - name: OVN_V6_MASQUERADE_SUBNET
+          value: fd69::/112
+        - name: OVN_MULTICAST_ENABLE
+          value: "true"
+        - name: OVN_UNPRIVILEGED_MODE
+          value: "no"
+        - name: OVN_EX_GW_NETWORK_INTERFACE
+        - name: OVN_SSL_ENABLE
+          value: "no"
+        - name: OVN_DISABLE_OVN_IFACE_ID_VER
+          value: "false"
+        - name: OVN_REMOTE_PROBE_INTERVAL
+          value: "100000"
+        - name: OVN_MONITOR_ALL
+        - name: OVN_OFCTRL_WAIT_BEFORE_CLEAR
+        - name: OVN_ENABLE_LFLOW_CACHE
+          value: "false"
+        - name: OVN_LFLOW_CACHE_LIMIT
+        - name: OVN_LFLOW_CACHE_LIMIT_KB
+        - name: OVN_MULTI_NETWORK_ENABLE
+          value: "true"
+        - name: OVN_EMPTY_LB_EVENTS
+        - name: OVN_ACL_LOGGING_RATE_LIMIT
+          value: "20"
+        - name: OVN_STATELESS_NETPOL_ENABLE
+          value: "true"
+        - name: OVN_HOST_NETWORK_NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              key: host_network_namespace
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_NORTH
+          value: local
+        - name: OVN_SOUTH
+          value: local
+        - name: OVN_ENABLE_INTERCONNECT
+          value: "true"
+        - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
+          value: "false"
+        - name: OVN_ENABLE_OVNKUBE_IDENTITY
+          value: "false"
+        - name: OVN_DISABLE_REQUESTEDCHASSIS
+          value: "true"
+        - name: OVN_ENABLE_SVC_TEMPLATE_SUPPORT
+          value: "false"
+        - name: OVN_ENABLE_DNSNAMERESOLVER
+          value: "false"
+        - name: OVN_NOHOSTSUBNET_LABEL
+          value: k8s.ovn.org/ovn-managed=false
+        - name: OVNKUBE_NODE_MODE
+          value: dpu
+        - name: OVNKUBE_NODE_LEASE_NAMESPACE
+          value: openshift-ovn-kubernetes
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62
+        imagePullPolicy: IfNotPresent
+        name: doca-ovnkube-controller
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /metrics
+            port: 9476
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /host
+          name: host-slash
+          readOnly: true
+        - mountPath: /var/lib/kubelet
+          name: host-kubelet
+          readOnly: true
+        - mountPath: /host-kubernetes
+          name: host-kubeconfig
+          readOnly: true
+        - mountPath: /var/run/dbus/
+          name: host-var-run-dbus
+          readOnly: true
+        - mountPath: /var/log/ovn-kubernetes/
+          name: host-var-log-ovnkube
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
+        - mountPath: /opt/cni/bin
+          name: host-opt-cni-bin
+        - mountPath: /etc/cni/net.d
+          name: host-etc-cni-netd
+        - mountPath: /var/run/netns
+          mountPropagation: Bidirectional
+          name: host-netns
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+        - mountPath: /var/run/ovn/
+          name: host-var-run-ovs
+        - mountPath: /ovn-cert
+          name: host-ovn-cert
+          readOnly: true
+        - mountPath: /etc/openvswitch/
+          name: host-etc-ovs
+        - mountPath: /etc/openvswitch/ovn_k8s.conf
+          name: init-output
+          subPath: ovn_k8s.conf
+        - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+          readOnly: true
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: tenant-cluster-access-secret
+          readOnly: true
+      - command:
+        - /root/ovnkube.sh
+        - ovn-controller
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: 1.1.0
+        - name: OVN_LOGLEVEL_CONTROLLER
+          value: -vconsole:info
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              key: k8s_apiserver
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: OVN_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: OVN_SSL_ENABLE
+        - name: OVN_NORTH
+          value: local
+        - name: OVN_SOUTH
+          value: local
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62
+        imagePullPolicy: IfNotPresent
+        name: ovn-controller
+        readinessProbe:
+          exec:
+            command:
+            - /usr/bin/ovn-kube-util
+            - readiness-probe
+            - -t
+            - ovn-controller
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 30
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - SYS_NICE
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /var/run/dbus/
+          name: host-var-run-dbus
+          readOnly: true
+        - mountPath: /var/log/openvswitch/
+          name: host-var-log-ovs
+        - mountPath: /var/log/ovn/
+          name: host-var-log-ovs
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+        - mountPath: /var/run/ovn/
+          name: host-var-run-ovs
+        - mountPath: /ovn-cert
+          name: host-ovn-cert
+          readOnly: true
+      - command:
+        - /root/ovnkube.sh
+        - ovs-metrics
+        env:
+        - name: OVN_DAEMONSET_VERSION
+          value: 1.1.0
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.hostIP
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:9af8c6523a889c9cd5b301b3cd6441c1fe01cc0ef7d667bfeb152108ba735e62
+        imagePullPolicy: IfNotPresent
+        name: ovs-metrics-exporter
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+          runAsUser: 0
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /var/run/dbus/
+          name: host-var-run-dbus
+          readOnly: true
+        - mountPath: /var/log/openvswitch/
+          name: host-var-log-ovs
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+      dnsPolicy: Default
+      hostNetwork: true
+      hostPID: true
+      imagePullSecrets:
+      - name: dpf-pull-secret
+      initContainers:
+      - command:
+        - /ipallocator
+        - allocator
+        env:
+        - name: IP_ALLOCATOR_REQUESTS
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.annotations['dpf.nvidia.com/ip-requests']
+        - name: K8S_POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: K8S_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: K8S_POD_UID
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.uid
+        image: ghcr.io/mellanox/ovn-kubernetes-dpf-utils:v0.1.0-latest-alin
+        imagePullPolicy: IfNotPresent
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /ipallocator
+              - deallocator
+        name: ipallocator
+        readinessProbe:
+          exec:
+            command:
+            - cat
+            - /var/run/readyz
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources: {}
+        restartPolicy: Always
+        securityContext:
+          runAsUser: 0
+        startupProbe:
+          exec:
+            command:
+            - cat
+            - /var/run/readyz
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /opt/cni/bin
+          name: cni-bin-dir
+          readOnly: true
+        - mountPath: /var/lib/cni/nv-ipam
+          name: nvipam-daemon-socket-dir
+          readOnly: true
+        - mountPath: /tmp/ips
+          name: ips
+        - mountPath: /var/lib/cni
+          name: cni-cache
+      - args:
+        - internal-ipam
+        command:
+        - /cniprovisioner
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: OVN_MTU
+          valueFrom:
+            configMapKeyRef:
+              key: mtu
+              name: cluster-ovn-fkpms-ovn-kubernetes-config
+        - name: VTEP_CIDR
+          value: 10.6.156.208/28
+        - name: HOST_CIDR
+          value: 10.6.135.0/24
+        image: ghcr.io/mellanox/ovn-kubernetes-dpf-utils:v0.1.0-latest-alin
+        imagePullPolicy: IfNotPresent
+        name: cniprovisioner
+        readinessProbe:
+          exec:
+            command:
+            - cat
+            - /var/run/readyz
+          failureThreshold: 3
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources: {}
+        restartPolicy: Always
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        startupProbe:
+          exec:
+            command:
+            - cat
+            - /var/run/readyz
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /tmp/ips
+          name: ips
+        - mountPath: /etc/openvswitch
+          name: init-output
+        - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          name: incluster
+          readOnly: true
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+      priorityClassName: system-cluster-critical
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: cluster-ovn-fkpms-ovn-kubernetes-node
+      serviceAccountName: cluster-ovn-fkpms-ovn-kubernetes-node
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+      volumes:
+      - emptyDir: {}
+        name: ips
+      - hostPath:
+          path: /var/lib/cni/bin/
+          type: Directory
+        name: cni-bin-dir
+      - hostPath:
+          path: /var/lib/cni/nv-ipam
+          type: Directory
+        name: nvipam-daemon-socket-dir
+      - emptyDir: {}
+        name: cni-cache
+      - emptyDir: {}
+        name: init-output
+      - hostPath:
+          path: /var/run/dbus
+          type: ""
+        name: host-var-run-dbus
+      - hostPath:
+          path: /etc/kubernetes/
+          type: ""
+        name: host-kubeconfig
+      - hostPath:
+          path: /var/lib/kubelet
+          type: ""
+        name: host-kubelet
+      - hostPath:
+          path: /var/log/ovn-kubernetes
+          type: ""
+        name: host-var-log-ovnkube
+      - hostPath:
+          path: /var/run/ovn-kubernetes
+          type: ""
+        name: host-var-run-ovn-kubernetes
+      - hostPath:
+          path: /var/lib/cni/bin/
+          type: ""
+        name: host-opt-cni-bin
+      - hostPath:
+          path: /run/multus/cni/net.d
+          type: ""
+        name: host-etc-cni-netd
+      - hostPath:
+          path: /
+          type: ""
+        name: host-slash
+      - hostPath:
+          path: /var/run/netns
+          type: ""
+        name: host-netns
+      - hostPath:
+          path: /var/log/openvswitch
+          type: ""
+        name: host-var-log-ovs
+      - hostPath:
+          path: /run/openvswitch
+          type: ""
+        name: host-run-ovs
+      - hostPath:
+          path: /var/run/openvswitch
+          type: ""
+        name: host-var-run-ovs
+      - hostPath:
+          path: /etc/ovn
+          type: DirectoryOrCreate
+        name: host-ovn-cert
+      - hostPath:
+          path: /var/lib/openvswitch
+          type: ""
+        name: host-var-lib-ovs
+      - hostPath:
+          path: /etc/openvswitch
+          type: ""
+        name: host-etc-ovs
+      - name: tenant-cluster-access-secret
+        secret:
+          defaultMode: 420
+          items:
+          - key: KUBERNETES_CA_DATA
+            path: ca.crt
+          - key: TOKEN_FILE
+            path: token
+          secretName: ovn-dpu
+      - name: incluster
+        projected:
+          defaultMode: 420
+          sources:
+          - secret:
+              items:
+              - key: ca.crt
+                path: ca.crt
+              - key: token
+                path: token
+              name: cluster-ovn-fkpms-ovn-kubernetes-dpucniprovisioner-token
+  updateStrategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+status:
+  currentNumberScheduled: 1
+  desiredNumberScheduled: 1
+  numberMisscheduled: 0
+  numberReady: 0
+  numberUnavailable: 1
+  observedGeneration: 1
+  updatedNumberScheduled: 1

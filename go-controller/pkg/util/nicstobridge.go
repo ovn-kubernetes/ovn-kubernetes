@@ -358,6 +358,16 @@ func BridgeToNic(bridge string) error {
 
 // GetDPUHostInterface returns the host representor interface attached to bridge
 func GetDPUHostInterface(bridgeName string) (string, error) {
+	// Check if DPU provider is available and use it for host representor detection
+	if dpuProvider := GetDPUProvider(); dpuProvider != nil {
+		hostRep, err := dpuProvider.GetHostRepresentor()
+		if err != nil {
+			return "", fmt.Errorf("failed to get host representor from DPU provider: %v", err)
+		}
+		return hostRep, nil
+	}
+
+	// Fallback to existing SR-IOV hardcoded detection for backwards compatibility
 	portsToInterfaces, err := getBridgePortsInterfaces(bridgeName)
 	if err != nil {
 		return "", err
@@ -371,7 +381,7 @@ func GetDPUHostInterface(bridgeName string) (string, error) {
 					iface, bridgeName, stderr, err)
 
 			}
-			flavor, err := GetSriovnetOps().GetRepresentorPortFlavour(stdout)
+			flavor, err := GetDPUProvider().GetRepresentorPortFlavour(stdout)
 			if err == nil && flavor == sriovnet.PORT_FLAVOUR_PCI_PF {
 				// host representor interface found
 				return stdout, nil
