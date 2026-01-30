@@ -208,6 +208,106 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 		)
 
 		ginkgo.DescribeTable(
+			"ICMP should bypass default deny policy for UDNs when enabled",
+			func(
+				netConfigParams networkAttachmentConfigParams,
+				clientPodConfig podConfiguration,
+				serverPodConfig podConfiguration,
+			) {
+				if !isICMPNetworkPolicyBypassEnabled() {
+					ginkgo.Skip("ICMP Network Policy bypass is not enabled, skipping ICMP bypass network policy tests")
+				}
+
+				ginkgo.By("Creating the attachment configuration")
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = f.Namespace.Name
+				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
+				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+					context.Background(),
+					generateNAD(netConfig, f.ClientSet),
+					metav1.CreateOptions{},
+				)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("creating client/server pods")
+				serverPodConfig.namespace = f.Namespace.Name
+				clientPodConfig.namespace = f.Namespace.Name
+				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
+				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
+
+				ginkgo.By("creating a \"default deny\" network policy")
+				_, err = makeDenyAllPolicy(f, f.Namespace.Name, "deny-all")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				var serverIPs []string
+				for i, cidr := range strings.Split(netConfig.cidr, ",") {
+					if cidr == "" {
+						continue
+					}
+					serverIP, err := getPodAnnotationIPsForAttachmentByIndex(
+						cs,
+						f.Namespace.Name,
+						serverPodConfig.name,
+						namespacedName(f.Namespace.Name, netConfig.name),
+						i,
+					)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					serverIPs = append(serverIPs, serverIP)
+				}
+				gomega.Expect(serverIPs).NotTo(gomega.BeEmpty())
+
+				ginkgo.By("asserting the *client* pod can ping the server pod despite the default deny policy")
+				for _, serverIP := range serverIPs {
+					gomega.Eventually(func() error {
+						return pingServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP)
+					}, 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+				}
+			},
+			ginkgo.Entry(
+				"in L2 dualstack primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+				*podConfig(
+					"client-pod",
+					withCommand(func() []string {
+						return []string{"/agnhost", "pause"}
+					}),
+				),
+				*podConfig(
+					"server-pod",
+					withCommand(func() []string {
+						return []string{"/agnhost", "pause"}
+					}),
+				),
+			),
+			ginkgo.Entry(
+				"in L3 dualstack primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+				*podConfig(
+					"client-pod",
+					withCommand(func() []string {
+						return []string{"/agnhost", "pause"}
+					}),
+				),
+				*podConfig(
+					"server-pod",
+					withCommand(func() []string {
+						return []string{"/agnhost", "pause"}
+					}),
+				),
+			),
+		)
+
+		ginkgo.DescribeTable(
 			"allow ingress traffic to one pod from a particular namespace",
 			func(
 				topology string,
