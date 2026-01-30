@@ -69,6 +69,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -130,6 +133,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -196,6 +202,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -248,6 +257,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         resources:
           requests:
@@ -327,6 +339,8 @@ spec:
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: {{ default "" .Values.global.hybridOverlayNetCidr | quote }}
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -413,6 +427,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       - name: host-var-lib-ovs
         hostPath:
           path: /var/lib/openvswitch
