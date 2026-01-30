@@ -171,6 +171,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 	logicalSwitch := nbdb.LogicalSwitch{
 		Name:        switchName,
 		ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(oc.GetNetInfo()),
+		OtherConfig: map[string]string{},
 	}
 
 	hostSubnets := make([]*net.IPNet, 0, len(clusterSubnets))
@@ -178,13 +179,15 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 		subnet := clusterSubnet.CIDR
 		hostSubnets = append(hostSubnets, subnet)
 		if utilnet.IsIPv6CIDR(subnet) {
-			logicalSwitch.OtherConfig = map[string]string{"ipv6_prefix": subnet.IP.String()}
+			logicalSwitch.OtherConfig["ipv6_prefix"] = subnet.IP.String()
 		} else {
-			logicalSwitch.OtherConfig = map[string]string{"subnet": subnet.String()}
+			logicalSwitch.OtherConfig["subnet"] = subnet.String()
 		}
 	}
 
-	if oc.isLayer2Interconnect() {
+	var lsps []*nbdb.LogicalSwitchPort
+	switch {
+	case oc.isLayer2WithInterconnectTransport():
 		tunnelKey := zoneinterconnect.BaseTransitSwitchTunnelKey + oc.GetNetworkID()
 		if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() {
 			if len(oc.GetTunnelKeys()) != 2 {
@@ -196,13 +199,29 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 		if err != nil {
 			return nil, err
 		}
+	case oc.Transport() == types.NetworkTransportEVPN:
+		// enable IGMP snooping to send multicast traffic just to registered
+		// pods, flood unregistered
+		logicalSwitch.OtherConfig["mcast_snoop"] = "true"
+		logicalSwitch.OtherConfig["mcast_flood_unregistered"] = "true"
+		logicalSwitch.OtherConfig["mcast_querier"] = "false"
+		// connect the switch to the EVPN macvrf
+		macvrfport := &nbdb.LogicalSwitchPort{
+			Name:      util.GetMACVRFPortName(switchName),
+			Addresses: []string{"unknown"},
+			ExternalIDs: map[string]string{
+				types.NetworkExternalID:  oc.GetNetworkName(),
+				types.TopologyExternalID: oc.TopologyType(),
+			},
+		}
+		lsps = append(lsps, macvrfport)
 	}
 
 	if clusterLoadBalancerGroupUUID != "" && switchLoadBalancerGroupUUID != "" {
 		logicalSwitch.LoadBalancerGroup = []string{clusterLoadBalancerGroupUUID, switchLoadBalancerGroupUUID}
 	}
 
-	err := libovsdbops.CreateOrUpdateLogicalSwitch(oc.nbClient, &logicalSwitch)
+	err := libovsdbops.CreateOrUpdateLogicalSwitchPortsAndSwitch(oc.nbClient, &logicalSwitch, lsps...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logical switch %+v: %v", logicalSwitch, err)
 	}

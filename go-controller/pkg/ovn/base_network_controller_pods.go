@@ -622,7 +622,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	customFields = append(customFields, libovsdbops.LogicalSwitchPortPortSecurity)
 
 	// On layer2 topology with interconnect, we need to add specific port config
-	if bnc.isLayer2Interconnect() {
+	if bnc.isLayer2WithInterconnectTransport() {
 		isRemotePort := !bnc.isPodScheduledinLocalZone(pod)
 		err = bnc.zoneICHandler.AddTransitPortConfig(isRemotePort, podAnnotation, lsp)
 		if err != nil {
