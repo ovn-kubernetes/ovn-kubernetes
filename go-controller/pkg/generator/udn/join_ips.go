@@ -54,7 +54,7 @@ func GetGWRouterIPv6(node *corev1.Node, netInfo util.NetInfo) (net.IP, error) {
 func GetGWRouterIPs(node *corev1.Node, netInfo util.NetInfo) ([]*net.IPNet, error) {
 	var gwRouterAddrs []*net.IPNet
 	// we allocate join subnets for L3/L2 primary user defined networks or default network
-	if !(netInfo.IsDefault() || (util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork())) {
+	if !netInfo.IsDefault() && (!util.IsNetworkSegmentationSupportEnabled() || !netInfo.IsPrimaryNetwork()) {
 		return gwRouterAddrs, nil
 	}
 	// Allocate the IP address(es) for the node Gateway router port connecting

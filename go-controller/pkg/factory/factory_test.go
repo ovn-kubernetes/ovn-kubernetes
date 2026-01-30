@@ -589,11 +589,12 @@ var _ = Describe("Watch Factory Operations", func() {
 
 	Context("when a processExisting is given", func() {
 		testExisting := func(objType reflect.Type, namespace string, sel labels.Selector, priority int) {
-			if objType == EndpointSliceType {
+			switch objType {
+			case EndpointSliceType:
 				wf, err = NewNodeWatchFactory(ovnClientset.GetNodeClientset(), nodeName)
-			} else if objType == CloudPrivateIPConfigType {
+			case CloudPrivateIPConfigType:
 				wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
-			} else {
+			default:
 				wf, err = NewMasterWatchFactory(ovnClientset)
 			}
 			Expect(err).NotTo(HaveOccurred())
@@ -613,11 +614,12 @@ var _ = Describe("Watch Factory Operations", func() {
 		}
 
 		testExistingFilteredHandler := func(objType reflect.Type, realObj reflect.Type, namespace string, sel labels.Selector, priority int) {
-			if objType == EndpointSliceType {
+			switch objType {
+			case EndpointSliceType:
 				wf, err = NewNodeWatchFactory(ovnClientset.GetNodeClientset(), nodeName)
-			} else if objType == CloudPrivateIPConfigType {
+			case CloudPrivateIPConfigType:
 				wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
-			} else {
+			default:
 				wf, err = NewMasterWatchFactory(ovnClientset)
 			}
 			Expect(err).NotTo(HaveOccurred())
@@ -745,7 +747,7 @@ var _ = Describe("Watch Factory Operations", func() {
 
 		It("is called for each existing pod that matches a given namespace and label", func() {
 			pod := newPod("pod1", "default")
-			pod.ObjectMeta.Labels["blah"] = "foobar"
+			pod.Labels["blah"] = "foobar"
 			pods = append(pods, pod)
 
 			sel, err := metav1.LabelSelectorAsSelector(
@@ -761,11 +763,12 @@ var _ = Describe("Watch Factory Operations", func() {
 
 	Context("when existing items are known to the informer", func() {
 		testExisting := func(objType reflect.Type) {
-			if objType == EndpointSliceType {
+			switch objType {
+			case EndpointSliceType:
 				wf, err = NewNodeWatchFactory(ovnClientset.GetNodeClientset(), nodeName)
-			} else if objType == CloudPrivateIPConfigType {
+			case CloudPrivateIPConfigType:
 				wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
-			} else {
+			default:
 				wf, err = NewMasterWatchFactory(ovnClientset)
 			}
 			Expect(err).NotTo(HaveOccurred())
@@ -2226,11 +2229,11 @@ var _ = Describe("Watch Factory Operations", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		passesFilter := newPod("pod1", "default")
-		passesFilter.ObjectMeta.Labels["blah"] = "foobar"
+		passesFilter.Labels["blah"] = "foobar"
 		failsFilter := newPod("pod2", "default")
-		failsFilter.ObjectMeta.Labels["blah"] = "baz"
+		failsFilter.Labels["blah"] = "baz"
 		failsFilter2 := newPod("pod3", "otherns")
-		failsFilter2.ObjectMeta.Labels["blah"] = "foobar"
+		failsFilter2.Labels["blah"] = "foobar"
 
 		sel, err := metav1.LabelSelectorAsSelector(
 			&metav1.LabelSelector{
@@ -2298,7 +2301,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		pod := newPod("pod1", "default")
-		pod.ObjectMeta.Labels["blah"] = "baz"
+		pod.Labels["blah"] = "baz"
 
 		sel, err := metav1.LabelSelectorAsSelector(
 			&metav1.LabelSelector{
@@ -2336,14 +2339,14 @@ var _ = Describe("Watch Factory Operations", func() {
 		// Update pod to pass filter; should be treated as add.  Need
 		// to deep-copy pod when modifying because it's a pointer all
 		// the way through when using FakeClient
-		podCopy.ObjectMeta.Labels["blah"] = "foobar"
+		podCopy.Labels["blah"] = "foobar"
 		pods = []*corev1.Pod{podCopy}
 		equalPod = podCopy
 		podWatch.Modify(podCopy)
 		Eventually(c.getAdded, 2).Should(Equal(1))
 
 		// Update pod to fail filter; should be treated as delete
-		podCopy2.ObjectMeta.Labels["blah"] = "baz"
+		podCopy2.Labels["blah"] = "baz"
 		podWatch.Modify(podCopy2)
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 		Consistently(c.getAdded, 2).Should(Equal(1))

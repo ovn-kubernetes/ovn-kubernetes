@@ -1427,7 +1427,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 
 				// Update namespace labels
-				namespace2.ObjectMeta.Labels = map[string]string{"labels": "test"}
+				namespace2.Labels = map[string]string{"labels": "test"}
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().
 					Update(context.TODO(), &namespace2, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

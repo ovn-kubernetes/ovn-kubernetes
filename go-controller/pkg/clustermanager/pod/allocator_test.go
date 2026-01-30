@@ -76,7 +76,7 @@ func (p testPod) getPod(t *testing.T) *corev1.Pod {
 		if err != nil {
 			t.Fatalf("Invalid network selection")
 		}
-		pod.ObjectMeta.Annotations[nadapi.NetworkAttachmentAnnot] = string(bytes)
+		pod.Annotations[nadapi.NetworkAttachmentAnnot] = string(bytes)
 	}
 
 	return pod
@@ -1011,10 +1011,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			}
 
 			var obtainedEvents []string
-			for {
-				if len(fakeRecorder.Events) == 0 {
-					break
-				}
+			for len(fakeRecorder.Events) > 0 {
 				obtainedEvents = append(obtainedEvents, <-fakeRecorder.Events)
 			}
 			g.Expect(tt.expectEvents).To(gomega.Equal(obtainedEvents))

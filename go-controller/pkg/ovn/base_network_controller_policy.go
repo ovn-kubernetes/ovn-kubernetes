@@ -560,9 +560,10 @@ func getPolicyType(policy *knet.NetworkPolicy) (bool, bool) {
 	var policyTypeEgress bool
 
 	for _, policyType := range policy.Spec.PolicyTypes {
-		if policyType == knet.PolicyTypeIngress {
+		switch policyType {
+		case knet.PolicyTypeIngress:
 			policyTypeIngress = true
-		} else if policyType == knet.PolicyTypeEgress {
+		case knet.PolicyTypeEgress:
 			policyTypeEgress = true
 		}
 	}

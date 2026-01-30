@@ -125,13 +125,14 @@ func getCoverageShowOutputMap(component string) (map[string]string, error) {
 		}
 	}()
 
-	if component == ovnController {
+	switch component {
+	case ovnController:
 		stdout, stderr, err = util.RunOVNControllerAppCtl("coverage/show")
-	} else if component == ovnNorthd {
+	case ovnNorthd:
 		stdout, stderr, err = util.RunOVNNorthAppCtl("coverage/show")
-	} else if component == ovsVswitchd {
+	case ovsVswitchd:
 		stdout, stderr, err = util.RunOvsVswitchdAppCtl("coverage/show")
-	} else {
+	default:
 		return nil, fmt.Errorf("component is unknown, and it isn't %s, %s, or %s",
 			ovnNorthd, ovnController, ovsVswitchd)
 	}
@@ -452,8 +453,8 @@ func klogSetter(val string) (string, error) {
 // stringFlagPutHandler wraps an http Handler to set string type flag.
 func stringFlagPutHandler(setter stringFlagSetterFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch {
-		case req.Method == "PUT":
+		switch req.Method {
+		case "PUT":
 			body, err := io.ReadAll(req.Body)
 			if err != nil {
 				writePlainText(http.StatusBadRequest, "error reading request body: "+err.Error(), w)

@@ -419,13 +419,14 @@ func runOVNretry(cmdPath string, envVars []string, extraArgsFunc func() ([]strin
 func getNbctlArgsAndEnv(timeout int, args ...string) ([]string, []string) {
 	var cmdArgs []string
 
-	if config.OvnNorth.Scheme == config.OvnDBSchemeSSL {
+	switch config.OvnNorth.Scheme {
+	case config.OvnDBSchemeSSL:
 		cmdArgs = append(cmdArgs,
 			fmt.Sprintf("--private-key=%s", config.OvnNorth.PrivKey),
 			fmt.Sprintf("--certificate=%s", config.OvnNorth.Cert),
 			fmt.Sprintf("--bootstrap-ca-cert=%s", config.OvnNorth.CACert),
 			fmt.Sprintf("--db=%s", config.OvnNorth.GetURL()))
-	} else if config.OvnNorth.Scheme == config.OvnDBSchemeTCP {
+	case config.OvnDBSchemeTCP:
 		cmdArgs = append(cmdArgs, fmt.Sprintf("--db=%s", config.OvnNorth.GetURL()))
 	}
 	cmdArgs = append(cmdArgs, fmt.Sprintf("--timeout=%d", timeout))
@@ -473,14 +474,15 @@ func RunOVNNbctl(args ...string) (string, string, error) {
 func RunOVNSbctlWithTimeout(timeout int, args ...string) (string, string,
 	error) {
 	var cmdArgs []string
-	if config.OvnSouth.Scheme == config.OvnDBSchemeSSL {
+	switch config.OvnSouth.Scheme {
+	case config.OvnDBSchemeSSL:
 		cmdArgs = []string{
 			fmt.Sprintf("--private-key=%s", config.OvnSouth.PrivKey),
 			fmt.Sprintf("--certificate=%s", config.OvnSouth.Cert),
 			fmt.Sprintf("--bootstrap-ca-cert=%s", config.OvnSouth.CACert),
 			fmt.Sprintf("--db=%s", config.OvnSouth.GetURL()),
 		}
-	} else if config.OvnSouth.Scheme == config.OvnDBSchemeTCP {
+	case config.OvnDBSchemeTCP:
 		cmdArgs = []string{
 			fmt.Sprintf("--db=%s", config.OvnSouth.GetURL()),
 		}
@@ -661,7 +663,7 @@ func AddOFFlowWithSpecificAction(bridgeName, action string) (string, string, err
 	args := []string{"-O", "OpenFlow13", "replace-flows", bridgeName, "-"}
 
 	stdin := &bytes.Buffer{}
-	stdin.Write([]byte(fmt.Sprintf("table=0,priority=0,actions=%s\n", action)))
+	fmt.Fprintf(stdin, "table=0,priority=0,actions=%s\n", action)
 
 	cmd := runner.exec.Command(runner.ofctlPath, args...)
 	cmd.SetStdin(stdin)

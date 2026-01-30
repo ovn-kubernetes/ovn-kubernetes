@@ -35,11 +35,12 @@ func (c *ExternalGatewayMasterController) Repair() error {
 
 	// migration from LGW to SGW mode
 	// for shared gateway mode, these LRPs shouldn't exist, so delete them all
-	if config.Gateway.Mode == config.GatewayModeShared {
+	switch config.Gateway.Mode {
+	case config.GatewayModeShared:
 		if err := c.nbClient.delAllHybridRoutePolicies(); err != nil {
 			klog.Errorf("Error while removing hybrid policies on moving to SGW mode, error: %v", err)
 		}
-	} else if config.Gateway.Mode == config.GatewayModeLocal {
+	case config.GatewayModeLocal:
 		// remove all legacy hybrid route policies
 		if err := c.nbClient.delAllLegacyHybridRoutePolicies(); err != nil {
 			klog.Errorf("Error while removing legacy hybrid policies, error: %v", err)

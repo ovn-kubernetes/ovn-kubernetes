@@ -273,7 +273,7 @@ func (oc *LocalnetUserDefinedNetworkController) run() error {
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
 func (oc *LocalnetUserDefinedNetworkController) Cleanup() error {
-	return oc.BaseLayer2UserDefinedNetworkController.cleanup()
+	return oc.cleanup()
 }
 
 func (oc *LocalnetUserDefinedNetworkController) init() error {
@@ -309,11 +309,11 @@ func (oc *LocalnetUserDefinedNetworkController) init() error {
 
 func (oc *LocalnetUserDefinedNetworkController) Stop() {
 	klog.Infof("Stoping controller for UDN %s", oc.GetNetworkName())
-	oc.BaseLayer2UserDefinedNetworkController.stop()
+	oc.stop()
 }
 
 func (oc *LocalnetUserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
-	return oc.BaseNetworkController.reconcile(
+	return oc.reconcile(
 		netInfo,
 		func(_ string) {},
 	)

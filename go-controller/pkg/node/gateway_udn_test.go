@@ -267,10 +267,10 @@ func getDummyOpenflowManager() *openflowManager {
 
 var _ = Describe("UserDefinedNetworkGateway", func() {
 	var (
-		netName               = "bluenet"
-		netID                 = "3"
-		nodeName       string = "worker1"
-		mgtPortMAC     string = "00:00:00:55:66:77" // dummy MAC used for fake commands
+		netName        = "bluenet"
+		netID          = "3"
+		nodeName       = "worker1"
+		mgtPortMAC     = "00:00:00:55:66:77" // dummy MAC used for fake commands
 		fexec          *ovntest.FakeExec
 		testNS         ns.NetNS
 		factoryMock    factoryMocks.NodeWatchFactory
@@ -702,7 +702,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
-			flowMap := udnGateway.gateway.openflowManager.flowCache
+			flowMap := udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
@@ -720,7 +720,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(70))                                      // 18 UDN Flows are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
@@ -756,7 +756,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			cnode := node.DeepCopy()
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
@@ -940,7 +940,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.nodeLister, udnGateway.node.Name, localSubnets, udnGateway.NetInfo)
 			Expect(err).NotTo(HaveOccurred())
-			flowMap := udnGateway.gateway.openflowManager.flowCache
+			flowMap := udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
@@ -960,7 +960,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			err = udnGateway.DelNetwork()
 			Expect(err).To(MatchError(ContainSubstring("fake delete metadata error")))
 			By("Ensuring everything else was still cleaned up correctly")
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
@@ -1134,7 +1134,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
-			flowMap := udnGateway.gateway.openflowManager.flowCache
+			flowMap := udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
@@ -1151,7 +1151,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(70))                                      // 18 UDN Flows are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
@@ -1187,7 +1187,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			cnode := node.DeepCopy()
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
@@ -1375,7 +1375,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, wf.NodeCoreInformer().Lister(),
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
-			flowMap := udnGateway.gateway.openflowManager.flowCache
+			flowMap := udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
@@ -1393,7 +1393,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(80))                                      // 18 UDN Flows, 5 advertisedUDN flows, and 2 packet mark flows (IPv4+IPv6) are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
@@ -1431,7 +1431,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			cnode := node.DeepCopy()
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
-			flowMap = udnGateway.gateway.openflowManager.flowCache
+			flowMap = udnGateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
