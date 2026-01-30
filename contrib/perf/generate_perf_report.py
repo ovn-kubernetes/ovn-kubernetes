@@ -18,9 +18,10 @@ import argparse
 class MetricsProcessor:
     """Process and analyze metrics data from JSON files."""
     
-    def __init__(self, metrics_dir: str = "."):
+    def __init__(self, metrics_dir: str = ".", workload: str = "kubelet-density-cni"):
+        self.workload = workload
         self.metrics_dir = metrics_dir
-        self.pod_latency_file = "podLatencyMeasurement-kubelet-density-cni.json"
+        self.pod_latency_file = f"podLatencyMeasurement-{self.workload}.json"
         self.container_cpu_file = "containerCPU.json"
         self.container_memory_file = "containerMemory.json"
         
@@ -139,11 +140,12 @@ class MetricsProcessor:
 class ReportGenerator:
     """Generate text report from processed metrics data."""
     
-    def __init__(self, title: str = "Kubernetes Workload Metrics Report"):
+    def __init__(self, title: str = "Kubernetes Workload Metrics Report", workload: str = "kubelet-density-cni"):
         self.title = title
+        self.workload = workload
     
     def generate_report(self, pod_latency: Dict[str, Any], ovn_cpu: Dict[str, Any], 
-                       ovn_memory: Dict[str, Any]) -> str:
+                       ovn_memory: Dict[str, Any] ) -> str:
         """Generate complete text report."""
         
         stats = pod_latency['stats']
@@ -151,7 +153,7 @@ class ReportGenerator:
         
         # Header
         report_lines.append("# 📊 Kubernetes Workload Metrics Report")
-        report_lines.append("## kubelet-density-cni Performance Results")
+        report_lines.append(f"## {self.workload} Performance Results")
         report_lines.append("")
         report_lines.append(f"**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
         report_lines.append("")
@@ -291,6 +293,8 @@ def detect_pr_environment() -> Optional[str]:
 def main():
     """Main function to generate the performance report."""
     parser = argparse.ArgumentParser(description='Generate Kubernetes workload metrics report')
+    parser.add_argument('--workload', default='kubelet-density-cni',
+                       help='Workload name (default: kubelet-density-cni)')
     parser.add_argument('--metrics-dir', default='.', 
                        help='Directory containing JSON metrics files (default: current directory)')
     parser.add_argument('--output', default='performance_report.md', 
@@ -310,8 +314,8 @@ def main():
     print()
     
     # Initialize processor and generator
-    processor = MetricsProcessor(args.metrics_dir)
-    generator = ReportGenerator(args.title)
+    processor = MetricsProcessor(args.metrics_dir, args.workload)
+    generator = ReportGenerator(args.title, args.workload)
     
     # Load and process data
     print("📊 Loading and processing metrics data...")

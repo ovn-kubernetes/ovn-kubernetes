@@ -1,0 +1,14 @@
+---
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: l2-network-{{.Iteration}}
+spec:
+  namespaceSelector:
+    matchLabels:
+      cudn-scale: "{{.JobName}}-{{.Iteration}}"
+  network:
+    topology: Layer2
+    layer2:
+        role: Primary
+        subnets: ["10.132.0.0/16"]
