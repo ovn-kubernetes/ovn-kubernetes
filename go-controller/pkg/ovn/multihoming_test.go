@@ -11,11 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
-
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -123,7 +119,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPorts(
 }
 
 func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsWithLspEnabled(expectedPodLspEnabled map[string]*bool) []libovsdbtest.TestData {
-	data := []libovsdbtest.TestData{}
+	data := generateUDNPostInitDB([]libovsdbtest.TestData{})
 	for _, ocInfo := range em.fakeOvn.userDefinedNetworkControllers {
 		nodeslsps := make(map[string][]string)
 		acls := make(map[string][]string)
@@ -180,8 +176,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					data = append(data, newExpectedSwitchToRouterPort(switchToRouterPortUUID, switchToRouterPortName, pod, ocInfo.bnc, nad))
 					nodeslsps[switchName] = append(nodeslsps[switchName], switchToRouterPortUUID)
 
-					if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
-						em.gatewayConfig != nil {
+					if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded && ocInfo.bnc.IsPrimaryNetwork() {
 						mgmtPortName := managementPortName(switchName)
 						mgmtPortUUID := mgmtPortName + "-UUID"
 						mgmtPort := expectedManagementPort(mgmtPortName, managementIP)
@@ -198,8 +193,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					switchName = ocInfo.bnc.GetNetworkScopedName(ovntypes.OVNLayer2Switch)
 					managementIP := managementPortIP(subnet)
 
-					if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
-						em.gatewayConfig != nil {
+					if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded && ocInfo.bnc.IsPrimaryNetwork() {
 						// there are multiple mgmt ports in the cluster, thus the ports must be scoped with the node name
 						mgmtPortName := managementPortName(ocInfo.bnc.GetNetworkScopedName(nodeName))
 						mgmtPortUUID := mgmtPortName + "-UUID"
@@ -239,7 +233,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				otherConfig = map[string]string{
 					"subnet": subnet.String(),
 				}
-				if !ocInfo.bnc.IsPrimaryNetwork() {
+				if !ocInfo.bnc.IsPrimaryNetwork() && ocInfo.bnc.TopologyType() == ovntypes.Layer3Topology {
 					// FIXME: This is weird that for secondary networks that don't have
 					// management ports these tests are expecting managementportIP to be
 					// excluded for no reason.
@@ -249,11 +243,12 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				}
 			}
 
-			// TODO: once we start the "full" Layer2UserDefinedNetworkController (instead of just Base)
-			// we can drop this, and compare all objects created by the controller (right now we're
-			// missing all the meters, and the COPP)
-			if ocInfo.bnc.TopologyType() == ovntypes.Layer2Topology {
-				otherConfig = nil
+			if ocInfo.bnc.TopologyType() == ovntypes.Layer2Topology && em.isInterconnectCluster {
+				otherConfig["mcast_snoop"] = "true"
+				otherConfig["mcast_flood_unregistered"] = "true"
+				otherConfig["mcast_querier"] = "false"
+				otherConfig[libovsdbops.RequestedTnlKey] = "16711685"
+				otherConfig["interconn-ts"] = switchName
 			}
 
 			switchNodeMap[switchName] = &nbdb.LogicalSwitch{
@@ -264,14 +259,19 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(ocInfo.bnc),
 				OtherConfig: otherConfig,
 				ACLs:        acls[switchName],
+				LoadBalancerGroup: []string{
+					ocInfo.bnc.GetNetInfo().GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterLBGroupName) + "-UUID",
+					ocInfo.bnc.GetNetInfo().GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterSwitchLBGroupName) + "-UUID",
+				},
 			}
 
-			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
-				em.gatewayConfig != nil {
+			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded && em.gatewayConfig != nil {
 				if ocInfo.bnc.TopologyType() == ovntypes.Layer3Topology {
-					data = append(data, expectedGWEntities(pod.nodeName, ocInfo.bnc, *em.gatewayConfig)...)
 					data = append(data, expectedLayer3EgressEntities(ocInfo.bnc, *em.gatewayConfig, subnet)...)
-				} else {
+					if ocInfo.bnc.IsPrimaryNetwork() {
+						data = append(data, expectedGWEntities(pod.nodeName, ocInfo.bnc, *em.gatewayConfig)...)
+					}
+				} else if ocInfo.bnc.IsPrimaryNetwork() {
 					data = append(data, expectedGWEntitiesLayer2(pod.nodeName, ocInfo.bnc, *em.gatewayConfig)...)
 					data = append(data, expectedLayer2EgressEntities(ocInfo.bnc, *em.gatewayConfig, subnet, false)...)
 				}
@@ -284,9 +284,25 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					ovntypes.NetworkRoleExternalID: util.GetUserDefinedNetworkRole(ocInfo.bnc.IsPrimaryNetwork()),
 					ovntypes.TopologyExternalID:    ocInfo.bnc.TopologyType(),
 				}
+				transitSwitchPortName := ocInfo.bnc.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + nodeName)
+				transitSwitchPortUUID := transitSwitchPortName + "-UUID"
+				data = append(data, &nbdb.LogicalSwitchPort{
+					UUID:      transitSwitchPortUUID,
+					Name:      transitSwitchPortName,
+					Type:      "router",
+					Addresses: []string{"router"},
+					Options: map[string]string{
+						"router-port":               ocInfo.bnc.GetNetworkScopedName(ovntypes.RouterToTransitSwitchPrefix + nodeName),
+						libovsdbops.RequestedTnlKey: "4",
+					},
+					ExternalIDs: map[string]string{
+						"node": nodeName,
+					},
+				})
 				data = append(data, &nbdb.LogicalSwitch{
-					UUID: transitSwitchName + "-UUID",
-					Name: transitSwitchName,
+					UUID:  transitSwitchName + "-UUID",
+					Name:  transitSwitchName,
+					Ports: []string{transitSwitchPortUUID},
 					OtherConfig: map[string]string{
 						"mcast_querier":             "false",
 						"mcast_flood_unregistered":  "true",
@@ -311,6 +327,12 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 		for _, logicalSwitch := range switchNodeMap {
 			data = append(data, logicalSwitch)
 		}
+		if ocInfo.bnc.IsPrimaryNetwork() {
+			data = append(data, newNetworkRouterPortGroup(ocInfo.bnc.GetNetInfo()))
+		}
+		data = append(data, newLoadBalancerGroup(ocInfo.bnc.GetNetInfo().GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterLBGroupName)))
+		data = append(data, newLoadBalancerGroup(ocInfo.bnc.GetNetInfo().GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterSwitchLBGroupName)))
+		data = append(data, newLoadBalancerGroup(ocInfo.bnc.GetNetInfo().GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterRouterLBGroupName)))
 	}
 
 	return data
@@ -383,23 +405,6 @@ func hostIPsFromGWConfig(gwConfig util.L3GatewayConfig) []string {
 		hostIPs = append(hostIPs, ip.IP.String())
 	}
 	return hostIPs
-}
-
-func newDummyGatewayManager(
-	kube kube.InterfaceOVN,
-	nbClient libovsdbclient.Client,
-	netInfo util.NetInfo,
-	factory *factory.WatchFactory,
-	nodeName string,
-) *GatewayManager {
-	return NewGatewayManager(
-		nodeName,
-		"",
-		kube,
-		nbClient,
-		netInfo,
-		factory,
-	)
 }
 
 func managementPortIP(subnet *net.IPNet) net.IP {
