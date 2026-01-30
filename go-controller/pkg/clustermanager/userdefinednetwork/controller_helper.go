@@ -165,7 +165,7 @@ func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.Ren
 
 	// EVPN transport is requested - ensure the feature is enabled.
 	if !util.IsEVPNEnabled() {
-		return nil, fmt.Errorf("EVPN transport requested but enable-evpn flag is not set")
+		return nil, fmt.Errorf("EVPN transport requested but EVPN feature is not enabled")
 	}
 
 	evpnCfg := spec.GetEVPN()

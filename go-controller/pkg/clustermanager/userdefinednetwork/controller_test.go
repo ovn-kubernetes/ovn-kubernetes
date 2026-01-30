@@ -1288,7 +1288,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Type:    "NetworkCreated",
 					Status:  "False",
 					Reason:  "NetworkAttachmentDefinitionSyncError",
-					Message: "EVPN transport requested but enable-evpn flag is not set",
+					Message: "EVPN transport requested but EVPN feature is not enabled",
 				}}), "should report error when EVPN flag is disabled")
 
 				// NAD should not be created when EVPN is disabled

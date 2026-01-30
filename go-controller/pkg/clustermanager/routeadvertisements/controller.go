@@ -527,9 +527,13 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		}
 	}
 
+	// Validate EVPN configuration requirements
+	hasEVPNConfig := len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0
+	if hasEVPNConfig && !util.IsEVPNEnabled() {
+		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is not enabled", errConfig)
+	}
 	// Require a router with default VRF for any EVPN configuration, since the
 	// global EVPN section with advertise-all-vni is required for EVPN to work properly.
-	hasEVPNConfig := len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0
 	if hasEVPNConfig && !frrRouterVRFs.Has("") {
 		return nil, nil, fmt.Errorf("%w: EVPN requires a router with default VRF but none were found in selected FRRConfigurations", errConfig)
 	}

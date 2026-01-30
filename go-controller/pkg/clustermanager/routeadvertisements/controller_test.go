@@ -1331,6 +1331,7 @@ exit
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
+			config.OVNKubernetesFeature.EnableEVPN = true
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 			addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)
@@ -1683,6 +1684,7 @@ func TestUpdates(t *testing.T) {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
+			config.OVNKubernetesFeature.EnableEVPN = true
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 
