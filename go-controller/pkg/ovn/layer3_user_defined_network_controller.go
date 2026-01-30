@@ -652,7 +652,7 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 }
 
 func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
-	return oc.BaseNetworkController.reconcile(
+	return oc.reconcile(
 		netInfo,
 		func(node string) {
 			oc.addNodeFailed.Store(node, true)

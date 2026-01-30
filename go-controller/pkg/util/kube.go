@@ -966,11 +966,11 @@ func IsLastUpdatedByManager(manager string, managedFields []metav1.ManagedFields
 	for _, managedFieldEntry := range managedFields {
 		switch managedFieldEntry.Manager {
 		case manager:
-			if managedFieldEntry.Time.Time.After(lastUpdateOurs) {
+			if managedFieldEntry.Time.After(lastUpdateOurs) {
 				lastUpdateOurs = managedFieldEntry.Time.Time
 			}
 		default:
-			if managedFieldEntry.Time.Time.After(lastUpdateTheirs) {
+			if managedFieldEntry.Time.After(lastUpdateTheirs) {
 				lastUpdateTheirs = managedFieldEntry.Time.Time
 			}
 		}

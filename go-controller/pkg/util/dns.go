@@ -112,10 +112,7 @@ func (d *DNS) updateOne(dns string) (bool, error) {
 		return false, err
 	}
 
-	changed := false
-	if !ipsEqual(res.ips, ips) {
-		changed = true
-	}
+	changed := !ipsEqual(res.ips, ips)
 	res.ips = ips
 	res.ttl = ttl
 	res.nextQueryTime = time.Now().Add(res.ttl)

@@ -208,11 +208,12 @@ func makeConntrackFilter(ip string, port int, protocol corev1.Protocol, filterTy
 	filter := &netlink.ConntrackFilter{}
 
 	var err error
-	if protocol == corev1.ProtocolUDP {
+	switch protocol {
+	case corev1.ProtocolUDP:
 		err = filter.AddProtocol(17)
-	} else if protocol == corev1.ProtocolTCP {
+	case corev1.ProtocolTCP:
 		err = filter.AddProtocol(6)
-	} else if protocol == corev1.ProtocolSCTP {
+	case corev1.ProtocolSCTP:
 		err = filter.AddProtocol(132)
 	}
 	Expect(err).NotTo(HaveOccurred())

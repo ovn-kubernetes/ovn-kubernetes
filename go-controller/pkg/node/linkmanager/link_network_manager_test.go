@@ -99,7 +99,7 @@ var _ = ginkgo.Describe("Link network manager", func() {
 		nlMock.On("AddrAdd", nlLink1Mock, &linkAddr).Return(nil)
 		c = NewController("test", v4Enabled, v6Enabled, nil)
 		gomega.Expect(c.AddAddress(linkAddr)).Should(gomega.Succeed())
-		nlMock.Mock.ExpectedCalls = nil
+		nlMock.ExpectedCalls = nil
 		nlMock.On("LinkByIndex", getLinkIndexFromName(linkName1)).Return(nil, netlink.LinkNotFoundError{})
 		nlMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
 		gomega.Expect(c.DelAddress(linkAddr)).Should(gomega.Succeed())
