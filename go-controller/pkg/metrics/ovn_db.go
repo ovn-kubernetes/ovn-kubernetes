@@ -359,7 +359,7 @@ func getOvnDbVersionInfo() {
 	}
 }
 
-func RegisterOvnDBMetrics(ovnRegistry *prometheus.Registry) ([]*util.OvsDbProperties, bool, bool) {
+func RegisterOvnDBMetrics(ovnRegistry prometheus.Registerer) ([]*util.OvsDbProperties, bool, bool) {
 	// get the ovsdb server version info
 	getOvnDbVersionInfo()
 	// register metrics that will be served off of /metrics path
