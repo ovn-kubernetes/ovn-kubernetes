@@ -114,11 +114,11 @@ func withClusterPortGroup() option {
 	}
 }
 
-func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPorts() []libovsdbtest.TestData {
-	return em.expectedLogicalSwitchesAndPortsWithLspEnabled(nil)
+func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPorts(localNode string) []libovsdbtest.TestData {
+	return em.expectedLogicalSwitchesAndPortsWithLspEnabled(localNode, nil)
 }
 
-func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsWithLspEnabled(expectedPodLspEnabled map[string]*bool) []libovsdbtest.TestData {
+func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsWithLspEnabled(localNode string, expectedPodLspEnabled map[string]*bool) []libovsdbtest.TestData {
 	data := generateUDNPostInitDB([]libovsdbtest.TestData{})
 	for _, ocInfo := range em.fakeOvn.userDefinedNetworkControllers {
 		nodeslsps := make(map[string][]string)
@@ -127,6 +127,9 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 		switchNodeMap := make(map[string]*nbdb.LogicalSwitch)
 		alreadyAddedManagementElements := make(map[string]struct{})
 		for _, pod := range em.pods {
+			if pod.nodeName != localNode {
+				continue
+			}
 			podInfo, ok := pod.udnPodInfos[ocInfo.bnc.GetNetworkName()]
 			if !ok {
 				continue
@@ -161,7 +164,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				if pod.noIfaceIdVer {
 					delete(lsp.Options, "iface-id-ver")
 				}
-				if ocInfo.bnc.isLayer2Interconnect() {
+				if ocInfo.bnc.hasLayer2EastWestInterconnect() {
 					lsp.Options[libovsdbops.RequestedTnlKey] = "1" // hardcode this for now.
 				}
 				data = append(data, lsp)
@@ -243,12 +246,30 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				}
 			}
 
-			if ocInfo.bnc.TopologyType() == ovntypes.Layer2Topology && em.isInterconnectCluster {
-				otherConfig["mcast_snoop"] = "true"
-				otherConfig["mcast_flood_unregistered"] = "true"
-				otherConfig["mcast_querier"] = "false"
-				otherConfig[libovsdbops.RequestedTnlKey] = "16711685"
-				otherConfig["interconn-ts"] = switchName
+			hasMACVRF := ocInfo.bnc.GetNetInfo().EVPNMACVRFVNI() != 0
+			if ocInfo.bnc.TopologyType() == ovntypes.Layer2Topology {
+				if em.isInterconnectCluster || hasMACVRF {
+					otherConfig["mcast_snoop"] = "true"
+					otherConfig["mcast_flood_unregistered"] = "true"
+					otherConfig["mcast_querier"] = "false"
+				}
+				if em.isInterconnectCluster && !hasMACVRF {
+					otherConfig[libovsdbops.RequestedTnlKey] = "16711685"
+					otherConfig["interconn-ts"] = switchName
+				}
+			}
+			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded && hasMACVRF {
+				macvrfPortName := util.GetMACVRFPortName(switchName)
+				macvrfPortUUID := macvrfPortName + "-UUID"
+				macvrfPort := &nbdb.LogicalSwitchPort{
+					UUID:        macvrfPortName + "-UUID",
+					Name:        macvrfPortName,
+					Addresses:   []string{"unknown"},
+					ExternalIDs: standardNonDefaultNetworkExtIDs(ocInfo.bnc.GetNetInfo()),
+				}
+				data = append(data, macvrfPort)
+				nodeslsps[switchName] = append(nodeslsps[switchName], macvrfPortUUID)
+				alreadyAddedManagementElements[macvrfPortName] = struct{}{}
 			}
 
 			switchNodeMap[switchName] = &nbdb.LogicalSwitch{

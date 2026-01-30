@@ -42,6 +42,7 @@ type userDefinedNetInfo struct {
 	isPrimary          bool
 	allowPersistentIPs bool
 	ipamClaimReference string
+	hasMACVRF          bool
 }
 
 const (
@@ -51,11 +52,13 @@ const (
 	userDefinedNetworkID   = "2"
 	denyPolicyName         = "deny-all-policy"
 	denyPG                 = "deny-port-group"
+	MACVRFVNI              = 101
 )
 
 type testConfiguration struct {
 	configToOverride   *config.OVNKubernetesFeatureConfig
 	gatewayConfig      *config.GatewayConfig
+	withRemotePod      bool
 	expectationOptions []option
 }
 
@@ -241,7 +244,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 								fakeOvn,
 								[]testPod{podInfo},
 								expectationOptions...,
-							).expectedLogicalSwitchesAndPorts()...)))
+							).expectedLogicalSwitchesAndPorts(nodeName)...)))
 
 				return nil
 			}
@@ -862,7 +865,7 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		}
 	}
 
-	return &ovncnitypes.NetConf{
+	netconf := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
 			Name: sni.netName,
 			Type: plugin,
@@ -873,7 +876,19 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		Role:               role,
 		AllowPersistentIPs: sni.allowPersistentIPs,
 		TransitSubnet:      transitSubnet,
+		Transport:          types.NetworkTransportGeneve,
 	}
+
+	if sni.hasMACVRF {
+		netconf.Transport = types.NetworkTransportEVPN
+		netconf.EVPN = &ovncnitypes.EVPNConfig{
+			MACVRF: &ovncnitypes.VRFConfig{
+				VNI: MACVRFVNI,
+			},
+		}
+	}
+
+	return netconf
 }
 
 func dummyTestPod(nsName string, info userDefinedNetInfo) testPod {
