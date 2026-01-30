@@ -953,7 +953,7 @@ destroy_bgp() {
 run_bgp_setup() {
   local phase="${1:-all}"
   local bgp_setup_bin="${DIR}/../test/e2e/_output/bin/bgp-setup"
-
+  
   # Build bgp-setup if it doesn't exist or if source is newer
   if [ ! -f "$bgp_setup_bin" ] || [ "${DIR}/../test/e2e/cmd/bgp-setup/main.go" -nt "$bgp_setup_bin" ]; then
     echo "Building bgp-setup tool..."
@@ -962,13 +962,13 @@ run_bgp_setup() {
     go build -o _output/bin/bgp-setup ./cmd/bgp-setup
     popd > /dev/null
   fi
-
+  
   echo "Running bgp-setup with phase: $phase"
-
+  
   # Determine IPv4/IPv6 flags
   local ipv4_flag="${PLATFORM_IPV4_SUPPORT:-true}"
   local ipv6_flag="${PLATFORM_IPV6_SUPPORT:-false}"
-
+  
   "$bgp_setup_bin" \
     --phase="$phase" \
     --container-runtime="$OCI_BIN" \

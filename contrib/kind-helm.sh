@@ -412,7 +412,10 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  # Phase 1a: Deploy external FRR container (before OVN installation)
   run_bgp_setup deploy-frr
+
+  # Phase 1b: Deploy BGP server container (before OVN installation)
   run_bgp_setup deploy-bgp-server
 fi
 if [ "$KIND_REMOVE_TAINT" == true ]; then
@@ -447,13 +450,14 @@ if [ "$KIND_INSTALL_METALLB" == true ]; then
   install_metallb
 fi
 if [ "$KIND_INSTALL_PLUGINS" == true ]; then
-  install_plugins
+..  install_plugins
 fi
 if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   install_kubevirt
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  # Phase 2: Install frr-k8s and create FRRConfiguration (after OVN is installed)
   run_bgp_setup install-frr-k8s
 fi
 

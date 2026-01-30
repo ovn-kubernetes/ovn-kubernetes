@@ -144,7 +144,7 @@ The `--phase` flag allows running specific parts of the setup:
 
 #### Running All Phases (Standalone Usage)
 
-When running `bgp-setup` outside of `kind.sh`, use phase `all` to set up everything at once:
+When running `bgp-setup` outside of `kind.sh`/`kind-helm.sh`, use phase `all` to set up everything at once:
 
 ```bash
 # Run all phases - deploys FRR, BGP server, and installs frr-k8s
@@ -154,9 +154,9 @@ When running `bgp-setup` outside of `kind.sh`, use phase `all` to set up everyth
 ./bgp-setup
 ```
 
-#### Running Individual Phases (Integration with kind.sh)
+#### Running Individual Phases (Integration with kind.sh/kind-helm.sh)
 
-When integrated with `kind.sh`, phases are run separately because some must execute before OVN installation and others after:
+When integrated with `kind.sh` or `kind-helm.sh`, phases are run separately because some must execute before OVN installation and others after:
 
 ```bash
 # Phase 1a: Deploy FRR container (before OVN installation)
@@ -188,10 +188,11 @@ All flags can also be set via environment variables:
 | `KIND_CLUSTER_NAME` | `--cluster-name` |
 | `BGP_TESTDATA_PATH` | `--testdata-path` |
 
-## Integration with kind.sh
+## Integration with kind.sh and kind-helm.sh
 
-This tool is integrated into `contrib/kind.sh` via the `run_bgp_setup` function.
-The shell script calls the tool in separate phases:
+This tool is integrated into `contrib/kind-common.sh` via the `run_bgp_setup` function,
+which is used by both `kind.sh` (standard deployment) and `kind-helm.sh` (Helm-based deployment).
+The shell scripts call the tool in separate phases:
 
 ```bash
 # Phase 1a: Before OVN installation - deploy FRR container
@@ -213,7 +214,7 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
 fi
 ```
 
-The `run_bgp_setup` function in kind.sh automatically builds the tool if needed
+The `run_bgp_setup` function in `kind-common.sh` automatically builds the tool if needed
 and passes the appropriate configuration flags.
 
 ## What It Does
