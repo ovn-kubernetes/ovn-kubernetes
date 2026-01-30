@@ -197,11 +197,12 @@ func ensureClusterRaftMembership(db *util.OvsDbProperties, kclient kube.Interfac
 	dbServerRegexp := `(ssl|tcp):(\[?([a-z0-9\-.:]+)\]?:\d+)`
 	r := regexp.MustCompile(dbServerRegexp)
 
-	if db.DbName == "OVN_Northbound" {
+	switch db.DbName {
+	case "OVN_Northbound":
 		knownMembers = strings.Split(config.OvnNorth.Address, ",")
-	} else if db.DbName == "OVN_Southbound" {
+	case "OVN_Southbound":
 		knownMembers = strings.Split(config.OvnSouth.Address, ",")
-	} else {
+	default:
 		return fmt.Errorf("invalid database name %s for database %s", db.DbName, db.DbAlias)
 	}
 	for _, knownMember := range knownMembers {
@@ -211,7 +212,7 @@ func ensureClusterRaftMembership(db *util.OvsDbProperties, kclient kube.Interfac
 			continue
 		}
 		server := match[3]
-		if !(utilnet.IsIPv4String(server) || utilnet.IsIPv6String(server) || govalidator.IsDNSName(server)) {
+		if !utilnet.IsIPv4String(server) && !utilnet.IsIPv6String(server) && !govalidator.IsDNSName(server) {
 			klog.Warningf("Found invalid value for IP address of known %s member %s: %s",
 				db.DbName, knownMember, server)
 			continue
@@ -237,7 +238,7 @@ func ensureClusterRaftMembership(db *util.OvsDbProperties, kclient kube.Interfac
 			return fmt.Errorf("unable to parse member in %s: %s", db.DbName, member)
 		}
 		matchedServer := member[4]
-		if !(utilnet.IsIPv4String(matchedServer) || utilnet.IsIPv6String(matchedServer) || govalidator.IsDNSName(matchedServer)) {
+		if !utilnet.IsIPv4String(matchedServer) && !utilnet.IsIPv6String(matchedServer) && !govalidator.IsDNSName(matchedServer) {
 			klog.Warningf("Unable to parse address portion of member entry in %v: %s",
 				db, matchedServer)
 			continue

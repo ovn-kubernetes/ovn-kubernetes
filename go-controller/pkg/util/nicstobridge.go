@@ -179,13 +179,14 @@ func setupDefaultFile() {
 	}
 
 	var defaultFile, text string
-	if platform == ubuntu {
+	switch platform {
+	case ubuntu:
 		defaultFile = ubuntuDefaultFile
 		text = "OVS_CTL_OPTS=\"$OVS_CTL_OPTS --delete-transient-ports\""
-	} else if platform == rhel {
+	case rhel:
 		defaultFile = rhelDefaultFile
 		text = "OPTIONS=--delete-transient-ports"
-	} else {
+	default:
 		return
 	}
 

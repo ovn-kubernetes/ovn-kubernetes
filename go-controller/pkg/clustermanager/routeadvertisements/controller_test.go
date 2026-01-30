@@ -327,7 +327,7 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 			&metav1.ObjectMeta{Name: tn.Network},
 			userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"),
 		)
-		nad.ObjectMeta.OwnerReferences = []metav1.OwnerReference{ownerRef}
+		nad.OwnerReferences = []metav1.OwnerReference{ownerRef}
 	}
 
 	// Build the config as a map to properly marshal EVPN config

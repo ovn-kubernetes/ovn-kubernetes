@@ -1570,11 +1570,12 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					acl := acl
 					// update ACL logging information
 					acl.Log = true
-					if acl.Action == nbdb.ACLActionPass {
+					switch acl.Action {
+					case nbdb.ACLActionPass:
 						acl.Severity = ptr.To(nbdb.ACLSeverityNotice)
-					} else if acl.Action == nbdb.ACLActionDrop {
+					case nbdb.ACLActionDrop:
 						acl.Severity = ptr.To(nbdb.ACLSeverityAlert)
-					} else if acl.Action == nbdb.ACLActionAllowRelated {
+					case nbdb.ACLActionAllowRelated:
 						acl.Severity = ptr.To(nbdb.ACLSeverityInfo)
 					}
 					expectedDatabaseState = append(expectedDatabaseState, acl)
@@ -1601,11 +1602,12 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					acl := acl.(*nbdb.ACL)
 					// update ACL logging information
 					acl.Log = true
-					if acl.Action == nbdb.ACLActionPass {
+					switch acl.Action {
+					case nbdb.ACLActionPass:
 						acl.Severity = ptr.To(nbdb.ACLSeverityInfo)
-					} else if acl.Action == nbdb.ACLActionDrop {
+					case nbdb.ACLActionDrop:
 						acl.Severity = ptr.To(nbdb.ACLSeverityWarning)
-					} else if acl.Action == nbdb.ACLActionAllowRelated {
+					case nbdb.ACLActionAllowRelated:
 						acl.Severity = ptr.To(nbdb.ACLSeverityDebug)
 					}
 				}

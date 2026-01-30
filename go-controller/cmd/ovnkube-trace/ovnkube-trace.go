@@ -169,10 +169,7 @@ func execInPod(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, n
 	}
 	parameterCodec := runtime.NewParameterCodec(scheme)
 
-	useStdin := false
-	if in != "" {
-		useStdin = true
-	}
+	useStdin := in != ""
 
 	// Prepare the API URL used to execute another process within the Pod.
 	req := coreclient.RESTClient().
@@ -246,10 +243,11 @@ func isRoutingViaHost(coreclient *corev1client.CoreV1Client, nodeName string) (b
 	if !ok {
 		return false, fmt.Errorf("could not determine gateway mode from annotations on node %s, no default entry in l3GwConfig: %v", node.Name, l3GwConfigParsed)
 	}
-	if defaultL3GwConfigParsed.Mode == "local" {
+	switch defaultL3GwConfigParsed.Mode {
+	case "local":
 		klog.V(5).Infof("Cluster gateway mode is routingViaHost according to annotation on node %s, %s", node.Name, l3GwConfig)
 		return true, nil
-	} else if defaultL3GwConfigParsed.Mode == "shared" {
+	case "shared":
 		klog.V(5).Infof("Cluster gateway mode is routingViaOVN according to annotation on node %s, %s", node.Name, l3GwConfig)
 		return false, nil
 	}
@@ -259,7 +257,7 @@ func isRoutingViaHost(coreclient *corev1client.CoreV1Client, nodeName string) (b
 
 // getPodMAC returns the pod's MAC address.
 func getPodMAC(pod *corev1.Pod) (podMAC string, err error) {
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.ObjectMeta.Annotations, types.DefaultNetworkName)
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
 	if err != nil {
 		return "", err
 	}
@@ -537,7 +535,7 @@ func getPodInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, 
 	if err != nil {
 		return nil, fmt.Errorf("execInPod() failed. err: %s, stderr: %s, stdout: %s, podInfo: %v", err, localError, localOutput, podInfo)
 	}
-	podInfo.OvnK8sMp0OfportNum = strings.Replace(localOutput, "\n", "", -1)
+	podInfo.OvnK8sMp0OfportNum = strings.ReplaceAll(localOutput, "\n", "")
 
 	// Set information specific to host networked pods or non-host networked pods.
 	if podInfo.HostNetwork {
@@ -573,7 +571,7 @@ func getRouterPortMacAddress(coreclient *corev1client.CoreV1Client, restconfig *
 	// The ipOutput is with the following format: 0a:58:a8:fe:00:03 100.88.0.3/16 or
 	// 0a:58:0a:f4:02:01 10.244.2.1/24 fd00:10:244:3::1/64 for dual stack cluster.
 	// Parse the mac address from it.
-	macIP := strings.Split(strings.Replace(ipOutput, "\n", "", -1), " ")
+	macIP := strings.Split(strings.ReplaceAll(ipOutput, "\n", ""), " ")
 	if len(macIP) < 1 {
 		return "", fmt.Errorf("invalid mac ip output %s", ipOutput)
 	}
@@ -661,22 +659,20 @@ func getDatabaseURIs(coreclient *corev1client.CoreV1Client, restconfig *rest.Con
 	re := regexp.MustCompile(`--nb-address(=| )[^\s]+`)
 	nbAddress := re.FindString(hostOutput)
 	if len(nbAddress) > 13 {
-		nbAddress = strings.Replace(
+		nbAddress = strings.ReplaceAll(
 			re.FindString(hostOutput)[13:],
 			"://",
-			":",
-			-1)
+			":")
 	} else {
 		nbAddress = nbdbServerSock
 	}
 	re = regexp.MustCompile(`--sb-address(=| )[^\s]+`)
 	sbAddress := re.FindString(hostOutput)
 	if len(sbAddress) > 13 {
-		sbAddress = strings.Replace(
+		sbAddress = strings.ReplaceAll(
 			re.FindString(hostOutput)[13:],
 			"://",
-			":",
-			-1)
+			":")
 	} else {
 		sbAddress = sbdbServerSock
 	}
