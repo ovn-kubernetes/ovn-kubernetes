@@ -41,12 +41,13 @@ func (gtf *GatewayTopologyFactory) NewClusterRouterWithMulticastSupport(
 }
 
 func (gtf *GatewayTopologyFactory) NewTransitRouter(
+	transitRouterName string,
 	netInfo util.NetInfo,
 	coopUUID string,
 	tunnelKey string,
 ) (*nbdb.LogicalRouter, error) {
 	routerOptions := map[string]string{libovsdbops.RequestedTnlKey: tunnelKey}
-	return gtf.newClusterRouter(netInfo.GetNetworkScopedClusterRouterName(), netInfo, coopUUID, routerOptions)
+	return gtf.newClusterRouter(transitRouterName, netInfo, coopUUID, routerOptions)
 }
 
 func (gtf *GatewayTopologyFactory) newClusterRouter(
