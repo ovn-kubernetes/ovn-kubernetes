@@ -2,9 +2,11 @@ package node
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,8 @@ type openflowManager struct {
 	// flow cache, use map instead of array for readability when debugging
 	flowCache     map[string][]string
 	flowMutex     sync.Mutex
+	groupCache    map[string]map[uint32]string
+	groupMutex    sync.Mutex
 	exGWFlowCache map[string][]string
 	exGWFlowMutex sync.Mutex
 	// channel to indicate we need to update flows immediately
@@ -87,12 +91,29 @@ func (c *openflowManager) setDefaultBridgeGARPDrop(isDropped bool) {
 func (c *openflowManager) updateFlowCacheEntry(key string, flows []string) {
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
+	c.groupMutex.Lock()
+	defer c.groupMutex.Unlock()
+
+	// Groups must always be created via addGroupCacheEntry before a flow referring to the group. The callers are
+	// responsible for this. To make sure that the cache is in a valid state, remove any flows that refer to invalid
+	// groups.
+	flows = c.filterFlowsByExistingGroups(key, flows)
 	c.flowCache[key] = flows
+
+	// Every time that we update the flow cache, we have to make sure that superfluous groups IDs are deleted.
+	groupsToKeep := c.extractReferencedGroups(key)
+	c.pruneUnreferencedGroups(key, groupsToKeep)
 }
 
 func (c *openflowManager) deleteFlowsByKey(key string) {
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
+
+	// Make sure to delete corresponding groups as well when we delete flows.
+	// deleteGroupsByKey locks groupMutex - therefore, grab flowMutex Lock first (above) and then groupMutex - this is
+	// the same order as in syncFlows.
+	c.deleteGroupsByKey(key)
+
 	delete(c.flowCache, key)
 }
 
@@ -100,6 +121,160 @@ func (c *openflowManager) getFlowsByKey(key string) []string {
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
 	return c.flowCache[key]
+}
+
+// addGroupCacheEntry adds an OVS group to the flow cache and returns its assigned group ID.
+// If an identical group already exists (exact string match of groupString) under the given key, it returns the
+// existing ID. This is done in order to avoid duplicate entries.
+// Otherwise, it finds the next available group ID by looking at IDs used under all keys, adds the group to the cache,
+// and returns the new ID.
+// Returns an error if the maximum number of OVS groups (MaxOVSGroups) has been reached.
+func (c *openflowManager) addGroupCacheEntry(key string, groupString string) (uint32, error) {
+	c.groupMutex.Lock()
+	defer c.groupMutex.Unlock()
+
+	// Check if the exact same match already exists under the key. If so, return the ID and do nothing.
+	for i, str := range c.groupCache[key] {
+		if str == groupString {
+			return i, nil
+		}
+	}
+
+	// Gather all assigned group IDs.
+	usedGroupIDs := map[uint32]bool{}
+	for _, existingGroups := range c.groupCache {
+		for groupID := range existingGroups {
+			usedGroupIDs[groupID] = true
+		}
+	}
+	// Find next free index, if any.
+	if uint32(len(usedGroupIDs)) >= util.MaxOVSGroups {
+		return 0, fmt.Errorf("limit reached for used OVS group IDs, max is: %d", util.MaxOVSGroups)
+	}
+	i := 0
+	for ; i < len(usedGroupIDs); i++ {
+		if !usedGroupIDs[uint32(i)] {
+			break
+		}
+	}
+
+	if _, ok := c.groupCache[key]; !ok {
+		c.groupCache[key] = make(map[uint32]string)
+	}
+	c.groupCache[key][uint32(i)] = groupString
+	return uint32(i), nil
+}
+
+// deleteGroupsByKey removes all OVS groups associated with the given key from the group cache.
+func (c *openflowManager) deleteGroupsByKey(key string) {
+	c.groupMutex.Lock()
+	defer c.groupMutex.Unlock()
+	delete(c.groupCache, key)
+}
+
+// filterFlowsByExistingGroups filters out flows that reference groups that don't exist in the group cache
+// under the service key.
+// It returns only the flows that either don't reference any groups or reference groups that exist in c.groupCache[key].
+// The groupMutex must be held by the caller.
+// Attention: this does not acquire a lock because it is a helper for updateFlowCacheEntry.
+func (c *openflowManager) filterFlowsByExistingGroups(key string, flows []string) []string {
+	// Regular expression to match group:<number> in flow strings
+	groupRegex := regexp.MustCompile(`group:(\d+)`)
+
+	var filteredFlows []string
+	for _, flow := range flows {
+		matches := groupRegex.FindAllStringSubmatch(flow, -1)
+		if len(matches) == 0 {
+			// Flow doesn't reference any groups, keep it
+			filteredFlows = append(filteredFlows, flow)
+			continue
+		}
+
+		// Check if all groups referenced in this flow exist.
+		allGroupsExist := true
+		for _, match := range matches {
+			if len(match) > 1 {
+				// Parse the group ID from the match
+				gid, err := strconv.ParseUint(match[1], 10, 32)
+				if err != nil {
+					// The gid wouldn't parse if it's too large. However, gid can never be larger than a uint32, so this
+					// error cannot occur.
+					allGroupsExist = false
+					break
+				}
+				// Check if this group exists in the group cache.
+				_, groupExists := c.groupCache[key][uint32(gid)]
+				if !groupExists {
+					allGroupsExist = false
+					break
+				}
+			}
+		}
+
+		if allGroupsExist {
+			filteredFlows = append(filteredFlows, flow)
+		}
+	}
+
+	return filteredFlows
+}
+
+// extractReferencedGroups extracts all group IDs referenced in the flows for a given key.
+// It scans the flows in c.flowCache[key] and returns a map of group IDs that are actually used.
+// The flowMutex must be held by the caller.
+// Attention: this does not acquire a lock because it is a helper for updateFlowCacheEntry.
+func (c *openflowManager) extractReferencedGroups(key string) map[uint32]bool {
+	groupsToKeep := make(map[uint32]bool)
+	flows := c.flowCache[key]
+
+	// Regular expression to match group:<number> in flow strings
+	groupRegex := regexp.MustCompile(`group:(\d+)`)
+
+	for _, flow := range flows {
+		matches := groupRegex.FindAllStringSubmatch(flow, -1)
+		for _, match := range matches {
+			if len(match) > 1 {
+				// Parse the group ID from the match
+				gid, err := strconv.ParseUint(match[1], 10, 32)
+				if err != nil {
+					// The gid wouldn't parse if it's too large. However, gid can never be larger than a uint32, so this
+					// error cannot occur.
+					continue
+				}
+				groupsToKeep[uint32(gid)] = true
+			}
+		}
+	}
+
+	return groupsToKeep
+}
+
+// pruneUnreferencedGroups synchronizes the groups for a given key with the provided groupsToKeep list.
+// It deletes all groups in c.groupCache[key] that are not present in groupsToKeep.
+func (c *openflowManager) pruneUnreferencedGroups(key string, groupsToKeep map[uint32]bool) {
+	groups, exists := c.groupCache[key]
+	if !exists {
+		return
+	}
+
+	// Delete groups that are not in groupsToKeep
+	for groupID := range groups {
+		if !groupsToKeep[groupID] {
+			delete(c.groupCache[key], groupID)
+		}
+	}
+	// If there are no more groups in the groupCache, delete the entire key.
+	if len(c.groupCache[key]) == 0 {
+		delete(c.groupCache, key)
+	}
+}
+
+// getGroupsByKey retrieves all OVS groups associated with the given key from the group cache.
+// Returns a copy of the map of group IDs to group strings, or nil if the key doesn't exist.
+func (c *openflowManager) getGroupsByKey(key string) map[uint32]string {
+	c.groupMutex.Lock()
+	defer c.groupMutex.Unlock()
+	return maps.Clone(c.groupCache[key])
 }
 
 func (c *openflowManager) updateExBridgeFlowCacheEntry(key string, flows []string) {
@@ -117,15 +292,41 @@ func (c *openflowManager) requestFlowSync() {
 	}
 }
 
+// syncFlows synchronizes the cached OpenFlow flows and groups to the OVS bridges.
+// It aggregates all flows from the flow cache and all groups from the group cache,
+// then replaces the current flows/groups on the default bridge with the aggregated set.
+// Groups are synced first because OVS requires groups to exist before flows that reference them can be added.
+// If an external gateway bridge is configured, its flows are synced as well (external gateway bridges cannot hold
+// groups, so these aren't synced).
 func (c *openflowManager) syncFlows() {
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
+	c.groupMutex.Lock()
+	defer c.groupMutex.Unlock()
 
 	flows := []string{}
 	for _, entry := range c.flowCache {
 		flows = append(flows, entry...)
 	}
+	groups := map[uint32]string{}
+	for _, entry := range c.groupCache {
+		for gid, gstr := range entry {
+			// This should never happen. Log and proceed nevertheless.
+			if _, ok := groups[gid]; ok {
+				klog.Errorf("Duplicate key %d in groups, flows: %s", gid, c.flowCache)
+			}
+			groups[gid] = gstr
+		}
+	}
 
+	// Sync groups first because:
+	// https://docs.openvswitch.org/en/latest/ref/ovs-actions.7/
+	// "The group must exist or Open vSwitch will refuse to add the flow"
+	// When groups are deleted, the corresponding flows are removed, as well.
+	err := util.ReplaceOFGroups(c.defaultBridge.GetBridgeName(), groups)
+	if err != nil {
+		klog.Errorf("Failed to sync groups, error: %v, flows: %s", err, c.flowCache)
+	}
 	_, stderr, err := util.ReplaceOFFlows(c.defaultBridge.GetBridgeName(), flows)
 	if err != nil {
 		klog.Errorf("Failed to add flows, error: %v, stderr, %s, flows: %s", err, stderr, c.flowCache)
@@ -162,6 +363,8 @@ func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeconfig.BridgeConfigur
 		externalGatewayBridge: exGWBridge,
 		flowCache:             make(map[string][]string),
 		flowMutex:             sync.Mutex{},
+		groupCache:            make(map[string]map[uint32]string),
+		groupMutex:            sync.Mutex{},
 		exGWFlowCache:         make(map[string][]string),
 		exGWFlowMutex:         sync.Mutex{},
 		flowChan:              make(chan struct{}, 1),
