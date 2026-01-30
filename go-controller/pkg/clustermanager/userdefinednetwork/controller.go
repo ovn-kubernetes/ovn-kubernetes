@@ -1016,7 +1016,7 @@ func (c *Controller) validateEVPNVTEP(cudn *userdefinednetworkv1.ClusterUserDefi
 	}
 
 	if !util.IsEVPNEnabled() {
-		return fmt.Errorf("EVPN transport requested but enable-evpn flag is not set")
+		return fmt.Errorf("EVPN transport requested but EVPN feature is not enabled")
 	}
 
 	// CEL validation ensures EVPN is set when transport is EVPN.
