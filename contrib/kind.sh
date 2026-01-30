@@ -1048,42 +1048,6 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 
-# Build and run the bgp-setup tool from test/e2e/_output/bin/bgp-setup
-# Arguments:
-#   $1 - phase: "deploy-frr", "deploy-bgp-server", "deploy-containers", "install-frr-k8s", or "all"
-run_bgp_setup() {
-  local phase="${1:-all}"
-  local bgp_setup_bin="${DIR}/../test/e2e/_output/bin/bgp-setup"
-  
-  # Build bgp-setup if it doesn't exist or if source is newer
-  if [ ! -f "$bgp_setup_bin" ] || [ "${DIR}/../test/e2e/cmd/bgp-setup/main.go" -nt "$bgp_setup_bin" ]; then
-    echo "Building bgp-setup tool..."
-    mkdir -p "${DIR}/../test/e2e/_output/bin"
-    pushd "${DIR}/../test/e2e" > /dev/null
-    go build -o _output/bin/bgp-setup ./cmd/bgp-setup
-    popd > /dev/null
-  fi
-  
-  echo "Running bgp-setup with phase: $phase"
-  
-  # Determine IPv4/IPv6 flags
-  local ipv4_flag="${PLATFORM_IPV4_SUPPORT:-true}"
-  local ipv6_flag="${PLATFORM_IPV6_SUPPORT:-false}"
-  
-  "$bgp_setup_bin" \
-    --phase="$phase" \
-    --container-runtime="$OCI_BIN" \
-    --ipv4="$ipv4_flag" \
-    --ipv6="$ipv6_flag" \
-    --bgp-server-subnet-ipv4="${BGP_SERVER_NET_SUBNET_IPV4}" \
-    --bgp-server-subnet-ipv6="${BGP_SERVER_NET_SUBNET_IPV6}" \
-    --frr-k8s-version="${FRR_K8S_VERSION:-v0.0.21}" \
-    --network-name="${NETWORK_NAME:-default}" \
-    --isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE:-strict}" \
-    --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK:-true}" \
-    --kubeconfig="${KUBECONFIG}"
-}
-
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   # Phase 1a: Deploy external FRR container (before OVN installation)
   run_bgp_setup deploy-frr
