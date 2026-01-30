@@ -212,20 +212,27 @@ func GetNodeAddresses(ipv4, ipv6 bool, nodes ...*corev1.Node) (ipsv4 []net.IP, i
 	return
 }
 
-// GetNodeChassisID returns the machine's OVN chassis ID
-func GetNodeChassisID() (string, error) {
-	chassisID, stderr, err := RunOVSVsctl("--if-exists", "get",
-		"Open_vSwitch", ".", "external_ids:system-id")
+func getFromOVSExternalIds(field string) (string, error) {
+	value, stderr, err := RunOVSVsctl("--if-exists", "get",
+		"Open_vSwitch", ".", "external_ids:"+field)
 	if err != nil {
-		klog.Errorf("No system-id configured in the local host, "+
-			"stderr: %q, error: %v", stderr, err)
-		return "", err
+		return "", fmt.Errorf("failed to get OVS external_ids:%s, stderr: %q, error: %w", field, stderr, err)
 	}
-	if chassisID == "" {
-		return "", fmt.Errorf("no system-id configured in the local host")
+	if value == "" {
+		return "", fmt.Errorf("empty %s configured in the local host", field)
 	}
 
-	return chassisID, nil
+	return value, nil
+}
+
+// GetNodeChassisID returns the machine's OVN chassis ID
+func GetNodeChassisID() (string, error) {
+	return getFromOVSExternalIds("system-id")
+}
+
+// GetNodeChassisHostnameFromOVS returns the machine's OVN chassis hostname
+func GetNodeChassisHostnameFromOVS() (string, error) {
+	return getFromOVSExternalIds("hostname")
 }
 
 // GetHybridOverlayPortName returns the name of the hybrid overlay switch port

@@ -148,6 +148,13 @@ const (
 
 	// OvnNodeDontSNATSubnets is a user assigned source subnets that should avoid SNAT at ovn-k8s-mp0 interface
 	OvnNodeDontSNATSubnets = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
+
+	// ovnNodeDPUHostLabel is used to indicate that node is of type dpu-host
+	ovnNodeDPUHostLabel = "k8s.ovn.org/dpu-host"
+
+	// OvnNodeChassisHostname is the hostname set on a node's chassis
+	// This is for annotating DPU-Host with associated DPU's chassis hostname
+	OvnNodeChassisHostname = "k8s.ovn.org/node-chassis-hostname"
 )
 
 type L3GatewayConfig struct {
@@ -1371,4 +1378,44 @@ func GetNodePrimaryDPUHostAddrAnnotation(node *corev1.Node) (*ifAddr, error) {
 		return nil, fmt.Errorf("node: %q does not have any IP information set", node.Name)
 	}
 	return nodeIfAddr, nil
+}
+
+func IsDPUHost(node *corev1.Node) bool {
+	if _, exists := node.Labels[ovnNodeDPUHostLabel]; exists {
+		return true
+	}
+	return false
+}
+
+func SetNodeChassisHostnameAnnotation(nodeAnnotator kube.Annotator, chassisHostname string) error {
+	if chassisHostname != "" {
+		if err := nodeAnnotator.Set(OvnNodeChassisHostname, chassisHostname); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ParseNodeChassisHostnameAnnotation returns the node's ovnNodeChassisHostname annotation
+func ParseNodeChassisHostnameAnnotation(node *corev1.Node) (string, error) {
+	chassisHostname, ok := node.Annotations[OvnNodeChassisHostname]
+	if !ok {
+		return "", newAnnotationNotSetError("%s annotation not found for node %s", OvnNodeChassisHostname, node.Name)
+	}
+	return chassisHostname, nil
+}
+
+func NodeChassisHostnameAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OvnNodeChassisHostname] != newNode.Annotations[OvnNodeChassisHostname]
+}
+
+// GetNodeChassisHostname returns the node's Chassis Hostname
+// For DPU-Host it will be obtained from the node-chassis-hostname annotation,
+// as that info will be set by DPU associated with it.
+func GetNodeChassisHostname(node *corev1.Node) (string, error) {
+	if IsDPUHost(node) {
+		return ParseNodeChassisHostnameAnnotation(node)
+	} else {
+		return node.Name, nil
+	}
 }

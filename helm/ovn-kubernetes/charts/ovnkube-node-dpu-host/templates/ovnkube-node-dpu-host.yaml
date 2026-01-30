@@ -211,7 +211,11 @@ spec:
         - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
-          value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
+          value: {{ default "" .Values.nodeMgmtPortNetdev | quote }}
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: {{ default "" .Values.mgmtPortVFResourceName | quote }}
+        - name: OVN_ENABLE_INTERCONNECT
+          value: {{ default "false" .Values.global.enableInterconnect | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:

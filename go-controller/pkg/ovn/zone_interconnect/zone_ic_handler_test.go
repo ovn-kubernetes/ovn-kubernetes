@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	// ovnNodeIDAnnotaton is the node annotation name used to store the node id.
-	ovnNodeIDAnnotaton = "k8s.ovn.org/node-id"
+	// ovnNodeIDAnnotation is the node annotation name used to store the node id.
+	ovnNodeIDAnnotation = "k8s.ovn.org/node-id"
 
 	// ovnTransitSwitchPortAddrAnnotation is the node annotation name to store the transit switch port ips.
 	ovnTransitSwitchPortAddrAnnotation = "k8s.ovn.org/node-transit-switch-port-ifaddr"
@@ -35,14 +35,20 @@ const (
 	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
 
-	// ovnNodeChassisIDAnnotatin is the node annotation name to store the node chassis id.
-	ovnNodeChassisIDAnnotatin = "k8s.ovn.org/node-chassis-id"
+	// ovnNodeChassisIDAnnotation is the node annotation name to store the node chassis id.
+	ovnNodeChassisIDAnnotation = "k8s.ovn.org/node-chassis-id"
 
 	// ovnNodeSubnetsAnnotation is the node annotation name to store the node subnets.
 	ovnNodeSubnetsAnnotation = "k8s.ovn.org/node-subnets"
 
 	// ovnNodeNetworkIDsAnnotation is the node annotation name to store the network ids.
 	ovnNodeNetworkIDsAnnotation = "k8s.ovn.org/network-ids"
+
+	// ovnNodeChassisHostnameAnnotation is the node annotation name to store the node chassis hostname.
+	ovnNodeChassisHostnameAnnotation = "k8s.ovn.org/node-chassis-hostname"
+
+	// ovnNodeDPUHostLabel is used to indicate that node is of type dpu-host
+	ovnNodeDPUHostLabel = "k8s.ovn.org/dpu-host"
 )
 
 func newClusterJoinSwitch() *nbdb.LogicalSwitch {
@@ -253,6 +259,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 		testNode1          corev1.Node
 		testNode2          corev1.Node
 		testNode3          corev1.Node
+		testNode5          corev1.Node
+		testNode6          corev1.Node
 		node1Chassis       sbdb.Chassis
 		node2Chassis       sbdb.Chassis
 		node3Chassis       sbdb.Chassis
@@ -298,9 +306,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
-						ovnNodeIDAnnotaton:                 "2",
+						ovnNodeIDAnnotation:                "2",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.2.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.2/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
@@ -315,9 +323,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "global",
-						ovnNodeIDAnnotaton:                 "3",
+						ovnNodeIDAnnotation:                "3",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.3.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.3/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
@@ -332,9 +340,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node3",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
-						ovnNodeIDAnnotaton:                 "4",
+						ovnNodeIDAnnotation:                "4",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.4.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.4/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
@@ -342,6 +350,41 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				},
 				Status: corev1.NodeStatus{
 					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.12"}},
+				},
+			}
+			// node5 is a remote zone node
+			testNode5 = corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node5",
+					Labels: map[string]string{ovnNodeDPUHostLabel: ""},
+					Annotations: map[string]string{
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9",
+						ovnNodeChassisHostnameAnnotation:   "node5-dpu",
+						ovnNodeZoneNameAnnotation:          "foo",
+						ovnNodeIDAnnotation:                "5",
+						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.5.0/24\"]}",
+						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.5/16\"}",
+					},
+				},
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.15"}},
+				},
+			}
+			// node6 is a remote zone node
+			testNode6 = corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node6",
+					Labels: map[string]string{ovnNodeDPUHostLabel: ""},
+					Annotations: map[string]string{
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aaca",
+						ovnNodeZoneNameAnnotation:          "foo",
+						ovnNodeIDAnnotation:                "6",
+						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.6.0/24\"]}",
+						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.6/16\"}",
+					},
+				},
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.16"}},
 				},
 			}
 
@@ -383,6 +426,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = zoneICHandler.AddRemoteZoneNode(&testNode5)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				return nil
 			}
@@ -591,9 +637,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
-						ovnNodeIDAnnotaton:                 "2",
+						ovnNodeIDAnnotation:                "2",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.2.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.2/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"blue\":\"1\"}",
@@ -608,9 +654,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "global",
-						ovnNodeIDAnnotaton:                 "3",
+						ovnNodeIDAnnotation:                "3",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.3.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.3/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"blue\":\"1\"}",
@@ -625,9 +671,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node3",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
-						ovnNodeIDAnnotaton:                 "4",
+						ovnNodeIDAnnotation:                "4",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.4.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.4/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"blue\":\"1\"}",
@@ -746,9 +792,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
-						ovnNodeIDAnnotaton:                 "2",
+						ovnNodeIDAnnotation:                "2",
 						ovnNodeSubnetsAnnotation:           "{\"red\":[\"10.244.2.0/24\"], \"blue\":[\"11.244.2.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.2/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"red\":\"2\", \"blue\":\"1\"}",
@@ -763,9 +809,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "foo",
-						ovnNodeIDAnnotaton:                 "3",
+						ovnNodeIDAnnotation:                "3",
 						ovnNodeSubnetsAnnotation:           "{\"red\":[\"10.244.3.0/24\"], \"blue\":[\"11.244.3.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.3/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"red\":\"2\", \"blue\":\"1\"}",
@@ -780,9 +826,9 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node3",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
-						ovnNodeIDAnnotaton:                 "4",
+						ovnNodeIDAnnotation:                "4",
 						ovnNodeSubnetsAnnotation:           "{\"red\":[\"10.244.4.0/24\"], \"blue\":[\"11.244.4.0/24\"]}",
 						ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.4/16\"}",
 						ovnNodeNetworkIDsAnnotation:        "{\"red\":\"2\", \"blue\":\"1\"}",
@@ -911,7 +957,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - node4")))
 
 				// Set the node id
-				testNode4.Annotations = map[string]string{ovnNodeIDAnnotaton: "5"}
+				testNode4.Annotations = map[string]string{ovnNodeIDAnnotation: "5"}
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
 				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get the node transit switch port ips for node node4")))
 
@@ -991,8 +1037,11 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
 				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - node4")))
 
+				err = zoneICHandler.AddRemoteZoneNode(&testNode6)
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("k8s.ovn.org/node-chassis-hostname annotation not found for node node6")))
+
 				// Set the node id
-				testNode4.Annotations[ovnNodeIDAnnotaton] = "5"
+				testNode4.Annotations[ovnNodeIDAnnotation] = "5"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
 				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 subnets annotation")))
 
