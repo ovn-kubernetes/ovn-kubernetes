@@ -2364,7 +2364,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				completedPod := ovntest.NewPod(completedTPod.namespace, completedTPod.podName, completedTPod.nodeName, completedTPod.podIP)
 				setPodAnnotations(completedPod, completedTPod)
-				completedPod.UID = types.UID(completedPod.ObjectMeta.Name)
+				completedPod.UID = types.UID(completedPod.Name)
 				completedPod.Status.Phase = corev1.PodSucceeded
 
 				runningTPod := newTPod(
@@ -2379,7 +2379,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				runningPod := ovntest.NewPod(runningTPod.namespace, runningTPod.podName, runningTPod.nodeName, runningTPod.podIP)
 				setPodAnnotations(runningPod, runningTPod)
-				runningPod.UID = types.UID(runningPod.ObjectMeta.Name)
+				runningPod.UID = types.UID(runningPod.Name)
 
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NamespaceList{

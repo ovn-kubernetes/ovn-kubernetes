@@ -167,7 +167,7 @@ func (n *NodeController) hybridOverlayNodeUpdate(node *corev1.Node) error {
 
 	// (re)add flows for the node
 	cookie := nameToCookie(node.Name)
-	drMACRaw := strings.Replace(drMAC.String(), ":", "", -1)
+	drMACRaw := strings.ReplaceAll(drMAC.String(), ":", "")
 
 	var flows []string
 	// Distributed Router MAC ARP responder flow; responds to ARP requests by OVN for
@@ -368,8 +368,8 @@ func (n *NodeController) recalculateFlowCache(oldDRIP net.IP, oldDRMAC net.Hardw
 	if oldDRMAC != nil {
 		macReplace = -1
 	}
-	oldDRMACRaw := strings.Replace(oldDRMAC.String(), ":", "", -1)
-	newDRMACRaw := strings.Replace(n.drMAC.String(), ":", "", -1)
+	oldDRMACRaw := strings.ReplaceAll(oldDRMAC.String(), ":", "")
+	newDRMACRaw := strings.ReplaceAll(n.drMAC.String(), ":", "")
 
 	portIPRawOld := getIPAsHexString(oldDRIP)
 	portIPRawNew := getIPAsHexString(n.drIP)
@@ -589,7 +589,7 @@ func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 	}
 	// Handle ARP for gateway address internally towards pods
 	// resubmit to table 1 for gateway mode arp processing
-	portMACRaw := strings.Replace(n.drMAC.String(), ":", "", -1)
+	portMACRaw := strings.ReplaceAll(n.drMAC.String(), ":", "")
 	portIPRaw := getIPAsHexString(n.drIP)
 	flows = append(flows,
 		fmt.Sprintf("table=0,priority=100,in_port=%s,arp_op=1,arp,arp_tpa=%s,"+

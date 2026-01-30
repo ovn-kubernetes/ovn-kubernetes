@@ -186,7 +186,7 @@ func runOvnKubeDBChecker(ctx *cli.Context) error {
 		&kube.Kube{KClient: ovnClientset.KubeClient},
 		stopChan)
 	// run until cancelled
-	<-ctx.Context.Done()
+	<-ctx.Done()
 	close(stopChan)
 	return nil
 }

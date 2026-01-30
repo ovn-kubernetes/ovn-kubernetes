@@ -183,7 +183,7 @@ var _ = Describe("Kube", func() {
 
 		It("adds a resourceVersion guard when creating a missing annotation key", func() {
 			var patchOps []jsonPatchOp
-			kube.KClient.(*fake.Clientset).Fake.PrependReactor("patch", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+			kube.KClient.(*fake.Clientset).PrependReactor("patch", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
 				patchAction := action.(ktesting.PatchAction)
 				Expect(patchAction.GetSubresource()).To(Equal("status"))
 				Expect(json.Unmarshal(patchAction.GetPatch(), &patchOps)).To(Succeed())
@@ -215,7 +215,7 @@ var _ = Describe("Kube", func() {
 
 		It("uses a per-key guard when updating an existing annotation key", func() {
 			var patchOps []jsonPatchOp
-			kube.KClient.(*fake.Clientset).Fake.PrependReactor("patch", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+			kube.KClient.(*fake.Clientset).PrependReactor("patch", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
 				patchAction := action.(ktesting.PatchAction)
 				Expect(patchAction.GetSubresource()).To(Equal("status"))
 				Expect(json.Unmarshal(patchAction.GetPatch(), &patchOps)).To(Succeed())

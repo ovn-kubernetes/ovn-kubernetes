@@ -231,7 +231,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			if t.migrationTarget.nodeName != "" && isLocalNode(t, t.migrationTarget.nodeName) {
 				if !virtLauncherCompleted(t.migrationTarget.testVirtLauncherPod) {
 					testVirtLauncherPods = append(testVirtLauncherPods, t.migrationTarget.testVirtLauncherPod)
-					testPods = append(testPods, t.migrationTarget.testVirtLauncherPod.testPod)
+					testPods = append(testPods, t.migrationTarget.testPod)
 				}
 				nodeSet[t.migrationTarget.nodeName] = true
 			}
@@ -703,7 +703,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			config.IPv6Mode = t.ipv6
 			config.OVNKubernetesFeature.EnableInterconnect = t.interconnected
 
-			if t.testVirtLauncherPod.vmName != "" {
+			if t.vmName != "" {
 				initVirtLauncherPod(&t.testVirtLauncherPod)
 			}
 			if t.migrationTarget.nodeName != "" {
@@ -780,7 +780,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						},
 					},
 				)
-				t.testPod.populateLogicalSwitchCache(fakeOvn)
+				t.populateLogicalSwitchCache(fakeOvn)
 				if t.migrationTarget.nodeName != "" {
 					t.migrationTarget.populateLogicalSwitchCache(fakeOvn)
 				}

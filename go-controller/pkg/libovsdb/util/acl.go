@@ -177,11 +177,12 @@ type ACLLoggingLevels struct {
 func getLogSeverity(action string, aclLogging *ACLLoggingLevels) (log bool, severity string) {
 	severity = ""
 	if aclLogging != nil {
-		if action == nbdb.ACLActionAllow || action == nbdb.ACLActionAllowRelated || action == nbdb.ACLActionAllowStateless {
+		switch action {
+		case nbdb.ACLActionAllow, nbdb.ACLActionAllowRelated, nbdb.ACLActionAllowStateless:
 			severity = aclLogging.Allow
-		} else if action == nbdb.ACLActionDrop || action == nbdb.ACLActionReject {
+		case nbdb.ACLActionDrop, nbdb.ACLActionReject:
 			severity = aclLogging.Deny
-		} else if action == nbdb.ACLActionPass {
+		case nbdb.ACLActionPass:
 			severity = aclLogging.Pass
 		}
 	}

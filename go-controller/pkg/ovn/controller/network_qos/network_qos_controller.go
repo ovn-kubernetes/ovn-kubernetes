@@ -510,7 +510,7 @@ func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
 }
 
 func (c *Controller) podNetworkResolver() func(nadKey string) string {
-	if !c.NetInfo.IsUserDefinedNetwork() {
+	if !c.IsUserDefinedNetwork() {
 		return nil
 	}
 	return c.networkManager.GetNetworkNameForNADKey

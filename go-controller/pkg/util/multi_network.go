@@ -473,7 +473,7 @@ func (nInfo *DefaultNetInfo) GetNetInfo() NetInfo {
 
 func (nInfo *DefaultNetInfo) copy() *DefaultNetInfo {
 	c := &DefaultNetInfo{}
-	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
+	c.copyFrom(&nInfo.mutableNetInfo)
 
 	return c
 }
@@ -1115,7 +1115,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		evpn:                  nInfo.evpn,
 	}
 	// copy mutables
-	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
+	c.copyFrom(&nInfo.mutableNetInfo)
 
 	return c
 }
@@ -1899,7 +1899,7 @@ func IsPreconfiguredUDNAddressesEnabled() bool {
 }
 
 func DoesNetworkRequireIPAM(netInfo NetInfo) bool {
-	return !((netInfo.TopologyType() == types.Layer2Topology || netInfo.TopologyType() == types.LocalnetTopology) && len(netInfo.Subnets()) == 0)
+	return (netInfo.TopologyType() != types.Layer2Topology && netInfo.TopologyType() != types.LocalnetTopology) || len(netInfo.Subnets()) != 0
 }
 
 func DoesNetworkRequireTunnelIDs(netInfo NetInfo) bool {

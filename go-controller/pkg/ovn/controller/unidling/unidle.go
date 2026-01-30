@@ -196,11 +196,12 @@ func (uc *unidlingController) handleLbEmptyBackendsEvent(event sbdb.ControllerEv
 	}
 	proto := event.EventInfo["protocol"]
 	var protocol corev1.Protocol
-	if proto == "udp" {
+	switch proto {
+	case "udp":
 		protocol = corev1.ProtocolUDP
-	} else if proto == "sctp" {
+	case "sctp":
 		protocol = corev1.ProtocolSCTP
-	} else {
+	default:
 		protocol = corev1.ProtocolTCP
 	}
 

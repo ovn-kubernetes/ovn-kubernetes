@@ -134,13 +134,13 @@ func (tn testNAD) NAD() *nadv1.NetworkAttachmentDefinition {
 	// Set owner reference for CUDN
 	if tn.IsCUDN {
 		ownerRef := makeCUDNOwnerRef(tn.Network)
-		nad.ObjectMeta.OwnerReferences = []metav1.OwnerReference{ownerRef}
+		nad.OwnerReferences = []metav1.OwnerReference{ownerRef}
 	}
 
 	// Set owner reference for UDN
 	if tn.IsUDN {
 		ownerRef := makeUDNOwnerRef(tn.Name)
-		nad.ObjectMeta.OwnerReferences = []metav1.OwnerReference{ownerRef}
+		nad.OwnerReferences = []metav1.OwnerReference{ownerRef}
 	}
 
 	// Build NAD spec config

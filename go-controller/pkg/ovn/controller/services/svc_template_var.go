@@ -61,7 +61,7 @@ func templateNameFromReference(template string) string {
 // "Service__default_node_port_svc__UDP__30957__node__router__template__IPv4"
 func makeTemplateName(name string) string {
 	invalidChars := regexp.MustCompile(`[/\-$@]`)
-	name = strings.Replace(name, "_", "__", -1)
+	name = strings.ReplaceAll(name, "_", "__")
 	return invalidChars.ReplaceAllString(name, "_")
 }
 

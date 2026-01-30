@@ -146,13 +146,13 @@ func normalizeLinkState(desired netlink.Link, state netlink.Link) netlink.Link {
 	case *netlink.Vlan:
 		r := result.(*netlink.Vlan)
 		if des.Attrs().ParentIndex == 0 {
-			r.LinkAttrs.ParentIndex = 0
+			r.ParentIndex = 0
 		}
 		if des.VlanProtocol == 0 {
 			r.VlanProtocol = 0
 		}
 		if len(des.Attrs().HardwareAddr) == 0 {
-			r.LinkAttrs.HardwareAddr = nil
+			r.HardwareAddr = nil
 		}
 	case *netlink.Vrf:
 		// No conditional fields — Table is always compared
@@ -228,7 +228,7 @@ func linkImmutableFieldsEqual(l, r netlink.Link) bool {
 	case *netlink.Vlan:
 		rv := r.(*netlink.Vlan)
 		if lv.VlanId != rv.VlanId ||
-			lv.LinkAttrs.ParentIndex != rv.LinkAttrs.ParentIndex ||
+			lv.ParentIndex != rv.ParentIndex ||
 			lv.VlanProtocol != rv.VlanProtocol ||
 			!bytes.Equal(lv.Attrs().HardwareAddr, rv.Attrs().HardwareAddr) {
 			return false
@@ -349,7 +349,7 @@ func validateConfig(cfg *DeviceConfig) error {
 		return fmt.Errorf("device %q: VLANParent set but Link is %T, not *netlink.Vlan", name, cfg.Link)
 	}
 	for _, addr := range cfg.Addresses {
-		if addr.IPNet != nil && isLinkLocalAddress(addr.IPNet.IP) {
+		if addr.IPNet != nil && isLinkLocalAddress(addr.IP) {
 			return fmt.Errorf("device %q: link-local address %s cannot be managed (kernel-managed)", name, addr.IPNet)
 		}
 	}

@@ -300,7 +300,7 @@ func (c *Controller) isAddressValid(address netlink.Addr) bool {
 	if address.IPNet == nil {
 		return false
 	}
-	if address.IPNet.IP.IsUnspecified() {
+	if address.IP.IsUnspecified() {
 		return false
 	}
 	if utilnet.IsIPv4(address.IP) && !c.ipv4Enabled {

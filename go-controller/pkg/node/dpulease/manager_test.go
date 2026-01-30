@@ -118,7 +118,7 @@ func TestEnsureLeaseRetriesOnAlreadyExists(t *testing.T) {
 	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 20*time.Second)
 
 	getCalls := 0
-	client.Fake.PrependReactor("get", "leases", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+	client.PrependReactor("get", "leases", func(_ k8stesting.Action) (bool, runtime.Object, error) {
 		getCalls++
 		if getCalls == 1 {
 			return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: coordinationv1.GroupName, Resource: "leases"}, "ovn-dpu-worker")
@@ -127,7 +127,7 @@ func TestEnsureLeaseRetriesOnAlreadyExists(t *testing.T) {
 	})
 
 	createCalls := 0
-	client.Fake.PrependReactor("create", "leases", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+	client.PrependReactor("create", "leases", func(_ k8stesting.Action) (bool, runtime.Object, error) {
 		createCalls++
 		if createCalls == 1 {
 			now := metav1.NowMicro()

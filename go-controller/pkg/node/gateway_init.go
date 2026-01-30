@@ -85,7 +85,7 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 	if needIPv4NextHop || needIPv6NextHop || gatewayIntf == "" {
 		defaultGatewayIntf, defaultGatewayNextHops, err := getDefaultGatewayInterfaceDetails(gatewayIntf, config.IPv4Mode, config.IPv6Mode)
 		if err != nil {
-			if !(errors.As(err, new(*GatewayInterfaceMismatchError)) && config.Gateway.Mode == config.GatewayModeLocal && config.Gateway.AllowNoUplink) {
+			if !errors.As(err, new(*GatewayInterfaceMismatchError)) || config.Gateway.Mode != config.GatewayModeLocal || !config.Gateway.AllowNoUplink {
 				return nil, "", err
 			}
 		}
