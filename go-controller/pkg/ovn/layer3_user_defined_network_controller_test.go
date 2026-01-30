@@ -42,6 +42,7 @@ type userDefinedNetInfo struct {
 	isPrimary          bool
 	allowPersistentIPs bool
 	ipamClaimReference string
+	hasEVPN            bool
 }
 
 const (
@@ -56,6 +57,8 @@ const (
 type testConfiguration struct {
 	configToOverride   *config.OVNKubernetesFeatureConfig
 	gatewayConfig      *config.GatewayConfig
+	withRemoteNode     bool
+	withRemotePod      bool
 	expectationOptions []option
 }
 
@@ -241,7 +244,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 								fakeOvn,
 								[]testPod{podInfo},
 								expectationOptions...,
-							).expectedLogicalSwitchesAndPorts()...)))
+							).expectedLogicalSwitchesAndPorts(nodeName)...)))
 
 				return nil
 			}
@@ -862,7 +865,7 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		}
 	}
 
-	return &ovncnitypes.NetConf{
+	netconf := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
 			Name: sni.netName,
 			Type: plugin,
@@ -873,7 +876,14 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		Role:               role,
 		AllowPersistentIPs: sni.allowPersistentIPs,
 		TransitSubnet:      transitSubnet,
+		Transport:          types.NetworkTransportGeneve,
 	}
+
+	if sni.hasEVPN {
+		netconf.Transport = types.NetworkTransportEVPN
+	}
+
+	return netconf
 }
 
 func dummyTestPod(nsName string, info userDefinedNetInfo) testPod {
