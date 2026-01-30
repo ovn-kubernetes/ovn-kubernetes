@@ -577,13 +577,14 @@ func UpdateEgressFirewallRuleCount(count float64) {
 // 1: If it is local gateway mode
 // 2: invalid mode
 func RecordEgressRoutingViaHost() {
-	if config.Gateway.Mode == config.GatewayModeLocal {
+	switch config.Gateway.Mode {
+	case config.GatewayModeLocal:
 		// routingViaHost is enabled
 		metricEgressRoutingViaHost.Set(1)
-	} else if config.Gateway.Mode == config.GatewayModeShared {
+	case config.GatewayModeShared:
 		// routingViaOVN is enabled
 		metricEgressRoutingViaHost.Set(0)
-	} else {
+	default:
 		// invalid mode
 		metricEgressRoutingViaHost.Set(2)
 	}

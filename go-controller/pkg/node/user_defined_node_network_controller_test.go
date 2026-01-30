@@ -47,7 +47,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		nad       = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
 		fexec      *ovntest.FakeExec
-		mgtPortMAC string = "00:00:00:55:66:77" // dummy MAC used for fake commands
+		mgtPortMAC = "00:00:00:55:66:77" // dummy MAC used for fake commands
 	)
 	BeforeEach(func() {
 		// Restore global default values before each testcase
@@ -158,10 +158,10 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 	var (
 		nad = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
-		netName                 = "bluenet"
-		netID                   = 3
-		nodeName         string = "worker1"
-		mgtPortMAC       string = "00:00:00:55:66:77"
+		netName          = "bluenet"
+		netID            = 3
+		nodeName         = "worker1"
+		mgtPortMAC       = "00:00:00:55:66:77"
 		fexec            *ovntest.FakeExec
 		testNS           ns.NetNS
 		vrf              *vrfmanager.Controller

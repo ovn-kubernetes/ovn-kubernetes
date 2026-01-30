@@ -608,7 +608,7 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 }
 
 func (oc *DefaultNetworkController) Reconcile(netInfo util.NetInfo) error {
-	return oc.BaseNetworkController.reconcile(
+	return oc.reconcile(
 		netInfo,
 		func(node string) { oc.gatewaysFailed.Store(node, true) },
 	)
