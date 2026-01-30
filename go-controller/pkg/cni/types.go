@@ -81,6 +81,9 @@ const CNIDel command = "DEL"
 // CNICheck is the command representing check operation on a pod
 const CNICheck command = "CHECK"
 
+// CNIStatus is the command representing a plugin readiness check
+const CNIStatus command = "STATUS"
+
 // Request sent to the Server by the OVN CNI plugin
 type Request struct {
 	// CNI environment variables, like CNI_COMMAND and CNI_NETNS
@@ -201,6 +204,11 @@ func NewClientSet(kclient kubernetes.Interface, podLister corev1listers.PodListe
 	}
 }
 
+// DPUStatusProvider reports whether the DPU is ready to service CNI requests.
+type DPUStatusProvider interface {
+	Ready() (bool, string)
+}
+
 // Server object that listens for JSON-marshaled Request objects
 // on a private root-only Unix domain socket.
 type Server struct {
@@ -210,4 +218,5 @@ type Server struct {
 	kubeAuth             *KubeAPIAuth
 	networkManager       networkmanager.Interface
 	ovsClient            client.Client
+	dpuHealth            DPUStatusProvider
 }

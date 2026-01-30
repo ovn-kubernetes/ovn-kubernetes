@@ -22,9 +22,10 @@ func main() {
 	c.Action = func(_ *cli.Context) error {
 		skel.PluginMainFuncs(
 			skel.CNIFuncs{
-				Add:   p.CmdAdd,
-				Check: p.CmdCheck,
-				Del:   p.CmdDel,
+				Add:    p.CmdAdd,
+				Check:  p.CmdCheck,
+				Del:    p.CmdDel,
+				Status: p.CmdStatus,
 			},
 			version.All,
 			bv.BuildString("ovn-k8s-cni-overlay"))

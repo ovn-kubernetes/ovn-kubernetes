@@ -35,6 +35,8 @@ var (
 	BandwidthNotFound = &notFoundError{}
 )
 
+const dpuNotReadyMsg = "DPU Not Ready"
+
 type direction int
 
 func (d direction) String() string {
@@ -457,7 +459,12 @@ func HandlePodRequest(
 		response, err = request.cmdDel(clientset)
 	case CNICheck:
 		err = request.cmdCheck()
+	case CNIUpdate:
+		// No-op update path today
+	case CNIStatus:
+		// handled by DPU health check gating before reaching here
 	default:
+		err = fmt.Errorf("unsupported CNI command %s", request.Command)
 	}
 
 	if response != nil {
