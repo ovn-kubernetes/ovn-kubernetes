@@ -1161,6 +1161,7 @@ ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
 ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
 ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
 ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+ovn_enable_interconnect=${ovn_enable_interconnect} \
   jinjanate ../templates/rbac-ovnkube-master.yaml.j2 -o ${output_dir}/rbac-ovnkube-master.yaml
 
 cp ../templates/rbac-ovnkube-identity.yaml.j2 ${output_dir}/rbac-ovnkube-identity.yaml

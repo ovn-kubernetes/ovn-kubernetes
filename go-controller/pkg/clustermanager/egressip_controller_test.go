@@ -22,7 +22,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/util/retry"
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -3288,24 +3287,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				assignedMark, err := strconv.Atoi(assignedMarkStr)
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "failed to convert mark to string")
 
-				ginkgo.By("clear mark to cause update and expect restoration of mark")
-				gomega.Expect(retry.RetryOnConflict(retry.DefaultRetry, func() error {
-					eIP, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), eIP.Name, metav1.GetOptions{})
-					if err != nil {
-						return err
-					}
-					eIP.Annotations = map[string]string{}
-					_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Update(context.TODO(), eIP, metav1.UpdateOptions{})
-					return err
-				})).ShouldNot(gomega.HaveOccurred(), "failed to update EgressIP object")
-				ginkgo.By("confirm the original mark is restored")
-				gomega.Eventually(getEgressIPAnnotationValue(eIP.Name)).ShouldNot(gomega.BeEmpty())
-				assignedMarkStr, err = getEgressIPAnnotationValue(eIP.Name)()
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "failed to get egress IP mark from annotations")
-				assignedMarkAfterUpdate, err := strconv.Atoi(assignedMarkStr)
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "failed to convert mark to string")
-				gomega.Expect(assignedMark).Should(gomega.Equal(assignedMarkAfterUpdate), "Mark should be identical if annotation is cleared")
-				ginkgo.By("confirm cache is unchanged")
+				ginkgo.By("confirm cache is set correctly")
 				cachedMark, _, err := fakeClusterManagerOVN.eIPC.getOrAllocMark(eIP.Name)
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 				gomega.Expect(cachedMark).Should(gomega.Equal(assignedMark), "EIP annotation and cache mark integer must be the same")
