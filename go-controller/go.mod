@@ -166,4 +166,8 @@ replace (
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 	github.com/j-keck/arping => github.com/JacobTanenbaum/arping v0.0.0-20240209152419-3987db83bd51
+	// TEMPORARY: Use fork with VLAN filtering/VNI support until merged upstream
+	// Adds: BridgeVlanAdd, BridgeVniAdd, BridgeVlanAddTunnelInfo, Vxlan.VniFilter
+	// TODO: Remove once https://github.com/vishvananda/netlink/pull/1159 is merged
+	github.com/vishvananda/netlink => github.com/kyrtapz/netlink v0.0.0-20260127093224-f8e95bf26303
 )
