@@ -966,3 +966,86 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 		})
 	}
 }
+
+func TestParseVTEPIPsAnnotation(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		expected    map[string][]string
+		expectErr   bool
+	}{
+		{
+			name:        "missing annotation returns empty map",
+			annotations: nil,
+			expected:    map[string][]string{},
+		},
+		{
+			name:        "single VTEP single IP",
+			annotations: map[string]string{OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1"]}`},
+			expected:    map[string][]string{"vtep1": {"100.64.0.1"}},
+		},
+		{
+			name:        "single VTEP dual-stack",
+			annotations: map[string]string{OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1","fd00::1"]}`},
+			expected:    map[string][]string{"vtep1": {"100.64.0.1", "fd00::1"}},
+		},
+		{
+			name:        "invalid JSON",
+			annotations: map[string]string{OVNNodeVTEPIPs: `not-json`},
+			expectErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: tt.annotations}}
+			result, err := ParseVTEPIPsAnnotation(node)
+			if tt.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestSetVTEPIPsAnnotation(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		vtepName    string
+		ips         []string
+		expected    map[string]interface{}
+	}{
+		{
+			name:        "add single IP to nil",
+			annotations: nil,
+			vtepName:    "vtep1",
+			ips:         []string{"100.64.0.1"},
+			expected:    map[string]interface{}{OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1"]}`},
+		},
+		{
+			name:        "add dual-stack IPs",
+			annotations: nil,
+			vtepName:    "vtep1",
+			ips:         []string{"100.64.0.1", "fd00::1"},
+			expected:    map[string]interface{}{OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1","fd00::1"]}`},
+		},
+		{
+			name:        "remove last clears annotation",
+			annotations: map[string]string{OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1"]}`},
+			vtepName:    "vtep1",
+			ips:         nil,
+			expected:    map[string]interface{}{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := SetVTEPIPsAnnotation(tt.annotations, tt.vtepName, tt.ips)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

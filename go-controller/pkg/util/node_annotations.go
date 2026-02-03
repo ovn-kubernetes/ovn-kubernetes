@@ -146,6 +146,10 @@ const (
 	// ovnNodeEncapIPs is used to indicate encap IPs set on the node
 	OVNNodeEncapIPs = "k8s.ovn.org/node-encap-ips"
 
+	// OVNNodeVTEPIPs is the annotation key for VTEP IPs on a node.
+	// The value is a JSON map of VTEP name to IP address.
+	OVNNodeVTEPIPs = "k8s.ovn.org/vtep-ips"
+
 	// OvnNodeDontSNATSubnets is a user assigned source subnets that should avoid SNAT at ovn-k8s-mp0 interface
 	OvnNodeDontSNATSubnets = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
 )
@@ -1371,4 +1375,62 @@ func GetNodePrimaryDPUHostAddrAnnotation(node *corev1.Node) (*ifAddr, error) {
 		return nil, fmt.Errorf("node: %q does not have any IP information set", node.Name)
 	}
 	return nodeIfAddr, nil
+}
+
+// ParseVTEPIPsAnnotation parses the VTEP IPs annotation from a node.
+// Returns a map of VTEP name to list of IPs (supports dual-stack).
+// Returns empty map if annotation is missing.
+func ParseVTEPIPsAnnotation(node *corev1.Node) (map[string][]string, error) {
+	annotation, ok := node.Annotations[OVNNodeVTEPIPs]
+	if !ok || annotation == "" {
+		return map[string][]string{}, nil
+	}
+
+	var vtepIPs map[string][]string
+	if err := json.Unmarshal([]byte(annotation), &vtepIPs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s annotation for node %q: %w", OVNNodeVTEPIPs, node.Name, err)
+	}
+	return vtepIPs, nil
+}
+
+// SetVTEPIPsAnnotation sets VTEP IPs in the annotations map.
+// Supports dual-stack: ips can contain both IPv4 and IPv6 addresses.
+// If ips is empty, the VTEP entry is removed.
+// Returns annotations compatible with kube.SetAnnotationsOnNode.
+func SetVTEPIPsAnnotation(annotations map[string]string, vtepName string, ips []string) (map[string]interface{}, error) {
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+
+	var vtepIPs map[string][]string
+	if existing := annotations[OVNNodeVTEPIPs]; existing != "" {
+		if err := json.Unmarshal([]byte(existing), &vtepIPs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal existing %s annotation: %w", OVNNodeVTEPIPs, err)
+		}
+	} else {
+		vtepIPs = map[string][]string{}
+	}
+
+	if len(ips) == 0 {
+		delete(vtepIPs, vtepName)
+	} else {
+		vtepIPs[vtepName] = ips
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range annotations {
+		result[k] = v
+	}
+
+	if len(vtepIPs) == 0 {
+		delete(result, OVNNodeVTEPIPs)
+		return result, nil
+	}
+
+	bytes, err := json.Marshal(vtepIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal %s annotation: %w", OVNNodeVTEPIPs, err)
+	}
+	result[OVNNodeVTEPIPs] = string(bytes)
+	return result, nil
 }
