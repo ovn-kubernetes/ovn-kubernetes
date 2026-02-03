@@ -344,7 +344,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 				if err != nil {
 					return fmt.Errorf("failed to get SNAT match for node %s for network %s: %v", pod.Spec.NodeName, oc.GetNetworkName(), err)
 				}
-				if ops, err = addOrUpdatePodSNATOps(oc.nbClient, oc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, []*net.IPNet{podIP}, snatMatch, ops); err != nil {
+				if ops, err = addOrUpdatePodSNATOps(oc.nbClient, oc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, []*net.IPNet{podIP}, snatMatch, "", ops); err != nil {
 					return err
 				}
 			}
