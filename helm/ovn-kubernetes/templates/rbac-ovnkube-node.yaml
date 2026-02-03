@@ -186,6 +186,7 @@ rules:
           - clusteruserdefinednetworks
           - networkqoses
           - clusternetworkconnects
+          - vteps
       verbs: [ "get", "list", "watch" ]
     {{- if or (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "enableNoOverlayManagedRouting" | ternary .Values.global.enableNoOverlayManagedRouting false) true) }}
     - apiGroups: ["k8s.ovn.org"]
