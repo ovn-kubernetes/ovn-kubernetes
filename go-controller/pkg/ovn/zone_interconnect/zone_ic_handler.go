@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -173,12 +174,20 @@ func (zic *ZoneInterconnectHandler) createOrUpdateTransitSwitch(networkID int) e
 
 // ensureTransitSwitch sets up the global transit switch required for interoperability with other zones
 // Must wait for network id to be annotated to any node by cluster manager
-func (zic *ZoneInterconnectHandler) ensureTransitSwitch(nodes []*corev1.Node) error {
-	if len(nodes) == 0 { // nothing to do
-		return nil
-	}
+func (zic *ZoneInterconnectHandler) ensureTransitSwitch() error {
 	start := time.Now()
 
+	// Get the transit switch. If its not present no cleanup to do
+	ts := &nbdb.LogicalSwitch{
+		Name: zic.networkTransitSwitchName,
+	}
+
+	_, err := libovsdbops.GetLogicalSwitch(zic.nbClient, ts)
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return err
+	}
+
+	// Create the transit switch if it doesn't exist
 	if err := zic.createOrUpdateTransitSwitch(zic.GetNetworkID()); err != nil {
 		return err
 	}
@@ -196,6 +205,10 @@ func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
 	if nodeID == -1 {
 		// Don't consider this node as cluster-manager has not allocated node id yet.
 		return fmt.Errorf("failed to get node id for node - %s", node.Name)
+	}
+
+	if err := zic.ensureTransitSwitch(); err != nil {
+		return fmt.Errorf("ensuring transit switch for local zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
 	}
 
 	if err := zic.createLocalZoneNodeResources(node, nodeID); err != nil {
@@ -257,6 +270,10 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 		}
 	}
 
+	if err := zic.ensureTransitSwitch(); err != nil {
+		return fmt.Errorf("ensuring transit switch for remote zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
+	}
+
 	klog.Infof("Creating interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
 
 	if err := zic.createRemoteZoneNodeResources(node, nodeID, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs); err != nil {
@@ -273,58 +290,89 @@ func (zic *ZoneInterconnectHandler) DeleteNode(node *corev1.Node) error {
 	return zic.cleanupNode(node.Name)
 }
 
-// SyncNodes ensures a transit switch exists and cleans up the interconnect
-// resources present in the OVN Northbound db for the stale nodes
-func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
+// CleanupStaleNodes cleans up the interconnect resources for stale nodes.
+func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error {
+	// Build set of current node names
 	foundNodeNames := sets.New[string]()
-	foundNodes := make([]*corev1.Node, len(objs))
-	for i, obj := range objs {
+	for _, obj := range objs {
 		node, ok := obj.(*corev1.Node)
 		if !ok {
-			return fmt.Errorf("spurious object in syncNodes: %v", obj)
+			return fmt.Errorf("spurious object in CleanupStaleNodes: %v", obj)
 		}
 		foundNodeNames.Insert(node.Name)
-		foundNodes[i] = node
 	}
+	staleNodeNames := sets.New[string]()
 
-	// Get the transit switch. If its not present no cleanup to do
+	// Get the transit switch
 	ts := &nbdb.LogicalSwitch{
 		Name: zic.networkTransitSwitchName,
 	}
-
 	ts, err := libovsdbops.GetLogicalSwitch(zic.nbClient, ts)
-	if err != nil {
-		if errors.Is(err, libovsdbclient.ErrNotFound) {
-			// This can happen for the first time when interconnect is enabled.
-			// Let's ensure the transit switch exists
-			return zic.ensureTransitSwitch(foundNodes)
+	if err == nil {
+		// Transit switch exists - find stale nodes by checking transit switch ports
+		for _, p := range ts.Ports {
+			lp := &nbdb.LogicalSwitchPort{
+				UUID: p,
+			}
+
+			lp, err := libovsdbops.GetLogicalSwitchPort(zic.nbClient, lp)
+			if err != nil {
+				continue
+			}
+
+			if lp.ExternalIDs == nil {
+				continue
+			}
+
+			lportNode := lp.ExternalIDs["node"]
+			if !foundNodeNames.Has(lportNode) {
+				staleNodeNames.Insert(lportNode)
+			}
 		}
-
-		return err
-	}
-
-	staleNodeNames := []string{}
-	for _, p := range ts.Ports {
-		lp := &nbdb.LogicalSwitchPort{
-			UUID: p,
-		}
-
-		lp, err = libovsdbops.GetLogicalSwitchPort(zic.nbClient, lp)
+	} else if errors.Is(err, libovsdbclient.ErrNotFound) {
+		// Transit switch doesn't exist - discover nodes from cluster router resources
+		lr := &nbdb.LogicalRouter{Name: zic.networkClusterRouterName}
+		lr, err = libovsdbops.GetLogicalRouter(zic.nbClient, lr)
 		if err != nil {
-			continue
+			if !errors.Is(err, libovsdbclient.ErrNotFound) {
+				return fmt.Errorf("failed to get cluster router: %w", err)
+			}
+			// Router doesn't exist, nothing to cleanup
+			return nil
 		}
 
-		if lp.ExternalIDs == nil {
-			continue
+		// Discover remote zone nodes from static routes with ic-node external ID
+		p := func(route *nbdb.LogicalRouterStaticRoute) bool {
+			return route.ExternalIDs != nil && route.ExternalIDs["ic-node"] != ""
+		}
+		routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(zic.nbClient, lr, p)
+		if err != nil {
+			return fmt.Errorf("failed to get static routes for cluster router: %w", err)
 		}
 
-		lportNode := lp.ExternalIDs["node"]
-		if !foundNodeNames.Has(lportNode) {
-			staleNodeNames = append(staleNodeNames, lportNode)
+		for _, route := range routes {
+			staleNodeNames.Insert(route.ExternalIDs["ic-node"])
 		}
+
+		// Discover local zone nodes from router ports connecting to transit switch
+		routerPortPrefix := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix)
+		for _, portUUID := range lr.Ports {
+			lrp, err := libovsdbops.GetLogicalRouterPort(zic.nbClient, &nbdb.LogicalRouterPort{UUID: portUUID})
+			if err != nil {
+				continue
+			}
+			// Extract node name from port name (e.g., "rtots-node1" -> "node1")
+			if nodeName, found := strings.CutPrefix(lrp.Name, routerPortPrefix); found {
+				staleNodeNames.Insert(nodeName)
+			}
+		}
+	} else {
+		// Unexpected error
+		return fmt.Errorf("unexpected error while getting transit switch: %w", err)
 	}
 
-	for _, staleNodeName := range staleNodeNames {
+	// Cleanup stale interconnect resources
+	for _, staleNodeName := range staleNodeNames.UnsortedList() {
 		if err := zic.cleanupNode(staleNodeName); err != nil {
 			klog.Errorf("Failed to cleanup the interconnect resources from OVN Northbound db for the stale node %s: %v", staleNodeName, err)
 		}
@@ -333,10 +381,25 @@ func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
 	return nil
 }
 
-// Cleanup deletes the transit switch for the network
+// Cleanup deletes all interconnect resources for the network, including all node resources
+// (ports, router ports, static routes) and the transit switch itself. This method is idempotent
+// and safe to call multiple times.
 func (zic *ZoneInterconnectHandler) Cleanup() error {
+	klog.Infof("Cleaning up all interconnect resources for network %s", zic.GetNetworkName())
+
+	// First cleanup all node resources (ports, routes, etc.)
+	// Passing nil removes all nodes from the transit switch
+	if err := zic.CleanupStaleNodes(nil); err != nil {
+		return fmt.Errorf("failed to cleanup node resources: %w", err)
+	}
+
+	// Then delete the transit switch
 	klog.Infof("Deleting the transit switch %s for the network %s", zic.networkTransitSwitchName, zic.GetNetworkName())
-	return libovsdbops.DeleteLogicalSwitch(zic.nbClient, zic.networkTransitSwitchName)
+	if err := libovsdbops.DeleteLogicalSwitch(zic.nbClient, zic.networkTransitSwitchName); err != nil &&
+		!errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to delete transit switch: %w", err)
+	}
+	return nil
 }
 
 // AddTransitSwitchConfig is only used by the layer2 network controller
@@ -384,7 +447,6 @@ func (zic *ZoneInterconnectHandler) addTransitSwitchConfig(sw *nbdb.LogicalSwitc
 }
 
 // createLocalZoneNodeResources creates the local zone node resources for interconnect
-//   - creates Transit switch if it doesn't yet exit
 //   - creates a logical switch port of type "router" in the transit switch with the name as - <network_name>.tstor-<node_name>
 //     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor-ovn-worker
 //     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor-ovn-worker
@@ -442,7 +504,6 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 }
 
 // createRemoteZoneNodeResources creates the remote zone node resources
-//   - creates Transit switch if it doesn't yet exit
 //   - creates a logical port of type "remote" in the transit switch with the name as - <network_name>.tstor.<node_name>
 //     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor.ovn-worker
 //     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor.ovn-worker

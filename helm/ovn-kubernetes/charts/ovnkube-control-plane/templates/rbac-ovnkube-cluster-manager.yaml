@@ -118,6 +118,12 @@ rules:
           - baselineadminnetworkpolicies/status
       verbs: [ "patch" ]
 
+    {{- if eq (hasKey .Values.global "enableNoOverlayManagedRouting" | ternary .Values.global.enableNoOverlayManagedRouting false) true }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - routeadvertisements
+      verbs: [ "create", "patch", "update", "delete", "get"]
+    {{- end }}
     {{- if eq (hasKey .Values.global "enableNetworkSegmentation" | ternary .Values.global.enableNetworkSegmentation false) true }}
     - apiGroups: ["discovery.k8s.io"]
       resources:
@@ -130,7 +136,7 @@ rules:
           - dnsnameresolvers
       verbs: [ "create", "delete", "list", "patch", "update", "watch" ]
     {{- end }}
-    {{- if eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true }}
+    {{- if or (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "enableNoOverlayManagedRouting" | ternary .Values.global.enableNoOverlayManagedRouting false) true) }}
     - apiGroups: ["frrk8s.metallb.io"]
       resources:
           - frrconfigurations

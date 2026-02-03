@@ -1066,9 +1066,11 @@ var _ = ginkgo.Describe("test e2e pod connectivity to host addresses", func() {
 			framework.Failf("Test requires >= 1 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
 		workerNodeName = nodes.Items[0].Name
-		// Add another IP address to the worker
+		// Add another IP address to the worker with preferred_lft 0 to mark it as deprecated.
+		// This prevents the IP from being selected as the node's primary gateway IP while still
+		// allowing the test to verify pod-to-host connectivity to non-node IPs.
 		_, err = infraprovider.Get().ExecK8NodeCommand(workerNodeName, []string{"ip", "a", "add",
-			fmt.Sprintf("%s/%s", targetIP, singleIPMask), "dev", deploymentconfig.Get().ExternalBridgeName()})
+			fmt.Sprintf("%s/%s", targetIP, singleIPMask), "dev", deploymentconfig.Get().ExternalBridgeName(), "preferred_lft", "0"})
 		framework.ExpectNoError(err, "failed to add IP to %s", workerNodeName)
 	})
 

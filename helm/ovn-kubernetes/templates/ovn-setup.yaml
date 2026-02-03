@@ -50,6 +50,36 @@ data:
   mtu:           {{ .Values.mtu | default 1500 | quote }}
   host_network_namespace: {{ $hostNetworkNamespace }}
 
+---
+# ovnkube-config ConfigMap
+#
+# Configuration for ovnkube binaries
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: ovn-kubernetes
+data:
+  ovnkube.conf: |
+{{- if .Values.global.enableNoOverlay }}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+{{- if .Values.global.enableNoOverlaySnat }}
+    outbound-snat = enabled
+{{- else }}
+    outbound-snat = disabled
+{{- end }}
+    routing = {{ if .Values.global.enableNoOverlayManagedRouting }}managed{{ else }}unmanaged{{ end }}
+{{- if .Values.global.enableNoOverlayManagedRouting }}
+
+    [bgp-managed]
+    as-number = {{ .Values.global.managedBGPASNumber | default 64512 }}
+    topology = {{ .Values.global.managedBGPTopology | default "full-mesh" }}
+{{- end }}
+{{- end }}
+
 {{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}
 ---
 # ovn-host-network-namespace.yaml

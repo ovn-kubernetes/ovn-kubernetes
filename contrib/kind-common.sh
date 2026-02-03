@@ -175,6 +175,24 @@ set_common_default_params() {
     echo "EVPN requires Route advertisements to be enabled (-rae)"
     exit 1
   fi
+
+  ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+    echo "No-overlay mode requires route advertisement to be enabled (-rae)"
+    exit 1
+  fi
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
+    echo "No-overlay mode requires advertise the default network (-adv)"
+    exit 1
+  fi
+
+  if [ "$ENABLE_NO_OVERLAY" == true ]; then
+    # Set default MTU for no-overlay mode (1500) if not already set
+    OVN_MTU=${OVN_MTU:-1500}
+  else
+    # Set default MTU for overlay mode (1400) if not already set
+    OVN_MTU=${OVN_MTU:-1400}
+  fi
 }
 
 set_ovn_image() {
@@ -1062,14 +1080,23 @@ destroy_bgp() {
 }
 
 install_frr_k8s() {
+  local bgp_port=${1:-0}
   echo "Installing frr-k8s ..."
   clone_frr
 
   # apply frr-k8s
+  if [ "${bgp_port}" -ne 0 ]; then
+    sed -i "s/bgpd_options=\"\(.*\)-p 0\(.*\)\"/bgpd_options=\"\1-p ${bgp_port}\2\"/g" "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+  fi
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
-  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
 
+wait_for_frr_k8s() {
+  kubectl wait -n frr-k8s-system deployment frr-k8s-webhook-server --for condition=Available --timeout 2m
+  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
+
+configure_frr_k8s() {
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
@@ -1080,8 +1107,8 @@ install_frr_k8s() {
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
     IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
-    # Process each occurrence of the IPv4 prefix
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+    # Process each occurrence of the IPv4 prefix in reverse order to avoid line number shifting
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
       # Insert the IPv6 prefix after each IPv4 prefix line
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done

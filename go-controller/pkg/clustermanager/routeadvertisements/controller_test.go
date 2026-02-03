@@ -136,7 +136,8 @@ func (tn testNode) Node() *corev1.Node {
 	if primaryAddressAnnotation == "" {
 		primaryAddressAnnotation = "{\"ipv4\":\"" + nodePrimaryAddr[tn.Name] + "\", \"ipv6\":\"" + nodePrimaryAddrIPv6[tn.Name] + "\"}"
 	}
-	return &corev1.Node{
+
+	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       tn.Name,
 			Labels:     tn.Labels,
@@ -147,6 +148,41 @@ func (tn testNode) Node() *corev1.Node {
 			},
 		},
 	}
+
+	// Parse IPs from annotation for Status.Addresses
+	var nodeIPs []string
+	if strings.Contains(primaryAddressAnnotation, "{") {
+		if strings.Contains(primaryAddressAnnotation, "\"ipv4\":\"") {
+			v4 := strings.Split(strings.Split(primaryAddressAnnotation, "\"ipv4\":\"")[1], "\"")[0]
+			nodeIPs = append(nodeIPs, v4)
+		}
+		if strings.Contains(primaryAddressAnnotation, "\"ipv6\":\"") {
+			v6 := strings.Split(strings.Split(primaryAddressAnnotation, "\"ipv6\":\"")[1], "\"")[0]
+			nodeIPs = append(nodeIPs, v6)
+		}
+	} else {
+		nodeIPs = append(nodeIPs, primaryAddressAnnotation)
+	}
+
+	for _, ip := range nodeIPs {
+		if ip == "" {
+			continue
+		}
+		// strip CIDR mask if present
+		ip = strings.Split(ip, "/")[0]
+		node.Status.Addresses = append(node.Status.Addresses, corev1.NodeAddress{
+			Type:    corev1.NodeInternalIP,
+			Address: ip,
+		})
+	}
+
+	return node
+}
+
+type testPrefixSelector struct {
+	Prefix string
+	LE     uint32
+	GE     uint32
 }
 
 type testNeighbor struct {
@@ -154,6 +190,7 @@ type testNeighbor struct {
 	Address   string
 	DisableMP *bool
 	Advertise []string
+	Receive   []testPrefixSelector
 }
 
 func (tn testNeighbor) Neighbor() frrapi.Neighbor {
@@ -170,6 +207,22 @@ func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 	}
 	if tn.DisableMP != nil {
 		n.DisableMP = *tn.DisableMP
+	}
+	if len(tn.Receive) > 0 {
+		prefixSelectors := make([]frrapi.PrefixSelector, 0, len(tn.Receive))
+		for _, ps := range tn.Receive {
+			prefixSelectors = append(prefixSelectors, frrapi.PrefixSelector{
+				Prefix: ps.Prefix,
+				LE:     ps.LE,
+				GE:     ps.GE,
+			})
+		}
+		n.ToReceive = frrapi.Receive{
+			Allowed: frrapi.AllowedInPrefixes{
+				Mode:     frrapi.AllowRestricted,
+				Prefixes: prefixSelectors,
+			},
+		}
 	}
 
 	return n
@@ -408,6 +461,7 @@ func TestController_reconcile(t *testing.T) {
 		namespaces           []*testNamespace
 		eips                 []*testEIP
 		reconcile            string
+		transport            string
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
 		expectFRRConfigs     []*testFRRConfig
@@ -818,6 +872,37 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionTrue,
 		},
 		{
+			name:      "reconciles pod RouteAdvertisement for default network in no-overlay mode with ToReceive routes",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			transport: types.NetworkTransportNoOverlay,
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Receive: []testPrefixSelector{{Prefix: "1.2.0.0/16"}}},
+						}},
+					},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.0.0/24"}, Receive: []testPrefixSelector{{Prefix: "1.1.0.0/16", LE: 24, GE: 24}}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
 			name: "fails to reconcile a secondary network",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			nads: []*testNAD{
@@ -977,6 +1062,43 @@ func TestController_reconcile(t *testing.T) {
 			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "excludes self-neighbor in managed full-mesh topology",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig-base",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.1"}, // self for node
+							{ASN: 1, Address: "10.0.0.2"}, // other node
+						}},
+					},
+				},
+			},
+			nodes: []*testNode{
+				{
+					Name:                     "node",
+					SubnetsAnnotation:        "{\"default\":\"1.1.0.0/24\"}",
+					PrimaryAddressAnnotation: "10.0.0.1",
+				},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig-base/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "10.0.0.2", Advertise: []string{"1.1.0.0/24"}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
 			name: "fails to reconcile EVPN-enabled network to default VRF",
@@ -1328,6 +1450,7 @@ exit
 					HostSubnetLength: 64,
 				},
 			}
+			config.Default.Transport = tt.transport
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
