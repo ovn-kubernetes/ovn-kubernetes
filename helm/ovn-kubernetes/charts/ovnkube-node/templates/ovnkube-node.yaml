@@ -98,6 +98,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
           readOnly: true
@@ -245,6 +248,8 @@ spec:
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_ENABLE_INTERCONNECT
           value: {{ hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false | quote }}
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
@@ -415,5 +420,8 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       tolerations:
       - operator: "Exists"

@@ -562,14 +562,247 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// Call ICHandler SyncNodes function removing the testNode3 from the list of nodes
+				// Call ICHandler CleanupStaleNodes function removing the testNode3 from the list of nodes
 				var kNodes []interface{}
 				kNodes = append(kNodes, &testNode1)
 				kNodes = append(kNodes, &testNode2)
-				err = zoneICHandler.SyncNodes(kNodes)
+				err = zoneICHandler.CleanupStaleNodes(kNodes)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("CleanupStaleNodes with nil should cleanup all transit switch ports for no-overlay migration", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
+
+				// Create transit switch and add nodes (simulating previous overlay configuration)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Set up nodes: testNode1 as local zone, testNode2 and testNode3 as remote zones
+				testNode2.Annotations[ovnNodeZoneNameAnnotation] = "remote-zone-1"
+				testNode3.Annotations[ovnNodeZoneNameAnnotation] = "remote-zone-2"
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify transit switch exists with ports
+				ts, err := libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ts.Ports).NotTo(gomega.BeEmpty(), "Transit switch should have ports before cleanup")
+
+				// Verify IC router ports exist (for local zone node)
+				clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				icRouterPorts := 0
+				for _, p := range clusterRouter.Ports {
+					lrp, err := libovsdbops.GetLogicalRouterPort(libovsdbOvnNBClient, &nbdb.LogicalRouterPort{UUID: p})
+					if err != nil {
+						continue
+					}
+					if len(lrp.Name) >= len(types.RouterToTransitSwitchPrefix) && lrp.Name[:len(types.RouterToTransitSwitchPrefix)] == types.RouterToTransitSwitchPrefix {
+						icRouterPorts++
+					}
+				}
+				gomega.Expect(icRouterPorts).To(gomega.Equal(1), "Should have router port for local zone node before cleanup")
+
+				// Verify IC static routes exist (for remote zone nodes)
+				p := func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.ExternalIDs != nil && route.ExternalIDs["ic-node"] != ""
+				}
+				routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, p)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).NotTo(gomega.BeEmpty(), "Should have IC static routes for remote zone nodes before cleanup")
+
+				// Call CleanupStaleNodes with nil to simulate no-overlay migration
+				// nil means "no current IC nodes", so all nodes become stale and should be cleaned up
+				err = zoneICHandler.CleanupStaleNodes(nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify all transit switch ports are cleaned up
+				ts, err = libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ts.Ports).To(gomega.BeEmpty(), "Transit switch ports should be cleaned up")
+
+				// Verify all IC router ports are cleaned up (local zone node resources)
+				clusterRouter, err = libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				icRouterPorts = 0
+				for _, p := range clusterRouter.Ports {
+					lrp, err := libovsdbops.GetLogicalRouterPort(libovsdbOvnNBClient, &nbdb.LogicalRouterPort{UUID: p})
+					if err != nil {
+						continue
+					}
+					if len(lrp.Name) >= len(types.RouterToTransitSwitchPrefix) && lrp.Name[:len(types.RouterToTransitSwitchPrefix)] == types.RouterToTransitSwitchPrefix {
+						icRouterPorts++
+					}
+				}
+				gomega.Expect(icRouterPorts).To(gomega.Equal(0), "All IC router ports should be cleaned up")
+
+				// Verify all IC static routes are cleaned up (remote zone node resources)
+				routes, err = libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, p)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).To(gomega.BeEmpty(), "All IC static routes should be cleaned up")
+
+				// Now call Cleanup to remove all interconnect resources (transit switch and any remaining nodes)
+				err = zoneICHandler.Cleanup()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify transit switch is deleted
+				_, err = libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound))
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("CleanupStaleNodes with nil should cleanup orphaned IC resources when transit switch doesn't exist", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
+
+				// Create transit switch and add nodes (simulating previous IC configuration)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Add testNode1 as local zone, testNode2 and testNode3 as remote zone
+				testNode2.Annotations[ovnNodeZoneNameAnnotation] = "remote"
+				testNode3.Annotations[ovnNodeZoneNameAnnotation] = "remote"
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify IC resources exist
+				clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Count IC router ports (for local zone nodes)
+				icRouterPorts := 0
+				for _, p := range clusterRouter.Ports {
+					lrp, err := libovsdbops.GetLogicalRouterPort(libovsdbOvnNBClient, &nbdb.LogicalRouterPort{UUID: p})
+					if err != nil {
+						continue
+					}
+					if len(lrp.Name) >= len(types.RouterToTransitSwitchPrefix) && lrp.Name[:len(types.RouterToTransitSwitchPrefix)] == types.RouterToTransitSwitchPrefix {
+						icRouterPorts++
+					}
+				}
+				gomega.Expect(icRouterPorts).To(gomega.Equal(1), "Should have router port for local zone node (node1)")
+
+				// Count IC static routes (for remote zone nodes)
+				p := func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.ExternalIDs != nil && route.ExternalIDs["ic-node"] != ""
+				}
+				routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, p)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).ToNot(gomega.BeEmpty(), "Should have IC static routes for remote zone nodes (node2, node3)")
+
+				// Manually delete the transit switch to simulate the resource leak scenario
+				// This leaves orphaned router ports and static routes
+				err = libovsdbops.DeleteLogicalSwitch(libovsdbOvnNBClient, types.TransitSwitch)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify transit switch is gone
+				_, err = libovsdbops.GetLogicalSwitch(libovsdbOvnNBClient, &nbdb.LogicalSwitch{Name: types.TransitSwitch})
+				gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound))
+
+				// Verify orphaned resources still exist
+				clusterRouter, err = libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				icRouterPorts = 0
+				for _, p := range clusterRouter.Ports {
+					lrp, err := libovsdbops.GetLogicalRouterPort(libovsdbOvnNBClient, &nbdb.LogicalRouterPort{UUID: p})
+					if err != nil {
+						continue
+					}
+					if len(lrp.Name) >= len(types.RouterToTransitSwitchPrefix) && lrp.Name[:len(types.RouterToTransitSwitchPrefix)] == types.RouterToTransitSwitchPrefix {
+						icRouterPorts++
+					}
+				}
+				gomega.Expect(icRouterPorts).To(gomega.Equal(1), "Router port should still exist before cleanup (the leak)")
+
+				routes, err = libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, p)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).ToNot(gomega.BeEmpty(), "IC static routes should still exist before cleanup (the leak)")
+
+				// Call CleanupStaleNodes with nil - should discover all nodes and clean them
+				err = zoneICHandler.CleanupStaleNodes(nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify all router ports are cleaned up
+				clusterRouter, err = libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				icRouterPorts = 0
+				for _, p := range clusterRouter.Ports {
+					lrp, err := libovsdbops.GetLogicalRouterPort(libovsdbOvnNBClient, &nbdb.LogicalRouterPort{UUID: p})
+					if err != nil {
+						continue
+					}
+					if len(lrp.Name) >= len(types.RouterToTransitSwitchPrefix) && lrp.Name[:len(types.RouterToTransitSwitchPrefix)] == types.RouterToTransitSwitchPrefix {
+						icRouterPorts++
+					}
+				}
+				gomega.Expect(icRouterPorts).To(gomega.Equal(0), "All router ports should be cleaned up")
+
+				// Verify all IC static routes are cleaned up
+				routes, err = libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, p)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(routes).To(gomega.BeEmpty(), "All IC static routes should be cleaned up")
 
 				return nil
 			}
@@ -718,11 +951,11 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = checkInterconnectResources("global", "blue", libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// Call ICHandler SyncNodes function removing the testNode3 from the list of nodes
+				// Call ICHandler CleanupStaleNodes function removing the testNode3 from the list of nodes
 				var kNodes []interface{}
 				kNodes = append(kNodes, &testNode1)
 				kNodes = append(kNodes, &testNode2)
-				err = zoneICHandler.SyncNodes(kNodes)
+				err = zoneICHandler.CleanupStaleNodes(kNodes)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = checkInterconnectResources("global", "blue", libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

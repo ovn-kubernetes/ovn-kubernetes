@@ -252,6 +252,11 @@ const (
 	NetworkRoleInfrastructure = "infrastructure-locked"
 	NetworkRoleNone           = "none"
 
+	// Network transport types - canonical format (lowercase)
+	NetworkTransportGeneve    = "geneve"
+	NetworkTransportNoOverlay = "no-overlay"
+	NetworkTransportEVPN      = "evpn"
+
 	// db index keys
 	// PrimaryIDKey is used as a primary client index
 	PrimaryIDKey = OvnK8sPrefix + "/id"

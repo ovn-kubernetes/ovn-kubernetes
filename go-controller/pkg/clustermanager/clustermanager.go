@@ -64,7 +64,8 @@ type ClusterManager struct {
 	// networkManager creates and deletes network controllers
 	networkManager networkmanager.Controller
 
-	raController *routeadvertisements.Controller
+	raController        *routeadvertisements.Controller
+	noOverlayController *noOverlayController
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -188,6 +189,10 @@ func NewClusterManager(
 
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
+		cm.noOverlayController, err = newNoOverlayController(wf, recorder, ovnClient.UserDefinedNetworkClient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create no-overlay validation controller: %w", err)
+		}
 	}
 
 	return cm, nil
@@ -260,6 +265,12 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 			return err
 		}
 	}
+	if cm.noOverlayController != nil {
+		err := cm.noOverlayController.Start()
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -291,6 +302,9 @@ func (cm *ClusterManager) Stop() {
 	if cm.raController != nil {
 		cm.raController.Stop()
 		cm.raController = nil
+	}
+	if cm.noOverlayController != nil {
+		cm.noOverlayController.Stop()
 	}
 }
 

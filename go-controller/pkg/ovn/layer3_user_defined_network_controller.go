@@ -826,11 +826,15 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 	}
 
 	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
-			errs = append(errs, err)
-			oc.syncZoneICFailed.Store(node.Name, true)
-		} else {
-			oc.syncZoneICFailed.Delete(node.Name)
+		// For no-overlay transport, skip creating interconnect resources entirely.
+		// Only create interconnect resources for overlay transport.
+		if oc.GetNetworkTransport() != types.NetworkTransportNoOverlay {
+			if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
+				errs = append(errs, err)
+				oc.syncZoneICFailed.Store(node.Name, true)
+			} else {
+				oc.syncZoneICFailed.Delete(node.Name)
+			}
 		}
 	}
 
@@ -869,11 +873,15 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 
 	var err error
 	if syncZoneIc && config.OVNKubernetesFeature.EnableInterconnect {
-		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
-			err = fmt.Errorf("failed to add the remote zone node [%s] to the zone interconnect handler, err : %w", node.Name, err)
-			oc.syncZoneICFailed.Store(node.Name, true)
-		} else {
-			oc.syncZoneICFailed.Delete(node.Name)
+		// For no-overlay transport, skip creating interconnect resources entirely.
+		// Only create interconnect resources for overlay transport.
+		if oc.GetNetworkTransport() != types.NetworkTransportNoOverlay {
+			if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
+				err = fmt.Errorf("failed to add the remote zone node [%s] to the zone interconnect handler, err : %w", node.Name, err)
+				oc.syncZoneICFailed.Store(node.Name, true)
+			} else {
+				oc.syncZoneICFailed.Delete(node.Name)
+			}
 		}
 	}
 	return err
@@ -1048,8 +1056,8 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.SyncNodes(activeNodes); err != nil {
-			return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
+		if err := oc.zoneICHandler.CleanupStaleNodes(activeNodes); err != nil {
+			return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
 		}
 	}
 
