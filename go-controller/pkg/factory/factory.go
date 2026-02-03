@@ -552,6 +552,12 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		}
 	}
 
+	if util.IsEVPNEnabled() {
+		wf.vtepFactory = vtepinformerfactory.NewSharedInformerFactory(ovnClientset.VTEPClient, resyncInterval)
+		// make sure shared informer is created for a factory, so on wf.vtepFactory.Start() it is initialized and caches are synced.
+		wf.vtepFactory.K8s().V1().VTEPs().Informer()
+	}
+
 	return wf, nil
 }
 
@@ -876,6 +882,12 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 		wf.raFactory = routeadvertisementsinformerfactory.NewSharedInformerFactory(ovnClientset.RouteAdvertisementsClient, resyncInterval)
 		// make sure shared informer is created for a factory, so on wf.raFactory.Start() it is initialized and caches are synced.
 		wf.raFactory.K8s().V1().RouteAdvertisements().Informer()
+	}
+
+	if util.IsEVPNEnabled() {
+		wf.vtepFactory = vtepinformerfactory.NewSharedInformerFactory(ovnClientset.VTEPClient, resyncInterval)
+		// make sure shared informer is created for a factory, so on wf.vtepFactory.Start() it is initialized and caches are synced.
+		wf.vtepFactory.K8s().V1().VTEPs().Informer()
 	}
 
 	// need to configure OVS interfaces for Pods on secondary networks in the DPU mode
