@@ -348,9 +348,30 @@ func (b *BaseType) UnmarshalJSON(data []byte) error {
 			oSet := bt.Enum.([]any)
 			innerSet := oSet[1].([]any)
 			b.Enum = make([]any, len(innerSet))
-			copy(b.Enum, innerSet)
+
+			// json unmarshal will convert all numeric types to float64, Convert float64 to int if the base type is integer
+			if bt.Type == "integer" {
+				for i, v := range innerSet {
+					if f, ok := v.(float64); ok {
+						b.Enum[i] = int(f)
+					} else {
+						b.Enum[i] = v
+					}
+				}
+			} else {
+				copy(b.Enum, innerSet)
+			}
 		default:
-			b.Enum = []any{bt.Enum}
+			// Single element enum
+			if bt.Type == "integer" {
+				if f, ok := bt.Enum.(float64); ok {
+					b.Enum = []any{int(f)}
+				} else {
+					b.Enum = []any{bt.Enum}
+				}
+			} else {
+				b.Enum = []any{bt.Enum}
+			}
 		}
 	}
 	b.Type = bt.Type

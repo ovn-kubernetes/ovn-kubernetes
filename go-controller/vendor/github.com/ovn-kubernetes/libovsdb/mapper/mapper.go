@@ -51,13 +51,13 @@ func (m Mapper) GetRowData(row *ovsdb.Row, result *Info) error {
 	if row == nil {
 		return nil
 	}
-	return m.getData(*row, result)
+	return m.getRowData(*row, result)
 }
 
-// getData transforms a map[string]any containing OvS types (e.g: a ResultRow
+// getRowData transforms a map[string]any containing OvS types (e.g: a ResultRow
 // has this format) to orm struct
 // The result object must be given as pointer to an object with the right tags
-func (m Mapper) getData(ovsData ovsdb.Row, result *Info) error {
+func (m Mapper) getRowData(ovsData ovsdb.Row, result *Info) error {
 	for name, column := range result.Metadata.TableSchema.Columns {
 		if !result.hasColumn(name) {
 			// If provided struct does not have a field to hold this value, skip it
@@ -78,6 +78,39 @@ func (m Mapper) getData(ovsData ovsdb.Row, result *Info) error {
 
 		if err := result.SetField(name, nativeElem); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// GetRowDataWithUUID transforms a Row to a struct based on its tags, set uuid if possible
+// The result object must be given as pointer to an object with the right tags
+func (m Mapper) GetRowDataWithUUID(row *ovsdb.Row, result *Info) error {
+	if row == nil {
+		return nil
+	}
+	return m.getRowDataWithUUID(*row, result)
+}
+
+// getRowDataWithUUID transforms a map[string]any containing OvS types (e.g: a ResultRow
+// has this format) to orm struct, set uuid if possible
+// The result object must be given as pointer to an object with the right tags
+func (m Mapper) getRowDataWithUUID(ovsData ovsdb.Row, result *Info) error {
+	if err := m.getRowData(ovsData, result); err != nil {
+		return err
+	}
+
+	// Explicitly handle the _uuid column after processing schema columns
+	if uuidOvsElem, uuidOk := ovsData["_uuid"]; uuidOk {
+		if uuidInfo, uuidInfoOk := uuidOvsElem.(ovsdb.UUID); uuidInfoOk {
+			// Check if the target model has a field tagged with "_uuid"
+			// The check `hasColumn` uses Metadata.Fields which is keyed by column name (tag)
+			if result.hasColumn("_uuid") {
+				// Set the field using the string value. SetField should handle it.
+				if err := result.SetField("_uuid", uuidInfo.GoUUID); err != nil {
+					return fmt.Errorf("failed to set _uuid field: %w", err)
+				}
+			}
 		}
 	}
 	return nil

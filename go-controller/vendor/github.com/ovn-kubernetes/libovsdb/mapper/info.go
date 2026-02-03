@@ -3,6 +3,7 @@ package mapper
 import (
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 )
@@ -176,4 +177,37 @@ func NewInfo(tableName string, table *ovsdb.TableSchema, obj any) (*Info, error)
 			TableName:   tableName,
 		},
 	}, nil
+}
+
+func (i *Info) ColumnsByPtr(fields ...any) ([]string, error) {
+	var columns []string
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	// Use user-provided field pointers, with validation
+	columnSet := make(map[string]struct{}, len(fields))
+	columns = make([]string, 0, len(fields))
+
+	for _, field := range fields {
+		colName, err := i.ColumnByPtr(field)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get column name for field pointer: %w", err)
+		}
+		if _, ok := columnSet[colName]; !ok {
+			columns = append(columns, colName)
+			columnSet[colName] = struct{}{}
+		}
+	}
+	return columns, nil
+}
+
+func (i *Info) ColumnsByPtrWithUUID(fields ...any) ([]string, error) {
+	columns, err := i.ColumnsByPtr(fields...)
+	if err != nil {
+		return nil, err
+	}
+	if slices.Contains(columns, "_uuid") {
+		return columns, nil
+	}
+	return append(columns, "_uuid"), nil
 }

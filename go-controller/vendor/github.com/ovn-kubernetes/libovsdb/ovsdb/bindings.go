@@ -228,8 +228,14 @@ func NativeToOvs(column *ColumnSchema, rawElem any) (any, error) {
 	}
 
 	switch column.Type {
-	case TypeInteger, TypeReal, TypeString, TypeBoolean, TypeEnum:
+	case TypeInteger, TypeReal, TypeString, TypeBoolean:
 		return rawElem, nil
+	case TypeEnum:
+		// Enums containing UUIDs should fall through to the UUID case below
+		if column.TypeObj.Key.Type != TypeUUID {
+			return rawElem, nil
+		}
+		fallthrough
 	case TypeUUID:
 		return UUID{GoUUID: rawElem.(string)}, nil
 	case TypeSet:
@@ -384,7 +390,7 @@ func ValidateCondition(column *ColumnSchema, function ConditionFunction, nativeV
 	}
 
 	switch column.Type {
-	case TypeSet, TypeMap, TypeBoolean, TypeString, TypeUUID:
+	case TypeSet, TypeMap, TypeBoolean, TypeString, TypeUUID, TypeEnum:
 		switch function {
 		case ConditionEqual, ConditionNotEqual, ConditionIncludes, ConditionExcludes:
 			return nil
