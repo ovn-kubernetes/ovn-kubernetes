@@ -918,8 +918,8 @@ func setupIPVRFAgnhost(ictx infraapi.Context, vid int, vrfName string, ipFamilie
 	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
 
 	// Put FRR's interface in the VRF
-	// NOTE: Moving an interface to a VRF in Linux removes IPv6 global addresses
-	// (IPv4 addresses are preserved). We must re-add the IPv6 address after VRF assignment.
+	// NOTE: keep_addr_on_down=1 is set at FRR container startup (in deploy_frr_external_container)
+	// to preserve IPv6 addresses during VRF assignment. See https://github.com/FRRouting/frr/issues/1666
 	_, err = infraprovider.Get().ExecExternalContainerCommand(frr,
 		[]string{"ip", "link", "set", frrInterface, "master", vrfName})
 	if err != nil {
