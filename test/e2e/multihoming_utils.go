@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
+
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
@@ -189,6 +193,69 @@ func patchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace s
 		metav1.PatchOptions{},
 	)
 	return err
+}
+
+const (
+	// OvnNetworkIDAnnotation is a unique network identifier annotated on the
+	// NAD by cluster manager nad controller. Pods cannot be scheduled until
+	// this annotation is set.
+	OvnNetworkIDAnnotation = "k8s.ovn.org/network-id"
+
+	// nadNetworkIDTimeout is the timeout for waiting for the network ID annotation
+	nadNetworkIDTimeout = 30 * time.Second
+	// nadNetworkIDPollInterval is the poll interval for checking the network ID annotation
+	nadNetworkIDPollInterval = 500 * time.Millisecond
+)
+
+// nadNetworkIDReadyFunc returns a function that checks if the NAD has a network ID annotation.
+// This is used with gomega's Eventually to wait for the cluster manager to allocate
+// a network ID for the network.
+func nadNetworkIDReadyFunc(nadClient nadclient.K8sCniCncfIoV1Interface, namespace, name string) func() error {
+	return func() error {
+		nad, err := nadClient.NetworkAttachmentDefinitions(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if nad.Annotations == nil || nad.Annotations[OvnNetworkIDAnnotation] == "" {
+			return fmt.Errorf("NAD %s/%s does not have network ID annotation yet", namespace, name)
+		}
+		return nil
+	}
+}
+
+// createNADAndWaitForNetworkReady creates a NetworkAttachmentDefinition and waits for the
+// cluster manager to allocate a network ID annotation (k8s.ovn.org/network-id).
+//
+// This addresses a race condition: when a pod is created immediately after a NAD, the
+// node's nad_controller may process the NAD before the cluster manager has allocated a
+// network ID. In this case, nad_controller.go returns early at the network ID check
+// (see ensureLocalNetwork), skipping network setup. The pod then times out waiting for
+// OVN annotations that are never set because the network wasn't initialized on the node.
+//
+// Ideally, the controller would reconcile and retry when the network ID becomes available,
+// but currently it does not. This helper works around that by ensuring the network ID
+// exists before tests proceed to create pods.
+//
+// Use this function when you need the network to be fully ready before creating pods.
+// For tests that only need the NAD to exist (e.g., conflict detection tests), use direct
+// NAD creation instead.
+//
+// TODO: reconsider this helper once pods are properly synced on NAD updates.
+func createNADAndWaitForNetworkReady(nadClient nadclient.K8sCniCncfIoV1Interface, nad *nadapi.NetworkAttachmentDefinition) (*nadapi.NetworkAttachmentDefinition, error) {
+	ginkgo.By(fmt.Sprintf("creating NAD %s/%s and waiting for network ID annotation", nad.Namespace, nad.Name))
+
+	createdNAD, err := nadClient.NetworkAttachmentDefinitions(nad.Namespace).Create(
+		context.Background(),
+		nad,
+		metav1.CreateOptions{},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	gomega.Eventually(nadNetworkIDReadyFunc(nadClient, nad.Namespace, nad.Name), nadNetworkIDTimeout, nadNetworkIDPollInterval).Should(gomega.Succeed())
+
+	return createdNAD, nil
 }
 
 type podConfiguration struct {
