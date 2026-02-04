@@ -27,6 +27,7 @@ import (
 	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -66,6 +67,8 @@ type NodeControllerManager struct {
 	ruleManager *iprulemanager.Controller
 	// ovs client that allows to read ovs info
 	ovsClient client.Client
+	// evpn controller that manages EVPN datapath
+	evpnController *evpn.Controller
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -293,6 +296,14 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
+
+	if util.IsEVPNEnabled() {
+		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create EVPN controller: %w", err)
+		}
+	}
+
 	return ncm, nil
 }
 
@@ -420,6 +431,12 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}
 
+	if ncm.evpnController != nil {
+		if err := ncm.evpnController.Start(); err != nil {
+			return fmt.Errorf("failed to start EVPN controller: %w", err)
+		}
+	}
+
 	// start workaround and remove when ovn has native support for silencing GARPs for LRPs
 	// https://issues.redhat.com/browse/FDP-1537
 	// when in mode ovnkube controller with node, wait until ovnkube controller is syncd before removing drop flows for GARPs
@@ -465,6 +482,10 @@ func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
 	// stop the NAD controller
 	if ncm.networkManager != nil {
 		ncm.networkManager.Stop()
+	}
+
+	if ncm.evpnController != nil {
+		ncm.evpnController.Stop()
 	}
 }
 
