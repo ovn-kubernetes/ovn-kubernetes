@@ -614,12 +614,12 @@ func (_m *NetLinkOps) LinkSetHardwareAddr(link netlink.Link, hwaddr net.Hardware
 	return r0
 }
 
-// LinkSetLearning provides a mock function with given fields: link, mode
-func (_m *NetLinkOps) LinkSetLearning(link netlink.Link, mode bool) error {
+// LinkSetIsolated provides a mock function with given fields: link, mode
+func (_m *NetLinkOps) LinkSetIsolated(link netlink.Link, mode bool) error {
 	ret := _m.Called(link, mode)
 
 	if len(ret) == 0 {
-		panic("no return value specified for LinkSetLearning")
+		panic("no return value specified for LinkSetIsolated")
 	}
 
 	var r0 error
@@ -632,12 +632,12 @@ func (_m *NetLinkOps) LinkSetLearning(link netlink.Link, mode bool) error {
 	return r0
 }
 
-// LinkSetIsolated provides a mock function with given fields: link, mode
-func (_m *NetLinkOps) LinkSetIsolated(link netlink.Link, mode bool) error {
+// LinkSetLearning provides a mock function with given fields: link, mode
+func (_m *NetLinkOps) LinkSetLearning(link netlink.Link, mode bool) error {
 	ret := _m.Called(link, mode)
 
 	if len(ret) == 0 {
-		panic("no return value specified for LinkSetIsolated")
+		panic("no return value specified for LinkSetLearning")
 	}
 
 	var r0 error

@@ -26,6 +26,21 @@ packages:
   github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport:
     interfaces:
       Interface:
+  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager:
+    interfaces:
+      Interface:
+    config:
+      dir: pkg/node/netlinkdevicemanager/mocks
+  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1:
+    interfaces:
+      VTEPInformer:
+    config:
+      dir: pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1/mocks
+  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1:
+    interfaces:
+      VTEPLister:
+    config:
+      dir: pkg/crd/vtep/v1/apis/listers/vtep/v1/mocks
   k8s.io/kubelet/pkg/apis/podresources/v1:
     interfaces:
       PodResourcesListerClient:

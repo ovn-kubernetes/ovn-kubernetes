@@ -18,7 +18,7 @@ type CNIPluginLibOps struct {
 }
 
 // AddRoute provides a mock function with given fields: ipn, gw, dev, mtu, table
-func (_m *CNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error {
+func (_m *CNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int, table int) error {
 	ret := _m.Called(ipn, gw, dev, mtu, table)
 
 	if len(ret) == 0 {
