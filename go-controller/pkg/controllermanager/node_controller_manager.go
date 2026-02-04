@@ -27,8 +27,10 @@ import (
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -66,6 +68,10 @@ type NodeControllerManager struct {
 	ruleManager *iprulemanager.Controller
 	// ovs client that allows to read ovs info
 	ovsClient client.Client
+	// netlink device manager
+	ndm *netlinkdevicemanager.Controller
+	// evpn controller that manages EVPN datapath
+	evpnController *evpn.Controller
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -293,6 +299,17 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
+
+	if util.IsEVPNEnabled() {
+		// Currently NDM is used only by the EVPN controller
+		ncm.ndm = netlinkdevicemanager.NewController()
+
+		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube, ncm.ndm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create EVPN controller: %w", err)
+		}
+	}
+
 	return ncm, nil
 }
 
@@ -420,6 +437,17 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}
 
+	if ncm.evpnController != nil {
+		if err := ncm.evpnController.Start(); err != nil {
+			return fmt.Errorf("failed to start EVPN controller: %w", err)
+		}
+
+		// Start NDM after EVPN initial sync has pre-populated desired state
+		if err := ncm.ndm.Run(ncm.stopChan, ncm.wg); err != nil {
+			return fmt.Errorf("failed to start NDM: %w", err)
+		}
+	}
+
 	// start workaround and remove when ovn has native support for silencing GARPs for LRPs
 	// https://issues.redhat.com/browse/FDP-1537
 	// when in mode ovnkube controller with node, wait until ovnkube controller is syncd before removing drop flows for GARPs
@@ -449,6 +477,12 @@ waitForControllerSyncLoop:
 
 // Stop gracefully stops all managed controllers
 func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
+	// Stop EVPN controller before closing stopChan so NDM doesn't process
+	// stale events while EVPN is shutting down.
+	if ncm.evpnController != nil {
+		ncm.evpnController.Stop()
+	}
+
 	// stop stale ovs ports cleanup
 	close(ncm.stopChan)
 

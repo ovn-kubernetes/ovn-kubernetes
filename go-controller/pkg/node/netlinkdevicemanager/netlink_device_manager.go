@@ -304,6 +304,7 @@ type BridgePortSettings struct {
 	VLANTunnel    bool // Enable VLAN tunnel mode (bridge link set dev X vlan_tunnel on)
 	NeighSuppress bool // Enable neighbor suppression (bridge link set dev X neigh_suppress on)
 	Learning      bool // Enable MAC learning
+	Isolated      bool // Isolated ports cannot forward frames to each other (bridge link set dev X isolated on)
 }
 
 // managedDevice tracks a device with its config and status
@@ -1645,6 +1646,7 @@ func getBridgePortSettings(link netlink.Link) (*BridgePortSettings, error) {
 		VLANTunnel:    protinfo.VlanTunnel,
 		NeighSuppress: protinfo.NeighSuppress,
 		Learning:      protinfo.Learning,
+		Isolated:      protinfo.Isolated,
 	}, nil
 }
 
@@ -1666,6 +1668,11 @@ func applyBridgePortSettings(link netlink.Link, settings BridgePortSettings) err
 	// Set learning mode
 	if err := nlOps.LinkSetLearning(link, settings.Learning); err != nil {
 		return fmt.Errorf("failed to set learning on %s: %w", name, err)
+	}
+
+	// Set isolated mode
+	if err := nlOps.LinkSetIsolated(link, settings.Isolated); err != nil {
+		return fmt.Errorf("failed to set isolated on %s: %w", link.Attrs().Name, err)
 	}
 
 	return nil

@@ -76,6 +76,7 @@ type NetLinkOps interface {
 	LinkSetVlanTunnel(link netlink.Link, mode bool) error
 	LinkSetBrNeighSuppress(link netlink.Link, mode bool) error
 	LinkSetLearning(link netlink.Link, mode bool) error
+	LinkSetIsolated(link netlink.Link, mode bool) error
 	LinkGetProtinfo(link netlink.Link) (netlink.Protinfo, error)
 }
 
@@ -283,6 +284,10 @@ func (defaultNetLinkOps) LinkSetBrNeighSuppress(link netlink.Link, mode bool) er
 
 func (defaultNetLinkOps) LinkSetLearning(link netlink.Link, mode bool) error {
 	return netlink.LinkSetLearning(link, mode)
+}
+
+func (defaultNetLinkOps) LinkSetIsolated(link netlink.Link, mode bool) error {
+	return netlink.LinkSetIsolated(link, mode)
 }
 
 func (defaultNetLinkOps) LinkGetProtinfo(link netlink.Link) (netlink.Protinfo, error) {
