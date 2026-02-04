@@ -314,15 +314,43 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}
 		}
 
+		// startIperfClient starts an iperf3 client in background after verifying connectivity.
+		// It removes any old log file, checks connectivity with a short foreground run,
+		// then starts the background iperf3 process.
+		startIperfClient = func(execFn execFnType, address string, port int32, iperfLogFile, stage string) error {
+			GinkgoHelper()
+
+			By(fmt.Sprintf("remove iperf3 log for %s: %s", address, stage))
+			output, err := execFn(fmt.Sprintf("rm -f %s", iperfLogFile))
+			if err != nil {
+				return fmt.Errorf("failed removing iperf3 log file %s: %w", output, err)
+			}
+
+			By(fmt.Sprintf("check iperf3 connectivity for %s: %s", address, stage))
+			output, err = execFn(fmt.Sprintf("iperf3 -c %s -p %d -t 1", address, port))
+			if err != nil {
+				return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
+			}
+
+			By(fmt.Sprintf("start iperf3 client to %s: %s", address, stage))
+			output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
+			if err != nil {
+				return fmt.Errorf("failed starting iperf3 in background %s: %w", output, err)
+			}
+			return nil
+		}
+
 		startEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, serverPodIPsByName map[string][]string, stage string) error {
 			GinkgoHelper()
 			Expect(serverPodIPsByName).NotTo(BeEmpty())
-			polling := 15 * time.Second
+			execFn := func(cmd string) (string, error) {
+				return virtClient.RunCommand(vmi, cmd, 15*time.Second)
+			}
 			for podName, serverPodIPs := range serverPodIPsByName {
 				for _, serverPodIP := range serverPodIPs {
-					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 -c %[2]s --logfile /tmp/%[1]s_%[2]s_iperf3.log &", podName, serverPodIP), polling)
-					if err != nil {
-						return fmt.Errorf("%s: %w", output, err)
+					iperfLogFile := fmt.Sprintf("/tmp/%s_%s_iperf3.log", podName, serverPodIP)
+					if err := startIperfClient(execFn, serverPodIP, iperf3DefaultPort, iperfLogFile, stage); err != nil {
+						return err
 					}
 				}
 			}
@@ -376,22 +404,8 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			Expect(addresses).NotTo(BeEmpty())
 			for _, address := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/%s_test_%s_%d_iperf3.log", logPrefix, address, port)
-				By(fmt.Sprintf("remove iperf3 log for %s: %s", address, stage))
-				output, err := execFn(fmt.Sprintf("rm -f %s", iperfLogFile))
-				if err != nil {
-					return fmt.Errorf("failed removing iperf3 log file %s: %w", output, err)
-				}
-
-				By(fmt.Sprintf("check iperf3 connectivity for %s: %s", address, stage))
-				output, err = execFn(fmt.Sprintf("iperf3 -c %s -p %d", address, port))
-				if err != nil {
-					return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
-				}
-
-				By(fmt.Sprintf("start from %s: %s", address, stage))
-				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
-				if err != nil {
-					return fmt.Errorf("failed at starting iperf3 in background %s: %w", output, err)
+				if err := startIperfClient(execFn, address, port, iperfLogFile, stage); err != nil {
+					return err
 				}
 			}
 			return nil
@@ -408,7 +422,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 		startNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, port int32, stage string) error {
 			GinkgoHelper()
 			execFn := func(cmd string) (string, error) {
-				return virtClient.RunCommand(vmi, cmd, 5*time.Second)
+				return virtClient.RunCommand(vmi, cmd, 15*time.Second)
 			}
 			return startNorthSouthIperfTraffic(execFn, addresses, port, "egress", stage)
 		}
