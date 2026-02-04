@@ -271,11 +271,6 @@ const (
 
 	// ManagedBGPTopologyFullMesh represents a full-mesh BGP topology
 	ManagedBGPTopologyFullMesh string = "full-mesh"
-
-	// NoOverlaySNATEnabled enables SNAT for outbound traffic
-	NoOverlaySNATEnabled string = "enabled"
-	// NoOverlaySNATDisabled disables SNAT for outbound traffic
-	NoOverlaySNATDisabled string = "disabled"
 )
 
 // DefaultConfig holds parsed config file parameters and command-line overrides
@@ -2396,8 +2391,8 @@ func validateNoOverlayConfig() error {
 		if NoOverlay.OutboundSNAT == "" {
 			return fmt.Errorf("outbound-snat is required when transport=no-overlay")
 		}
-		if NoOverlay.OutboundSNAT != NoOverlaySNATEnabled && NoOverlay.OutboundSNAT != NoOverlaySNATDisabled {
-			return fmt.Errorf("invalid outbound-snat %q: must be %q or %q", NoOverlay.OutboundSNAT, NoOverlaySNATEnabled, NoOverlaySNATDisabled)
+		if NoOverlay.OutboundSNAT != types.NoOverlaySNATEnabled && NoOverlay.OutboundSNAT != types.NoOverlaySNATDisabled {
+			return fmt.Errorf("invalid outbound-snat %q: must be %q or %q", NoOverlay.OutboundSNAT, types.NoOverlaySNATEnabled, types.NoOverlaySNATDisabled)
 		}
 
 		if NoOverlay.Routing == "" {

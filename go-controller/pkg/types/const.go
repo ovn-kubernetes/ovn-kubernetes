@@ -257,6 +257,11 @@ const (
 	NetworkTransportNoOverlay = "no-overlay"
 	NetworkTransportEVPN      = "evpn"
 
+	// NoOverlaySNATEnabled enables SNAT for outbound traffic
+	NoOverlaySNATEnabled = "enabled"
+	// NoOverlaySNATDisabled disables SNAT for outbound traffic
+	NoOverlaySNATDisabled = "disabled"
+
 	// db index keys
 	// PrimaryIDKey is used as a primary client index
 	PrimaryIDKey = OvnK8sPrefix + "/id"
