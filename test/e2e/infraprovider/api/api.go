@@ -18,6 +18,8 @@ type Provider interface {
 
 	// PrimaryNetwork returns OVN-Kubernetes primary infrastructure network information
 	PrimaryNetwork() (Network, error)
+	// ListNetworks returns the names of all networks
+	ListNetworks() ([]string, error)
 	// GetNetwork returns a network
 	GetNetwork(name string) (Network, error)
 	// GetExternalContainerNetworkInterface fetches network interface information from the external container attached to a specific network
