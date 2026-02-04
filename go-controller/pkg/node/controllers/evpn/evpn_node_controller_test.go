@@ -29,9 +29,11 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	factorymocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	ndmmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -68,7 +70,14 @@ var _ = Describe("EVPN node controller", func() {
 			wf.On("VTEPInformer").Return(informer)
 			lister.On("Get", vtepName).Return(vtep, nil)
 
-			ctrl := &Controller{nodeName: nodeName, watchFactory: wf, ndm: ndm, stopChan: make(chan struct{})}
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ndm:          ndm,
+				networkMgr:   &networkmanager.FakeNetworkManager{},
+				nadVTEPInfo:  make(map[string]string),
+				stopChan:     make(chan struct{}),
+			}
 
 			bridgeName := GetEVPNBridgeName(vtepName)
 			vxlan4Name := GetEVPNVXLANName(vtepName, utilnet.IPv4)
@@ -117,7 +126,14 @@ var _ = Describe("EVPN node controller", func() {
 			wf.On("VTEPInformer").Return(informer)
 			lister.On("Get", vtepName).Return(vtep, nil)
 
-			ctrl := &Controller{nodeName: nodeName, watchFactory: wf, ndm: ndm, stopChan: make(chan struct{})}
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ndm:          ndm,
+				networkMgr:   &networkmanager.FakeNetworkManager{},
+				nadVTEPInfo:  make(map[string]string),
+				stopChan:     make(chan struct{}),
+			}
 
 			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv4)).Return(nil)
 			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv6)).Return(nil)
@@ -138,7 +154,13 @@ var _ = Describe("EVPN node controller", func() {
 			lister.On("Get", vtepName).Return(nil, apierrors.NewNotFound(
 				schema.GroupResource{Group: "k8s.ovn.org", Resource: "vteps"}, vtepName))
 
-			ctrl := &Controller{nodeName: nodeName, watchFactory: wf, ndm: ndm, stopChan: make(chan struct{})}
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ndm:          ndm,
+				nadVTEPInfo:  make(map[string]string),
+				stopChan:     make(chan struct{}),
+			}
 
 			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv4)).Return(nil)
 			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv6)).Return(nil)
@@ -155,6 +177,7 @@ var _ = Describe("EVPN node controller", func() {
 			vtepClient *vtepfake.Clientset
 			wf         *factory.WatchFactory
 			ndm        *ndmmocks.Interface
+			fakeNM     *networkmanager.FakeNetworkManager
 			ctrl       *Controller
 		)
 
@@ -185,7 +208,8 @@ var _ = Describe("EVPN node controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(wf.Start()).To(Succeed())
 
-			ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, ndm)
+			fakeNM = &networkmanager.FakeNetworkManager{}
+			ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, ndm, fakeNM)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ctrl.Start()).To(Succeed())
 		})
@@ -254,6 +278,95 @@ var _ = Describe("EVPN node controller", func() {
 
 			By("verifying IPv6 VXLAN was deleted (no IPv6 in host-cidrs)")
 			Expect(ndm.AssertCalled(GinkgoT(), "DeleteLink", vxlan6Name)).To(BeTrue())
+		})
+
+		It("reconciles VTEP with VID/VNI mappings when a network is added or removed", func() {
+			const nadKey = "test-ns/test-nad"
+
+			By("allowing any NDM calls throughout the test")
+			ndm.On("DeleteLink", mock.Anything).Return(nil)
+			ndm.On("EnsureLink", mock.Anything).Return(nil)
+
+			By("creating an unmanaged VTEP and annotating the node with host-cidrs")
+			_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
+				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+				Spec: vtepv1.VTEPSpec{
+					CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+					Mode:  vtepv1.VTEPModeUnmanaged,
+				},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				_, err := wf.VTEPInformer().Lister().Get(vtepName)
+				return err
+			}).Should(Succeed())
+
+			node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			node.Annotations = map[string]string{
+				util.OVNNodeHostCIDRs: `["100.64.0.1/24"]`,
+			}
+			_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("simulating a network add with EVPN VID/VNI mappings")
+			netInfo := &multinetworkmocks.NetInfo{}
+			netInfo.On("EVPNVTEPName").Return(vtepName)
+			netInfo.On("EVPNMACVRFVID").Return(100)
+			netInfo.On("EVPNMACVRFVNI").Return(int32(10100))
+			netInfo.On("EVPNIPVRFVID").Return(200)
+			netInfo.On("EVPNIPVRFVNI").Return(int32(10200))
+			fakeNM.NADNetworks = map[string]util.NetInfo{nadKey: netInfo}
+			fakeNM.PrimaryNetworks = map[string]util.NetInfo{"test-ns": netInfo}
+			fakeNM.TriggerHandlers(nadKey, netInfo, false)
+
+			vxlan4Name := GetEVPNVXLANName(vtepName, utilnet.IPv4)
+			bridgeName := GetEVPNBridgeName(vtepName)
+
+			By("verifying reconcile created devices with correct VID/VNI mappings on the VXLAN")
+			Eventually(func() []netlinkdevicemanager.VIDVNIMapping {
+				for _, call := range ndm.Calls {
+					if call.Method == "EnsureLink" {
+						cfg := call.Arguments.Get(0).(netlinkdevicemanager.DeviceConfig)
+						if cfg.Link.Attrs().Name == vxlan4Name {
+							return cfg.VIDVNIMappings
+						}
+					}
+				}
+				return nil
+			}).Should(ConsistOf(
+				netlinkdevicemanager.VIDVNIMapping{VID: 100, VNI: 10100},
+				netlinkdevicemanager.VIDVNIMapping{VID: 200, VNI: 10200},
+			))
+
+			By("verifying bridge was also created")
+			var ensured []string
+			for _, call := range ndm.Calls {
+				if call.Method == "EnsureLink" {
+					cfg := call.Arguments.Get(0).(netlinkdevicemanager.DeviceConfig)
+					ensured = append(ensured, cfg.Link.Attrs().Name)
+				}
+			}
+			Expect(ensured).To(ContainElement(bridgeName))
+
+			By("simulating a network removal: clear NADNetworks and trigger handlers")
+			ndm.Calls = nil
+			fakeNM.NADNetworks = nil
+			fakeNM.PrimaryNetworks = nil
+			fakeNM.TriggerHandlers(nadKey, nil, true)
+
+			By("verifying reconcile was triggered again and VXLAN has no mappings")
+			Eventually(func() bool {
+				for _, call := range ndm.Calls {
+					if call.Method == "EnsureLink" {
+						cfg := call.Arguments.Get(0).(netlinkdevicemanager.DeviceConfig)
+						if cfg.Link.Attrs().Name == vxlan4Name {
+							return len(cfg.VIDVNIMappings) == 0
+						}
+					}
+				}
+				return false
+			}).Should(BeTrue())
 		})
 	})
 })
