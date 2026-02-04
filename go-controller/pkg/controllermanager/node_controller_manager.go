@@ -304,7 +304,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		// Currently NDM is used only by the EVPN controller
 		ncm.ndm = netlinkdevicemanager.NewController()
 
-		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube, ncm.ndm)
+		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube, ncm.ndm, ncm.networkManager.Interface())
 		if err != nil {
 			return nil, fmt.Errorf("failed to create EVPN controller: %w", err)
 		}
