@@ -17,6 +17,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	utilnet "k8s.io/utils/net"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedroutefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
@@ -30,15 +32,30 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	factorymocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	ndmmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager/mocks"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func newTestOVSClient() (libovsdbclient.Client, *libovsdbtest.Context) {
+	bridgeUUID := "bridge-br-int-uuid"
+	ovsClient, testCtx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
+			&vswitchd.Bridge{UUID: bridgeUUID, Name: ovsBridgeInt},
+		},
+	})
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return ovsClient, testCtx
+}
 
 var _ = Describe("EVPN node controller", func() {
 	const (
@@ -47,6 +64,21 @@ var _ = Describe("EVPN node controller", func() {
 	)
 
 	Describe("reconcile", func() {
+		var (
+			ovsClient  libovsdbclient.Client
+			ovsCleanup *libovsdbtest.Context
+		)
+
+		BeforeEach(func() {
+			ovsClient, ovsCleanup = newTestOVSClient()
+		})
+
+		AfterEach(func() {
+			if ovsCleanup != nil {
+				ovsCleanup.Cleanup()
+			}
+		})
+
 		It("creates bridge and VXLANs for an unmanaged dual-stack VTEP", func() {
 			vtep := &vtepv1.VTEP{
 				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
@@ -76,6 +108,7 @@ var _ = Describe("EVPN node controller", func() {
 				watchFactory: wf,
 				ndm:          ndm,
 				networkMgr:   &networkmanager.FakeNetworkManager{},
+				ovsClient:    ovsClient,
 				nadVTEPInfo:  make(map[string]string),
 				svisByBridge: make(map[string]sets.Set[string]),
 				stopChan:     make(chan struct{}),
@@ -133,6 +166,7 @@ var _ = Describe("EVPN node controller", func() {
 				watchFactory: wf,
 				ndm:          ndm,
 				networkMgr:   &networkmanager.FakeNetworkManager{},
+				ovsClient:    ovsClient,
 				nadVTEPInfo:  make(map[string]string),
 				svisByBridge: make(map[string]sets.Set[string]),
 				stopChan:     make(chan struct{}),
@@ -162,6 +196,7 @@ var _ = Describe("EVPN node controller", func() {
 				nodeName:     nodeName,
 				watchFactory: wf,
 				ndm:          ndm,
+				ovsClient:    ovsClient,
 				nadVTEPInfo:  make(map[string]string),
 				svisByBridge: make(map[string]sets.Set[string]),
 				stopChan:     make(chan struct{}),
@@ -176,29 +211,6 @@ var _ = Describe("EVPN node controller", func() {
 		})
 
 		It("creates L3 and L2 SVIs with correct VLAN IDs and VRF master", func() {
-			vtep := &vtepv1.VTEP{
-				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
-				Spec: vtepv1.VTEPSpec{
-					CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
-					Mode:  vtepv1.VTEPModeUnmanaged,
-				},
-			}
-			node := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        nodeName,
-					Annotations: map[string]string{util.OVNNodeHostCIDRs: `["100.64.0.1/24"]`},
-				},
-			}
-
-			ndm := &ndmmocks.Interface{}
-			lister := &vteplistmocks.VTEPLister{}
-			informer := &vtepinfmocks.VTEPInformer{}
-			informer.On("Lister").Return(lister)
-			wf := &factorymocks.NodeWatchFactory{}
-			wf.On("GetNode", nodeName).Return(node, nil)
-			wf.On("VTEPInformer").Return(informer)
-			lister.On("Get", vtepName).Return(vtep, nil)
-
 			netInfo := &multinetworkmocks.NetInfo{}
 			netInfo.On("EVPNVTEPName").Return(vtepName)
 			netInfo.On("EVPNMACVRFVID").Return(100)
@@ -207,18 +219,10 @@ var _ = Describe("EVPN node controller", func() {
 			netInfo.On("EVPNIPVRFVNI").Return(int32(10200))
 			netInfo.On("GetNetworkName").Return("mynet")
 			netInfo.On("GetNetworkID").Return(5)
+			netInfo.On("GetNetworkScopedSwitchName", mock.Anything).Return("mynet_ovn_layer2_switch")
 
 			fakeNM := &networkmanager.FakeNetworkManager{
 				PrimaryNetworks: map[string]util.NetInfo{"test-ns": netInfo},
-			}
-			ctrl := &Controller{
-				nodeName:     nodeName,
-				watchFactory: wf,
-				ndm:          ndm,
-				networkMgr:   fakeNM,
-				nadVTEPInfo:  make(map[string]string),
-				svisByBridge: make(map[string]sets.Set[string]),
-				stopChan:     make(chan struct{}),
 			}
 
 			bridgeName := GetEVPNBridgeName(vtepName)
@@ -226,38 +230,24 @@ var _ = Describe("EVPN node controller", func() {
 			l2SVIName := GetEVPNL2SVIName(netInfo)
 			vrfName := util.GetNetworkVRFName(netInfo)
 
-			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
-				_, isBridge := cfg.Link.(*netlink.Bridge)
-				return isBridge
-			})).Return(nil)
-			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
-				_, isVxlan := cfg.Link.(*netlink.Vxlan)
-				return isVxlan
-			})).Return(nil)
-			ndm.On("DeleteLink", mock.Anything).Return(nil)
+			ndm := &ndmmocks.Interface{}
+			ndm.On("EnsureLink", mock.Anything).Return(nil)
 
-			// Expect L3 SVI
-			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+			ctrl := &Controller{ndm: ndm, networkMgr: fakeNM, svisByBridge: make(map[string]sets.Set[string])}
+			networks, err := ctrl.collectEVPNNetworks(vtepName)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(ctrl.reconcileSVIs(bridgeName, networks)).To(Succeed())
+
+			ndm.AssertCalled(GinkgoT(), "EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
 				vlan, ok := cfg.Link.(*netlink.Vlan)
 				return ok && cfg.Link.Attrs().Name == l3SVIName && vlan.VlanId == 200 &&
 					cfg.VLANParent == bridgeName && cfg.Master == vrfName
-			})).Return(nil)
-
-			// Expect L2 SVI
-			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
-				vlan, ok := cfg.Link.(*netlink.Vlan)
-				return ok && cfg.Link.Attrs().Name == l2SVIName && vlan.VlanId == 100 &&
-					cfg.VLANParent == bridgeName && cfg.Master == vrfName
-			})).Return(nil)
-
-			Expect(ctrl.reconcile(vtepName)).To(Succeed())
-			ndm.AssertCalled(GinkgoT(), "EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
-				vlan, ok := cfg.Link.(*netlink.Vlan)
-				return ok && cfg.Link.Attrs().Name == l3SVIName && vlan.VlanId == 200
 			}))
 			ndm.AssertCalled(GinkgoT(), "EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
 				vlan, ok := cfg.Link.(*netlink.Vlan)
-				return ok && cfg.Link.Attrs().Name == l2SVIName && vlan.VlanId == 100
+				return ok && cfg.Link.Attrs().Name == l2SVIName && vlan.VlanId == 100 &&
+					cfg.VLANParent == bridgeName && cfg.Master == vrfName
 			}))
 		})
 
@@ -293,6 +283,7 @@ var _ = Describe("EVPN node controller", func() {
 				watchFactory: wf,
 				ndm:          ndm,
 				networkMgr:   &networkmanager.FakeNetworkManager{},
+				ovsClient:    ovsClient,
 				nadVTEPInfo:  make(map[string]string),
 				svisByBridge: map[string]sets.Set[string]{
 					bridgeName: sets.New(staleSVI),
@@ -324,6 +315,7 @@ var _ = Describe("EVPN node controller", func() {
 				nodeName:     nodeName,
 				watchFactory: wf,
 				ndm:          ndm,
+				ovsClient:    ovsClient,
 				nadVTEPInfo:  make(map[string]string),
 				svisByBridge: map[string]sets.Set[string]{
 					bridgeName: sets.New(sviName),
@@ -340,6 +332,27 @@ var _ = Describe("EVPN node controller", func() {
 			ndm.AssertCalled(GinkgoT(), "DeleteLink", sviName)
 			ndm.AssertExpectations(GinkgoT())
 		})
+
+		It("cleans up stale OVS ports for a VTEP", func() {
+			// Create a stale OVS port using the production helper
+			stalePortName := "evovs-stale"
+			Expect(libovsdbops.CreateOrUpdatePortWithInterface(ovsClient, ovsBridgeInt, stalePortName,
+				map[string]string{externalIDEVPNVTEP: vtepName}, nil)).To(Succeed())
+
+			// Verify the port exists before cleanup
+			_, err := getOVSPort(ovsClient, stalePortName)
+			Expect(err).NotTo(HaveOccurred())
+
+			ctrl := &Controller{ovsClient: ovsClient}
+
+			By("calling reconcileOVSPorts with no desired ports")
+			err = ctrl.reconcileOVSPorts(vtepName, GetEVPNBridgeName(vtepName), nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the stale OVS port was removed")
+			_, err = getOVSPort(ovsClient, stalePortName)
+			Expect(err).To(HaveOccurred())
+		})
 	})
 
 	Describe("onNodeUpdate", func() {
@@ -349,6 +362,7 @@ var _ = Describe("EVPN node controller", func() {
 			wf         *factory.WatchFactory
 			ndm        *ndmmocks.Interface
 			fakeNM     *networkmanager.FakeNetworkManager
+			ovsCleanup *libovsdbtest.Context
 			ctrl       *Controller
 		)
 
@@ -380,7 +394,9 @@ var _ = Describe("EVPN node controller", func() {
 			Expect(wf.Start()).To(Succeed())
 
 			fakeNM = &networkmanager.FakeNetworkManager{}
-			ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, ndm, fakeNM)
+			var ovsClient libovsdbclient.Client
+			ovsClient, ovsCleanup = newTestOVSClient()
+			ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, ndm, fakeNM, ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ctrl.Start()).To(Succeed())
 		})
@@ -391,6 +407,9 @@ var _ = Describe("EVPN node controller", func() {
 			}
 			if wf != nil {
 				wf.Shutdown()
+			}
+			if ovsCleanup != nil {
+				ovsCleanup.Cleanup()
 			}
 		})
 
@@ -496,6 +515,7 @@ var _ = Describe("EVPN node controller", func() {
 			netInfo.On("EVPNIPVRFVNI").Return(int32(10200))
 			netInfo.On("GetNetworkName").Return("mynet")
 			netInfo.On("GetNetworkID").Return(5)
+			netInfo.On("GetNetworkScopedSwitchName", mock.Anything).Return("mynet_ovn_layer2_switch")
 			fakeNM.NADNetworks = map[string]util.NetInfo{nadKey: netInfo}
 			fakeNM.PrimaryNetworks = map[string]util.NetInfo{"test-ns": netInfo}
 			fakeNM.TriggerHandlers(nadKey, netInfo, false)
@@ -577,3 +597,11 @@ var _ = Describe("EVPN node controller", func() {
 		})
 	})
 })
+
+func getOVSPort(ovsClient libovsdbclient.Client, name string) (*vswitchd.Port, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	defer cancel()
+	port := &vswitchd.Port{Name: name}
+	err := ovsClient.Get(ctx, port)
+	return port, err
+}
