@@ -600,22 +600,36 @@ func (c *Controller) RequestFullSync(nodeInfos []nodeInfo) {
 // belong to the network that this service controller is responsible for.
 func (c *Controller) skipService(name, namespace string) bool {
 	if util.IsNetworkSegmentationSupportEnabled() {
-		serviceNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace)
+		serviceNAD, err := c.networkManager.GetPrimaryNADForNamespace(namespace)
 		if err != nil {
+			// If the namespace requires a UDN that hasn't been processed yet, the default controller
+			// should skip this service; the UDN controller will handle it once ready.
+			if util.IsUnprocessedActiveNetworkError(err) {
+				return c.netInfo.IsDefault()
+			}
 			utilruntime.HandleError(fmt.Errorf("failed to retrieve network for service %s/%s: %w",
 				namespace, name, err))
 			return true
 		}
 
+		serviceNetworkName := types.DefaultNetworkName
+		isDefaultNetwork := serviceNAD == types.DefaultNetworkName
+		if !isDefaultNetwork {
+			serviceNetworkName = c.networkManager.GetNetworkNameForNADKey(serviceNAD)
+			if serviceNetworkName == "" {
+				return true
+			}
+		}
+
 		// Do not skip default network services enabled for UDN
-		if serviceNetwork.IsDefault() &&
+		if isDefaultNetwork &&
 			c.netInfo.IsPrimaryNetwork() &&
 			globalconfig.Gateway.Mode == globalconfig.GatewayModeShared &&
 			util.IsUDNEnabledService(ktypes.NamespacedName{Namespace: namespace, Name: name}.String()) {
 			return false
 		}
 
-		if serviceNetwork.GetNetworkName() != c.netInfo.GetNetworkName() {
+		if serviceNetworkName != c.netInfo.GetNetworkName() {
 			return true
 		}
 	}
