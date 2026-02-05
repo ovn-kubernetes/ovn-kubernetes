@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
@@ -241,26 +240,9 @@ func (oc *DefaultNetworkController) updateNamespace(old, newer *corev1.Namespace
 				} else {
 					// Helper function to handle the complex SNAT operations
 					handleSNATOps := func() error {
-						extIPs, err := getExternalIPsGR(oc.watchFactory, pod.Spec.NodeName)
+						ops, err := oc.AddPodSNATOps(pod.Spec.NodeName, podAnnotation.IPs)
 						if err != nil {
 							return err
-						}
-
-						var ops []ovsdb.Operation
-						// Handle each pod IP individually since each IP family needs its own SNAT match
-						for _, podIP := range podAnnotation.IPs {
-							ipFamily := utilnet.IPv4
-							if utilnet.IsIPv6CIDR(podIP) {
-								ipFamily = utilnet.IPv6
-							}
-							snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(oc.nbClient, oc.GetNetInfo(), pod.Spec.NodeName, oc.isPodNetworkAdvertisedAtNode(pod.Spec.NodeName), ipFamily)
-							if err != nil {
-								return fmt.Errorf("failed to get SNAT match for node %s for network %s: %v", pod.Spec.NodeName, oc.GetNetworkName(), err)
-							}
-							ops, err = addOrUpdatePodSNATOps(oc.nbClient, oc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, []*net.IPNet{podIP}, snatMatch, "", ops)
-							if err != nil {
-								return err
-							}
 						}
 
 						// Execute all operations in a single transaction
