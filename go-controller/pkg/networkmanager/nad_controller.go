@@ -907,8 +907,11 @@ func (c *nadController) GetActiveNetworkForNamespaceFast(namespace string) util.
 
 // GetPrimaryNADForNamespace returns the full namespaced key of the
 // primary NAD for the given namespace, if one exists.
-// Returns default network if namespace has no primary UDN
+// Returns default network if namespace has no primary UDN or Network Segmentation is disabled
 func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	if !util.IsNetworkSegmentationSupportEnabled() {
+		return types.DefaultNetworkName, nil
+	}
 	c.RLock()
 	primary := c.primaryNADs[namespace]
 	c.RUnlock()
