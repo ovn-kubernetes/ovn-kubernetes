@@ -507,7 +507,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
 				return fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
-		gw.nodePortWatcherIptables = newNodePortWatcherIptables(nc.networkManager)
+		gw.nodePortWatcherIptables = newNodePortWatcherIptables(nc.name, nc.networkManager)
 		gw.loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory)
 		portClaimWatcher, err := newPortClaimWatcher(nc.recorder)
 		if err != nil {

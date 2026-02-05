@@ -366,6 +366,8 @@ func IsClusterIP(svcVIP string) bool {
 	return false
 }
 
+// UnprocessedActiveNetworkError indicates that the primary UDN is required and exists
+// for a namespace, but our network manager has not processed it yet.
 type UnprocessedActiveNetworkError struct {
 	namespace string
 	udnName   string
@@ -385,6 +387,7 @@ func NewUnprocessedActiveNetworkError(namespace, udnName string) *UnprocessedAct
 	return &UnprocessedActiveNetworkError{namespace: namespace, udnName: udnName}
 }
 
+// InvalidPrimaryNetworkError indicates that the namespace requires a primary UDN, but no primary UDN exists yet
 type InvalidPrimaryNetworkError struct {
 	namespace string
 }
