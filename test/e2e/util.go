@@ -2065,3 +2065,75 @@ func waitForNodeReadyState(f *framework.Framework, nodeName string, timeout time
 		return false
 	}, timeout, 10*time.Second).Should(gomega.BeTrue(), expectationMessage)
 }
+
+// TrafficGenerator generates network traffic in the cluster to ensure network
+// monitoring tools (like sFlow, NetFlow) have data to sample. It creates a pod
+// that continuously sends requests to the kubernetes API server.
+type TrafficGenerator struct {
+	stopCh chan struct{}
+	pod    *v1.Pod
+}
+
+// StartTrafficGenerator creates a pod and starts generating traffic to the
+// kubernetes API server. The traffic flows through br-int, making it available
+// for sampling by OVS flow monitoring (sFlow, NetFlow, IPFIX).
+// Call Stop() to clean up when done.
+func StartTrafficGenerator(f *framework.Framework) (*TrafficGenerator, error) {
+	tg := &TrafficGenerator{
+		stopCh: make(chan struct{}),
+	}
+
+	// Create an agnhost pod for traffic generation
+	tg.pod = e2epod.NewAgnhostPod(
+		f.Namespace.Name,
+		"traffic-generator",
+		nil, nil, nil,
+		"netexec", "--http-port=8080",
+	)
+
+	var err error
+	tg.pod, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(
+		context.TODO(), tg.pod, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create traffic generator pod: %w", err)
+	}
+
+	err = e2epod.WaitForPodRunningInNamespace(context.TODO(), f.ClientSet, tg.pod)
+	if err != nil {
+		return nil, fmt.Errorf("traffic generator pod failed to start: %w", err)
+	}
+
+	// Get the kubernetes service ClusterIP to use as traffic target
+	kubeSvc, err := f.ClientSet.CoreV1().Services("default").Get(
+		context.TODO(), "kubernetes", metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kubernetes service: %w", err)
+	}
+	target := kubeSvc.Spec.ClusterIP
+
+	// Start generating traffic in the background
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-tg.stopCh:
+				return
+			case <-ticker.C:
+				// Ignore errors - we just need to generate traffic
+				_, _, _ = e2epod.ExecCommandInContainerWithFullOutput(
+					f, tg.pod.Name, tg.pod.Spec.Containers[0].Name,
+					"curl", "-s", "-k", "--connect-timeout", "1",
+					fmt.Sprintf("https://%s", target))
+			}
+		}
+	}()
+
+	return tg, nil
+}
+
+// Stop stops the traffic generation goroutine.
+// The pod will be cleaned up automatically when the test namespace is deleted.
+func (tg *TrafficGenerator) Stop() {
+	close(tg.stopCh)
+}
