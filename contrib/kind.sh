@@ -124,6 +124,7 @@ echo "-dug | --dynamic-udn-removal-grace-period <seconds>     Configure the grac
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
+echo "--allow-icmp-netpol                           Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules"
 echo ""
 }
 
@@ -373,6 +374,8 @@ parse_args() {
                                                 ;;
             -mps| --multi-pod-subnet )          MULTI_POD_SUBNET=true
                                                 ;;
+            --allow-icmp-netpol )               OVN_ENABLE_ICMP_NETPOL=true
+                                                ;;
             -h | --help )                       usage
                                                 exit
                                                 ;;
@@ -476,6 +479,7 @@ print_params() {
      echo "OVN_MTU= $OVN_MTU"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
      echo "MULTI_POD_SUBNET= $MULTI_POD_SUBNET"
+     echo "OVN_ENABLE_ICMP_NETPOL= $OVN_ENABLE_ICMP_NETPOL"
      echo ""
 }
 
@@ -758,7 +762,8 @@ create_ovn_kube_manifests() {
     --mtu="${OVN_MTU}" \
     --enable-dnsnameresolver="${OVN_ENABLE_DNSNAMERESOLVER}" \
     --mtu="${OVN_MTU}" \
-    --enable-observ="${OVN_OBSERV_ENABLE}"
+    --enable-observ="${OVN_OBSERV_ENABLE}" \
+    --allow-icmp-netpol="${OVN_ENABLE_ICMP_NETPOL}"
   popd
 }
 
