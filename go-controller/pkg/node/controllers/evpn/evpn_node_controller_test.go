@@ -6,12 +6,15 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	utilnet "k8s.io/utils/net"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -25,10 +28,15 @@ import (
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	netlinkMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -45,10 +53,15 @@ var _ = Describe("EVPN node controller", func() {
 		stopCh chan struct{}
 		ctrl   *Controller
 
-		kubeClient *fake.Clientset
-		vtepClient *vtepfake.Clientset
-		netMgr     *networkmanager.FakeNetworkManager
+		kubeClient   *fake.Clientset
+		vtepClient   *vtepfake.Clientset
+		netMgr       *networkmanager.FakeNetworkManager
+		ovsClient    libovsdbclient.Client
+		ovsdbCleanup *libovsdbtest.Context
+		netlinkMock  *utilMocks.NetLinkOps
 	)
+
+	origNetlinkOps := util.GetNetLinkOps()
 
 	BeforeEach(func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
@@ -57,6 +70,29 @@ var _ = Describe("EVPN node controller", func() {
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
 		config.Gateway.Mode = config.GatewayModeLocal
+
+		// Set up netlink mock
+		netlinkMock = &utilMocks.NetLinkOps{}
+		util.SetNetLinkOpMockInst(netlinkMock)
+
+		mockLink := &netlinkMocks.Link{}
+		mockLink.On("Attrs").Return(&netlink.LinkAttrs{Name: "mock-link"})
+		netlinkMock.On("LinkByName", mock.Anything).Return(mockLink, nil)
+		netlinkMock.On("LinkSetMaster", mock.Anything, mock.Anything).Return(nil)
+		netlinkMock.On("LinkSetUp", mock.Anything).Return(nil)
+		netlinkMock.On("BridgeVlanAdd", mock.Anything, mock.Anything, true, true, false, true).Return(nil)
+
+		// Create fake OVS client with br-int bridge
+		// UUIDs must be valid RFC 4122 UUIDs for the test harness
+		brIntUUID := "550e8400-e29b-41d4-a716-446655440000"
+		var err error
+		ovsClient, ovsdbCleanup, err = libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.Bridge{UUID: brIntUUID, Name: "br-int"},
+				&vswitchd.OpenvSwitch{UUID: "550e8400-e29b-41d4-a716-446655440001", Bridges: []string{brIntUUID}},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
 
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -77,7 +113,6 @@ var _ = Describe("EVPN node controller", func() {
 			VTEPClient:                vtepClient,
 		}
 
-		var err error
 		wf, err = factory.NewNodeWatchFactory(ovnNodeClient, nodeName)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(wf.Start()).To(Succeed())
@@ -116,7 +151,7 @@ var _ = Describe("EVPN node controller", func() {
 			NADNetworks: map[string]util.NetInfo{},
 		}
 
-		ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, netlinkdevicemanager.NewController(), netMgr)
+		ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, netlinkdevicemanager.NewController(), netMgr, ovsClient)
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -127,6 +162,10 @@ var _ = Describe("EVPN node controller", func() {
 		if wf != nil {
 			wf.Shutdown()
 		}
+		if ovsdbCleanup != nil {
+			ovsdbCleanup.Cleanup()
+		}
+		util.SetNetLinkOpMockInst(origNetlinkOps)
 	})
 
 	It("applies and cleans up device configs for a managed VTEP", func() {
@@ -353,5 +392,51 @@ var _ = Describe("EVPN node controller", func() {
 		Eventually(func() []netlinkdevicemanager.DeviceConfig {
 			return ctrl.ndm.ListDevicesByVLANParent(bridgeName)
 		}).Should(BeEmpty())
+	})
+
+	It("reconciles and creates OVS ports for VTEP with MAC-VRF networks", func() {
+		By("creating a managed VTEP")
+		_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: vtepName,
+			},
+			Spec: vtepv1.VTEPSpec{
+				CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+				Mode:  vtepv1.VTEPModeManaged,
+			},
+		}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("annotating the node with VTEP IP")
+		node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		node.Annotations = map[string]string{
+			util.OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1"]}`,
+		}
+		_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() error {
+			_, err := wf.VTEPInformer().Lister().Get(vtepName)
+			return err
+		}).Should(Succeed())
+		Eventually(func() bool {
+			node, err := wf.GetNode(nodeName)
+			if err != nil {
+				return false
+			}
+			return node.Annotations[util.OVNNodeVTEPIPs] != ""
+		}).Should(BeTrue())
+
+		By("reconciling the VTEP")
+		err = ctrl.reconcile(vtepName)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying OVS ports are created for MAC-VRF networks")
+		ports, err := libovsdbops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
+			return port.ExternalIDs[externalIDEVPNVTEP] == vtepName
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ports).To(HaveLen(1))
 	})
 })
