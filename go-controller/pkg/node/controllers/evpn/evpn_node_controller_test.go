@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 	utilnet "k8s.io/utils/net"
 
@@ -76,6 +77,7 @@ var _ = Describe("EVPN node controller", func() {
 				ndm:          ndm,
 				networkMgr:   &networkmanager.FakeNetworkManager{},
 				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: make(map[string]sets.Set[string]),
 				stopChan:     make(chan struct{}),
 			}
 
@@ -132,12 +134,14 @@ var _ = Describe("EVPN node controller", func() {
 				ndm:          ndm,
 				networkMgr:   &networkmanager.FakeNetworkManager{},
 				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: make(map[string]sets.Set[string]),
 				stopChan:     make(chan struct{}),
 			}
 
+			bridgeName := GetEVPNBridgeName(vtepName)
 			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv4)).Return(nil)
 			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv6)).Return(nil)
-			ndm.On("DeleteLink", GetEVPNBridgeName(vtepName)).Return(nil)
+			ndm.On("DeleteLink", bridgeName).Return(nil)
 
 			Expect(ctrl.reconcile(vtepName)).To(Succeed())
 			ndm.AssertExpectations(GinkgoT())
@@ -159,6 +163,7 @@ var _ = Describe("EVPN node controller", func() {
 				watchFactory: wf,
 				ndm:          ndm,
 				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: make(map[string]sets.Set[string]),
 				stopChan:     make(chan struct{}),
 			}
 
@@ -167,6 +172,172 @@ var _ = Describe("EVPN node controller", func() {
 			ndm.On("DeleteLink", GetEVPNBridgeName(vtepName)).Return(nil)
 
 			Expect(ctrl.reconcile(vtepName)).To(Succeed())
+			ndm.AssertExpectations(GinkgoT())
+		})
+
+		It("creates L3 and L2 SVIs with correct VLAN IDs and VRF master", func() {
+			vtep := &vtepv1.VTEP{
+				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+				Spec: vtepv1.VTEPSpec{
+					CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+					Mode:  vtepv1.VTEPModeUnmanaged,
+				},
+			}
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{util.OVNNodeHostCIDRs: `["100.64.0.1/24"]`},
+				},
+			}
+
+			ndm := &ndmmocks.Interface{}
+			lister := &vteplistmocks.VTEPLister{}
+			informer := &vtepinfmocks.VTEPInformer{}
+			informer.On("Lister").Return(lister)
+			wf := &factorymocks.NodeWatchFactory{}
+			wf.On("GetNode", nodeName).Return(node, nil)
+			wf.On("VTEPInformer").Return(informer)
+			lister.On("Get", vtepName).Return(vtep, nil)
+
+			netInfo := &multinetworkmocks.NetInfo{}
+			netInfo.On("EVPNVTEPName").Return(vtepName)
+			netInfo.On("EVPNMACVRFVID").Return(100)
+			netInfo.On("EVPNMACVRFVNI").Return(int32(10100))
+			netInfo.On("EVPNIPVRFVID").Return(200)
+			netInfo.On("EVPNIPVRFVNI").Return(int32(10200))
+			netInfo.On("GetNetworkName").Return("mynet")
+			netInfo.On("GetNetworkID").Return(5)
+
+			fakeNM := &networkmanager.FakeNetworkManager{
+				PrimaryNetworks: map[string]util.NetInfo{"test-ns": netInfo},
+			}
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ndm:          ndm,
+				networkMgr:   fakeNM,
+				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: make(map[string]sets.Set[string]),
+				stopChan:     make(chan struct{}),
+			}
+
+			bridgeName := GetEVPNBridgeName(vtepName)
+			l3SVIName := GetEVPNL3SVIName(netInfo)
+			l2SVIName := GetEVPNL2SVIName(netInfo)
+			vrfName := util.GetNetworkVRFName(netInfo)
+
+			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+				_, isBridge := cfg.Link.(*netlink.Bridge)
+				return isBridge
+			})).Return(nil)
+			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+				_, isVxlan := cfg.Link.(*netlink.Vxlan)
+				return isVxlan
+			})).Return(nil)
+			ndm.On("DeleteLink", mock.Anything).Return(nil)
+
+			// Expect L3 SVI
+			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+				vlan, ok := cfg.Link.(*netlink.Vlan)
+				return ok && cfg.Link.Attrs().Name == l3SVIName && vlan.VlanId == 200 &&
+					cfg.VLANParent == bridgeName && cfg.Master == vrfName
+			})).Return(nil)
+
+			// Expect L2 SVI
+			ndm.On("EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+				vlan, ok := cfg.Link.(*netlink.Vlan)
+				return ok && cfg.Link.Attrs().Name == l2SVIName && vlan.VlanId == 100 &&
+					cfg.VLANParent == bridgeName && cfg.Master == vrfName
+			})).Return(nil)
+
+			Expect(ctrl.reconcile(vtepName)).To(Succeed())
+			ndm.AssertCalled(GinkgoT(), "EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+				vlan, ok := cfg.Link.(*netlink.Vlan)
+				return ok && cfg.Link.Attrs().Name == l3SVIName && vlan.VlanId == 200
+			}))
+			ndm.AssertCalled(GinkgoT(), "EnsureLink", mock.MatchedBy(func(cfg netlinkdevicemanager.DeviceConfig) bool {
+				vlan, ok := cfg.Link.(*netlink.Vlan)
+				return ok && cfg.Link.Attrs().Name == l2SVIName && vlan.VlanId == 100
+			}))
+		})
+
+		It("removes stale SVIs that are no longer desired", func() {
+			vtep := &vtepv1.VTEP{
+				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+				Spec: vtepv1.VTEPSpec{
+					CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+					Mode:  vtepv1.VTEPModeUnmanaged,
+				},
+			}
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{util.OVNNodeHostCIDRs: `["100.64.0.1/24"]`},
+				},
+			}
+
+			ndm := &ndmmocks.Interface{}
+			lister := &vteplistmocks.VTEPLister{}
+			informer := &vtepinfmocks.VTEPInformer{}
+			informer.On("Lister").Return(lister)
+			wf := &factorymocks.NodeWatchFactory{}
+			wf.On("GetNode", nodeName).Return(node, nil)
+			wf.On("VTEPInformer").Return(informer)
+			lister.On("Get", vtepName).Return(vtep, nil)
+
+			bridgeName := GetEVPNBridgeName(vtepName)
+			staleSVI := "evsvi-old"
+
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ndm:          ndm,
+				networkMgr:   &networkmanager.FakeNetworkManager{},
+				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: map[string]sets.Set[string]{
+					bridgeName: sets.New(staleSVI),
+				},
+				stopChan: make(chan struct{}),
+			}
+
+			ndm.On("EnsureLink", mock.Anything).Return(nil)
+			ndm.On("DeleteLink", mock.Anything).Return(nil)
+
+			Expect(ctrl.reconcile(vtepName)).To(Succeed())
+			ndm.AssertCalled(GinkgoT(), "DeleteLink", staleSVI)
+		})
+
+		It("deletes SVIs parented to the bridge when VTEP is not found", func() {
+			ndm := &ndmmocks.Interface{}
+			lister := &vteplistmocks.VTEPLister{}
+			informer := &vtepinfmocks.VTEPInformer{}
+			informer.On("Lister").Return(lister)
+			wf := &factorymocks.NodeWatchFactory{}
+			wf.On("VTEPInformer").Return(informer)
+			lister.On("Get", vtepName).Return(nil, apierrors.NewNotFound(
+				schema.GroupResource{Group: "k8s.ovn.org", Resource: "vteps"}, vtepName))
+
+			bridgeName := GetEVPNBridgeName(vtepName)
+			sviName := "evsvi-net1"
+
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ndm:          ndm,
+				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: map[string]sets.Set[string]{
+					bridgeName: sets.New(sviName),
+				},
+				stopChan: make(chan struct{}),
+			}
+
+			ndm.On("DeleteLink", sviName).Return(nil)
+			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv4)).Return(nil)
+			ndm.On("DeleteLink", GetEVPNVXLANName(vtepName, utilnet.IPv6)).Return(nil)
+			ndm.On("DeleteLink", bridgeName).Return(nil)
+
+			Expect(ctrl.reconcile(vtepName)).To(Succeed())
+			ndm.AssertCalled(GinkgoT(), "DeleteLink", sviName)
 			ndm.AssertExpectations(GinkgoT())
 		})
 	})
@@ -280,12 +451,19 @@ var _ = Describe("EVPN node controller", func() {
 			Expect(ndm.AssertCalled(GinkgoT(), "DeleteLink", vxlan6Name)).To(BeTrue())
 		})
 
-		It("reconciles VTEP with VID/VNI mappings when a network is added or removed", func() {
+		It("creates SVIs with correct mappings when a network is added and removes them when removed", func() {
 			const nadKey = "test-ns/test-nad"
+
+			var ensuredMu sync.Mutex
+			var ensuredCfgs []netlinkdevicemanager.DeviceConfig
 
 			By("allowing any NDM calls throughout the test")
 			ndm.On("DeleteLink", mock.Anything).Return(nil)
-			ndm.On("EnsureLink", mock.Anything).Return(nil)
+			ndm.On("EnsureLink", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+				ensuredMu.Lock()
+				defer ensuredMu.Unlock()
+				ensuredCfgs = append(ensuredCfgs, args.Get(0).(netlinkdevicemanager.DeviceConfig))
+			})
 
 			By("creating an unmanaged VTEP and annotating the node with host-cidrs")
 			_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
@@ -316,21 +494,24 @@ var _ = Describe("EVPN node controller", func() {
 			netInfo.On("EVPNMACVRFVNI").Return(int32(10100))
 			netInfo.On("EVPNIPVRFVID").Return(200)
 			netInfo.On("EVPNIPVRFVNI").Return(int32(10200))
+			netInfo.On("GetNetworkName").Return("mynet")
+			netInfo.On("GetNetworkID").Return(5)
 			fakeNM.NADNetworks = map[string]util.NetInfo{nadKey: netInfo}
 			fakeNM.PrimaryNetworks = map[string]util.NetInfo{"test-ns": netInfo}
 			fakeNM.TriggerHandlers(nadKey, netInfo, false)
 
+			l3SVIName := GetEVPNL3SVIName(netInfo)
+			l2SVIName := GetEVPNL2SVIName(netInfo)
 			vxlan4Name := GetEVPNVXLANName(vtepName, utilnet.IPv4)
 			bridgeName := GetEVPNBridgeName(vtepName)
 
-			By("verifying reconcile created devices with correct VID/VNI mappings on the VXLAN")
+			By("verifying VID/VNI mappings on the VXLAN device")
 			Eventually(func() []netlinkdevicemanager.VIDVNIMapping {
-				for _, call := range ndm.Calls {
-					if call.Method == "EnsureLink" {
-						cfg := call.Arguments.Get(0).(netlinkdevicemanager.DeviceConfig)
-						if cfg.Link.Attrs().Name == vxlan4Name {
-							return cfg.VIDVNIMappings
-						}
+				ensuredMu.Lock()
+				defer ensuredMu.Unlock()
+				for _, cfg := range ensuredCfgs {
+					if cfg.Link.Attrs().Name == vxlan4Name && len(cfg.VIDVNIMappings) > 0 {
+						return cfg.VIDVNIMappings
 					}
 				}
 				return nil
@@ -339,33 +520,59 @@ var _ = Describe("EVPN node controller", func() {
 				netlinkdevicemanager.VIDVNIMapping{VID: 200, VNI: 10200},
 			))
 
-			By("verifying bridge was also created")
-			var ensured []string
-			for _, call := range ndm.Calls {
-				if call.Method == "EnsureLink" {
-					cfg := call.Arguments.Get(0).(netlinkdevicemanager.DeviceConfig)
-					ensured = append(ensured, cfg.Link.Attrs().Name)
+			By("verifying L3 and L2 SVIs were created with correct VLAN IDs and bridge parent")
+			Eventually(func() []string {
+				ensuredMu.Lock()
+				defer ensuredMu.Unlock()
+				var svis []string
+				for _, cfg := range ensuredCfgs {
+					if _, ok := cfg.Link.(*netlink.Vlan); ok {
+						svis = append(svis, cfg.Link.Attrs().Name)
+					}
+				}
+				return svis
+			}).Should(ContainElements(l3SVIName, l2SVIName))
+
+			ensuredMu.Lock()
+			for _, cfg := range ensuredCfgs {
+				vlan, ok := cfg.Link.(*netlink.Vlan)
+				if !ok {
+					continue
+				}
+				switch cfg.Link.Attrs().Name {
+				case l3SVIName:
+					Expect(vlan.VlanId).To(Equal(200))
+					Expect(cfg.VLANParent).To(Equal(bridgeName))
+				case l2SVIName:
+					Expect(vlan.VlanId).To(Equal(100))
+					Expect(cfg.VLANParent).To(Equal(bridgeName))
 				}
 			}
-			Expect(ensured).To(ContainElement(bridgeName))
+			ensuredMu.Unlock()
 
-			By("simulating a network removal: clear NADNetworks and trigger handlers")
-			ndm.Calls = nil
+			By("simulating network removal and verifying VXLAN has no mappings")
+			ensuredMu.Lock()
+			ensuredCfgs = nil
+			ensuredMu.Unlock()
 			fakeNM.NADNetworks = nil
 			fakeNM.PrimaryNetworks = nil
 			fakeNM.TriggerHandlers(nadKey, nil, true)
 
-			By("verifying reconcile was triggered again and VXLAN has no mappings")
 			Eventually(func() bool {
-				for _, call := range ndm.Calls {
-					if call.Method == "EnsureLink" {
-						cfg := call.Arguments.Get(0).(netlinkdevicemanager.DeviceConfig)
-						if cfg.Link.Attrs().Name == vxlan4Name {
-							return len(cfg.VIDVNIMappings) == 0
-						}
+				ensuredMu.Lock()
+				defer ensuredMu.Unlock()
+				for _, cfg := range ensuredCfgs {
+					if cfg.Link.Attrs().Name == vxlan4Name {
+						return len(cfg.VIDVNIMappings) == 0
 					}
 				}
 				return false
+			}).Should(BeTrue())
+
+			By("verifying stale SVIs were deleted after network removal")
+			Eventually(func() bool {
+				return ndm.AssertCalled(GinkgoT(), "DeleteLink", l3SVIName) &&
+					ndm.AssertCalled(GinkgoT(), "DeleteLink", l2SVIName)
 			}).Should(BeTrue())
 		})
 	})
