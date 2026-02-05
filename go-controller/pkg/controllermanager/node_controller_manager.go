@@ -298,7 +298,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 	}
 
 	if util.IsEVPNEnabled() {
-		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube, ncm.networkManager.Interface())
+		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube, ncm.networkManager.Interface(), ncm.ovsClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create EVPN controller: %w", err)
 		}

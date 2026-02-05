@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -22,13 +23,20 @@ import (
 	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
-const vxlanPort = 4789
+const (
+	vxlanPort = 4789
+	// externalIDEVPNVTEP is the external-id key used to tag OVS ports with their VTEP name
+	externalIDEVPNVTEP = "evpn-vtep"
+	ovsBridgeInt       = "br-int"
+)
 
 type Controller struct {
 	nodeName     string
@@ -36,11 +44,12 @@ type Controller struct {
 	kube         kube.Interface
 	networkMgr   networkmanager.Interface
 	ndm          *netlinkdevicemanager.Controller
+	ovsClient    libovsdbclient.Client
 
-	vtepController   controller.Controller
-	nadReconciler    controller.Reconciler
-	nadReconcilerID  uint64
-	nadVTEPInfoLock  sync.Mutex
+	vtepController  controller.Controller
+	nadReconciler   controller.Reconciler
+	nadReconcilerID uint64
+	nadVTEPInfoLock sync.Mutex
 	// Cache NAD key -> VTEP name for cleanup when NADs are deleted.
 	nadVTEPInfo      map[string]string
 	nodeEventHandler cache.ResourceEventHandlerRegistration
@@ -49,13 +58,14 @@ type Controller struct {
 	wg       *sync.WaitGroup
 }
 
-func NewController(nodeName string, wf factory.NodeWatchFactory, kube kube.Interface, networkMgr networkmanager.Interface) (*Controller, error) {
+func NewController(nodeName string, wf factory.NodeWatchFactory, kube kube.Interface, networkMgr networkmanager.Interface, ovsClient libovsdbclient.Client) (*Controller, error) {
 	c := &Controller{
 		nodeName:     nodeName,
 		watchFactory: wf,
 		kube:         kube,
 		networkMgr:   networkMgr,
 		ndm:          netlinkdevicemanager.NewController(),
+		ovsClient:    ovsClient,
 		nadVTEPInfo:  make(map[string]string),
 		stopChan:     make(chan struct{}),
 		wg:           &sync.WaitGroup{},
@@ -291,6 +301,10 @@ func (c *Controller) reconcile(key string) error {
 		return fmt.Errorf("failed to reconcile SVIs: %w", err)
 	}
 
+	if err := c.reconcileOVSPorts(vtep.Name, bridgeName, networks); err != nil {
+		return fmt.Errorf("failed to reconcile OVS ports: %w", err)
+	}
+
 	return nil
 }
 
@@ -325,6 +339,7 @@ type evpnNetworkInfo struct {
 	macVRFVID, macVRFVNI int
 	ipVRFVID, ipVRFVNI   int
 	sviName              string
+	ovsPortName          string
 	vrfName              string
 	routerMAC            net.HardwareAddr
 }
@@ -338,13 +353,14 @@ func (c *Controller) collectEVPNNetworks(vtepName string) ([]evpnNetworkInfo, er
 			return nil
 		}
 		networks = append(networks, evpnNetworkInfo{
-			macVRFVID: netInfo.EVPNMACVRFVID(),
-			macVRFVNI: int(netInfo.EVPNMACVRFVNI()),
-			ipVRFVID:  netInfo.EVPNIPVRFVID(),
-			ipVRFVNI:  int(netInfo.EVPNIPVRFVNI()),
-			sviName:   GetEVPNSVIName(netInfo),
-			vrfName:   util.GetNetworkVRFName(netInfo),
-			routerMAC: EVPNRouterMAC(netInfo.GetNetworkID()),
+			macVRFVID:   netInfo.EVPNMACVRFVID(),
+			macVRFVNI:   int(netInfo.EVPNMACVRFVNI()),
+			ipVRFVID:    netInfo.EVPNIPVRFVID(),
+			ipVRFVNI:    int(netInfo.EVPNIPVRFVNI()),
+			sviName:     GetEVPNSVIName(netInfo),
+			ovsPortName: GetEVPNOVSPortName(netInfo),
+			vrfName:     util.GetNetworkVRFName(netInfo),
+			routerMAC:   EVPNRouterMAC(netInfo.GetNetworkID()),
 		})
 		return nil
 	})
@@ -401,9 +417,94 @@ func (c *Controller) reconcileSVIs(bridgeName string, networks []evpnNetworkInfo
 	return nil
 }
 
+// reconcileOVSPorts ensures OVS internal ports exist for MAC-VRF networks and removes stale ones.
+func (c *Controller) reconcileOVSPorts(vtepName, bridgeName string, networks []evpnNetworkInfo) error {
+	desiredPorts := sets.New[string]()
+	for _, net := range networks {
+		if net.macVRFVID == 0 {
+			continue
+		}
+		desiredPorts.Insert(net.ovsPortName)
+		if err := c.ensureOVSPort(vtepName, bridgeName, net.ovsPortName, net.macVRFVID); err != nil {
+			return fmt.Errorf("failed to ensure OVS port %s: %w", net.ovsPortName, err)
+		}
+	}
+
+	ports, err := libovsdbops.FindOVSPortsWithPredicate(c.ovsClient, func(port *vswitchd.Port) bool {
+		return port.ExternalIDs[externalIDEVPNVTEP] == vtepName
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list OVS ports for VTEP %s: %w", vtepName, err)
+	}
+	for _, port := range ports {
+		if !desiredPorts.Has(port.Name) {
+			klog.Infof("OVS port %s no longer needed for VTEP %s, removing", port.Name, vtepName)
+			if err := c.deleteOVSPort(port.Name); err != nil {
+				return fmt.Errorf("failed to delete stale OVS port %s: %w", port.Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ensureOVSPort creates an OVS internal port on br-int, attaches it to the EVPN bridge, and sets VLAN access.
+// This function is idempotent - it's safe to call multiple times.
+func (c *Controller) ensureOVSPort(vtepName, bridgeName, portName string, vid int) error {
+	if err := libovsdbops.CreateOrUpdatePortWithInterface(c.ovsClient, ovsBridgeInt, portName,
+		map[string]string{externalIDEVPNVTEP: vtepName}); err != nil {
+		return fmt.Errorf("failed to create OVS port %s: %w", portName, err)
+	}
+
+	ovsLink, err := util.GetNetLinkOps().LinkByName(portName)
+	if err != nil {
+		return fmt.Errorf("failed to get OVS port link %s: %w", portName, err)
+	}
+	evpnBridge, err := util.GetNetLinkOps().LinkByName(bridgeName)
+	if err != nil {
+		return fmt.Errorf("failed to get EVPN bridge %s: %w", bridgeName, err)
+	}
+	if err := util.GetNetLinkOps().LinkSetMaster(ovsLink, evpnBridge); err != nil {
+		return fmt.Errorf("failed to attach OVS port %s to bridge %s: %w", portName, bridgeName, err)
+	}
+	if err := util.GetNetLinkOps().LinkSetUp(ovsLink); err != nil {
+		return fmt.Errorf("failed to bring up OVS port %s: %w", portName, err)
+	}
+
+	if err := c.ndm.EnsureBridgePortVLAN(portName, netlinkdevicemanager.BridgePortVLAN{
+		VID:      vid,
+		PVID:     true,
+		Untagged: true,
+	}); err != nil {
+		return fmt.Errorf("failed to set VLAN on OVS port %s: %w", portName, err)
+	}
+
+	return nil
+}
+
+// deleteOVSPort removes an OVS port from br-int.
+func (c *Controller) deleteOVSPort(portName string) error {
+	if err := c.ndm.DeleteBridgePortVLAN(portName, 0); err != nil {
+		return err
+	}
+	return libovsdbops.DeletePortWithInterfaces(c.ovsClient, ovsBridgeInt, portName)
+}
+
 func (c *Controller) deleteVTEPDevices(vtepName string) error {
 	bridgeName := GetEVPNBridgeName(vtepName)
 	var errs []error
+
+	ports, err := libovsdbops.FindOVSPortsWithPredicate(c.ovsClient, func(port *vswitchd.Port) bool {
+		return port.ExternalIDs[externalIDEVPNVTEP] == vtepName
+	})
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to list OVS ports: %w", err))
+	}
+	for _, port := range ports {
+		if err := c.deleteOVSPort(port.Name); err != nil {
+			errs = append(errs, err)
+		}
+	}
 
 	// Delete all SVIs parented to this bridge
 	for _, cfg := range c.ndm.ListDevicesByVLANParent(bridgeName) {
@@ -412,7 +513,6 @@ func (c *Controller) deleteVTEPDevices(vtepName string) error {
 			errs = append(errs, err)
 		}
 	}
-
 
 	if err := c.ndm.DeleteLink(GetEVPNVXLANName(vtepName, utilnet.IPv4)); err != nil {
 		errs = append(errs, err)
