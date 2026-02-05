@@ -627,6 +627,18 @@ func doesContainerNameExist(name string) (bool, error) {
 	return state != "", nil
 }
 
+func getContainerPID(containerName string) (string, error) {
+	pidBytes, err := exec.Command(containerengine.Get().String(), "inspect", "-f", "{{.State.Pid}}", containerName).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get PID for container %s: %v, out: %s", containerName, err, pidBytes)
+	}
+	pid := strings.TrimSpace(string(pidBytes))
+	if pid == "" || pid == "0" {
+		return "", fmt.Errorf("container %s is not running (PID: %s)", containerName, pid)
+	}
+	return pid, nil
+}
+
 func doesNetworkExist(networkName string) (bool, error) {
 	dataBytes, err := exec.Command(containerengine.Get().String(), "network", "ls", "--format", nameFormat).CombinedOutput()
 	if err != nil {
@@ -737,7 +749,13 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 		if err != nil {
 			return "", fmt.Errorf("failed to get IP family flag for %s: %w", ip, err)
 		}
-		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "-br", ipFlag, "a", "sh").CombinedOutput()
+
+		pid, err := getContainerPID(containerName)
+		if err != nil {
+			return "", err
+		}
+		// Use nsenter to run 'ip' in the container's network namespace.
+		allInfAddrBytes, err := exec.Command("sudo", "nsenter", "-t", pid, "-n", "ip", "-br", ipFlag, "a", "sh").CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command 'ip -br a sh': err %v, out: %s", ip, containerName,
 				err, allInfAddrBytes)
@@ -766,8 +784,8 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 			return "", fmt.Errorf("failed to extract inf name + veth name from %q splitting by %q", infNames, splitChar)
 		}
 		infName := infNamesSplit[0]
-		// validate its an interface name on the Node with iproute2
-		out, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "link", "show", infName).CombinedOutput()
+		// validate its an interface name using nsenter
+		out, err := exec.Command("sudo", "nsenter", "-t", pid, "-n", "ip", "link", "show", infName).CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("failed to validate that interface name %q with IP %s exists in container %s: err %v, out: %s",
 				infName, ip, containerName, err, out)
@@ -787,7 +805,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv4 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv4)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv4, err)
+			return ni, fmt.Errorf("failed to get network interface name using IPv4 address %s: %w", ni.IPv4, err)
 		}
 	}
 	ni.IPv6Gateway, err = getContainerNetwork(inspectNetworkIPv6GWKeyStr)
@@ -805,7 +823,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv6 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv6 address %s: %v", ni.IPv6, err)
+			return ni, fmt.Errorf("failed to get network interface name using IPv6 address %s: %w", ni.IPv6, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)
