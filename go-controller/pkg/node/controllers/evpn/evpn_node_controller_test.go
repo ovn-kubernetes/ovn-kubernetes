@@ -203,6 +203,23 @@ var _ = Describe("EVPN node controller", func() {
 			netlinkdevicemanager.VIDVNIMapping{VID: 20, VNI: 200},
 		))
 
+		By("verifying SVI device config is stored")
+		netInfo := netMgr.PrimaryNetworks["default"]
+		sviName := GetEVPNSVIName(netInfo)
+		sviCfg := ctrl.ndm.GetConfig(sviName)
+		Expect(sviCfg).NotTo(BeNil())
+		Expect(sviCfg.Master).To(Equal(util.GetNetworkVRFName(netInfo)))
+		Expect(sviCfg.VLANParent).To(Equal(bridgeName))
+		sviLink, ok := sviCfg.Link.(*netlink.Vlan)
+		Expect(ok).To(BeTrue())
+		Expect(sviLink.VlanId).To(Equal(netInfo.EVPNIPVRFVID()))
+		Expect(sviLink.HardwareAddr).To(Equal(EVPNRouterMAC(netInfo.GetNetworkID())))
+
+		By("verifying SVI is listed by VLANParent")
+		svisOnBridge := ctrl.ndm.ListDevicesByVLANParent(bridgeName)
+		Expect(svisOnBridge).To(HaveLen(1))
+		Expect(svisOnBridge[0].Link.Attrs().Name).To(Equal(sviName))
+
 		dummyCfg := ctrl.ndm.GetConfig(dummyName)
 		Expect(dummyCfg).NotTo(BeNil())
 		_, ok = dummyCfg.Link.(*netlink.Dummy)
@@ -239,11 +256,13 @@ var _ = Describe("EVPN node controller", func() {
 		Expect(ctrl.ndm.GetConfig(vxlan4Name)).To(BeNil())
 		Expect(ctrl.ndm.GetConfig(vxlan6Name)).To(BeNil())
 		Expect(ctrl.ndm.GetConfig(dummyName)).To(BeNil())
+		Expect(ctrl.ndm.GetConfig(sviName)).To(BeNil())
 		Expect(ctrl.ndm.GetBridgeMappings(vxlan4Name)).To(BeNil())
 		Expect(ctrl.ndm.GetBridgeMappings(vxlan6Name)).To(BeNil())
+		Expect(ctrl.ndm.ListDevicesByVLANParent(bridgeName)).To(HaveLen(0))
 	})
 
-	It("reconciles VTEP on NAD updates and clears cache on delete", func() {
+	It("cleans up SVI when NAD is deleted", func() {
 		nadKey := "default/evpn-nad"
 
 		Expect(netMgr).NotTo(BeNil())
@@ -294,20 +313,38 @@ var _ = Describe("EVPN node controller", func() {
 
 		netInfo := netMgr.PrimaryNetworks["default"]
 		Expect(netInfo).NotTo(BeNil())
+		bridgeName := GetEVPNBridgeName(vtepName)
+		sviName := GetEVPNSVIName(netInfo)
+
+		By("adding a NAD and verifying SVI is created")
 		netMgr.NADNetworks[nadKey] = netInfo
 		netMgr.TriggerHandlers(nadKey, netInfo, false)
 
-		bridgeName := GetEVPNBridgeName(vtepName)
 		Eventually(func() *netlinkdevicemanager.DeviceConfig {
 			return ctrl.ndm.GetConfig(bridgeName)
 		}).ShouldNot(BeNil())
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(sviName)
+		}).ShouldNot(BeNil())
 
+		By("deleting the NAD and verifying SVI is cleaned up")
 		delete(netMgr.NADNetworks, nadKey)
+		// Also remove from PrimaryNetworks since DoWithLock iterates over it
+		delete(netMgr.PrimaryNetworks, "default")
 		netMgr.TriggerHandlers(nadKey, nil, true)
 
+		// NAD cache should be cleared
 		Eventually(func() bool {
 			_, ok := ctrl.nadVTEPInfo[nadKey]
 			return !ok
 		}).Should(BeTrue())
+
+		// SVI should be cleaned up (no networks reference this VTEP now)
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(sviName)
+		}).Should(BeNil())
+		Eventually(func() []netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.ListDevicesByVLANParent(bridgeName)
+		}).Should(HaveLen(0))
 	})
 })

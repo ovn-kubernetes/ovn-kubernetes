@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 
 	utilnet "k8s.io/utils/net"
 
@@ -74,4 +75,15 @@ func getEVPNNetworkDeviceName(netInfo util.NetInfo, prefix string) string {
 		}
 	}
 	return fmt.Sprintf("%s%d", prefix, netInfo.GetNetworkID())
+}
+
+// EVPNRouterMAC generates the router MAC address for an EVPN network's SVI.
+// Uses the locally-administered prefix 0A:58 with NetworkID in the last two bytes.
+// This provides a consistent MAC for Type-5 EVPN routes across the cluster.
+func EVPNRouterMAC(networkID int) net.HardwareAddr {
+	return net.HardwareAddr{
+		0x0A, 0x58,
+		0x00, 0x00,
+		byte(networkID >> 8), byte(networkID & 0xFF),
+	}
 }

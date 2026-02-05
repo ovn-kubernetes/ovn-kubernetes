@@ -270,11 +270,12 @@ func (c *Controller) reconcile(key string) error {
 		}
 	}
 
-	mappings, err := c.getVIDVNIMappings(vtep.Name)
+	networks, err := c.collectEVPNNetworks(vtep.Name)
 	if err != nil {
-		return fmt.Errorf("failed to build VID/VNI mappings: %w", err)
+		return fmt.Errorf("failed to collect EVPN networks: %w", err)
 	}
 
+	mappings := c.getVIDVNIMappings(networks)
 	if vtepIPv4 != nil {
 		if err := c.ndm.EnsureBridgeMappings(bridgeName, vxlan4Name, mappings); err != nil {
 			return fmt.Errorf("failed to ensure VXLAN mappings for %s: %w", vxlan4Name, err)
@@ -284,6 +285,10 @@ func (c *Controller) reconcile(key string) error {
 		if err := c.ndm.EnsureBridgeMappings(bridgeName, vxlan6Name, mappings); err != nil {
 			return fmt.Errorf("failed to ensure VXLAN mappings for %s: %w", vxlan6Name, err)
 		}
+	}
+
+	if err := c.reconcileSVIs(bridgeName, networks); err != nil {
+		return fmt.Errorf("failed to reconcile SVIs: %w", err)
 	}
 
 	return nil
@@ -315,39 +320,100 @@ func (c *Controller) reconcileNAD(key string) error {
 	return nil
 }
 
-func (c *Controller) getVIDVNIMappings(vtepName string) ([]netlinkdevicemanager.VIDVNIMapping, error) {
-	var mappings []netlinkdevicemanager.VIDVNIMapping
+// evpnNetworkInfo holds EVPN config for a network.
+type evpnNetworkInfo struct {
+	macVRFVID, macVRFVNI int
+	ipVRFVID, ipVRFVNI   int
+	sviName              string
+	vrfName              string
+	routerMAC            net.HardwareAddr
+}
+
+// collectEVPNNetworks gathers EVPN network info for all networks using this VTEP.
+func (c *Controller) collectEVPNNetworks(vtepName string) ([]evpnNetworkInfo, error) {
+	var networks []evpnNetworkInfo
+
 	err := c.networkMgr.DoWithLock(func(netInfo util.NetInfo) error {
 		if netInfo == nil || netInfo.EVPNVTEPName() != vtepName {
 			return nil
 		}
-
-		macVID, macVNI := netInfo.EVPNMACVRFVID(), netInfo.EVPNMACVRFVNI()
-		if macVID != 0 && macVNI != 0 {
-			mappings = append(mappings, netlinkdevicemanager.VIDVNIMapping{
-				VID: uint16(macVID),
-				VNI: uint32(macVNI),
-			})
-		}
-
-		ipVID, ipVNI := netInfo.EVPNIPVRFVID(), netInfo.EVPNIPVRFVNI()
-		if ipVID != 0 && ipVNI != 0 {
-			mappings = append(mappings, netlinkdevicemanager.VIDVNIMapping{
-				VID: uint16(ipVID),
-				VNI: uint32(ipVNI),
-			})
-		}
-
+		networks = append(networks, evpnNetworkInfo{
+			macVRFVID: netInfo.EVPNMACVRFVID(),
+			macVRFVNI: int(netInfo.EVPNMACVRFVNI()),
+			ipVRFVID:  netInfo.EVPNIPVRFVID(),
+			ipVRFVNI:  int(netInfo.EVPNIPVRFVNI()),
+			sviName:   GetEVPNSVIName(netInfo),
+			vrfName:   util.GetNetworkVRFName(netInfo),
+			routerMAC: EVPNRouterMAC(netInfo.GetNetworkID()),
+		})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return mappings, nil
+	return networks, nil
+}
+
+func (c *Controller) getVIDVNIMappings(networks []evpnNetworkInfo) []netlinkdevicemanager.VIDVNIMapping {
+	var mappings []netlinkdevicemanager.VIDVNIMapping
+	for _, n := range networks {
+		if n.macVRFVID != 0 && n.macVRFVNI != 0 {
+			mappings = append(mappings, netlinkdevicemanager.VIDVNIMapping{VID: uint16(n.macVRFVID), VNI: uint32(n.macVRFVNI)})
+		}
+		if n.ipVRFVID != 0 && n.ipVRFVNI != 0 {
+			mappings = append(mappings, netlinkdevicemanager.VIDVNIMapping{VID: uint16(n.ipVRFVID), VNI: uint32(n.ipVRFVNI)})
+		}
+	}
+	return mappings
+}
+
+// reconcileSVIs ensures desired SVIs exist and removes stale ones.
+// Uses NDM's ListDevicesByVLANParent to find current SVIs for this bridge.
+func (c *Controller) reconcileSVIs(bridgeName string, networks []evpnNetworkInfo) error {
+	desiredSVIs := sets.New[string]()
+	for _, net := range networks {
+		if net.ipVRFVID == 0 {
+			continue
+		}
+		desiredSVIs.Insert(net.sviName)
+		if err := c.ndm.EnsureLink(netlinkdevicemanager.DeviceConfig{
+			Link: &netlink.Vlan{
+				LinkAttrs: netlink.LinkAttrs{Name: net.sviName, HardwareAddr: net.routerMAC},
+				VlanId:    net.ipVRFVID,
+			},
+			VLANParent: bridgeName,
+			Master:     net.vrfName,
+		}); err != nil {
+			return fmt.Errorf("failed to ensure SVI %s: %w", net.sviName, err)
+		}
+	}
+
+	for _, cfg := range c.ndm.ListDevicesByVLANParent(bridgeName) {
+		sviName := cfg.Link.Attrs().Name
+		if !desiredSVIs.Has(sviName) {
+			klog.Infof("SVI %s no longer applies to %s, removing it", sviName, bridgeName)
+			if err := c.ndm.DeleteLink(sviName); err != nil {
+				return fmt.Errorf("failed to delete stale SVI %s: %w", sviName, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *Controller) deleteVTEPDevices(vtepName string) error {
+	bridgeName := GetEVPNBridgeName(vtepName)
 	var errs []error
+
+	// Delete all SVIs parented to this bridge
+	for _, cfg := range c.ndm.ListDevicesByVLANParent(bridgeName) {
+		sviName := cfg.Link.Attrs().Name
+		if err := c.ndm.DeleteLink(sviName); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+
 	if err := c.ndm.DeleteLink(GetEVPNVXLANName(vtepName, utilnet.IPv4)); err != nil {
 		errs = append(errs, err)
 	}
@@ -357,7 +423,7 @@ func (c *Controller) deleteVTEPDevices(vtepName string) error {
 	if err := c.ndm.DeleteLink(GetEVPNDummyName(vtepName)); err != nil {
 		errs = append(errs, err)
 	}
-	if err := c.ndm.DeleteLink(GetEVPNBridgeName(vtepName)); err != nil {
+	if err := c.ndm.DeleteLink(bridgeName); err != nil {
 		errs = append(errs, err)
 	}
 	return utilerrors.Join(errs...)
