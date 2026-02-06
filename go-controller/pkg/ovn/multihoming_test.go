@@ -298,7 +298,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				}
 			}
 			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
-				em.isInterconnectCluster && ocInfo.bnc.TopologyType() == ovntypes.Layer3Topology {
+				em.isInterconnectCluster && ocInfo.bnc.TopologyType() == ovntypes.Layer3Topology && !hasEVPN {
 				transitSwitchName := ocInfo.bnc.GetNetworkName() + "_transit_switch"
 				extIDs := map[string]string{
 					ovntypes.NetworkExternalID:     ocInfo.bnc.GetNetworkName(),

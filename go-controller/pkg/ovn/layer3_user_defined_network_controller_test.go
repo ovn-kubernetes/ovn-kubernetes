@@ -129,14 +129,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 				Expect(err).NotTo(HaveOccurred())
 				networkPolicy := getMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
+
 				nodes := []corev1.Node{*testNode}
-				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				if testConfig.withRemoteNode {
+					By("adding a remote node")
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
 					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
-					By("adding an extra node that should be ignored by Dynamic UDN Allocation")
 					nodes = append(nodes, *testNode2)
 				}
+
 				fakeOvn.startWithDBSetup(
 					initialDB,
 					&corev1.NamespaceList{
@@ -295,8 +297,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			icClusterTestConfiguration(func(config *testConfiguration) {
 				config.configToOverride.EnableDynamicUDNAllocation = true
 				config.configToOverride.EnableNetworkSegmentation = true
+				config.withRemoteNode = true
 			}),
 			config.GatewayModeShared,
+		),
+		Entry("pod on a CUDN configured with EVPN",
+			dummyPrimaryLayer3EVPNCUDN("192.168.0.0/16", "192.168.1.0/24"),
+			icClusterTestConfiguration(func(config *testConfiguration) {
+				config.withRemoteNode = true
+			}),
+			config.GatewayModeLocal,
 		),
 	)
 
@@ -938,6 +948,12 @@ func dummyPrimaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) us
 	return secondaryNet
 }
 
+func dummyPrimaryLayer3EVPNCUDN(clustersubnets, hostsubnets string) userDefinedNetInfo {
+	udnNetInfo := dummyPrimaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets)
+	udnNetInfo.hasEVPN = true
+	return udnNetInfo
+}
+
 // This util is returning a network-name/hostSubnet for the node's node-subnets annotation
 func (sni *userDefinedNetInfo) String() string {
 	return fmt.Sprintf("%q: %q", sni.netName, sni.hostsubnets)
@@ -1187,7 +1203,8 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		},
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
+	hasEVPN := netInfo.Transport() == types.NetworkTransportEVPN
+	if config.OVNKubernetesFeature.EnableInterconnect && !hasEVPN {
 		rtotsLRPName := netInfo.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + nodeName)
 		rtotsLRPUUID := rtotsLRPName + "-UUID"
 		expectedEntities = append(expectedEntities,
