@@ -391,6 +391,10 @@ install_metallb() {
  kubectl_version = "v1.31.0"
 EOF
 
+  # Fix for newer Docker versions that don't accept --ulimit core=-1
+  # The -1 value is interpreted as a flag, not a value. Remove it entirely.
+  sed -i 's/--ulimit core=-1 //g' tasks.py
+
   pip install -r dev-env/requirements.txt
 
   local ip_family ipv6_network
