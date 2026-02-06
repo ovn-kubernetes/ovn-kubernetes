@@ -101,7 +101,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
-		Transport:                    types.NetworkTransportGeneve,
+		Transport:                    types.NetworkTransportDefault,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -363,8 +363,8 @@ type DefaultConfig struct {
 	UDNAllowedDefaultServices []string
 
 	// Transport specifies the transport technology used for the default network.
-	// Accepts: "geneve" or "no-overlay".
-	// Defaults to "geneve".
+	// Accepts: "default" or "no-overlay".
+	// Defaults to "default".
 	Transport string `gcfg:"transport"`
 }
 
@@ -1032,7 +1032,7 @@ var CommonFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "transport",
 		Value:       Default.Transport,
-		Usage:       "Transport technology used for the default network, default to geneve if unspecified. (geneve, no-overlay)",
+		Usage:       "Transport technology used for the default network, default to \"default\" if unspecified. (default, no-overlay)",
 		Destination: &cliConfig.Default.Transport,
 	},
 	&cli.BoolFlag{
@@ -2384,8 +2384,8 @@ func buildNoOverlayConfig(file *config) error {
 // validateNoOverlayConfig validates the no-overlay configuration
 func validateNoOverlayConfig() error {
 	// Validate transport option
-	if Default.Transport != types.NetworkTransportGeneve && Default.Transport != types.NetworkTransportNoOverlay {
-		return fmt.Errorf("invalid transport %q: must be %q or %q", Default.Transport, types.NetworkTransportGeneve, types.NetworkTransportNoOverlay)
+	if Default.Transport != types.NetworkTransportDefault && Default.Transport != types.NetworkTransportNoOverlay {
+		return fmt.Errorf("invalid transport %q: must be %q or %q", Default.Transport, types.NetworkTransportDefault, types.NetworkTransportNoOverlay)
 	}
 
 	// If transport is no-overlay, validate required no-overlay options
