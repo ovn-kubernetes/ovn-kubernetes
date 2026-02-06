@@ -468,6 +468,24 @@ func (_m *NetLinkOps) LinkSetAlias(link netlink.Link, name string) error {
 	return r0
 }
 
+// LinkSetIsolated provides a mock function with given fields: link, mode
+func (_m *NetLinkOps) LinkSetIsolated(link netlink.Link, mode bool) error {
+	ret := _m.Called(link, mode)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LinkSetIsolated")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(netlink.Link, bool) error); ok {
+		r0 = rf(link, mode)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // LinkSetBrNeighSuppress provides a mock function with given fields: link, mode
 func (_m *NetLinkOps) LinkSetBrNeighSuppress(link netlink.Link, mode bool) error {
 	ret := _m.Called(link, mode)

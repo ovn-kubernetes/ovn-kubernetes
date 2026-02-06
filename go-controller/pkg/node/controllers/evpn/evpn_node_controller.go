@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -525,7 +526,6 @@ func (c *Controller) deleteOVSPort(portName string) error {
 	return libovsdbops.DeletePortWithInterfaces(c.ovsClient, ovsBridgeInt, portName)
 }
 
-
 func (c *Controller) deleteVTEPDevices(vtepName string) error {
 	bridgeName := GetEVPNBridgeName(vtepName)
 	var errs []error
@@ -600,6 +600,7 @@ func (c *Controller) ensureVXLAN(vxlanName string, bridgeName string, srcIP net.
 			VLANTunnel:    true,
 			NeighSuppress: true,
 			Learning:      false,
+			Isolated:      true,
 		},
 	})
 	if err != nil {
@@ -609,6 +610,14 @@ func (c *Controller) ensureVXLAN(vxlanName string, bridgeName string, srcIP net.
 }
 
 func (c *Controller) getVTEPIPs(vtep *vtepv1.VTEP, node *corev1.Node) (net.IP, net.IP, error) {
+	if vtep.Spec.Mode == vtepv1.VTEPModeUnmanaged {
+		return c.discoverVTEPIPs(vtep)
+	}
+	return c.getVTEPIPsFromAnnotation(vtep, node)
+}
+
+// getVTEPIPsFromAnnotation reads VTEP IPs from the node annotation set by the cluster manager allocator.
+func (c *Controller) getVTEPIPsFromAnnotation(vtep *vtepv1.VTEP, node *corev1.Node) (net.IP, net.IP, error) {
 	vtepIPs, err := util.ParseVTEPIPsAnnotation(node)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse VTEP IPs annotation: %w", err)
@@ -629,6 +638,46 @@ func (c *Controller) getVTEPIPs(vtep *vtepv1.VTEP, node *corev1.Node) (net.IP, n
 			ipv4 = ip
 		} else {
 			ipv6 = ip
+		}
+	}
+	return ipv4, ipv6, nil
+}
+
+// discoverVTEPIPs finds IPs on local interfaces that fall within the VTEP's CIDRs.
+// For unmanaged VTEPs, an external provider has already assigned IPs to the node;
+// this discovers them via netlink rather than requiring a node annotation.
+func (c *Controller) discoverVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP, error) {
+	var cidrs []*net.IPNet
+	for _, cidr := range vtep.Spec.CIDRs {
+		_, ipNet, err := net.ParseCIDR(string(cidr))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse VTEP CIDR %q: %w", cidr, err)
+		}
+		cidrs = append(cidrs, ipNet)
+	}
+
+	var ipv4, ipv6 net.IP
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		addrs, err := util.GetNetLinkOps().AddrList(nil, family)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to list addresses (family %d): %w", family, err)
+		}
+		for _, addr := range addrs {
+			// Skip VIPs: keepalived labels them with "vip", and MetalLB/keepalived
+			// add them as secondary. These IPs can float between nodes.
+			if util.IsAddressAddedByKeepAlived(addr) || (addr.Flags&unix.IFA_F_SECONDARY) != 0 {
+				continue
+			}
+			for _, cidr := range cidrs {
+				if cidr.Contains(addr.IP) {
+					if addr.IP.To4() != nil {
+						ipv4 = addr.IP
+					} else {
+						ipv6 = addr.IP
+					}
+					break
+				}
+			}
 		}
 	}
 	return ipv4, ipv6, nil

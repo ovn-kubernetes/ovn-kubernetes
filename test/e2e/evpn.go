@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -506,9 +505,11 @@ func setupEVPNBGPOnExternalFRR(ictx infraapi.Context, asn int, neighborIPs []str
 	cmd = append(cmd, "-c", "address-family l2vpn evpn")
 	cmd = append(cmd, "-c", "advertise-all-vni")
 
-	// Activate each neighbor in the l2vpn evpn address-family
+	// Activate each neighbor in the l2vpn evpn address-family and configure
+	// route-reflector-client so that EVPN routes are reflected.
 	for _, ip := range neighborIPs {
 		cmd = append(cmd, "-c", fmt.Sprintf("neighbor %s activate", ip))
+		cmd = append(cmd, "-c", fmt.Sprintf("neighbor %s route-reflector-client", ip))
 	}
 
 	cmd = append(cmd, "-c", "exit-address-family")
@@ -1021,9 +1022,9 @@ func createVTEP(f *framework.Framework, ictx infraapi.Context, name string, cidr
 // createFRRConfiguration creates an FRRConfiguration CR for BGP peering with the external FRR.
 // This is used by RouteAdvertisements to determine which neighbors to advertise routes to.
 //
-// For EVPN L3 IP-VRF, we don't need toReceive because:
-// - External routes come via EVPN Type-5 and are imported via route-target matching in the VRF
-// - The FRRConfiguration just provides the BGP neighbor definition and label for RA selector
+// With unmanaged VTEP mode using node IPs, no IPv4/IPv6 unicast prefix advertisement
+// is needed — the VTEP IPs (node IPs) are already directly reachable from the external FRR
+// on the same L2 network. Only the BGP neighbor definition and label for RA selector are needed.
 //
 // Parameters:
 //   - ictx: Infrastructure context for cleanup registration
@@ -1046,7 +1047,9 @@ func createFRRConfiguration(ictx infraapi.Context,
 
 	// Generate FRRConfiguration YAML
 	// No toReceive needed - EVPN routes come via l2vpn evpn address-family
-	// and are imported via route-target matching in the VRF
+	// and are imported via route-target matching in the VRF.
+	// No prefixes/toAdvertise needed - with unmanaged VTEP using node IPs,
+	// the VTEP IPs are directly reachable on the same L2 network.
 	yaml := fmt.Sprintf(`apiVersion: frrk8s.metallb.io/v1beta1
 kind: FRRConfiguration
 metadata:
@@ -1095,111 +1098,6 @@ metadata:
 
 	framework.Logf("FRRConfiguration created: %s (neighbor: %s)", name, neighborIP)
 	return nil
-}
-
-// =============================================================================
-// REVERT ME: Temporary Cluster-Side EVPN Setup
-// =============================================================================
-// This section provides a temporary workaround to enable EVPN E2E tests before
-// OVN-Kubernetes natively implements EVPN. It downloads and executes a setup
-// script from a remote GitHub repository.
-//
-// The script performs:
-//   - Step 7: Setup EVPN Bridge on cluster nodes (br0/vxlan0)
-//   - Step 8: Configure MAC-VRF + IP-VRF (OVS port, OVN LSP, VLAN/VNI, SVI)
-//   - Step 9: Configure frr-k8s for EVPN BGP (vtysh commands)
-//
-// Remove this entire section once OVN-K EVPN implementation is complete.
-// =============================================================================
-
-const (
-	// clusterEVPNSetupScriptURL is the URL to the cluster-side EVPN setup script.
-	// REVERT ME: Remove this once OVN-K implements EVPN natively.
-	clusterEVPNSetupScriptURL = "https://raw.githubusercontent.com/tssurya/evpn-scripts-on-ovnk-kind-with-existing-bgp-setup/main/evpn-cluster-setup.sh"
-)
-
-// runClusterEVPNSetupScript executes the cluster-side EVPN setup script from remote URL.
-// The script discovers and configures all cluster nodes automatically using kubectl.
-// This is a temporary workaround until OVN-K implements EVPN natively.
-//
-// REVERT ME: Remove this function once OVN-K EVPN implementation is complete.
-func runClusterEVPNSetupScript(ictx infraapi.Context,
-	networkName, externalFRRIP string,
-	bgpASN int,
-	hasMACVRF bool, macVRFVNI, macVRFVID int,
-	hasIPVRF bool, ipVRFVNI, ipVRFVID int,
-	cudnSubnets []string) error {
-
-	// Build environment variables - script handles node discovery via kubectl
-	// All vars prefixed with EVPN_ to avoid conflicts with other env vars
-	env := map[string]string{
-		"EVPN_NETWORK_NAME":    networkName,
-		"EVPN_EXTERNAL_FRR_IP": externalFRRIP,
-		"EVPN_BGP_ASN":         fmt.Sprintf("%d", bgpASN),
-		"EVPN_CUDN_SUBNETS":    strings.Join(cudnSubnets, ","),
-		"EVPN_OVN_NAMESPACE":   deploymentconfig.Get().OVNKubernetesNamespace(),
-		"EVPN_FRR_NAMESPACE":   deploymentconfig.Get().FRRK8sNamespace(),
-	}
-	if hasMACVRF {
-		env["EVPN_MACVRF_VNI"] = fmt.Sprintf("%d", macVRFVNI)
-		env["EVPN_MACVRF_VID"] = fmt.Sprintf("%d", macVRFVID)
-	}
-	if hasIPVRF {
-		env["EVPN_IPVRF_VNI"] = fmt.Sprintf("%d", ipVRFVNI)
-		env["EVPN_IPVRF_VID"] = fmt.Sprintf("%d", ipVRFVID)
-	}
-
-	// Register cleanup FIRST - ensures cleanup runs even if setup fails
-	ictx.AddCleanUpFn(func() error {
-		cleanupEnv := copyEnvMap(env)
-		cleanupEnv["EVPN_CLEANUP"] = "true"
-
-		framework.Logf("Running cluster EVPN cleanup script")
-		if err := runRemoteScript(clusterEVPNSetupScriptURL, cleanupEnv); err != nil {
-			// Log but don't fail - cleanup should be best-effort
-			framework.Logf("WARNING: cleanup script had errors (may be expected): %v", err)
-		}
-		return nil
-	})
-
-	// Run setup script - it handles all nodes internally
-	framework.Logf("Running cluster EVPN setup script")
-	if err := runRemoteScript(clusterEVPNSetupScriptURL, env); err != nil {
-		return fmt.Errorf("setup script failed: %w", err)
-	}
-
-	framework.Logf("Cluster-side EVPN setup complete")
-	return nil
-}
-
-// runRemoteScript executes a bash script from a URL with the given environment variables.
-// Uses: curl -sL $url | bash
-func runRemoteScript(url string, env map[string]string) error {
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("curl -sL %s | bash", url))
-
-	// Set environment variables
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
-
-	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		framework.Logf("Script output:\n%s", string(output))
-	}
-	if err != nil {
-		return fmt.Errorf("script failed: %w\nOutput: %s", err, string(output))
-	}
-	return nil
-}
-
-// copyEnvMap creates a copy of an environment variable map.
-func copyEnvMap(m map[string]string) map[string]string {
-	cp := make(map[string]string, len(m))
-	for k, v := range m {
-		cp[k] = v
-	}
-	return cp
 }
 
 // =============================================================================
@@ -1269,10 +1167,6 @@ var _ = ginkgo.Describe("EVPN", func() {
 		ipVRFAgnhostSubnetIPv4 = "172.27.102.0/24"
 		ipVRFAgnhostSubnetIPv6 = "fd00:102::/64"
 
-		// VTEP subnet for VTEP IP allocation
-		vtepSubnetIPv4 = "100.64.0.0/24"
-		vtepSubnetIPv6 = "fd00:64::/112"
-
 		// Connectivity test parameters
 		timeout = 60 * time.Second
 	)
@@ -1329,15 +1223,13 @@ var _ = ginkgo.Describe("EVPN", func() {
 			case utilnet.IPv4:
 				cudnSubnets = append(cudnSubnets, cudnSubnetIPv4)
 				ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostSubnetIPv4)
-				vtepSubnets = append(vtepSubnets, vtepSubnetIPv4)
 			case utilnet.IPv6:
 				cudnSubnets = append(cudnSubnets, cudnSubnetIPv6)
 				ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostSubnetIPv6)
-				vtepSubnets = append(vtepSubnets, vtepSubnetIPv6)
 			}
 		}
 
-		// Discover external FRR IP
+		// Discover external FRR IP and VTEP subnets from kind network
 		kindNetwork, err := infraprovider.Get().GetNetwork("kind")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		frrNetIf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
@@ -1352,6 +1244,20 @@ var _ = ginkgo.Describe("EVPN", func() {
 		}
 		gomega.Expect(externalFRRIP).NotTo(gomega.BeEmpty(), "External FRR must have an IP on kind network")
 		framework.Logf("External FRR IP: %s", externalFRRIP)
+
+		// Derive VTEP subnets from the kind network CIDRs.
+		// With unmanaged VTEP mode, we use node IPs as VTEP IPs, so the VTEP
+		// CIDRs match the node network (kind bridge) — no separate underlay needed.
+		kindV4Subnet, kindV6Subnet, err := kindNetwork.IPv4IPv6Subnets()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		if isIPv4Supported(f.ClientSet) && kindV4Subnet != "" {
+			vtepSubnets = append(vtepSubnets, kindV4Subnet)
+		}
+		if isIPv6Supported(f.ClientSet) && kindV6Subnet != "" {
+			vtepSubnets = append(vtepSubnets, kindV6Subnet)
+		}
+		gomega.Expect(vtepSubnets).NotTo(gomega.BeEmpty(), "Kind network must have subnets for VTEP CIDRs")
+		framework.Logf("VTEP subnets (from kind network): %v", vtepSubnets)
 
 		// Collect node IPs for BGP neighbors
 		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
@@ -1457,9 +1363,9 @@ var _ = ginkgo.Describe("EVPN", func() {
 				gomega.Expect(setupIPVRFBGPOnExternalFRR(ictx, ipVRFName, bgpASN, int(networkSpec.EVPN.IPVRF.VNI), ipFamilies, ipVRFAgnhostSubnets)).To(gomega.Succeed())
 			}
 
-			ginkgo.By("Creating VTEP CR")
+			ginkgo.By("Creating VTEP CR (Unmanaged - using node IPs)")
 			testVTEPName := testBaseName + "-vtep"
-			err := createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeManaged)
+			err := createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeUnmanaged)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Update VTEP name in network spec
@@ -1474,15 +1380,6 @@ var _ = ginkgo.Describe("EVPN", func() {
 			testNamespace, err := createNamespaceWithPrimaryNetworkOfType(f, ictx, baseName, testBaseName, cudnAdvertisedVRFLiteOrEVPN, networkSpec)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			f.Namespace = testNamespace
-
-			// REVERT ME: Temporary cluster-side EVPN setup until OVN-K implements it natively
-			ginkgo.By("Running cluster-side EVPN setup script (REVERT ME)")
-			err = runClusterEVPNSetupScript(ictx,
-				testBaseName, externalFRRIP, bgpASN,
-				hasMACVRF, macVRFVNI, macVRFVID,
-				hasIPVRF, ipVRFVNI, ipVRFVID,
-				cudnSubnetsFromSpec)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Creating test pod on CUDN")
 			testPod := e2epod.CreateExecPodOrFail(
