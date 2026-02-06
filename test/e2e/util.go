@@ -2074,6 +2074,40 @@ func isNoOverlayEnabled() bool {
 	return val == "true"
 }
 
+// isOutboundSNATEnabled checks if outbound SNAT is enabled for the default network
+func isOutboundSNATEnabled() bool {
+	if !isNoOverlayEnabled() {
+		return false
+	}
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	args := []string{"get", "configmap", "ovnkube-config", "-o=jsonpath={.data.ovnkube\\.conf}"}
+	conf := e2ekubectl.RunKubectlOrDie(ovnKubeNamespace, args...)
+
+	// Simplistic check for outbound-snat = enable
+	if strings.Contains(conf, "outbound-snat = enable") || strings.Contains(conf, "outbound-snat=enable") {
+		framework.Logf("Outbound SNAT is enabled in ovnkube-config")
+		return true
+	}
+	return false
+}
+
+// isManagedRoutingEnabled checks if managed routing is enabled for the default network
+func isManagedRoutingEnabled() bool {
+	if !isNoOverlayEnabled() {
+		return false
+	}
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	args := []string{"get", "configmap", "ovnkube-config", "-o=jsonpath={.data.ovnkube\\.conf}"}
+	conf := e2ekubectl.RunKubectlOrDie(ovnKubeNamespace, args...)
+
+	// Simplistic check for routing = managed
+	if strings.Contains(conf, "routing = managed") || strings.Contains(conf, "routing=managed") {
+		framework.Logf("Managed routing is enabled in ovnkube-config")
+		return true
+	}
+	return false
+}
+
 // getNodePodSubnets retrieves the pod subnets for a node from the k8s.ovn.org/node-subnets annotation.
 // This returns the actual pod CIDRs that OVN uses for routing.
 func getNodePodSubnets(node *v1.Node) ([]string, error) {
