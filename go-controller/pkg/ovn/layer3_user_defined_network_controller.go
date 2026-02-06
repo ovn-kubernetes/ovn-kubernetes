@@ -523,6 +523,19 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	// Note : Cluster manager removes the subnet annotation for the node.
 	netName := oc.GetNetworkName()
 	klog.Infof("Delete OVN logical entities for %s network controller of network %s", types.Layer3Topology, netName)
+
+	// For primary L3 UDN only: when this is a cleanup-only controller (dummy for stale UDN
+	// cleanup; GetNetworkID() is InvalidID because netInfo was never reconciled from a NAD),
+	// discover and cleanup all gateway routers from the NB DB. DB-driven cleanup works even
+	// when nodes are already gone.
+	if oc.IsPrimaryNetwork() && oc.GetNetworkID() == types.InvalidID {
+		if err := cleanupGatewayRoutersForNetworkFromDB(oc.nbClient, oc.GetNetInfo(),
+			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkScopedJoinSwitchName()); err != nil {
+			return fmt.Errorf("failed to cleanup gateway routers for network %s: %w", netName, err)
+		}
+	}
+
+	// Node switches (which hold management port LSPs) are deleted below; LSPs are cascade-deleted with the logical switch.
 	// first delete node logical switches
 	ops, err = libovsdbops.DeleteLogicalSwitchesWithPredicateOps(oc.nbClient, ops,
 		func(item *nbdb.LogicalSwitch) bool {
@@ -562,6 +575,16 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 		return err
 	}
 
+	// Delete QoS rows for this network (e.g. from NetworkQoS controller). Applies to primary and
+	// secondary Layer3 UDNs when EnableNetworkQoS is set.
+	ops, err = libovsdbops.DeleteQoSesWithPredicateOps(oc.nbClient, ops,
+		func(item *nbdb.QoS) bool {
+			return item.ExternalIDs[types.NetworkExternalID] == netName
+		})
+	if err != nil {
+		return fmt.Errorf("failed to get ops for deleting QoSes of network %s: %v", netName, err)
+	}
+
 	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
 	if err != nil {
 		return fmt.Errorf("failed to deleting routers/switches of network %s: %v", netName, err)
@@ -574,13 +597,8 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	}
 
 	// remove load balancer groups
-	lbGroups := make([]*nbdb.LoadBalancerGroup, 0, 3)
-	for _, lbGroupUUID := range []string{oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID} {
-		lbGroups = append(lbGroups, &nbdb.LoadBalancerGroup{UUID: lbGroupUUID})
-	}
-	if err := libovsdbops.DeleteLoadBalancerGroups(oc.nbClient, lbGroups); err != nil {
-		klog.Errorf("Failed to delete load balancer groups on network: %q, error: %v", oc.GetNetworkName(), err)
-	}
+	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
+		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
 
 	return nil
 }

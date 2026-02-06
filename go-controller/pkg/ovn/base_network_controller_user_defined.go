@@ -819,6 +819,75 @@ func (bsnc *BaseUserDefinedNetworkController) WatchMultiNetworkPolicy() error {
 	return nil
 }
 
+// cleanupGatewayRoutersForNetworkFromDB discovers all gateway routers for the given network from
+// the NB DB (by ExternalIDs and GWRouterPrefix) and cleans each one via a dummy GatewayManager.
+// Used when gateway managers are empty (e.g. dummy controller or stale cleanup) so cleanup works
+// even when nodes are gone.
+func cleanupGatewayRoutersForNetworkFromDB(
+	nbClient libovsdbclient.Client,
+	netInfo util.NetInfo,
+	clusterRouterName, joinSwitchName string,
+) error {
+	var errs []error
+	networkName := netInfo.GetNetworkName()
+	pred := func(lr *nbdb.LogicalRouter) bool {
+		return lr.ExternalIDs[types.NetworkExternalID] == networkName &&
+			strings.HasPrefix(lr.Name, types.GWRouterPrefix)
+	}
+	routers, err := libovsdbops.FindLogicalRoutersWithPredicate(nbClient, pred)
+	if err != nil {
+		return fmt.Errorf("failed to find gateway routers for network %s: %w", networkName, err)
+	}
+	layer2UseTransitRouter := netInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter
+	for _, lr := range routers {
+		nodeName := netInfo.RemoveNetworkScopeFromName(util.GetWorkerFromGatewayRouter(lr.Name))
+		gw := NewGatewayManagerForCleanup(nbClient, netInfo, clusterRouterName, joinSwitchName, lr.Name, nodeName, layer2UseTransitRouter)
+		if err := gw.Cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup gateway router %s for network %q (node %s): %w", lr.Name, networkName, nodeName, err))
+		}
+	}
+	return utilerrors.Join(errs...)
+}
+
+// cleanupLoadBalancerGroups removes load balancer groups for a user-defined network controller.
+// When LB group UUIDs are known (normal controller), they are deleted directly by UUID.
+// Otherwise (dummy/stale cleanup controller), the groups are looked up by network-scoped name.
+func cleanupLoadBalancerGroups(
+	nbClient libovsdbclient.Client,
+	netInfo util.NetInfo,
+	switchLBGroupUUID, clusterLBGroupUUID, routerLBGroupUUID string,
+) {
+	networkName := netInfo.GetNetworkName()
+	if switchLBGroupUUID != "" || clusterLBGroupUUID != "" || routerLBGroupUUID != "" {
+		lbGroups := make([]*nbdb.LoadBalancerGroup, 0, 3)
+		for _, lbGroupUUID := range []string{switchLBGroupUUID, clusterLBGroupUUID, routerLBGroupUUID} {
+			if lbGroupUUID != "" {
+				lbGroups = append(lbGroups, &nbdb.LoadBalancerGroup{UUID: lbGroupUUID})
+			}
+		}
+		if err := libovsdbops.DeleteLoadBalancerGroups(nbClient, lbGroups); err != nil {
+			klog.Errorf("Failed to delete load balancer groups on network: %q, error: %v", networkName, err)
+		}
+		return
+	}
+	// Dummy controller (e.g. stale UDN cleanup): find LB groups by network-scoped name and delete them
+	names := map[string]bool{
+		netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterLBGroupName):       true,
+		netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterSwitchLBGroupName): true,
+		netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName): true,
+	}
+	staleLBGroups, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(g *nbdb.LoadBalancerGroup) bool {
+		return names[g.Name]
+	})
+	if err != nil {
+		klog.Errorf("Failed to find load balancer groups for stale network %q: %v", networkName, err)
+	} else if len(staleLBGroups) > 0 {
+		if err := libovsdbops.DeleteLoadBalancerGroups(nbClient, staleLBGroups); err != nil {
+			klog.Errorf("Failed to delete load balancer groups on stale network: %q, error: %v", networkName, err)
+		}
+	}
+}
+
 // cleanupPolicyLogicalEntities cleans up all the port groups and address sets that belong to the given controller
 func cleanupPolicyLogicalEntities(nbClient libovsdbclient.Client, ops []ovsdb.Operation, controllerName string) ([]ovsdb.Operation, error) {
 	var err error
