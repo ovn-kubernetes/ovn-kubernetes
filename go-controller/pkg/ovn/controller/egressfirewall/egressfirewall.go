@@ -948,8 +948,8 @@ func (oc *EFController) moveACLsToNamespacedPortGroups(existingEFNamespaces map[
 			if namespace != "" && existingEFNamespaces[namespace] {
 				pgName, err := oc.getNamespacePortGroupName(namespace)
 				if err != nil {
-					return fmt.Errorf("failed to get port group name for egress firewall ACL move with "+
-						"namespace: %s, err: %w", namespace, err)
+					klog.Warningf("Skipping egress firewall ACL move for namespace %s: %v", namespace, err)
+					continue
 				}
 				// re-attach from ClusterPortGroupNameBase to namespaced port group.
 				// port group should exist, because namespace handler will create it.
@@ -1088,11 +1088,18 @@ func getNamespacePortGroupDbIDs(ns string, controller string) *libovsdbops.DbObj
 }
 
 func (oc *EFController) getNamespacePortGroupName(namespace string) (string, error) {
-	activeNetwork, err := oc.networkManager.GetActiveNetworkForNamespace(namespace)
+	nadKey, err := oc.networkManager.GetPrimaryNADForNamespace(namespace)
 	if err != nil {
-		return "", fmt.Errorf("failed to get active network for namespace %s: %w", namespace, err)
+		return "", fmt.Errorf("failed to get primary NAD for namespace %s: %w", namespace, err)
 	}
-	ownerController := activeNetwork.GetNetworkName() + "-network-controller"
+	networkName := types.DefaultNetworkName
+	if nadKey != types.DefaultNetworkName && nadKey != "" {
+		networkName = oc.networkManager.GetNetworkNameForNADKey(nadKey)
+		if networkName == "" {
+			return "", fmt.Errorf("failed to resolve network name for NAD %s in namespace %s", nadKey, namespace)
+		}
+	}
+	ownerController := networkName + "-network-controller"
 	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController)), nil
 }
 
