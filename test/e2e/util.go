@@ -21,6 +21,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
@@ -2064,4 +2065,33 @@ func waitForNodeReadyState(f *framework.Framework, nodeName string, timeout time
 		}
 		return false
 	}, timeout, 10*time.Second).Should(gomega.BeTrue(), expectationMessage)
+}
+
+// isNoOverlayEnabled checks if no-overlay mode is enabled for the default network
+func isNoOverlayEnabled() bool {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_NO_OVERLAY_ENABLE")
+	return val == "true"
+}
+
+// getNodePodSubnets retrieves the pod subnets for a node from the k8s.ovn.org/node-subnets annotation.
+// This returns the actual pod CIDRs that OVN uses for routing.
+func getNodePodSubnets(node *v1.Node) ([]string, error) {
+	nodeSubnetsAnnotation, ok := node.Annotations[ovnNodeSubnets]
+	if !ok {
+		return nil, fmt.Errorf("node %s missing %s annotation", node.Name, ovnNodeSubnets)
+	}
+
+	// The annotation is JSON like: {"default":["10.244.1.0/24","fd00:10:244:2::/64"]}
+	var nodeSubnets map[string][]string
+	if err := json.Unmarshal([]byte(nodeSubnetsAnnotation), &nodeSubnets); err != nil {
+		return nil, fmt.Errorf("failed to parse node-subnets annotation for node %s: %w", node.Name, err)
+	}
+
+	subnets, ok := nodeSubnets[ovntypes.DefaultNetworkName]
+	if !ok || len(subnets) == 0 {
+		return nil, fmt.Errorf("node %s has no subnets for network %s", node.Name, ovntypes.DefaultNetworkName)
+	}
+
+	return subnets, nil
 }
