@@ -22,8 +22,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -32,6 +34,7 @@ import (
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
@@ -44,6 +47,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	ovnretry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -192,7 +196,12 @@ type EgressIPController struct {
 	// value will be true if local to this zone and false otherwise
 	nodeZoneState *syncmap.SyncMap[bool]
 	// networkManager used for getting network information for UDNs
-	networkManager networkmanager.Interface
+	networkManager          networkmanager.Interface
+	nadReconciler           networkmanager.NADReconciler
+	nadReconcilerID         uint64
+	nadReconcilerRegistered bool
+	// retryEgressIPPods allows requeuing egressIP pod processing on NAD changes
+	retryEgressIPPods *ovnretry.RetryFramework
 	// An address set factory that creates address sets
 	addressSetFactory addressset.AddressSetFactory
 	// Northbound database zone name to which this Controller is connected to - aka local zone
@@ -233,6 +242,16 @@ func NewEIPController(
 		v4:                v4,
 		v6:                v6,
 	}
+	nadReconcilerConfig := &controller.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   e.syncNAD,
+		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
+	}
+	e.nadReconciler = controller.NewReconciler(
+		controllerName+"-egressip-nad",
+		nadReconcilerConfig,
+	)
 	return e
 }
 
@@ -362,18 +381,24 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 			for _, namespace := range namespaces {
 				namespaceLabels := labels.Set(namespace.Labels)
 				if !newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
-					ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+					ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 					if err != nil {
 						return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
+					}
+					if !ok {
+						continue
 					}
 					if err := e.deleteNamespaceEgressIPAssignment(ni, oldEIP.Name, oldEIP.Status.Items, namespace, oldEIP.Spec.PodSelector); err != nil {
 						return fmt.Errorf("network %s: failed to delete namespace %s egress IP config: %v", ni.GetNetworkName(), namespace.Name, err)
 					}
 				}
 				if newNamespaceSelector.Matches(namespaceLabels) && !oldNamespaceSelector.Matches(namespaceLabels) {
-					ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+					ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 					if err != nil {
 						return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
+					}
+					if !ok {
+						continue
 					}
 					if err := e.addNamespaceEgressIPAssignments(ni, newEIP.Name, newEIP.Status.Items, mark, namespace, newEIP.Spec.PodSelector); err != nil {
 						errs = append(errs, fmt.Errorf("network %s: failed to add namespace %s egress IP config: %v", ni.GetNetworkName(), namespace.Name, err))
@@ -397,18 +422,24 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				for _, pod := range pods {
 					podLabels := labels.Set(pod.Labels)
 					if !newPodSelector.Matches(podLabels) && oldPodSelector.Matches(podLabels) {
-						ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+						ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 						if err != nil {
 							return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
+						}
+						if !ok {
+							continue
 						}
 						if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, oldEIP.Name, oldEIP.Status.Items, pod); err != nil {
 							return fmt.Errorf("network %s: failed to delete pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
 						}
 					}
 					if newPodSelector.Matches(podLabels) && !oldPodSelector.Matches(podLabels) {
-						ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+						ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 						if err != nil {
 							return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
+						}
+						if !ok {
+							continue
 						}
 						if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
 							errs = append(errs, fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err))
@@ -429,9 +460,12 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				namespaceLabels := labels.Set(namespace.Labels)
 				// If the namespace does not match anymore then there's no
 				// reason to look at the pod selector.
-				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+				ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 				if err != nil {
 					return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
+				}
+				if !ok {
+					continue
 				}
 				if !newNamespaceSelector.Matches(namespaceLabels) && oldNamespaceSelector.Matches(namespaceLabels) {
 					if err := e.deleteNamespaceEgressIPAssignment(ni, oldEIP.Name, oldEIP.Status.Items, namespace, oldEIP.Spec.PodSelector); err != nil {
@@ -536,9 +570,12 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 				return err
 			}
 			if namespaceSelector.Matches(oldLabels) && !namespaceSelector.Matches(newLabels) {
-				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespaceName)
+				ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespaceName)
 				if err != nil {
 					return fmt.Errorf("failed to get active network for namespace %s: %w", namespaceName, err)
+				}
+				if !ok {
+					return nil
 				}
 				if err := e.deleteNamespaceEgressIPAssignment(ni, eIP.Name, eIP.Status.Items, oldNamespace, eIP.Spec.PodSelector); err != nil {
 					return fmt.Errorf("network %s: failed to delete namespace %q for egress IP %q: %w",
@@ -547,9 +584,12 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 			}
 			if !namespaceSelector.Matches(oldLabels) && namespaceSelector.Matches(newLabels) {
 				mark := getEgressIPPktMark(eIP.Name, eIP.Annotations)
-				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespaceName)
+				ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespaceName)
 				if err != nil {
 					return fmt.Errorf("failed to get active network for namespace %s: %v", namespaceName, err)
+				}
+				if !ok {
+					return nil
 				}
 				if err := e.addNamespaceEgressIPAssignments(ni, eIP.Name, eIP.Status.Items, mark, newNamespace, eIP.Spec.PodSelector); err != nil {
 					return fmt.Errorf("network %s: failed to add namespace %q for egress IP %q: %w",
@@ -653,15 +693,13 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 				if err != nil {
 					return err
 				}
-				ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
-				if err != nil {
-					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
-				}
+				oldMatches, newMatches := false, false
+				deletePath := false
 				if !podSelector.Empty() {
 					// Use "new" and "old" instead of "newPod" and "oldPod" to determine whether
 					// pods was created or is being deleted.
-					newMatches := new != nil && podSelector.Matches(newPodLabels)
-					oldMatches := old != nil && podSelector.Matches(oldPodLabels)
+					newMatches = new != nil && podSelector.Matches(newPodLabels)
+					oldMatches = old != nil && podSelector.Matches(oldPodLabels)
 					// If the podSelector doesn't match the pod, then continue
 					// because this EgressIP intends to match other pods in that
 					// namespace and not this one. Other EgressIP objects might
@@ -671,7 +709,31 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 					}
 					// Check if the pod stopped matching. If the pod was deleted,
 					// "new" will be nil, so this must account for that case.
-					if !newMatches && oldMatches {
+					deletePath = !newMatches && oldMatches
+				} else {
+					// Empty pod selector means all pods in namespace are matched.
+					deletePath = new == nil
+				}
+
+				ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
+				if err != nil {
+					return fmt.Errorf("failed to get active network for namespace %s: %w", namespace.Name, err)
+				}
+				if !ok && deletePath && old != nil {
+					// During dynamic UDN churn, active network resolution can transiently return !ok on delete.
+					// Fall back to the pod-assignment cache network to avoid skipping stale egressIP cleanup.
+					if cachedNetwork := e.getNetworkFromPodAssignment(getPodKey(oldPod)); cachedNetwork != nil {
+						ni = cachedNetwork
+						ok = true
+						klog.V(4).Infof("Using cached network %q for egressIP delete reconciliation of pod %s/%s",
+							ni.GetNetworkName(), oldPod.Namespace, oldPod.Name)
+					}
+				}
+				if !ok {
+					return nil
+				}
+				if !podSelector.Empty() {
+					if deletePath {
 						if err := e.deletePodEgressIPAssignmentsWithCleanup(ni, eIP.Name, eIP.Status.Items, oldPod); err != nil {
 							return fmt.Errorf("network %s: failed to delete pod %s/%s for egress IP %q: %w",
 								ni.GetNetworkName(), oldPod.Namespace, oldPod.Name, eIP.Name, err)
@@ -725,9 +787,12 @@ func (e *EgressIPController) addEgressIPAssignments(name string, statusAssignmen
 	}
 	var errs []error
 	for _, namespace := range namespaces {
-		ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+		ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
+		}
+		if !ok {
+			continue
 		}
 		if err := e.addNamespaceEgressIPAssignments(ni, name, statusAssignments, mark, namespace, podSelector); err != nil {
 			errs = append(errs, err)
@@ -1304,6 +1369,102 @@ func (e *EgressIPController) getALocalZoneNodeName() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("failed to find a local OVN zone Node")
+}
+
+// resolveActiveNetworkForNamespaceOnLocalNode returns the active network for the namespace
+// only if the network is active on the local zone node. It returns (nil, false, nil) when
+// the network is not active on this zone or the namespace/UDN is not yet processed.
+func (e *EgressIPController) resolveActiveNetworkForNamespaceOnLocalNode(namespace string) (util.NetInfo, bool, error) {
+	localNodeName, err := e.getALocalZoneNodeName()
+	if err != nil {
+		klog.V(5).Infof("No local zone node found while resolving network for namespace %q: %v", namespace, err)
+		return nil, false, nil
+	}
+
+	netInfo, ok, err := networkmanager.ResolveActiveNetworkForNamespaceOnNode(e.networkManager, localNodeName, namespace)
+	if err != nil {
+		if util.IsInvalidPrimaryNetworkError(err) || util.IsUnprocessedActiveNetworkError(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return netInfo, ok, nil
+}
+
+func (e *EgressIPController) StartNADReconciler() error {
+	if e.networkManager == nil || e.nadReconciler == nil {
+		return nil
+	}
+	if !e.nadReconcilerRegistered {
+		id, err := e.networkManager.RegisterNADReconciler(e.nadReconciler)
+		if err != nil {
+			return err
+		}
+		e.nadReconcilerID = id
+		e.nadReconcilerRegistered = true
+	}
+	return controller.Start(e.nadReconciler)
+}
+
+func (e *EgressIPController) StopNADReconciler() {
+	if e.nadReconcilerRegistered {
+		if err := e.networkManager.DeRegisterNADReconciler(e.nadReconcilerID); err != nil {
+			klog.Warningf("Failed to deregister egress IP NAD reconciler: %v", err)
+		}
+		e.nadReconcilerRegistered = false
+	}
+	controller.Stop(e.nadReconciler)
+	e.nadReconcilerID = 0
+	e.nadReconciler = nil
+}
+
+func (e *EgressIPController) syncNAD(key string) error {
+	startTime := time.Now()
+	klog.V(5).Infof("Egress IP NAD reconcile %s", key)
+	defer func() {
+		klog.V(4).Infof("Finished syncing Egress IP for NAD %s, took %v", key, time.Since(startTime))
+	}()
+
+	namespace, _, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		klog.Errorf("Failed splitting NAD key %s: %v", key, err)
+		return nil
+	}
+
+	ni := e.networkManager.GetNetInfoForNADKey(key)
+	if ni == nil {
+		return nil
+	}
+	// Only reconcile for primary network NADs. Secondary NADs are irrelevant for EgressIP.
+	if !ni.IsPrimaryNetwork() {
+		return nil
+	}
+	// Ensure egressIP pods for this namespace are retried after NAD processing so
+	// we don't miss the UDN IPs if pod updates raced the NAD event.
+	e.addEgressIPPodRetriesForNamespace(namespace)
+	return nil
+}
+
+func (e *EgressIPController) addEgressIPPodRetriesForNamespace(namespace string) {
+	if e.retryEgressIPPods == nil {
+		return
+	}
+	pods, err := e.watchFactory.GetPods(namespace)
+	if err != nil {
+		klog.Warningf("Failed to list pods for EgressIP NAD retry in namespace %s: %v", namespace, err)
+		return
+	}
+	for _, pod := range pods {
+		pod := *pod
+		if util.PodCompleted(&pod) {
+			continue
+		}
+		klog.V(5).Infof("Adding egress IP pod %s/%s for immediate retry due to NAD change", pod.Name, pod.Namespace)
+		if err := e.retryEgressIPPods.AddRetryObjWithAddNoBackoff(&pod); err != nil {
+			klog.Warningf("Failed to add pod %s/%s to egressIP retry queue: %v", pod.Namespace, pod.Name, err)
+		}
+	}
+	e.retryEgressIPPods.RequestRetryObjs()
 }
 
 func (e *EgressIPController) syncStaleAddressSetIPs(egressIPCache egressIPCache) error {
@@ -1902,9 +2063,13 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 	cache.networkToRouter = map[string]string{}
 	// build a map of networks -> nodes -> redirect IP
 	for _, namespace := range namespaces {
-		ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+		ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 		if err != nil {
 			klog.Errorf("Failed to get active network for namespace %s, stale objects may remain: %v", namespace.Name, err)
+			continue
+		}
+		if !ok {
+			klog.V(5).Infof("Skipping namespace %s while building egress IP cache: network not active on local zone", namespace.Name)
 			continue
 		}
 		// skip if already processed
@@ -2054,12 +2219,16 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				klog.Errorf("Error building egress IP sync cache, cannot retrieve pods for namespace: %s and egress IP: %s, err: %v", namespace.Name, egressIP.Name, err)
 				continue
 			}
-			ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+			ni, ok, err := e.resolveActiveNetworkForNamespaceOnLocalNode(namespace.Name)
 			if err != nil {
 				klog.Errorf("Failed to get active network for namespace %s, skipping sync: %v", namespace.Name, err)
 				continue
 			}
-			_, ok := egressIPsCache[egressIP.Name][ni.GetNetworkName()]
+			if !ok {
+				klog.V(5).Infof("Skipping namespace %s while building egress IP sync cache: network not active on local zone", namespace.Name)
+				continue
+			}
+			_, ok = egressIPsCache[egressIP.Name][ni.GetNetworkName()]
 			if ok {
 				continue // aready populated
 			}
