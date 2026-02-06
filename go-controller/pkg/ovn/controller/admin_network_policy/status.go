@@ -46,6 +46,22 @@ const (
 	policyNotReadyReason = "SetupFailed"
 )
 
+// doesStatusNeedAnUpdate compares the existing condition with the new condition
+// and returns true if an update is needed, false if the status is already in the desired state.
+// This helps avoid unnecessary API server calls when the status hasn't changed.
+func doesStatusNeedAnUpdate(existingCondition *metav1.Condition, newCondition metav1.Condition) bool {
+	if existingCondition == nil {
+		return true // condition doesn't exist yet, needs to be created
+	}
+	// Check if Status, Reason, and Message are all the same - if so, no update needed
+	if existingCondition.Status == newCondition.Status &&
+		existingCondition.Reason == newCondition.Reason &&
+		existingCondition.Message == newCondition.Message {
+		return false
+	}
+	return true
+}
+
 // updateANPStatusToReady updates the status of the policy to reflect that it is ready
 // Each zone's ovnkube-controller will call this, hence let's update status using server-side-apply
 func (c *Controller) updateANPStatusToReady(anpName string) error {
@@ -59,8 +75,6 @@ func (c *Controller) updateANPStatusToReady(anpName string) error {
 	if err != nil {
 		return fmt.Errorf("unable to update the status of ANP %s, err: %v", anpName, err)
 	}
-	klog.V(5).Infof("Patched the status of ANP %v with condition type %v/%v",
-		anpName, policyReadyStatusType+c.zone, metav1.ConditionTrue)
 	return nil
 }
 
@@ -83,8 +97,6 @@ func (c *Controller) updateANPStatusToNotReady(anpName, message string) error {
 	if err != nil {
 		return fmt.Errorf("unable update the status of ANP %s, err: %v", anpName, err)
 	}
-	klog.V(3).Infof("Patched the status of ANP %v with condition type %v/%v and reason %s/%s",
-		anpName, policyReadyStatusType+c.zone, metav1.ConditionFalse, policyNotReadyReason, message)
 	return nil
 }
 
@@ -94,6 +106,10 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 		return err
 	}
 	existingCondition := meta.FindStatusCondition(anp.Status.Conditions, newCondition.Type)
+	if !doesStatusNeedAnUpdate(existingCondition, newCondition) {
+		// status is already in the desired state, skip the update to reduce API server load
+		return nil
+	}
 	if existingCondition == nil {
 		newCondition.LastTransitionTime = metav1.NewTime(time.Now())
 	} else {
@@ -109,6 +125,10 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 		WithStatus(anpapiapply.AdminNetworkPolicyStatus().WithConditions(newCondition))
 	_, err = c.anpClientSet.PolicyV1alpha1().AdminNetworkPolicies().
 		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
+	if err == nil {
+		klog.V(5).Infof("Patched the status of ANP %s with condition type %s/%s, reason %s, message: %s",
+			anpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)
+	}
 	return err
 }
 
@@ -125,8 +145,6 @@ func (c *Controller) updateBANPStatusToReady(banpName string) error {
 	if err != nil {
 		return fmt.Errorf("unable to update the status of BANP %s, err: %v", banpName, err)
 	}
-	klog.V(5).Infof("Patched the status of BANP %v with condition type %v/%v",
-		banpName, policyReadyStatusType+c.zone, metav1.ConditionTrue)
 	return nil
 }
 
@@ -146,8 +164,6 @@ func (c *Controller) updateBANPStatusToNotReady(banpName, message string) error 
 	if err != nil {
 		return fmt.Errorf("unable update the status of BANP %s, err: %v", banpName, err)
 	}
-	klog.V(3).Infof("Patched the status of BANP %v with condition type %v/%v and reason %s",
-		banpName, policyReadyStatusType+c.zone, metav1.ConditionFalse, policyNotReadyReason)
 	return nil
 }
 
@@ -157,6 +173,10 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 		return err
 	}
 	existingCondition := meta.FindStatusCondition(banp.Status.Conditions, newCondition.Type)
+	if !doesStatusNeedAnUpdate(existingCondition, newCondition) {
+		// status is already in the desired state, skip the update to reduce API server load
+		return nil
+	}
 	if existingCondition == nil {
 		newCondition.LastTransitionTime = metav1.NewTime(time.Now())
 	} else {
@@ -172,5 +192,9 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 		WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus().WithConditions(newCondition))
 	_, err = c.anpClientSet.PolicyV1alpha1().BaselineAdminNetworkPolicies().
 		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.zone, Force: true})
+	if err == nil {
+		klog.V(5).Infof("Patched the status of BANP %s with condition type %s/%s, reason %s, message: %s",
+			banpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)
+	}
 	return err
 }

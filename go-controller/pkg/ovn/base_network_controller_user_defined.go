@@ -348,7 +348,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	// we also need to create a remote logical port for remote pods on layer2
 	// topologies with interconnect
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-	requiresLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
+	requiresLogicalPort := isLocalPod || bsnc.hasLayer2EastWestInterconnect()
 
 	if requiresLogicalPort {
 		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadKey, network, lspEnabled)
@@ -451,7 +451,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 	// there is only a logical port for local pods or remote pods of layer2
 	// networks on interconnect, so only delete in these cases
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-	hasLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
+	hasLogicalPort := isLocalPod || bsnc.hasLayer2EastWestInterconnect()
 
 	// for a specific NAD belongs to this network, Pod's logical port might already be created half-way
 	// without its lpInfo cache being created; need to deleted resources created for that NAD as well.
@@ -666,7 +666,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		}
 
 		isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-		hasRemotePort := !isLocalPod || bsnc.isLayer2Interconnect()
+		hasRemotePort := !isLocalPod || bsnc.hasLayer2EastWestInterconnect()
 
 		for nadKey := range networkMap {
 			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)

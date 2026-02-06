@@ -969,7 +969,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 
 			_, err := RenderNetAttachDefManifest(cudn, "test-ns")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("EVPN transport requested but enable-evpn flag is not set"))
+			Expect(err.Error()).To(ContainSubstring("EVPN transport requested but EVPN feature is not enabled"))
 		})
 	})
 

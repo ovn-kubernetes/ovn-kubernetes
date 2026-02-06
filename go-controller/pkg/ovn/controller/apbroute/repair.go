@@ -155,7 +155,7 @@ func (c *ExternalGatewayMasterController) Repair() error {
 		// if pod had no ECMP routes we need to make sure we remove logical route policy for local gw mode
 		if !podHasAnyECMPRoutes {
 			for _, ovnRoute := range ovnRoutes {
-				node := strings.TrimPrefix(ovnRoute.router, types.GWRouterPrefix)
+				node := util.GetWorkerFromGatewayRouter(ovnRoute.router)
 				if err := c.nbClient.delHybridRoutePolicyForPod(net.ParseIP(podIP), node); err != nil {
 					return fmt.Errorf("error while removing hybrid policy for pod IP: %s, on node: %s, error: %v",
 						podIP, node, err)

@@ -74,6 +74,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -146,6 +149,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         {{- if eq (hasKey .Values.global "enableCompactMode" | ternary .Values.global.enableCompactMode false) true }}
         # Common mounts
@@ -250,6 +256,8 @@ spec:
           value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
         - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
@@ -320,6 +328,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       {{- if eq (hasKey .Values.global "enableCompactMode" | ternary .Values.global.enableCompactMode false) true }}
       - name: host-slash
         hostPath:

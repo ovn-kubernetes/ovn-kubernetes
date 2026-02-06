@@ -22,7 +22,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/util/retry"
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -3288,24 +3287,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				assignedMark, err := strconv.Atoi(assignedMarkStr)
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "failed to convert mark to string")
 
-				ginkgo.By("clear mark to cause update and expect restoration of mark")
-				gomega.Expect(retry.RetryOnConflict(retry.DefaultRetry, func() error {
-					eIP, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), eIP.Name, metav1.GetOptions{})
-					if err != nil {
-						return err
-					}
-					eIP.Annotations = map[string]string{}
-					_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Update(context.TODO(), eIP, metav1.UpdateOptions{})
-					return err
-				})).ShouldNot(gomega.HaveOccurred(), "failed to update EgressIP object")
-				ginkgo.By("confirm the original mark is restored")
-				gomega.Eventually(getEgressIPAnnotationValue(eIP.Name)).ShouldNot(gomega.BeEmpty())
-				assignedMarkStr, err = getEgressIPAnnotationValue(eIP.Name)()
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "failed to get egress IP mark from annotations")
-				assignedMarkAfterUpdate, err := strconv.Atoi(assignedMarkStr)
-				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "failed to convert mark to string")
-				gomega.Expect(assignedMark).Should(gomega.Equal(assignedMarkAfterUpdate), "Mark should be identical if annotation is cleared")
-				ginkgo.By("confirm cache is unchanged")
+				ginkgo.By("confirm cache is set correctly")
 				cachedMark, _, err := fakeClusterManagerOVN.eIPC.getOrAllocMark(eIP.Name)
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 				gomega.Expect(cachedMark).Should(gomega.Equal(assignedMark), "EIP annotation and cache mark integer must be the same")
@@ -4215,6 +4197,122 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(eIPMarkFromCache).ShouldNot(gomega.Equal(eIP2MarkFromCache))
 				return nil
 			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		// This test validates that when two EgressIP CRs have the same IP in their specs,
+		// and one already has the IP assigned in status (from before restart), the sync
+		// function properly pre-populates the allocator cache to prevent duplicate assignment.
+		// This is a regression test for the bug where duplicate IPs were assigned during
+		// control-plane pod restart because the allocator cache wasn't populated from
+		// existing EgressIP statuses before processing individual ADD events.
+		ginkgo.It("should not assign duplicate IP during restart when two EgressIPs have same IP in spec", func() {
+			app.Action = func(*cli.Context) error {
+				duplicateIP := "192.168.126.101"
+				node1IPv4 := "192.168.126.12/24"
+				node2IPv4 := "192.168.126.51/24"
+
+				node1 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4, ""),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4NodeSubnet, v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+				node2 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node2Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4, ""),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\": [\"%s\",\"%s\"]}", v4NodeSubnet, v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+
+				// eIP1 has the IP assigned in status (simulating state from before restart)
+				eIP1 := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta("egressip-1"),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{duplicateIP},
+					},
+					Status: egressipv1.EgressIPStatus{
+						Items: []egressipv1.EgressIPStatusItem{
+							{
+								EgressIP: duplicateIP,
+								Node:     node1Name,
+							},
+						},
+					},
+				}
+
+				// eIP2 has the same IP in spec but NOT in status (unassigned, but was created
+				// with duplicate IP - which should have been rejected but wasn't due to a bug
+				// or manual API manipulation)
+				eIP2 := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta("egressip-2"),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{duplicateIP},
+					},
+					Status: egressipv1.EgressIPStatus{
+						Items: []egressipv1.EgressIPStatusItem{},
+					},
+				}
+
+				fakeClusterManagerOVN.start(
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
+					// Both EgressIPs exist at startup - simulating restart scenario
+					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP1, eIP2}},
+				)
+
+				// Use WatchEgressNodes to properly initialize the allocator cache
+				// (simulating real startup behavior rather than manually setting up cache)
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// eIP1 should keep its assignment (the IP was already assigned)
+				gomega.Eventually(getEgressIPStatusLen("egressip-1")).Should(gomega.Equal(1))
+				egressIPs1, nodes1 := getEgressIPStatus("egressip-1")
+				gomega.Expect(nodes1[0]).To(gomega.Equal(node1Name))
+				gomega.Expect(egressIPs1[0]).To(gomega.Equal(duplicateIP))
+
+				// eIP2 should NOT get the duplicate IP assigned (not even to node2) -
+				// it should remain unassigned because initEgressNodeReachability pre-populated the
+				// cache with eIP1's assignment
+				gomega.Eventually(getEgressIPStatusLen("egressip-2")).Should(gomega.Equal(0))
+
+				return nil
+			}
+
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})

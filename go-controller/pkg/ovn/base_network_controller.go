@@ -634,7 +634,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	}
 
 	err := libovsdbops.CreateOrUpdateLogicalSwitch(bnc.nbClient, &logicalSwitch, &logicalSwitch.OtherConfig,
-		&logicalSwitch.LoadBalancerGroup)
+		&logicalSwitch.LoadBalancerGroup, &logicalSwitch.ExternalIDs)
 	if err != nil {
 		return fmt.Errorf("failed to add logical switch %+v: %v", logicalSwitch, err)
 	}
@@ -1056,8 +1056,18 @@ func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error
 	return role, nil
 }
 
-func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
-	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer2Topology
+// hasEastWestInterconnect returns whether the network East/West traffic goes
+// through the interconnect overlay or not. This is not the case for networks
+// that have no overlay or that use EVPN, and this method would typically be
+// used to inhibit the configuration of interconnect resources in those cases.
+func (bnc *BaseNetworkController) hasEastWestInterconnect() bool {
+	return config.OVNKubernetesFeature.EnableInterconnect && bnc.Transport() == types.NetworkTransportGeneve
+}
+
+// hasEastWestInterconnect returns whether this is Layer 2 network that has
+// East/West interconnect traffic. See hasEastWestInterconnect.
+func (bnc *BaseNetworkController) hasLayer2EastWestInterconnect() bool {
+	return bnc.hasEastWestInterconnect() && bnc.TopologyType() == types.Layer2Topology
 }
 
 // HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.

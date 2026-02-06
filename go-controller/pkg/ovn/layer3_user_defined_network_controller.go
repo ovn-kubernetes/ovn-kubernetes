@@ -1048,8 +1048,8 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.SyncNodes(activeNodes); err != nil {
-			return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
+		if err := oc.zoneICHandler.CleanupStaleNodes(activeNodes); err != nil {
+			return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
 		}
 	}
 

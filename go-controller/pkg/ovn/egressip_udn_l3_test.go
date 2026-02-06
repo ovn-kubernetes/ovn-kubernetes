@@ -262,7 +262,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: networkName1, ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{},
 					},
 				}
@@ -474,7 +474,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -637,7 +637,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: networkName1, ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
 				fakeOvn.startWithDBSetup(
@@ -850,7 +850,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -988,7 +988,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -1156,7 +1156,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: networkName1, ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
 				fakeOvn.startWithDBSetup(
@@ -1433,7 +1433,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID", "stor-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 						OtherConfig: map[string]string{
 							"exclude_ips": util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
@@ -1682,7 +1682,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID", "stor-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 						OtherConfig: map[string]string{
 							"exclude_ips": util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
@@ -1890,7 +1890,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: networkName1, ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
 				fakeOvn.startWithDBSetup(
@@ -2100,7 +2100,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -2258,7 +2258,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: networkName1, ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
 				fakeOvn.startWithDBSetup(
@@ -2456,7 +2456,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -2617,7 +2617,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: networkName1, ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 					},
 				}
 				fakeOvn.startWithDBSetup(
@@ -2901,7 +2901,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
 						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID", "stor-" + networkName1_ + node1Name + "-UUID"},
-						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
+						ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(netInfo),
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
 						OtherConfig: map[string]string{
 							"exclude_ips": util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),

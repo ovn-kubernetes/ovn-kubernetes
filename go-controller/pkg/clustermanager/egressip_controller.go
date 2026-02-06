@@ -531,7 +531,26 @@ func (eIPC *egressIPClusterController) getSortedEgressData() ([]*egressNode, map
 	return assignableNodes, allAllocations
 }
 
-func (eIPC *egressIPClusterController) initEgressNodeReachability(_ []interface{}) error {
+func (eIPC *egressIPClusterController) initEgressNodeReachability(objs []interface{}) error {
+	for _, obj := range objs {
+		node := obj.(*corev1.Node)
+		if err := eIPC.initEgressIPAllocator(node); err != nil {
+			klog.Warningf("Egress node initialization error: %v", err)
+		}
+	}
+
+	// Before reconciling unassigned EgressIPs, ensure the allocator cache is populated
+	// with existing assignments from EgressIP statuses. This prevents duplicate IP
+	// assignments when two EgressIPs have the same IP in their specs but only one has
+	// it assigned in status (e.g., after control-plane restart or during initial sync).
+	egressIPs, err := eIPC.kube.GetEgressIPs()
+	if err != nil {
+		return fmt.Errorf("unable to list EgressIPs, err: %v", err)
+	}
+	for _, egressIP := range egressIPs {
+		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
+	}
+
 	go eIPC.checkEgressNodesReachability()
 	return nil
 }
@@ -989,11 +1008,6 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 	for status := range invalidStatus {
 		statusToRemove = append(statusToRemove, status)
 		ipsToRemove.Insert(status.EgressIP)
-	}
-	// Adding the mark to annotations is bundled with status update in-order to minimise updates, cover the case where there is no update to status
-	// and mark annotation has been modified / removed. This should only occur for an update and the mark was previous set.
-	if ipsToAssign.Len() == 0 && ipsToRemove.Len() == 0 {
-		eIPC.ensureMark(old, new)
 	}
 
 	if ipsToRemove.Len() > 0 {
@@ -1825,10 +1839,21 @@ func generateStatusPatchOp(statusItems []egressipv1.EgressIPStatusItem) jsonPatc
 	}
 }
 
+// ensureAllocatorEgressIPAssignments adds EgressIP assignments to the allocator cache
+// if the EgressIP has status items. This is critical to prevent duplicate IP assignments
+// during restart when EgressIPs are processed in arbitrary order.
+func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) {
+	if len(egressIP.Status.Items) > 0 {
+		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, egressIP.Status.Items)
+	}
+}
+
 // syncEgressIPMarkAllocator iterates over all existing EgressIPs. It builds a mark cache of existing marks stored on each
-// EgressIP annotation or allocates and adds a new mark to an EgressIP if it doesn't exist
+// EgressIP annotation or allocates and adds a new mark to an EgressIP if it doesn't exist.
 func (eIPC *egressIPClusterController) syncEgressIPMarkAllocator(egressIPs []interface{}) error {
-	// reserve previously assigned marks
+	// Reserve previously assigned marks. Note: the allocator cache is pre-populated with
+	// existing assignments from EgressIP statuses in initEgressNodeReachability, which runs
+	// before this sync function.
 	for _, object := range egressIPs {
 		egressIP, ok := object.(*egressipv1.EgressIP)
 		if !ok {
@@ -1878,22 +1903,6 @@ var (
 
 func getEgressIPMarkAllocator() id.Allocator {
 	return id.NewIDAllocator("eip_mark", eipMarkMax-eipMarkMin)
-}
-
-// ensureMark ensures that if a mark was remove or changed value, then restore the mark.
-func (eIPC *egressIPClusterController) ensureMark(old, new *egressipv1.EgressIP) {
-	// Adding the mark to annotations is bundled with status update in-order to minimise updates, cover the case where there is no update to status
-	// and mark annotation has been modified / removed. This should only occur for an update and the mark was previous set.
-	if old != nil && new != nil {
-		if util.IsEgressIPMarkSet(old.Annotations) && util.EgressIPMarkAnnotationChanged(old.Annotations, new.Annotations) {
-			mark, _, err := eIPC.getOrAllocMark(new.Name)
-			if err != nil {
-				klog.Errorf("Failed to restore EgressIP %s mark because unable to retrieve mark: %v", new.Name, err)
-			} else if err = eIPC.patchEgressIP(new.Name, generateMarkPatchOp(mark)); err != nil {
-				klog.Errorf("Failed to restore EgressIP %s mark because patching failed: %v", new.Name, err)
-			}
-		}
-	}
 }
 
 // getOrAllocMark allocates a new mark integer for name using round-robin strategy if none was already allocated for name otherwise

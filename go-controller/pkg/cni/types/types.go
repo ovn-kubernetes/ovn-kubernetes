@@ -81,7 +81,7 @@ type NetConf struct {
 	PhysicalNetworkName string `json:"physicalNetworkName,omitempty"`
 
 	// Transport describes the transport protocol for east-west traffic.
-	// Valid values are "nooverlay", "geneve", and "evpn".
+	// Valid values are "no-overlay", "geneve", and "evpn".
 	// Defaults to "geneve".
 	Transport string `json:"transport,omitempty"`
 

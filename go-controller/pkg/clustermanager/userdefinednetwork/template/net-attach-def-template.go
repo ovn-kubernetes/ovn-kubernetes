@@ -145,7 +145,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 		},
 		NADName:   nadName,
 		Topology:  strings.ToLower(string(spec.GetTopology())),
-		Transport: strings.ToLower(string(spec.GetTransport())),
+		Transport: transportFromCRD(string(spec.GetTransport())),
 	}
 
 	switch spec.GetTopology() {
@@ -200,7 +200,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 
 	if spec.GetTransport() == userdefinednetworkv1.TransportOptionEVPN {
 		if !util.IsEVPNEnabled() {
-			return nil, fmt.Errorf("EVPN transport requested but enable-evpn flag is not set")
+			return nil, fmt.Errorf("EVPN transport requested but EVPN feature is not enabled")
 		}
 		netConfSpec.EVPN = renderEVPNConfig(spec, opts)
 	}
@@ -276,6 +276,22 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 	}
 
 	return cniNetConf, nil
+}
+
+// transportFromCRD converts CRD PascalCase format to canonical format.
+// CRD format uses PascalCase: "Geneve", "NoOverlay", "EVPN"
+// Returns canonical lowercase format: "geneve", "no-overlay", "evpn"
+func transportFromCRD(crdTransport string) string {
+	switch crdTransport {
+	case "Geneve":
+		return types.NetworkTransportGeneve
+	case "NoOverlay":
+		return types.NetworkTransportNoOverlay
+	case "EVPN":
+		return types.NetworkTransportEVPN
+	default:
+		return crdTransport // Return as-is for validation to catch
+	}
 }
 
 func localnetMTU(desiredMTU int32) int {
