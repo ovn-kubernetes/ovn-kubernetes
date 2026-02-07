@@ -120,11 +120,8 @@ var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, 
 				By("Creating the attachment configuration")
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
-				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				nad := generateNAD(netConfig, f.ClientSet)
+				_, err = createNADAndWaitForNetworkReady(nadClient, nad)
 				Expect(err).NotTo(HaveOccurred())
 
 				By(fmt.Sprintf("Creating a UDN LoadBalancer service"))

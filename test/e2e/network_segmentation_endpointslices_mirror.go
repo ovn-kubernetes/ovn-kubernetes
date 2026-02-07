@@ -165,7 +165,8 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
 				netConfig := newNetworkAttachmentConfig(c)
 				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
+				nad.Namespace = f.Namespace.Name
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
@@ -251,7 +252,8 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
 				netConfig := newNetworkAttachmentConfig(c)
 				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(fmt.Sprintf("%s-default", f.Namespace.Name)).Create(context.Background(), nad, metav1.CreateOptions{})
+				nad.Namespace = fmt.Sprintf("%s-default", f.Namespace.Name)
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {

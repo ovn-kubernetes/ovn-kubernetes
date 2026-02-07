@@ -91,12 +91,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				})).To(Succeed())
 			}
 
-			By("creating the attachment configuration")
-			_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
-				context.Background(),
-				generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
-				metav1.CreateOptions{},
-			)
+			_, err := createNADAndWaitForNetworkReady(nadClient, generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating the pod using a secondary network")
@@ -317,12 +312,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				})).To(Succeed())
 
 				nad := generateNAD(netConfig, f.ClientSet)
-				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
-				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					nad,
-					metav1.CreateOptions{},
-				)
+				_, err = createNADAndWaitForNetworkReady(nadClient, nad)
 				Expect(err).NotTo(HaveOccurred())
 
 				if len(serverPodConfig.attachments) > 0 && serverPodConfig.ipRequestFromSubnet != "" {
@@ -753,12 +743,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				cidr:      secondaryNetworkCIDR,
 			})
 
-			By("creating the attachment configuration")
-			_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-				context.Background(),
-				generateNAD(netConfig, f.ClientSet),
-				metav1.CreateOptions{},
-			)
+			_, err := createNADAndWaitForNetworkReady(nadClient, generateNAD(netConfig, f.ClientSet))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating a new namespace")
@@ -795,13 +780,8 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				return false
 			}, 2*time.Minute, 6*time.Second).Should(BeTrue())
 
-			By("creating the attachment configuration in the new namespace")
 			netConfig.namespace = createdNamespace.Name
-			_, err = nadClient.NetworkAttachmentDefinitions(createdNamespace.Name).Create(
-				context.Background(),
-				generateNAD(netConfig, f.ClientSet),
-				metav1.CreateOptions{},
-			)
+			_, err = createNADAndWaitForNetworkReady(nadClient, generateNAD(netConfig, f.ClientSet))
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod reaches the `Ready` state")
@@ -830,12 +810,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					})).To(Succeed())
 				}
 
-				By("creating the attachment configuration")
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
-					metav1.CreateOptions{},
-				)
+				_, err := createNADAndWaitForNetworkReady(nadClient, generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)))
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Get two schedulable nodes and schedule client and server to be on distinct Nodes")
@@ -1226,12 +1201,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				})
 
 				BeforeEach(func() {
-					By("creating the attachment configuration")
-					_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
-						context.Background(),
-						generateNAD(netConfig, f.ClientSet),
-						metav1.CreateOptions{},
-					)
+					_, err := createNADAndWaitForNetworkReady(nadClient, generateNAD(netConfig, f.ClientSet))
 					Expect(err).NotTo(HaveOccurred())
 				})
 
@@ -1611,12 +1581,7 @@ ip a add %[4]s/24 dev %[2]s
 							excludeCIDRs:        []string{underlayServiceIP + "/32"},
 						})
 
-					By("creating the attachment configuration for a separate VLAN")
-					_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-						context.Background(),
-						generateNAD(vlan20NetConfig, f.ClientSet),
-						metav1.CreateOptions{},
-					)
+					_, err := createNADAndWaitForNetworkReady(nadClient, generateNAD(vlan20NetConfig, f.ClientSet))
 					Expect(err).NotTo(HaveOccurred())
 
 					clientPodConfig := podConfiguration{
@@ -2326,18 +2291,9 @@ ip a add %[4]s/24 dev %[2]s
 
 			for i := range netAttachDefs {
 				netConfig := netAttachDefs[i]
-				By("creating the attachment configuration")
-				_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				_, err := createNADAndWaitForNetworkReady(nadClient, generateNAD(netConfig, f.ClientSet))
 				Expect(err).NotTo(HaveOccurred())
 			}
-
-			By("sitting on our hands for a couple secs we give the controller time to sync all NADs before provisioning policies and pods")
-			// TODO: this is temporary. We hope to eventually sync pods & multi-net policies on NAD C/U/D ops
-			time.Sleep(3 * time.Second)
 
 			podConfig := podConfiguration{
 				attachments: []nadapi.NetworkSelectionElement{
@@ -2399,16 +2355,8 @@ ip a add %[4]s/24 dev %[2]s
 				netConfig.namespace = f.Namespace.Name
 				netConfig.name = testNadName
 
-				By("creating the secondary network attachment definition")
-				_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				_, err := createNADAndWaitForNetworkReady(nadClient, generateNAD(netConfig, f.ClientSet))
 				Expect(err).NotTo(HaveOccurred())
-
-				By("waiting for controller to sync the NAD")
-				time.Sleep(5 * time.Second)
 
 				By("creating a pod with multiple attachments to the same secondary NAD")
 				// Specify the same NAD name multiple times to test GetIndexedNADKey functionality
@@ -2738,21 +2686,13 @@ func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Po
 
 func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interface, extraNamespace *v1.Namespace, netConfig networkAttachmentConfig) error {
 	for _, ns := range []*v1.Namespace{f.Namespace, extraNamespace} {
-		By(fmt.Sprintf("creating the nad for namespace %q", ns.Name))
 		netConfig.namespace = ns.Name
-		_, err := nadClient.NetworkAttachmentDefinitions(ns.Name).Create(
-			context.Background(),
-			generateNAD(netConfig, f.ClientSet),
-			metav1.CreateOptions{},
-		)
+		nad := generateNAD(netConfig, f.ClientSet)
+		_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 		if err != nil {
 			return err
 		}
 	}
-
-	By("sitting on our hands for a couple secs we give the controller time to sync all NADs before provisioning policies and pods")
-	// TODO: this is temporary. We hope to eventually sync pods & multi-net policies on NAD C/U/D ops
-	time.Sleep(3 * time.Second)
 
 	return nil
 }

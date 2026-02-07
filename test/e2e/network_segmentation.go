@@ -737,7 +737,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 			Entry("NetworkAttachmentDefinitions", func(c *networkAttachmentConfigParams) error {
 				netConfig := newNetworkAttachmentConfig(*c)
 				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(c.namespace).Create(context.Background(), nad, metav1.CreateOptions{})
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c *networkAttachmentConfigParams) error {
@@ -896,11 +896,8 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				netConfigParams.namespace = f.Namespace.Name
 				filterSupportedNetworkConfig(f.ClientSet, &netConfigParams)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				nad := generateNAD(netConfig, f.ClientSet)
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				framework.ExpectNoError(err)
 				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
 			},
@@ -931,11 +928,8 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				netConfigParams.namespace = f.Namespace.Name
 				filterSupportedNetworkConfig(f.ClientSet, &netConfigParams)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				nad := generateNAD(netConfig, f.ClientSet)
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				framework.ExpectNoError(err)
 				testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
 			},
@@ -1638,7 +1632,7 @@ spec:
 			Entry("NetworkAttachmentDefinitions", func(c *networkAttachmentConfigParams) error {
 				netConfig := newNetworkAttachmentConfig(*c)
 				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c *networkAttachmentConfigParams) error {

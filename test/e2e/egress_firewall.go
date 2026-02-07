@@ -161,11 +161,8 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 
 				netConfig = newNetworkAttachmentConfig(nadCfg)
 				netConfig.namespace = f.Namespace.Name
-				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				nad := generateNAD(netConfig, f.ClientSet)
+				_, err = createNADAndWaitForNetworkReady(nadClient, nad)
 				framework.ExpectNoError(err)
 			}
 		})
