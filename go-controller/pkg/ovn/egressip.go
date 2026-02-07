@@ -854,7 +854,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 	if len(statusAssignments) == 0 {
 		return nil
 	}
-	var remainingAssignments, staleAssignments []egressipv1.EgressIPStatusItem
+	var remainingAssignments, staleAssignments, reprogramAssignments []egressipv1.EgressIPStatusItem
 	nadKey, err := e.getPodNADKeyForNetwork(ni, pod)
 	if err != nil {
 		return err
@@ -881,6 +881,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			network:              ni,
 		}
 	} else if podState.egressIPName == name || podState.egressIPName == "" {
+		podIPsChanged := !podIPSliceEqual(podState.podIPs, podIPs)
 		// We do the setup only if this egressIP object is the one serving this pod OR
 		// podState.egressIPName can be empty if no re-routes were found in
 		// syncPodAssignmentCache for the existing pod, we will treat this case as a new add
@@ -889,6 +890,10 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			// (meaning it was populated during EIP sync and needs to be processed for the pod).
 			if value, exists := podState.egressStatuses.statusMap[status]; !exists || value == egressStatusStatePending {
 				remainingAssignments = append(remainingAssignments, status)
+			} else if podIPsChanged {
+				// A pod can be re-created with the same name but a different IP.
+				// Force a delete+add for existing statuses so LRP match/NAT gets updated.
+				reprogramAssignments = append(reprogramAssignments, status)
 			}
 			// Detect stale EIP status entries (same EgressIP reassigned to a different node)
 			// and queue the outdated entry for cleanup.
@@ -896,7 +901,6 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 				staleAssignments = append(staleAssignments, *staleStatus)
 			}
 		}
-		podState.podIPs = podIPs
 		podState.egressIPName = name
 		podState.network = ni
 		podState.standbyEgressIPNames.Delete(name)
@@ -930,6 +934,18 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		}
 		delete(podState.egressStatuses.statusMap, staleStatus)
 	}
+	if len(reprogramAssignments) > 0 {
+		klog.V(2).Infof("Pod %s IPs changed, forcing egress IP status reprogram for statuses: %+v", podKey, reprogramAssignments)
+		if err := e.deletePodEgressIPAssignments(ni, name, reprogramAssignments, pod, false); err != nil {
+			return fmt.Errorf("failed to force reprogram of pod %s statuses %v for egress IP %s: %w",
+				podKey, reprogramAssignments, name, err)
+		}
+		for _, status := range reprogramAssignments {
+			delete(podState.egressStatuses.statusMap, status)
+		}
+		remainingAssignments = append(remainingAssignments, reprogramAssignments...)
+	}
+	podState.podIPs = podIPs
 	// We store podState into podAssignment cache at this place for two reasons.
 	// 1. When podAssignmentState is newly created.
 	// 2. deletePodEgressIPAssignments might clean the podAssignment cache, make sure we add it back.
@@ -2499,6 +2515,23 @@ func (e egressStatuses) hasStaleEIPStatus(potentialStatus egressipv1.EgressIPSta
 
 func (e egressStatuses) delete(deleteStatus egressipv1.EgressIPStatusItem) {
 	delete(e.statusMap, deleteStatus)
+}
+
+func podIPSliceEqual(oldIPs, newIPs []net.IP) bool {
+	if len(oldIPs) != len(newIPs) {
+		return false
+	}
+	oldIPStrings := make([]string, 0, len(oldIPs))
+	for _, podIP := range oldIPs {
+		oldIPStrings = append(oldIPStrings, podIP.String())
+	}
+	newIPStrings := make([]string, 0, len(newIPs))
+	for _, podIP := range newIPs {
+		newIPStrings = append(newIPStrings, podIP.String())
+	}
+	sort.Strings(oldIPStrings)
+	sort.Strings(newIPStrings)
+	return slices.Equal(oldIPStrings, newIPStrings)
 }
 
 // podAssignmentState keeps track of which egressIP object is serving
