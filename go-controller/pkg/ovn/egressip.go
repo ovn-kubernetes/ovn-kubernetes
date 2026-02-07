@@ -1475,10 +1475,18 @@ func (e *EgressIPController) addEgressIPPodRetriesForNamespace(namespace string)
 		if util.PodCompleted(&pod) {
 			continue
 		}
-		klog.V(5).Infof("Adding egress IP pod %s/%s for immediate retry due to NAD change", pod.Name, pod.Namespace)
-		if err := e.retryEgressIPPods.AddRetryObjWithAddNoBackoff(&pod); err != nil {
-			klog.Warningf("Failed to add pod %s/%s to egressIP retry queue: %v", pod.Namespace, pod.Name, err)
-		}
+		e.addEgressIPPodRetry(&pod, "NAD change")
+	}
+}
+
+func (e *EgressIPController) addEgressIPPodRetry(pod *corev1.Pod, reason string) {
+	if e.retryEgressIPPods == nil || pod == nil || util.PodCompleted(pod) || !util.PodNeedsSNAT(pod) {
+		return
+	}
+	klog.V(5).Infof("Adding egress IP pod %s/%s for immediate retry due to %s", pod.Namespace, pod.Name, reason)
+	if err := e.retryEgressIPPods.AddRetryObjWithAddNoBackoff(pod); err != nil {
+		klog.Warningf("Failed to add pod %s/%s to egressIP retry queue: %v", pod.Namespace, pod.Name, err)
+		return
 	}
 	e.retryEgressIPPods.RequestRetryObjs()
 }

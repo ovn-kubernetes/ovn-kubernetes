@@ -422,6 +422,9 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 
 	if lsp != nil {
 		_ = bsnc.logicalPortCache.add(pod, switchName, nadKey, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
+		if bsnc.onLogicalPortCacheAdd != nil {
+			bsnc.onLogicalPortCacheAdd(pod, nadKey)
+		}
 		if bsnc.requireDHCP(pod) {
 			if err := bsnc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
 				return err

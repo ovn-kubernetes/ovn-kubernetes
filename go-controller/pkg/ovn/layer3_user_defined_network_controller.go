@@ -385,6 +385,11 @@ func NewLayer3UserDefinedNetworkController(
 		gatewayManagers:             sync.Map{},
 		eIPController:               eIPController,
 	}
+	if oc.IsPrimaryNetwork() && oc.eIPController != nil {
+		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
+			oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
+		}
+	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
 		oc.zoneICHandler = zoneic.NewZoneInterconnectHandler(oc.GetNetInfo(), cnci.nbClient, cnci.sbClient, cnci.watchFactory)

@@ -124,6 +124,9 @@ type BaseNetworkController struct {
 
 	// A cache of all logical ports known to the controller
 	logicalPortCache *PortCache
+	// optional callback for consumers that need to react when a pod's logical
+	// port info is inserted/refreshed in logicalPortCache.
+	onLogicalPortCacheAdd func(pod *corev1.Pod, nadKey string)
 
 	// Info about known namespaces. You must use oc.getNamespaceLocked() or
 	// oc.waitForNamespaceLocked() to read this map, and oc.createNamespaceLocked()

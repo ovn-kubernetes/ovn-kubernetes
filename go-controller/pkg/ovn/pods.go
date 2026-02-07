@@ -379,6 +379,9 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 
 	// Add the pod's logical switch port to the port cache
 	_ = oc.logicalPortCache.add(pod, switchName, types.DefaultNetworkName, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
+	if oc.onLogicalPortCacheAdd != nil {
+		oc.onLogicalPortCacheAdd(pod, types.DefaultNetworkName)
+	}
 
 	if kubevirt.IsPodLiveMigratable(pod) {
 		if err := oc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
