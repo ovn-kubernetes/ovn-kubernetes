@@ -258,14 +258,22 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			}
 		}
 
-		// If ClusterIPServiceNetwork is enabled, add LB attachment ops to the same transaction
+		// If ClusterIPServiceNetwork is enabled, add LB attachment ops to the same transaction.
 		// This attaches this network's LBs to all other networks' switches in allocatedSubnets.
 		// Over the full loop, all pairs get covered (like routes and policies).
+		// ensureLoadBalancersOps may return needsRetry=true when the expected LB count doesn't
+		// match the found count (e.g., services controller hasn't finished creating LBs yet).
+		// In that case we still transact the ops (partial LBs attached is better than none)
+		// but collect an error to trigger a CNC requeue.
 		if serviceConnectivityDesired {
-			createOps, err = c.ensureLoadBalancersOps(createOps, netInfo, allocatedSubnets)
+			var lbRetry bool
+			createOps, lbRetry, err = c.ensureLoadBalancersOps(createOps, netInfo, allocatedSubnets)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure load balancers for network %s: %w", cncName, netInfo.GetNetworkName(), err))
 				continue
+			}
+			if lbRetry {
+				errs = append(errs, fmt.Errorf("CNC %s: network %s has mismatched LB count, will retry", cncName, netInfo.GetNetworkName()))
 			}
 		}
 
@@ -1160,7 +1168,35 @@ func (c *Controller) getNetworkSwitchName(netInfo util.NetInfo) (string, error) 
 	}
 }
 
-// ensureLoadBalancersOps builds ops to attach this network's LBs to all other connectednetworks' switches.
+// countExpectedClusterIPLBs returns the number of ClusterIP LBs expected for a network.
+// Each ClusterIP service produces one LB per unique protocol (TCP/UDP/SCTP).
+func (c *Controller) countExpectedClusterIPLBs(netInfo util.NetInfo) (int, error) {
+	namespaces, err := c.networkManager.GetActiveNetworkNamespaces(netInfo.GetNetworkName())
+	if err != nil {
+		return 0, fmt.Errorf("failed to get namespaces for network %s: %w", netInfo.GetNetworkName(), err)
+	}
+	expectedCount := 0
+	for _, ns := range namespaces {
+		services, err := c.serviceLister.Services(ns).List(labels.Everything())
+		if err != nil {
+			return 0, fmt.Errorf("failed to list services in namespace %s: %w", ns, err)
+		}
+		for _, svc := range services {
+			if !util.IsClusterIPSet(svc) {
+				continue // skip headless services
+			}
+			// Each service gets 1 LB per unique protocol
+			protocols := sets.New[corev1.Protocol]()
+			for _, port := range svc.Spec.Ports {
+				protocols.Insert(port.Protocol)
+			}
+			expectedCount += protocols.Len()
+		}
+	}
+	return expectedCount, nil
+}
+
+// ensureLoadBalancersOps builds ops to attach this network's LBs to all other connected networks' switches.
 // This is called for each network in allocatedSubnets, so over the full reconciliation loop,
 // all pairs of networks get LB attachments in both directions (like routes and policies).
 // It finds ClusterIP LBs from each connected network and attaches them to the
@@ -1168,23 +1204,47 @@ func (c *Controller) getNetworkSwitchName(netInfo util.NetInfo) (string, error) 
 // NOTE: Service deletions are handled automatically by OVN weak references.
 // When an LB is deleted by the services controller, OVSDB automatically removes
 // the LB UUID from all LogicalSwitch.load_balancer columns (weak ref with min=0).
+//
+// Returns the ops to execute, and a boolean indicating whether a retry is needed.
+// The retry boolean is set to true (with a nil error) only when the number of
+// found ClusterIP LBs does not match the expected count based on services.
+// When retry is true, the caller should still transact the ops (partial LBs are
+// better than none), but should return an error to trigger a CNC requeue.
 func (c *Controller) ensureLoadBalancersOps(ops []ovsdb.Operation, netInfo util.NetInfo,
-	allocatedSubnets map[string][]*net.IPNet) ([]ovsdb.Operation, error) {
+	allocatedSubnets map[string][]*net.IPNet) ([]ovsdb.Operation, bool, error) {
 
 	// Get this network's LBs
 	thisnetworkLBs, err := c.findClusterIPLoadBalancers(netInfo)
 	if err != nil {
-		return ops, fmt.Errorf("failed to find ClusterIP LBs for network %s: %w", netInfo.GetNetworkName(), err)
+		return ops, false, fmt.Errorf("failed to find ClusterIP LBs for network %s: %w", netInfo.GetNetworkName(), err)
 	}
 
-	if len(thisnetworkLBs) == 0 {
-		klog.V(5).Infof("No ClusterIP LBs found for network %s, skipping service connectivity", netInfo.GetNetworkName())
-		return ops, nil
+	// Count expected LBs from ClusterIP services in this network's namespaces so we can detect
+	// when the services controller hasn't finished creating LBs yet. If found != expected we set
+	// needsRetry: we still transact the ops we have (partial connectivity is better than none),
+	// but the caller will requeue the CNC so we run again and attach any LBs that appear later.
+	expectedLBCount, err := c.countExpectedClusterIPLBs(netInfo)
+	if err != nil {
+		return ops, false, fmt.Errorf("failed to count expected LBs for network %s: %w", netInfo.GetNetworkName(), err)
+	}
+
+	foundLBCount := len(thisnetworkLBs)
+	needsRetry := foundLBCount != expectedLBCount
+
+	if needsRetry {
+		klog.V(4).Infof("Network %s: found %d ClusterIP LBs but expected %d, will retry after transacting available ops",
+			netInfo.GetNetworkName(), foundLBCount, expectedLBCount)
+	}
+
+	if foundLBCount == 0 {
+		klog.V(5).Infof("No ClusterIP LBs found for network %s (expected %d), skipping LB attachment",
+			netInfo.GetNetworkName(), expectedLBCount)
+		return ops, needsRetry, nil
 	}
 
 	thisNetworkID := netInfo.GetNetworkID()
-	klog.V(5).Infof("Ensuring service connectivity for network %s (ID=%d): %d LBs",
-		netInfo.GetNetworkName(), thisNetworkID, len(thisnetworkLBs))
+	klog.V(5).Infof("Ensuring service connectivity for network %s (ID=%d): %d LBs (expected %d)",
+		netInfo.GetNetworkName(), thisNetworkID, foundLBCount, expectedLBCount)
 
 	// Attach this network's LBs to all OTHER networks' switches.
 	// Note: We iterate allocatedSubnets again here (it's also iterated by the caller) because
@@ -1221,14 +1281,14 @@ func (c *Controller) ensureLoadBalancersOps(ops []ovsdb.Operation, netInfo util.
 		otherSwitch := &nbdb.LogicalSwitch{Name: otherSwitchName}
 		addOps, err := libovsdbops.AddLoadBalancersToLogicalSwitchOps(c.nbClient, nil, otherSwitch, thisnetworkLBs...)
 		if err != nil {
-			return ops, fmt.Errorf("failed to create ops to attach LBs to switch %s: %w", otherSwitchName, err)
+			return ops, false, fmt.Errorf("failed to create ops to attach LBs to switch %s: %w", otherSwitchName, err)
 		}
 		ops = append(ops, addOps...)
 		klog.V(5).Infof("Adding %d LBs from network %d to switch %s (network %d)",
 			len(thisnetworkLBs), thisNetworkID, otherSwitchName, otherNetworkID)
 	}
 
-	return ops, nil
+	return ops, needsRetry, nil
 }
 
 // cleanupServiceConnectivity removes all cross-network LB attachments for a CNC.

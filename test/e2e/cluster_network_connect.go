@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
@@ -2962,6 +2963,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 					if srcNetwork == dstNetwork {
 						continue // Skip same network - that's intra-network
 					}
+					framework.Logf("Testing connectivity: %s -> %s (pod %s -> %d service IP(s))", srcNetwork, dstNetwork, srcPod.Name, len(dstIPs))
 					srcPodMap := map[string]*corev1.Pod{srcPod.Name: srcPod}
 					targetIPs := map[string][]string{dstNetwork + "-svc": dstIPs}
 					verifyCrossNetworkConnectivity(srcPodMap, targetIPs, expectSuccess)
@@ -3200,8 +3202,8 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   28. Verify CNC subnet annotation has 3 networks, blue service unreachable (no route - timeout)
 		   29. Delete green PUDN along with its pods, verify CNC has 2 networks, green unreachable
 		   30. Verify black and white CUDN services still reachable
-		   31. Re-create blue PUDN namespace, network, pods, and service
-		   32. Re-create green PUDN namespace, network, pods, and service
+		   31. Re-create blue PUDN network and pods (namespace and service were not deleted)
+		   32. Re-create green PUDN network and pods (namespace and service were not deleted)
 		   33. Verify all 4 network services are reachable again
 
 		   --- Service Lifecycle Tests (Steps 34-37) ---
@@ -3484,7 +3486,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			verifyCrossNetworkConnectivity(whitePodMap, map[string][]string{"black-svc": serviceIPs["black-svc"]}, true)
 
 			// =====================================================================
-			// Step 31: Re-create blue PUDN namespace, network, pods, and service
+			// Step 31: Re-create blue PUDN network and pods (service was not deleted)
 			// =====================================================================
 			By("31. Recreating blue PUDN network")
 			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "103.103.0.0/16", "2014:100:400::0/60")
@@ -3501,7 +3503,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			bluePodMap = map[string]*corev1.Pod{"blue-pod-0": pods["blue-pod-0"]}
 
 			// =====================================================================
-			// Step 32: Re-create green PUDN namespace, network, pods, and service
+			// Step 32: Re-create green PUDN network and pods (service was not deleted)
 			// =====================================================================
 			By("32. Recreating green PUDN network")
 			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "104.104.0.0/16", "2014:100:500::0/60")
@@ -3520,6 +3522,9 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			// Step 33: Verify all 4 network services are reachable again
 			// =====================================================================
+			By("33. Verifying CNC subnet annotation has 4 networks (blue and green re-added)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
 			By("33. Verifying all 4 network services are reachable again")
 			verifyFullMeshServiceConnectivity(networkPods, networkServiceIPs, true)
 
