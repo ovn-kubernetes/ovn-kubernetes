@@ -2064,7 +2064,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		// net.JoinHostPort properly handles IPv6 addresses by adding brackets
 		url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(toIP, "8080"))
 		stdout, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
-			"curl", "--connect-timeout", "1", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
+			"curl", "--connect-timeout", "0.5", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
 		if expectSuccess {
 			return err == nil && stdout == "200"
 		}
@@ -2078,7 +2078,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	checkConnectivityFailureType := func(fromNamespace, fromPodName, toIP string) string {
 		url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(toIP, "8080"))
 		stdout, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
-			"curl", "--connect-timeout", "1", "-s", "-o", "/dev/null", "-w", "%{http_code}:%{exitcode}", url)
+			"curl", "--connect-timeout", "0.5", "-s", "-o", "/dev/null", "-w", "%{http_code}:%{exitcode}", url)
 		if err == nil && strings.HasPrefix(stdout, "200:") {
 			return "success"
 		}
@@ -2115,7 +2115,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 					if expectSuccess {
 						Eventually(func() bool {
 							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, true)
-						}, 10*time.Second, 1*time.Second).Should(BeTrue(), msg)
+						}, 5*time.Second, 1*time.Second).Should(BeTrue(), msg)
 					} else {
 						// First wait for connectivity to fail (OVN flows take time to update)
 						Eventually(func() bool {
@@ -2124,7 +2124,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 						// Then verify it stays failed consistently
 						Consistently(func() bool {
 							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, false)
-						}, 10*time.Second, 1*time.Second).Should(BeTrue(), msg+" (consistent failure)")
+						}, 3*time.Second, 1*time.Second).Should(BeTrue(), msg+" (consistent failure)")
 					}
 				}
 			}
@@ -2144,7 +2144,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 					if expectSuccess {
 						Eventually(func() bool {
 							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, true)
-						}, 10*time.Second, 1*time.Second).Should(BeTrue(), msg)
+						}, 5*time.Second, 1*time.Second).Should(BeTrue(), msg)
 					} else {
 						// First wait for connectivity to fail (OVN flows take time to update)
 						Eventually(func() bool {
@@ -2153,7 +2153,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 						// Then verify it stays failed consistently
 						Consistently(func() bool {
 							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, false)
-						}, 10*time.Second, 1*time.Second).Should(BeTrue(), msg+" (consistent failure)")
+						}, 3*time.Second, 1*time.Second).Should(BeTrue(), msg+" (consistent failure)")
 					}
 				}
 			}
