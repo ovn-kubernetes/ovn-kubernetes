@@ -90,7 +90,13 @@ func NewManagementPortController(
 		c.ports[ovsPort] = newManagementPortOVS(cfg, routeManager)
 	}
 	if hasNetdev {
-		c.ports[netdevPort] = newManagementPortNetdev(netdevDevName, cfg, routeManager)
+		// Get device ID for fallback lookup after DPU reboot.
+		deviceID, err := util.GetDeviceIDFromNetdevice(netdevDevName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get device ID for %s: %v", netdevDevName, err)
+		}
+		klog.Infof("Management port device ID: %s (from device %s)", deviceID, netdevDevName)
+		c.ports[netdevPort] = newManagementPortNetdev(netdevDevName, deviceID, cfg, routeManager)
 	}
 	if hasRepresentor {
 		ifName := types.K8sMgmtIntfName
