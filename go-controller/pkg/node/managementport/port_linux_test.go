@@ -329,7 +329,15 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		mgtPortMAC string = "0a:58:0a:01:01:02"
 		mgtPort    string = types.K8sMgmtIntfName
 		mtu        int    = 1400
+		deviceID   string = "0000:03:00.0"
 	)
+
+	// Mock filesystem operations to return a device ID for the netdev
+	origFsOps := util.GetFileSystemOps()
+	defer util.SetFileSystemOps(origFsOps)
+	mockFsOps := &utilMocks.FileSystemOps{}
+	mockFsOps.On("Readlink", mock.AnythingOfType("string")).Return("../../"+deviceID, nil)
+	util.SetFileSystemOps(mockFsOps)
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -426,7 +434,15 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		mgtPortMAC string = "0a:58:0a:01:01:02"
 		mgtPort    string = types.K8sMgmtIntfName
 		mtu        int    = 1400
+		deviceID   string = "0000:03:00.0"
 	)
+
+	// Mock filesystem operations to return a device ID for the netdev
+	origFsOps := util.GetFileSystemOps()
+	defer util.SetFileSystemOps(origFsOps)
+	mockFsOps := &utilMocks.FileSystemOps{}
+	mockFsOps.On("Readlink", mock.AnythingOfType("string")).Return("../../"+deviceID, nil)
+	util.SetFileSystemOps(mockFsOps)
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1171,8 +1187,19 @@ var _ = Describe("Management Port tests", func() {
 	})
 
 	Context("NewManagementPortController creates a controller according to config.OvnKubeNode.Mode", func() {
+		var origFsOps util.FileSystemOps
+
 		BeforeEach(func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
+			// Mock filesystem operations to return a device ID for netdev tests
+			origFsOps = util.GetFileSystemOps()
+			mockFsOps := &utilMocks.FileSystemOps{}
+			mockFsOps.On("Readlink", mock.AnythingOfType("string")).Return("../../0000:03:00.0", nil)
+			util.SetFileSystemOps(mockFsOps)
+		})
+
+		AfterEach(func() {
+			util.SetFileSystemOps(origFsOps)
 		})
 
 		node := &corev1.Node{

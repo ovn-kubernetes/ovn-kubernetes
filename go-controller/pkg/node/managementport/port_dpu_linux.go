@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/klog/v2"
@@ -108,23 +109,51 @@ type managementPortNetdev struct {
 	netdevDevName string
 	cfg           *managementPortConfig
 	routeManager  *routemanager.Controller
+	// deviceID is the PCI device ID for fallback lookup when interface name changes
+	deviceID string
 }
 
 // newManagementPortNetdev creates a new managementPortNetdev
-func newManagementPortNetdev(netdevDevName string, cfg *managementPortConfig, routeManager *routemanager.Controller) *managementPortNetdev {
+func newManagementPortNetdev(netdevDevName, deviceID string, cfg *managementPortConfig, routeManager *routemanager.Controller) *managementPortNetdev {
 	return &managementPortNetdev{
 		ifName:        types.K8sMgmtIntfName,
 		netdevDevName: netdevDevName,
 		cfg:           cfg,
 		routeManager:  routeManager,
+		deviceID:      deviceID,
 	}
 }
 
+// findNetdevByDeviceID attempts to find the netdev using PCI device ID when name lookup fails.
+// This handles the case where the interface name changes after DPU reboot.
+func (mp *managementPortNetdev) findNetdevByDeviceID() (netlink.Link, error) {
+	if mp.deviceID == "" {
+		return nil, fmt.Errorf("no device ID available for fallback lookup")
+	}
+
+	netdevName, err := util.GetNetdevNameFromDeviceId(mp.deviceID, nadapi.DeviceInfo{})
+	if err != nil {
+		return nil, fmt.Errorf("device ID lookup failed: %w", err)
+	}
+
+	link, err := util.GetNetLinkOps().LinkByName(netdevName)
+	if err != nil {
+		return nil, fmt.Errorf("device ID %s resolved to %s but LinkByName failed: %w", mp.deviceID, netdevName, err)
+	}
+
+	klog.Infof("Found netdev %s by device ID %s", netdevName, mp.deviceID)
+	return link, nil
+}
+
 func (mp *managementPortNetdev) create() error {
-	klog.V(5).Infof("Lookup netdevice link and existing management port using '%v'", mp.netdevDevName)
+	klog.Infof("Management port netdev create: netdevDevName=%s, deviceID=%s, ifName=%s", mp.netdevDevName, mp.deviceID, mp.ifName)
 	link, err := util.GetNetLinkOps().LinkByName(mp.netdevDevName)
 	if err != nil {
-		return err
+		// Name lookup failed, try by PCI device ID if available
+		link, err = mp.findNetdevByDeviceID()
+		if err != nil {
+			return fmt.Errorf("failed to find management port netdev (name=%s, deviceID=%s): %w", mp.netdevDevName, mp.deviceID, err)
+		}
 	}
 
 	if link.Attrs().Name != mp.ifName {
