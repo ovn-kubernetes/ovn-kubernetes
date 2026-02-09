@@ -220,6 +220,11 @@ const (
 	ClusterSwitchLBGroupName = "clusterSwitchLBGroup"
 	ClusterRouterLBGroupName = "clusterRouterLBGroup"
 
+	// NetworkConnectServiceLBGroupPrefix is the prefix for per-CNC LoadBalancerGroups
+	// used for cross-network service connectivity. Each CNC gets its own LBG
+	// so that overlapping CNCs don't interfere with each other's cleanup.
+	NetworkConnectServiceLBGroupPrefix = "cnc_svc_"
+
 	// key for network name external-id
 	NetworkExternalID = OvnK8sPrefix + "/" + "network"
 	// key for node name external-id
