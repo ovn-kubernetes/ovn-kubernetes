@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
+	"slices"
 	"time"
 
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
@@ -366,7 +368,7 @@ func (c *Controller) crossValidateCNCs(cncState *clusterNetworkConnectState, dis
 }
 
 func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetworkConnect) ([]util.NetInfo, sets.Set[string], error) {
-	discoveredNetworks := []util.NetInfo{}
+	discoveredNetworks := map[string]util.NetInfo{}
 	allMatchingNADKeys := sets.New[string]()
 	var errs []error
 
@@ -406,7 +408,7 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				// This NAD passed all validation checks, so it's selected by this CNC
 				nadKey := nad.Namespace + "/" + nad.Name
 				allMatchingNADKeys.Insert(nadKey)
-				discoveredNetworks = append(discoveredNetworks, network)
+				discoveredNetworks[network.GetNetworkName()] = network
 			}
 		case apitypes.PrimaryUserDefinedNetworks:
 			namespaceSelector, err := metav1.LabelSelectorAsSelector(&selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector)
@@ -430,14 +432,14 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 					continue
 				}
 				allMatchingNADKeys.Insert(nadKey)
-				discoveredNetworks = append(discoveredNetworks, namespacePrimaryNetwork)
+				discoveredNetworks[namespacePrimaryNetwork.GetNetworkName()] = namespacePrimaryNetwork
 			}
 		default:
 			errs = append(errs, fmt.Errorf("%w: unsupported network selection type %s", errConfig, selector.NetworkSelectionType))
 		}
 	}
 
-	return discoveredNetworks, allMatchingNADKeys, kerrors.NewAggregate(errs)
+	return slices.Collect(maps.Values(discoveredNetworks)), allMatchingNADKeys, kerrors.NewAggregate(errs)
 }
 
 // allocateSubnets allocates subnets for the given discovered networks
