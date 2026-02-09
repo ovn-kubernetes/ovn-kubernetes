@@ -178,6 +178,11 @@ set_common_default_params() {
     echo "EVPN requires Route advertisements to be enabled (-rae)"
     exit 1
   fi
+  if [ "$ENABLE_EVPN" == true ] && [ "$OVN_GATEWAY_MODE" != "local" ]; then
+    echo "EVPN requires local gateway mode (-gm local)"
+    exit 1
+  fi
+  
 
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
   if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
