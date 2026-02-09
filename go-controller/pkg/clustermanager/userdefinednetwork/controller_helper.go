@@ -29,7 +29,15 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 	defer func() {
 		duration := time.Since(start)
 		// Record workflow phase metric for NAD sync
-		metrics.RecordUDNWorkflowPhaseDuration(obj.GetName(), "nad_sync", duration.Seconds())
+		// Use network-scoped name to avoid collisions between same-name UDNs in different namespaces
+		metricName := obj.GetName()
+		switch o := obj.(type) {
+		case *userdefinednetworkv1.UserDefinedNetwork:
+			metricName = util.GenerateUDNNetworkName(o.Namespace, o.Name)
+		case *userdefinednetworkv1.ClusterUserDefinedNetwork:
+			metricName = util.GenerateCUDNNetworkName(o.Name)
+		}
+		metrics.RecordUDNWorkflowPhaseDuration(metricName, "nad_sync", duration.Seconds())
 	}()
 	if utiludn.IsPrimaryNetwork(template.GetSpec(obj)) {
 		// check if required UDN label is on namespace
