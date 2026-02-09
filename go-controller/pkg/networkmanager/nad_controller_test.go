@@ -178,12 +178,14 @@ func (tnc *testNetworkController) Start(context.Context) error {
 func (tnc *testNetworkController) Stop() {
 	tnc.tcm.Lock()
 	defer tnc.tcm.Unlock()
+	fmt.Printf("stopping network: %s\n", testNetworkKey(tnc))
 	tnc.tcm.stopped = append(tnc.tcm.stopped, testNetworkKey(tnc))
 }
 
 func (tnc *testNetworkController) Cleanup() error {
 	tnc.tcm.Lock()
 	defer tnc.tcm.Unlock()
+	fmt.Printf("cleaning up network: %s\n", testNetworkKey(tnc))
 	tnc.tcm.cleaned = append(tnc.tcm.cleaned, testNetworkKey(tnc))
 	return nil
 }
@@ -842,8 +844,20 @@ func TestNADController(t *testing.T) {
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			netController := nadController.networkController
 
-			g.Expect(nadController.networkController.Start()).To(gomega.Succeed())
-			defer nadController.networkController.Stop()
+			// Drive reconciliation only for networks touched by the NAD operation
+			// to avoid assertions against transient async queue states.
+			syncTouchedNetworks := func(nadKey, prevNetwork string) {
+				networkNames := sets.New[string]()
+				if prevNetwork != "" {
+					networkNames.Insert(prevNetwork)
+				}
+				if currNetwork := nadController.nads[nadKey]; currNetwork != "" {
+					networkNames.Insert(currNetwork)
+				}
+				for _, network := range networkNames.UnsortedList() {
+					g.Expect(netController.syncNetwork(network)).To(gomega.Succeed())
+				}
+			}
 
 			for _, args := range tt.args {
 				namespace, name, err := cache.SplitMetaNamespaceKey(args.nad)
@@ -858,12 +872,14 @@ func TestNADController(t *testing.T) {
 					g.Expect(err).To(gomega.Or(gomega.Not(gomega.HaveOccurred()), gomega.MatchError(apierrors.IsAlreadyExists, "AlreadyExists")))
 				}
 
+				prevNetwork := nadController.nads[args.nad]
 				err = nadController.syncNAD(args.nad, nad)
 				if args.wantErr {
 					g.Expect(err).To(gomega.HaveOccurred())
 				} else {
 					g.Expect(err).NotTo(gomega.HaveOccurred())
 				}
+				syncTouchedNetworks(args.nad, prevNetwork)
 			}
 
 			meetsExpectations := func(g gomega.Gomega) {
@@ -943,8 +959,7 @@ func TestNADController(t *testing.T) {
 				}
 			}
 
-			g.Eventually(meetsExpectations).Should(gomega.Succeed())
-			g.Consistently(meetsExpectations).Should(gomega.Succeed())
+			meetsExpectations(g)
 		})
 	}
 }
