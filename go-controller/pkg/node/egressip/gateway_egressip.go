@@ -376,8 +376,12 @@ func (g *BridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
 		if err != nil {
 			return err
 		}
-		node.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
-		return g.kube.UpdateNodeStatus(node)
+		nodeToUpdate := node.DeepCopy()
+		if nodeToUpdate.Annotations == nil {
+			nodeToUpdate.Annotations = map[string]string{}
+		}
+		nodeToUpdate.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
+		return g.kube.UpdateNodeStatus(nodeToUpdate)
 	})
 }
 
@@ -412,8 +416,12 @@ func (g *BridgeEIPAddrManager) deleteIPsFromAnnotation(candidateIPs ...net.IP) e
 		if err != nil {
 			return err
 		}
-		node.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
-		return g.kube.UpdateNodeStatus(node)
+		nodeToUpdate := node.DeepCopy()
+		if nodeToUpdate.Annotations == nil {
+			nodeToUpdate.Annotations = map[string]string{}
+		}
+		nodeToUpdate.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
+		return g.kube.UpdateNodeStatus(nodeToUpdate)
 	})
 }
 
