@@ -33,6 +33,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnapplyconfkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
@@ -874,7 +875,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 		metrics.IncrementCUDNCount(role, topology)
 	}
 
-	if err := c.validateEVPNVTEP(cudn); err != nil {
+	if err := c.validateEVPN(cudn); err != nil {
 		return nil, err
 	}
 
@@ -1020,15 +1021,18 @@ func newClusterNetworkCreatedCondition(nads []netv1.NetworkAttachmentDefinition,
 	return condition
 }
 
-// validateEVPNVTEP validates EVPN configuration for a CUDN.
+// validateEVPN validates EVPN configuration for a CUDN.
 // Returns an error if EVPN is requested but disabled, or if the referenced VTEP doesn't exist.
-func (c *Controller) validateEVPNVTEP(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
+func (c *Controller) validateEVPN(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
 	if cudn.Spec.Network.Transport != userdefinednetworkv1.TransportOptionEVPN {
 		return nil // Not an EVPN network
 	}
 
-	if !util.IsEVPNEnabled() {
+	if !config.OVNKubernetesFeature.EnableEVPN {
 		return fmt.Errorf("EVPN transport requested but EVPN feature is not enabled")
+	}
+	if config.Gateway.Mode != config.GatewayModeLocal {
+		return fmt.Errorf("EVPN transport requested but EVPN feature is only supported in local gateway mode")
 	}
 
 	// CEL validation ensures EVPN is set when transport is EVPN.

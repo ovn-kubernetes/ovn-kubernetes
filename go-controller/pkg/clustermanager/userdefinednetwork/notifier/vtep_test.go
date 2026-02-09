@@ -41,6 +41,8 @@ var _ = Describe("VTEPNotifier", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
+		// satisfy EVPN LGW restriction, otherwise no effect
+		config.Gateway.Mode = config.GatewayModeLocal
 		fakeClient := &util.OVNClusterManagerClientset{
 			KubeClient:                fake.NewSimpleClientset(),
 			NetworkAttchDefClient:     netv1fake.NewSimpleClientset(),

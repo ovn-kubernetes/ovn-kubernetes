@@ -1388,6 +1388,8 @@ exit
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
 			config.OVNKubernetesFeature.EnableEVPN = true
+			// satisfy EVPN LGW restriction, otherwise no effect
+			config.Gateway.Mode = config.GatewayModeLocal
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 			addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)

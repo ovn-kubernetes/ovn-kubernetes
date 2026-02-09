@@ -31,6 +31,8 @@ var _ = Describe("NetAttachDefTemplate", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
+		// satisfy EVPN LGW restriction, otherwise no effect
+		config.Gateway.Mode = config.GatewayModeLocal
 	})
 
 	DescribeTable("should fail to render NAD spec given",
