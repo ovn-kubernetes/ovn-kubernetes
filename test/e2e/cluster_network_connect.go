@@ -2063,8 +2063,11 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	checkConnectivity := func(fromNamespace, fromPodName, toIP string, expectSuccess bool) bool {
 		// net.JoinHostPort properly handles IPv6 addresses by adding brackets
 		url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(toIP, "8080"))
+		// --connect-timeout only covers the TCP connection phase.
+		// --max-time caps total request time including data transfer, ensuring
+		// curl doesn't hang indefinitely if connection succeeds but data never arrives.
 		stdout, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
-			"curl", "--connect-timeout", "0.5", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
+			"curl", "--connect-timeout", "0.5", "--max-time", "1", "-s", "-o", "/dev/null", "-w", "%{http_code}", url)
 		if expectSuccess {
 			return err == nil && stdout == "200"
 		}
@@ -2078,7 +2081,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	checkConnectivityFailureType := func(fromNamespace, fromPodName, toIP string) string {
 		url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(toIP, "8080"))
 		stdout, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
-			"curl", "--connect-timeout", "0.5", "-s", "-o", "/dev/null", "-w", "%{http_code}:%{exitcode}", url)
+			"curl", "--connect-timeout", "0.5", "--max-time", "1", "-s", "-o", "/dev/null", "-w", "%{http_code}:%{exitcode}", url)
 		if err == nil && strings.HasPrefix(stdout, "200:") {
 			return "success"
 		}
