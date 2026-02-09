@@ -132,7 +132,7 @@ var metricUDNReconciliationDuration = prometheus.NewHistogramVec(prometheus.Hist
 	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
 	Name:      "udn_reconciliation_duration_seconds",
 	Help:      "Time to reconcile a UDN (includes NAD creation, allocation, status update)",
-	Buckets:   prometheus.ExponentialBuckets(.001, 2, 14), // 1ms to 8.192s
+	Buckets:   prometheus.ExponentialBuckets(.01, 2, 16), // 10ms to 327.68s, covers 180s cap with resolution
 }, []string{"name"})
 
 var metricUDNNodeAllocOperationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -280,4 +280,16 @@ func RecordUDNNodeAllocOperationDuration(name string, operation string, duration
 // RecordUDNWorkflowPhaseDuration records wall-clock duration of each UDN workflow phase
 func RecordUDNWorkflowPhaseDuration(name, phase string, duration float64) {
 	metricUDNWorkflowPhaseDuration.WithLabelValues(name, phase).Observe(duration)
+}
+
+// CleanupUDNMetrics removes all metric time series associated with a deleted UDN to prevent
+// unbounded cardinality growth. Should be called when a UDN or CUDN is fully deleted.
+func CleanupUDNMetrics(networkName string) {
+	// Single-label metric: delete by exact label value
+	metricUDNReconciliationDuration.DeleteLabelValues(networkName)
+
+	// Multi-label metrics: delete all series matching the network name
+	// DeletePartialMatch removes all time series where the "name" label matches
+	metricUDNNodeAllocOperationDuration.DeletePartialMatch(prometheus.Labels{"name": networkName})
+	metricUDNWorkflowPhaseDuration.DeletePartialMatch(prometheus.Labels{"name": networkName})
 }
