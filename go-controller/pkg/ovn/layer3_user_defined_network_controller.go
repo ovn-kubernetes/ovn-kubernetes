@@ -675,6 +675,12 @@ func (oc *Layer3UserDefinedNetworkController) WatchNodes() error {
 }
 
 func (oc *Layer3UserDefinedNetworkController) init() error {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		metrics.RecordUDNNBDBProgrammedDuration(oc.GetNetworkName(), duration.Seconds())
+	}()
+
 	if err := oc.gatherJoinSwitchIPs(); err != nil {
 		return fmt.Errorf("failed to gather join switch IPs for network %s: %v", oc.GetNetworkName(), err)
 	}

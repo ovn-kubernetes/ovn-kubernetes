@@ -155,18 +155,18 @@ func New(
 	vidAllocator := id.NewIDAllocator("EVPN-VIDs", MaxEVPNVIDs)
 
 	c := &Controller{
-		nadClient:         nadClient,
-		nadLister:         nadInfomer.Lister(),
-		udnClient:         udnClient,
-		udnLister:         udnLister,
-		cudnLister:        cudnLister,
-		renderNadFn:       renderNadFn,
-		podInformer:       podInformer,
-		namespaceInformer: namespaceInformer,
-		networkManager:    networkManager,
-		namespaceTracker:  map[string]sets.Set[string]{},
-		vidAllocator:      vidAllocator,
-		eventRecorder:     eventRecorder,
+		nadClient:                     nadClient,
+		nadLister:                     nadInfomer.Lister(),
+		udnClient:                     udnClient,
+		udnLister:                     udnLister,
+		cudnLister:                    cudnLister,
+		renderNadFn:                   renderNadFn,
+		podInformer:                   podInformer,
+		namespaceInformer:             namespaceInformer,
+		networkManager:                networkManager,
+		namespaceTracker:              map[string]sets.Set[string]{},
+		vidAllocator:                  vidAllocator,
+		eventRecorder:                 eventRecorder,
 	}
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
@@ -572,6 +572,37 @@ func (c *Controller) UpdateSubsystemCondition(
 		c.eventRecorder.Event(udnRef, event.EventType, event.Reason, event.Note)
 	}
 
+	// Record network allocation duration when NetworkAllocationSucceeded becomes True for the first time
+	if condition != nil && condition.Type == "NetworkAllocationSucceeded" && condition.Status == metav1.ConditionTrue {
+		wasAlreadyTrue := meta.IsStatusConditionTrue(udn.Status.Conditions, "NetworkAllocationSucceeded")
+		if !wasAlreadyTrue {
+			allocationDuration := condition.LastTransitionTime.Time.Sub(udn.CreationTimestamp.Time)
+			// Record workflow phase metric for network ready
+			// This is creation → NetworkAllocationSucceeded time (total time until network is ready)
+			metrics.RecordUDNWorkflowPhaseDuration(udnName, "network_ready", allocationDuration.Seconds())
+
+			// Calculate async node allocation time (excluding UDN controller synchronous work)
+			// async_node_allocation = NetworkCreated.LastTransitionTime → NetworkAllocationSucceeded.LastTransitionTime
+			// This represents the wall-clock time for network cluster controller async operations
+			// including controller init, per-node processing, and waiting for all nodes to complete
+			wasNetworkCreatedBefore := meta.IsStatusConditionTrue(udn.Status.Conditions, conditionTypeNetworkCreated)
+			if wasNetworkCreatedBefore {
+				// NetworkCreated was set during reconciliation, so we can calculate async work
+				// by finding when reconciliation completed (when NetworkCreated was set)
+				networkCreatedCondition := meta.FindStatusCondition(udn.Status.Conditions, conditionTypeNetworkCreated)
+				if networkCreatedCondition != nil {
+					// Async node allocation time = NetworkAllocationSucceeded - NetworkCreated
+					// This is the wall-clock time for network cluster controller to allocate network on all nodes
+					asyncNodeAllocationDuration := condition.LastTransitionTime.Time.Sub(networkCreatedCondition.LastTransitionTime.Time)
+					metrics.RecordUDNWorkflowPhaseDuration(udnName, "async_node_allocation", asyncNodeAllocationDuration.Seconds())
+					klog.V(5).Infof("Recorded async node allocation duration for UDN %s: %v (NetworkCreated→NetworkAllocationSucceeded)", udnName, asyncNodeAllocationDuration)
+				}
+			}
+
+			klog.Infof("Recorded allocation duration for UDN %s: %v", udnName, allocationDuration)
+		}
+	}
+
 	if condition == nil {
 		return nil
 	}
@@ -621,6 +652,29 @@ func (c *Controller) reconcileUDN(key string) error {
 	}
 
 	udnCopy := udn.DeepCopy()
+
+	// Check if NetworkCreated was already True before this reconcile
+	wasNetworkCreatedBefore := meta.IsStatusConditionTrue(udnCopy.Status.Conditions, conditionTypeNetworkCreated)
+
+	// Track queue wait time for first reconciliation
+	if !wasNetworkCreatedBefore {
+		reconcileStartTime := time.Now()
+		queueWaitDuration := reconcileStartTime.Sub(udnCopy.CreationTimestamp.Time)
+
+		// Record workflow phase metric
+		metrics.RecordUDNWorkflowPhaseDuration(udnCopy.Name, "queue_wait", queueWaitDuration.Seconds())
+		klog.Infof("UDN %s/%s spent %v in queue before reconciliation", namespace, name, queueWaitDuration)
+	}
+	// Defer metric recording to measure total reconciliation time including queue wait
+	// For first reconciliation, measure from UDN creation time to include queue wait
+	defer func() {
+		if !wasNetworkCreatedBefore && udnCopy != nil {
+			reconciliationDuration := time.Since(udnCopy.CreationTimestamp.Time)
+			metrics.RecordUDNReconciliationDuration(udnCopy.Name, reconciliationDuration.Seconds())
+			klog.Infof("Recorded reconciliation duration for UDN %s: %v (includes queue wait + processing)",
+				udnCopy.Name, reconciliationDuration)
+		}
+	}()
 
 	nadCopy, syncErr := c.syncUserDefinedNetwork(udnCopy)
 

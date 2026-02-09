@@ -538,6 +538,12 @@ func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 }
 
 func (oc *Layer2UserDefinedNetworkController) init() error {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		metrics.RecordUDNNBDBProgrammedDuration(oc.GetNetworkName(), duration.Seconds())
+	}()
+
 	// Create default Control Plane Protection (COPP) entry for routers
 	defaultCOPPUUID, err := EnsureDefaultCOPP(oc.nbClient)
 	if err != nil {

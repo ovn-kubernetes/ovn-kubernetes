@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
@@ -17,12 +18,19 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
 )
 
 func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.NetworkAttachmentDefinition, error) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start)
+		// Record workflow phase metric for NAD sync
+		metrics.RecordUDNWorkflowPhaseDuration(obj.GetName(), "nad_sync", duration.Seconds())
+	}()
 	if utiludn.IsPrimaryNetwork(template.GetSpec(obj)) {
 		// check if required UDN label is on namespace
 		ns, err := c.namespaceInformer.Lister().Get(namespace)
