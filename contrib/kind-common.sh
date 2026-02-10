@@ -234,6 +234,7 @@ build_ovn_image() {
 }
 
 run_kubectl() {
+  kind export kubeconfig --name ${KIND_CLUSTER_NAME} 
   local retries=0
   local attempts=10
   while true; do

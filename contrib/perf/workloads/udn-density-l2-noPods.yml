@@ -23,27 +23,26 @@ global:
         labelSelector: {name: ovnkube-control-plane}
         url: http://localhost:9411/debug/pprof/heap?seconds=30
 jobs:
-  - name: kubelet-density-cni
-    jobIterations: 100
+  - name: udn-density-l2-nopods
+    jobIterations: 200
     qps: 10
     burst: 10
-    namespacedIterations: false 
-    namespace: kubelet-density-cni
+    namespacedIterations: true 
+    namespace: udn-density-l2-nopods
     waitWhenFinished: true
     podWait: false 
-    preLoadImages: true
+    preLoadImages: false 
     preLoadPeriod: 2m
     churnConfig:
       percent: 10
-      cycles: 10
-      mode: objects
+      cycles: 5 
+      delay: 2m
+    namespaceLabels:
+      security.openshift.io/scc.podSecurityLabelSync: false
+      pod-security.kubernetes.io/enforce: privileged
+      pod-security.kubernetes.io/audit: privileged
+      pod-security.kubernetes.io/warn: privileged
+      k8s.ovn.org/primary-user-defined-network: ""
     objects:
-
-      - objectTemplate: workloads/templates/kubelet-density-cni/webserver-deployment.yml
-        replicas: 1
-
-      - objectTemplate: workloads/templates/kubelet-density-cni/webserver-service.yml
-        replicas: 1
-
-      - objectTemplate: workloads/templates/kubelet-density-cni/curl-deployment.yml
+      - objectTemplate: workloads/templates/udn-density/udn_l2.yml
         replicas: 1
