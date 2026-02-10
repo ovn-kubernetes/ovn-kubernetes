@@ -274,7 +274,11 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 		}
 		activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 		if err != nil {
-			return fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
+			return fmt.Errorf("failed to find active network for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+		if activeNetwork == nil {
+			// no active network, pod doesn't belong to our controller
+			return nil
 		}
 	}
 
@@ -627,28 +631,17 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		var activeNetwork util.NetInfo
 		var err error
 		if bsnc.IsPrimaryNetwork() {
-			// check to see if the primary NAD is even applicable to our controller
-			foundNamespaceNAD, err := bsnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
-			if err != nil {
-				return fmt.Errorf("failed to get primary network namespace NAD: %w", err)
-			}
-			if foundNamespaceNAD == types.DefaultNetworkName {
-				continue
-			}
-			networkName := bsnc.networkManager.GetNetworkNameForNADKey(foundNamespaceNAD)
-			if networkName != "" && networkName != bsnc.GetNetworkName() {
-				continue
-			}
 			activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 			if err != nil {
-				if apierrors.IsNotFound(err) {
-					// namespace is gone after we listed this pod, that means the pod no longer exists
-					// we don't need to preserve it's previously allocated IP address or logical switch port
-					klog.Infof("%s network controller pod sync: pod %s/%s namespace has been deleted, ignoring pod",
-						bsnc.GetNetworkName(), pod.Namespace, pod.Name)
-					continue
-				}
-				return fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
+				return fmt.Errorf("failed to find the active network for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			}
+			if activeNetwork == nil || activeNetwork.IsDefault() {
+				// no active network for pod, or is a default network pod
+				continue
+			}
+			if activeNetwork.GetNetworkName() != bsnc.GetNetworkName() {
+				// network name found but doesn't apply to our controller
+				continue
 			}
 		}
 

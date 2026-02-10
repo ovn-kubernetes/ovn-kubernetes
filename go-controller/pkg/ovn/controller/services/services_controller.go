@@ -604,7 +604,7 @@ func (c *Controller) skipService(name, namespace string) bool {
 		if err != nil {
 			// If the namespace requires a UDN that hasn't been processed yet, the default controller
 			// should skip this service; the UDN controller will handle it once ready.
-			if util.IsUnprocessedActiveNetworkError(err) {
+			if util.IsInvalidPrimaryNetworkError(err) {
 				return c.netInfo.IsDefault()
 			}
 			utilruntime.HandleError(fmt.Errorf("failed to retrieve network for service %s/%s: %w",

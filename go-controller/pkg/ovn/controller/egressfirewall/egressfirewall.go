@@ -422,20 +422,15 @@ func (oc *EFController) sync(key string) (updateErr error) {
 		}()
 
 		activeNetwork, netErr := oc.networkManager.GetActiveNetworkForNamespace(namespace)
-		if netErr != nil {
-			if util.IsUnprocessedActiveNetworkError(netErr) {
-				klog.V(5).Infof("Skipping egress firewall %s/%s: primary network not ready: %v", namespace, efName, netErr)
-				skipStatusUpdate = true
-				return nil
-			}
-			if util.IsInvalidPrimaryNetworkError(netErr) {
-				// Namespace requires P-UDN, but it does not exist. Remove EF config and surface error in status.
-				updateErr = netErr
-			} else {
-				return fmt.Errorf("failed to get active network for egress firewall %s/%s namespace: %w",
-					namespace, efName, netErr)
-			}
-		} else {
+		switch {
+		case netErr != nil:
+			// Failed to resolve active network; surface this in EF status.
+			updateErr = netErr
+		case activeNetwork == nil:
+			// No active network for this namespace in this controller context (e.g. filtered by D-UDN):
+			// cleanup stale EF config but don't report an EF status error.
+			skipStatusUpdate = true
+		default:
 			aclLoggingLevels, logErr := oc.getNamespaceACLLogging(namespace)
 			if logErr != nil {
 				return fmt.Errorf("failed to get acl logging levels for egress firewall %s/%s: %w",
@@ -645,7 +640,10 @@ func (oc *EFController) validateAndGetEgressFirewallDestination(namespace string
 		}
 		cidrSelector = egressFirewallDestination.CIDRSelector
 		netInfo, err := oc.networkManager.GetActiveNetworkForNamespace(namespace)
-		if err != nil {
+		if netInfo == nil || err != nil {
+			if err == nil {
+				err = fmt.Errorf("no active network found for namespace %s ", namespace)
+			}
 			return "", "", nil, nil,
 				fmt.Errorf("failed to validate egress firewall destination: %w", err)
 		}

@@ -3,7 +3,6 @@ package networkmanager
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
 
@@ -44,11 +43,13 @@ type watchFactory interface {
 // information to the rest of the project.
 type Interface interface {
 	// GetActiveNetworkForNamespace returns a copy of the primary network for
-	// the namespace if any or the default network otherwise. If there is a
-	// primary UDN defined but the NAD has not been processed yet, returns
-	// ErrNetworkControllerTopologyNotManaged. Used for controllers that are not
-	// capable of reconciling primary network changes. If unsure, use this one
-	// and not GetActiveNetworkForNamespaceFast.
+	// the namespace if any or the default network otherwise.
+	// If the network is non-existent for a legitimate reason (namespace gone or
+	// filtered by Dynamic UDN) it returns nil NetInfo and no error.
+	// If the network is non-existent, but should exist, return InvalidPrimaryNetworkError.
+	// If unsure, use this one and not GetActiveNetworkForNamespaceFast.
+	// Note this function is filtered by Dynamic UDN, so if your caller wants NAD/Network
+	// information without D-UDN filtering, use GetPrimaryNADForNamespace.
 	GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error)
 
 	// GetActiveNetworkForNamespaceFast returns the primary network for the
@@ -62,6 +63,7 @@ type Interface interface {
 	// GetPrimaryNADForNamespace returns the full namespaced key of the
 	// primary NAD for the given namespace, if one exists.
 	// Returns default network if namespace has no primary UDN.
+	// This function is not filtered based on Dynamic UDN.
 	GetPrimaryNADForNamespace(namespace string) (string, error)
 
 	// GetNetwork returns the network of the given name or nil if unknown
@@ -105,51 +107,6 @@ type Controller interface {
 	Interface() Interface
 	Start() error
 	Stop()
-}
-
-// ResolveActiveNetworkForNamespaceOnNode returns the active primary network for the namespace only if
-// the network is active on the given node. It uses the NAD cache to resolve the namespace's primary
-// NAD and network name, checks NodeHasNetwork, and then calls GetActiveNetworkForNamespace to fetch
-// the rendered NetInfo. It returns (nil, false, nil) when the network is not active on the node.
-func ResolveActiveNetworkForNamespaceOnNode(nm Interface, nodeName, namespace string) (util.NetInfo, bool, error) {
-	if nm == nil {
-		return nil, false, fmt.Errorf("network manager is nil")
-	}
-
-	nadKey, err := nm.GetPrimaryNADForNamespace(namespace)
-	if err != nil {
-		return nil, false, err
-	}
-	if nadKey == "" {
-		// Namespace is gone
-		return nil, false, nil
-	}
-
-	if nadKey == types.DefaultNetworkName {
-		netInfo, err := nm.GetActiveNetworkForNamespace(namespace)
-		if err != nil {
-			return nil, false, err
-		}
-		return netInfo, true, nil
-	}
-
-	networkName := nm.GetNetworkNameForNADKey(nadKey)
-	if networkName == "" {
-		return nil, false, fmt.Errorf("no primary network found for namespace %s", namespace)
-	}
-
-	if !nm.NodeHasNetwork(nodeName, networkName) {
-		return nil, false, nil
-	}
-
-	// At this point the namespace's primary NAD is known and the network is active on this node,
-	// so GetActiveNetworkForNamespace should not normally return InvalidPrimaryNetworkError.
-	// Any error here is treated as transient/inconsistent state.
-	netInfo, err := nm.GetActiveNetworkForNamespace(namespace)
-	if err != nil {
-		return nil, false, err
-	}
-	return netInfo, true, nil
 }
 
 // Default returns a default implementation that assumes the default network is

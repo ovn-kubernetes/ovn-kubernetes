@@ -10,9 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -22,6 +20,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -45,9 +44,9 @@ func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace
 	return "", nil
 }
 
-func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
-	notFoundErr := apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, namespace)
-	return nil, fmt.Errorf("failed to get namespace %q: %w", namespace, notFoundErr)
+func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
+	// Namespace is gone; new GetActiveNetworkForNamespace semantics return nil, nil.
+	return nil, nil
 }
 
 // mockNetworkManagerWithInvalidPrimaryNetworkError simulates UDN deletion scenario
@@ -78,14 +77,18 @@ func (m *mockNetworkManagerWithError) GetActiveNetworkForNamespace(namespace str
 	return nil, fmt.Errorf("network lookup failed for namespace %q", namespace)
 }
 
-// mockNetworkManagerWithUnprocessedActiveNetworkError simulates a namespace that
-// requires a UDN but the primary NAD has not been processed yet.
-type mockNetworkManagerWithUnprocessedActiveNetworkError struct {
+// mockNetworkManagerWithInvalidPrimaryNetworkSkip simulates a namespace that
+// requires a primary UDN but is currently in invalid primary network state.
+type mockNetworkManagerWithInvalidPrimaryNetworkSkip struct {
 	networkmanager.Interface
 }
 
-func (m *mockNetworkManagerWithUnprocessedActiveNetworkError) GetPrimaryNADForNamespace(namespace string) (string, error) {
-	return "", util.NewUnprocessedActiveNetworkError(namespace, "")
+func (m *mockNetworkManagerWithInvalidPrimaryNetworkSkip) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	return "", util.NewInvalidPrimaryNetworkError(namespace)
+}
+
+func (m *mockNetworkManagerWithInvalidPrimaryNetworkSkip) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
+	return nil, util.NewInvalidPrimaryNetworkError(namespace)
 }
 
 // mockNetworkManagerWithInactiveNode simulates a UDN where the node is inactive for the network.
@@ -105,8 +108,10 @@ func (m *mockNetworkManagerWithInactiveNode) NodeHasNetwork(_, _ string) bool {
 	return false
 }
 
-func (m *mockNetworkManagerWithInactiveNode) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
-	return nil, fmt.Errorf("unexpected GetActiveNetworkForNamespace call for %q", namespace)
+func (m *mockNetworkManagerWithInactiveNode) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
+	// New code paths resolve activity directly via GetActiveNetworkForNamespace.
+	// Returning nil netInfo means "network not active on this node".
+	return nil, nil
 }
 
 // mockNetworkManagerWithActiveUDN simulates a UDN active on this node.
@@ -348,6 +353,7 @@ var _ = Describe("SyncServices", func() {
 		config.Gateway.Mode = config.GatewayModeLocal
 		config.IPv4Mode = true
 		config.IPv6Mode = false
+		_ = nodenft.SetFakeNFTablesHelper()
 
 		fakeClient = &util.OVNNodeClientset{
 			KubeClient: fake.NewSimpleClientset(),
@@ -374,7 +380,7 @@ var _ = Describe("SyncServices", func() {
 		watcher.Shutdown()
 	})
 
-	Context("when namespace requires UDN but NAD is unprocessed", func() {
+	Context("when namespace has invalid primary network", func() {
 		It("should skip service sync without failing startup", func() {
 			service := newService(testService, testNamespace, "10.96.0.20",
 				[]corev1.ServicePort{{
@@ -386,13 +392,13 @@ var _ = Describe("SyncServices", func() {
 				}},
 				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
 
-			npw.networkManager = &mockNetworkManagerWithUnprocessedActiveNetworkError{}
+			npw.networkManager = &mockNetworkManagerWithInvalidPrimaryNetworkSkip{}
 
 			err := npw.SyncServices([]interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
 			verifyIPTablesRule(iptV4, "10.96.0.20", 80, 30091, false,
-				"iptables rule should not be created when UDN is unprocessed")
+				"iptables rule should not be created when primary network is invalid")
 		})
 	})
 

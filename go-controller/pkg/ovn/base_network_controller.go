@@ -340,12 +340,6 @@ func (oc *BaseUserDefinedNetworkController) shouldFilterNamespace(namespace stri
 
 	nadKey, err := oc.networkManager.GetPrimaryNADForNamespace(namespace)
 	if err != nil {
-		if util.IsUnprocessedActiveNetworkError(err) {
-			return false
-		}
-		if util.IsInvalidPrimaryNetworkError(err) {
-			return true
-		}
 		return false
 	}
 	if nadKey == types.DefaultNetworkName {
@@ -1049,7 +1043,7 @@ func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error
 		pod,
 	)
 	if err != nil {
-		if util.IsUnprocessedActiveNetworkError(err) {
+		if util.IsInvalidPrimaryNetworkError(err) {
 			bnc.recordPodErrorEvent(pod, err)
 		}
 		return "", err
@@ -1174,7 +1168,7 @@ func (bnc *BaseNetworkController) AddResourceCommon(objType reflect.Type, obj in
 		if err != nil {
 			// If this is a UDN namespace that hasn't been processed yet, the default
 			// controller should skip it while UDN controllers should retry.
-			if bnc.GetNetworkName() == types.DefaultNetworkName && util.IsUnprocessedActiveNetworkError(err) {
+			if bnc.GetNetworkName() == types.DefaultNetworkName && util.IsInvalidPrimaryNetworkError(err) {
 				return nil
 			}
 			// Retry until the NAD controller has processed the primary NAD for this namespace.
@@ -1194,11 +1188,15 @@ func (bnc *BaseNetworkController) AddResourceCommon(objType reflect.Type, obj in
 				return nil
 			}
 		}
-		netinfo, err := bnc.networkManager.GetActiveNetworkForNamespace(np.Namespace)
+		netInfo, err := bnc.networkManager.GetActiveNetworkForNamespace(np.Namespace)
 		if err != nil {
 			return fmt.Errorf("could not get active network for namespace %s: %v", np.Namespace, err)
 		}
-		if bnc.GetNetworkName() != netinfo.GetNetworkName() {
+		if netInfo == nil {
+			// no active network, nothing to do
+			return nil
+		}
+		if bnc.GetNetworkName() != netInfo.GetNetworkName() {
 			return nil
 		}
 		if err := bnc.addNetworkPolicy(np); err != nil {
