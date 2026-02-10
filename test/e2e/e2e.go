@@ -1986,6 +1986,11 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 			setEnv := map[string]string{ovnEnvVar: addressAndPort}
 			setUnsetTemplateContainerEnv(f.ClientSet, ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), setEnv)
 
+			ginkgo.By("Starting traffic generator to ensure flow monitoring has data to sample")
+			trafficGen, err := StartTrafficGenerator(f)
+			framework.ExpectNoError(err, "failed to start traffic generator")
+			defer trafficGen.Stop()
+
 			ginkgo.By(fmt.Sprintf("Checking that the collector container received %s data", protocolStr))
 			keyword := keywordInLogs[protocol]
 			collectorContainerLogsTest := func() wait.ConditionFunc {
