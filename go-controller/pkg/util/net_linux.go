@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"reflect"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mdlayher/arp"
@@ -30,6 +31,7 @@ type NetLinkOps interface {
 	LinkByIndex(index int) (netlink.Link, error)
 	LinkSetDown(link netlink.Link) error
 	LinkAdd(link netlink.Link) error
+	LinkModify(link netlink.Link) error
 	LinkDelete(link netlink.Link) error
 	LinkSetAlias(link netlink.Link, name string) error
 	LinkSetName(link netlink.Link, newName string) error
@@ -58,6 +60,21 @@ type NetLinkOps interface {
 	LinkSetVfHardwareAddr(pfLink netlink.Link, vfIndex int, hwaddr net.HardwareAddr) error
 	RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, done <-chan struct{}, options netlink.RouteSubscribeOptions) error
 	LinkSubscribeWithOptions(ch chan<- netlink.LinkUpdate, done <-chan struct{}, options netlink.LinkSubscribeOptions) error
+	// Error checking helpers
+	IsEntryNotFoundError(err error) bool
+	IsAlreadyExistsError(err error) bool
+	// Bridge VLAN operations
+	BridgeVlanAdd(link netlink.Link, vid uint16, pvid, untagged, self, master bool) error
+	BridgeVlanDel(link netlink.Link, vid uint16, pvid, untagged, self, master bool) error
+	BridgeVniAdd(link netlink.Link, vni uint32) error
+	BridgeVniDel(link netlink.Link, vni uint32) error
+	BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, self, master bool) error
+	BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, self, master bool) error
+	// Bridge port settings
+	LinkSetVlanTunnel(link netlink.Link, mode bool) error
+	LinkSetBrNeighSuppress(link netlink.Link, mode bool) error
+	LinkSetLearning(link netlink.Link, mode bool) error
+	LinkGetProtinfo(link netlink.Link) (netlink.Protinfo, error)
 }
 
 type defaultNetLinkOps struct {
@@ -98,6 +115,10 @@ func (defaultNetLinkOps) LinkSetDown(link netlink.Link) error {
 
 func (defaultNetLinkOps) LinkAdd(link netlink.Link) error {
 	return netlink.LinkAdd(link)
+}
+
+func (defaultNetLinkOps) LinkModify(link netlink.Link) error {
+	return netlink.LinkModify(link)
 }
 
 func (defaultNetLinkOps) LinkSetAlias(link netlink.Link, name string) error {
@@ -142,6 +163,19 @@ func (defaultNetLinkOps) LinkSetTxQLen(link netlink.Link, qlen int) error {
 
 func (defaultNetLinkOps) IsLinkNotFoundError(err error) bool {
 	return reflect.TypeOf(err) == reflect.TypeOf(netlink.LinkNotFoundError{})
+}
+
+// IsEntryNotFoundError checks if an error indicates an entry was not found.
+// This covers both ENOENT (entry not found) and ENODEV (device not found,
+// which can occur if the device is deleted after we obtained the link handle).
+func (defaultNetLinkOps) IsEntryNotFoundError(err error) bool {
+	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ENODEV)
+}
+
+// IsAlreadyExistsError checks if an error indicates an entry already exists.
+// Used for idempotent add operations where EEXIST is expected and acceptable.
+func (defaultNetLinkOps) IsAlreadyExistsError(err error) bool {
+	return errors.Is(err, syscall.EEXIST)
 }
 
 func (defaultNetLinkOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
@@ -206,6 +240,46 @@ func (defaultNetLinkOps) RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate
 
 func (defaultNetLinkOps) LinkSubscribeWithOptions(ch chan<- netlink.LinkUpdate, done <-chan struct{}, options netlink.LinkSubscribeOptions) error {
 	return netlink.LinkSubscribeWithOptions(ch, done, options)
+}
+
+func (defaultNetLinkOps) BridgeVlanAdd(link netlink.Link, vid uint16, pvid, untagged, self, master bool) error {
+	return netlink.BridgeVlanAdd(link, vid, pvid, untagged, self, master)
+}
+
+func (defaultNetLinkOps) BridgeVlanDel(link netlink.Link, vid uint16, pvid, untagged, self, master bool) error {
+	return netlink.BridgeVlanDel(link, vid, pvid, untagged, self, master)
+}
+
+func (defaultNetLinkOps) BridgeVniAdd(link netlink.Link, vni uint32) error {
+	return netlink.BridgeVniAdd(link, vni)
+}
+
+func (defaultNetLinkOps) BridgeVniDel(link netlink.Link, vni uint32) error {
+	return netlink.BridgeVniDel(link, vni)
+}
+
+func (defaultNetLinkOps) BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, self, master bool) error {
+	return netlink.BridgeVlanAddTunnelInfo(link, vid, vni, self, master)
+}
+
+func (defaultNetLinkOps) BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, self, master bool) error {
+	return netlink.BridgeVlanDelTunnelInfo(link, vid, vni, self, master)
+}
+
+func (defaultNetLinkOps) LinkSetVlanTunnel(link netlink.Link, mode bool) error {
+	return netlink.LinkSetVlanTunnel(link, mode)
+}
+
+func (defaultNetLinkOps) LinkSetBrNeighSuppress(link netlink.Link, mode bool) error {
+	return netlink.LinkSetBrNeighSuppress(link, mode)
+}
+
+func (defaultNetLinkOps) LinkSetLearning(link netlink.Link, mode bool) error {
+	return netlink.LinkSetLearning(link, mode)
+}
+
+func (defaultNetLinkOps) LinkGetProtinfo(link netlink.Link) (netlink.Protinfo, error) {
+	return netlink.LinkGetProtinfo(link)
 }
 
 func getFamily(ip net.IP) int {
