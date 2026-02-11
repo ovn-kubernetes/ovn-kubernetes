@@ -74,6 +74,47 @@ func (c *Controller) findCNCServiceLBGroup(cncName string) (*nbdb.LoadBalancerGr
 	return lbg, nil
 }
 
+// buildACLDBIDs builds DbObjectIDs for a CNC-owned ACL.
+func buildACLDBIDs(cncName, aclType string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+			libovsdbops.TypeKey:       aclType,
+		})
+}
+
+// buildLRPortDBIDs builds DbObjectIDs for a CNC-owned Logical Router Port.
+func buildLRPortDBIDs(cncName, networkID, nodeID, routerName string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPortClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+			libovsdbops.NetworkIDKey:  networkID,
+			libovsdbops.NodeIDKey:     nodeID,
+			libovsdbops.RouterNameKey: routerName,
+		})
+}
+
+// buildLRPolicyDBIDs builds DbObjectIDs for a CNC-owned Logical Router Policy.
+func buildLRPolicyDBIDs(cncName, srcNetID, dstNetID, ipFamily, routerName string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey:           cncName,
+			libovsdbops.SourceNetworkIDKey:      srcNetID,
+			libovsdbops.DestinationNetworkIDKey: dstNetID,
+			libovsdbops.IPFamilyKey:             ipFamily,
+			libovsdbops.RouterNameKey:           routerName,
+		})
+}
+
+// buildLRExternalIDs builds ExternalIDs for a CNC logical router.
+func buildLRExternalIDs(cncName string) map[string]string {
+	return map[string]string{
+		libovsdbops.ObjectNameKey.String():      cncName,
+		libovsdbops.OwnerControllerKey.String(): controllerName,
+		libovsdbops.OwnerTypeKey.String():       libovsdbops.ClusterNetworkConnectOwnerType,
+	}
+}
+
 // ensureConnectRouter creates or updates the connect router for a CNC.
 func (c *Controller) ensureConnectRouter(cnc *networkconnectv1.ClusterNetworkConnect, tunnelID int) error {
 	routerName := getConnectRouterName(cnc.Name)
@@ -86,12 +127,8 @@ func (c *Controller) ensureConnectRouter(cnc *networkconnectv1.ClusterNetworkCon
 		return fmt.Errorf("unable to create router control plane protection: %w", err)
 	}
 	router := &nbdb.LogicalRouter{
-		Name: routerName,
-		ExternalIDs: map[string]string{
-			libovsdbops.ObjectNameKey.String():      cnc.Name,
-			libovsdbops.OwnerControllerKey.String(): controllerName,
-			libovsdbops.OwnerTypeKey.String():       libovsdbops.ClusterNetworkConnectOwnerType,
-		},
+		Name:        routerName,
+		ExternalIDs: buildLRExternalIDs(cnc.Name),
 		Options: map[string]string{
 			// Set the tunnel key for the connect router
 			"requested-tnl-key": strconv.Itoa(tunnelID),
@@ -797,13 +834,7 @@ func (c *Controller) createRouterPortOps(ops []ovsdb.Operation, routerName, port
 		return nil, fmt.Errorf("no IPNets provided for router port %s", portName)
 	}
 
-	dbIndexes := libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPortClusterNetworkConnect, controllerName,
-		map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.NodeIDKey:     strconv.Itoa(nodeID),
-			libovsdbops.NetworkIDKey:  strconv.Itoa(networkID),
-			libovsdbops.ObjectNameKey: cncName,
-			libovsdbops.RouterNameKey: routerName,
-		})
+	dbIndexes := buildLRPortDBIDs(cncName, strconv.Itoa(networkID), strconv.Itoa(nodeID), routerName)
 
 	port := &nbdb.LogicalRouterPort{
 		Name:        portName,
@@ -965,14 +996,7 @@ func (c *Controller) createRoutingPoliciesOps(ops []ovsdb.Operation, dstNetworkI
 		}
 		match := fmt.Sprintf(`inport == "%s" && %s.dst == %s`, inportName, ipVersion, dstSubnet.CIDR.String())
 
-		dbIndexes := libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyClusterNetworkConnect, controllerName,
-			map[libovsdbops.ExternalIDKey]string{
-				libovsdbops.DestinationNetworkIDKey: strconv.Itoa(dstNetworkID),
-				libovsdbops.SourceNetworkIDKey:      strconv.Itoa(srcNetworkID),
-				libovsdbops.IPFamilyKey:             ipFamily,
-				libovsdbops.ObjectNameKey:           cncName,
-				libovsdbops.RouterNameKey:           routerName,
-			})
+		dbIndexes := buildLRPolicyDBIDs(cncName, strconv.Itoa(srcNetworkID), strconv.Itoa(dstNetworkID), ipFamily, routerName)
 		policy := &nbdb.LogicalRouterPolicy{
 			Priority:    ovntypes.NetworkConnectPolicyPriority,
 			Match:       match,
@@ -1623,11 +1647,7 @@ func (c *Controller) buildSharedPartialConnectivityACLs(cncName, addressSetNameV
 
 	if len(serviceMatches) > 0 {
 		allowMatch := fmt.Sprintf("(%s)", strings.Join(serviceMatches, " || "))
-		dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
-			map[libovsdbops.ExternalIDKey]string{
-				libovsdbops.ObjectNameKey: cncName,
-				libovsdbops.TypeKey:       "allow-service",
-			})
+		dbIDs := buildACLDBIDs(cncName, "allow-service")
 		allowServiceACL := libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectAllowServiceTrafficPriority,
 			allowMatch, nbdb.ACLActionPass, nil, libovsdbutil.LportEgress, 0)
 		acls = append(acls, allowServiceACL)
@@ -1658,11 +1678,7 @@ func (c *Controller) buildSharedPartialConnectivityACLs(cncName, addressSetNameV
 	}
 
 	if dropMatch != "" {
-		dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
-			map[libovsdbops.ExternalIDKey]string{
-				libovsdbops.ObjectNameKey: cncName,
-				libovsdbops.TypeKey:       "drop-pod",
-			})
+		dbIDs := buildACLDBIDs(cncName, "drop-pod")
 		dropPodACL := libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectDropPodTrafficPriority,
 			dropMatch, nbdb.ACLActionDrop, nil, libovsdbutil.LportEgress, 0)
 		acls = append(acls, dropPodACL)
@@ -1710,11 +1726,7 @@ func (c *Controller) buildAllowSameNetworkACL(cncName string, networkID int, sub
 
 	allowMatch := strings.Join(matches, " || ")
 
-	dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
-		map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.ObjectNameKey: cncName,
-			libovsdbops.TypeKey:       fmt.Sprintf("allow-same-network-%d", networkID),
-		})
+	dbIDs := buildACLDBIDs(cncName, fmt.Sprintf("allow-same-network-%d", networkID))
 
 	return libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectAllowSameNetworkPriority,
 		allowMatch, nbdb.ACLActionPass, nil, libovsdbutil.LportEgress, 0)
