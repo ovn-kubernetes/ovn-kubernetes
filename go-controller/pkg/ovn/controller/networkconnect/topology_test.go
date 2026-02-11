@@ -2166,3 +2166,940 @@ func TestEnsureStaticRoutesOps(t *testing.T) {
 		})
 	}
 }
+
+// ---- Service Connectivity Tests ----
+
+func TestFindCNCServiceLBGroup(t *testing.T) {
+	tests := []struct {
+		name      string
+		cncName   string
+		initialDB []libovsdbtest.TestData
+		expectNil bool
+		expectErr bool
+	}{
+		{
+			name:    "LBG exists - returns it with UUID",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-1",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+			},
+			expectNil: false,
+		},
+		{
+			name:      "LBG does not exist - returns nil, nil",
+			cncName:   "nonexistent-cnc",
+			initialDB: []libovsdbtest.TestData{},
+			expectNil: true,
+		},
+		{
+			name:    "multiple LBGs, only matching one returned",
+			cncName: "target-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-other",
+					Name: getCNCServiceLBGroupName("other-cnc"),
+				},
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-target",
+					Name: getCNCServiceLBGroupName("target-cnc"),
+				},
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-unrelated",
+					Name: "some-other-lbg",
+				},
+			},
+			expectNil: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			lbg, err := c.findCNCServiceLBGroup(tt.cncName)
+
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			if tt.expectNil {
+				assert.Nil(t, lbg)
+			} else {
+				require.NotNil(t, lbg)
+				assert.Equal(t, getCNCServiceLBGroupName(tt.cncName), lbg.Name)
+				assert.NotEmpty(t, lbg.UUID, "UUID should be populated")
+			}
+		})
+	}
+}
+
+func TestFindClusterIPLoadBalancersForNetworks(t *testing.T) {
+	tests := []struct {
+		name           string
+		networkNames   sets.Set[string]
+		initialDB      []libovsdbtest.TestData
+		expectedCounts map[string]int // networkName -> expected LB count
+	}{
+		{
+			name:         "single network with matching ClusterIP LBs",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-2",
+					Name: "Service_netA_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 2},
+		},
+		{
+			name:         "multiple networks grouped correctly",
+			networkNames: sets.New("netA", "netB"),
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancer{
+					UUID: "lb-a1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-b1",
+					Name: "Service_netB_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-b2",
+					Name: "Service_netB_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 1, "netB": 2},
+		},
+		{
+			name:         "no matching LBs - wrong kind, wrong network, non-cluster name",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				// Wrong kind
+				&nbdb.LoadBalancer{
+					UUID: "lb-wrong-kind",
+					Name: "NotService_netA_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "NotService",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// Wrong network
+				&nbdb.LoadBalancer{
+					UUID: "lb-wrong-net",
+					Name: "Service_netB_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+				// Non-cluster name (no "_cluster" in name)
+				&nbdb.LoadBalancer{
+					UUID: "lb-non-cluster",
+					Name: "Service_netA_tcp_nodeport",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{},
+		},
+		{
+			name:         "mixed LBs - only matching ones returned",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				// Matches
+				&nbdb.LoadBalancer{
+					UUID: "lb-match",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// Wrong kind - should not match
+				&nbdb.LoadBalancer{
+					UUID: "lb-wrong-kind",
+					Name: "Other_netA_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Other",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// Non-cluster - should not match
+				&nbdb.LoadBalancer{
+					UUID: "lb-non-cluster",
+					Name: "Service_netA_tcp_nodeport",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 1},
+		},
+		{
+			name:         "multiple services in same network - one per protocol",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				// svc1 TCP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc1-tcp",
+					Name: "Service_netA_svc1_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// svc1 UDP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc1-udp",
+					Name: "Service_netA_svc1_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// svc2 TCP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc2-tcp",
+					Name: "Service_netA_svc2_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// svc2 SCTP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc2-sctp",
+					Name: "Service_netA_svc2_sctp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 4},
+		},
+		{
+			name:           "empty DB",
+			networkNames:   sets.New("netA"),
+			initialDB:      []libovsdbtest.TestData{},
+			expectedCounts: map[string]int{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			result, err := c.findClusterIPLoadBalancersForNetworks(tt.networkNames)
+			require.NoError(t, err)
+
+			for netName, expectedCount := range tt.expectedCounts {
+				assert.Len(t, result[netName], expectedCount, "network %s LB count mismatch", netName)
+			}
+			// Verify no extra networks in result
+			for netName := range result {
+				_, expected := tt.expectedCounts[netName]
+				assert.True(t, expected, "unexpected network %s in result", netName)
+			}
+		})
+	}
+}
+
+func TestGetNetworkSwitchName(t *testing.T) {
+	tests := []struct {
+		name           string
+		topologyType   string
+		localZoneNode  *corev1.Node
+		expectedSwitch string
+		expectError    bool
+	}{
+		{
+			name:           "Layer2 topology - distributed switch",
+			topologyType:   ovntypes.Layer2Topology,
+			localZoneNode:  nil, // not needed for L2
+			expectedSwitch: "switch_netA",
+		},
+		{
+			name:         "Layer3 topology with localZoneNode",
+			topologyType: ovntypes.Layer3Topology,
+			localZoneNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node1"},
+			},
+			expectedSwitch: "switch_netA_node1",
+		},
+		{
+			name:          "Layer3 topology with nil localZoneNode - error",
+			topologyType:  ovntypes.Layer3Topology,
+			localZoneNode: nil,
+			expectError:   true,
+		},
+		{
+			name:          "unsupported topology - error",
+			topologyType:  "localnet",
+			localZoneNode: nil,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Controller{
+				localZoneNode: tt.localZoneNode,
+			}
+
+			netInfo := &mocks.NetInfo{}
+			netInfo.On("TopologyType").Return(tt.topologyType)
+			netInfo.On("GetNetworkName").Return("netA")
+			if tt.topologyType == ovntypes.Layer2Topology {
+				netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_netA")
+			}
+			if tt.topologyType == ovntypes.Layer3Topology && tt.localZoneNode != nil {
+				netInfo.On("GetNetworkScopedSwitchName", tt.localZoneNode.Name).Return("switch_netA_" + tt.localZoneNode.Name)
+			}
+
+			switchName, err := c.getNetworkSwitchName(netInfo)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedSwitch, switchName)
+		})
+	}
+}
+
+func TestEnsureLoadBalancerGroupOps(t *testing.T) {
+	tests := []struct {
+		name          string
+		cncName       string
+		topologyType  string
+		networkName   string
+		networkID     int
+		localZoneNode *corev1.Node
+		initialDB     []libovsdbtest.TestData
+		services      []*corev1.Service // services in the network's namespaces
+		namespace     string            // namespace for services
+		expectError   bool
+		expectedLBs   int // expected LBs in the LBG after ops
+		expectSwitch  bool
+	}{
+		{
+			name:         "Layer2 happy path - count matches",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports:     []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: 80}},
+					},
+				},
+			},
+			expectedLBs:  1,
+			expectSwitch: true,
+		},
+		{
+			name:         "Layer3 happy path - count matches, node-scoped switch",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer3Topology,
+			networkName:  "netB",
+			networkID:    20,
+			namespace:    "ns1",
+			localZoneNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node1"},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netB_node1",
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netB_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports:     []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: 80}},
+					},
+				},
+			},
+			expectedLBs:  1,
+			expectSwitch: true,
+		},
+		{
+			name:         "no matching LBs, no services - only switch attachment",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+			},
+			services:     []*corev1.Service{},
+			expectedLBs:  0,
+			expectSwitch: true,
+		},
+		{
+			name:         "count lower - fewer LBs than expected, error but partial ops",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+				// Only 1 LB in DB
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports: []corev1.ServicePort{
+							{Protocol: corev1.ProtocolTCP, Port: 80},
+							{Protocol: corev1.ProtocolUDP, Port: 53},
+						},
+					},
+				},
+			},
+			expectError:  true, // count mismatch: found 1, expected 2
+			expectedLBs:  1,    // partial: the 1 found LB is still added
+			expectSwitch: true,
+		},
+		{
+			name:         "count higher - more LBs than expected, error but ops still built",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+				// 2 LBs in DB but only 1 service with 1 protocol -> expected 1
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-2",
+					Name: "Service_netA_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports:     []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: 80}},
+					},
+				},
+			},
+			expectError:  true, // count mismatch: found 2, expected 1
+			expectedLBs:  2,    // all found LBs still added
+			expectSwitch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			err := config.PrepareTestConfig()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			// Set up fake clientset with services
+			fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
+			for _, svc := range tt.services {
+				_, err := fakeClientset.KubeClient.CoreV1().Services(svc.Namespace).Create(
+					context.Background(), svc, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+			require.NoError(t, err)
+			err = wf.Start()
+			require.NoError(t, err)
+			defer wf.Shutdown()
+
+			syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer syncCancel()
+			synced := cache.WaitForCacheSync(syncCtx.Done(), wf.ServiceCoreInformer().Informer().HasSynced)
+			require.True(t, synced, "informer caches should sync")
+
+			// Create mock netInfo
+			netInfo := &mocks.NetInfo{}
+			netInfo.On("GetNetworkName").Return(tt.networkName)
+			netInfo.On("GetNetworkID").Return(tt.networkID)
+			netInfo.On("TopologyType").Return(tt.topologyType)
+			if tt.topologyType == ovntypes.Layer2Topology {
+				netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_" + tt.networkName)
+			}
+			if tt.topologyType == ovntypes.Layer3Topology && tt.localZoneNode != nil {
+				netInfo.On("GetNetworkScopedSwitchName", tt.localZoneNode.Name).Return(
+					"switch_" + tt.networkName + "_" + tt.localZoneNode.Name)
+			}
+
+			nm := &networkmanager.FakeNetworkManager{
+				PrimaryNetworks: map[string]util.NetInfo{
+					tt.namespace: netInfo,
+				},
+			}
+
+			c := &Controller{
+				nbClient:       nbClient,
+				networkManager: nm,
+				serviceLister:  wf.ServiceCoreInformer().Lister(),
+				localZoneNode:  tt.localZoneNode,
+			}
+
+			// Look up the LBG from the DB to get its real UUID (as the real caller does)
+			lbg, err := c.findCNCServiceLBGroup(tt.cncName)
+			require.NoError(t, err)
+			require.NotNil(t, lbg, "LBG should exist in initial DB")
+
+			ops, err := c.ensureLoadBalancerGroupOps(nil, lbg, netInfo)
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			// Even on error, ops should be built for what succeeds
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify LBs in LBG
+			updatedLBG, err := libovsdbops.GetLoadBalancerGroup(nbClient, &nbdb.LoadBalancerGroup{Name: lbg.Name})
+			require.NoError(t, err)
+			assert.Len(t, updatedLBG.LoadBalancer, tt.expectedLBs, "LB count in LBG mismatch")
+
+			// Verify switch has LBG attached
+			if tt.expectSwitch {
+				var switchName string
+				if tt.topologyType == ovntypes.Layer2Topology {
+					switchName = "switch_" + tt.networkName
+				} else if tt.localZoneNode != nil {
+					switchName = "switch_" + tt.networkName + "_" + tt.localZoneNode.Name
+				}
+				if switchName != "" {
+					sw, swErr := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+						return s.Name == switchName
+					})
+					require.NoError(t, swErr)
+					require.Len(t, sw, 1)
+					assert.Len(t, sw[0].LoadBalancerGroup, 1, "switch should have 1 LBG attached")
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupServiceConnectivity(t *testing.T) {
+	tests := []struct {
+		name              string
+		cncName           string
+		initialDB         []libovsdbtest.TestData
+		expectLBGDeleted  bool
+		expectedSwitchLBG map[string]int // switchName -> expected LBG count after cleanup
+	}{
+		{
+			name:    "LBG referenced by 2 switches - removes from both and deletes LBG",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw1-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw2-uuid",
+					Name:              "switch_netB",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+			},
+			expectLBGDeleted: true,
+			expectedSwitchLBG: map[string]int{
+				"switch_netA": 0,
+				"switch_netB": 0,
+			},
+		},
+		{
+			name:    "LBG exists, no switch references - just deletes LBG",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw1-uuid",
+					Name: "switch_netA",
+				},
+			},
+			expectLBGDeleted: true,
+			expectedSwitchLBG: map[string]int{
+				"switch_netA": 0,
+			},
+		},
+		{
+			name:             "LBG does not exist - no-op, no error",
+			cncName:          "nonexistent-cnc",
+			initialDB:        []libovsdbtest.TestData{},
+			expectLBGDeleted: false, // nothing to delete
+		},
+		{
+			name:    "only some switches reference the LBG",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LoadBalancerGroup{
+					UUID: "other-lbg-uuid",
+					Name: "other-lbg",
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw1-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw2-uuid",
+					Name:              "switch_netB",
+					LoadBalancerGroup: []string{"other-lbg-uuid"},
+				},
+			},
+			expectLBGDeleted: true,
+			expectedSwitchLBG: map[string]int{
+				"switch_netA": 0, // LBG removed
+				"switch_netB": 1, // other LBG still there
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			err = c.cleanupServiceConnectivity(tt.cncName)
+			require.NoError(t, err)
+
+			// Verify LBG is deleted (or was never there)
+			if tt.expectLBGDeleted {
+				lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+					return lbg.Name == getCNCServiceLBGroupName(tt.cncName)
+				})
+				require.NoError(t, err)
+				assert.Empty(t, lbgs, "LBG should be deleted")
+			}
+
+			// Verify switch LBG counts
+			for switchName, expectedCount := range tt.expectedSwitchLBG {
+				switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(sw *nbdb.LogicalSwitch) bool {
+					return sw.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, switches, 1)
+				assert.Len(t, switches[0].LoadBalancerGroup, expectedCount,
+					"switch %s should have %d LBG(s)", switchName, expectedCount)
+			}
+		})
+	}
+}
+
+func TestCleanupLoadBalancerGroupOps(t *testing.T) {
+	tests := []struct {
+		name                  string
+		cncName               string
+		disconnectedNetworkID int
+		topologyType          string
+		networkName           string
+		localZoneNode         *corev1.Node
+		initialDB             []libovsdbtest.TestData
+		networkInManager      bool
+		expectedLBsInLBG      int
+		expectedSwitchLBGs    int
+	}{
+		{
+			name:                  "disconnected network in networkManager - removes LBs and LBG from switch",
+			cncName:               "test-cnc",
+			disconnectedNetworkID: 10,
+			topologyType:          ovntypes.Layer2Topology,
+			networkName:           "netA",
+			networkInManager:      true,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID:         "lbg-uuid",
+					Name:         getCNCServiceLBGroupName("test-cnc"),
+					LoadBalancer: []string{"lb-1"},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+			},
+			expectedLBsInLBG:   0,
+			expectedSwitchLBGs: 0,
+		},
+		{
+			name:                  "disconnected network not in networkManager - no-op",
+			cncName:               "test-cnc",
+			disconnectedNetworkID: 99,
+			networkInManager:      false,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID:         "lbg-uuid",
+					Name:         getCNCServiceLBGroupName("test-cnc"),
+					LoadBalancer: []string{"lb-1"},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+			},
+			expectedLBsInLBG:   1, // unchanged
+			expectedSwitchLBGs: 1, // unchanged
+		},
+		{
+			name:                  "LBG does not exist - no-op",
+			cncName:               "nonexistent-cnc",
+			disconnectedNetworkID: 10,
+			networkInManager:      true,
+			topologyType:          ovntypes.Layer2Topology,
+			networkName:           "netA",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+			},
+			expectedLBsInLBG:   -1, // LBG doesn't exist, skip check
+			expectedSwitchLBGs: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			var nm networkmanager.Interface
+			if tt.networkInManager {
+				netInfo := &mocks.NetInfo{}
+				netInfo.On("GetNetworkName").Return(tt.networkName)
+				netInfo.On("GetNetworkID").Return(tt.disconnectedNetworkID)
+				netInfo.On("TopologyType").Return(tt.topologyType)
+				if tt.topologyType == ovntypes.Layer2Topology {
+					netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_" + tt.networkName)
+				}
+				if tt.topologyType == ovntypes.Layer3Topology && tt.localZoneNode != nil {
+					netInfo.On("GetNetworkScopedSwitchName", tt.localZoneNode.Name).Return(
+						"switch_" + tt.networkName + "_" + tt.localZoneNode.Name)
+				}
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{
+						"ns1": netInfo,
+					},
+				}
+			} else {
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{},
+				}
+			}
+
+			c := &Controller{
+				nbClient:       nbClient,
+				networkManager: nm,
+				localZoneNode:  tt.localZoneNode,
+			}
+
+			ops, err := c.cleanupLoadBalancerGroupOps(nil, tt.cncName, tt.disconnectedNetworkID)
+			require.NoError(t, err)
+
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify LBs in LBG
+			if tt.expectedLBsInLBG >= 0 {
+				lbgName := getCNCServiceLBGroupName(tt.cncName)
+				lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+					return lbg.Name == lbgName
+				})
+				require.NoError(t, err)
+				if len(lbgs) > 0 {
+					assert.Len(t, lbgs[0].LoadBalancer, tt.expectedLBsInLBG, "LBs in LBG mismatch")
+				}
+			}
+
+			// Verify switch LBG count
+			switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(_ *nbdb.LogicalSwitch) bool {
+				return true
+			})
+			require.NoError(t, err)
+			for _, sw := range switches {
+				assert.Len(t, sw.LoadBalancerGroup, tt.expectedSwitchLBGs,
+					"switch %s LBG count mismatch", sw.Name)
+			}
+		})
+	}
+}
