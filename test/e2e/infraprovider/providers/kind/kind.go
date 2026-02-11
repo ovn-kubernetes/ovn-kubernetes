@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,37 @@ func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd
 		return "", fmt.Errorf("failed to exec container command (%s): err: %v, stdout: %q", strings.Join(cmdArgs, " "), err, out)
 	}
 	return string(out), nil
+}
+
+func (k *kind) RunOneShotContainer(image string, cmd []string, runtimeArgs []string) (string, error) {
+	args := []string{"run", "--rm"}
+	args = append(args, runtimeArgs...)
+	args = append(args, image)
+	args = append(args, cmd...)
+	out, err := exec.Command(containerengine.Get().String(), args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to run one-shot container (%s): err: %v, stdout: %q", strings.Join(args, " "), err, out)
+	}
+	return string(out), nil
+}
+
+func (k *kind) GetExternalContainerPID(containerName string) (int, error) {
+	exists, err := doesContainerNameExist(containerName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check if container %q exists: %w", containerName, err)
+	}
+	if !exists {
+		return 0, fmt.Errorf("container %q does not exist: %w", containerName, api.NotFound)
+	}
+	out, err := exec.Command(containerengine.Get().String(), "inspect", "--format", "{{.State.Pid}}", containerName).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get PID for container %q: %w (output: %s)", containerName, err, out)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse PID for container %q: %w", containerName, err)
+	}
+	return pid, nil
 }
 
 func (k *kind) GetExternalContainerLogs(container api.ExternalContainer) (string, error) {
@@ -231,7 +263,13 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 	if exists {
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
-	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--hostname", container.Name}
+	// Handle --network none (nil Network) vs regular networks
+	if container.Network != nil {
+		cmd = append(cmd, "--network", container.Network.Name())
+	} else {
+		cmd = append(cmd, "--network", "none")
+	}
 	if container.Entrypoint != "" {
 		cmd = append(cmd, "--entrypoint", container.Entrypoint)
 	}
@@ -249,8 +287,8 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 	if err != nil {
 		return container, fmt.Errorf("failed to create container %s: %s (%s)", container, err, stdOut)
 	}
-	// fetch IPs for the attached container network. Host networked containers do not expose IP information.
-	if !isHostNetworked(container.Network.Name()) {
+	// fetch IPs for the attached container network. Host networked and --network none containers do not expose IP information.
+	if container.Network != nil && !isHostNetworked(container.Network.Name()) {
 		err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 360*time.Second, true, func(ctx context.Context) (done bool, err error) {
 			ni, err := getNetworkInterface(container.Name, container.Network.Name())
 			if err != nil {
@@ -787,7 +825,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv4 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv4)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv4, err)
+			framework.Logf("failed to get network interface name using IPv4 address %s on container %q: %v", ni.IPv4, containerName, err)
 		}
 	}
 	ni.IPv6Gateway, err = getContainerNetwork(inspectNetworkIPv6GWKeyStr)
@@ -805,7 +843,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv6 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv6, err)
+			framework.Logf("failed to get network interface name using IPv6 address %s on container %q: %v", ni.IPv6, containerName, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)
