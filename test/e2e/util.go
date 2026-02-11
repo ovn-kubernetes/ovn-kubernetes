@@ -1655,6 +1655,16 @@ func matchCIDRStringsByIPFamilySet(cidrs []string, ipFamilySet sets.Set[utilnet.
 	return r
 }
 
+func matchIPStringsByIPFamilySet(ips []string, ipFamilySet sets.Set[utilnet.IPFamily]) []string {
+	var r []string
+	for _, ip := range ips {
+		if ipFamilySet.Has(utilnet.IPFamilyOfString(ip)) {
+			r = append(r, ip)
+		}
+	}
+	return r
+}
+
 func splitCIDRStringsByIPFamily(cidrs []string) (ipv4 []string, ipv6 []string) {
 	for _, cidr := range cidrs {
 		switch {

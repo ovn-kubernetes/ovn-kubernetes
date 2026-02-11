@@ -2569,3 +2569,20 @@ func unmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[strin
 	}
 	return podNetworks, nil
 }
+
+func getNetworkSubnetsFromSpec(networkSpec *udnv1.NetworkSpec) []string {
+	var subnets []string
+	switch {
+	case networkSpec.Layer2 != nil:
+		for _, cidr := range networkSpec.Layer2.Subnets {
+			subnets = append(subnets, string(cidr))
+		}
+	case networkSpec.Layer3 != nil:
+		for _, subnet := range networkSpec.Layer3.Subnets {
+			subnets = append(subnets, string(subnet.CIDR))
+		}
+	default:
+		panic("unsupported network type")
+	}
+	return subnets
+}
