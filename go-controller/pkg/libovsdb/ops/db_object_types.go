@@ -250,9 +250,10 @@ var ACLNetworkPolicyPortIndex = newObjectIDsType(acl, NetworkPolicyPortIndexOwne
 // ingress/egress + NetworkPolicy[In/E]gressRule idx - defines given gressPolicy.
 // ACLs are created for gp.portPolicies which are grouped by protocol:
 // - for empty policy (no selectors and no ip blocks) - empty ACL (see allIPsMatch)
+// with idx=emptyIdx (-1)
 // OR
-// - all selector-based peers ACL
-// - for every IPBlock +1 ACL
+// - all selector-based peers ACL with idx=emptyIdx (-1)
+// - all ipBlocks combined into a single ACL with idx=ipBlockCombinedIdx (-2)
 // Therefore unique id for a given gressPolicy is protocol name + IPBlock idx
 // (protocol will be "None" if no port policy is defined, and empty policy and all
 // selector-based peers ACLs will have idx=-1)
