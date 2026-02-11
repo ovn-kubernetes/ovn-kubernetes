@@ -1645,11 +1645,10 @@ func matchIPv6StringFamily(ipStrings []string) (string, error) {
 	return util.MatchIPStringFamily(true /*ipv6*/, ipStrings)
 }
 
-func matchCIDRStringsByIPFamily(cidrs []string, families ...utilnet.IPFamily) []string {
+func matchCIDRStringsByIPFamilySet(cidrs []string, ipFamilySet sets.Set[utilnet.IPFamily]) []string {
 	var r []string
-	familySet := sets.New(families...)
 	for _, cidr := range cidrs {
-		if familySet.Has(utilnet.IPFamilyOfCIDRString(cidr)) {
+		if ipFamilySet.Has(utilnet.IPFamilyOfCIDRString(cidr)) {
 			r = append(r, cidr)
 		}
 	}
