@@ -753,6 +753,17 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				}
 			}
 
+			ginkgo.By("routes from CUDN are exported to external FRR router")
+			for _, serverContainerIP := range serverContainerIPs {
+				for _, node := range nodes.Items {
+					if cudnTemplate.Spec.Network.Layer3 != nil {
+						checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cUDN.Name)
+					} else {
+						checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnTemplate.Spec.Network.Layer2.Subnets)
+					}
+				}
+			}
+
 			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
 			for _, serverContainerIP := range serverContainerIPs {
 				podIP, err := getPodAnnotationIPsForAttachmentByIndex(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 0)
