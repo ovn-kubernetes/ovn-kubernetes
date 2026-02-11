@@ -324,24 +324,45 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 }
 
 // serviceNeedsUpdate determines if a service change requires reconciliation.
-// We only care about service CREATE for ClusterIPServiceNetwork connectivity.
+// We care about service CREATE and protocol-set changes for ClusterIPServiceNetwork.
 // Service deletes don't need processing because:
-//   - LogicalSwitch.load_balancer is a weak reference with min=0 and refType=weak
+//   - LoadBalancerGroup.load_balancer is a weak reference with min=0 and refType=weak
 //   - When the LB is deleted by services controller, OVSDB automatically
-//     garbage-collects the UUID from all switches (including cross-network attachments)
+//     garbage-collects the UUID from the LBG
 //
-// Service updates (like endpoint changes) are handled by the services controller.
-// We only need to care about load balancer attachments. LB Updates or deattachments
-// are handled by the services controller.
+// Service updates that only change endpoints, port numbers, or labels are handled
+// by the services controller. We only need to react when the set of unique protocols
+// changes (e.g., adding UDP alongside TCP), because the services controller creates
+// one _cluster LB per protocol and we need to add the new LB to the CNC's LBG.
+// Note: spec.clusterIP and spec.type are immutable after creation, so those cannot
+// change via updates.
 func serviceNeedsUpdate(oldObj, newObj *corev1.Service) bool {
 	// Only process create (oldObj == nil)
 	// Delete events are handled automatically by OVN weak reference cleanup
 	if oldObj == nil && newObj != nil {
+		klog.V(5).Infof("serviceNeedsUpdate: CREATE event for %s/%s, returning true", newObj.Namespace, newObj.Name)
 		return true
 	}
-	// Skip updates and deletes- services controller handles LB content updates,
-	// we only care about service existence for LB attachment purposes.
+	// Process updates where the set of unique protocols changed
+	if oldObj != nil && newObj != nil {
+		needsUpdate := !serviceProtocolsEqual(oldObj, newObj)
+		klog.V(5).Infof("serviceNeedsUpdate: UPDATE event for %s/%s, protocolsChanged=%v", newObj.Namespace, newObj.Name, needsUpdate)
+		return needsUpdate
+	}
 	return false
+}
+
+// serviceProtocolsEqual returns true if both services have the same set of unique protocols.
+func serviceProtocolsEqual(a, b *corev1.Service) bool {
+	aProto := sets.New[corev1.Protocol]()
+	for _, p := range a.Spec.Ports {
+		aProto.Insert(p.Protocol)
+	}
+	bProto := sets.New[corev1.Protocol]()
+	for _, p := range b.Spec.Ports {
+		bProto.Insert(p.Protocol)
+	}
+	return aProto.Equal(bProto)
 }
 
 // reconcileCNC reconciles a ClusterNetworkConnect object.

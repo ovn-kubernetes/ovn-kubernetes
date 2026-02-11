@@ -3295,6 +3295,37 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					verifySwitchLBG(blueNetwork.SwitchName("node1"), lbg.UUID, true)
 				})
 
+				It("should update LBG when service adds a new protocol", func() {
+					subnetAnnotation := startBothNetworks()
+					// Create service with TCP only and seed its LB
+					createServiceOfType("red-ns", "svc-red", corev1.ServiceTypeClusterIP, "10.96.0.10")
+					seedClusterLB("Service_red-network_tcp_cluster", "red-network")
+
+					createCNCAndWait(subnetAnnotation)
+
+					// LBG should have 1 LB (TCP only)
+					verifyLBGHasLBs(1)
+
+					// Update the service to add a UDP port (simulates kubectl edit)
+					svc, err := fakeClientset.KubeClient.CoreV1().Services("red-ns").Get(
+						context.Background(), "svc-red", metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+						Port: 53, Protocol: corev1.ProtocolUDP,
+					})
+					_, err = fakeClientset.KubeClient.CoreV1().Services("red-ns").Update(
+						context.Background(), svc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Seed the new UDP _cluster LB (services controller would create this)
+					seedClusterLB("Service_red-network_udp_cluster", "red-network")
+
+					// LBG should now have 2 LBs (TCP + UDP) after the service update
+					// triggers a CNC reconcile
+					lbg := verifyLBGHasLBs(2)
+					verifySwitchLBG(redNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
 				It("should attach LBG to new switch when network is added", func() {
 					// Start with only the red (L3) network
 					networks := []testNetwork{redNetwork}

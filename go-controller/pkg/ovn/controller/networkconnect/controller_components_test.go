@@ -661,7 +661,7 @@ func TestServiceNeedsUpdate(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "spec change - should not trigger",
+			name: "irrelevant spec change (ClusterIP) - should not trigger",
 			oldObj: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "svc1",
@@ -678,6 +678,68 @@ func TestServiceNeedsUpdate(t *testing.T) {
 				},
 				Spec: corev1.ServiceSpec{
 					ClusterIP: "10.96.0.2",
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "new protocol added - should trigger",
+			oldObj: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.1",
+					Ports: []corev1.ServicePort{
+						{Port: 80, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+			newObj: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.1",
+					Ports: []corev1.ServicePort{
+						{Port: 80, Protocol: corev1.ProtocolTCP},
+						{Port: 53, Protocol: corev1.ProtocolUDP},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "protocol removed - should trigger",
+			oldObj: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.1",
+					Ports: []corev1.ServicePort{
+						{Port: 80, Protocol: corev1.ProtocolTCP},
+						{Port: 53, Protocol: corev1.ProtocolUDP},
+					},
+				},
+			},
+			newObj: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.1",
+					Ports: []corev1.ServicePort{
+						{Port: 80, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "same protocols different ports - should not trigger",
+			oldObj: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.1",
+					Ports: []corev1.ServicePort{
+						{Port: 80, Protocol: corev1.ProtocolTCP},
+					},
+				},
+			},
+			newObj: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.1",
+					Ports: []corev1.ServicePort{
+						{Port: 8080, Protocol: corev1.ProtocolTCP},
+					},
 				},
 			},
 			expected: false,

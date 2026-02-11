@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -2025,10 +2026,10 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		cs = f.ClientSet
 	})
 
-	// httpServerPodConfig returns a podConfiguration for an HTTP server pod
+	// httpServerPodConfig returns a podConfiguration for an HTTP+UDP server pod
 	httpServerPodConfig := func(podName, namespace string) podConfiguration {
 		cfg := *podConfig(podName, withCommand(func() []string {
-			return httpServerContainerCmd(8080)
+			return []string{"netexec", "--http-port", "8080", "--udp-port", "9090"}
 		}))
 		cfg.namespace = namespace
 		return cfg
@@ -4238,6 +4239,75 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			verifyCrossNetworkConnectivity(greenPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, true)
 
 			By("Steps 1-18 completed successfully - connectivity type switching validated")
+		})
+
+		/*
+		   Test: Service protocol update triggers CNC reconciliation
+		   Validates that updating a service to add a new protocol (UDP alongside TCP)
+		   triggers the CNC controller to reconcile and add the new _cluster LB to the LBG.
+
+		   Steps:
+		   1. Create CNC with ["PodNetwork", "ClusterIPServiceNetwork"]
+		   2. Verify blue service reachable from other networks (TCP)
+		   3. Update blue service to add a UDP port (new protocol -> new _cluster LB)
+		   4. Verify blue service TCP still works (proves CNC reconciled without breaking existing LBs)
+		   5. Verify blue service UDP works from another network via nc -u
+		*/
+		It("should maintain cross-network service connectivity after service protocol update", func() {
+			// Step 1: Create CNC with service connectivity
+			By("1. Creating CNC with PodNetwork and ClusterIPServiceNetwork")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel,
+				[]string{"PodNetwork", "ClusterIPServiceNetwork"})
+
+			By("1. Verifying CNC annotations")
+			verifyCNCHasBothAnnotations(cncName)
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// Step 2: Verify blue service is reachable from other networks (TCP)
+			By("2. Verifying blue service reachable from other networks (TCP)")
+			blackPod := pods["black-pod-0"]
+			blueSvcIPs := map[string][]string{"blue-svc": serviceIPs["blue-svc"]}
+			verifyCrossNetworkConnectivity(map[string]*corev1.Pod{blackPod.Name: blackPod}, blueSvcIPs, true)
+
+			// Step 3: Update blue service to add a UDP port
+			// This causes the services controller to create a new _cluster LB for UDP.
+			// The CNC controller must react to the service update (protocol set changed)
+			// and add the new LB to the CNC's LoadBalancerGroup.
+			By("3. Updating blue service to add UDP port")
+			blueSvc, err := cs.CoreV1().Services(blueNs).Get(context.Background(), "blue-svc", metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			// When multiple ports exist, all ports must be named
+			blueSvc.Spec.Ports[0].Name = "tcp"
+			blueSvc.Spec.Ports = append(blueSvc.Spec.Ports, corev1.ServicePort{
+				Name: "udp", Port: 9090, TargetPort: intstr.FromInt32(9090), Protocol: corev1.ProtocolUDP,
+			})
+			_, err = cs.CoreV1().Services(blueNs).Update(context.Background(), blueSvc, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Step 4: Verify blue service TCP still works after protocol update
+			// This proves the CNC was reconciled after the service update and the LBG
+			// is intact (the TCP _cluster LB was not removed during reconciliation).
+			By("4. Verifying blue service TCP still works after protocol update")
+			verifyCrossNetworkConnectivity(map[string]*corev1.Pod{blackPod.Name: blackPod}, blueSvcIPs, true)
+
+			// Step 5: Verify blue service UDP works from another network
+			// Use nc -u from a black pod to the blue service ClusterIP on port 9090.
+			// The netexec UDP handler responds to "hostname" with the pod's hostname.
+			By("5. Verifying blue service UDP works from black network (nc -u)")
+			for _, blueIP := range serviceIPs["blue-svc"] {
+				Eventually(func() bool {
+					cmd := fmt.Sprintf("echo hostname | nc -u -w1 %s 9090", blueIP)
+					stdout, err := e2ekubectl.RunKubectl(blackPod.Namespace, "exec", blackPod.Name, "--",
+						"/bin/sh", "-c", cmd)
+					if err != nil {
+						framework.Logf("UDP check from %s to %s:9090 failed: %v", blackPod.Name, blueIP, err)
+						return false
+					}
+					framework.Logf("UDP check from %s to %s:9090 returned: %q", blackPod.Name, blueIP, stdout)
+					return len(strings.TrimSpace(stdout)) > 0
+				}, 5*time.Second, 1*time.Second).Should(BeTrue(),
+					fmt.Sprintf("UDP connectivity from %s to blue service %s:9090", blackPod.Name, blueIP))
+			}
 		})
 	})
 })
