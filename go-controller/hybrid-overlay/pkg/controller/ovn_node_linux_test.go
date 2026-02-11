@@ -310,7 +310,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				node1Name string = "node1"
 			)
 
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*createNode(node1Name, "linux", thisNodeIP, nil),
 				},
@@ -355,7 +355,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			)
 
 			annotations := createNodeAnnotationsForSubnet(node1Subnet)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*createNode(node1Name, "linux", node1IP, annotations),
 				},
@@ -398,7 +398,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			})
 
@@ -473,7 +473,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
 			remoteTestPod := createPod("test", "remotePod", remoteNodeName, remotePodCIDR, remotePodMAC)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{*node, *remoteNode},
 			})
 
@@ -568,7 +568,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
-			fakeClient := fake.NewSimpleClientset(
+			fakeClient := fake.NewClientset(
 				//&v1.NodeList{
 				//	Items: []v1.Node{*node},
 				//},
@@ -651,7 +651,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*node,
 				},
@@ -751,7 +751,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*node,
 				},
@@ -891,7 +891,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*node,
 				},
@@ -1020,7 +1020,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*node,
 				},

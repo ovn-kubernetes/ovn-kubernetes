@@ -62,7 +62,7 @@ func (o *FakeClusterManager) start(objects ...runtime.Object) {
 		}
 	}
 	o.fakeClient = &util.OVNClusterManagerClientset{
-		KubeClient:          fake.NewSimpleClientset(v1Objects...),
+		KubeClient:          fake.NewClientset(v1Objects...),
 		EgressIPClient:      egressipfake.NewSimpleClientset(egressIPObjects...),
 		EgressServiceClient: egresssvcfake.NewSimpleClientset(egressSvcObjects...),
 		CloudNetworkClient:  cloudservicefake.NewSimpleClientset(cloudObjects...),

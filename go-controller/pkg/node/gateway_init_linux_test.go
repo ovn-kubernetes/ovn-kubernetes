@@ -309,7 +309,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 
-		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 			Items: []corev1.Node{existingNode},
 		})
 		fakeClient := &util.OVNNodeClientset{
@@ -752,7 +752,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}},
 		}
 
-		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 			Items: []corev1.Node{existingNode},
 		})
 		fakeClient := &util.OVNNodeClientset{
@@ -907,7 +907,7 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}},
 		}
 
-		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 			Items: []corev1.Node{existingNode},
 		})
 		fakeClient := &util.OVNNodeClientset{
@@ -1254,7 +1254,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Expect(err).NotTo(HaveOccurred())
 		}
 
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{existingNode},
 			},

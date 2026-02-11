@@ -127,7 +127,7 @@ func deleteTestNBGlobal(nbClient libovsdbclient.Client, _ string) error {
 func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 	var nbZoneFailed bool
 	stopChan = make(chan struct{})
-	fakeClient = fake.NewSimpleClientset(append(k8sObjects, node)...)
+	fakeClient = fake.NewClientset(append(k8sObjects, node)...)
 	fakeRouteClient = adminpolicybasedrouteclient.NewSimpleClientset(routePolicyObjects...)
 	iFactory, err = factory.NewMasterWatchFactory(&util.OVNMasterClientset{
 		KubeClient:             fakeClient,

@@ -109,7 +109,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				types.HybridOverlayNodeSubnet: hoNodeSubnet,
 			})
 
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					*testNode,
 				},
@@ -156,7 +156,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				types.HybridOverlayNodeSubnet: hoNodeSubnet,
 			})
 
-			fakeClient := fake.NewSimpleClientset(&corev1.PodList{
+			fakeClient := fake.NewClientset(&corev1.PodList{
 				Items: []corev1.Pod{
 					*testPod1,
 					*testPod2,

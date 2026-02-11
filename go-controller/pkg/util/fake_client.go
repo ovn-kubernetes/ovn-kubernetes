@@ -108,7 +108,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 	populateTracker(nadClient, nads...)
 
 	return &OVNClientset{
-		KubeClient:                fake.NewSimpleClientset(v1Objects...),
+		KubeClient:                fake.NewClientset(v1Objects...),
 		ANPClient:                 anpfake.NewSimpleClientset(anpObjects...),
 		EgressIPClient:            egressipfake.NewSimpleClientset(egressIPObjects...),
 		EgressFirewallClient:      egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),

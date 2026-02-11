@@ -44,7 +44,7 @@ var _ = Describe("Unidling Controller", func() {
 	})
 
 	It("should respond to a controller event", func() {
-		client := fake.NewSimpleClientset()
+		client := fake.NewClientset()
 		recorder := record.NewFakeRecorder(10)
 		informerFactory := informers.NewSharedInformerFactory(client, 0)
 		serviceInformer := informerFactory.Core().V1().Services().Informer()
@@ -122,7 +122,7 @@ var _ = Describe("Unidling Controller", func() {
 	})
 
 	It("should update unidled-at annotation when unidling", func() {
-		client := fake.NewSimpleClientset()
+		client := fake.NewClientset()
 		informerFactory := informers.NewSharedInformerFactory(client, 0)
 		serviceInformer := informerFactory.Core().V1().Services().Informer()
 

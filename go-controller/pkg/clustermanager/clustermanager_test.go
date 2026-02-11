@@ -89,7 +89,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -155,7 +155,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -247,7 +247,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							Labels: map[string]string{corev1.LabelOSStable: "windows"},
 						},
 					}}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -319,7 +319,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -430,7 +430,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -503,7 +503,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -615,7 +615,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -673,7 +673,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Close the watch factory and create a new one
 				f.Shutdown()
-				kubeFakeClient = fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient = fake.NewClientset(&corev1.NodeList{
 					Items: updatedNodes,
 				})
 				fakeClient = &util.OVNClusterManagerClientset{
@@ -742,7 +742,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -806,7 +806,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Close the watch factory and create a new one
 				f.Shutdown()
-				kubeFakeClient = fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient = fake.NewClientset(&corev1.NodeList{
 					Items: updatedNodes,
 				})
 				fakeClient = &util.OVNClusterManagerClientset{
@@ -1101,7 +1101,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					},
 				}
 
-				kubeFakeClient := fake.NewSimpleClientset(ns1, ns2)
+				kubeFakeClient := fake.NewClientset(ns1, ns2)
 				fakeClient := util.GetOVNClientset(udn1, udn2, cnc)
 				fakeClient.KubeClient = kubeFakeClient
 
@@ -1236,7 +1236,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -1312,7 +1312,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -1409,7 +1409,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -1523,7 +1523,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{

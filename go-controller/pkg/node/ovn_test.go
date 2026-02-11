@@ -63,7 +63,7 @@ func (o *FakeOVNNode) Start(ctx *cli.Context, objects ...runtime.Object) {
 	Expect(err).NotTo(HaveOccurred())
 
 	o.fakeClient = &util.OVNNodeClientset{
-		KubeClient:             fake.NewSimpleClientset(v1Objects...),
+		KubeClient:             fake.NewClientset(v1Objects...),
 		EgressServiceClient:    egressservicefake.NewSimpleClientset(egressServiceObjects...),
 		AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
 		NetworkAttchDefClient:  nadfake.NewSimpleClientset(),

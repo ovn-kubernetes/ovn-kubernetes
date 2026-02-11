@@ -42,7 +42,7 @@ var _ = Describe("VTEPNotifier", func() {
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
 		fakeClient := &util.OVNClusterManagerClientset{
-			KubeClient:                fake.NewSimpleClientset(),
+			KubeClient:                fake.NewClientset(),
 			NetworkAttchDefClient:     netv1fake.NewSimpleClientset(),
 			UserDefinedNetworkClient:  udnv1fake.NewSimpleClientset(),
 			RouteAdvertisementsClient: rafake.NewSimpleClientset(),

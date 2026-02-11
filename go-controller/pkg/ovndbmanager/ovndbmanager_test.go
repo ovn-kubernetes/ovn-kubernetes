@@ -267,7 +267,7 @@ func TestEnsureClusterRaftMembership(t *testing.T) {
 	config.OvnNorth.Address = knownMembers
 	config.OvnSouth.Address = knownMembers
 
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	kubeInterface := &kube.Kube{
 		KClient: fakeClient,
 	}
@@ -399,7 +399,7 @@ func TestEnsureClusterDNSRaftMembership(t *testing.T) {
 	config.OvnNorth.Address = knownDNSMembers
 	config.OvnSouth.Address = knownDNSMembers
 
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	kubeInterface := &kube.Kube{
 		KClient: fakeClient,
 	}

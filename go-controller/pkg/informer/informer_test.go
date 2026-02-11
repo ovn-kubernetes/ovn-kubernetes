@@ -74,7 +74,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		adds := int32(0)
 		deletes := int32(0)
 
-		k := fake.NewSimpleClientset(
+		k := fake.NewClientset(
 			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					UID:  types.UID(namespace),
@@ -141,7 +141,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		adds := int32(0)
 		deletes := int32(0)
 
-		k := fake.NewSimpleClientset(
+		k := fake.NewClientset(
 			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					UID:  types.UID(namespace),
@@ -212,7 +212,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		deletes := int32(0)
 
 		pod := newPod("foo", namespace)
-		k := fake.NewSimpleClientset(
+		k := fake.NewClientset(
 			[]runtime.Object{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
@@ -300,7 +300,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		deletes := int32(0)
 
 		pod := newPod("foo", namespace)
-		k := fake.NewSimpleClientset(
+		k := fake.NewClientset(
 			[]runtime.Object{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
@@ -375,7 +375,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		adds := int32(0)
 		deletes := int32(0)
 
-		k := fake.NewSimpleClientset(
+		k := fake.NewClientset(
 			[]runtime.Object{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
@@ -450,7 +450,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		deletes := int32(0)
 
 		pod := newPod("foo", namespace)
-		k := fake.NewSimpleClientset(
+		k := fake.NewClientset(
 			[]runtime.Object{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
@@ -523,7 +523,7 @@ var _ = Describe("Informer Event Handler Tests", func() {
 
 var _ = Describe("Event Handler Internals", func() {
 	It("should enqueue a well formed event", func() {
-		k := fake.NewSimpleClientset()
+		k := fake.NewClientset()
 		factory := informers.NewSharedInformerFactory(k, 0)
 		e := eventHandler{
 			name:           "test",
@@ -547,7 +547,7 @@ var _ = Describe("Event Handler Internals", func() {
 	})
 
 	It("should enqueue a well formed delete event", func() {
-		k := fake.NewSimpleClientset()
+		k := fake.NewClientset()
 		factory := informers.NewSharedInformerFactory(k, 0)
 		e := eventHandler{
 			name:           "test",
@@ -576,7 +576,7 @@ var _ = Describe("Event Handler Internals", func() {
 	})
 
 	It("should not enqueue object set for deletion", func() {
-		k := fake.NewSimpleClientset()
+		k := fake.NewClientset()
 		factory := informers.NewSharedInformerFactory(k, 0)
 		e := eventHandler{
 			name:           "test",

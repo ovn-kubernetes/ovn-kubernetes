@@ -43,7 +43,7 @@ func newFakeClientSet(pod *corev1.Pod, podNamespaceLister *mocks.PodNamespaceLis
 	if pod != nil {
 		podList.Items = []corev1.Pod{*pod}
 	}
-	fakeClient := fake.NewSimpleClientset(podList)
+	fakeClient := fake.NewClientset(podList)
 
 	return &ClientSet{
 		kclient:   fakeClient,

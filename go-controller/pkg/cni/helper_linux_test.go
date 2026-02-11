@@ -1501,7 +1501,7 @@ func TestConfigureOVS(t *testing.T) {
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 			var podLister v1mocks.PodLister
 			podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
-			fakeClient := fake.NewSimpleClientset(&corev1.PodList{Items: []corev1.Pod{pod}})
+			fakeClient := fake.NewClientset(&corev1.PodList{Items: []corev1.Pod{pod}})
 			clientset := NewClientSet(fakeClient, &podLister)
 			err = ConfigureOVS(ctx, tc.podNs, tc.podName, "", tc.vfRep,
 				tc.ifInfo, sandboxID, vfPciAddress, clientset)

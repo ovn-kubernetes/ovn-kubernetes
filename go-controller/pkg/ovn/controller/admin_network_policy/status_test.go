@@ -95,7 +95,7 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 		return nil, err
 	}
 	fakeClient := &util.OVNClientset{
-		KubeClient: fake.NewSimpleClientset(),
+		KubeClient: fake.NewClientset(),
 		ANPClient: anpfake.NewSimpleClientset(
 			&initANPs,
 			&initBANPs,

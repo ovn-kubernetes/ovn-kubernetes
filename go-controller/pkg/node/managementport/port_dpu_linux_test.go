@@ -157,7 +157,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSAddMgmtPortCmd(cfg.nodeName, mgmtPortDpu.repDevName),
 			})
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			})
 			fakeNodeClient := &util.OVNNodeClientset{
@@ -205,7 +205,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 				Cmd: genOVSAddMgmtPortCmd(cfg.nodeName, mgmtPortDpu.repDevName),
 			})
 
-			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			fakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			})
 			fakeNodeClient := &util.OVNNodeClientset{

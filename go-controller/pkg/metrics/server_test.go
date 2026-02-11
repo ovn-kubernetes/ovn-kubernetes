@@ -43,7 +43,7 @@ func TestNewMetricServerRunAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var ovsDBClient libovsdbclient.Client
-	var kubeClient kubernetes.Interface = fake.NewSimpleClientset()
+	var kubeClient kubernetes.Interface = fake.NewClientset()
 
 	server := NewMetricServer(opts, ovsDBClient, kubeClient)
 	require.NotNil(t, server, "Server should not be nil")
@@ -104,7 +104,7 @@ func TestNewMetricServerRunAndFailOnFatalError(t *testing.T) {
 	}
 
 	var ovsDBClient libovsdbclient.Client
-	var kubeClient kubernetes.Interface = fake.NewSimpleClientset()
+	var kubeClient kubernetes.Interface = fake.NewClientset()
 
 	server := NewMetricServer(opts, ovsDBClient, kubeClient)
 	require.NotNil(t, server, "Server should not be nil")
@@ -809,7 +809,7 @@ func TestHandleMetrics(t *testing.T) {
 			}()
 
 			// Create server with OVS client
-			var kubeClient kubernetes.Interface = fake.NewSimpleClientset()
+			var kubeClient kubernetes.Interface = fake.NewClientset()
 			server := NewMetricServer(opts, ovsDBClient, kubeClient)
 			server.registerMetrics()
 

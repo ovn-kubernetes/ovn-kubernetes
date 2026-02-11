@@ -79,7 +79,7 @@ func checkOVSPortPodInfo(execMock *ovntest.FakeExec, vfRep string, exists bool, 
 }
 
 func newFakeKubeClientWithPod(pod *corev1.Pod) *fake.Clientset {
-	return fake.NewSimpleClientset(&corev1.PodList{Items: []corev1.Pod{*pod}})
+	return fake.NewClientset(&corev1.PodList{Items: []corev1.Pod{*pod}})
 }
 
 var _ = Describe("Node DPU tests", func() {

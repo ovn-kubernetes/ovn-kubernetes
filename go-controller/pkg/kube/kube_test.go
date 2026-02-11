@@ -19,7 +19,7 @@ var _ = Describe("Kube", func() {
 		var node *corev1.Node
 
 		BeforeEach(func() {
-			fakeClient := fake.NewSimpleClientset()
+			fakeClient := fake.NewClientset()
 			kube = Kube{
 				KClient: fakeClient,
 			}
@@ -47,7 +47,7 @@ var _ = Describe("Kube", func() {
 		var kube Kube
 
 		BeforeEach(func() {
-			fakeClient := fake.NewSimpleClientset()
+			fakeClient := fake.NewClientset()
 			kube = Kube{
 				KClient: fakeClient,
 			}

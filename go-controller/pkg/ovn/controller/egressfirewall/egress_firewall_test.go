@@ -79,7 +79,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.Gateway.Mode = config.GatewayModeShared
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
-		fakeClient = fake.NewSimpleClientset(node1, node2)
+		fakeClient = fake.NewClientset(node1, node2)
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags

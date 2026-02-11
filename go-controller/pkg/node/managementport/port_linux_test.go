@@ -259,7 +259,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 			util.OvnNodeManagementPortMacAddresses: fmt.Sprintf("{\"default\":%q}", mgmtPortMAC)}
 	}
 
-	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+	fakeClient := fake.NewClientset(&corev1.NodeList{
 		Items: []corev1.Node{existingNode},
 	})
 	fakeNodeClient := &util.OVNNodeClientset{
@@ -360,7 +360,7 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		Name: nodeName,
 	}}
 
-	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+	fakeClient := fake.NewClientset(&corev1.NodeList{
 		Items: []corev1.Node{existingNode},
 	})
 	fakeNodeClient := &util.OVNNodeClientset{

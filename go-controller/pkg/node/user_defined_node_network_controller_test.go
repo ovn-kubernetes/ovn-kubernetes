@@ -305,7 +305,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		nodenft.SetFakeNFTablesHelper()
 		util.SetFakeIPTablesHelpers()
 
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			},

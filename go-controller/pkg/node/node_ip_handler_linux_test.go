@@ -383,7 +383,7 @@ func configureKubeOVNContext(nodeName string, useNetlink bool) *testCtx {
 	tc := &testCtx{
 		doneWg:      &sync.WaitGroup{},
 		stopCh:      make(chan struct{}),
-		fakeClient:  fake.NewSimpleClientset(node),
+		fakeClient:  fake.NewClientset(node),
 		mgmtPortIP4: ovntest.MustParseIPNet("10.1.1.2/24"),
 		mgmtPortIP6: ovntest.MustParseIPNet("2001:db8::1/64"),
 	}
