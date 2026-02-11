@@ -184,11 +184,14 @@ func NewController(
 	return c
 }
 
-// Start starts the controller.
+// Start starts the controller. Uses StartWithInitialSync so that repairStaleCNCs
+// runs once at startup (after informers are synced, before workers) to clean up
+// OVN state for CNCs that no longer exist in the API.
 func (c *Controller) Start() error {
 	klog.Infof("Starting ovnkube network connect controller for zone %s", c.zone)
+	initialSync := func() error { return c.repairStaleCNCs() }
 	if c.nadReconciler == nil {
-		return controllerutil.Start(
+		return controllerutil.StartWithInitialSync(initialSync,
 			c.cncController,
 			c.nodeController,
 			c.serviceController,
@@ -199,7 +202,7 @@ func (c *Controller) Start() error {
 		return err
 	}
 	c.nadReconcilerID = id
-	return controllerutil.Start(
+	return controllerutil.StartWithInitialSync(initialSync,
 		c.cncController,
 		c.nodeController,
 		c.nadReconciler,

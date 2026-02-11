@@ -593,6 +593,14 @@ func (c *Controller) cleanupNetworkConnections(cncName string, serviceConnectivi
 		}
 	}
 
+	return c.cleanupNetworkConnectivity(cncName)
+}
+
+// cleanupNetworkConnectivity removes all router ports and routing policies owned by a CNC
+// from the network routers. Ports on the connect router are skipped (the connect router
+// is deleted separately). Discovery is done from OVN directly, so this is safe to call
+// even during startup repair when the cncCache may not be populated.
+func (c *Controller) cleanupNetworkConnectivity(cncName string) error {
 	var ops []ovsdb.Operation
 
 	// Find all ports owned by this CNC (across all routers and networks)
@@ -667,7 +675,7 @@ func (c *Controller) cleanupNetworkConnections(cncName string, serviceConnectivi
 		if _, err := libovsdbops.TransactAndCheck(c.nbClient, ops); err != nil {
 			return fmt.Errorf("failed to execute cleanup operations for CNC %s: %w", cncName, err)
 		}
-		klog.Infof("CNC %s: executed %d cleanup operations", cncName, len(ops))
+		klog.Infof("CNC %s: cleaned up network connectivity (%d ops)", cncName, len(ops))
 	}
 
 	return nil
@@ -1325,15 +1333,12 @@ func (c *Controller) ensureLoadBalancerGroupOps(ops []ovsdb.Operation,
 
 // cleanupServiceConnectivity removes all cross-network LB attachments for a CNC.
 // Called when ClusterIPServiceNetwork is disabled on the CNC or when CNC is deleted.
-// With the LBG approach, this removes the CNC's LBG from all connected switches
+// With the LBG approach, this removes the CNC's LBG from all switches that reference it
 // (LogicalSwitch.load_balancer_group is a strong reference, so we must remove
 // all references before deleting the LBG), then deletes the LBG itself.
+// Switches are discovered from OVN (not from cncCache) so this is safe to call
+// even when the cache is out of sync or during startup repair.
 func (c *Controller) cleanupServiceConnectivity(cncName string) error {
-	cncState, exists := c.cncCache[cncName]
-	if !exists || cncState == nil {
-		return fmt.Errorf("CNC %s state not found in cache", cncName)
-	}
-
 	lbgName := getCNCServiceLBGroupName(cncName)
 
 	// Look up the LBG to get its UUID (needed for switch mutation ops)
@@ -1346,32 +1351,26 @@ func (c *Controller) cleanupServiceConnectivity(cncName string) error {
 		return nil
 	}
 
-	// First, remove the LBG from all connected networks' switches.
+	// Find all switches that reference this LBG.
 	// LogicalSwitch.load_balancer_group is a strong reference, so we cannot
 	// delete the LBG while any switch still references it.
+	switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(c.nbClient, func(sw *nbdb.LogicalSwitch) bool {
+		for _, uuid := range sw.LoadBalancerGroup {
+			if uuid == lbg.UUID {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find switches referencing LBG %s: %w", lbgName, err)
+	}
+
 	var ops []ovsdb.Operation
-	for _, owner := range cncState.connectedNetworks.UnsortedList() {
-		_, networkID, err := util.ParseNetworkOwner(owner)
-		if err != nil {
-			klog.Warningf("Failed to parse network owner key %s: %v", owner, err)
-			continue
-		}
-
-		netInfo := c.networkManager.GetNetworkByID(networkID)
-		if netInfo == nil {
-			continue
-		}
-
-		switchName, err := c.getNetworkSwitchName(netInfo)
-		if err != nil {
-			klog.Warningf("CNC %s: failed to get switch name for network %s: %v", cncName, netInfo.GetNetworkName(), err)
-			continue
-		}
-
-		sw := &nbdb.LogicalSwitch{Name: switchName}
+	for _, sw := range switches {
 		removeOps, err := libovsdbops.RemoveLoadBalancerGroupsFromLogicalSwitchOps(c.nbClient, nil, sw, lbg)
 		if err != nil {
-			klog.Warningf("CNC %s: failed to remove LBG %s from switch %s: %v", cncName, lbgName, switchName, err)
+			klog.Warningf("CNC %s: failed to remove LBG %s from switch %s: %v", cncName, lbgName, sw.Name, err)
 			continue
 		}
 		ops = append(ops, removeOps...)
@@ -1388,7 +1387,7 @@ func (c *Controller) cleanupServiceConnectivity(cncName string) error {
 		if _, err := libovsdbops.TransactAndCheck(c.nbClient, ops); err != nil {
 			return fmt.Errorf("failed to cleanup service LBG %s for CNC %s: %w", lbgName, cncName, err)
 		}
-		klog.Infof("CNC %s: cleaned up service LBG %s", cncName, lbgName)
+		klog.Infof("CNC %s: cleaned up service LBG %s (removed from %d switch(es))", cncName, lbgName, len(switches))
 	}
 
 	return nil

@@ -655,8 +655,10 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				zoneName      string
 			)
 
-			// start initializes and starts the controller with the given initial state
-			start := func(initialDB []libovsdbtest.TestData, nodes []testNode, networks map[string]testNetwork) {
+			// start initializes and starts the controller with the given initial state.
+			// extraObjects can be used to pre-seed the fake API with additional objects
+			// (e.g. CNC objects for repair tests).
+			start := func(initialDB []libovsdbtest.TestData, nodes []testNode, networks map[string]testNetwork, extraObjects ...runtime.Object) {
 				var err error
 
 				// Always add COPP to initialDB (required for router creation)
@@ -672,12 +674,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				}, nil)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Create fake clientset with nodes
-				var nodeObjs []runtime.Object
+				// Create fake clientset with nodes and any extra objects
+				var objects []runtime.Object
 				for _, n := range nodes {
-					nodeObjs = append(nodeObjs, createTestNode(n))
+					objects = append(objects, createTestNode(n))
 				}
-				fakeClientset = util.GetOVNClientset(nodeObjs...).GetOVNKubeControllerClientset()
+				objects = append(objects, extraObjects...)
+				fakeClientset = util.GetOVNClientset(objects...).GetOVNKubeControllerClientset()
 
 				// Create watch factory
 				wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset)
@@ -2901,6 +2904,159 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					Eventually(func() error {
 						return verifyRouterPolicyCount(nbClient, networks[3].RouterName(), "multi-cnc2", networks[3].id, networks[2].id, expectedPerIPFamily)
 					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+			})
+
+			// =============================================================================
+			// Context: Repair (startup cleanup of stale CNC objects)
+			// =============================================================================
+			Context("Repair", func() {
+				It("should clean up all stale object types while preserving valid ones", func() {
+					// "valid-cnc" exists in the API, "stale-cnc" does not.
+					// Pre-seed OVN DB with every object type for both CNCs.
+					// After Start() (which runs repairStaleCNCs), only valid objects should remain.
+					validCNCName := "valid-cnc"
+					staleCNCName := "stale-cnc"
+					networkRouterName := "udn_network_router"
+
+					validPortUUID := "valid-port-uuid"
+					stalePortUUID := "stale-port-uuid"
+					staleConnectPortUUID := "stale-connect-port-uuid"
+					validPolicyUUID := "valid-policy-uuid"
+					stalePolicyUUID := "stale-policy-uuid"
+					validLBGUUID := "valid-lbg-uuid"
+					staleLBGUUID := "stale-lbg-uuid"
+					validACLUUID := "valid-acl-uuid"
+					staleACLUUID := "stale-acl-uuid"
+
+					validLBGName := ovntypes.NetworkConnectServiceLBGroupPrefix + validCNCName
+					staleLBGName := ovntypes.NetworkConnectServiceLBGroupPrefix + staleCNCName
+
+					initialDB := []libovsdbtest.TestData{
+						// Network router with both valid and stale ports/policies
+						&nbdb.LogicalRouter{
+							UUID:     "network-router-uuid",
+							Name:     networkRouterName,
+							Ports:    []string{validPortUUID, stalePortUUID},
+							Policies: []string{validPolicyUUID, stalePolicyUUID},
+						},
+						// Valid connect router
+						&nbdb.LogicalRouter{
+							UUID:        "valid-connect-router-uuid",
+							Name:        getConnectRouterName(validCNCName),
+							ExternalIDs: buildLRExternalIDs(validCNCName),
+						},
+						// Stale connect router (with a port on it — deleted with the router)
+						&nbdb.LogicalRouter{
+							UUID:        "stale-connect-router-uuid",
+							Name:        getConnectRouterName(staleCNCName),
+							ExternalIDs: buildLRExternalIDs(staleCNCName),
+							Ports:       []string{staleConnectPortUUID},
+						},
+						// Router ports
+						&nbdb.LogicalRouterPort{
+							UUID:        validPortUUID,
+							Name:        "lrp-valid-net1",
+							ExternalIDs: buildLRPortDBIDs(validCNCName, "1", "0", networkRouterName).GetExternalIDs(),
+						},
+						&nbdb.LogicalRouterPort{
+							UUID:        stalePortUUID,
+							Name:        "lrp-stale-net1",
+							ExternalIDs: buildLRPortDBIDs(staleCNCName, "1", "0", networkRouterName).GetExternalIDs(),
+						},
+						&nbdb.LogicalRouterPort{
+							UUID:        staleConnectPortUUID,
+							Name:        "lrp-stale-connect",
+							ExternalIDs: buildLRPortDBIDs(staleCNCName, "1", "0", getConnectRouterName(staleCNCName)).GetExternalIDs(),
+						},
+						// Router policies
+						&nbdb.LogicalRouterPolicy{
+							UUID:        validPolicyUUID,
+							Priority:    100,
+							Match:       "ip4.src == 10.1.0.0/16",
+							Action:      nbdb.LogicalRouterPolicyActionReroute,
+							ExternalIDs: buildLRPolicyDBIDs(validCNCName, "1", "2", "ip4", networkRouterName).GetExternalIDs(),
+						},
+						&nbdb.LogicalRouterPolicy{
+							UUID:        stalePolicyUUID,
+							Priority:    100,
+							Match:       "ip4.src == 10.2.0.0/16",
+							Action:      nbdb.LogicalRouterPolicyActionReroute,
+							ExternalIDs: buildLRPolicyDBIDs(staleCNCName, "1", "2", "ip4", networkRouterName).GetExternalIDs(),
+						},
+						// Load balancer groups
+						&nbdb.LoadBalancerGroup{UUID: validLBGUUID, Name: validLBGName},
+						&nbdb.LoadBalancerGroup{UUID: staleLBGUUID, Name: staleLBGName},
+						// ACLs
+						&nbdb.ACL{
+							UUID:        validACLUUID,
+							Action:      nbdb.ACLActionAllowRelated,
+							Direction:   nbdb.ACLDirectionFromLport,
+							Match:       "ip4",
+							Priority:    1000,
+							ExternalIDs: buildACLDBIDs(validCNCName, "allow-service").GetExternalIDs(),
+						},
+						&nbdb.ACL{
+							UUID:        staleACLUUID,
+							Action:      nbdb.ACLActionAllowRelated,
+							Direction:   nbdb.ACLDirectionFromLport,
+							Match:       "ip4",
+							Priority:    1000,
+							ExternalIDs: buildACLDBIDs(staleCNCName, "allow-service").GetExternalIDs(),
+						},
+						// Switch referencing both LBGs and both ACLs
+						&nbdb.LogicalSwitch{
+							UUID:              "switch-uuid",
+							Name:              "test-switch",
+							LoadBalancerGroup: []string{validLBGUUID, staleLBGUUID},
+							ACLs:              []string{validACLUUID, staleACLUUID},
+						},
+					}
+
+					validCNC := createTestCNC(validCNCName, 100, defaultConnectSubnets(), "")
+					start(initialDB, nil, nil, validCNC)
+
+					// --- Valid objects should survive ---
+
+					// Valid connect router
+					_, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: getConnectRouterName(validCNCName)})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Network router should keep only valid port and policy
+					netRouter, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: networkRouterName})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(netRouter.Ports).To(HaveLen(1))
+					Expect(netRouter.Policies).To(HaveLen(1))
+
+					// Only valid LBG should remain
+					lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+						return strings.HasPrefix(lbg.Name, ovntypes.NetworkConnectServiceLBGroupPrefix)
+					})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(lbgs).To(HaveLen(1))
+					Expect(lbgs[0].Name).To(Equal(validLBGName))
+
+					// Only valid ACL should remain
+					aclPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
+					acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](aclPredicateIDs, nil))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(acls).To(HaveLen(1))
+					Expect(acls[0].ExternalIDs[libovsdbops.ObjectNameKey.String()]).To(Equal(validCNCName))
+
+					// Switch should reference only valid LBG and valid ACL
+					sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(sw *nbdb.LogicalSwitch) bool {
+						return sw.Name == "test-switch"
+					})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(sw).To(HaveLen(1))
+					Expect(sw[0].LoadBalancerGroup).To(HaveLen(1))
+					Expect(sw[0].ACLs).To(HaveLen(1))
+
+					// --- Stale objects should be gone ---
+
+					// Stale connect router
+					_, err = libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: getConnectRouterName(staleCNCName)})
+					Expect(err).To(HaveOccurred())
 				})
 			})
 
