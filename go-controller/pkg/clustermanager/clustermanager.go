@@ -17,6 +17,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/endpointslicemirror"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/networkconnect"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/nooverlay"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/routeadvertisements"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
 	udncontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
@@ -64,7 +65,8 @@ type ClusterManager struct {
 	// networkManager creates and deletes network controllers
 	networkManager networkmanager.Controller
 
-	raController *routeadvertisements.Controller
+	raController        *routeadvertisements.Controller
+	noOverlayController *nooverlay.Controller
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -188,6 +190,9 @@ func NewClusterManager(
 
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
+		if config.Default.Transport == types.NetworkTransportNoOverlay {
+			cm.noOverlayController = nooverlay.NewController(wf, recorder)
+		}
 	}
 
 	return cm, nil
@@ -260,6 +265,15 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 			return err
 		}
 	}
+
+	// Start no-overlay validation controller
+	if cm.noOverlayController != nil {
+		err := cm.noOverlayController.Start()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -291,6 +305,10 @@ func (cm *ClusterManager) Stop() {
 	if cm.raController != nil {
 		cm.raController.Stop()
 		cm.raController = nil
+	}
+	if cm.noOverlayController != nil {
+		cm.noOverlayController.Stop()
+		cm.noOverlayController = nil
 	}
 }
 
