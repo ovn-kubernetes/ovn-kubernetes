@@ -6,6 +6,7 @@ import (
 	"net"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -291,10 +292,20 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 		acl.UUID = dbIDs.String() + "-UUID"
 		acls = append(acls, acl)
 	}
-	for i, ipBlock := range ipBlocks {
-		match := fmt.Sprintf("ip4.%s == %s && %s == @%s", ipDir, ipBlock, portDir, pgName)
+	if len(ipBlocks) > 0 {
+		var ipBlockMatches []string
+		for _, ipBlock := range ipBlocks {
+			ipBlockMatches = append(ipBlockMatches, fmt.Sprintf("ip4.%s == %s", ipDir, ipBlock))
+		}
+		var match string
+		if len(ipBlockMatches) == 1 {
+			match = ipBlockMatches[0]
+		} else {
+			match = fmt.Sprintf("(%s)", strings.Join(ipBlockMatches, " || "))
+		}
+		match = fmt.Sprintf("%s && %s == @%s", match, portDir, pgName)
 		action := allowAction(params.statelessNetPol)
-		dbIDs := gp.getNetpolACLDbIDs(i, libovsdbutil.UnspecifiedL4Protocol)
+		dbIDs := gp.getNetpolACLDbIDs(ipBlockCombinedIdx, libovsdbutil.UnspecifiedL4Protocol)
 		acl := libovsdbops.BuildACL(
 			libovsdbutil.GetACLName(dbIDs),
 			direction,
