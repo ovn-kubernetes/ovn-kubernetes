@@ -12,6 +12,7 @@ ovnControllerLogLevel: 4
 nodeMgmtPortNetdev: ""
 
 # The device plugin resource name that has allocated interfaces to be used for management ports
+# This must be set when using UDNs.
 mgmtPortVFResourceName: ""
 
 # If using UDNs, the number of VFs required to handle management ports, which depends on

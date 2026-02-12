@@ -112,10 +112,10 @@ spec:
             {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
             {{ .Values.mgmtPortVFResourceName }}: {{ .Values.mgmtPortVFsCount }}
             {{- end }}
+          {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
           limits:
-            {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
             {{ .Values.mgmtPortVFResourceName }}: {{ .Values.mgmtPortVFsCount }}
-            {{- end }}
+          {{- end }}
         env:
         {{ if .Values.global.enableCoredumps -}}
         - name: GOTRACEBACK
