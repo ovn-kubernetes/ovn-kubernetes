@@ -86,6 +86,7 @@ nav:
   - Getting Started:
     - Launching OVN-Kubernetes: installation/launching-ovn-kubernetes-on-kind.md
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
+    - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
     - Configuration Guide: getting-started/configuration.md
     - CLI Guide: getting-started/cli-guide.md
     - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md
