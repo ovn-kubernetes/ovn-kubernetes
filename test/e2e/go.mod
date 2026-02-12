@@ -1,4 +1,4 @@
-module github.com/ovn-org/ovn-kubernetes/test/e2e
+module github.com/ovn-kubernetes/ovn-kubernetes/test/e2e
 
 go 1.24.0
 
@@ -164,7 +164,7 @@ require (
 	github.com/google/goexpect v0.0.0-20210430020637-ab937bf7fd6f
 	github.com/onsi/ginkgo v1.16.5
 	github.com/openshift-kni/k8sreporter v1.0.6
-	github.com/ovn-org/ovn-kubernetes/go-controller v1.0.0
+	github.com/ovn-kubernetes/ovn-kubernetes/go-controller v1.0.0
 	go.universe.tf/metallb v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.72.1
 	gopkg.in/yaml.v2 v2.4.0
@@ -176,6 +176,6 @@ require (
 
 replace (
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
-	github.com/ovn-org/ovn-kubernetes/go-controller => ../../go-controller
+	github.com/ovn-kubernetes/ovn-kubernetes/go-controller => ../../go-controller
 	go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
 )

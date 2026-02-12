@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"slices"
 
-	bitmapallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
+	bitmapallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 )
 
 const (

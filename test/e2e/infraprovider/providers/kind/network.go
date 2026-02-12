@@ -2,7 +2,7 @@ package kind
 
 import (
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"k8s.io/utils/net"
 )
 

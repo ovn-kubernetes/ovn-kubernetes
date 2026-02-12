@@ -39,10 +39,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/csrapprover"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovnwebhook"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovnwebhook"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 type config struct {
@@ -314,7 +314,7 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 	// We cannot use the default implementation of the webhook server because we need to enable SO_REUSEPORT
 	// on the socket to allow for two instances running at the same time (required during upgrades).
 	// The webhook server is set up and started in a very similar way to the default one:
-	// https://github.com/ovn-org/ovn-kubernetes/blob/7c0838bb46d6de202f509abe47609c8da09311b2/go-controller/vendor/sigs.k8s.io/controller-runtime/pkg/webhook/server.go#L212
+	// https://github.com/ovn-kubernetes/ovn-kubernetes/blob/7c0838bb46d6de202f509abe47609c8da09311b2/go-controller/vendor/sigs.k8s.io/controller-runtime/pkg/webhook/server.go#L212
 
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {

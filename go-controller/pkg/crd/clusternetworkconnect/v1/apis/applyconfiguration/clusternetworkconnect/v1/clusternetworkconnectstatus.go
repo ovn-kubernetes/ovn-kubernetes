@@ -18,7 +18,7 @@ limitations under the License.
 package v1
 
 import (
-	clusternetworkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	clusternetworkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 

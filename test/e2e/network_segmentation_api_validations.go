@@ -6,9 +6,9 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
-	testscenariocudn "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario/cudn"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
+	testscenariocudn "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario/cudn"
 )
 
 var _ = Describe("Network Segmentation: API validations", feature.NetworkSegmentation, func() {

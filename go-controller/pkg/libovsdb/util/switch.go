@@ -11,11 +11,11 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var updateNodeSwitchLock sync.Mutex
@@ -24,7 +24,7 @@ var updateNodeSwitchLock sync.Mutex
 // and after adding the hybrid overlay port, and ensures that each port's IP
 // is added to the logical switch's exclude_ips. This prevents ovn-northd log
 // spam about duplicate IP addresses.
-// See https://github.com/ovn-org/ovn-kubernetes/pull/779
+// See https://github.com/ovn-kubernetes/ovn-kubernetes/pull/779
 func UpdateNodeSwitchExcludeIPs(nbClient libovsdbclient.Client, mgmtIfName, switchName, nodeName string, subnet, mgmtIfAddr *net.IPNet) error {
 	if utilnet.IsIPv6CIDR(subnet) {
 		// We don't exclude any IPs in IPv6

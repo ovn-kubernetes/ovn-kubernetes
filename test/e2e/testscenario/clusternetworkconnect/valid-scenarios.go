@@ -1,6 +1,6 @@
 package clusternetworkconnect
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
+import "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
 
 var ValidScenarios = []testscenario.ValidateCRScenario{
 	{
