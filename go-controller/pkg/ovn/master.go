@@ -684,6 +684,21 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		}
 	}
 
+	// Sync no-overlay SNAT exemption address set for no-overlay mode with outbound SNAT enabled in SGW mode.
+	// The address set contains cluster CIDRs + local zone node IPs and is used in SNAT
+	// exemption rules to prevent SNATing pod-to-pod and pod-to-local-node traffic.
+	// In LGW mode, nftables sets are used instead.
+	if util.IsNoOverlaySNATExemptionNeeded(oc) && (nSyncs.syncNode || nSyncs.syncGw) {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err))
+		} else {
+			if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, hostAddrs); err != nil {
+				errs = append(errs, fmt.Errorf("failed to sync no-overlay SNAT exemption address set: %w", err))
+			}
+		}
+	}
+
 	return utilerrors.Join(errs...)
 }
 

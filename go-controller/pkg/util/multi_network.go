@@ -57,6 +57,7 @@ type NetInfo interface {
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
 	Transport() string
+	OutboundSNAT() string
 	EVPNVTEPName() string
 	EVPNMACVRFVNI() int32
 	EVPNMACVRFRouteTarget() string
@@ -665,6 +666,11 @@ func (nInfo *DefaultNetInfo) Transport() string {
 	return config.Default.Transport
 }
 
+// OutboundSNAT() string returns the outbound SNAT configuration for the default network when using no-overlay transport.
+func (nInfo *DefaultNetInfo) OutboundSNAT() string {
+	return config.NoOverlay.OutboundSNAT
+}
+
 // EVPNVTEPName returns empty as EVPN is not supported on the default network
 func (nInfo *DefaultNetInfo) EVPNVTEPName() string {
 	return ""
@@ -871,6 +877,12 @@ func (nInfo *userDefinedNetInfo) Transport() string {
 		return types.NetworkTransportGeneve
 	}
 	return nInfo.transport
+}
+
+// OutboundSNAT() string returns the outbound SNAT configuration for this network when using no-overlay transport.
+func (nInfo *userDefinedNetInfo) OutboundSNAT() string {
+	// TODO: implement per-network no-overlay outbound SNAT configuration
+	return ""
 }
 
 // EVPNVTEPName returns the name of the VTEP CR for EVPN

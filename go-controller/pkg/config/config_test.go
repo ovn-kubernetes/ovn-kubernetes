@@ -2138,7 +2138,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 
 			// Test valid no-overlay transport with required options
 			Default.Transport = types.NetworkTransportNoOverlay
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 			NoOverlay.Routing = NoOverlayRoutingManaged
 			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
 			err = validateNoOverlayConfig()
@@ -2167,12 +2167,12 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
 
 			// Test valid enable
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 			err := validateNoOverlayConfig()
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 			// Test valid disable
-			NoOverlay.OutboundSNAT = NoOverlaySNATDisabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATDisabled
 			err = validateNoOverlayConfig()
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -2185,7 +2185,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 
 		It("requires routing when transport is no-overlay", func() {
 			Default.Transport = types.NetworkTransportNoOverlay
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 			NoOverlay.Routing = ""
 			err := validateNoOverlayConfig()
 			gomega.Expect(err).To(gomega.HaveOccurred())
@@ -2194,7 +2194,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 
 		It("validates routing values", func() {
 			Default.Transport = types.NetworkTransportNoOverlay
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 
 			// Test valid managed (requires topology)
 			NoOverlay.Routing = NoOverlayRoutingManaged
@@ -2218,7 +2218,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		It("builds no-overlay config from file only", func() {
 			fileConfig := config{
 				NoOverlay: NoOverlayConfig{
-					OutboundSNAT: NoOverlaySNATEnabled,
+					OutboundSNAT: types.NoOverlaySNATEnabled,
 					Routing:      NoOverlayRoutingManaged,
 				},
 				ManagedBGP: ManagedBGPConfig{
@@ -2230,14 +2230,14 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			err = buildManagedBGPConfig(&fileConfig)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			// Config file values should be applied
-			gomega.Expect(NoOverlay.OutboundSNAT).To(gomega.Equal(NoOverlaySNATEnabled))
+			gomega.Expect(NoOverlay.OutboundSNAT).To(gomega.Equal(types.NoOverlaySNATEnabled))
 			gomega.Expect(NoOverlay.Routing).To(gomega.Equal(NoOverlayRoutingManaged))
 			gomega.Expect(ManagedBGP.Topology).To(gomega.Equal(ManagedBGPTopologyFullMesh))
 		})
 
 		It("requires topology when routing is managed", func() {
 			Default.Transport = types.NetworkTransportNoOverlay
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 			NoOverlay.Routing = NoOverlayRoutingManaged
 			ManagedBGP.Topology = ""
 			err := validateNoOverlayConfig()
@@ -2247,7 +2247,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 
 		It("validates topology values", func() {
 			Default.Transport = types.NetworkTransportNoOverlay
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 			NoOverlay.Routing = NoOverlayRoutingManaged
 
 			// Test valid full-mesh
@@ -2265,7 +2265,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 
 		It("does not require topology when routing is unmanaged", func() {
 			Default.Transport = types.NetworkTransportNoOverlay
-			NoOverlay.OutboundSNAT = NoOverlaySNATEnabled
+			NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
 			NoOverlay.Routing = NoOverlayRoutingUnmanaged
 			ManagedBGP.Topology = ""
 			err := validateNoOverlayConfig()
