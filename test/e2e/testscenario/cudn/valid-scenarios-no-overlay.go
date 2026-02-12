@@ -121,12 +121,12 @@ spec:
 `,
 	},
 	{
-		Description: "Layer3 primary network with default Geneve transport (no transport field set)",
+		Description: "Layer3 primary network with unset default transport (no transport field set)",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
 metadata:
-  name: geneve-default-transport
+  name: unset-default-transport
 spec:
   namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: orange}}
   network:
@@ -140,12 +140,12 @@ spec:
 `,
 	},
 	{
-		Description: "Layer3 primary network with explicit Geneve transport",
+		Description: "Layer3 primary network with explicit Default transport",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
 metadata:
-  name: geneve-explicit-transport
+  name: default-explicit-transport
 spec:
   namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: cyan}}
   network:
@@ -156,7 +156,7 @@ spec:
       subnets:
       - cidr: 10.70.0.0/16
         hostSubnet: 24
-    transport: Geneve
+    transport: Default
 `,
 	},
 }

@@ -801,16 +801,17 @@ spec:
                     - Localnet
                     type: string
                   transport:
+                    default: Default
                     description: |-
                       Transport describes the transport technology for pod-to-pod traffic.
-                      Allowed values are "NoOverlay", "Geneve", and "EVPN".
+                      Allowed values are "NoOverlay", "Default", and "EVPN".
                       - "NoOverlay": The network operates in no-overlay mode.
-                      - "Geneve": The network uses Geneve overlay.
+                      - "Default": The network uses default overlay.
                       - "EVPN": The network uses EVPN transport.
-                      When omitted, the default behaviour is Geneve.
+                      When omitted, the default behaviour is Default.
                     enum:
                     - NoOverlay
-                    - Geneve
+                    - Default
                     - EVPN
                     type: string
                 required:
@@ -839,7 +840,8 @@ spec:
                     has(self.noOverlay)'
                 - message: spec.noOverlay is forbidden when transport type is not
                     'NoOverlay'
-                  rule: self.transport == 'NoOverlay' || !has(self.noOverlay)
+                  rule: (has(self.transport) && self.transport == 'NoOverlay') ||
+                    !has(self.noOverlay)
                 - message: transport 'EVPN' is only supported for Layer2 or Layer3
                     primary networks
                   rule: '!has(self.transport) || self.transport != ''EVPN'' || ((self.topology
@@ -849,7 +851,7 @@ spec:
                 - message: spec.evpn field is required when transport is 'EVPN'
                   rule: '!has(self.transport) || self.transport != ''EVPN'' || has(self.evpn)'
                 - message: spec.evpn field is forbidden when transport is not 'EVPN'
-                  rule: self.transport == 'EVPN' || !has(self.evpn)
+                  rule: (has(self.transport) && self.transport == 'EVPN') || !has(self.evpn)
                 - message: spec.evpn.macVRF field is required for Layer2 topology
                     when transport is 'EVPN'
                   rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology

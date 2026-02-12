@@ -92,13 +92,13 @@ spec:
 `,
 	},
 	{
-		Description: "noOverlay is forbidden when transport is Geneve",
+		Description: "noOverlay is forbidden when transport is Default",
 		ExpectedErr: `spec.noOverlay is forbidden when transport type is not 'NoOverlay'`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
 metadata:
-  name: no-overlay-options-with-geneve-fail
+  name: no-overlay-options-with-default-fail
 spec:
   namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
   network:
@@ -108,14 +108,14 @@ spec:
       subnets:
       - cidr: 10.10.0.0/16
         hostSubnet: 24
-    transport: Geneve
+    transport: Default
     noOverlay:
       outboundSNAT: Enabled
       routing: Managed
 `,
 	},
 	{
-		Description: "noOverlay is forbidden when transport is not set (defaults to Geneve)",
+		Description: "noOverlay is forbidden when transport is not set (defaults to Default)",
 		ExpectedErr: `spec.noOverlay is forbidden when transport type is not 'NoOverlay'`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
