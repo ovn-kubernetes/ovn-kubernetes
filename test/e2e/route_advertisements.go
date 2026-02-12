@@ -966,83 +966,98 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			max := 25999
 			hostNetworkPort = rand.Intn(max-min+1) + min
 			framework.Logf("Random host networked port chosen: %d", hostNetworkPort)
-			for _, node := range nodes.Items {
-				// this creates a udp / http netexec listener which is able to receive the "hostname"
-				// command. We use this to validate that each endpoint is received at least once
-				args := []string{
-					"netexec",
-					fmt.Sprintf("--http-port=%d", hostNetworkPort),
-					fmt.Sprintf("--udp-port=%d", hostNetworkPort),
-				}
-
-				// create host networked Pods
-				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
-					p.Spec.Containers[0].Args = args
-					p.Spec.HostNetwork = true
-				})
-
-				framework.ExpectNoError(err)
-			}
 
 			ginkgo.By("Setting up pods and services")
+
+			// Create all pod specs upfront as distinct objects.
+			var hostNetPods []*corev1.Pod
+			for _, node := range nodes.Items {
+				p := e2epod.NewAgnhostPod(f.Namespace.Name, node.Name+"-hostnet-ep", nil, nil, nil,
+					"netexec",
+					fmt.Sprintf("--http-port=%d", hostNetworkPort),
+					fmt.Sprintf("--udp-port=%d", hostNetworkPort))
+				p.Spec.NodeName = node.Name
+				p.Spec.HostNetwork = true
+				hostNetPods = append(hostNetPods, e2epod.NewPodClient(f).Create(context.TODO(), p))
+			}
+
+			podNetASpecs := []*corev1.Pod{
+				e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
+				e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-2-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
+				e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-3-%s-net-%s", nodes.Items[1].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
+			}
+			for _, p := range podNetASpecs {
+				p.Spec.NodeName = nodes.Items[0].Name
+				p.Labels = map[string]string{"network": cudnA.Name}
+			}
+			podNetASpecs[2].Spec.NodeName = nodes.Items[1].Name
+
+			podNetBSpec := e2epod.NewAgnhostPod(udnNamespaceB.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[1].Name, cudnB.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
+			podNetBSpec.Spec.NodeName = nodes.Items[1].Name
+			podNetBSpec.Labels = map[string]string{"network": cudnB.Name}
+
+			podNetDefaultSpec := e2epod.NewAgnhostPod("default", fmt.Sprintf("pod-1-%s-net-default", nodes.Items[1].Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
+			podNetDefaultSpec.Spec.NodeName = nodes.Items[1].Name
+			podNetDefaultSpec.Labels = map[string]string{"network": "default"}
+
+			// Submit all pods to the API without waiting for readiness.
 			podsNetA = []*corev1.Pod{}
-			pod := e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
-			pod.Spec.NodeName = nodes.Items[0].Name
-			pod.Labels = map[string]string{"network": cudnA.Name}
-			podsNetA = append(podsNetA, e2epod.NewPodClient(f).CreateSync(context.TODO(), pod))
+			for _, p := range podNetASpecs {
+				podsNetA = append(podsNetA, e2epod.NewPodClient(f).Create(context.TODO(), p))
+			}
+			podNetB = e2epod.PodClientNS(f, udnNamespaceB.Name).Create(context.TODO(), podNetBSpec)
+			podNetDefault = e2epod.PodClientNS(f, "default").Create(context.TODO(), podNetDefaultSpec)
 
-			pod.Name = fmt.Sprintf("pod-2-%s-net-%s", nodes.Items[0].Name, cudnA.Name)
-			podsNetA = append(podsNetA, e2epod.NewPodClient(f).CreateSync(context.TODO(), pod))
-
-			pod.Name = fmt.Sprintf("pod-3-%s-net-%s", nodes.Items[1].Name, cudnA.Name)
-			pod.Spec.NodeName = nodes.Items[1].Name
-			podsNetA = append(podsNetA, e2epod.NewPodClient(f).CreateSync(context.TODO(), pod))
-
-			svc := e2eservice.CreateServiceSpec(fmt.Sprintf("service-%s", cudnA.Name), "", false, pod.Labels)
-			svc.Spec.Ports = []corev1.ServicePort{{Port: 8080}}
+			// Create services (don't need pods to be ready).
 			familyPolicy := corev1.IPFamilyPolicyPreferDualStack
+
+			svc := e2eservice.CreateServiceSpec(fmt.Sprintf("service-%s", cudnA.Name), "", false, map[string]string{"network": cudnA.Name})
+			svc.Spec.Ports = []corev1.ServicePort{{Port: 8080}}
 			svc.Spec.IPFamilyPolicy = &familyPolicy
 			svc.Spec.Type = corev1.ServiceTypeNodePort
-			svcNodePortNetA, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortNetA, err = f.ClientSet.CoreV1().Services(udnNamespaceA.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			pod.Name = fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[1].Name, cudnB.Name)
-			pod.Namespace = udnNamespaceB.Name
-			pod.Labels = map[string]string{"network": cudnB.Name}
-			podNetB = e2epod.PodClientNS(f, udnNamespaceB.Name).CreateSync(context.TODO(), pod)
-			framework.Logf("created pod %s/%s", podNetB.Namespace, podNetB.Name)
 
 			svc.Name = fmt.Sprintf("service-%s", cudnB.Name)
-			svc.Namespace = pod.Namespace
-			svc.Spec.Selector = pod.Labels
-			svcNodePortNetB, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svc.Namespace = udnNamespaceB.Name
+			svc.Spec.Selector = map[string]string{"network": cudnB.Name}
+			svcNodePortNetB, err = f.ClientSet.CoreV1().Services(udnNamespaceB.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			pod.Name = fmt.Sprintf("pod-1-%s-net-default", nodes.Items[1].Name)
-			pod.Namespace = "default"
-			pod.Labels = map[string]string{"network": "default"}
-			podNetDefault = e2epod.PodClientNS(f, "default").CreateSync(context.TODO(), pod)
 
 			svc.Name = "service-default"
 			svc.Namespace = "default"
-			svc.Spec.Selector = pod.Labels
+			svc.Spec.Selector = map[string]string{"network": "default"}
 			svc.Spec.Type = corev1.ServiceTypeNodePort
-			svcNodePortNetDefault, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortNetDefault, err = f.ClientSet.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// create one nodePort service with externalTrafficPolicy=Local in default namespace
 			svc.Name = "nodeport-default-etp-local"
-			svc.Spec.Type = corev1.ServiceTypeNodePort
 			svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
-			svcNodePortETPLocalDefault, err = f.ClientSet.CoreV1().Services(svc.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortETPLocalDefault, err = f.ClientSet.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// create one nodePort service with externalTrafficPolicy=Local in udnNamespaceA
 			svc.Name = fmt.Sprintf("nodeport-etp-local-%s", cudnA.Name)
 			svc.Namespace = udnNamespaceA.Name
 			svc.Spec.Selector = map[string]string{"network": cudnA.Name}
-			svcNodePortETPLocalNetA, err = f.ClientSet.CoreV1().Services(svc.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})
+			svcNodePortETPLocalNetA, err = f.ClientSet.CoreV1().Services(udnNamespaceA.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Wait for all pods to be ready (they've been scheduling in parallel).
+			for _, p := range append(hostNetPods, append(podsNetA, podNetB, podNetDefault)...) {
+				framework.ExpectNoError(e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, p.Name, p.Namespace, framework.PodStartTimeout))
+			}
+			// Re-get pods to have updated status (e.g. pod IPs).
+			for i, p := range podsNetA {
+				podsNetA[i], err = f.ClientSet.CoreV1().Pods(p.Namespace).Get(context.TODO(), p.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err)
+			}
+			podNetB, err = f.ClientSet.CoreV1().Pods(podNetB.Namespace).Get(context.TODO(), podNetB.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+			framework.Logf("created pod %s/%s", podNetB.Namespace, podNetB.Name)
+			podNetDefault, err = f.ClientSet.CoreV1().Pods(podNetDefault.Namespace).Get(context.TODO(), podNetDefault.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err)
 
 			ginkgo.By("Expose networks")
 			ra = &rav1.RouteAdvertisements{
@@ -1160,7 +1175,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				// to targetAddress. If clientNamespace is empty the function assumes clientName is a node that will be used as the
 				// client.
 				var checkConnectivity = func(clientName, clientNamespace, targetAddress string) (string, error) {
-					curlCmd := []string{"curl", "-g", "-q", "-s", "--max-time", "2", "--insecure", targetAddress}
+					curlCmd := []string{"curl", "-g", "-q", "-s", "--max-time", "1", "--insecure", targetAddress}
 					var out string
 					var err error
 					if clientNamespace != "" {
@@ -1193,7 +1208,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					if expectErr {
 						// When the connectivity check is expected to fail it should be failing consistently
 						asyncAssertion = gomega.Consistently
-						timeout = time.Second * 15
+						timeout = time.Second * 5
 					}
 					asyncAssertion(func() error {
 						out, err := checkConnectivity(clientName, clientNamespace, dst)
