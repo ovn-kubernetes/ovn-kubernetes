@@ -26,6 +26,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -3099,6 +3100,691 @@ func TestCleanupLoadBalancerGroupOps(t *testing.T) {
 			for _, sw := range switches {
 				assert.Len(t, sw.LoadBalancerGroup, tt.expectedSwitchLBGs,
 					"switch %s LBG count mismatch", sw.Name)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Partial Connectivity Unit Tests
+// =============================================================================
+
+func TestBuildSharedPartialConnectivityACLs(t *testing.T) {
+	tests := []struct {
+		name                      string
+		ipv4Mode                  bool
+		ipv6Mode                  bool
+		serviceCIDRs              []string
+		asNameV4                  string
+		asNameV6                  string
+		expectedACLCount          int
+		allowServiceMatchContains []string // substrings expected in allow-service match
+		allowServiceMatchExcludes []string // substrings that must NOT appear in allow-service match
+		dropPodMatchContains      []string // substrings expected in drop-pod match
+		dropPodMatchExcludes      []string // substrings that must NOT appear in drop-pod match
+	}{
+		{
+			name:                      "IPv4 only - allow-service + drop-pod",
+			ipv4Mode:                  true,
+			ipv6Mode:                  false,
+			serviceCIDRs:              []string{"172.16.1.0/24"},
+			asNameV4:                  "as_v4_hash",
+			asNameV6:                  "as_v6_hash",
+			expectedACLCount:          2,
+			allowServiceMatchContains: []string{"ip4.dst == 172.16.1.0/24"},
+			dropPodMatchContains:      []string{"ip4.dst == $as_v4_hash", "ct.new"},
+		},
+		{
+			name:                      "IPv6 only - allow-service + drop-pod",
+			ipv4Mode:                  false,
+			ipv6Mode:                  true,
+			serviceCIDRs:              []string{"fd00:10:96::/112"},
+			asNameV4:                  "as_v4_hash",
+			asNameV6:                  "as_v6_hash",
+			expectedACLCount:          2,
+			allowServiceMatchContains: []string{"ip6.dst == fd00:10:96::/112"},
+			allowServiceMatchExcludes: []string{"ip4"},
+			dropPodMatchContains:      []string{"ip6.dst == $as_v6_hash", "ct.new"},
+			dropPodMatchExcludes:      []string{"ip4"},
+		},
+		{
+			name:                      "dual-stack - allow-service combines both CIDRs, drop-pod uses both address sets",
+			ipv4Mode:                  true,
+			ipv6Mode:                  true,
+			serviceCIDRs:              []string{"172.16.1.0/24", "fd00:10:96::/112"},
+			asNameV4:                  "as_v4_hash",
+			asNameV6:                  "as_v6_hash",
+			expectedACLCount:          2,
+			allowServiceMatchContains: []string{"ip4.dst == 172.16.1.0/24", "ip6.dst == fd00:10:96::/112"},
+			dropPodMatchContains:      []string{"ip4.dst == $as_v4_hash", "ip6.dst == $as_v6_hash", "ct.new"},
+		},
+		{
+			name:                 "no service CIDRs - only drop ACL (edge case)",
+			ipv4Mode:             true,
+			ipv6Mode:             false,
+			serviceCIDRs:         []string{},
+			asNameV4:             "as_v4_hash",
+			asNameV6:             "as_v6_hash",
+			expectedACLCount:     1, // only drop-pod, no allow-service
+			dropPodMatchContains: []string{"ip4.dst == $as_v4_hash", "ct.new"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := config.PrepareTestConfig()
+			require.NoError(t, err)
+
+			config.IPv4Mode = tt.ipv4Mode
+			config.IPv6Mode = tt.ipv6Mode
+
+			config.Kubernetes.ServiceCIDRs = nil
+			for _, cidr := range tt.serviceCIDRs {
+				_, parsed, err := net.ParseCIDR(cidr)
+				require.NoError(t, err)
+				config.Kubernetes.ServiceCIDRs = append(config.Kubernetes.ServiceCIDRs, parsed)
+			}
+
+			c := &Controller{}
+			acls := c.buildSharedPartialConnectivityACLs("test-cnc", tt.asNameV4, tt.asNameV6)
+			require.Len(t, acls, tt.expectedACLCount)
+
+			// All ACLs should be owned by the CNC and on egress (from-lport)
+			for _, acl := range acls {
+				assert.Equal(t, "test-cnc", acl.ExternalIDs[libovsdbops.ObjectNameKey.String()])
+				assert.Equal(t, nbdb.ACLDirectionFromLport, acl.Direction)
+			}
+
+			// Find ACLs by priority
+			aclByPriority := make(map[int]*nbdb.ACL)
+			for _, acl := range acls {
+				aclByPriority[acl.Priority] = acl
+			}
+
+			if allowService, ok := aclByPriority[ovntypes.NetworkConnectAllowServiceTrafficPriority]; ok {
+				assert.Equal(t, nbdb.ACLActionPass, allowService.Action)
+				for _, s := range tt.allowServiceMatchContains {
+					assert.Contains(t, allowService.Match, s)
+				}
+				for _, s := range tt.allowServiceMatchExcludes {
+					assert.NotContains(t, allowService.Match, s)
+				}
+			}
+
+			if dropPod, ok := aclByPriority[ovntypes.NetworkConnectDropPodTrafficPriority]; ok {
+				assert.Equal(t, nbdb.ACLActionDrop, dropPod.Action)
+				for _, s := range tt.dropPodMatchContains {
+					assert.Contains(t, dropPod.Match, s)
+				}
+				for _, s := range tt.dropPodMatchExcludes {
+					assert.NotContains(t, dropPod.Match, s)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildAllowSameNetworkACL(t *testing.T) {
+	tests := []struct {
+		name          string
+		cncName       string
+		networkID     int
+		subnets       []string
+		expectNil     bool
+		matchContains []string // substrings expected in ACL match
+		matchExcludes []string // substrings that must NOT appear in ACL match
+		expectedType  string   // expected ExternalIDs[TypeKey] value (empty to skip)
+	}{
+		{
+			name:          "IPv4 only subnet",
+			cncName:       "test-cnc",
+			networkID:     1,
+			subnets:       []string{"10.128.0.0/16"},
+			matchContains: []string{"ip4.dst == 10.128.0.0/16"},
+			matchExcludes: []string{"ip6"},
+		},
+		{
+			name:          "IPv6 only subnet",
+			cncName:       "test-cnc",
+			networkID:     2,
+			subnets:       []string{"fd00:10:128::/48"},
+			matchContains: []string{"ip6.dst == fd00:10:128::/48"},
+			matchExcludes: []string{"ip4"},
+		},
+		{
+			name:          "dual-stack subnets",
+			cncName:       "test-cnc",
+			networkID:     3,
+			subnets:       []string{"10.128.0.0/16", "fd00:10:128::/48"},
+			matchContains: []string{"ip4.dst == 10.128.0.0/16", "ip6.dst == fd00:10:128::/48"},
+		},
+		{
+			name:      "empty subnets returns nil",
+			cncName:   "test-cnc",
+			networkID: 4,
+			subnets:   []string{},
+			expectNil: true,
+		},
+		{
+			name:         "network ID embedded in external IDs",
+			cncName:      "my-cnc",
+			networkID:    42,
+			subnets:      []string{"10.0.0.0/8"},
+			expectedType: "allow-same-network-42",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Controller{}
+			acl := c.buildAllowSameNetworkACL(tt.cncName, tt.networkID, tt.subnets)
+			if tt.expectNil {
+				assert.Nil(t, acl)
+				return
+			}
+			require.NotNil(t, acl)
+
+			// Common assertions for all non-nil ACLs
+			assert.Equal(t, ovntypes.NetworkConnectAllowSameNetworkPriority, acl.Priority)
+			assert.Equal(t, nbdb.ACLActionPass, acl.Action)
+			assert.Equal(t, nbdb.ACLDirectionFromLport, acl.Direction)
+			assert.Equal(t, tt.cncName, acl.ExternalIDs[libovsdbops.ObjectNameKey.String()])
+
+			for _, s := range tt.matchContains {
+				assert.Contains(t, acl.Match, s)
+			}
+			for _, s := range tt.matchExcludes {
+				assert.NotContains(t, acl.Match, s)
+			}
+			if tt.expectedType != "" {
+				assert.Equal(t, tt.expectedType, acl.ExternalIDs[libovsdbops.TypeKey.String()])
+			}
+		})
+	}
+}
+
+func TestPreparePartialConnectivityACLs(t *testing.T) {
+	err := config.PrepareTestConfig()
+	require.NoError(t, err)
+
+	// IPv4 mode with service CIDR 172.16.1.0/24 (from PrepareTestConfig)
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+
+	cncName := "test-cnc"
+
+	// Create two mock networks
+	networkA := &mocks.NetInfo{}
+	networkA.On("GetNetworkName").Return("netA")
+	networkA.On("GetNetworkID").Return(1)
+	networkA.On("TopologyType").Return(ovntypes.Layer2Topology)
+	networkA.On("GetNetworkScopedSwitchName", "").Return("switch_netA")
+	networkA.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{CIDR: ovntest.MustParseIPNet("10.128.0.0/16")},
+	})
+
+	networkB := &mocks.NetInfo{}
+	networkB.On("GetNetworkName").Return("netB")
+	networkB.On("GetNetworkID").Return(2)
+	networkB.On("TopologyType").Return(ovntypes.Layer3Topology)
+	networkB.On("GetNetworkScopedSwitchName", "node1").Return("switch_netB_node1")
+	networkB.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{CIDR: ovntest.MustParseIPNet("10.129.0.0/16")},
+	})
+
+	nm := &networkmanager.FakeNetworkManager{
+		PrimaryNetworks: map[string]util.NetInfo{
+			"nsA": networkA,
+			"nsB": networkB,
+		},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{}, nil)
+	require.NoError(t, err)
+	defer cleanup.Cleanup()
+
+	c := &Controller{
+		nbClient:          nbClient,
+		networkManager:    nm,
+		localZoneNode:     &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+		addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, true, false),
+	}
+
+	allocatedSubnets := map[string][]*net.IPNet{
+		"layer2_1": {ovntest.MustParseIPNet("192.168.0.0/24")},
+		"layer3_2": {ovntest.MustParseIPNet("192.168.1.0/24")},
+	}
+
+	state, err := c.preparePartialConnectivityACLs(cncName, allocatedSubnets)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+
+	// Verify state structure
+	assert.Len(t, state.sharedACLs, 2, "should have allow-service + drop-pod")
+	assert.Len(t, state.perNetworkACLs, 2, "should have per-network ACL for each network")
+	assert.Len(t, state.networkSwitches, 2, "should have switch name for each network")
+
+	// Verify switch names
+	assert.Equal(t, "switch_netA", state.networkSwitches[1])
+	assert.Equal(t, "switch_netB_node1", state.networkSwitches[2])
+
+	// Verify per-network ACLs have correct priorities
+	for _, acl := range state.perNetworkACLs {
+		assert.Equal(t, ovntypes.NetworkConnectAllowSameNetworkPriority, acl.Priority)
+		assert.Equal(t, nbdb.ACLActionPass, acl.Action)
+	}
+
+	// Verify shared ACLs priorities
+	priorities := map[int]bool{}
+	for _, acl := range state.sharedACLs {
+		priorities[acl.Priority] = true
+	}
+	assert.True(t, priorities[ovntypes.NetworkConnectAllowServiceTrafficPriority], "allow-service ACL should exist")
+	assert.True(t, priorities[ovntypes.NetworkConnectDropPodTrafficPriority], "drop-pod ACL should exist")
+}
+
+func TestEnsurePartialConnectivityACLsOps(t *testing.T) {
+	tests := []struct {
+		name                 string
+		networkID            int
+		state                *partialConnectivityState
+		initialDB            []libovsdbtest.TestData
+		expectError          bool
+		verifyACLCount       int // expected CNC-owned ACLs after transact (-1 to skip)
+		verifySwitchACLCount int // expected ACLs on the switch after transact (-1 to skip)
+	}{
+		{
+			name:      "adds shared + per-network ACLs to switch",
+			networkID: 1,
+			state: &partialConnectivityState{
+				sharedACLs: []*nbdb.ACL{
+					{
+						UUID:        "allow-svc-uuid",
+						Action:      nbdb.ACLActionPass,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "(ip4.dst == 172.16.1.0/24)",
+						Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "allow-service").GetExternalIDs(),
+					},
+					{
+						UUID:        "drop-pod-uuid",
+						Action:      nbdb.ACLActionDrop,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "ip4.dst == $some_as && ct.new",
+						Priority:    ovntypes.NetworkConnectDropPodTrafficPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "drop-pod").GetExternalIDs(),
+					},
+				},
+				perNetworkACLs: map[int]*nbdb.ACL{
+					1: {
+						UUID:        "allow-same-1-uuid",
+						Action:      nbdb.ACLActionPass,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "ip4.dst == 10.128.0.0/16",
+						Priority:    ovntypes.NetworkConnectAllowSameNetworkPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "allow-same-network-1").GetExternalIDs(),
+					},
+				},
+				networkSwitches: map[int]string{1: "switch_netA"},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+			},
+			verifyACLCount:       3, // allow-service, drop-pod, allow-same-network-1
+			verifySwitchACLCount: 3,
+		},
+		{
+			name:      "nil state returns error",
+			networkID: 1,
+			state:     nil,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{UUID: "sw-uuid", Name: "switch_netA"},
+			},
+			expectError:          true,
+			verifyACLCount:       -1,
+			verifySwitchACLCount: -1,
+		},
+		{
+			name:      "network ID not in networkSwitches returns error",
+			networkID: 99,
+			state: &partialConnectivityState{
+				sharedACLs:      []*nbdb.ACL{},
+				perNetworkACLs:  map[int]*nbdb.ACL{},
+				networkSwitches: map[int]string{1: "switch_netA"},
+			},
+			initialDB:            []libovsdbtest.TestData{},
+			expectError:          true,
+			verifyACLCount:       -1,
+			verifySwitchACLCount: -1,
+		},
+		{
+			name:      "switch name in state but absent from DB returns error",
+			networkID: 1,
+			state: &partialConnectivityState{
+				sharedACLs: []*nbdb.ACL{
+					{
+						UUID:        "allow-svc-uuid",
+						Action:      nbdb.ACLActionPass,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "(ip4.dst == 172.16.1.0/24)",
+						Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "allow-service").GetExternalIDs(),
+					},
+				},
+				perNetworkACLs:  map[int]*nbdb.ACL{},
+				networkSwitches: map[int]string{1: "switch_netA"}, // maps to switch_netA
+			},
+			initialDB:            []libovsdbtest.TestData{}, // but no switch in DB
+			expectError:          true,
+			verifyACLCount:       -1,
+			verifySwitchACLCount: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			ops, err := c.ensurePartialConnectivityACLsOps(nil, tt.state, tt.networkID)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify CNC-owned ACLs
+			if tt.verifyACLCount >= 0 {
+				predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+					map[libovsdbops.ExternalIDKey]string{
+						libovsdbops.ObjectNameKey: "test-cnc",
+					})
+				acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil))
+				require.NoError(t, err)
+				assert.Len(t, acls, tt.verifyACLCount, "CNC-owned ACL count mismatch")
+			}
+
+			// Verify switch ACL count using the switch name from the test state
+			if tt.verifySwitchACLCount >= 0 {
+				switchName := tt.state.networkSwitches[tt.networkID]
+				sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+					return s.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, sw, 1)
+				assert.Len(t, sw[0].ACLs, tt.verifySwitchACLCount, "switch ACL count mismatch")
+			}
+		})
+	}
+}
+
+func TestCleanupPartialConnectivityACLsOps(t *testing.T) {
+	cncName := "test-cnc"
+	aclExternalIDs := buildACLDBIDs(cncName, "allow-service").GetExternalIDs()
+
+	tests := []struct {
+		name             string
+		disconnectedID   int
+		networkInManager bool
+		topologyType     string
+		networkName      string
+		initialDB        []libovsdbtest.TestData
+		expectedACLCount int // ACLs remaining on the switch after cleanup
+	}{
+		{
+			name:             "removes all CNC ACLs from disconnected network's switch",
+			disconnectedID:   10,
+			networkInManager: true,
+			topologyType:     ovntypes.Layer2Topology,
+			networkName:      "netA",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-1",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: aclExternalIDs,
+				},
+				&nbdb.ACL{
+					UUID:        "acl-2",
+					Action:      nbdb.ACLActionDrop,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as && ct.new",
+					Priority:    ovntypes.NetworkConnectDropPodTrafficPriority,
+					ExternalIDs: buildACLDBIDs(cncName, "drop-pod").GetExternalIDs(),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+					ACLs: []string{"acl-1", "acl-2"},
+				},
+			},
+			expectedACLCount: 0,
+		},
+		{
+			name:             "network not in manager - no-op",
+			disconnectedID:   99,
+			networkInManager: false,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-1",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: aclExternalIDs,
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+					ACLs: []string{"acl-1"},
+				},
+			},
+			expectedACLCount: 1, // unchanged
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			var nm networkmanager.Interface
+			if tt.networkInManager {
+				netInfo := &mocks.NetInfo{}
+				netInfo.On("GetNetworkName").Return(tt.networkName)
+				netInfo.On("GetNetworkID").Return(tt.disconnectedID)
+				netInfo.On("TopologyType").Return(tt.topologyType)
+				if tt.topologyType == ovntypes.Layer2Topology {
+					netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_" + tt.networkName)
+				}
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{"ns1": netInfo},
+				}
+			} else {
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{},
+				}
+			}
+
+			c := &Controller{
+				nbClient:       nbClient,
+				networkManager: nm,
+			}
+
+			ops, err := c.cleanupPartialConnectivityACLsOps(nil, cncName, tt.disconnectedID)
+			require.NoError(t, err)
+
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify switch ACL count
+			switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(_ *nbdb.LogicalSwitch) bool {
+				return true
+			})
+			require.NoError(t, err)
+			for _, sw := range switches {
+				assert.Len(t, sw.ACLs, tt.expectedACLCount,
+					"switch %s ACL count mismatch", sw.Name)
+			}
+		})
+	}
+}
+
+func TestCleanupPartialConnectivity(t *testing.T) {
+	tests := []struct {
+		name               string
+		cncName            string
+		initialDB          []libovsdbtest.TestData
+		expectACLsRemain   int // total ACLs remaining after cleanup
+		expectSwitchACLs   map[string]int
+		expectAddressSetGC bool // whether address set should be destroyed
+	}{
+		{
+			name:    "removes ACLs from all switches and destroys address set",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-1",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "allow-service").GetExternalIDs(),
+				},
+				&nbdb.ACL{
+					UUID:        "acl-2",
+					Action:      nbdb.ACLActionDrop,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as && ct.new",
+					Priority:    ovntypes.NetworkConnectDropPodTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "drop-pod").GetExternalIDs(),
+				},
+				&nbdb.ACL{
+					UUID:        "acl-3",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == 10.128.0.0/16",
+					Priority:    ovntypes.NetworkConnectAllowSameNetworkPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "allow-same-network-1").GetExternalIDs(),
+				},
+				// switchA has all 3 ACLs
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-1", "acl-2", "acl-3"},
+				},
+				// switchB has the 2 shared ACLs
+				&nbdb.LogicalSwitch{
+					UUID: "sw-B",
+					Name: "switch_netB",
+					ACLs: []string{"acl-1", "acl-2"},
+				},
+			},
+			expectACLsRemain: 0,
+			expectSwitchACLs: map[string]int{
+				"switch_netA": 0,
+				"switch_netB": 0,
+			},
+			expectAddressSetGC: true,
+		},
+		{
+			name:    "no ACLs to clean - only destroys address set",
+			cncName: "empty-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+				},
+			},
+			expectACLsRemain:   0,
+			expectSwitchACLs:   map[string]int{"switch_netA": 0},
+			expectAddressSetGC: true,
+		},
+		{
+			name:    "only cleans ACLs owned by specified CNC",
+			cncName: "cnc-a",
+			initialDB: []libovsdbtest.TestData{
+				// CNC-A's ACL
+				&nbdb.ACL{
+					UUID:        "acl-cnca",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("cnc-a", "allow-service").GetExternalIDs(),
+				},
+				// CNC-B's ACL (should not be touched)
+				&nbdb.ACL{
+					UUID:        "acl-cncb",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("cnc-b", "allow-service").GetExternalIDs(),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-cnca", "acl-cncb"},
+				},
+			},
+			expectACLsRemain:   1, // cnc-b's ACL remains
+			expectSwitchACLs:   map[string]int{"switch_netA": 1},
+			expectAddressSetGC: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{
+				nbClient:          nbClient,
+				addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, true, false),
+			}
+
+			err = c.cleanupPartialConnectivity(tt.cncName)
+			require.NoError(t, err)
+
+			// Verify total ACL count
+			allPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
+			acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](allPredicateIDs, nil))
+			require.NoError(t, err)
+			assert.Len(t, acls, tt.expectACLsRemain, "remaining ACL count mismatch")
+
+			// Verify per-switch ACL counts
+			for switchName, expectedCount := range tt.expectSwitchACLs {
+				sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+					return s.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, sw, 1)
+				assert.Len(t, sw[0].ACLs, expectedCount,
+					"switch %s ACL count mismatch", switchName)
 			}
 		})
 	}
