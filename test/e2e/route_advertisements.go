@@ -898,19 +898,32 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
-		ginkgo.BeforeEach(func() {
+		ginkgo.Context("", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
+		ginkgo.BeforeAll(func() {
 			ginkgo.By("Configuring primary UDN namespaces")
 			var err error
-			udnNamespaceA, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
-				"e2e-framework":           f.BaseName,
-				RequiredUDNNamespaceLabel: "",
-			})
+			// Create namespaces directly via the API instead of f.CreateNamespace()
+			// to avoid framework cleaning them up in AfterEach
+			udnNamespaceA, err = f.ClientSet.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: f.BaseName + "-",
+					Labels: map[string]string{
+						"e2e-framework":           f.BaseName,
+						RequiredUDNNamespaceLabel: "",
+					},
+				},
+			}, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			f.Namespace = udnNamespaceA
-			udnNamespaceB, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
-				"e2e-framework":           f.BaseName,
-				RequiredUDNNamespaceLabel: "",
-			})
+			udnNamespaceB, err = f.ClientSet.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: f.BaseName + "-",
+					Labels: map[string]string{
+						"e2e-framework":           f.BaseName,
+						RequiredUDNNamespaceLabel: "",
+					},
+				},
+			}, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Configuring networks")
@@ -1117,7 +1130,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			}
 		})
 
-		ginkgo.AfterEach(func() {
+		ginkgo.AfterAll(func() {
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceA.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceB.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 
@@ -1166,6 +1179,20 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				err = raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				ra = nil
+			}
+
+			// Delete the namespaces manually since they were created directly
+			// via the API (not via f.CreateNamespace) to avoid framework's
+			// AfterEach cleanup.
+			if udnNamespaceA != nil {
+				err = f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), udnNamespaceA.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				udnNamespaceA = nil
+			}
+			if udnNamespaceB != nil {
+				err = f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), udnNamespaceB.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				udnNamespaceB = nil
 			}
 		})
 
@@ -1721,6 +1748,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 				}),
 		)
+		})
 
 	},
 	ginkgo.Entry("Layer3",
