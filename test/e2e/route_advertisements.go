@@ -1899,17 +1899,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		otherBGPServerSubnetIPv4 = "172.138.0.0/16"
 		otherBGPServerSubnetIPv6 = "fc00:f853:ccd:138::/64"
 
-		// IP-VRF agnhost subnet - external network for L3 connectivity testing
-		ipVRFAgnhostSubnetIPv4 = "172.27.102.0/24"
-		ipVRFAgnhostSubnetIPv6 = "fd00:102::/64"
-
-		// VTEP subnet for VTEP IP allocation
-		vtepSubnetIPv4 = "100.64.0.0/24"
-		vtepSubnetIPv6 = "fd00:64::/112"
-
-		bgpASN    = 64512
-		macVRFVID = 100
-		ipVRFVID  = 202
+		bgpASN = 64512
 	)
 
 	// staleSubnets lists all subnets that may be left behind if a test times out during cleanup.
@@ -1981,6 +1971,38 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				),
 			).To(gomega.Succeed())
 			servers = append(servers, agnhostName)
+		case cudnAdvertisedEVPN:
+			ginkgo.By("Running a EVPN network with an agnhost server")
+			ipVRFAgnhostIPv4, ipVRFAgnhostIPv6 := randomIPVRFAgnhostSubnets()
+			ipVRFAgnhostSubnets := []string{ipVRFAgnhostIPv4, ipVRFAgnhostIPv6}
+			vtepIPv4, vtepIPv6 := randomVTEPSubnets()
+			vtepSubnets := []string{vtepIPv4, vtepIPv6}
+			macVRFAgnhostName := networkName + "-macvrf-agnhost"
+			macVRFNetworkName := macVRFAgnhostName
+			ipVRFAgnhostName := networkName + "-ipvrf-agnhost"
+			ipVRFNetworkName := ipVRFAgnhostName
+			gomega.Expect(
+				runEVPNNetworkAndServers(
+					f,
+					ictx,
+					networkName,
+					ipFamilySet,
+					networkSpec,
+					ipVRFAgnhostSubnets,
+					vtepSubnets,
+					bgpASN,
+					macVRFAgnhostName,
+					macVRFNetworkName,
+					ipVRFAgnhostName,
+					ipVRFNetworkName,
+				),
+			).To(gomega.Succeed())
+			if networkSpec.EVPN.MACVRF != nil {
+				servers = append(servers, macVRFAgnhostName)
+			}
+			if networkSpec.EVPN.IPVRF != nil {
+				servers = append(servers, ipVRFAgnhostName)
+			}
 		}
 
 		ginkgo.By("Configuring the namespace and network")
@@ -2004,6 +2026,29 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "address", "add", iface.IPv6 + "/" + iface.IPv6Prefix, "dev", iface.InfName})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
+		case cudnAdvertisedEVPN:
+			// REVERT ME: Temporary cluster-side EVPN setup until OVN-K implements it natively
+			ginkgo.By("Running cluster-side EVPN setup script (REVERT ME)")
+			cudnSubnets := getNetworkSubnetsFromSpec(networkSpec)
+			var macVRFVNI, ipVRFVNI int
+			if networkSpec.EVPN.MACVRF != nil {
+				macVRFVNI = int(networkSpec.EVPN.MACVRF.VNI)
+			}
+			if networkSpec.EVPN.IPVRF != nil {
+				ipVRFVNI = int(networkSpec.EVPN.IPVRF.VNI)
+			}
+			err = runClusterEVPNSetupScript(
+				ictx,
+				ipFamilySet,
+				networkName,
+				bgpASN,
+				macVRFVNI,
+				randomVID(),
+				ipVRFVNI,
+				randomVID(),
+				cudnSubnets,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
 		return testNamespace, servers
@@ -2135,11 +2180,56 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				Subnets: udnv1.DualStackCIDRs{cudnCIDRv4, cudnCIDRv6},
 			},
 		}
+		layer2MACVRFNetworkSpec = &udnv1.NetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer2,
+			Layer2: &udnv1.Layer2Config{
+				Role:    udnv1.NetworkRolePrimary,
+				Subnets: randomL2CUDNSubnets(),
+			},
+			Transport: udnv1.TransportOptionEVPN,
+			EVPN: &udnv1.EVPNConfig{
+				MACVRF: &udnv1.VRFConfig{
+					VNI: randomVNI(),
+				},
+			},
+		}
+		layer2MACVRFIPVRFNetworkSpec = &udnv1.NetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer2,
+			Layer2: &udnv1.Layer2Config{
+				Role:    udnv1.NetworkRolePrimary,
+				Subnets: randomL2CUDNSubnets(),
+			},
+			Transport: udnv1.TransportOptionEVPN,
+			EVPN: &udnv1.EVPNConfig{
+				MACVRF: &udnv1.VRFConfig{
+					VNI: randomVNI(),
+				},
+				IPVRF: &udnv1.VRFConfig{
+					VNI: randomVNI(),
+				},
+			},
+		}
+		layer3IPVRFNetworkSpec = &udnv1.NetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer3,
+			Layer3: &udnv1.Layer3Config{
+				Role:    udnv1.NetworkRolePrimary,
+				Subnets: randomL3CUDNSubnets(),
+			},
+			Transport: udnv1.TransportOptionEVPN,
+			EVPN: &udnv1.EVPNConfig{
+				IPVRF: &udnv1.VRFConfig{
+					VNI: randomVNI(),
+				},
+			},
+		}
 	)
 
 	networksToTest := []ginkgo.TableEntry{
 		ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer3NetworkSpec),
 		ginkgo.Entry("Layer 2 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer2NetworkSpec),
+		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer3IPVRFNetworkSpec),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFNetworkSpec),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFIPVRFNetworkSpec),
 	}
 
 	ginkgo.DescribeTableSubtree("When the tested network is of type",
