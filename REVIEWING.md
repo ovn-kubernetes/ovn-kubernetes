@@ -35,7 +35,7 @@ Be trustworthy. During a review, your actions both build and help maintain the t
 
 ## Process
 
-* Reviewers are automatically assigned via the load-balancing algorithm using contributors from the ovn-org/ovn-kubernetes-members team.
+* Reviewers are automatically assigned via the load-balancing algorithm using contributors from the ovn-kubernetes/ovn-kubernetes-members team.
 * Reviewers may opt out of reviewing of any PR or the reviewing process altogether by contacting committers or setting their github profile status as "busy" and removing themselves from any currently assigned PR.
 * Reviewers should wait for automated checks to pass before reviewing
 * At least 1 approved review is required from a maintainer before a pull request can be merged

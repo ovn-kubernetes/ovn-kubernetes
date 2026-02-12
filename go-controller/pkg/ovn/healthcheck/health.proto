@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package grpc.health.v1;
-option go_package = "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck";
+option go_package = "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck";
 
 message HealthCheckRequest {
   string service = 1;

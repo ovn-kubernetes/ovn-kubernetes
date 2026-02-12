@@ -129,7 +129,7 @@ When multicast is enabled for ovn-k, you will find 4 default global ACLs:
 - 2 ACLs (ingress/egress) dropping all multicast traffic - on all switches (via clusterPortGroup)
 - 2 ACLs (ingress/egress) allowing all multicast traffic - on clusterRouterPortGroup
   (that allows multicast between pods that reside on different nodes, see
-  https://github.com/ovn-org/ovn-kubernetes/commit/3864f2b6463392ae2d80c18d06bd46ec44e639f9 for more details)
+  https://github.com/ovn-kubernetes/ovn-kubernetes/commit/3864f2b6463392ae2d80c18d06bd46ec44e639f9 for more details)
 
 ```
 action              : allow

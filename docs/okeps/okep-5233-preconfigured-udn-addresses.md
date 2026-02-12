@@ -1,6 +1,6 @@
 # OKEP-5233: Predefined addresses for primary user defined networks workloads
 
-* Issue: [#5233](https://github.com/ovn-org/ovn-kubernetes/issues/5233)
+* Issue: [#5233](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5233)
 
 ## Problem Statement
 

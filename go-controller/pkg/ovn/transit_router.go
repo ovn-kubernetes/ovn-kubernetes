@@ -6,9 +6,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	udn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	udn "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (

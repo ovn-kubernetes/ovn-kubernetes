@@ -17,11 +17,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -530,7 +530,7 @@ spec:
 										return true, nil
 									}
 								}
-								// Due to potential k8s bug described here: https://github.com/ovn-org/ovn-kubernetes/issues/4073
+								// Due to potential k8s bug described here: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4073
 								// We may need to restart kubelet for the backend pod to update its host networked IP address
 								_, restartErr := infraprovider.Get().ExecK8NodeCommand(workerNode.Name, []string{"systemctl", "restart", "kubelet"})
 								framework.ExpectNoError(restartErr)
@@ -668,7 +668,7 @@ func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
 // getNodeInternalAddresses returns the first IPv4 and/or IPv6 InternalIP defined for the node. Node IPs are ordered,
 // meaning that the returned IPs should be kubelet's node IPs.
 //
-//	Copied from: https://github.com/ovn-org/ovn-kubernetes/blob/\
+//	Copied from: https://github.com/ovn-kubernetes/ovn-kubernetes/blob/\
 //	                              2cceeebd4f66ee8dd9e683551b883e549b5cd7da/go-controller/pkg/ovn/egressip.go#L2580
 func getNodeInternalAddresses(node *v1.Node) (string, string) {
 	var v4Addr, v6Addr string

@@ -27,7 +27,7 @@ import (
 	kexec "k8s.io/utils/exec"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // getSupportedPlatformTypes returns a list of all supported platform types

@@ -18,7 +18,7 @@ limitations under the License.
 package v1
 
 import (
-	egressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	egressfirewallv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 )
 
 // EgressFirewallRuleApplyConfiguration represents a declarative configuration of the EgressFirewallRule type for use

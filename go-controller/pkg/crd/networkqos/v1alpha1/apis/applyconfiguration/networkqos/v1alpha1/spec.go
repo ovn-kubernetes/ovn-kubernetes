@@ -18,7 +18,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	types "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 

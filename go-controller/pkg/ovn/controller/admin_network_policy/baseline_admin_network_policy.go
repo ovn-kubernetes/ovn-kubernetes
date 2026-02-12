@@ -11,8 +11,8 @@ import (
 	"k8s.io/klog/v2"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 )
 
 func (c *Controller) processNextBANPWorkItem(wg *sync.WaitGroup) bool {

@@ -18,7 +18,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	networkqosv1alpha1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	networkqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 )
 
 // ClassifierApplyConfiguration represents a declarative configuration of the Classifier type for use

@@ -1,4 +1,4 @@
-module github.com/ovn-org/ovn-kubernetes/test/conformance
+module github.com/ovn-kubernetes/ovn-kubernetes/test/conformance
 
 go 1.24.0
 

@@ -1,4 +1,4 @@
-module github.com/ovn-org/ovn-kubernetes/go-controller
+module github.com/ovn-kubernetes/ovn-kubernetes/go-controller
 
 go 1.24.0
 

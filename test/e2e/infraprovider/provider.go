@@ -1,7 +1,7 @@
 package infraprovider
 
 import (
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 type Name string

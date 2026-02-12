@@ -5,7 +5,7 @@ import (
 
 	ktypes "k8s.io/apimachinery/pkg/types"
 
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 )
 
 func extractVMFromExternalIDs(externalIDs map[string]string) *ktypes.NamespacedName {

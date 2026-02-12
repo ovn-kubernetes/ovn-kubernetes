@@ -22,8 +22,8 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type CNIPluginLibOps interface {
@@ -642,7 +642,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 	}
 
 	if len(ifInfo.NetdevName) != 0 {
-		// NOTE: For SF representor same external_id is used due to https://github.com/ovn-org/ovn-kubernetes/pull/3054
+		// NOTE: For SF representor same external_id is used due to https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3054
 		// Review this line when upgrade mechanism will be implemented
 		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:vf-netdev-name=%s", ifInfo.NetdevName))
 	}

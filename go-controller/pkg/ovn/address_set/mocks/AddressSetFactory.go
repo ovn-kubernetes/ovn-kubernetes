@@ -3,10 +3,10 @@
 package mocks
 
 import (
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	mock "github.com/stretchr/testify/mock"
 
-	ops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	ops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 
 	ovsdb "github.com/ovn-kubernetes/libovsdb/ovsdb"
 )

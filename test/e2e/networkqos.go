@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"

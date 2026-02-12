@@ -7,7 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 )
 
 // ParseHybridOverlayHostSubnet returns the parsed hybrid overlay hostsubnet if

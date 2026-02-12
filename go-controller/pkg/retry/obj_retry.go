@@ -13,12 +13,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const RetryObjInterval = 30 * time.Second
@@ -765,7 +765,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 					// If object is in terminal state, check if we have already processed it in a previous update.
 					// We cannot blindly handle multiple delete operations for the same pod currently. There can be races
 					// where other pod handlers are removing IP addresses from address sets when they shouldn't be, etc.
-					// See: https://github.com/ovn-org/ovn-kubernetes/pull/3318#issuecomment-1349804450
+					// See: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3318#issuecomment-1349804450
 					if _, loaded := r.terminatedObjects.LoadAndDelete(key); loaded {
 						// object was already terminated
 						klog.Infof("Ignoring delete event for resource in terminal state %s %s",

@@ -14,7 +14,7 @@ import (
 	v1pod "k8s.io/kubernetes/pkg/api/v1/pod"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (m *externalPolicyManager) syncPod(pod *corev1.Pod, routeQueue workqueue.TypedRateLimitingInterface[string]) error {

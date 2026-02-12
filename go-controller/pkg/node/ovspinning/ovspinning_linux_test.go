@@ -23,7 +23,7 @@ import (
 	kubeletpodresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/cpuset"
 
-	mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/kubelet/pkg/apis/podresources/v1"
+	mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/kubelet/pkg/apis/podresources/v1"
 )
 
 func TestAlignCPUAffinity(t *testing.T) {
