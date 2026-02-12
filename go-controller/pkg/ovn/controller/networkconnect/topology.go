@@ -296,9 +296,9 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		// Build ops per network to keep transaction sizes bounded
 		var createOps []ovsdb.Operation
 
-		// Add partial connectivity ACLs to this network's switch
-		// This creates the ACLs (idempotent) and adds them to the switch
-		if partialConnectivityDesired {
+		// Add partial connectivity ACLs to this network's switch (only if local).
+		// ACLs are attached to the switch, which only exists locally with dynamic UDN allocation.
+		if partialConnectivityDesired && localActive {
 			createOps, err = c.ensurePartialConnectivityACLsOps(createOps, partialConnState, networkID)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure partial connectivity ACLs for network %s: %w", cncName, netInfo.GetNetworkName(), err))
@@ -334,9 +334,12 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		}
 
 		// If ClusterIPServiceNetwork is enabled, add this network's LBs to the CNC's LBG
-		// and attach the LBG to this network's switch.
+		// and attach the LBG to this network's switch (only if the switch exists locally).
+		// LBs are always added to the LBG (so every zone's local DB knows about all
+		// networks' service LBs), but the LBG-to-switch attachment is skipped when the
+		// local node doesn't have the network (dynamic UDN allocation).
 		if serviceConnectivityDesired {
-			createOps, err = c.ensureLoadBalancerGroupOps(createOps, serviceLBG, netInfo)
+			createOps, err = c.ensureLoadBalancerGroupOps(createOps, serviceLBG, netInfo, localActive)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure LBG for network %s: %w", cncName, netInfo.GetNetworkName(), err))
 				continue
@@ -1289,9 +1292,13 @@ func (c *Controller) findLoadBalancers(netInfo util.NetInfo) ([]*nbdb.LoadBalanc
 // ensureLoadBalancerGroupOps adds the given network's ClusterIP LBs to the CNC's
 // LoadBalancerGroup and attaches the LBG to the network's switch.
 // The LBG must already exist (created before the per-network loop).
+// LBs are always added to the LBG (each zone has its own local NB DB, so every
+// node must populate its LBG with all networks' LBs), but the LBG-to-switch
+// attachment is only done when localActive is true -- with dynamic UDN allocation
+// the switch may not exist on nodes that don't have the network.
 // Errors are collected but don't prevent building ops for what succeeds.
 func (c *Controller) ensureLoadBalancerGroupOps(ops []ovsdb.Operation,
-	lbg *nbdb.LoadBalancerGroup, netInfo util.NetInfo) ([]ovsdb.Operation, error) {
+	lbg *nbdb.LoadBalancerGroup, netInfo util.NetInfo, localActive bool) ([]ovsdb.Operation, error) {
 
 	var errs []error
 
@@ -1313,19 +1320,25 @@ func (c *Controller) ensureLoadBalancerGroupOps(ops []ovsdb.Operation,
 		}
 	}
 
-	// Attach the LBG to this network's switch
-	switchName, err := c.getNetworkSwitchName(netInfo)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to get switch name for network %s: %w", netInfo.GetNetworkName(), err))
-	} else {
-		sw := &nbdb.LogicalSwitch{Name: switchName}
-		ops, err = libovsdbops.AddLoadBalancerGroupsToLogicalSwitchOps(c.nbClient, ops, sw, lbg)
+	// Attach the LBG to this network's switch (only when the local node has the network).
+	// With dynamic UDN allocation, L3 switches only exist on nodes with pods for that network.
+	if localActive {
+		switchName, err := c.getNetworkSwitchName(netInfo)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to attach LBG %s to switch %s: %w", lbg.Name, switchName, err))
+			errs = append(errs, fmt.Errorf("failed to get switch name for network %s: %w", netInfo.GetNetworkName(), err))
 		} else {
-			klog.V(5).Infof("Attaching LBG %s to switch %s (network %s)",
-				lbg.Name, switchName, netInfo.GetNetworkName())
+			sw := &nbdb.LogicalSwitch{Name: switchName}
+			ops, err = libovsdbops.AddLoadBalancerGroupsToLogicalSwitchOps(c.nbClient, ops, sw, lbg)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to attach LBG %s to switch %s: %w", lbg.Name, switchName, err))
+			} else {
+				klog.V(5).Infof("Attaching LBG %s to switch %s (network %s)",
+					lbg.Name, switchName, netInfo.GetNetworkName())
+			}
 		}
+	} else {
+		klog.V(5).Infof("Skipping LBG %s switch attachment for network %s (not active on local node)",
+			lbg.Name, netInfo.GetNetworkName())
 	}
 
 	return ops, utilerrors.Join(errs...)

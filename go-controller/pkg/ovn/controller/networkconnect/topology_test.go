@@ -2781,7 +2781,7 @@ func TestEnsureLoadBalancerGroupOps(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, lbg, "LBG should exist in initial DB")
 
-			ops, err := c.ensureLoadBalancerGroupOps(nil, lbg, netInfo)
+			ops, err := c.ensureLoadBalancerGroupOps(nil, lbg, netInfo, true)
 
 			if tt.expectError {
 				require.Error(t, err)
