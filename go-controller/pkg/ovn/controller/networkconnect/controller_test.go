@@ -128,7 +128,9 @@ type testNode struct {
 
 // setupTestConfig initializes the test config with the given IP mode
 func setupTestConfig(v4Enabled, v6Enabled bool) {
-	Expect(config.PrepareTestConfig()).NotTo(HaveOccurred())
+	if err := config.PrepareTestConfig(); err != nil {
+		panic("PrepareTestConfig failed: " + err.Error())
+	}
 	config.IPv4Mode = v4Enabled
 	config.IPv6Mode = v6Enabled
 	config.OVNKubernetesFeature.EnableMultiNetwork = true

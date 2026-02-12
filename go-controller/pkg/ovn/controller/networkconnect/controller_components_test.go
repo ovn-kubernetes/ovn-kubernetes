@@ -18,7 +18,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
@@ -387,13 +386,7 @@ func TestNodeNeedsUpdate(t *testing.T) {
 // TestController_reconcileNode tests that reconcileNode requeues all CNCs
 func TestController_reconcileNode(t *testing.T) {
 	g := gomega.NewWithT(t)
-
-	err := config.PrepareTestConfig()
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-
-	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-	config.OVNKubernetesFeature.EnableNetworkConnect = true
+	setupTestConfig(true, true)
 
 	fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
 
@@ -404,7 +397,7 @@ func TestController_reconcileNode(t *testing.T) {
 	cnc2 := &networkconnectv1.ClusterNetworkConnect{
 		ObjectMeta: metav1.ObjectMeta{Name: "cnc2"},
 	}
-	_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+	_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 		context.Background(), cnc1, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
@@ -497,12 +490,7 @@ func TestController_reconcileNode(t *testing.T) {
 // TestController_syncNAD tests that syncNAD requeues CNCs matching the NAD network ID.
 func TestController_syncNAD(t *testing.T) {
 	g := gomega.NewWithT(t)
-	err := config.PrepareTestConfig()
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-
-	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-	config.OVNKubernetesFeature.EnableNetworkConnect = true
+	setupTestConfig(true, true)
 
 	fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
 
@@ -516,7 +504,7 @@ func TestController_syncNAD(t *testing.T) {
 			},
 		},
 	}
-	_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+	_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 		context.Background(), cnc, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -918,13 +906,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 // TestController_reconcileService tests that reconcileService requeues matching CNCs
 func TestController_reconcileService(t *testing.T) {
 	g := gomega.NewWithT(t)
-
-	err := config.PrepareTestConfig()
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-
-	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-	config.OVNKubernetesFeature.EnableNetworkConnect = true
+	setupTestConfig(true, true)
 
 	// Create NetInfo for the UDN network (layer3, ID=1)
 	netInfo, err := createNetInfo(testNetwork{
