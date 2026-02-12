@@ -165,7 +165,8 @@ type networkPolicy struct {
 	reconcilePeerNamespaces []*peerNamespacesRetry
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
-	peerAddressSets []string
+	peerAddressSets    []string
+	ipBlockAddressSets map[string]bool
 
 	// localPods is a map of pods affected by this policy.
 	// It is used to update defaultDeny port group port counters, when deleting network policy.
@@ -203,6 +204,7 @@ func NewNetworkPolicy(policy *knet.NetworkPolicy) *networkPolicy {
 		isEgress:                policyTypeEgress,
 		reconcilePeerNamespaces: make([]*peerNamespacesRetry, 0),
 		localPods:               sync.Map{},
+		ipBlockAddressSets:      make(map[string]bool),
 	}
 	return np
 }
@@ -314,6 +316,13 @@ func (bnc *BaseNetworkController) syncNetworkPoliciesCommon(expectedPolicies map
 	if err := libovsdbops.DeletePortGroupsWithPredicate(bnc.nbClient, p); err != nil {
 		return fmt.Errorf("cannot find default deny NetworkPolicy port groups: %v", err)
 	}
+
+	// clean up stale IPBlock Address sets.
+	predicateIDs = libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNetworkPolicyIPBlock, bnc.controllerName, nil)
+	if err := libovsdbutil.DeleteAddrSetsWithoutACLRef(predicateIDs, bnc.nbClient); err != nil {
+		return fmt.Errorf("cannot delete stale ipBlock address sets: %v", err)
+	}
+
 	return nil
 }
 
@@ -1060,20 +1069,38 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 			return err
 		}
 
-		// 4. Build policy ACLs and port group. All the local pods that this policy
+		// 4. Build policy IPBlock Address Sets, ACLs and port group. All the local pods that this policy
 		// selects will be eventually added to this port group.
+		for _, ingress := range np.ingressPolicies {
+			if err := bnc.setupIPBlockAddressSets(ingress, np); err != nil {
+				return err
+			}
+		}
+		for _, egress := range np.egressPolicies {
+			if err := bnc.setupIPBlockAddressSets(egress, np); err != nil {
+				return err
+			}
+		}
 
 		pgDbIDs := bnc.getNetworkPolicyPortGroupDbIDs(policy.Namespace, policy.Name)
 		np.portGroupName = libovsdbutil.GetPortGroupName(pgDbIDs)
 		ops := []ovsdb.Operation{}
 
-		acls := bnc.buildNetworkPolicyACLs(np, aclLogging)
-		ops, err = libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, ops, bnc.GetSamplingConfig(), acls...)
+		createdACLs, skippedACLs := bnc.buildNetworkPolicyACLs(np, aclLogging)
+		ops, err = libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, ops, bnc.GetSamplingConfig(), createdACLs...)
 		if err != nil {
 			return fmt.Errorf("failed to create ACL ops: %v", err)
 		}
 
-		pg := libovsdbutil.BuildPortGroup(pgDbIDs, nil, acls)
+		// Remove legacy per-ipBlock ACLs from the port group
+		if len(skippedACLs) > 0 {
+			ops, err = libovsdbops.DeleteACLsFromPortGroupOps(bnc.nbClient, ops, np.portGroupName, skippedACLs...)
+			if err != nil {
+				return fmt.Errorf("failed to create ops to remove legacy ACLs from port group: %v", err)
+			}
+		}
+
+		pg := libovsdbutil.BuildPortGroup(pgDbIDs, nil, createdACLs)
 		ops, err = libovsdbops.CreateOrUpdatePortGroupsOps(bnc.nbClient, ops, pg)
 		if err != nil {
 			return fmt.Errorf("failed to create ops to add port to a port group: %v", err)
@@ -1270,18 +1297,21 @@ func (bnc *BaseNetworkController) addNetworkPolicy(policy *knet.NetworkPolicy) e
 
 // buildNetworkPolicyACLs builds the ACLS associated with the 'gress policies
 // of the provided network policy.
-func (bnc *BaseNetworkController) buildNetworkPolicyACLs(np *networkPolicy, aclLogging *libovsdbutil.ACLLoggingLevels) []*nbdb.ACL {
-	acls := []*nbdb.ACL{}
+func (bnc *BaseNetworkController) buildNetworkPolicyACLs(np *networkPolicy, aclLogging *libovsdbutil.ACLLoggingLevels) ([]*nbdb.ACL, []*nbdb.ACL) {
+	createdACLs := []*nbdb.ACL{}
+	skippedACLs := []*nbdb.ACL{}
 	for _, gp := range np.ingressPolicies {
-		acl, _ := gp.buildLocalPodACLs(np.portGroupName, aclLogging)
-		acls = append(acls, acl...)
+		created, skipped := gp.buildLocalPodACLs(np.portGroupName, aclLogging)
+		createdACLs = append(createdACLs, created...)
+		skippedACLs = append(skippedACLs, skipped...)
 	}
 	for _, gp := range np.egressPolicies {
-		acl, _ := gp.buildLocalPodACLs(np.portGroupName, aclLogging)
-		acls = append(acls, acl...)
+		created, skipped := gp.buildLocalPodACLs(np.portGroupName, aclLogging)
+		createdACLs = append(createdACLs, created...)
+		skippedACLs = append(skippedACLs, skipped...)
 	}
 
-	return acls
+	return createdACLs, skippedACLs
 }
 
 // deleteNetworkPolicy removes a network policy
@@ -1360,6 +1390,21 @@ func (bnc *BaseNetworkController) cleanupNetworkPolicy(np *networkPolicy) error 
 	if err != nil {
 		return fmt.Errorf("unable to delete policy from default deny port groups: %v", err)
 	}
+
+	// cleanup IPBlock addresssets associated with network policy.
+	for _, gp := range np.ingressPolicies {
+		if err := bnc.cleanupIPBlockAddressSets(gp); err != nil {
+			return fmt.Errorf("failed to cleanup ipBlock address sets for ingress policy %d: %v",
+				gp.idx, err)
+		}
+	}
+	for _, gp := range np.egressPolicies {
+		if err := bnc.cleanupIPBlockAddressSets(gp); err != nil {
+			return fmt.Errorf("failed to cleanup ipBlock address sets for egress policy %d: %v",
+				gp.idx, err)
+		}
+	}
+	np.ipBlockAddressSets = nil
 
 	// delete from peer address set, this may cause address set deletion, so we need to
 	// do that after ACLs are deleted to avoid ovn-controller errors
@@ -1599,6 +1644,72 @@ func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
 		bnc.watchFactory.RemoveNamespaceHandler(retry.handler)
 	}
 	np.reconcilePeerNamespaces = make([]*peerNamespacesRetry, 0)
+}
+
+func (bnc *BaseNetworkController) setupIPBlockAddressSets(gp *gressPolicy, np *networkPolicy) error {
+	if len(gp.ipBlocks) == 0 {
+		return nil
+	}
+	if !gp.ipv4Mode && !gp.ipv6Mode {
+		return nil
+	}
+	// Collect all allow and except CIDRs
+	var allowCIDRs, exceptCIDRs []string
+	for _, ipBlock := range gp.ipBlocks {
+		allowCIDRs = append(allowCIDRs, ipBlock.CIDR)
+		exceptCIDRs = append(exceptCIDRs, ipBlock.Except...)
+	}
+	// Create "allow" address set
+	if len(allowCIDRs) > 0 {
+		allowDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockAllow)
+		allowAS, err := bnc.addressSetFactory.NewAddressSet(allowDbIDs, allowCIDRs)
+		if err != nil {
+			return fmt.Errorf("failed to create ipBlock allow address set: %v", err)
+		}
+		gp.ipv4BlockAllow, gp.ipv6BlockAllow = allowAS.GetASHashNames()
+		np.ipBlockAddressSets[allowDbIDs.String()] = true
+	}
+	// Create "except" address set if needed
+	if len(exceptCIDRs) > 0 {
+		exceptDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockExcept)
+		exceptAS, err := bnc.addressSetFactory.NewAddressSet(exceptDbIDs, exceptCIDRs)
+		if err != nil {
+			// Cleanup allow set on failure
+			if len(allowCIDRs) > 0 {
+				allowDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockAllow)
+				_ = bnc.addressSetFactory.DestroyAddressSet(allowDbIDs)
+				delete(np.ipBlockAddressSets, allowDbIDs.String())
+			}
+			return fmt.Errorf("failed to create ipBlock except address set: %v", err)
+		}
+		gp.ipv4BlockExcept, gp.ipv6BlockExcept = exceptAS.GetASHashNames()
+		np.ipBlockAddressSets[exceptDbIDs.String()] = true
+	}
+
+	return nil
+}
+
+func (bnc *BaseNetworkController) cleanupIPBlockAddressSets(gp *gressPolicy) error {
+	var errs []error
+	// Delete allow address set
+	if gp.ipv4BlockAllow != "" || gp.ipv6BlockAllow != "" {
+		allowDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockAllow)
+		if err := bnc.addressSetFactory.DestroyAddressSet(allowDbIDs); err != nil {
+			errs = append(errs, fmt.Errorf("failed to destroy ipBlock allow address set: %v", err))
+		}
+
+	}
+	// Delete except address set
+	if gp.ipv4BlockExcept != "" || gp.ipv6BlockExcept != "" {
+		exceptDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockExcept)
+		if err := bnc.addressSetFactory.DestroyAddressSet(exceptDbIDs); err != nil {
+			errs = append(errs, fmt.Errorf("failed to destroy ipBlock except address set: %v", err))
+		}
+	}
+	if len(errs) > 0 {
+		return utilerrors.Join(errs...)
+	}
+	return nil
 }
 
 // The following 2 functions should return the same key for network policy based on k8s on internal networkPolicy object
