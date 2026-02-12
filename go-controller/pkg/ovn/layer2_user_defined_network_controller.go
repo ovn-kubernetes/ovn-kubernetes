@@ -490,7 +490,7 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
 func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	networkName := oc.GetNetworkName()
-	if err := oc.BaseLayer2UserDefinedNetworkController.cleanup(); err != nil {
+	if err := oc.cleanup(); err != nil {
 		return fmt.Errorf("failed to cleanup network %q: %w", networkName, err)
 	}
 
@@ -592,11 +592,11 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 
 func (oc *Layer2UserDefinedNetworkController) Stop() {
 	klog.Infof("Stoping controller for UDN %s", oc.GetNetworkName())
-	oc.BaseLayer2UserDefinedNetworkController.stop()
+	oc.stop()
 }
 
 func (oc *Layer2UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
-	return oc.BaseNetworkController.reconcile(
+	return oc.reconcile(
 		netInfo,
 		func(node string) { oc.gatewaysFailed.Store(node, true) },
 	)

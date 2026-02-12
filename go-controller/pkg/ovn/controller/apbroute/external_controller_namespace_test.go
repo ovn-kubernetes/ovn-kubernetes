@@ -69,7 +69,7 @@ func deletePolicy(policyName string, fakeRouteClient *adminpolicybasedrouteclien
 func deleteNamespace(namespaceName string, fakeClient *fake.Clientset) {
 	ns, err := fakeClient.CoreV1().Namespaces().Get(context.Background(), namespaceName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred())
-	ns.ObjectMeta.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	ns.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 	_, err = fakeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 	err = fakeClient.CoreV1().Namespaces().Delete(context.Background(), namespaceName, metav1.DeleteOptions{})

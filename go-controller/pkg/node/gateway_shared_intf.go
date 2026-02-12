@@ -1833,11 +1833,12 @@ func newNodePortWatcher(
 	// will not be processed by the OpenFlow flows, so we need to add iptable rules that DNATs the
 	// NodePortIP:NodePort to ClusterServiceIP:Port. We don't need to do this on DPU.
 	if config.OvnKubeNode.Mode == types.NodeModeFull {
-		if config.Gateway.Mode == config.GatewayModeLocal {
+		switch config.Gateway.Mode {
+		case config.GatewayModeLocal:
 			if err := initLocalGatewayIPTables(); err != nil {
 				return nil, err
 			}
-		} else if config.Gateway.Mode == config.GatewayModeShared {
+		case config.GatewayModeShared:
 			if err := initSharedGatewayIPTables(); err != nil {
 				return nil, err
 			}
@@ -1870,10 +1871,7 @@ func newNodePortWatcher(
 	}
 
 	// used to tell addServiceRules which rules to add
-	dpuMode := false
-	if config.OvnKubeNode.Mode != types.NodeModeFull {
-		dpuMode = true
-	}
+	dpuMode := config.OvnKubeNode.Mode != types.NodeModeFull
 
 	// Get Physical IPs of Node, Can be IPV4 IPV6 or both
 	gatewayIPv4, gatewayIPv6 := getGatewayFamilyAddrs(gwBridge.GetIPs())
