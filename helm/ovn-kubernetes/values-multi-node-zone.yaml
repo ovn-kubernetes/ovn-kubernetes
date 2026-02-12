@@ -24,8 +24,6 @@ mtu: 1400
 skipCallToK8s: false
 
 global:
-  # -- The net device to be used for management port, will be renamed to ovn-k8s-mp0 and used to allow host network services and pods to access k8s pod and service networks
-  nodeMgmtPortNetdev: ""
   # -- The interface on nodes that will be used for external gateway network traffic
   extGatewayNetworkInterface: ""
   # -- GENEVE UDP port (default 6081)
