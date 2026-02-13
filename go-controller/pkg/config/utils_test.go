@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 )
 
 func TestParseClusterSubnetEntries(t *testing.T) {

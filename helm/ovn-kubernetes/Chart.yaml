@@ -9,7 +9,7 @@ icon: https://www.ovn.org/images/ovn-logo.png
 annotations:
   default-values: "values-no-ic.yaml"
 sources:
-  - https://github.com/ovn-org/ovn-kubernetes
+  - https://github.com/ovn-kubernetes/ovn-kubernetes
   - https://github.com/ovn-org/ovn
 dependencies:
   - name: ovn-ipsec

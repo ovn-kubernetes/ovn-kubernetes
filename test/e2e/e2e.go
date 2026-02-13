@@ -17,13 +17,13 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/containerengine"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
@@ -1416,7 +1416,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 
 				// It is expected that endpoints take a bit of time to come up after conversion. We remove all iptables rules and all breth0 flows.
 				// Therefore, test IPv4 endpoints until they are stable, only then proceed to the actual test.
-				// To be removed once https://github.com/ovn-org/ovn-kubernetes/issues/2933 is fixed.
+				// To be removed once https://github.com/ovn-kubernetes/ovn-kubernetes/issues/2933 is fixed.
 				framework.Logf("Monitoring endpoints for up to 60 seconds for IPv4 to give them time to come up (issue 2933)")
 				gomega.Eventually(func() (r bool) {
 					// Sleep for 5 seconds before proceeding.
@@ -1456,7 +1456,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					for nodeName, ipAddresses := range nodeToAddressesMapping {
 						for _, address := range ipAddresses {
 							// Use a slice for stable order, always tests http first and udp second due to
-							// https://github.com/ovn-org/ovn-kubernetes/issues/2913.
+							// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/2913.
 							for _, protocol := range []string{"http", "udp"} {
 								port := protocolPorts[protocol]
 								ginkgo.By(fmt.Sprintf("Hitting nodeport %s/%d on %s with IP %s and reaching all the endpoints ", protocol, port, nodeName, address))

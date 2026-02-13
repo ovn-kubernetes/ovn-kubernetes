@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cryptorand"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cryptorand"
 )
 
 const (

@@ -3,7 +3,7 @@ package dnsnameresolver
 import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 )
 
 type DNSNameResolver interface {

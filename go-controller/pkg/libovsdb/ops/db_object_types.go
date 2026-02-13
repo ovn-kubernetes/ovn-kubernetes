@@ -1,6 +1,6 @@
 package ops
 
-import "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+import "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 
 const (
 	addressSet dbObjType = iota

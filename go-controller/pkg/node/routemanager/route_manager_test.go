@@ -17,7 +17,7 @@ import (
 	utilsnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 )
 
 // mainTableID is the default routing table. IPRoute2 names the default routing table as 'main'

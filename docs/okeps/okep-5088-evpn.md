@@ -1,6 +1,6 @@
 # OKEP-5088: EVPN Support
 
-* Issue: [#5088](https://github.com/ovn-org/ovn-kubernetes/issues/5088)
+* Issue: [#5088](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5088)
 
 ## Problem Statement
 

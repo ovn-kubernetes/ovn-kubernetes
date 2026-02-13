@@ -47,8 +47,8 @@ get_crd_version() {
 deepcopy-gen \
   --go-header-file hack/boilerplate.go.txt \
   --output-file zz_generated.deepcopy.go \
-  --bounding-dirs github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types \
-  github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types
+  --bounding-dirs github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types \
+  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types
 
 for crd in ${crds}; do
 
@@ -65,16 +65,16 @@ for crd in ${crds}; do
   deepcopy-gen \
     --go-header-file hack/boilerplate.go.txt \
     --output-file zz_generated.deepcopy.go \
-    --bounding-dirs github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd \
-    github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
+    --bounding-dirs github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd \
+    github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
   echo "Generating apply configuration for $crd ($api_version)"
   applyconfiguration-gen \
     --go-header-file hack/boilerplate.go.txt \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
-    --output-pkg github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
-    github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
+    --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
+    github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
   echo "Generating clientset for $crd ($api_version)"
@@ -82,10 +82,10 @@ for crd in ${crds}; do
     --go-header-file hack/boilerplate.go.txt \
     --clientset-name "${CLIENTSET_NAME_VERSIONED:-versioned}" \
     --input-base "" \
-    --input github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
+    --input github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/clientset \
-    --output-pkg github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/clientset \
-    --apply-configuration-package github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
+    --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/clientset \
+    --apply-configuration-package github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
     --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
     "$@"
 
@@ -93,20 +93,20 @@ for crd in ${crds}; do
   lister-gen \
     --go-header-file hack/boilerplate.go.txt \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/listers \
-    --output-pkg github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
+    --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
     --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
-    github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
+    github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
   echo "Generating informers for $crd ($api_version)"
   informer-gen \
     --go-header-file hack/boilerplate.go.txt \
-    --versioned-clientset-package github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/clientset/versioned \
-    --listers-package  github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
+    --versioned-clientset-package github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/clientset/versioned \
+    --listers-package  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/informers \
-    --output-pkg github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/informers \
+    --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/informers \
     --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
-    github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
+    github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
 done

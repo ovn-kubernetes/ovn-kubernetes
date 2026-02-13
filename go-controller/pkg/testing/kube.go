@@ -4,7 +4,7 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	"k8s.io/utils/ptr"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // USED ONLY FOR TESTING

@@ -15,9 +15,9 @@ import (
 	nodeutil "k8s.io/component-helpers/node/util"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // checkNodeAnnot defines additional checks for the allowed annotations
@@ -179,7 +179,7 @@ func (p NodeAdmission) ValidateUpdate(ctx context.Context, oldObj, newObj runtim
 		_, newCondition := nodeutil.GetNodeCondition(&(newNodeShallowCopy.Status), corev1.NodeNetworkUnavailable)
 
 		// In GCP OVN-Kubernetes modifies NodeNetworkUnavailable condition on the nodes, allow an update of the condition
-		// https://github.com/ovn-org/ovn-kubernetes/blob/e2e442133f16699671bb6564c4b8863229841fd9/go-controller/pkg/ovn/master.go#L507
+		// https://github.com/ovn-kubernetes/ovn-kubernetes/blob/e2e442133f16699671bb6564c4b8863229841fd9/go-controller/pkg/ovn/master.go#L507
 		if oldId >= 0 && newCondition != nil && !reflect.DeepEqual(oldCondition, newCondition) {
 			// Replace the old NodeNetworkUnavailable condition with the new one to make DeepEqual happy
 			conditionsDeepCopy := make([]corev1.NodeCondition, len(oldNodeShallowCopy.Status.Conditions))

@@ -1,6 +1,6 @@
 # OKEP-5674: DPU Healthcheck
 
-* Issue: [#5674](https://github.com/ovn-org/ovn-kubernetes/issues/5674)
+* Issue: [#5674](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5674)
 
 ## Problem Statement
 
