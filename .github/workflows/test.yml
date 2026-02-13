@@ -355,9 +355,24 @@ jobs:
       run: |
         sudo ufw disable
 
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_BASE_TAR} && rm -rf ${CI_IMAGE_BASE_TAR}
+        docker images || true
 
     - name: kind setup
       run: |
@@ -630,9 +645,24 @@ jobs:
       with:
         name: test-image-pr
 
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        docker images || true
 
     - name: kind setup
       timeout-minutes: 30
@@ -788,9 +818,25 @@ jobs:
       with:
         name: test-image-pr
 
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        docker images || true
+
 
     - name: kind IPv4 setup
       run: |
