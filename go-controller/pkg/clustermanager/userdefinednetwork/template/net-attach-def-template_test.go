@@ -352,7 +352,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-				"cniVersion": "1.0.0",
+				"cniVersion": "1.1.0",
 				"type": "ovn-k8s-cni-overlay",
 				"name": "mynamespace_test-net",
 				"netAttachDefName": "mynamespace/test-net",
@@ -376,7 +376,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "mynamespace_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -403,7 +403,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "mynamespace_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -429,7 +429,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "mynamespace_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -490,7 +490,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-				"cniVersion": "1.0.0",
+				"cniVersion": "1.1.0",
 				"type": "ovn-k8s-cni-overlay",
 				"name": "cluster_udn_test-net",
 				"netAttachDefName": "mynamespace/test-net",
@@ -514,7 +514,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -541,7 +541,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -567,7 +567,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -594,7 +594,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -623,7 +623,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -655,7 +655,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -695,7 +695,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -736,7 +736,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",
@@ -778,7 +778,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				},
 			},
 			`{
-			  "cniVersion": "1.0.0",
+			  "cniVersion": "1.1.0",
 			  "type": "ovn-k8s-cni-overlay",
 			  "name": "cluster_udn_test-net",
 			  "netAttachDefName": "mynamespace/test-net",

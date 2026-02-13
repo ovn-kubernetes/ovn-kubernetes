@@ -366,6 +366,28 @@ func (p *Plugin) CmdStatus(args *skel.CmdArgs) error {
 	return err
 }
 
+// CmdGC is the callback for runtime garbage collection.
+func (p *Plugin) CmdGC(args *skel.CmdArgs) error {
+	var err error
+
+	startTime := time.Now()
+	defer func() {
+		p.postMetrics(startTime, CNIGC, err)
+		if err != nil {
+			klog.Errorf("Error on CmdGC: %v", err)
+		}
+	}()
+
+	conf, err := config.ReadCNIConfig(args.StdinData)
+	if err != nil {
+		return err
+	}
+	setupLogging(conf)
+
+	// OVN-Kubernetes does not maintain independent local plugin state that needs GC.
+	return nil
+}
+
 // CmdCheck is the callback for 'checking' container's networking is as expected.
 func (p *Plugin) CmdCheck(_ *skel.CmdArgs) error {
 	// noop...CMD check is not considered useful, and has a considerable performance impact

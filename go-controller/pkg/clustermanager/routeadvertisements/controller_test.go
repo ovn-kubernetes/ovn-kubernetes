@@ -332,7 +332,7 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 
 	// Build the config as a map to properly marshal EVPN config
 	cniConfig := map[string]interface{}{
-		"cniVersion":       "0.4.0",
+		"cniVersion":       "1.1.0",
 		"name":             tn.Network,
 		"type":             config.CNI.Plugin,
 		"netAttachDefName": tn.Namespace + "/" + tn.Name,

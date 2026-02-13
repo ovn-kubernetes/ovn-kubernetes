@@ -25,6 +25,7 @@ func main() {
 				Add:    p.CmdAdd,
 				Check:  p.CmdCheck,
 				Del:    p.CmdDel,
+				GC:     p.CmdGC,
 				Status: p.CmdStatus,
 			},
 			version.All,

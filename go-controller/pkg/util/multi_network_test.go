@@ -317,7 +317,7 @@ func TestParseNetconf(t *testing.T) {
 			inputNetAttachDefConfigSpec: `
     {
             "name": "tenantred",
-            "cniVersion": "1.0.0",
+            "cniVersion": "1.1.0",
             "plugins": [
               {
                 "type": "ovn-k8s-cni-overlay",
@@ -333,7 +333,7 @@ func TestParseNetconf(t *testing.T) {
 				NADName:  "ns1/nad1",
 				MTU:      1400,
 				VLANID:   10,
-				NetConf:  cnitypes.NetConf{Name: "tenantred", CNIVersion: "1.0.0", Type: "ovn-k8s-cni-overlay"},
+				NetConf:  cnitypes.NetConf{Name: "tenantred", CNIVersion: "1.1.0", Type: "ovn-k8s-cni-overlay"},
 			},
 		},
 		{

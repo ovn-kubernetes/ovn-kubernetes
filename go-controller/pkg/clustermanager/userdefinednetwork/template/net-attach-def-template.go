@@ -24,8 +24,6 @@ const (
 
 	FinalizerUserDefinedNetwork = "k8s.ovn.org/user-defined-network-protection"
 	LabelUserDefinedNetwork     = "k8s.ovn.org/user-defined-network"
-
-	cniVersion = "1.0.0"
 )
 
 type SpecGetter interface {
@@ -139,7 +137,7 @@ func validateTopology(spec SpecGetter) error {
 func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *RenderOptions) (map[string]interface{}, error) {
 	netConfSpec := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
-			CNIVersion: cniVersion,
+			CNIVersion: config.CNISpecVersion,
 			Type:       OvnK8sCNIOverlay,
 			Name:       networkName,
 		},
@@ -224,7 +222,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 	// Generating the net-conf JSON string using 'map[string]struct{}' provide the
 	// expected result.
 	cniNetConf := map[string]interface{}{
-		"cniVersion":       cniVersion,
+		"cniVersion":       config.CNISpecVersion,
 		"type":             OvnK8sCNIOverlay,
 		"name":             networkName,
 		"netAttachDefName": nadName,

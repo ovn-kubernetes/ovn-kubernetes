@@ -19,7 +19,7 @@ func GenerateNAD(networkName, name, namespace, topology, cidr, role string) *nad
 	return GenerateNADWithConfig(name, namespace, fmt.Sprintf(
 		`
 {
-        "cniVersion": "0.4.0",
+        "cniVersion": "1.1.0",
         "name": %q,
         "type": "ovn-k8s-cni-overlay",
         "topology":%q,
@@ -48,7 +48,7 @@ func GenerateNADWithoutMTU(networkName, name, namespace, topology, cidr, role st
 	return GenerateNADWithConfig(name, namespace, fmt.Sprintf(
 		`
 {
-        "cniVersion": "0.4.0",
+        "cniVersion": "1.1.0",
         "name": %q,
         "type": "ovn-k8s-cni-overlay",
         "topology":%q,

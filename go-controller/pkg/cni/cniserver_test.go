@@ -167,7 +167,7 @@ func TestCNIServer(t *testing.T) {
 				Config: []byte(cniConfig),
 				DeviceInfo: nadapi.DeviceInfo{
 					Type:    "vdpa",
-					Version: "1.0.0",
+					Version: "1.1.0",
 					Vdpa: &nadapi.VdpaDevice{
 						ParentDevice: "vdpa:0000:65:00.3",
 						Driver:       "vhost",

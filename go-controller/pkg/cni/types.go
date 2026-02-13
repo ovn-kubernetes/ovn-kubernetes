@@ -84,6 +84,9 @@ const CNICheck command = "CHECK"
 // CNIStatus is the command representing a plugin readiness check
 const CNIStatus command = "STATUS"
 
+// CNIGC is the command representing CNI runtime garbage collection
+const CNIGC command = "GC"
+
 // Request sent to the Server by the OVN CNI plugin
 type Request struct {
 	// CNI environment variables, like CNI_COMMAND and CNI_NETNS

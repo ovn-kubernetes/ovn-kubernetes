@@ -19,13 +19,16 @@ import (
 var ErrorAttachDefNotOvnManaged = errors.New("net-attach-def not managed by OVN")
 var ErrorChainingNotSupported = errors.New("CNI plugin chaining is not supported")
 
+// CNISpecVersion is the CNI spec version used when OVN-Kubernetes renders CNI config.
+const CNISpecVersion = "1.1.0"
+
 // WriteCNIConfig writes a CNI JSON config file to directory given by global config
 // if the file doesn't already exist, or is different than the content that would
 // be written.
 func WriteCNIConfig() error {
 	netConf := &ovncnitypes.NetConf{
 		NetConf: types.NetConf{
-			CNIVersion: "0.4.0",
+			CNIVersion: CNISpecVersion,
 			Name:       "ovn-kubernetes",
 			Type:       CNI.Plugin,
 		},
