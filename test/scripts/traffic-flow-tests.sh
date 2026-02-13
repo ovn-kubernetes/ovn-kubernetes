@@ -78,7 +78,13 @@ setup() {
     "${OCI_BIN}" pull "${TFT_TEST_IMAGE}" || error_exit "Failed to pull the test image."
     local KIND_CLUSTER_NAME
     KIND_CLUSTER_NAME=$(kind get clusters)
-    kind load docker-image "${TFT_TEST_IMAGE}" --name "${KIND_CLUSTER_NAME}" || error_exit "Failed to load the test image."
+    # Use OCI_BIN save --platform + kind load image-archive to avoid
+    # "content digest not found" errors with Docker 29+'s containerd
+    # image store when loading multi-arch images via kind load docker-image.
+    local TFT_IMAGE_TAR="/tmp/tft-image.tar"
+    "${OCI_BIN}" save --platform linux/amd64 "${TFT_TEST_IMAGE}" -o "${TFT_IMAGE_TAR}" || error_exit "Failed to save the test image."
+    kind load image-archive "${TFT_IMAGE_TAR}" --name "${KIND_CLUSTER_NAME}" || error_exit "Failed to load the test image."
+    rm -f "${TFT_IMAGE_TAR}"
 
     if [ -d "${TRAFFIC_FLOW_TESTS_FULL_PATH}" ]; then
         error_exit "Install folder already exists: ${TRAFFIC_FLOW_TESTS_FULL_PATH}"
