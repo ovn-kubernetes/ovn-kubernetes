@@ -12,6 +12,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -96,10 +97,10 @@ func (c *addressManager) addAddr(ipnet net.IPNet, linkIndex int) bool {
 
 // removes IP from address manager
 // returns true if there was an update
-func (c *addressManager) delAddr(ipnet net.IPNet, linkIndex int) bool {
+func (c *addressManager) delAddr(ipnet net.IPNet) bool {
 	c.Lock()
 	defer c.Unlock()
-	if c.cidrs.Has(ipnet.String()) && c.isValidNodeIP(ipnet.IP, linkIndex) {
+	if c.cidrs.Has(ipnet.String()) {
 		klog.Infof("Removing IP: %s, from node IP manager", ipnet)
 		c.cidrs.Delete(ipnet.String())
 		return true
@@ -134,7 +135,7 @@ func (c *addressManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) {
 		return
 	}
 
-	c.addHandlerForPrimaryAddrChange()
+	c.addHandlerForAddrChange()
 	doneWg.Add(1)
 	go func() {
 		c.runInternal(stopChan, c.getNetlinkAddrSubFunc(stopChan))
@@ -172,7 +173,7 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 			if a.NewAddr {
 				addrChanged = c.addAddr(a.LinkAddress, a.LinkIndex)
 			} else {
-				addrChanged = c.delAddr(a.LinkAddress, a.LinkIndex)
+				addrChanged = c.delAddr(a.LinkAddress)
 			}
 
 			c.handleNodePrimaryAddrChange()
@@ -218,20 +219,44 @@ func (c *addressManager) getNetlinkAddrSubFunc(stopChan <-chan struct{}) func() 
 	}
 }
 
-// addHandlerForPrimaryAddrChange handles reconfiguration of a node primary IP address change
-func (c *addressManager) addHandlerForPrimaryAddrChange() {
+// addHandlerForAddrChange handles reconfiguration of a node primary IP address change or egress IP annotation changes
+func (c *addressManager) addHandlerForAddrChange() {
 	// Add an event handler to the node informer. This is needed for cases where users first update the node's IP
 	// address but only later update kubelet configuration and restart kubelet (which in turn will update the reported
 	// IP address inside the node's status field).
+	// It is also needed to cover gaps when the egress IPs are updated in annotations, in order to
+	// maintain a consistent host-cidrs set, without stale Egress IPs.
 	nodeInformer := c.watchFactory.NodeInformer()
 	_, err := nodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: func(_, _ interface{}) {
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldNode, oldOK := oldObj.(*corev1.Node)
+			newNode, newOK := newObj.(*corev1.Node)
+			if oldOK && newOK && newNode.Name == c.nodeName && nodeEgressIPAnnotationsChanged(oldNode, newNode) {
+				klog.V(5).Infof("Node %s egress IP annotations changed, syncing node IP manager", c.nodeName)
+				c.sync()
+				// c.sync() already calls c.handleNodePrimaryAddrChange, so safe to return
+				return
+			}
 			c.handleNodePrimaryAddrChange()
 		},
 	})
 	if err != nil {
 		klog.Fatalf("Could not add node event handler while starting address manager %v", err)
 	}
+}
+
+func nodeEgressIPAnnotationsChanged(oldNode, newNode *corev1.Node) bool {
+	if oldNode == nil || newNode == nil {
+		return false
+	}
+	for _, key := range []string{util.OVNNodeSecondaryHostEgressIPs, util.OVNNodeBridgeEgressIPs} {
+		oldVal, oldSet := oldNode.Annotations[key]
+		newVal, newSet := newNode.Annotations[key]
+		if oldSet != newSet || oldVal != newVal {
+			return true
+		}
+	}
+	return false
 }
 
 // updates OVN's EncapIP if the node IP changed
@@ -381,8 +406,11 @@ func (c *addressManager) nodePrimaryAddrChanged() (bool, error) {
 	return true, nil
 }
 
-// detects if the IP is valid for a node
-// excludes things like local IPs, mgmt port ip, special masquerade IP and Egress IPs for non-ovs type interfaces
+// isValidNodeIP detects if the IP is valid for a node.
+// It excludes things like local IPs, mgmt port ip, special masquerade IP and Egress IPs
+// for non-ovs type interfaces.
+// Note, it possible that the node annotations may not be up to date when this check is executed.
+// For this reason, sync is triggered on annotation change via addHandlerForAddrChange.
 func (c *addressManager) isValidNodeIP(addr net.IP, linkIndex int) bool {
 	if addr == nil {
 		return false
