@@ -2,6 +2,7 @@ name: ovn-ci
 
 on:
   merge_group:
+  push:
   pull_request:
     branches: [ master,release-* ]
     # Only run jobs if at least one non-doc file is changed
