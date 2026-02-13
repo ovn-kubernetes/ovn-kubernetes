@@ -170,6 +170,54 @@ var _ = Describe("Node IP Handler event tests", func() {
 	})
 })
 
+var _ = Describe("Node IP Handler helper tests", func() {
+	const nodeName = "node1"
+
+	It("removes cached IPs even when they are no longer valid node IPs", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		tc.ipManager.Lock()
+		tc.ipManager.cidrs.Insert(tc.mgmtPortIP4.String())
+		tc.ipManager.Unlock()
+
+		Expect(tc.ipManager.delAddr(*tc.mgmtPortIP4)).To(BeTrue())
+		_, networks := tc.ipManager.ListAddresses()
+		Expect(networks).To(BeEmpty())
+	})
+
+	It("syncs stale host-cidrs when egress IP annotations change", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		tc.ipManager.addHandlerForAddrChange()
+
+		staleEIP := "2001:db8:abcd:1234:c001::"
+		node, err := tc.fakeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		nodeToUpdate := node.DeepCopy()
+		nodeToUpdate.Annotations[util.OVNNodeHostCIDRs] = fmt.Sprintf("[\"%s\", \"%s\", \"%s/128\"]", "10.1.1.10/24", "2001:db8::10/64", staleEIP)
+		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = fmt.Sprintf("[\"%s\"]", staleEIP)
+		_, err = tc.fakeClient.CoreV1().Nodes().Update(context.TODO(), nodeToUpdate, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			updatedNode, err := tc.fakeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+			if err != nil {
+				return false
+			}
+			hostIPs, err := util.ParseNodeHostCIDRsDropNetMask(updatedNode)
+			if err != nil {
+				return false
+			}
+			return !hostIPs.Has(staleEIP)
+		}, 5).Should(BeTrue())
+	})
+})
+
 var _ = Describe("Node IP Handler tests", func() {
 	// To ensure that variables don't leak between parallel Ginkgo specs,
 	// put all test context into a single struct and reference it via
