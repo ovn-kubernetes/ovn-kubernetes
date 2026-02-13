@@ -26,8 +26,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
@@ -248,6 +250,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/rp_filter=2",
 			Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
 		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{"ovs-ofctl -O OpenFlow13 del-groups breth0"})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			"ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
 		})
@@ -575,6 +578,579 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// shareGatewayInterfaceTestETPLocalSGWMixedNamedPortsWithHostNetworkedPodsExtIP specifically tests the scenario
+// of ETP=Local, shared gateway, with mixed named ports with host networked pods. In this scenario, we populate the
+// groupCache, and in syncFlows() we build the list of groups from the cache and then create them with ReplaceOFGroups.
+// This function is a variation of and could be merged with shareGatewayInterfaceTest. However, the reduction in
+// code duplication would come at the cost of readability (these tests are already difficult to read as is).
+func shareGatewayInterfaceTestETPLocalSGWMixedNamedPortsWithHostNetworkedPodsExtIP(app *cli.App, testNS ns.NetNS,
+	eth0Name, eth0MAC, eth0GWIP, eth0CIDR string, gatewayVLANID uint, l netlink.Link) {
+	const mtu string = "1234"
+	const clusterCIDR string = "10.1.0.0/16"
+	config.Gateway.DisableForwarding = false
+
+	var err error
+	if len(eth0GWIP) > 0 {
+		// And a default route
+		err := testNS.Do(func(ns.NetNS) error {
+			defRoute := &netlink.Route{
+				LinkIndex: l.Attrs().Index,
+				Scope:     netlink.SCOPE_UNIVERSE,
+				Dst:       ovntest.MustParseIPNet("0.0.0.0/0"),
+				Gw:        ovntest.MustParseIP(eth0GWIP),
+			}
+			return netlink.RouteAdd(defRoute)
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}
+
+	app.Action = func(ctx *cli.Context) error {
+		const (
+			nodeName   string = "node1"
+			systemID   string = "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"
+			nodeSubnet string = "10.1.1.0/24"
+		)
+
+		fexec := ovntest.NewLooseCompareFakeExec()
+
+		// management port commands
+		mpPortName := types.K8sMgmtIntfName
+		mpPortRepName := types.K8sMgmtIntfName + "_0"
+		mpPortLegacyName := types.K8sPrefix + nodeName
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortName,
+			Output: "internal," + mpPortName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortRepName,
+			Output: "internal," + mpPortRepName,
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/forwarding=1",
+			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
+		})
+
+		// gateway commands
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
+			Err: fmt.Errorf(""),
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
+			Err: fmt.Errorf(""),
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: "ovs-vsctl --timeout=15 br-exists eth0",
+			Err: fmt.Errorf(""),
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: "ovs-vsctl --timeout=15 -- --may-exist add-br breth0 -- br-set-external-id breth0 bridge-id breth0 -- br-set-external-id breth0 bridge-uplink eth0 -- set bridge breth0 fail-mode=standalone other_config:hwaddr=" + eth0MAC + " -- --may-exist add-port breth0 eth0 -- set port eth0 other-config:transient=true",
+			Action: func() error {
+				return testNS.Do(func(ns.NetNS) error {
+					defer GinkgoRecover()
+					_, err = netlink.LinkByName("br" + eth0Name)
+					Expect(err).NotTo(HaveOccurred())
+					return nil
+				})
+			},
+		})
+		if config.IPv4Mode {
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "sysctl -w net/ipv4/conf/breth0/forwarding=1",
+				Output: "net.ipv4.conf.breth0.forwarding = 1",
+			})
+		}
+
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 mac_in_use",
+			Output: eth0MAC,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge-mappings",
+			Output: "",
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-bridge-mappings=" + types.PhysicalNetworkName + ":breth0",
+		})
+
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
+			Output: systemID,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl dpif/show-dp-features breth0",
+			Output: "Check pkt length action: Yes",
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . other_config:hw-offload",
+			Output: fmt.Sprintf("%t", false),
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add breth0 breth0 0 " + eth0MAC,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_node1-to-br-int ofport",
+			Output: "5",
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 get interface eth0 ofport",
+			Output: "7",
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 get Open_vSwitch . external_ids:ovn-encap-ip",
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-encap-ip=192.168.1.10",
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovn-appctl --timeout=5 -t ovn-controller exit --restart",
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ip route replace table 7 172.16.1.0/24 via 10.1.1.1 dev ovn-k8s-mp0",
+			Output: "0",
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ip -4 rule",
+			Output: "0",
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ip -4 rule add fwmark 0x1745ec lookup 7 prio 30",
+			Output: "0",
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/rp_filter=2",
+			Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
+		})
+		ovsOFOutput := `
+OFPT_FEATURES_REPLY (xid=0x2): dpid:00000242ac120002
+n_tables:254, n_buffers:0
+capabilities: FLOW_STATS TABLE_STATS PORT_STATS QUEUE_STATS ARP_MATCH_IP
+actions: output enqueue set_vlan_vid set_vlan_pcp strip_vlan mod_dl_src mod_dl_dst mod_nw_src mod_nw_dst mod_nw_tos mod_tp_src mod_tp_dst
+ 1(eth0): addr:02:42:ac:12:00:02
+     config:     0
+     state:      0
+     current:    10GB-FD COPPER
+     speed: 10000 Mbps now, 0 Mbps max
+ 2(patch-breth0_ov): addr:8e:8d:f4:cd:4f:76
+     config:     0
+     state:      0
+     speed: 0 Mbps now, 0 Mbps max
+ LOCAL(breth0): addr:02:42:ac:12:00:02
+     config:     0
+     state:      0
+     speed: 0 Mbps now, 0 Mbps max
+OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-ofctl show breth0",
+			Output: ovsOFOutput,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-ofctl show breth0",
+			Output: ovsOFOutput,
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{"ovs-ofctl -O OpenFlow13 dump-groups breth0"})
+		fexec.AddFakeCmdsNoOutputNoError([]string{"ovs-ofctl -O OpenFlow13 add-group breth0 -"})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
+		})
+		// nodePortWatcher()
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface eth0 ofport",
+			Output: "7",
+		})
+		if gatewayVLANID > 0 {
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --data=bare --no-heading --columns=_uuid find Interface name=breth0",
+				Output: "34b218d3-7a29-43fd-99b8-30a01287af86",
+			})
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --data=bare --no-heading --columns=name find Port interface=34b218d3-7a29-43fd-99b8-30a01287af86",
+				Output: "breth0",
+			})
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovs-vsctl --timeout=15 set Port breth0 tag=3000",
+			})
+		}
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-ofctl show breth0",
+			Output: ovsOFOutput,
+		})
+		// syncServices()
+
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		Expect(util.SetupMockOVSPidFile()).To(Succeed())
+
+		err = util.SetExec(fexec)
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = config.InitConfig(ctx, fexec, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		existingNode := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					// add some fake previous subnets to force OVNK to try to clean it
+					util.OvnNodeMasqCIDR: "{\"ipv4\":\"170.254.0.0/16\",\"ipv6\":\"fa69::/112\"}",
+				},
+			},
+		}
+
+		expectedAddr, err := netlink.ParseAddr(eth0CIDR)
+		Expect(err).NotTo(HaveOccurred())
+		nodeAddr := corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: expectedAddr.IP.String()}
+		existingNode.Status = corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}}
+		localHostNetIP := expectedAddr.IP.String()
+		externalIP := "1.1.1.1"
+		externalIPPort := int32(8032)
+
+		epPortProtocol := corev1.ProtocolTCP
+		epPortValue := int32(8888)
+		epPortValue2 := int32(8889)
+		svcPortName := "https-port"
+		svcTargetPortName := "https-target"
+		service := *newService("service1", "namespace1", "10.129.0.2",
+			[]corev1.ServicePort{
+				{
+					Name:       svcPortName,
+					Port:       externalIPPort,
+					Protocol:   corev1.ProtocolTCP,
+					TargetPort: intstr.FromString(svcTargetPortName),
+				},
+			},
+			corev1.ServiceTypeClusterIP,
+			[]string{externalIP},
+			corev1.ServiceStatus{},
+			true, false,
+		)
+		ep1 := discovery.Endpoint{
+			Addresses: []string{localHostNetIP}, // Host-networked endpoint local to this node.
+			NodeName:  ptr.To(nodeName),
+		}
+		epPort1 := discovery.EndpointPort{
+			Name:     &svcPortName,
+			Port:     &epPortValue,
+			Protocol: &epPortProtocol,
+		}
+		endpointSlice := *newEndpointSlice(
+			"service1",
+			"namespace1",
+			[]discovery.Endpoint{ep1},
+			[]discovery.EndpointPort{epPort1},
+		)
+		ep2 := discovery.Endpoint{
+			Addresses: []string{localHostNetIP}, // Host-networked endpoint local to this node.
+			NodeName:  ptr.To(nodeName),
+		}
+		epPort2 := discovery.EndpointPort{
+			Name:     &svcPortName,
+			Port:     &epPortValue2,
+			Protocol: &epPortProtocol,
+		}
+		endpointSlice2 := *newEndpointSlice(
+			"service1",
+			"namespace1",
+			[]discovery.Endpoint{ep2},
+			[]discovery.EndpointPort{epPort2},
+		)
+		endpointSlice2.Name = "service1xy23"
+
+		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
+		nft := nodenft.SetFakeNFTablesHelper()
+
+		// Make Management port
+		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
+		rm := routemanager.NewController()
+		netInfo := &multinetworkmocks.NetInfo{}
+		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
+		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
+		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
+		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
+		Expect(err).NotTo(HaveOccurred())
+
+		kubeFakeClient := fake.NewSimpleClientset(
+			&corev1.NodeList{
+				Items: []corev1.Node{existingNode},
+			},
+			&service,
+			&discovery.EndpointSliceList{
+				Items: []discovery.EndpointSlice{
+					endpointSlice,
+					endpointSlice2,
+				},
+			},
+		)
+		fakeClient := &util.OVNNodeClientset{
+			KubeClient:            kubeFakeClient,
+			NetworkAttchDefClient: nadfake.NewSimpleClientset(),
+		}
+
+		stop := make(chan struct{})
+		wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		wg := &sync.WaitGroup{}
+		defer func() {
+			close(stop)
+			wg.Wait()
+			wf.Shutdown()
+		}()
+		err = wf.Start()
+		Expect(err).NotTo(HaveOccurred())
+
+		k := &kube.Kube{KClient: kubeFakeClient}
+
+		nodeAnnotator := kube.NewNodeAnnotator(k, existingNode.Name)
+
+		err = util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(nodeSubnet))
+		Expect(err).NotTo(HaveOccurred())
+		err = nodeAnnotator.Run()
+		Expect(err).NotTo(HaveOccurred())
+		wg.Add(1)
+		go func() {
+			defer GinkgoRecover()
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+
+			// create dummy management interface
+			err := netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			// start management port
+			err = mp.Start(stop)
+			Expect(err).NotTo(HaveOccurred())
+
+			// setup stale masquerade
+			// Create breth0 as a dummy link
+			err = netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name:         "br" + eth0Name,
+					HardwareAddr: ovntest.MustParseMAC(eth0MAC),
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			link, err := netlink.LinkByName("br" + eth0Name)
+			Expect(err).NotTo(HaveOccurred())
+			err = netlink.LinkSetUp(link)
+			Expect(err).NotTo(HaveOccurred())
+			staleAddr, err := netlink.ParseAddr("170.254.0.2/32")
+			Expect(err).NotTo(HaveOccurred())
+			err = netlink.AddrAdd(link, staleAddr)
+			Expect(err).NotTo(HaveOccurred())
+			_, gw, err := net.ParseCIDR("170.254.0.1/32")
+			Expect(err).NotTo(HaveOccurred())
+			staleRoute := &netlink.Route{
+				LinkIndex: link.Attrs().Index,
+				Dst:       gw,
+			}
+			err = netlink.RouteAdd(staleRoute)
+			Expect(err).NotTo(HaveOccurred())
+			// ensure stale route is present
+			r, err := util.LinkRouteGetFilteredRoute(
+				staleRoute,
+				netlink.RT_FILTER_DST|netlink.RT_FILTER_OIF|netlink.RT_FILTER_SRC,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(r).NotTo(BeNil())
+
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			Expect(err).NotTo(HaveOccurred())
+
+			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
+			sharedGw, err := newGateway(
+				nodeName,
+				ovntest.MustParseIPNets(nodeSubnet),
+				gatewayNextHops,
+				gatewayIntf,
+				"",
+				ifAddrs,
+				nodeAnnotator,
+				mp,
+				k,
+				wf,
+				rm,
+				nil,
+				networkmanager.Default().Interface(),
+				config.GatewayModeShared,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			err = sharedGw.initFunc()
+			Expect(err).NotTo(HaveOccurred())
+			err = sharedGw.Init(stop, wg)
+			Expect(err).NotTo(HaveOccurred())
+			err = nodeAnnotator.Run()
+			Expect(err).NotTo(HaveOccurred())
+
+			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
+			// Start does two things, starts nodeIPManager which spawns a go routine and also starts openflow manager by spawning a go routine
+			//sharedGw.Start()
+			sharedGw.nodeIPManager.sync()
+			// we cannot start openflow manager directly because it spawns a go routine
+			// FIXME: extract openflow manager func from the spawning of a go routine so it can be called directly below.
+			sharedGw.openflowManager.syncFlows()
+			// Verify the code moved eth0's IP address, MAC, and routes
+			// over to breth0
+			l, err := netlink.LinkByName("breth0")
+			Expect(err).NotTo(HaveOccurred())
+			addrs, err := netlink.AddrList(l, syscall.AF_INET)
+			Expect(err).NotTo(HaveOccurred())
+			var found, staleFound bool
+			expectedAddr, err := netlink.ParseAddr(eth0CIDR)
+			Expect(err).NotTo(HaveOccurred())
+			for _, a := range addrs {
+				// ensure stale masquerade IP was removed from the bridge
+				if a.IP.Equal(staleAddr.IP) && bytes.Equal(a.Mask, staleAddr.Mask) {
+					staleFound = true
+				}
+				// ensure code moved correct IP to bridge
+				if a.IP.Equal(expectedAddr.IP) && bytes.Equal(a.Mask, expectedAddr.Mask) {
+					found = true
+				}
+			}
+			Expect(found).To(BeTrue())
+			Expect(staleFound).To(BeFalse())
+
+			Expect(l.Attrs().HardwareAddr.String()).To(Equal(eth0MAC))
+
+			// check that the masquerade route was added
+			expRoute := &netlink.Route{
+				Dst:       ovntest.MustParseIPNet(fmt.Sprintf("%s/32", config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String())),
+				LinkIndex: l.Attrs().Index,
+				Src:       ifAddrs[0].IP,
+			}
+			Eventually(func() error {
+				r, err := util.LinkRouteGetFilteredRoute(
+					expRoute,
+					netlink.RT_FILTER_DST|netlink.RT_FILTER_OIF|netlink.RT_FILTER_SRC,
+				)
+				if err != nil {
+					return err
+				}
+				if r == nil {
+					return fmt.Errorf("failed to find route")
+				}
+				return nil
+			}, 1*time.Second).ShouldNot(HaveOccurred())
+			// ensure stale masquerade route is no longer present
+			r, err = util.LinkRouteGetFilteredRoute(
+				staleRoute,
+				netlink.RT_FILTER_DST|netlink.RT_FILTER_OIF|netlink.RT_FILTER_SRC,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(r).To(BeNil())
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
+		// Make sure that annotation 'k8s.ovn.org/gateway-mtu-support' is set to "false" (because hw-offload is true).
+		Consistently(func() bool {
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), existingNode.Name, metav1.GetOptions{})
+			if err != nil {
+				return false
+			}
+			return node.Annotations["k8s.ovn.org/gateway-mtu-support"] != "false"
+		}, 5).Should(BeTrue(), "invalid annotation, hw-offload is disabled but found annotation "+
+			"'k8s.ovn.org/gateway-mtu-support' with value == \"false\"")
+
+		expectedTables := map[string]util.FakeTable{
+			"nat": {
+				"PREROUTING": []string{
+					"-j OVN-KUBE-ETP",
+					"-j OVN-KUBE-EXTERNALIP",
+					"-j OVN-KUBE-NODEPORT",
+				},
+				"OUTPUT": []string{
+					"-j OVN-KUBE-EXTERNALIP",
+					"-j OVN-KUBE-NODEPORT",
+					"-j OVN-KUBE-ITP",
+				},
+				"OVN-KUBE-NODEPORT": []string{},
+				"OVN-KUBE-EXTERNALIP": []string{
+					"-p TCP -d 1.1.1.1 --dport 8032 -j DNAT --to-destination 10.129.0.2:8032",
+				},
+				"OVN-KUBE-ETP": []string{},
+				"OVN-KUBE-ITP": []string{},
+			},
+			"filter": {},
+			"mangle": {
+				"OUTPUT": []string{
+					"-j OVN-KUBE-ITP",
+				},
+				"OVN-KUBE-ITP": []string{},
+			},
+		}
+		f4 := iptV4.(*util.FakeIPTables)
+		err = f4.MatchState(expectedTables, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectedTables = map[string]util.FakeTable{
+			"nat":    {},
+			"filter": {},
+			"mangle": {},
+		}
+		f6 := iptV6.(*util.FakeIPTables)
+		err = f6.MatchState(expectedTables, nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectedNFT := `add table inet ovn-kubernetes
+add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-nodeports { type inet_proto . inet_service ; comment "NodePorts not subject to management port SNAT" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-services-v4 { type ipv4_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv4)" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-services-v6 { type ipv6_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv6)" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { type ipv4_addr ; flags interval ; comment "subnets not subject to management port SNAT (IPv4)" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { type ipv6_addr ; flags interval ; comment "subnets not subject to management port SNAT (IPv6)" ; }
+add rule inet ovn-kubernetes mgmtport-snat oifname != ovn-k8s-mp0 return
+add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
+add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.2 counter return
+add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
+add rule inet ovn-kubernetes mgmtport-snat ip saddr @mgmtport-no-snat-subnets-v4 counter return
+add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.2
+`
+
+		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+		Expect(err).NotTo(HaveOccurred())
+
+		// check that masquerade subnet annotation got updated
+		node, err := wf.GetNode(nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		subnets, err := util.ParseNodeMasqueradeSubnet(node)
+		Expect(err).NotTo(HaveOccurred())
+		for _, subnet := range subnets {
+			if utilnet.IsIPv4CIDR(subnet) {
+				Expect(subnet.String()).To(Equal(config.Gateway.V4MasqueradeSubnet))
+			} else if utilnet.IsIPv6CIDR(subnet) {
+				Expect(subnet.String()).To(Equal(config.Gateway.V6MasqueradeSubnet))
+			}
+		}
+
+		return nil
+	}
+
+	err = app.Run([]string{
+		app.Name,
+		"--cluster-subnets=" + clusterCIDR,
+		"--init-gateways",
+		"--gateway-interface=" + eth0Name,
+		"--nodeport",
+		"--gateway-vlanid=" + fmt.Sprintf("%d", gatewayVLANID),
+		"--mtu=" + mtu,
+	})
+	Expect(err).NotTo(HaveOccurred())
+}
+
 func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 	brphys, hostMAC, hostCIDR, dpuIP string, gatewayVLANID uint) {
 	const mtu string = "1400"
@@ -713,6 +1289,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Output: "9",
 		})
 		// cleanup flows
+		fexec.AddFakeCmdsNoOutputNoError([]string{"ovs-ofctl -O OpenFlow13 del-groups " + brphys})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			"ovs-ofctl -O OpenFlow13 --bundle replace-flows " + brphys + " -",
 		})
@@ -1202,6 +1779,10 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Cmd:    "ovs-ofctl show breth0",
 			Output: ovsOFOutput,
 		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-ofctl -O OpenFlow13 del-groups breth0",
+			Output: "",
+		})
 		// syncServices()
 
 		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
@@ -1546,6 +2127,12 @@ var _ = Describe("Gateway Init Operations", func() {
 
 		ovntest.OnSupportedPlatformsIt("sets up a shared interface gateway", func() {
 			shareGatewayInterfaceTest(app, testNS, eth0Name, eth0MAC, eth0GWIP, eth0CIDR, 0, link, false, true)
+		})
+
+		ovntest.OnSupportedPlatformsIt("sets up a shared interface gateway where ETP=local, SGW mode, with mixed "+
+			"named ports, with host networked pods and with external IP", func() {
+			shareGatewayInterfaceTestETPLocalSGWMixedNamedPortsWithHostNetworkedPodsExtIP(
+				app, testNS, eth0Name, eth0MAC, eth0GWIP, eth0CIDR, 0, link)
 		})
 
 		ovntest.OnSupportedPlatformsIt("sets up a shared interface gateway with hw-offloading", func() {
