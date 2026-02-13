@@ -187,5 +187,5 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	entry, ok := oc.cache.Load(namespace)
 	require.True(t, ok)
 	require.Equal(t, pgName, entry.pgName)
-	require.Equal(t, subnetsKeyForNetInfo(netInfo2), entry.subnetsKey)
+	require.True(t, util.IsIPNetsEqual(subnetsForNetInfo(netInfo2), entry.subnets))
 }

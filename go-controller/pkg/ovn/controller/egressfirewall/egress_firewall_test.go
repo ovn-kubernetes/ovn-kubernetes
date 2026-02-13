@@ -484,7 +484,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 				subnets = append(subnets, config.CIDRNetworkEntry{CIDR: cidr})
 			}
 			config.Default.ClusterSubnets = subnets
-			entry := &cacheEntry{}
+			entry := &cacheEntry{subnets: subnetsForNetInfo(&util.DefaultNetInfo{})}
 			output, err := efController.newEgressFirewallRule("default", tc.egressFirewallRule, tc.id, entry)
 			if tc.err == true {
 				gomega.Expect(err).To(gomega.HaveOccurred())
@@ -716,8 +716,13 @@ func TestValidateAndGetEgressFirewallDestination(t *testing.T) {
 			if len(tc.udnName) > 0 {
 				network = tc.udnName
 			}
+			entry := &cacheEntry{subnets: subnetsForNetInfo(&util.DefaultNetInfo{})}
+			if len(tc.udnName) > 0 {
+				entry.subnets = subnetsForNetInfo(netInfo)
+			}
+
 			cidrSelector, dnsName, clusterSubnetIntersection, nodeSelector, err :=
-				efController.validateAndGetEgressFirewallDestination(network, tc.egressFirewallDestination)
+				efController.validateAndGetEgressFirewallDestination(network, tc.egressFirewallDestination, entry)
 			if tc.expectedErr {
 				require.Error(t, err)
 			} else {
