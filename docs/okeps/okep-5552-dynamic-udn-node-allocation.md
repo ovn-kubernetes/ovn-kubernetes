@@ -15,6 +15,7 @@ allows for horizontal scaling to much higher number of overall UDNs running in a
 ## Goals
 
  * To dynamically allow the network to only be rendered on specific nodes.
+ * To dynamically allocate subnets and other per-node+UDN information.
  * To increase overall scalability of the number UDNs in a Kubernetes cluster with this solution.
  * To increase the efficiency of ovnkube operations on nodes where a UDN exists, but is not needed.
 
@@ -41,6 +42,11 @@ launched in UDN 201, the node will have to render UDN 201 before the pod can be 
 a one time larger pod latency cost for the first pod wired to the UDN. Additionally, there are more tradeoffs with other
 feature limitations outlined later in this document.
 
+Furthermore, there is a desire to dynamically allocate per-node network assignments, such as per node subnet allocation.
+This will allow a user to define UDNs with smaller subnets, when the user can plan that those subnets may only exist on
+a subset of nodes. It also avoids unnecessary node annotation updates, which will lessen the burden of node update
+processing in OVN-Kubernetes.
+
 ## User-Stories/Use-Cases
 
 Story 1: Segment groups of nodes per tenant
@@ -50,6 +56,8 @@ to create a CUDN per tenant, which means my network will only really need to exi
 like to be able to limit this network to only be rendered on that subset of nodes.
 This way I will be able to have less resource overhead from OVN-Kubernetes on each node,
 and be able to scale to a higher number of UDNs in my cluster.
+It will also allow me to define a subnet for my UDN that is smaller. This helps, for example, in case I plan on
+advertising this subnet with BGP and want to use the smallest subnet possible.
 
 ## Proposed Solution
 
@@ -89,7 +97,8 @@ controller manager containers. The breakdown of how these will be modified is ou
   * EgressIP Controller — No change
   * Unidling Controller — No change
   * DNS Resolver — No change
-  * Network Cluster Controller — Modified to report status and exclude nodes not serving the UDN
+  * Network Cluster Controller — Modified to report status and exclude nodes not serving the UDN. Ignore node allocation
+for NADs that are not active on a particular node (no pods for the UDN and not an EIP node).
 * Controller Manager (ovnkube-controller)
   * Default Network — No change
   * NAD Controller — Ignore NADs for UDNs that are not active on this node (no pods for the UDN and not an EIP node)
@@ -103,6 +112,12 @@ to create or run any sub-controllers for nodes that do not have the network. To 
 modified to hold a filterFunc field, which the respective controller manager can set in order to filter out NADs. For
 Cluster Manager, this function will not apply, but for Controller Manager and Node Controller Manager it will be a function
 that filters based on if the UDN is serving pods on this node.
+
+For Cluster Manager, Network Cluster Controller (NCC) is spawned per UDN to handle cluster-wide allocation of IDs, keys and
+subnets. NCC will be modified to query the NAD Controller to see if a node is active or not. If not, then it will not
+allocate subnets and in the case of Layer 2 networks, it also will not allocate udn-layer2-node-gateway-router-lrp-tunnel-ids.
+Upon an inactive network going active on a node, the network change will be propagated to the NCC, and NCC will then
+allocate and annotate the node.
 
 #### New Pod/EgressIP Tracker Controller
 
@@ -172,6 +187,7 @@ network.
 
 * Unit Tests will be added to ensure the behavior works as expected, including checking that
 OVN switches/routers are not created there is no pod/egress IP active on the node, etc.
+* Unit Tests will be added to ensure dynamic allocation works correctly.
 * E2E Tests will be added to create a CUDN/UDN with the feature enabled and ensure pod traffic works correctly between nodes.
 * Benchmark/Scale testing will be done to show the resource savings of 1000s of nodes with 1000s of UDNs.
 
@@ -192,7 +208,7 @@ Limitations:
 
 ## OVN Kubernetes Version Skew
 
-Targeted for release 1.2.
+Targeted for release 1.3.
 
 ## Alternatives
 
