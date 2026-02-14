@@ -134,6 +134,11 @@ type BaseNetworkController struct {
 	// from inside those functions.
 	namespaces      map[string]*namespaceInfo
 	namespacesMutex sync.Mutex
+	// namespaceAddressSetReferences stores reference counts for namespaces that
+	// currently require namespace address set pod membership.
+	namespaceAddressSetReferences map[string]int
+	// namespaceAddressSetReferencesMutex protects namespaceAddressSetReferences.
+	namespaceAddressSetReferencesMutex sync.RWMutex
 
 	// An address set factory that creates address sets
 	addressSetFactory addressset.AddressSetFactory
@@ -928,12 +933,14 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 // addLocalPodToNamespaceLocked returns the ops needed to add the pod's IP to the namespace
 // address set and the port UUID (if applicable) to the namespace port group.
 // This function must be called with the nsInfo lock taken.
-func (bnc *BaseNetworkController) addLocalPodToNamespaceLocked(nsInfo *namespaceInfo, ips []*net.IPNet, portUUID string) ([]ovsdb.Operation, error) {
+func (bnc *BaseNetworkController) addLocalPodToNamespaceLocked(namespace string, nsInfo *namespaceInfo, ips []*net.IPNet, portUUID string) ([]ovsdb.Operation, error) {
 	var ops []ovsdb.Operation
 	var err error
 
-	if ops, err = nsInfo.addressSet.AddAddressesReturnOps(util.IPNetsIPToStringSlice(ips)); err != nil {
-		return nil, err
+	if bnc.shouldMaintainNamespaceAddressSetPodMembership(namespace, nsInfo) {
+		if ops, err = nsInfo.addressSet.AddAddressesReturnOps(util.IPNetsIPToStringSlice(ips)); err != nil {
+			return nil, err
+		}
 	}
 
 	if portUUID != "" && nsInfo.portGroupName != "" {

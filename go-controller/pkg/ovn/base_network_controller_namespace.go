@@ -68,6 +68,121 @@ func getNamespaceAddrSetDbIDs(namespaceName, controller string) *libovsdbops.DbO
 	})
 }
 
+func (bnc *BaseNetworkController) isHostNetworkNamespace(namespace string) bool {
+	return bnc.IsDefault() && config.Kubernetes.HostNetworkNamespace != "" &&
+		namespace == config.Kubernetes.HostNetworkNamespace
+}
+
+func (bnc *BaseNetworkController) hasNamespaceAddressSetReference(namespace string) bool {
+	bnc.namespaceAddressSetReferencesMutex.RLock()
+	defer bnc.namespaceAddressSetReferencesMutex.RUnlock()
+	return bnc.namespaceAddressSetReferences[namespace] > 0
+}
+
+// shouldMaintainNamespaceAddressSetPodMembership checks to see if a namespace needs the namespace address set
+// must be called with nsInfo locked
+func (bnc *BaseNetworkController) shouldMaintainNamespaceAddressSetPodMembership(namespace string, nsInfo *namespaceInfo) bool {
+	if bnc.isHostNetworkNamespace(namespace) {
+		return true
+	}
+	if bnc.hasNamespaceAddressSetReference(namespace) {
+		return true
+	}
+	return nsInfo != nil && nsInfo.multicastEnabled
+}
+
+// addNamespaceAddressSetReference increments the reference count for namespace
+// address set usage.
+func (bnc *BaseNetworkController) addNamespaceAddressSetReference(namespace string) {
+	bnc.namespaceAddressSetReferencesMutex.Lock()
+	defer bnc.namespaceAddressSetReferencesMutex.Unlock()
+	bnc.namespaceAddressSetReferences[namespace]++
+}
+
+// removeNamespaceAddressSetReference decrements the reference count for namespace
+// address set usage, and returns true when it drops to zero.
+func (bnc *BaseNetworkController) removeNamespaceAddressSetReference(namespace string) bool {
+	bnc.namespaceAddressSetReferencesMutex.Lock()
+	defer bnc.namespaceAddressSetReferencesMutex.Unlock()
+
+	count, found := bnc.namespaceAddressSetReferences[namespace]
+	if !found || count == 0 {
+		return true
+	}
+	if count == 1 {
+		delete(bnc.namespaceAddressSetReferences, namespace)
+		return true
+	}
+	bnc.namespaceAddressSetReferences[namespace] = count - 1
+	return false
+}
+
+// syncNamespaceAddressSetForPolicy refreshes namespace address set pod IPs for
+// referenced namespaces.
+func (bnc *BaseNetworkController) syncNamespaceAddressSetForPolicy(namespace string) error {
+	if !bnc.hasNamespaceAddressSetReference(namespace) || bnc.isHostNetworkNamespace(namespace) {
+		return nil
+	}
+
+	nsInfo, nsUnlock := bnc.getNamespaceLocked(namespace, true)
+	if nsInfo == nil {
+		return nil
+	}
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			nsUnlock()
+		}
+	}()
+	if nsInfo.addressSet == nil {
+		return nil
+	}
+	addressSet := nsInfo.addressSet
+	nsUnlock()
+	unlocked = true
+
+	return addressSet.SetAddresses(util.StringSlice(bnc.getAllNamespacePodAddresses(namespace)))
+}
+
+// clearNamespaceAddressSetForPolicy clears namespace address set pod IP
+// membership for namespaces no longer referenced.
+func (bnc *BaseNetworkController) clearNamespaceAddressSetForPolicy(namespace string) error {
+	if bnc.hasNamespaceAddressSetReference(namespace) || bnc.isHostNetworkNamespace(namespace) {
+		return nil
+	}
+
+	nsInfo, nsUnlock := bnc.getNamespaceLocked(namespace, true)
+	if nsInfo == nil {
+		return nil
+	}
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			nsUnlock()
+		}
+	}()
+	if nsInfo.addressSet == nil {
+		return nil
+	}
+	if bnc.shouldMaintainNamespaceAddressSetPodMembership(namespace, nsInfo) {
+		return nil
+	}
+	addressSet := nsInfo.addressSet
+	nsUnlock()
+	unlocked = true
+	return addressSet.SetAddresses(nil)
+}
+
+func (bnc *BaseNetworkController) shouldPopulateNamespaceAddressSetOnCreate(namespace string, ns *corev1.Namespace) bool {
+	if bnc.isHostNetworkNamespace(namespace) {
+		return true
+	}
+	if bnc.hasNamespaceAddressSetReference(namespace) {
+		return true
+	}
+	return ns != nil && bnc.multicastSupport && isNamespaceMulticastEnabled(ns.Annotations)
+}
+
 func (bnc *BaseNetworkController) shouldWatchNamespaces() bool {
 	// Watch namespaces only if one of the following conditions is met:
 	// - The network is the default network.
@@ -230,6 +345,18 @@ func (bnc *BaseNetworkController) multicastUpdateNamespace(ns *corev1.Namespace,
 	if err != nil {
 		return err
 	}
+
+	// Keep namespace AS membership aligned with multicast enable/disable transitions.
+	if nsInfo.addressSet != nil {
+		if bnc.shouldMaintainNamespaceAddressSetPodMembership(ns.Name, nsInfo) {
+			podIPs := bnc.getAllNamespacePodAddresses(ns.Name)
+			if err := nsInfo.addressSet.SetAddresses(util.StringSlice(podIPs)); err != nil {
+				return err
+			}
+		} else if err := nsInfo.addressSet.SetAddresses(nil); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -264,10 +391,19 @@ func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnl
 		// we are creating nsInfo and going to set it in namespaces map
 		// so safe to hold the lock while we create and add it
 		defer bnc.namespacesMutex.Unlock()
-		// create the adddress set for the new namespace
+		// create namespace address set for the new namespace.
+		// If namespace address set membership isn't currently required, ensure
+		// the address set exists but keep existing addresses untouched. This
+		// avoids a transient empty window for legacy namespaceSelector-only
+		// network policies during controller restart; stale membership is
+		// reconciled later by network policy sync.
 		var err error
-		ips := ipsGetter(ns)
-		nsInfo.addressSet, err = bnc.createNamespaceAddrSetAllPods(ns, ips)
+		if bnc.shouldPopulateNamespaceAddressSetOnCreate(ns, namespace) {
+			nsInfo.addressSet, err = bnc.createNamespaceAddrSetAllPods(ns, ipsGetter(ns))
+		} else {
+			dbIDs := getNamespaceAddrSetDbIDs(ns, bnc.controllerName)
+			nsInfo.addressSet, err = bnc.addressSetFactory.EnsureAddressSet(dbIDs)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to create address set for namespace: %s, error: %v", ns, err)
 		}

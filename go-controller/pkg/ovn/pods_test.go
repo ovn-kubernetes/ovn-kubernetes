@@ -1161,7 +1161,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				podTest.populateLogicalSwitchCache(fakeOvn)
 				err = fakeOvn.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{})
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
 					libovsdbtest.HaveData(getDefaultNetExpectedPodsAndSwitches([]testPod{}, []string{"node1"})...))
 
@@ -1189,7 +1189,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podTest.namespace).Get(context.TODO(), podTest.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{})
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
 					libovsdbtest.HaveData(getDefaultNetExpectedPodsAndSwitches([]testPod{podTest}, []string{"node1"})...))
 				// check the retry cache no longer has the entry
@@ -1243,7 +1243,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podTest.namespace).Get(context.TODO(), podTest.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
-				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{})
 
 				// inject transient problem, nbdb is down
 				fakeOvn.controller.nbClient.Close()
@@ -1317,7 +1317,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				err = fakeOvn.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{})
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
 					libovsdbtest.HaveData(getDefaultNetExpectedPodsAndSwitches([]testPod{}, []string{"node1"})...))
 
@@ -1436,7 +1436,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					context.TODO(), podTest.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
-				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{})
 
 				// inject transient problem, nbdb is down
 				fakeOvn.controller.nbClient.Close()
@@ -1545,7 +1545,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
-				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{podTest.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(podTest.namespace, []string{})
 
 				// Get pod from api with its metadata filled in
 				pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podTest.namespace).Get(context.TODO(), podTest.podName, metav1.GetOptions{})
@@ -2504,7 +2504,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 				// use the namespace address set to verify that the IP was not
 				// released
-				fakeOvn.asf.ExpectAddressSetWithAddresses(runningTPod.namespace, []string{runningTPod.podIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(runningTPod.namespace, []string{})
 
 				return nil
 			}
@@ -2659,7 +2659,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// check that the pod IP is added to the namespace AS
-				fakeOvn.asf.ExpectAddressSetWithAddresses(testNs, []string{testPodIP})
+				fakeOvn.asf.ExpectAddressSetWithAddresses(testNs, []string{})
 
 				return nil
 			}

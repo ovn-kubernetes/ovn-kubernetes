@@ -737,7 +737,7 @@ func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, podIfAddrs [
 	defer nsUnlock()
 	var ops []ovsdb.Operation
 	var err error
-	if nsInfo.addressSet != nil {
+	if nsInfo.addressSet != nil && bnc.shouldMaintainNamespaceAddressSetPodMembership(ns, nsInfo) {
 		if ops, err = nsInfo.addressSet.DeleteAddressesReturnOps(util.IPNetsIPToStringSlice(podIfAddrs)); err != nil {
 			return nil, err
 		}

@@ -712,7 +712,7 @@ func (bsnc *BaseUserDefinedNetworkController) addPodToNamespaceForUserDefinedNet
 
 	defer nsUnlock()
 
-	return bsnc.addLocalPodToNamespaceLocked(nsInfo, ips, portUUID)
+	return bsnc.addLocalPodToNamespaceLocked(ns, nsInfo, ips, portUUID)
 }
 
 // AddNamespaceForUserDefinedNetwork creates corresponding addressset in ovn db for User Defined Network
