@@ -46,11 +46,12 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	)
 
 	namespaceT := *newNamespace("namespace1")
-	// namespace address set hash name
-	asv4, asv6 := addressset.GetHashNamesForAS(getNamespaceAddrSetDbIDs(namespaceT.Name, controllerName))
-	qosAS := getEgressQosAddrSetDbIDs(namespaceT.Name, fmt.Sprintf("%d", EgressQoSFlowStartPriority), controllerName)
+	qosRule0AS := getEgressQosAddrSetDbIDs(namespaceT.Name, fmt.Sprintf("%d", EgressQoSFlowStartPriority), controllerName)
 	// egress qos 0th rule address set hash names
-	qosASv4, qosASv6 := addressset.GetHashNamesForAS(qosAS)
+	qosRule0ASv4, qosRule0ASv6 := addressset.GetHashNamesForAS(qosRule0AS)
+	qosRule1AS := getEgressQosAddrSetDbIDs(namespaceT.Name, fmt.Sprintf("%d", EgressQoSFlowStartPriority-1), controllerName)
+	// egress qos 1st rule address set hash names
+	qosRule1ASv4, qosRule1ASv6 := addressset.GetHashNamesForAS(qosRule1AS)
 
 	const (
 		node1Name string = "node1"
@@ -234,14 +235,14 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		},
 		ginkgo.Entry("ipv4", true, false, "1.2.3.4/32", "5.6.7.8/32",
-			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", asv4),
-			fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", asv4)),
+			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosRule0ASv4),
+			fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", qosRule1ASv4)),
 		ginkgo.Entry("ipv6", false, true, "2001:0db8:85a3:0000:0000:8a2e:0370:7334/128", "2001:0db8:85a3:0000:0000:8a2e:0370:7335/128",
-			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7334/128) && ip6.src == $%s", asv6),
-			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && ip6.src == $%s", asv6)),
+			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7334/128) && ip6.src == $%s", qosRule0ASv6),
+			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && ip6.src == $%s", qosRule1ASv6)),
 		ginkgo.Entry("dual", true, true, "1.2.3.4/32", "2001:0db8:85a3:0000:0000:8a2e:0370:7335/128",
-			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && (ip4.src == $%s || ip6.src == $%s)", asv4, asv6),
-			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && (ip4.src == $%s || ip6.src == $%s)", asv4, asv6)),
+			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && (ip4.src == $%s || ip6.src == $%s)", qosRule0ASv4, qosRule0ASv6),
+			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && (ip4.src == $%s || ip6.src == $%s)", qosRule1ASv4, qosRule1ASv6)),
 	)
 
 	ginkgo.DescribeTable("reconciles existing and non-existing egressqoses with PodSelectors",
@@ -433,14 +434,14 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		},
 		ginkgo.Entry("ipv4", true, false, "10.128.1.3", "1.2.3.4/32", "5.6.7.8/32",
-			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosASv4),
-			fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", asv4)),
+			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosRule0ASv4),
+			fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", qosRule1ASv4)),
 		ginkgo.Entry("ipv6", false, true, "fd00:10:244:2::3", "2001:0db8:85a3:0000:0000:8a2e:0370:7334/128", "2001:0db8:85a3:0000:0000:8a2e:0370:7335/128",
-			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7334/128) && ip6.src == $%s", qosASv6),
-			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && ip6.src == $%s", asv6)),
+			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7334/128) && ip6.src == $%s", qosRule0ASv6),
+			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && ip6.src == $%s", qosRule1ASv6)),
 		ginkgo.Entry("dual", true, true, "10.128.1.3", "1.2.3.4/32", "2001:0db8:85a3:0000:0000:8a2e:0370:7335/128",
-			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && (ip4.src == $%s || ip6.src == $%s)", qosASv4, qosASv6),
-			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && (ip4.src == $%s || ip6.src == $%s)", asv4, asv6)),
+			fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && (ip4.src == $%s || ip6.src == $%s)", qosRule0ASv4, qosRule0ASv6),
+			fmt.Sprintf("(ip6.dst == 2001:0db8:85a3:0000:0000:8a2e:0370:7335/128) && (ip4.src == $%s || ip6.src == $%s)", qosRule1ASv4, qosRule1ASv6)),
 	)
 
 	ginkgo.It("Validate status with invalid QoS Object", func() {
@@ -565,7 +566,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
-				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", asv4),
+				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosRule0ASv4),
 				Priority:    EgressQoSFlowStartPriority,
 				Action:      map[string]int{nbdb.QoSActionDSCP: 50},
 				ExternalIDs: getEgressQoSRuleDbIDs(namespaceT.Name, EgressQoSFlowStartPriority).GetExternalIDs(),
@@ -573,7 +574,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 			qos2 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
-				Match:       fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", asv4),
+				Match:       fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", qosRule1ASv4),
 				Priority:    EgressQoSFlowStartPriority - 1,
 				Action:      map[string]int{nbdb.QoSActionDSCP: 60},
 				ExternalIDs: getEgressQoSRuleDbIDs(namespaceT.Name, EgressQoSFlowStartPriority-1).GetExternalIDs(),
@@ -691,7 +692,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
-				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", asv4),
+				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosRule0ASv4),
 				Priority:    EgressQoSFlowStartPriority,
 				Action:      map[string]int{nbdb.QoSActionDSCP: 50},
 				ExternalIDs: getEgressQoSRuleDbIDs(namespaceT.Name, EgressQoSFlowStartPriority).GetExternalIDs(),
@@ -699,7 +700,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 			qos2 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
-				Match:       fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", asv4),
+				Match:       fmt.Sprintf("(ip4.dst == 5.6.7.8/32) && ip4.src == $%s", qosRule1ASv4),
 				Priority:    EgressQoSFlowStartPriority - 1,
 				Action:      map[string]int{nbdb.QoSActionDSCP: 60},
 				ExternalIDs: getEgressQoSRuleDbIDs(namespaceT.Name, EgressQoSFlowStartPriority-1).GetExternalIDs(),
@@ -852,7 +853,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
-				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", asv4),
+				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosRule0ASv4),
 				Priority:    EgressQoSFlowStartPriority,
 				Action:      map[string]int{nbdb.QoSActionDSCP: 40},
 				ExternalIDs: getEgressQoSRuleDbIDs(namespaceT.Name, EgressQoSFlowStartPriority).GetExternalIDs(),
@@ -995,7 +996,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
-				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", asv4),
+				Match:       fmt.Sprintf("(ip4.dst == 1.2.3.4/32) && ip4.src == $%s", qosRule0ASv4),
 				Priority:    EgressQoSFlowStartPriority,
 				Action:      map[string]int{nbdb.QoSActionDSCP: 40},
 				ExternalIDs: getEgressQoSRuleDbIDs(namespaceT.Name, EgressQoSFlowStartPriority).GetExternalIDs(),
