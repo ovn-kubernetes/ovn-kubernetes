@@ -1367,12 +1367,23 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				I0212 20:22:37.643187 1837759 egressip_controller.go:1173] Current assignments are: map[]
 				I0212 20:22:37.643205 1837759 egressip_controller.go:1175] Will attempt assignment for egress IP: 192.168.126.51
 				E0212 20:22:37.643254 1837759 egressip_controller.go:1190] Egress IP: 192.168.126.51 address is already assigned on an interface on node node2*/
-				gomega.Eventually(fakeClusterManagerOVN.fakeRecorder.Events).Should(gomega.HaveLen(4))
-				for i := 0; i < 4; i++ {
+				gomega.Eventually(fakeClusterManagerOVN.fakeRecorder.Events).Should(gomega.HaveLen(8))
+				conflictCount := 0
+				noMatchingCount := 0
+				for i := 0; i < 8; i++ {
 					recordedEvent := <-fakeClusterManagerOVN.fakeRecorder.Events
-					gomega.Expect(recordedEvent).To(gomega.ContainSubstring(
-						"EgressIPConflict Egress IP egressip with IP 192.168.126.51 is conflicting with a host (node2) IP address and will not be assigned"))
+					gomega.Expect(recordedEvent).To(gomega.SatisfyAny(
+						gomega.ContainSubstring("EgressIPConflict Egress IP egressip with IP 192.168.126.51 is conflicting with a host (node2) IP address and will not be assigned"),
+						gomega.ContainSubstring("NoMatchingNodeFound No matching nodes found, which can host any of the egress IPs: [192.168.126.51] for object EgressIP: egressip")))
+					if strings.Contains(recordedEvent, "EgressIPConflict") {
+						conflictCount++
+					}
+					if strings.Contains(recordedEvent, "NoMatchingNodeFound") {
+						noMatchingCount++
+					}
 				}
+				gomega.Expect(conflictCount).To(gomega.Equal(4))
+				gomega.Expect(noMatchingCount).To(gomega.Equal(4))
 				return nil
 			}
 
