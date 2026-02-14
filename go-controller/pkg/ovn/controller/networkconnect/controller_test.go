@@ -108,6 +108,16 @@ func (n testNetwork) RouterName() string {
 	return prefix + ovntypes.OVNClusterRouter
 }
 
+// SwitchName returns the OVN logical switch name for this network.
+// For Layer2, there's a single distributed switch. For Layer3, there's a switch per node.
+func (n testNetwork) SwitchName(nodeName string) string {
+	prefix := util.GetUserDefinedNetworkPrefix(n.name)
+	if n.topologyType == ovntypes.Layer2Topology {
+		return prefix + ovntypes.OVNLayer2Switch
+	}
+	return prefix + nodeName
+}
+
 // testNode represents a node configuration for testing
 type testNode struct {
 	name        string
@@ -118,7 +128,9 @@ type testNode struct {
 
 // setupTestConfig initializes the test config with the given IP mode
 func setupTestConfig(v4Enabled, v6Enabled bool) {
-	Expect(config.PrepareTestConfig()).NotTo(HaveOccurred())
+	if err := config.PrepareTestConfig(); err != nil {
+		panic("PrepareTestConfig failed: " + err.Error())
+	}
 	config.IPv4Mode = v4Enabled
 	config.IPv6Mode = v6Enabled
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -239,8 +251,13 @@ func buildNodeSubnetAnnotation(networks map[string]subnetPair) string {
 	return result
 }
 
-// createTestCNC creates a test CNC object with proper annotations
-func createTestCNC(name string, tunnelID int, connectSubnets []networkconnectv1.ConnectSubnet, subnetAnnotation string) *networkconnectv1.ClusterNetworkConnect {
+// createTestCNC creates a test CNC object with proper annotations.
+// connectivity is optional; defaults to [PodNetwork] if not provided (backward compatible).
+func createTestCNC(name string, tunnelID int, connectSubnets []networkconnectv1.ConnectSubnet,
+	subnetAnnotation string, connectivity ...networkconnectv1.ConnectivityType) *networkconnectv1.ClusterNetworkConnect {
+	if len(connectivity) == 0 {
+		connectivity = []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork}
+	}
 	cnc := &networkconnectv1.ClusterNetworkConnect{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -248,9 +265,7 @@ func createTestCNC(name string, tunnelID int, connectSubnets []networkconnectv1.
 		},
 		Spec: networkconnectv1.ClusterNetworkConnectSpec{
 			ConnectSubnets: connectSubnets,
-			Connectivity: []networkconnectv1.ConnectivityType{
-				networkconnectv1.PodNetwork,
-			},
+			Connectivity:   connectivity,
 		},
 	}
 	if tunnelID > 0 {
@@ -637,6 +652,137 @@ func verifyRouterStaticRoutesCount(nbClient libovsdbclient.Client, routerName, c
 	return nil
 }
 
+// createInitialDBWithSwitches builds initial DB data with routers and switches for the given networks.
+func createInitialDBWithSwitches(networks []testNetwork, nodeName string) []libovsdbtest.TestData {
+	var data []libovsdbtest.TestData
+	for _, net := range networks {
+		data = append(data, &nbdb.LogicalRouter{
+			UUID: net.RouterName() + "-uuid",
+			Name: net.RouterName(),
+		})
+		data = append(data, &nbdb.LogicalSwitch{
+			UUID: net.SwitchName(nodeName) + "-uuid",
+			Name: net.SwitchName(nodeName),
+		})
+	}
+	return data
+}
+
+// createServiceInFakeAPI creates a service in the fake API with the given type and clusterIP.
+func createServiceInFakeAPI(clientset *util.OVNKubeControllerClientset, namespace, name string,
+	svcType corev1.ServiceType, clusterIP string, protocols ...corev1.Protocol) {
+	if len(protocols) == 0 {
+		protocols = []corev1.Protocol{corev1.ProtocolTCP}
+	}
+	var ports []corev1.ServicePort
+	for i, proto := range protocols {
+		ports = append(ports, corev1.ServicePort{Port: int32(80 + i), Protocol: proto})
+	}
+	var clusterIPs []string
+	if clusterIP != "" && clusterIP != "None" {
+		clusterIPs = []string{clusterIP}
+	}
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: corev1.ServiceSpec{
+			Type:       svcType,
+			ClusterIP:  clusterIP,
+			ClusterIPs: clusterIPs,
+			Ports:      ports,
+		},
+	}
+	_, err := clientset.KubeClient.CoreV1().Services(namespace).Create(
+		context.Background(), svc, metav1.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// seedClusterLBInDB seeds a _cluster LB into the NB DB for a network.
+func seedClusterLBInDB(nbClient libovsdbclient.Client, lbName, networkName string) {
+	lb := &nbdb.LoadBalancer{
+		Name: lbName,
+		ExternalIDs: map[string]string{
+			ovntypes.LoadBalancerKindExternalID: "Service",
+			ovntypes.NetworkExternalID:          networkName,
+		},
+	}
+	ops, err := libovsdbops.CreateOrUpdateLoadBalancersOps(nbClient, nil, lb)
+	Expect(err).NotTo(HaveOccurred())
+	_, err = libovsdbops.TransactAndCheck(nbClient, ops)
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// verifyLBGHasLBs verifies the CNC's LBG exists and contains the expected number of LBs.
+func verifyLBGHasLBs(nbClient libovsdbclient.Client, cncName string, expectedLBCount int) *nbdb.LoadBalancerGroup {
+	lbgName := getCNCServiceLBGroupName(cncName)
+	var lbg *nbdb.LoadBalancerGroup
+	Eventually(func() error {
+		var err error
+		lbg, err = libovsdbops.GetLoadBalancerGroup(nbClient, &nbdb.LoadBalancerGroup{Name: lbgName})
+		if err != nil {
+			return fmt.Errorf("LBG %s not found: %w", lbgName, err)
+		}
+		if len(lbg.LoadBalancer) != expectedLBCount {
+			return fmt.Errorf("LBG %s has %d LBs, expected %d", lbgName, len(lbg.LoadBalancer), expectedLBCount)
+		}
+		return nil
+	}).WithTimeout(5 * time.Second).Should(Succeed())
+	return lbg
+}
+
+// verifySwitchLBG verifies a LBG is (or is not) attached to a switch.
+func verifySwitchLBG(nbClient libovsdbclient.Client, switchName, lbgUUID string, expectAttached bool) {
+	Eventually(func() error {
+		sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+			return s.Name == switchName
+		})
+		if err != nil {
+			return err
+		}
+		if len(sw) != 1 {
+			return fmt.Errorf("expected 1 switch %s, got %d", switchName, len(sw))
+		}
+		found := false
+		for _, uuid := range sw[0].LoadBalancerGroup {
+			if uuid == lbgUUID {
+				found = true
+				break
+			}
+		}
+		if expectAttached && !found {
+			return fmt.Errorf("switch %s does not have LBG %s, has %v", switchName, lbgUUID, sw[0].LoadBalancerGroup)
+		}
+		if !expectAttached && found {
+			return fmt.Errorf("switch %s still has LBG %s", switchName, lbgUUID)
+		}
+		return nil
+	}).WithTimeout(5 * time.Second).Should(Succeed())
+}
+
+// seedBothNetworkLBs creates ClusterIP services and seeds their _cluster LBs for both networks.
+func seedBothNetworkLBs(clientset *util.OVNKubeControllerClientset, nbClient libovsdbclient.Client) {
+	createServiceInFakeAPI(clientset, "red-ns", "svc-red", corev1.ServiceTypeClusterIP, "10.96.0.10")
+	createServiceInFakeAPI(clientset, "blue-ns", "svc-blue", corev1.ServiceTypeClusterIP, "10.96.0.11")
+	seedClusterLBInDB(nbClient, "Service_red-network_tcp_cluster", "red-network")
+	seedClusterLBInDB(nbClient, "Service_blue-network_tcp_cluster", "blue-network")
+}
+
+// verifyLBGDoesNotExist verifies the CNC's LBG does not exist.
+func verifyLBGDoesNotExist(nbClient libovsdbclient.Client, cncName string) {
+	lbgName := getCNCServiceLBGroupName(cncName)
+	Eventually(func() error {
+		lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+			return lbg.Name == lbgName
+		})
+		if err != nil {
+			return err
+		}
+		if len(lbgs) > 0 {
+			return fmt.Errorf("LBG %s still exists", lbgName)
+		}
+		return nil
+	}).WithTimeout(5 * time.Second).Should(Succeed())
+}
+
 // =============================================================================
 // Integration Tests for Network Connect Controller
 // =============================================================================
@@ -653,10 +799,16 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				fakeNM        *networkmanager.FakeNetworkManager
 				controller    *Controller
 				zoneName      string
+
+				// Common network definitions reused across Service and Partial Connectivity contexts
+				redNetwork  testNetwork // Layer3
+				blueNetwork testNetwork // Layer2
 			)
 
-			// start initializes and starts the controller with the given initial state
-			start := func(initialDB []libovsdbtest.TestData, nodes []testNode, networks map[string]testNetwork) {
+			// start initializes and starts the controller with the given initial state.
+			// extraObjects can be used to pre-seed the fake API with additional objects
+			// (e.g. CNC objects for repair tests).
+			start := func(initialDB []libovsdbtest.TestData, nodes []testNode, networks map[string]testNetwork, extraObjects ...runtime.Object) {
 				var err error
 
 				// Always add COPP to initialDB (required for router creation)
@@ -672,12 +824,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				}, nil)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Create fake clientset with nodes
-				var nodeObjs []runtime.Object
+				// Create fake clientset with nodes and any extra objects
+				var objects []runtime.Object
 				for _, n := range nodes {
-					nodeObjs = append(nodeObjs, createTestNode(n))
+					objects = append(objects, createTestNode(n))
 				}
-				fakeClientset = util.GetOVNClientset(nodeObjs...).GetOVNKubeControllerClientset()
+				objects = append(objects, extraObjects...)
+				fakeClientset = util.GetOVNClientset(objects...).GetOVNKubeControllerClientset()
 
 				// Create watch factory
 				wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset)
@@ -718,11 +871,33 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 			BeforeEach(func() {
 				setupTestConfig(ipMode.v4, ipMode.v6)
 				zoneName = "node1" // Default zone name
+				redNetwork = testNetwork{name: "red-network", id: 1, topologyType: ovntypes.Layer3Topology}
+				blueNetwork = testNetwork{name: "blue-network", id: 2, topologyType: ovntypes.Layer2Topology}
 			})
 
 			AfterEach(func() {
 				cleanup()
 			})
+
+			// startBothNetworks sets up L3+L2 networks with 1 node and returns the CNC subnet annotation.
+			startBothNetworks := func() string {
+				networks := []testNetwork{redNetwork, blueNetwork}
+				nodes := []testNode{
+					{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+						"red-network":  {"10.128.1.0/24", "fd00:10:128:1::/64"},
+						"blue-network": {"10.129.1.0/24", "fd00:10:129:1::/64"},
+					}},
+				}
+				initialDB := createInitialDBWithSwitches(networks, "node1")
+				start(initialDB, nodes, map[string]testNetwork{
+					"red-ns":  redNetwork,
+					"blue-ns": blueNetwork,
+				})
+				return buildConnectSubnetAnnotation(map[string]subnetPair{
+					"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+					"layer2_2": {"192.168.1.0/24", "fd00:192:168:1::/64"},
+				})
+			}
 
 			// =============================================================================
 			// Context: CNC Lifecycle Tests
@@ -2900,6 +3075,763 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 					Eventually(func() error {
 						return verifyRouterPolicyCount(nbClient, networks[3].RouterName(), "multi-cnc2", networks[3].id, networks[2].id, expectedPerIPFamily)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+			})
+
+			// =============================================================================
+			// Context: Repair (startup cleanup of stale CNC objects)
+			// =============================================================================
+			Context("Repair", func() {
+				It("should clean up all stale object types while preserving valid ones", func() {
+					// "valid-cnc" exists in the API, "stale-cnc" does not.
+					// Pre-seed OVN DB with every object type for both CNCs.
+					// After Start() (which runs repairStaleCNCs), only valid objects should remain.
+					validCNCName := "valid-cnc"
+					staleCNCName := "stale-cnc"
+					networkRouterName := "udn_network_router"
+
+					validPortUUID := "valid-port-uuid"
+					stalePortUUID := "stale-port-uuid"
+					staleConnectPortUUID := "stale-connect-port-uuid"
+					validPolicyUUID := "valid-policy-uuid"
+					stalePolicyUUID := "stale-policy-uuid"
+					validLBGUUID := "valid-lbg-uuid"
+					staleLBGUUID := "stale-lbg-uuid"
+					validACLUUID := "valid-acl-uuid"
+					staleACLUUID := "stale-acl-uuid"
+
+					validLBGName := ovntypes.NetworkConnectServiceLBGroupPrefix + validCNCName
+					staleLBGName := ovntypes.NetworkConnectServiceLBGroupPrefix + staleCNCName
+
+					initialDB := []libovsdbtest.TestData{
+						// Network router with both valid and stale ports/policies
+						&nbdb.LogicalRouter{
+							UUID:     "network-router-uuid",
+							Name:     networkRouterName,
+							Ports:    []string{validPortUUID, stalePortUUID},
+							Policies: []string{validPolicyUUID, stalePolicyUUID},
+						},
+						// Valid connect router
+						&nbdb.LogicalRouter{
+							UUID:        "valid-connect-router-uuid",
+							Name:        getConnectRouterName(validCNCName),
+							ExternalIDs: buildLRExternalIDs(validCNCName),
+						},
+						// Stale connect router (with a port on it — deleted with the router)
+						&nbdb.LogicalRouter{
+							UUID:        "stale-connect-router-uuid",
+							Name:        getConnectRouterName(staleCNCName),
+							ExternalIDs: buildLRExternalIDs(staleCNCName),
+							Ports:       []string{staleConnectPortUUID},
+						},
+						// Router ports
+						&nbdb.LogicalRouterPort{
+							UUID:        validPortUUID,
+							Name:        "lrp-valid-net1",
+							ExternalIDs: buildLRPortDBIDs(validCNCName, "1", "0", networkRouterName).GetExternalIDs(),
+						},
+						&nbdb.LogicalRouterPort{
+							UUID:        stalePortUUID,
+							Name:        "lrp-stale-net1",
+							ExternalIDs: buildLRPortDBIDs(staleCNCName, "1", "0", networkRouterName).GetExternalIDs(),
+						},
+						&nbdb.LogicalRouterPort{
+							UUID:        staleConnectPortUUID,
+							Name:        "lrp-stale-connect",
+							ExternalIDs: buildLRPortDBIDs(staleCNCName, "1", "0", getConnectRouterName(staleCNCName)).GetExternalIDs(),
+						},
+						// Router policies
+						&nbdb.LogicalRouterPolicy{
+							UUID:        validPolicyUUID,
+							Priority:    100,
+							Match:       "ip4.src == 10.1.0.0/16",
+							Action:      nbdb.LogicalRouterPolicyActionReroute,
+							ExternalIDs: buildLRPolicyDBIDs(validCNCName, "1", "2", "ip4", networkRouterName).GetExternalIDs(),
+						},
+						&nbdb.LogicalRouterPolicy{
+							UUID:        stalePolicyUUID,
+							Priority:    100,
+							Match:       "ip4.src == 10.2.0.0/16",
+							Action:      nbdb.LogicalRouterPolicyActionReroute,
+							ExternalIDs: buildLRPolicyDBIDs(staleCNCName, "1", "2", "ip4", networkRouterName).GetExternalIDs(),
+						},
+						// Load balancer groups
+						&nbdb.LoadBalancerGroup{UUID: validLBGUUID, Name: validLBGName},
+						&nbdb.LoadBalancerGroup{UUID: staleLBGUUID, Name: staleLBGName},
+						// ACLs
+						&nbdb.ACL{
+							UUID:        validACLUUID,
+							Action:      nbdb.ACLActionAllowRelated,
+							Direction:   nbdb.ACLDirectionFromLport,
+							Match:       "ip4",
+							Priority:    1000,
+							ExternalIDs: buildACLDBIDs(validCNCName, "allow-service").GetExternalIDs(),
+						},
+						&nbdb.ACL{
+							UUID:        staleACLUUID,
+							Action:      nbdb.ACLActionAllowRelated,
+							Direction:   nbdb.ACLDirectionFromLport,
+							Match:       "ip4",
+							Priority:    1000,
+							ExternalIDs: buildACLDBIDs(staleCNCName, "allow-service").GetExternalIDs(),
+						},
+						// Switch referencing both LBGs and both ACLs
+						&nbdb.LogicalSwitch{
+							UUID:              "switch-uuid",
+							Name:              "test-switch",
+							LoadBalancerGroup: []string{validLBGUUID, staleLBGUUID},
+							ACLs:              []string{validACLUUID, staleACLUUID},
+						},
+					}
+
+					validCNC := createTestCNC(validCNCName, 100, defaultConnectSubnets(), "")
+					start(initialDB, nil, nil, validCNC)
+
+					// --- Valid objects should survive ---
+
+					// Valid connect router
+					_, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: getConnectRouterName(validCNCName)})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Network router should keep only valid port and policy
+					netRouter, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: networkRouterName})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(netRouter.Ports).To(HaveLen(1))
+					Expect(netRouter.Policies).To(HaveLen(1))
+
+					// Only valid LBG should remain
+					lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+						return strings.HasPrefix(lbg.Name, ovntypes.NetworkConnectServiceLBGroupPrefix)
+					})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(lbgs).To(HaveLen(1))
+					Expect(lbgs[0].Name).To(Equal(validLBGName))
+
+					// Only valid ACL should remain
+					aclPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
+					acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](aclPredicateIDs, nil))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(acls).To(HaveLen(1))
+					Expect(acls[0].ExternalIDs[libovsdbops.ObjectNameKey.String()]).To(Equal(validCNCName))
+
+					// Switch should reference only valid LBG and valid ACL
+					sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(sw *nbdb.LogicalSwitch) bool {
+						return sw.Name == "test-switch"
+					})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(sw).To(HaveLen(1))
+					Expect(sw[0].LoadBalancerGroup).To(HaveLen(1))
+					Expect(sw[0].ACLs).To(HaveLen(1))
+
+					// --- Stale objects should be gone ---
+
+					// Stale connect router
+					_, err = libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: getConnectRouterName(staleCNCName)})
+					Expect(err).To(HaveOccurred())
+				})
+			})
+
+			// =============================================================================
+			// Context: Service Connectivity (ClusterIPServiceNetwork)
+			// =============================================================================
+			Context("Service Connectivity", func() {
+				const (
+					svcCNCName  = "svc-cnc"
+					svcTunnelID = 100
+				)
+
+				// Helper: create the CNC and wait until the controller reconciles it.
+				// The CNC always has both PodNetwork + ClusterIPServiceNetwork.
+				createCNCAndWait := func(subnetAnnotation string) {
+					cnc := createTestCNC(svcCNCName, svcTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				It("should create LBG and attach to switches with 0 LBs when no services exist", func() {
+					subnetAnnotation := startBothNetworks()
+					createCNCAndWait(subnetAnnotation)
+
+					// Verify LBG exists with 0 LBs
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 0)
+
+					// Verify LBG is attached to both switches
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Connect router should also exist (pod connectivity works alongside service connectivity)
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, svcCNCName, svcTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+
+				It("should add LBs to LBG when services are created", func() {
+					subnetAnnotation := startBothNetworks()
+					createCNCAndWait(subnetAnnotation)
+
+					// Wait for initial reconcile - LBG exists with 0 LBs
+					verifyLBGHasLBs(nbClient, svcCNCName, 0)
+
+					// Create services and seed matching LBs.
+					// Service create events fire reconcileService -> requeue CNC.
+					// Even if the CNC reconciles before LBs are seeded, the count mismatch
+					// causes a retry, and Eventually handles convergence.
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// LBG should now have 2 LBs after retries converge
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+
+					// Both switches should still have the LBG
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
+				It("should update LBG when service adds a new protocol", func() {
+					subnetAnnotation := startBothNetworks()
+					// Create service with TCP only and seed its LB
+					createServiceInFakeAPI(fakeClientset, "red-ns", "svc-red", corev1.ServiceTypeClusterIP, "10.96.0.10")
+					seedClusterLBInDB(nbClient, "Service_red-network_tcp_cluster", "red-network")
+
+					createCNCAndWait(subnetAnnotation)
+
+					// LBG should have 1 LB (TCP only)
+					verifyLBGHasLBs(nbClient, svcCNCName, 1)
+
+					// Update the service to add a UDP port (simulates kubectl edit)
+					svc, err := fakeClientset.KubeClient.CoreV1().Services("red-ns").Get(
+						context.Background(), "svc-red", metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+						Port: 53, Protocol: corev1.ProtocolUDP,
+					})
+					_, err = fakeClientset.KubeClient.CoreV1().Services("red-ns").Update(
+						context.Background(), svc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Seed the new UDP _cluster LB (services controller would create this)
+					seedClusterLBInDB(nbClient, "Service_red-network_udp_cluster", "red-network")
+
+					// LBG should now have 2 LBs (TCP + UDP) after the service update
+					// triggers a CNC reconcile
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
+				It("should attach LBG to new switch when network is added", func() {
+					// Start with only the red (L3) network
+					networks := []testNetwork{redNetwork}
+					nodes := []testNode{
+						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+							"red-network": {"10.128.1.0/24", "fd00:10:128:1::/64"},
+						}},
+					}
+					initialDB := createInitialDBWithSwitches(networks, "node1")
+					start(initialDB, nodes, map[string]testNetwork{"red-ns": redNetwork})
+
+					subnetAnnotation := buildConnectSubnetAnnotation(map[string]subnetPair{
+						"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+					})
+					createCNCAndWait(subnetAnnotation)
+
+					// Wait for LBG attached to red switch
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 0)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Now add the blue (L2) network: router + switch in DB, network in manager
+					err := libovsdbops.CreateOrUpdateLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: blueNetwork.RouterName()})
+					Expect(err).NotTo(HaveOccurred())
+					err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: blueNetwork.SwitchName("node1")})
+					Expect(err).NotTo(HaveOccurred())
+
+					blueNetInfo, err := createNetInfo(blueNetwork)
+					Expect(err).NotTo(HaveOccurred())
+					fakeNM.PrimaryNetworks["blue-ns"] = blueNetInfo
+
+					// Seed services + LBs for both networks before updating the CNC,
+					// so the reconcile triggered by the CNC annotation update finds them.
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Update CNC subnet annotation to include blue network — triggers reconcile
+					cnc, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), svcCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Annotations[ovnNetworkConnectSubnetAnnotation] = buildConnectSubnetAnnotation(map[string]subnetPair{
+						"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+						"layer2_2": {"192.168.1.0/24", "fd00:192:168:1::/64"},
+					})
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify LBG now attached to blue switch too with both LBs
+					lbg = verifyLBGHasLBs(nbClient, svcCNCName, 2)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
+				It("should cleanup LBs and detach LBG when network is removed", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+					createCNCAndWait(subnetAnnotation)
+
+					// Verify fully set up: LBG has 2 LBs, both switches have LBG
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Remove blue network from CNC by updating subnet annotation
+					cnc, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), svcCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Annotations[ovnNetworkConnectSubnetAnnotation] = buildConnectSubnetAnnotation(map[string]subnetPair{
+						"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+					})
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify: blue LBs removed from LBG (only 1 LB from red), LBG detached from blue switch
+					lbg = verifyLBGHasLBs(nbClient, svcCNCName, 1)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, false)
+				})
+
+				It("should remove LBs from LBG when service is deleted", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+					createCNCAndWait(subnetAnnotation)
+
+					// Verify fully set up
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Simulate services controller: delete the blue LB from NB DB.
+					// LoadBalancerGroup.load_balancer is a weak reference, so deleting the LB
+					// from the DB automatically removes it from the LBG (no reconcile needed).
+					blueLBs, err := libovsdbops.FindLoadBalancersWithPredicate(nbClient, func(lb *nbdb.LoadBalancer) bool {
+						return lb.Name == "Service_blue-network_tcp_cluster"
+					})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(blueLBs).To(HaveLen(1))
+					err = libovsdbops.DeleteLoadBalancers(nbClient, blueLBs)
+					Expect(err).NotTo(HaveOccurred())
+
+					// LBG has 1 LB (red only) via weak ref cleanup; both switches still have LBG
+					lbg = verifyLBGHasLBs(nbClient, svcCNCName, 1)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
+				It("should cleanup all service connectivity when ClusterIPServiceNetwork is disabled", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+					createCNCAndWait(subnetAnnotation)
+
+					// Verify fully set up
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Disable ClusterIPServiceNetwork: update CNC to have only PodNetwork
+					cnc, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), svcCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork}
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// LBG should be deleted entirely
+					verifyLBGDoesNotExist(nbClient, svcCNCName)
+
+					// Both switches should no longer reference any CNC LBG
+					Eventually(func() error {
+						sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+							return s.Name == redNetwork.SwitchName("node1") || s.Name == blueNetwork.SwitchName("node1")
+						})
+						if err != nil {
+							return err
+						}
+						for _, s := range sw {
+							if len(s.LoadBalancerGroup) > 0 {
+								return fmt.Errorf("switch %s still has LBGs %v", s.Name, s.LoadBalancerGroup)
+							}
+						}
+						return nil
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					// Pod connectivity (connect router) should still be intact
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, svcCNCName, svcTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+
+				It("should create LBG and attach LBs when ClusterIPServiceNetwork is enabled on existing CNC", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Create CNC with only PodNetwork (no service connectivity)
+					cnc := createTestCNC(svcCNCName, svcTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wait for pod connectivity to reconcile (connect router exists)
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, svcCNCName, svcTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					// LBG should NOT exist yet (service connectivity not enabled)
+					lbgName := getCNCServiceLBGroupName(svcCNCName)
+					Consistently(func() bool {
+						lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+							return lbg.Name == lbgName
+						})
+						return err == nil && len(lbgs) == 0
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+
+					// Now enable ClusterIPServiceNetwork by updating the CNC
+					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), svcCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
+						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork,
+					}
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// LBG should now be created with 2 LBs (both networks' services already exist)
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+
+					// LBG should be attached to both switches
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Pod connectivity should still be intact
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, svcCNCName, svcTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+
+				It("should not add LBs for headless services", func() {
+					subnetAnnotation := startBothNetworks()
+
+					// Create a normal ClusterIP service + its LB, and a headless service (no LB in OVN)
+					createServiceInFakeAPI(fakeClientset, "red-ns", "svc-normal", corev1.ServiceTypeClusterIP, "10.96.0.10")
+					createServiceInFakeAPI(fakeClientset, "blue-ns", "svc-headless", corev1.ServiceTypeClusterIP, "None")
+					seedClusterLBInDB(nbClient, "Service_red-network_tcp_cluster", "red-network")
+
+					createCNCAndWait(subnetAnnotation)
+
+					// LBG should have only the normal service's LB (1, not 2)
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 1)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
+				It("should add cluster LBs for LoadBalancer type services", func() {
+					// Use only L3 network for simplicity
+					networks := []testNetwork{redNetwork}
+					nodes := []testNode{
+						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+							"red-network": {"10.128.1.0/24", "fd00:10:128:1::/64"},
+						}},
+					}
+					initialDB := createInitialDBWithSwitches(networks, "node1")
+					start(initialDB, nodes, map[string]testNetwork{"red-ns": redNetwork})
+
+					// Create a LoadBalancer type service (still has a ClusterIP) and its _cluster LB
+					createServiceInFakeAPI(fakeClientset, "red-ns", "svc-lb", corev1.ServiceTypeLoadBalancer, "10.96.0.20")
+					seedClusterLBInDB(nbClient, "Service_red-network_tcp_cluster", "red-network")
+
+					subnetAnnotation := buildConnectSubnetAnnotation(map[string]subnetPair{
+						"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+					})
+					createCNCAndWait(subnetAnnotation)
+
+					// LBG should have the LoadBalancer service's cluster LB
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 1)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+				})
+
+				It("should cleanup LBG and switches when CNC is deleted", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+					createCNCAndWait(subnetAnnotation)
+
+					// Verify fully set up
+					lbg := verifyLBGHasLBs(nbClient, svcCNCName, 2)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Delete the CNC
+					err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Delete(
+						context.Background(), svcCNCName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// LBG should be deleted entirely
+					verifyLBGDoesNotExist(nbClient, svcCNCName)
+
+					// Both switches should no longer reference any LBG
+					Eventually(func() error {
+						sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+							return s.Name == redNetwork.SwitchName("node1") || s.Name == blueNetwork.SwitchName("node1")
+						})
+						if err != nil {
+							return err
+						}
+						for _, s := range sw {
+							if len(s.LoadBalancerGroup) > 0 {
+								return fmt.Errorf("switch %s still has LBGs %v", s.Name, s.LoadBalancerGroup)
+							}
+						}
+						return nil
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					// Connect router should also be gone
+					Eventually(func() error {
+						_, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: getConnectRouterName(svcCNCName)})
+						if err != nil {
+							return nil // expected: router gone
+						}
+						return fmt.Errorf("connect router %s still exists", getConnectRouterName(svcCNCName))
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+			})
+
+			// =============================================================================
+			// Context: Partial Connectivity (ClusterIPServiceNetwork only, no PodNetwork)
+			// =============================================================================
+			Context("Partial Connectivity", func() {
+				const (
+					partialCNCName  = "partial-cnc"
+					partialTunnelID = 200
+				)
+
+				// Helper: verify CNC-owned ACLs exist on a switch
+				verifySwitchHasCNCACLs := func(switchName string, expectedCount int) {
+					Eventually(func() error {
+						sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+							return s.Name == switchName
+						})
+						if err != nil {
+							return err
+						}
+						if len(sw) != 1 {
+							return fmt.Errorf("expected 1 switch %s, got %d", switchName, len(sw))
+						}
+						if len(sw[0].ACLs) != expectedCount {
+							return fmt.Errorf("switch %s has %d ACLs, expected %d", switchName, len(sw[0].ACLs), expectedCount)
+						}
+						return nil
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				}
+
+				// Helper: verify no CNC-owned ACLs exist on any switch
+				verifyNoCNCACLs := func() {
+					predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+						map[libovsdbops.ExternalIDKey]string{
+							libovsdbops.ObjectNameKey: partialCNCName,
+						})
+					Eventually(func() error {
+						acls, err := libovsdbops.FindACLsWithPredicate(nbClient,
+							libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil))
+						if err != nil {
+							return err
+						}
+						if len(acls) > 0 {
+							return fmt.Errorf("found %d CNC ACLs, expected 0", len(acls))
+						}
+						return nil
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				}
+
+				// Helper: verify connect router exists (always created for any CNC with tunnel ID)
+				verifyConnectRouterExists := func() {
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, partialCNCName, partialTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				}
+
+				// How many ACLs per switch: shared (allow-service + drop-pod) + per-network (allow-same-network)
+				expectedACLsPerSwitch := func() int {
+					count := 2 // allow-service + drop-pod (always)
+					count++    // allow-same-network (1 per switch)
+					return count
+				}
+
+				It("should create ACLs, LBG, and connect router with only ClusterIPServiceNetwork", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Create CNC with only ClusterIPServiceNetwork (no PodNetwork)
+					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.ClusterIPServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify partial connectivity ACLs on both switches
+					expected := expectedACLsPerSwitch()
+					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), expected)
+					verifySwitchHasCNCACLs(blueNetwork.SwitchName("node1"), expected)
+
+					// Verify LBG created with LBs and attached to switches
+					lbg := verifyLBGHasLBs(nbClient, partialCNCName, 2)
+					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
+					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
+
+					// Connect router is always created for any CNC (handles routing infrastructure)
+					verifyConnectRouterExists()
+				})
+
+				It("should transition from partial to full connectivity when PodNetwork is added", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Start with partial connectivity (service only)
+					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.ClusterIPServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wait for partial state: ACLs on switches + LBG + connect router
+					expected := expectedACLsPerSwitch()
+					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), expected)
+					verifyLBGHasLBs(nbClient, partialCNCName, 2)
+					verifyConnectRouterExists()
+
+					// Now add PodNetwork -> full connectivity
+					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), partialCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
+						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork,
+					}
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify partial ACLs are cleaned up (partial -> full removes them)
+					verifyNoCNCACLs()
+
+					// Connect router should still exist
+					verifyConnectRouterExists()
+
+					// LBG should still exist
+					verifyLBGHasLBs(nbClient, partialCNCName, 2)
+				})
+
+				It("should transition from full to partial connectivity when PodNetwork is removed", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Start with full connectivity (pod + service)
+					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wait for full state: connect router exists, no partial ACLs
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, partialCNCName, partialTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+					verifyLBGHasLBs(nbClient, partialCNCName, 2)
+
+					// Now remove PodNetwork -> partial connectivity
+					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), partialCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
+						networkconnectv1.ClusterIPServiceNetwork,
+					}
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify partial ACLs are created on switches
+					expected := expectedACLsPerSwitch()
+					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), expected)
+					verifySwitchHasCNCACLs(blueNetwork.SwitchName("node1"), expected)
+
+					// LBG should still exist (service connectivity still active)
+					verifyLBGHasLBs(nbClient, partialCNCName, 2)
+				})
+
+				It("should cleanup all partial connectivity artifacts when CNC is deleted", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Create CNC with partial connectivity
+					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.ClusterIPServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wait for partial state to be established
+					expected := expectedACLsPerSwitch()
+					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), expected)
+					verifyLBGHasLBs(nbClient, partialCNCName, 2)
+
+					// Delete the CNC
+					err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Delete(
+						context.Background(), partialCNCName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify all partial connectivity artifacts are cleaned up
+					verifyNoCNCACLs()
+					verifyLBGDoesNotExist(nbClient, partialCNCName)
+
+					// Both switches should have no ACLs and no LBGs
+					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), 0)
+					verifySwitchHasCNCACLs(blueNetwork.SwitchName("node1"), 0)
+				})
+
+				It("should transition from partial to none when ClusterIPServiceNetwork is removed", func() {
+					subnetAnnotation := startBothNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					// Start with partial connectivity
+					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.ClusterIPServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wait for partial state
+					expected := expectedACLsPerSwitch()
+					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), expected)
+					verifyLBGHasLBs(nbClient, partialCNCName, 2)
+
+					// Remove ClusterIPServiceNetwork, add PodNetwork
+					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), partialCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
+						networkconnectv1.PodNetwork,
+					}
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Verify ACLs cleaned up
+					verifyNoCNCACLs()
+
+					// LBG should be deleted (service connectivity disabled)
+					verifyLBGDoesNotExist(nbClient, partialCNCName)
+
+					// Connect router should now exist (pod connectivity enabled)
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, partialCNCName, partialTunnelID)
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 				})
 			})

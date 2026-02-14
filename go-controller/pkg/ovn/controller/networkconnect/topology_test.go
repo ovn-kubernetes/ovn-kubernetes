@@ -26,6 +26,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -878,7 +879,7 @@ func TestCleanupNetworkConnections(t *testing.T) {
 				nbClient: nbClient,
 			}
 
-			err = c.cleanupNetworkConnections(tt.cncName)
+			err = c.cleanupNetworkConnections(tt.cncName, false, false)
 			if tt.expectError {
 				assert.Error(t, err)
 				return
@@ -998,6 +999,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 		zone:           "zone1",
 		nodeLister:     wf.NodeCoreInformer().Lister(),
 		networkManager: nm,
+		localZoneNode:  node,
 		cncCache: map[string]*networkConnectState{
 			cncName: {
 				name:              cncName,
@@ -1600,8 +1602,11 @@ func TestEnsureRoutingPoliciesOps(t *testing.T) {
 			cnc := &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: tt.cncName},
 			}
-
-			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets, nodes[0])
+			// Set localZoneNode for Layer3 tests
+			if tt.srcTopologyType == ovntypes.Layer3Topology {
+				c.localZoneNode = nodes[0]
+			}
+			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -2158,6 +2163,1628 @@ func TestEnsureStaticRoutesOps(t *testing.T) {
 					expectedIPFamily = "v6"
 				}
 				assert.Equal(t, expectedIPFamily, route.ExternalIDs[libovsdbops.IPFamilyKey.String()], "IPFamilyKey mismatch")
+			}
+		})
+	}
+}
+
+// ---- Service Connectivity Tests ----
+
+func TestFindCNCServiceLBGroup(t *testing.T) {
+	tests := []struct {
+		name      string
+		cncName   string
+		initialDB []libovsdbtest.TestData
+		expectNil bool
+		expectErr bool
+	}{
+		{
+			name:    "LBG exists - returns it with UUID",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-1",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+			},
+			expectNil: false,
+		},
+		{
+			name:      "LBG does not exist - returns nil, nil",
+			cncName:   "nonexistent-cnc",
+			initialDB: []libovsdbtest.TestData{},
+			expectNil: true,
+		},
+		{
+			name:    "multiple LBGs, only matching one returned",
+			cncName: "target-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-other",
+					Name: getCNCServiceLBGroupName("other-cnc"),
+				},
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-target",
+					Name: getCNCServiceLBGroupName("target-cnc"),
+				},
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid-unrelated",
+					Name: "some-other-lbg",
+				},
+			},
+			expectNil: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			lbg, err := c.findCNCServiceLBGroup(tt.cncName)
+
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			if tt.expectNil {
+				assert.Nil(t, lbg)
+			} else {
+				require.NotNil(t, lbg)
+				assert.Equal(t, getCNCServiceLBGroupName(tt.cncName), lbg.Name)
+				assert.NotEmpty(t, lbg.UUID, "UUID should be populated")
+			}
+		})
+	}
+}
+
+func TestFindClusterIPLoadBalancersForNetworks(t *testing.T) {
+	tests := []struct {
+		name           string
+		networkNames   sets.Set[string]
+		initialDB      []libovsdbtest.TestData
+		expectedCounts map[string]int // networkName -> expected LB count
+	}{
+		{
+			name:         "single network with matching ClusterIP LBs",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-2",
+					Name: "Service_netA_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 2},
+		},
+		{
+			name:         "multiple networks grouped correctly",
+			networkNames: sets.New("netA", "netB"),
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancer{
+					UUID: "lb-a1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-b1",
+					Name: "Service_netB_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-b2",
+					Name: "Service_netB_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 1, "netB": 2},
+		},
+		{
+			name:         "no matching LBs - wrong kind, wrong network, non-cluster name",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				// Wrong kind
+				&nbdb.LoadBalancer{
+					UUID: "lb-wrong-kind",
+					Name: "NotService_netA_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "NotService",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// Wrong network
+				&nbdb.LoadBalancer{
+					UUID: "lb-wrong-net",
+					Name: "Service_netB_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+				// Non-cluster name (no "_cluster" in name)
+				&nbdb.LoadBalancer{
+					UUID: "lb-non-cluster",
+					Name: "Service_netA_tcp_nodeport",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{},
+		},
+		{
+			name:         "mixed LBs - only matching ones returned",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				// Matches
+				&nbdb.LoadBalancer{
+					UUID: "lb-match",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// Wrong kind - should not match
+				&nbdb.LoadBalancer{
+					UUID: "lb-wrong-kind",
+					Name: "Other_netA_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Other",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// Non-cluster - should not match
+				&nbdb.LoadBalancer{
+					UUID: "lb-non-cluster",
+					Name: "Service_netA_tcp_nodeport",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 1},
+		},
+		{
+			name:         "multiple services in same network - one per protocol",
+			networkNames: sets.New("netA"),
+			initialDB: []libovsdbtest.TestData{
+				// svc1 TCP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc1-tcp",
+					Name: "Service_netA_svc1_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// svc1 UDP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc1-udp",
+					Name: "Service_netA_svc1_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// svc2 TCP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc2-tcp",
+					Name: "Service_netA_svc2_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				// svc2 SCTP
+				&nbdb.LoadBalancer{
+					UUID: "lb-svc2-sctp",
+					Name: "Service_netA_svc2_sctp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			expectedCounts: map[string]int{"netA": 4},
+		},
+		{
+			name:           "empty DB",
+			networkNames:   sets.New("netA"),
+			initialDB:      []libovsdbtest.TestData{},
+			expectedCounts: map[string]int{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			result, err := c.findClusterIPLoadBalancersForNetworks(tt.networkNames)
+			require.NoError(t, err)
+
+			for netName, expectedCount := range tt.expectedCounts {
+				assert.Len(t, result[netName], expectedCount, "network %s LB count mismatch", netName)
+			}
+			// Verify no extra networks in result
+			for netName := range result {
+				_, expected := tt.expectedCounts[netName]
+				assert.True(t, expected, "unexpected network %s in result", netName)
+			}
+		})
+	}
+}
+
+func TestGetNetworkSwitchName(t *testing.T) {
+	tests := []struct {
+		name           string
+		topologyType   string
+		localZoneNode  *corev1.Node
+		expectedSwitch string
+		expectError    bool
+	}{
+		{
+			name:           "Layer2 topology - distributed switch",
+			topologyType:   ovntypes.Layer2Topology,
+			localZoneNode:  nil, // not needed for L2
+			expectedSwitch: "switch_netA",
+		},
+		{
+			name:         "Layer3 topology with localZoneNode",
+			topologyType: ovntypes.Layer3Topology,
+			localZoneNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node1"},
+			},
+			expectedSwitch: "switch_netA_node1",
+		},
+		{
+			name:          "Layer3 topology with nil localZoneNode - error",
+			topologyType:  ovntypes.Layer3Topology,
+			localZoneNode: nil,
+			expectError:   true,
+		},
+		{
+			name:          "unsupported topology - error",
+			topologyType:  "localnet",
+			localZoneNode: nil,
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Controller{
+				localZoneNode: tt.localZoneNode,
+			}
+
+			netInfo := &mocks.NetInfo{}
+			netInfo.On("TopologyType").Return(tt.topologyType)
+			netInfo.On("GetNetworkName").Return("netA")
+			if tt.topologyType == ovntypes.Layer2Topology {
+				netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_netA")
+			}
+			if tt.topologyType == ovntypes.Layer3Topology && tt.localZoneNode != nil {
+				netInfo.On("GetNetworkScopedSwitchName", tt.localZoneNode.Name).Return("switch_netA_" + tt.localZoneNode.Name)
+			}
+
+			switchName, err := c.getNetworkSwitchName(netInfo)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedSwitch, switchName)
+		})
+	}
+}
+
+func TestEnsureLoadBalancerGroupOps(t *testing.T) {
+	tests := []struct {
+		name          string
+		cncName       string
+		topologyType  string
+		networkName   string
+		networkID     int
+		localZoneNode *corev1.Node
+		initialDB     []libovsdbtest.TestData
+		services      []*corev1.Service // services in the network's namespaces
+		namespace     string            // namespace for services
+		expectError   bool
+		expectedLBs   int // expected LBs in the LBG after ops
+		expectSwitch  bool
+	}{
+		{
+			name:         "Layer2 happy path - count matches",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports:     []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: 80}},
+					},
+				},
+			},
+			expectedLBs:  1,
+			expectSwitch: true,
+		},
+		{
+			name:         "Layer3 happy path - count matches, node-scoped switch",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer3Topology,
+			networkName:  "netB",
+			networkID:    20,
+			namespace:    "ns1",
+			localZoneNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node1"},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netB_node1",
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netB_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netB",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports:     []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: 80}},
+					},
+				},
+			},
+			expectedLBs:  1,
+			expectSwitch: true,
+		},
+		{
+			name:         "no matching LBs, no services - only switch attachment",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+			},
+			services:     []*corev1.Service{},
+			expectedLBs:  0,
+			expectSwitch: true,
+		},
+		{
+			name:         "count lower - fewer LBs than expected, error but partial ops",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+				// Only 1 LB in DB
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports: []corev1.ServicePort{
+							{Protocol: corev1.ProtocolTCP, Port: 80},
+							{Protocol: corev1.ProtocolUDP, Port: 53},
+						},
+					},
+				},
+			},
+			expectError:  true, // count mismatch: found 1, expected 2
+			expectedLBs:  1,    // partial: the 1 found LB is still added
+			expectSwitch: true,
+		},
+		{
+			name:         "count higher - more LBs than expected, error but ops still built",
+			cncName:      "test-cnc",
+			topologyType: ovntypes.Layer2Topology,
+			networkName:  "netA",
+			networkID:    10,
+			namespace:    "ns1",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+				// 2 LBs in DB but only 1 service with 1 protocol -> expected 1
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-2",
+					Name: "Service_netA_udp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+			},
+			services: []*corev1.Service{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "svc1", Namespace: "ns1"},
+					Spec: corev1.ServiceSpec{
+						ClusterIP: "10.96.0.10",
+						Ports:     []corev1.ServicePort{{Protocol: corev1.ProtocolTCP, Port: 80}},
+					},
+				},
+			},
+			expectError:  true, // count mismatch: found 2, expected 1
+			expectedLBs:  2,    // all found LBs still added
+			expectSwitch: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			err := config.PrepareTestConfig()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			// Set up fake clientset with services
+			fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
+			for _, svc := range tt.services {
+				_, err := fakeClientset.KubeClient.CoreV1().Services(svc.Namespace).Create(
+					context.Background(), svc, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+			require.NoError(t, err)
+			err = wf.Start()
+			require.NoError(t, err)
+			defer wf.Shutdown()
+
+			syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer syncCancel()
+			synced := cache.WaitForCacheSync(syncCtx.Done(), wf.ServiceCoreInformer().Informer().HasSynced)
+			require.True(t, synced, "informer caches should sync")
+
+			// Create mock netInfo
+			netInfo := &mocks.NetInfo{}
+			netInfo.On("GetNetworkName").Return(tt.networkName)
+			netInfo.On("GetNetworkID").Return(tt.networkID)
+			netInfo.On("TopologyType").Return(tt.topologyType)
+			if tt.topologyType == ovntypes.Layer2Topology {
+				netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_" + tt.networkName)
+			}
+			if tt.topologyType == ovntypes.Layer3Topology && tt.localZoneNode != nil {
+				netInfo.On("GetNetworkScopedSwitchName", tt.localZoneNode.Name).Return(
+					"switch_" + tt.networkName + "_" + tt.localZoneNode.Name)
+			}
+
+			nm := &networkmanager.FakeNetworkManager{
+				PrimaryNetworks: map[string]util.NetInfo{
+					tt.namespace: netInfo,
+				},
+			}
+
+			c := &Controller{
+				nbClient:       nbClient,
+				networkManager: nm,
+				serviceLister:  wf.ServiceCoreInformer().Lister(),
+				localZoneNode:  tt.localZoneNode,
+			}
+
+			// Look up the LBG from the DB to get its real UUID (as the real caller does)
+			lbg, err := c.findCNCServiceLBGroup(tt.cncName)
+			require.NoError(t, err)
+			require.NotNil(t, lbg, "LBG should exist in initial DB")
+
+			ops, err := c.ensureLoadBalancerGroupOps(nil, lbg, netInfo, true)
+
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			// Even on error, ops should be built for what succeeds
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify LBs in LBG
+			updatedLBG, err := libovsdbops.GetLoadBalancerGroup(nbClient, &nbdb.LoadBalancerGroup{Name: lbg.Name})
+			require.NoError(t, err)
+			assert.Len(t, updatedLBG.LoadBalancer, tt.expectedLBs, "LB count in LBG mismatch")
+
+			// Verify switch has LBG attached
+			if tt.expectSwitch {
+				var switchName string
+				if tt.topologyType == ovntypes.Layer2Topology {
+					switchName = "switch_" + tt.networkName
+				} else if tt.localZoneNode != nil {
+					switchName = "switch_" + tt.networkName + "_" + tt.localZoneNode.Name
+				}
+				if switchName != "" {
+					sw, swErr := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+						return s.Name == switchName
+					})
+					require.NoError(t, swErr)
+					require.Len(t, sw, 1)
+					assert.Len(t, sw[0].LoadBalancerGroup, 1, "switch should have 1 LBG attached")
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupServiceConnectivity(t *testing.T) {
+	tests := []struct {
+		name              string
+		cncName           string
+		initialDB         []libovsdbtest.TestData
+		expectLBGDeleted  bool
+		expectedSwitchLBG map[string]int // switchName -> expected LBG count after cleanup
+	}{
+		{
+			name:    "LBG referenced by 2 switches - removes from both and deletes LBG",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw1-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw2-uuid",
+					Name:              "switch_netB",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+			},
+			expectLBGDeleted: true,
+			expectedSwitchLBG: map[string]int{
+				"switch_netA": 0,
+				"switch_netB": 0,
+			},
+		},
+		{
+			name:    "LBG exists, no switch references - just deletes LBG",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw1-uuid",
+					Name: "switch_netA",
+				},
+			},
+			expectLBGDeleted: true,
+			expectedSwitchLBG: map[string]int{
+				"switch_netA": 0,
+			},
+		},
+		{
+			name:             "LBG does not exist - no-op, no error",
+			cncName:          "nonexistent-cnc",
+			initialDB:        []libovsdbtest.TestData{},
+			expectLBGDeleted: false, // nothing to delete
+		},
+		{
+			name:    "only some switches reference the LBG",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID: "lbg-uuid",
+					Name: getCNCServiceLBGroupName("test-cnc"),
+				},
+				&nbdb.LoadBalancerGroup{
+					UUID: "other-lbg-uuid",
+					Name: "other-lbg",
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw1-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw2-uuid",
+					Name:              "switch_netB",
+					LoadBalancerGroup: []string{"other-lbg-uuid"},
+				},
+			},
+			expectLBGDeleted: true,
+			expectedSwitchLBG: map[string]int{
+				"switch_netA": 0, // LBG removed
+				"switch_netB": 1, // other LBG still there
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			err = c.cleanupServiceConnectivity(tt.cncName)
+			require.NoError(t, err)
+
+			// Verify LBG is deleted (or was never there)
+			if tt.expectLBGDeleted {
+				lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+					return lbg.Name == getCNCServiceLBGroupName(tt.cncName)
+				})
+				require.NoError(t, err)
+				assert.Empty(t, lbgs, "LBG should be deleted")
+			}
+
+			// Verify switch LBG counts
+			for switchName, expectedCount := range tt.expectedSwitchLBG {
+				switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(sw *nbdb.LogicalSwitch) bool {
+					return sw.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, switches, 1)
+				assert.Len(t, switches[0].LoadBalancerGroup, expectedCount,
+					"switch %s should have %d LBG(s)", switchName, expectedCount)
+			}
+		})
+	}
+}
+
+func TestCleanupLoadBalancerGroupOps(t *testing.T) {
+	tests := []struct {
+		name                  string
+		cncName               string
+		disconnectedNetworkID int
+		topologyType          string
+		networkName           string
+		localZoneNode         *corev1.Node
+		initialDB             []libovsdbtest.TestData
+		networkInManager      bool
+		expectedLBsInLBG      int
+		expectedSwitchLBGs    int
+	}{
+		{
+			name:                  "disconnected network in networkManager - removes LBs and LBG from switch",
+			cncName:               "test-cnc",
+			disconnectedNetworkID: 10,
+			topologyType:          ovntypes.Layer2Topology,
+			networkName:           "netA",
+			networkInManager:      true,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID:         "lbg-uuid",
+					Name:         getCNCServiceLBGroupName("test-cnc"),
+					LoadBalancer: []string{"lb-1"},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+			},
+			expectedLBsInLBG:   0,
+			expectedSwitchLBGs: 0,
+		},
+		{
+			name:                  "disconnected network not in networkManager - no-op",
+			cncName:               "test-cnc",
+			disconnectedNetworkID: 99,
+			networkInManager:      false,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LoadBalancerGroup{
+					UUID:         "lbg-uuid",
+					Name:         getCNCServiceLBGroupName("test-cnc"),
+					LoadBalancer: []string{"lb-1"},
+				},
+				&nbdb.LoadBalancer{
+					UUID: "lb-1",
+					Name: "Service_netA_tcp_cluster",
+					ExternalIDs: map[string]string{
+						ovntypes.LoadBalancerKindExternalID: "Service",
+						ovntypes.NetworkExternalID:          "netA",
+					},
+				},
+				&nbdb.LogicalSwitch{
+					UUID:              "sw-uuid",
+					Name:              "switch_netA",
+					LoadBalancerGroup: []string{"lbg-uuid"},
+				},
+			},
+			expectedLBsInLBG:   1, // unchanged
+			expectedSwitchLBGs: 1, // unchanged
+		},
+		{
+			name:                  "LBG does not exist - no-op",
+			cncName:               "nonexistent-cnc",
+			disconnectedNetworkID: 10,
+			networkInManager:      true,
+			topologyType:          ovntypes.Layer2Topology,
+			networkName:           "netA",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+			},
+			expectedLBsInLBG:   -1, // LBG doesn't exist, skip check
+			expectedSwitchLBGs: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			var nm networkmanager.Interface
+			if tt.networkInManager {
+				netInfo := &mocks.NetInfo{}
+				netInfo.On("GetNetworkName").Return(tt.networkName)
+				netInfo.On("GetNetworkID").Return(tt.disconnectedNetworkID)
+				netInfo.On("TopologyType").Return(tt.topologyType)
+				if tt.topologyType == ovntypes.Layer2Topology {
+					netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_" + tt.networkName)
+				}
+				if tt.topologyType == ovntypes.Layer3Topology && tt.localZoneNode != nil {
+					netInfo.On("GetNetworkScopedSwitchName", tt.localZoneNode.Name).Return(
+						"switch_" + tt.networkName + "_" + tt.localZoneNode.Name)
+				}
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{
+						"ns1": netInfo,
+					},
+				}
+			} else {
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{},
+				}
+			}
+
+			c := &Controller{
+				nbClient:       nbClient,
+				networkManager: nm,
+				localZoneNode:  tt.localZoneNode,
+			}
+
+			ops, err := c.cleanupLoadBalancerGroupOps(nil, tt.cncName, tt.disconnectedNetworkID)
+			require.NoError(t, err)
+
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify LBs in LBG
+			if tt.expectedLBsInLBG >= 0 {
+				lbgName := getCNCServiceLBGroupName(tt.cncName)
+				lbgs, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(lbg *nbdb.LoadBalancerGroup) bool {
+					return lbg.Name == lbgName
+				})
+				require.NoError(t, err)
+				if len(lbgs) > 0 {
+					assert.Len(t, lbgs[0].LoadBalancer, tt.expectedLBsInLBG, "LBs in LBG mismatch")
+				}
+			}
+
+			// Verify switch LBG count
+			switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(_ *nbdb.LogicalSwitch) bool {
+				return true
+			})
+			require.NoError(t, err)
+			for _, sw := range switches {
+				assert.Len(t, sw.LoadBalancerGroup, tt.expectedSwitchLBGs,
+					"switch %s LBG count mismatch", sw.Name)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Partial Connectivity Unit Tests
+// =============================================================================
+
+func TestBuildSharedPartialConnectivityACLs(t *testing.T) {
+	tests := []struct {
+		name                      string
+		ipv4Mode                  bool
+		ipv6Mode                  bool
+		serviceCIDRs              []string
+		asNameV4                  string
+		asNameV6                  string
+		expectedACLCount          int
+		allowServiceMatchContains []string // substrings expected in allow-service match
+		allowServiceMatchExcludes []string // substrings that must NOT appear in allow-service match
+		dropPodMatchContains      []string // substrings expected in drop-pod match
+		dropPodMatchExcludes      []string // substrings that must NOT appear in drop-pod match
+	}{
+		{
+			name:                      "IPv4 only - allow-service + drop-pod",
+			ipv4Mode:                  true,
+			ipv6Mode:                  false,
+			serviceCIDRs:              []string{"172.16.1.0/24"},
+			asNameV4:                  "as_v4_hash",
+			asNameV6:                  "as_v6_hash",
+			expectedACLCount:          2,
+			allowServiceMatchContains: []string{"ip4.dst == 172.16.1.0/24"},
+			dropPodMatchContains:      []string{"ip4.dst == $as_v4_hash", "ct.new"},
+		},
+		{
+			name:                      "IPv6 only - allow-service + drop-pod",
+			ipv4Mode:                  false,
+			ipv6Mode:                  true,
+			serviceCIDRs:              []string{"fd00:10:96::/112"},
+			asNameV4:                  "as_v4_hash",
+			asNameV6:                  "as_v6_hash",
+			expectedACLCount:          2,
+			allowServiceMatchContains: []string{"ip6.dst == fd00:10:96::/112"},
+			allowServiceMatchExcludes: []string{"ip4"},
+			dropPodMatchContains:      []string{"ip6.dst == $as_v6_hash", "ct.new"},
+			dropPodMatchExcludes:      []string{"ip4"},
+		},
+		{
+			name:                      "dual-stack - allow-service combines both CIDRs, drop-pod uses both address sets",
+			ipv4Mode:                  true,
+			ipv6Mode:                  true,
+			serviceCIDRs:              []string{"172.16.1.0/24", "fd00:10:96::/112"},
+			asNameV4:                  "as_v4_hash",
+			asNameV6:                  "as_v6_hash",
+			expectedACLCount:          2,
+			allowServiceMatchContains: []string{"ip4.dst == 172.16.1.0/24", "ip6.dst == fd00:10:96::/112"},
+			dropPodMatchContains:      []string{"ip4.dst == $as_v4_hash", "ip6.dst == $as_v6_hash", "ct.new"},
+		},
+		{
+			name:                 "no service CIDRs - only drop ACL (edge case)",
+			ipv4Mode:             true,
+			ipv6Mode:             false,
+			serviceCIDRs:         []string{},
+			asNameV4:             "as_v4_hash",
+			asNameV6:             "as_v6_hash",
+			expectedACLCount:     1, // only drop-pod, no allow-service
+			dropPodMatchContains: []string{"ip4.dst == $as_v4_hash", "ct.new"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := config.PrepareTestConfig()
+			require.NoError(t, err)
+
+			config.IPv4Mode = tt.ipv4Mode
+			config.IPv6Mode = tt.ipv6Mode
+
+			config.Kubernetes.ServiceCIDRs = nil
+			for _, cidr := range tt.serviceCIDRs {
+				_, parsed, err := net.ParseCIDR(cidr)
+				require.NoError(t, err)
+				config.Kubernetes.ServiceCIDRs = append(config.Kubernetes.ServiceCIDRs, parsed)
+			}
+
+			c := &Controller{}
+			acls := c.buildSharedPartialConnectivityACLs("test-cnc", tt.asNameV4, tt.asNameV6)
+			require.Len(t, acls, tt.expectedACLCount)
+
+			// All ACLs should be owned by the CNC and on egress (from-lport)
+			for _, acl := range acls {
+				assert.Equal(t, "test-cnc", acl.ExternalIDs[libovsdbops.ObjectNameKey.String()])
+				assert.Equal(t, nbdb.ACLDirectionFromLport, acl.Direction)
+			}
+
+			// Find ACLs by priority
+			aclByPriority := make(map[int]*nbdb.ACL)
+			for _, acl := range acls {
+				aclByPriority[acl.Priority] = acl
+			}
+
+			if allowService, ok := aclByPriority[ovntypes.NetworkConnectAllowServiceTrafficPriority]; ok {
+				assert.Equal(t, nbdb.ACLActionPass, allowService.Action)
+				for _, s := range tt.allowServiceMatchContains {
+					assert.Contains(t, allowService.Match, s)
+				}
+				for _, s := range tt.allowServiceMatchExcludes {
+					assert.NotContains(t, allowService.Match, s)
+				}
+			}
+
+			if dropPod, ok := aclByPriority[ovntypes.NetworkConnectDropPodTrafficPriority]; ok {
+				assert.Equal(t, nbdb.ACLActionDrop, dropPod.Action)
+				for _, s := range tt.dropPodMatchContains {
+					assert.Contains(t, dropPod.Match, s)
+				}
+				for _, s := range tt.dropPodMatchExcludes {
+					assert.NotContains(t, dropPod.Match, s)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildAllowSameNetworkACL(t *testing.T) {
+	tests := []struct {
+		name          string
+		cncName       string
+		networkID     int
+		subnets       []string
+		expectNil     bool
+		matchContains []string // substrings expected in ACL match
+		matchExcludes []string // substrings that must NOT appear in ACL match
+		expectedType  string   // expected ExternalIDs[TypeKey] value (empty to skip)
+	}{
+		{
+			name:          "IPv4 only subnet",
+			cncName:       "test-cnc",
+			networkID:     1,
+			subnets:       []string{"10.128.0.0/16"},
+			matchContains: []string{"ip4.dst == 10.128.0.0/16"},
+			matchExcludes: []string{"ip6"},
+		},
+		{
+			name:          "IPv6 only subnet",
+			cncName:       "test-cnc",
+			networkID:     2,
+			subnets:       []string{"fd00:10:128::/48"},
+			matchContains: []string{"ip6.dst == fd00:10:128::/48"},
+			matchExcludes: []string{"ip4"},
+		},
+		{
+			name:          "dual-stack subnets",
+			cncName:       "test-cnc",
+			networkID:     3,
+			subnets:       []string{"10.128.0.0/16", "fd00:10:128::/48"},
+			matchContains: []string{"ip4.dst == 10.128.0.0/16", "ip6.dst == fd00:10:128::/48"},
+		},
+		{
+			name:      "empty subnets returns nil",
+			cncName:   "test-cnc",
+			networkID: 4,
+			subnets:   []string{},
+			expectNil: true,
+		},
+		{
+			name:         "network ID embedded in external IDs",
+			cncName:      "my-cnc",
+			networkID:    42,
+			subnets:      []string{"10.0.0.0/8"},
+			expectedType: "allow-same-network-42",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Controller{}
+			acl := c.buildAllowSameNetworkACL(tt.cncName, tt.networkID, tt.subnets)
+			if tt.expectNil {
+				assert.Nil(t, acl)
+				return
+			}
+			require.NotNil(t, acl)
+
+			// Common assertions for all non-nil ACLs
+			assert.Equal(t, ovntypes.NetworkConnectAllowSameNetworkPriority, acl.Priority)
+			assert.Equal(t, nbdb.ACLActionPass, acl.Action)
+			assert.Equal(t, nbdb.ACLDirectionFromLport, acl.Direction)
+			assert.Equal(t, tt.cncName, acl.ExternalIDs[libovsdbops.ObjectNameKey.String()])
+
+			for _, s := range tt.matchContains {
+				assert.Contains(t, acl.Match, s)
+			}
+			for _, s := range tt.matchExcludes {
+				assert.NotContains(t, acl.Match, s)
+			}
+			if tt.expectedType != "" {
+				assert.Equal(t, tt.expectedType, acl.ExternalIDs[libovsdbops.TypeKey.String()])
+			}
+		})
+	}
+}
+
+func TestPreparePartialConnectivityACLs(t *testing.T) {
+	err := config.PrepareTestConfig()
+	require.NoError(t, err)
+
+	// IPv4 mode with service CIDR 172.16.1.0/24 (from PrepareTestConfig)
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+
+	cncName := "test-cnc"
+
+	// Create two mock networks
+	networkA := &mocks.NetInfo{}
+	networkA.On("GetNetworkName").Return("netA")
+	networkA.On("GetNetworkID").Return(1)
+	networkA.On("TopologyType").Return(ovntypes.Layer2Topology)
+	networkA.On("GetNetworkScopedSwitchName", "").Return("switch_netA")
+	networkA.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{CIDR: ovntest.MustParseIPNet("10.128.0.0/16")},
+	})
+
+	networkB := &mocks.NetInfo{}
+	networkB.On("GetNetworkName").Return("netB")
+	networkB.On("GetNetworkID").Return(2)
+	networkB.On("TopologyType").Return(ovntypes.Layer3Topology)
+	networkB.On("GetNetworkScopedSwitchName", "node1").Return("switch_netB_node1")
+	networkB.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{CIDR: ovntest.MustParseIPNet("10.129.0.0/16")},
+	})
+
+	nm := &networkmanager.FakeNetworkManager{
+		PrimaryNetworks: map[string]util.NetInfo{
+			"nsA": networkA,
+			"nsB": networkB,
+		},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{}, nil)
+	require.NoError(t, err)
+	defer cleanup.Cleanup()
+
+	c := &Controller{
+		nbClient:          nbClient,
+		networkManager:    nm,
+		localZoneNode:     &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}},
+		addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, true, false),
+	}
+
+	allocatedSubnets := map[string][]*net.IPNet{
+		"layer2_1": {ovntest.MustParseIPNet("192.168.0.0/24")},
+		"layer3_2": {ovntest.MustParseIPNet("192.168.1.0/24")},
+	}
+
+	state, err := c.preparePartialConnectivityACLs(cncName, allocatedSubnets)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+
+	// Verify state structure
+	assert.Len(t, state.sharedACLs, 2, "should have allow-service + drop-pod")
+	assert.Len(t, state.perNetworkACLs, 2, "should have per-network ACL for each network")
+	assert.Len(t, state.networkSwitches, 2, "should have switch name for each network")
+
+	// Verify switch names
+	assert.Equal(t, "switch_netA", state.networkSwitches[1])
+	assert.Equal(t, "switch_netB_node1", state.networkSwitches[2])
+
+	// Verify per-network ACLs have correct priorities
+	for _, acl := range state.perNetworkACLs {
+		assert.Equal(t, ovntypes.NetworkConnectAllowSameNetworkPriority, acl.Priority)
+		assert.Equal(t, nbdb.ACLActionPass, acl.Action)
+	}
+
+	// Verify shared ACLs priorities
+	priorities := map[int]bool{}
+	for _, acl := range state.sharedACLs {
+		priorities[acl.Priority] = true
+	}
+	assert.True(t, priorities[ovntypes.NetworkConnectAllowServiceTrafficPriority], "allow-service ACL should exist")
+	assert.True(t, priorities[ovntypes.NetworkConnectDropPodTrafficPriority], "drop-pod ACL should exist")
+}
+
+func TestEnsurePartialConnectivityACLsOps(t *testing.T) {
+	tests := []struct {
+		name                 string
+		networkID            int
+		state                *partialConnectivityState
+		initialDB            []libovsdbtest.TestData
+		expectError          bool
+		verifyACLCount       int // expected CNC-owned ACLs after transact (-1 to skip)
+		verifySwitchACLCount int // expected ACLs on the switch after transact (-1 to skip)
+	}{
+		{
+			name:      "adds shared + per-network ACLs to switch",
+			networkID: 1,
+			state: &partialConnectivityState{
+				sharedACLs: []*nbdb.ACL{
+					{
+						UUID:        "allow-svc-uuid",
+						Action:      nbdb.ACLActionPass,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "(ip4.dst == 172.16.1.0/24)",
+						Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "allow-service").GetExternalIDs(),
+					},
+					{
+						UUID:        "drop-pod-uuid",
+						Action:      nbdb.ACLActionDrop,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "ip4.dst == $some_as && ct.new",
+						Priority:    ovntypes.NetworkConnectDropPodTrafficPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "drop-pod").GetExternalIDs(),
+					},
+				},
+				perNetworkACLs: map[int]*nbdb.ACL{
+					1: {
+						UUID:        "allow-same-1-uuid",
+						Action:      nbdb.ACLActionPass,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "ip4.dst == 10.128.0.0/16",
+						Priority:    ovntypes.NetworkConnectAllowSameNetworkPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "allow-same-network-1").GetExternalIDs(),
+					},
+				},
+				networkSwitches: map[int]string{1: "switch_netA"},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+				},
+			},
+			verifyACLCount:       3, // allow-service, drop-pod, allow-same-network-1
+			verifySwitchACLCount: 3,
+		},
+		{
+			name:      "nil state returns error",
+			networkID: 1,
+			state:     nil,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{UUID: "sw-uuid", Name: "switch_netA"},
+			},
+			expectError:          true,
+			verifyACLCount:       -1,
+			verifySwitchACLCount: -1,
+		},
+		{
+			name:      "network ID not in networkSwitches returns error",
+			networkID: 99,
+			state: &partialConnectivityState{
+				sharedACLs:      []*nbdb.ACL{},
+				perNetworkACLs:  map[int]*nbdb.ACL{},
+				networkSwitches: map[int]string{1: "switch_netA"},
+			},
+			initialDB:            []libovsdbtest.TestData{},
+			expectError:          true,
+			verifyACLCount:       -1,
+			verifySwitchACLCount: -1,
+		},
+		{
+			name:      "switch name in state but absent from DB returns error",
+			networkID: 1,
+			state: &partialConnectivityState{
+				sharedACLs: []*nbdb.ACL{
+					{
+						UUID:        "allow-svc-uuid",
+						Action:      nbdb.ACLActionPass,
+						Direction:   nbdb.ACLDirectionFromLport,
+						Match:       "(ip4.dst == 172.16.1.0/24)",
+						Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+						ExternalIDs: buildACLDBIDs("test-cnc", "allow-service").GetExternalIDs(),
+					},
+				},
+				perNetworkACLs:  map[int]*nbdb.ACL{},
+				networkSwitches: map[int]string{1: "switch_netA"}, // maps to switch_netA
+			},
+			initialDB:            []libovsdbtest.TestData{}, // but no switch in DB
+			expectError:          true,
+			verifyACLCount:       -1,
+			verifySwitchACLCount: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			ops, err := c.ensurePartialConnectivityACLsOps(nil, tt.state, tt.networkID)
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify CNC-owned ACLs
+			if tt.verifyACLCount >= 0 {
+				predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+					map[libovsdbops.ExternalIDKey]string{
+						libovsdbops.ObjectNameKey: "test-cnc",
+					})
+				acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil))
+				require.NoError(t, err)
+				assert.Len(t, acls, tt.verifyACLCount, "CNC-owned ACL count mismatch")
+			}
+
+			// Verify switch ACL count using the switch name from the test state
+			if tt.verifySwitchACLCount >= 0 {
+				switchName := tt.state.networkSwitches[tt.networkID]
+				sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+					return s.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, sw, 1)
+				assert.Len(t, sw[0].ACLs, tt.verifySwitchACLCount, "switch ACL count mismatch")
+			}
+		})
+	}
+}
+
+func TestCleanupPartialConnectivityACLsOps(t *testing.T) {
+	cncName := "test-cnc"
+	aclExternalIDs := buildACLDBIDs(cncName, "allow-service").GetExternalIDs()
+
+	tests := []struct {
+		name             string
+		disconnectedID   int
+		networkInManager bool
+		topologyType     string
+		networkName      string
+		initialDB        []libovsdbtest.TestData
+		expectedACLCount int // ACLs remaining on the switch after cleanup
+	}{
+		{
+			name:             "removes all CNC ACLs from disconnected network's switch",
+			disconnectedID:   10,
+			networkInManager: true,
+			topologyType:     ovntypes.Layer2Topology,
+			networkName:      "netA",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-1",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: aclExternalIDs,
+				},
+				&nbdb.ACL{
+					UUID:        "acl-2",
+					Action:      nbdb.ACLActionDrop,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as && ct.new",
+					Priority:    ovntypes.NetworkConnectDropPodTrafficPriority,
+					ExternalIDs: buildACLDBIDs(cncName, "drop-pod").GetExternalIDs(),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+					ACLs: []string{"acl-1", "acl-2"},
+				},
+			},
+			expectedACLCount: 0,
+		},
+		{
+			name:             "network not in manager - no-op",
+			disconnectedID:   99,
+			networkInManager: false,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-1",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: aclExternalIDs,
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-uuid",
+					Name: "switch_netA",
+					ACLs: []string{"acl-1"},
+				},
+			},
+			expectedACLCount: 1, // unchanged
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			var nm networkmanager.Interface
+			if tt.networkInManager {
+				netInfo := &mocks.NetInfo{}
+				netInfo.On("GetNetworkName").Return(tt.networkName)
+				netInfo.On("GetNetworkID").Return(tt.disconnectedID)
+				netInfo.On("TopologyType").Return(tt.topologyType)
+				if tt.topologyType == ovntypes.Layer2Topology {
+					netInfo.On("GetNetworkScopedSwitchName", "").Return("switch_" + tt.networkName)
+				}
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{"ns1": netInfo},
+				}
+			} else {
+				nm = &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{},
+				}
+			}
+
+			c := &Controller{
+				nbClient:       nbClient,
+				networkManager: nm,
+			}
+
+			ops, err := c.cleanupPartialConnectivityACLsOps(nil, cncName, tt.disconnectedID)
+			require.NoError(t, err)
+
+			if len(ops) > 0 {
+				_, txnErr := libovsdbops.TransactAndCheck(nbClient, ops)
+				require.NoError(t, txnErr)
+			}
+
+			// Verify switch ACL count
+			switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(_ *nbdb.LogicalSwitch) bool {
+				return true
+			})
+			require.NoError(t, err)
+			for _, sw := range switches {
+				assert.Len(t, sw.ACLs, tt.expectedACLCount,
+					"switch %s ACL count mismatch", sw.Name)
+			}
+		})
+	}
+}
+
+func TestCleanupPartialConnectivity(t *testing.T) {
+	tests := []struct {
+		name               string
+		cncName            string
+		initialDB          []libovsdbtest.TestData
+		expectACLsRemain   int // total ACLs remaining after cleanup
+		expectSwitchACLs   map[string]int
+		expectAddressSetGC bool // whether address set should be destroyed
+	}{
+		{
+			name:    "removes ACLs from all switches and destroys address set",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-1",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "allow-service").GetExternalIDs(),
+				},
+				&nbdb.ACL{
+					UUID:        "acl-2",
+					Action:      nbdb.ACLActionDrop,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as && ct.new",
+					Priority:    ovntypes.NetworkConnectDropPodTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "drop-pod").GetExternalIDs(),
+				},
+				&nbdb.ACL{
+					UUID:        "acl-3",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == 10.128.0.0/16",
+					Priority:    ovntypes.NetworkConnectAllowSameNetworkPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "allow-same-network-1").GetExternalIDs(),
+				},
+				// switchA has all 3 ACLs
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-1", "acl-2", "acl-3"},
+				},
+				// switchB has the 2 shared ACLs
+				&nbdb.LogicalSwitch{
+					UUID: "sw-B",
+					Name: "switch_netB",
+					ACLs: []string{"acl-1", "acl-2"},
+				},
+			},
+			expectACLsRemain: 0,
+			expectSwitchACLs: map[string]int{
+				"switch_netA": 0,
+				"switch_netB": 0,
+			},
+			expectAddressSetGC: true,
+		},
+		{
+			name:    "no ACLs to clean - only destroys address set",
+			cncName: "empty-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+				},
+			},
+			expectACLsRemain:   0,
+			expectSwitchACLs:   map[string]int{"switch_netA": 0},
+			expectAddressSetGC: true,
+		},
+		{
+			name:    "only cleans ACLs owned by specified CNC",
+			cncName: "cnc-a",
+			initialDB: []libovsdbtest.TestData{
+				// CNC-A's ACL
+				&nbdb.ACL{
+					UUID:        "acl-cnca",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("cnc-a", "allow-service").GetExternalIDs(),
+				},
+				// CNC-B's ACL (should not be touched)
+				&nbdb.ACL{
+					UUID:        "acl-cncb",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectAllowServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("cnc-b", "allow-service").GetExternalIDs(),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-cnca", "acl-cncb"},
+				},
+			},
+			expectACLsRemain:   1, // cnc-b's ACL remains
+			expectSwitchACLs:   map[string]int{"switch_netA": 1},
+			expectAddressSetGC: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{
+				nbClient:          nbClient,
+				addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, true, false),
+			}
+
+			err = c.cleanupPartialConnectivity(tt.cncName)
+			require.NoError(t, err)
+
+			// Verify total ACL count
+			allPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
+			acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](allPredicateIDs, nil))
+			require.NoError(t, err)
+			assert.Len(t, acls, tt.expectACLsRemain, "remaining ACL count mismatch")
+
+			// Verify per-switch ACL counts
+			for switchName, expectedCount := range tt.expectSwitchACLs {
+				sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+					return s.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, sw, 1)
+				assert.Len(t, sw[0].ACLs, expectedCount,
+					"switch %s ACL count mismatch", switchName)
 			}
 		})
 	}

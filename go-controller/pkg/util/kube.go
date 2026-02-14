@@ -936,17 +936,6 @@ func ServiceNamespacedNameFromEndpointSlice(endpointSlice *discovery.EndpointSli
 	return k8stypes.NamespacedName{Namespace: endpointSlice.Namespace, Name: svcName}, nil
 }
 
-// isHostEndpoint determines if the given endpoint ip belongs to a host networked pod
-func IsHostEndpoint(endpointIPstr string) bool {
-	endpointIP := net.ParseIP(endpointIPstr)
-	for _, clusterNet := range config.Default.ClusterSubnets {
-		if clusterNet.CIDR.Contains(endpointIP) {
-			return false
-		}
-	}
-	return true
-}
-
 func getEndpointsFromEndpointSlices(endpointSlices []*discovery.EndpointSlice) []discovery.Endpoint {
 	endpoints := []discovery.Endpoint{}
 	for _, slice := range endpointSlices {
