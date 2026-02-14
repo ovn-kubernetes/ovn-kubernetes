@@ -175,6 +175,7 @@ type BridgeEIPAddrManager struct {
 	nodeName         string
 	bridgeName       string
 	nodeAnnotationMu sync.Mutex
+	annotationIPs    sets.Set[string]
 	eIPLister        egressiplisters.EgressIPLister
 	eIPInformer      cache.SharedIndexInformer
 	nodeLister       corev1listers.NodeLister
@@ -195,6 +196,7 @@ func NewBridgeEIPAddrManager(nodeName, bridgeName string, linkManager *linkmanag
 		nodeName:         nodeName,     // k8 node name
 		bridgeName:       bridgeName,   // bridge name for which EIP IPs are managed
 		nodeAnnotationMu: sync.Mutex{}, // mu for updating Node annotation
+		annotationIPs:    sets.New[string](),
 		eIPLister:        eIPInformer.Lister(),
 		eIPInformer:      eIPInformer.Informer(),
 		nodeLister:       nodeInformer.Lister(),
@@ -305,6 +307,9 @@ func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 	if err != nil {
 		return fmt.Errorf("failed to sync EgressIP gateway config because unable to get Node annotation: %v", err)
 	}
+	g.nodeAnnotationMu.Lock()
+	g.annotationIPs = sets.New[string](getIPsStr(annotIPs...)...)
+	g.nodeAnnotationMu.Unlock()
 	configs := markIPs{v4: map[int]string{}, v6: map[int]string{}}
 	for _, obj := range objs {
 		eip, ok := obj.(*egressipv1.EgressIP)
@@ -349,36 +354,42 @@ func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 	return nil
 }
 
-// addIPToAnnotation adds an address to the collection of existing addresses stored in the nodes annotation. Caller
-// may repeat addition of addresses without care for duplicate addresses being added.
-func (g *BridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
-	g.nodeAnnotationMu.Lock()
-	defer g.nodeAnnotationMu.Unlock()
+// updateAnnotationLocked updates the node's egress IPs
+// Must be called with nodeAnnotationMu locked
+func (g *BridgeEIPAddrManager) updateAnnotationLocked(updatedIPs sets.Set[string]) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		node, err := g.nodeLister.Get(g.nodeName)
 		if err != nil {
 			return err
 		}
-		existingIPsStr, err := util.ParseNodeBridgeEgressIPsAnnotation(node)
-		if err != nil {
-			if util.IsAnnotationNotSetError(err) {
-				existingIPsStr = make([]string, 0)
-			} else {
-				return fmt.Errorf("failed to parse annotation key %q from node object: %v", util.OVNNodeBridgeEgressIPs, err)
-			}
-		}
-		existingIPsSet := sets.New[string](existingIPsStr...)
-		candidateIPStr := candidateIP.String()
-		if existingIPsSet.Has(candidateIPStr) {
-			return nil
-		}
-		patch, err := json.Marshal(existingIPsSet.Insert(candidateIPStr).UnsortedList())
+		patch, err := json.Marshal(updatedIPs.UnsortedList())
 		if err != nil {
 			return err
 		}
-		node.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
-		return g.kube.UpdateNodeStatus(node)
+		nodeToUpdate := node.DeepCopy()
+		if nodeToUpdate.Annotations == nil {
+			nodeToUpdate.Annotations = map[string]string{}
+		}
+		nodeToUpdate.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
+		return g.kube.UpdateNodeStatus(nodeToUpdate)
 	})
+}
+
+// addIPToAnnotation adds an address to the collection of existing addresses stored in the nodes annotation. Caller
+// may repeat addition of addresses without care for duplicate addresses being added.
+func (g *BridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
+	g.nodeAnnotationMu.Lock()
+	defer g.nodeAnnotationMu.Unlock()
+	updatedIPs := sets.New[string](g.annotationIPs.UnsortedList()...)
+	updatedIPs.Insert(candidateIP.String())
+	if updatedIPs.Equal(g.annotationIPs) {
+		return nil
+	}
+	if err := g.updateAnnotationLocked(updatedIPs); err != nil {
+		return err
+	}
+	g.annotationIPs = updatedIPs
+	return nil
 }
 
 // deleteIPsFromAnnotation deletes address from annotation. If multiple users, callers must synchronise.
@@ -386,35 +397,17 @@ func (g *BridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
 func (g *BridgeEIPAddrManager) deleteIPsFromAnnotation(candidateIPs ...net.IP) error {
 	g.nodeAnnotationMu.Lock()
 	defer g.nodeAnnotationMu.Unlock()
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		node, err := g.nodeLister.Get(g.nodeName)
-		if err != nil {
-			return err
-		}
-		existingIPsStr, err := util.ParseNodeBridgeEgressIPsAnnotation(node)
-		if err != nil {
-			if util.IsAnnotationNotSetError(err) {
-				existingIPsStr = make([]string, 0)
-			} else {
-				return fmt.Errorf("failed to parse annotation key %q from node object: %v", util.OVNNodeBridgeEgressIPs, err)
-			}
-		}
-		if len(existingIPsStr) == 0 {
-			return nil
-		}
-		existingIPsSet := sets.New[string](existingIPsStr...)
-		candidateIPsStr := getIPsStr(candidateIPs...)
-		if !existingIPsSet.HasAny(candidateIPsStr...) {
-			return nil
-		}
-		existingIPsSet.Delete(candidateIPsStr...)
-		patch, err := json.Marshal(existingIPsSet.UnsortedList())
-		if err != nil {
-			return err
-		}
-		node.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
-		return g.kube.UpdateNodeStatus(node)
-	})
+	candidateIPsStr := getIPsStr(candidateIPs...)
+	updatedIPs := sets.New[string](g.annotationIPs.UnsortedList()...)
+	updatedIPs.Delete(candidateIPsStr...)
+	if updatedIPs.Equal(g.annotationIPs) {
+		return nil
+	}
+	if err := g.updateAnnotationLocked(updatedIPs); err != nil {
+		return err
+	}
+	g.annotationIPs = updatedIPs
+	return nil
 }
 
 func (g *BridgeEIPAddrManager) addIPBridge(ip net.IP) error {

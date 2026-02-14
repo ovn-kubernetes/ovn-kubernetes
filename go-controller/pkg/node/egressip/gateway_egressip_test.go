@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -72,9 +73,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			isUpdated, err := addrMgr.AddEgressIP(eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.ConsistOf(ipV4Addr))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(ipV4Addr))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 		})
@@ -122,9 +125,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			isUpdated, err := addrMgr.AddEgressIP(eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.ConsistOf(ipV4Addr, ipV4Addr2))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(ipV4Addr, ipV4Addr2))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 		})
@@ -164,9 +169,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			isUpdated, err := addrMgr.UpdateEgressIP(unassignedEIP, assignedEIP)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.ConsistOf(ipV4Addr))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(ipV4Addr))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 		})
@@ -189,9 +196,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			isUpdated, err = addrMgr.UpdateEgressIP(assignedEIP, unassignedEIP)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).ShouldNot(gomega.ConsistOf(ipV4Addr))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).ShouldNot(gomega.ConsistOf(ipV4Addr))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrDel", nlLinkMock,
@@ -250,9 +259,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			isUpdated, err = addrMgr.DeleteEgressIP(eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).ShouldNot(gomega.ConsistOf(ipV4Addr))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).ShouldNot(gomega.ConsistOf(ipV4Addr))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrDel", nlLinkMock,
@@ -290,9 +301,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			eipUnassigned3 := getEIPNotAssignedToNode(mark3, ipV4Addr3)
 			err := addrMgr.SyncEgressIP([]interface{}{eipAssigned1, eipAssigned2, eipUnassigned3})
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process valid EgressIPs")
-			node, err := addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.ConsistOf(ipV4Addr, ipV4Addr2))
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(ipV4Addr, ipV4Addr2))
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
@@ -374,9 +387,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 
 			// Verify cleanup: secondary IP removed from cache, annotation, and bridge
 			gomega.Expect(addrMgr.cache.IsIPPresent(net.ParseIP(secondaryIP))).Should(gomega.BeFalse(), "secondary IP should be removed from cache")
-			node, err = addrMgr.nodeLister.Get(nodeName)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.ConsistOf(ipV4Addr), "only valid OVN IP should be in annotation")
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(ipV4Addr), "only valid OVN IP should be in annotation")
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrDel", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(secondaryIP), bridgeLinkIndex))).Should(gomega.BeTrue(), "should delete secondary IP from bridge")
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
@@ -411,8 +426,17 @@ func initBridgeEIPAddrManagerWithHostCIDRs(nodeName, bridgeName string, bridgeEI
 	gomega.Expect(watchFactory.Start()).Should(gomega.Succeed(), "watch factory should start")
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "watch factory creation must succeed")
 	linkManager := linkmanager.NewController(nodeName, true, true, nil)
-	return NewBridgeEIPAddrManager(nodeName, bridgeName, linkManager, &kube.Kube{KClient: client}, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer()),
-		watchFactory.Shutdown
+	addrMgr := NewBridgeEIPAddrManager(nodeName, bridgeName, linkManager, &kube.Kube{KClient: client}, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
+	initialAnnotIPs, err := util.ParseNodeBridgeEgressIPsAnnotation(node)
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			initialAnnotIPs = make([]string, 0)
+		} else {
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "bridge EgressIP annotation should be parseable")
+		}
+	}
+	addrMgr.annotationIPs = sets.New[string](initialAnnotIPs...)
+	return addrMgr, watchFactory.Shutdown
 }
 
 func getEIPAssignedToNode(nodeName, mark, assignedIP string) *egressipv1.EgressIP {
