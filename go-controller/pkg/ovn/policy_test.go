@@ -246,7 +246,8 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 		hashedASName, _ := getMultinetNsAddrSetHashNames(nsName, controllerName)
 		hashedASNames = append(hashedASNames, hashedASName)
 	}
-	ipBlocks := []string{}
+	var ipBlocksAllow []string
+	var ipBlocksExcept []string
 	for _, peer := range peers {
 		// follow the algorithm from setupGressPolicy
 		if (peer.NamespaceSelector != nil || peer.PodSelector != nil) && !useNamespaceAddrSet(peer) {
@@ -260,7 +261,8 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 			hashedASNames = append(hashedASNames, asv4)
 		}
 		if peer.IPBlock != nil {
-			ipBlocks = append(ipBlocks, peer.IPBlock.CIDR)
+			ipBlocksAllow = append(ipBlocksAllow, peer.IPBlock.CIDR)
+			ipBlocksExcept = append(ipBlocksExcept, peer.IPBlock.Except...)
 		}
 	}
 	gp := gressPolicy{
@@ -291,10 +293,22 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 		acl.UUID = dbIDs.String() + "-UUID"
 		acls = append(acls, acl)
 	}
-	for i, ipBlock := range ipBlocks {
-		match := fmt.Sprintf("ip4.%s == %s && %s == @%s", ipDir, ipBlock, portDir, pgName)
+	if len(ipBlocksAllow) > 0 {
+		allowDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockAllow)
+		ipBlockAllowHashV4, _ := addressset.GetHashNamesForAS(allowDbIDs)
+
+		match := fmt.Sprintf("ip4.%s == $%s", ipDir, ipBlockAllowHashV4)
+
+		if len(ipBlocksExcept) > 0 {
+			exceptDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockExcept)
+			ipBlockExceptHashV4, _ := addressset.GetHashNamesForAS(exceptDbIDs)
+			match = fmt.Sprintf("(%s && ip4.%s != $%s) && %s == @%s",
+				match, ipDir, ipBlockExceptHashV4, portDir, pgName)
+		} else {
+			match = fmt.Sprintf("%s && %s == @%s", match, portDir, pgName)
+		}
 		action := allowAction(params.statelessNetPol)
-		dbIDs := gp.getNetpolACLDbIDs(i, libovsdbutil.UnspecifiedL4Protocol)
+		dbIDs := gp.getNetpolACLDbIDs(ipBlockCombinedIdx, libovsdbutil.UnspecifiedL4Protocol)
 		acl := libovsdbops.BuildACL(
 			libovsdbutil.GetACLName(dbIDs),
 			direction,
@@ -380,6 +394,50 @@ func getPolicyData(params *netpolDataParams) []libovsdbtest.TestData {
 		data = append(data, acl)
 	}
 	data = append(data, pg)
+
+	controllerName := getNetworkControllerName(params.netInfo.GetNetworkName())
+	for i, ingress := range params.networkPolicy.Spec.Ingress {
+		var allowCIDRs, exceptCIDRs []string
+		for _, peer := range ingress.From {
+			if peer.IPBlock != nil {
+				allowCIDRs = append(allowCIDRs, peer.IPBlock.CIDR)
+				exceptCIDRs = append(exceptCIDRs, peer.IPBlock.Except...)
+			}
+		}
+		if len(allowCIDRs) > 0 {
+			gp := &gressPolicy{
+				policyNamespace: params.networkPolicy.Namespace,
+				policyName:      params.networkPolicy.Name,
+				policyType:      knet.PolicyTypeIngress,
+				idx:             i,
+				controllerName:  controllerName,
+			}
+			ipBlockAS := buildIPBlockAddressSets(gp, allowCIDRs, exceptCIDRs)
+			data = append(data, ipBlockAS...)
+		}
+	}
+
+	for i, egress := range params.networkPolicy.Spec.Egress {
+		var allowCIDRs, exceptCIDRs []string
+		for _, peer := range egress.To {
+			if peer.IPBlock != nil {
+				allowCIDRs = append(allowCIDRs, peer.IPBlock.CIDR)
+				exceptCIDRs = append(exceptCIDRs, peer.IPBlock.Except...)
+			}
+		}
+		if len(allowCIDRs) > 0 {
+			gp := &gressPolicy{
+				policyNamespace: params.networkPolicy.Namespace,
+				policyName:      params.networkPolicy.Name,
+				policyType:      knet.PolicyTypeEgress,
+				idx:             i,
+				controllerName:  controllerName,
+			}
+			ipBlockAS := buildIPBlockAddressSets(gp, allowCIDRs, exceptCIDRs)
+			data = append(data, ipBlockAS...)
+		}
+	}
+
 	return data
 }
 
@@ -594,6 +652,34 @@ func buildNetworkPolicyAddressSets(networkPolicy *knet.NetworkPolicy) []libovsdb
 			}
 		}
 	}
+	return addressSets
+}
+
+func buildIPBlockAddressSets(gp *gressPolicy, allowCIDRs, exceptCIDRs []string) []libovsdbtest.TestData {
+	var addressSets []libovsdbtest.TestData
+
+	if len(allowCIDRs) > 0 {
+		allowDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockAllow)
+		allowASv4, allowASv6 := addressset.GetTestDbAddrSets(allowDbIDs, allowCIDRs)
+		if config.IPv4Mode {
+			addressSets = append(addressSets, allowASv4)
+		}
+		if config.IPv6Mode {
+			addressSets = append(addressSets, allowASv6)
+		}
+	}
+
+	if len(exceptCIDRs) > 0 {
+		exceptDbIDs := gp.getIPBlockAddrSetDbIDs(ipBlockExcept)
+		exceptASv4, exceptASv6 := addressset.GetTestDbAddrSets(exceptDbIDs, exceptCIDRs)
+		if config.IPv4Mode {
+			addressSets = append(addressSets, exceptASv4)
+		}
+		if config.IPv6Mode {
+			addressSets = append(addressSets, exceptASv6)
+		}
+	}
+
 	return addressSets
 }
 

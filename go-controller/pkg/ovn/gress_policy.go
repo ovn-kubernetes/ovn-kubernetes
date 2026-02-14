@@ -22,6 +22,10 @@ import (
 const (
 	// emptyIdx is used to create ACL for gressPolicy that doesn't have ipBlocks
 	emptyIdx = -1
+	// ipBlockCombinedIdx is used to create ACL for gressPolicy that have ipBlocks
+	ipBlockCombinedIdx = -2
+	ipBlockAllow       = "allow"
+	ipBlockExcept      = "except"
 )
 
 type gressPolicy struct {
@@ -55,6 +59,12 @@ type gressPolicy struct {
 	// supported IP mode
 	ipv4Mode bool
 	ipv6Mode bool
+
+	// IPv4 and IPv6 allow and except CIDRs hash names
+	ipv4BlockAllow  string
+	ipv6BlockAllow  string
+	ipv4BlockExcept string
+	ipv6BlockExcept string
 }
 
 func newGressPolicy(policyType knet.PolicyType, idx int, namespace, name, controllerName string, isNetPolStateless bool, netInfo util.NetInfo) *gressPolicy {
@@ -167,14 +177,14 @@ func (gp *gressPolicy) allIPsMatch() string {
 	}
 }
 
-func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) []string {
+func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) string {
 	var direction string
 	if gp.policyType == knet.PolicyTypeIngress {
 		direction = "src"
 	} else {
 		direction = "dst"
 	}
-	var matchStrings []string
+	var ipBlockMatches []string
 	var matchStr, ipVersion string
 	for _, ipBlock := range gp.ipBlocks {
 		if utilnet.IsIPv6CIDRString(ipBlock.CIDR) {
@@ -185,17 +195,76 @@ func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) []string 
 		if len(ipBlock.Except) == 0 {
 			matchStr = fmt.Sprintf("%s.%s == %s", ipVersion, direction, ipBlock.CIDR)
 		} else {
-			matchStr = fmt.Sprintf("%s.%s == %s && %s.%s != {%s}", ipVersion, direction, ipBlock.CIDR,
+			matchStr = fmt.Sprintf("(%s.%s == %s && %s.%s != {%s})", ipVersion, direction, ipBlock.CIDR,
 				ipVersion, direction, strings.Join(ipBlock.Except, ", "))
 		}
-		if l4Match == libovsdbutil.UnspecifiedL4Match {
-			matchStr = fmt.Sprintf("%s && %s", matchStr, lportMatch)
-		} else {
-			matchStr = fmt.Sprintf("%s && %s && %s", matchStr, l4Match, lportMatch)
-		}
-		matchStrings = append(matchStrings, matchStr)
+		ipBlockMatches = append(ipBlockMatches, matchStr)
 	}
-	return matchStrings
+
+	if len(ipBlockMatches) == 0 {
+		return ""
+	}
+
+	var l3Match string
+	if len(ipBlockMatches) == 1 {
+		l3Match = ipBlockMatches[0]
+	} else {
+		l3Match = fmt.Sprintf("(%s)", strings.Join(ipBlockMatches, " || "))
+	}
+
+	if l4Match == libovsdbutil.UnspecifiedL4Match {
+		return fmt.Sprintf("%s && %s", l3Match, lportMatch)
+	}
+	return fmt.Sprintf("%s && %s && %s", l3Match, l4Match, lportMatch)
+}
+
+func (gp *gressPolicy) getL3MatchFromIPBlockAddressSets(l4Match, lportMatch string) string {
+	var direction string
+	if gp.policyType == knet.PolicyTypeIngress {
+		direction = "src"
+	} else {
+		direction = "dst"
+	}
+
+	var v4Match, v6Match string
+
+	if gp.ipv4Mode && gp.ipv4BlockAllow != "" {
+		v4AllowMatch := fmt.Sprintf("ip4.%s == $%s", direction, gp.ipv4BlockAllow)
+		if gp.ipv4BlockExcept != "" {
+			v4Match = fmt.Sprintf("(%s && ip4.%s != $%s)",
+				v4AllowMatch, direction, gp.ipv4BlockExcept)
+		} else {
+			v4Match = v4AllowMatch
+		}
+	}
+
+	if gp.ipv6Mode && gp.ipv6BlockAllow != "" {
+		v6AllowMatch := fmt.Sprintf("ip6.%s == $%s", direction, gp.ipv6BlockAllow)
+		if gp.ipv6BlockExcept != "" {
+			v6Match = fmt.Sprintf("(%s && ip6.%s != $%s)",
+				v6AllowMatch, direction, gp.ipv6BlockExcept)
+		} else {
+			v6Match = v6AllowMatch
+		}
+	}
+
+	var l3Match string
+	if v4Match != "" && v6Match != "" {
+		l3Match = fmt.Sprintf("(%s || %s)", v4Match, v6Match)
+	} else if v4Match != "" {
+		l3Match = v4Match
+	} else if v6Match != "" {
+		l3Match = v6Match
+	}
+
+	if l3Match == "" {
+		return ""
+	}
+
+	if l4Match == libovsdbutil.UnspecifiedL4Match {
+		return fmt.Sprintf("%s && %s", l3Match, lportMatch)
+	}
+	return fmt.Sprintf("%s && %s && %s", l3Match, l4Match, lportMatch)
 }
 
 // addNamespaceAddressSet adds a namespace address set to the gress policy.
@@ -284,13 +353,30 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	}
 	for protocol, l4Match := range libovsdbutil.GetL4MatchesFromNetworkPolicyPorts(gp.portPolicies) {
 		if len(gp.ipBlocks) > 0 {
-			// Add ACL allow rule for IPBlock CIDR
-			ipBlockMatches := gp.getMatchFromIPBlock(lportMatch, l4Match)
-			for ipBlockIdx, ipBlockMatch := range ipBlockMatches {
-				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol)
-				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, ipBlockMatch, action,
-					aclLogging, gp.aclPipeline)
-				createdACLs = append(createdACLs, acl)
+			// Add ACL allow rule for IPBlock CIDRs
+			var match string
+			// Use address sets if IP modes are enabled
+			if gp.ipv4Mode || gp.ipv6Mode {
+				match = gp.getL3MatchFromIPBlockAddressSets(l4Match, lportMatch)
+			} else {
+				// Fallback for scenarios without IP modes
+				match = gp.getMatchFromIPBlock(lportMatch, l4Match)
+			}
+			if match == "" {
+				continue
+			}
+			aclIDs := gp.getNetpolACLDbIDs(ipBlockCombinedIdx, protocol)
+			acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority,
+				match, action, aclLogging, gp.aclPipeline)
+			createdACLs = append(createdACLs, acl)
+			// we created one ACL per ipBlock with their indexes
+			// Now we use ipBlockCombinedIdx (-2) for all ipBlocks
+			// so legacy ACLs should be removed
+			for i := range gp.ipBlocks {
+				legacyACLIDs := gp.getNetpolACLDbIDs(i, protocol)
+				legacyACL := libovsdbutil.BuildACLWithDefaultTier(legacyACLIDs, types.DefaultAllowPriority,
+					"", action, aclLogging, gp.aclPipeline)
+				skippedACLs = append(skippedACLs, legacyACL)
 			}
 		}
 		// if there are pod/namespace selector, then allow packets from/to that address_set or
@@ -345,4 +431,21 @@ func (gp *gressPolicy) getNetpolACLDbIDs(ipBlockIdx int, protocol string) *libov
 			// protocol key
 			libovsdbops.PortPolicyProtocolKey: protocol,
 		})
+}
+
+func (gp *gressPolicy) getIPBlockAddrSetDbIDs(asType string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(
+		libovsdbops.AddressSetNetworkPolicyIPBlock,
+		gp.controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			// policy namespace+name
+			libovsdbops.ObjectNameKey: libovsdbops.BuildNamespaceNameKey(gp.policyNamespace, gp.policyName),
+			// egress or ingress
+			libovsdbops.PolicyDirectionKey: string(gp.policyType),
+			// gress policy index
+			libovsdbops.GressIdxKey: strconv.Itoa(gp.idx),
+			// "allow" or "except"
+			libovsdbops.TypeKey: asType,
+		},
+	)
 }
