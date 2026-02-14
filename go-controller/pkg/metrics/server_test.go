@@ -654,6 +654,7 @@ func TestHandleMetrics(t *testing.T) {
 				"ovn_controller_txn_try_again",
 				"ovn_controller_txn_unchanged",
 				"ovn_controller_txn_uncommitted",
+				"ovn_controller_udn_nbdb_programmed_duration_seconds",
 				"ovn_controller_vconn_open",
 				"ovn_controller_vconn_received",
 				"ovn_controller_vconn_sent",
