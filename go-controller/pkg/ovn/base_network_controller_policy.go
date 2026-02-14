@@ -1307,7 +1307,6 @@ func (bnc *BaseNetworkController) deleteNetworkPolicy(policy *knet.NetworkPolicy
 	err := bnc.networkPolicies.DoWithLock(npKey, func(npKey string) error {
 		np, ok := bnc.networkPolicies.Load(npKey)
 		if !ok {
-			klog.Infof("Deleting policy %s that is already deleted", npKey)
 			return nil
 		}
 		if err := bnc.cleanupNetworkPolicy(np); err != nil {

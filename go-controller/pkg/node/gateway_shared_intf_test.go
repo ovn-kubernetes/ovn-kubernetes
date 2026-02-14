@@ -10,8 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -21,6 +20,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
+	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -38,14 +39,24 @@ type mockNetworkManagerWithNamespaceNotFoundError struct {
 	networkmanager.Interface
 }
 
-func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
-	notFoundErr := apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, namespace)
-	return nil, fmt.Errorf("failed to get namespace %q: %w", namespace, notFoundErr)
+func (m *mockNetworkManagerWithNamespaceNotFoundError) GetPrimaryNADForNamespace(_ string) (string, error) {
+	// Simulate namespace deletion: no primary NAD by definition.
+	return "", nil
+}
+
+func (m *mockNetworkManagerWithNamespaceNotFoundError) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
+	// Namespace is gone; new GetActiveNetworkForNamespace semantics return nil, nil.
+	return nil, nil
 }
 
 // mockNetworkManagerWithInvalidPrimaryNetworkError simulates UDN deletion scenario
 type mockNetworkManagerWithInvalidPrimaryNetworkError struct {
 	networkmanager.Interface
+}
+
+func (m *mockNetworkManagerWithInvalidPrimaryNetworkError) GetPrimaryNADForNamespace(_ string) (string, error) {
+	// just a trigger to ensure GetActiveNetworkForNamespace gets called
+	return types.DefaultNetworkName, nil
 }
 
 func (m *mockNetworkManagerWithInvalidPrimaryNetworkError) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
@@ -57,8 +68,72 @@ type mockNetworkManagerWithError struct {
 	networkmanager.Interface
 }
 
+func (m *mockNetworkManagerWithError) GetPrimaryNADForNamespace(_ string) (string, error) {
+	// just a trigger to ensure GetActiveNetworkForNamespace gets called
+	return types.DefaultNetworkName, nil
+}
+
 func (m *mockNetworkManagerWithError) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	return nil, fmt.Errorf("network lookup failed for namespace %q", namespace)
+}
+
+// mockNetworkManagerWithInvalidPrimaryNetworkSkip simulates a namespace that
+// requires a primary UDN but is currently in invalid primary network state.
+type mockNetworkManagerWithInvalidPrimaryNetworkSkip struct {
+	networkmanager.Interface
+}
+
+func (m *mockNetworkManagerWithInvalidPrimaryNetworkSkip) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	return "", util.NewInvalidPrimaryNetworkError(namespace)
+}
+
+func (m *mockNetworkManagerWithInvalidPrimaryNetworkSkip) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
+	return nil, util.NewInvalidPrimaryNetworkError(namespace)
+}
+
+// mockNetworkManagerWithInactiveNode simulates a UDN where the node is inactive for the network.
+type mockNetworkManagerWithInactiveNode struct {
+	networkmanager.Interface
+}
+
+func (m *mockNetworkManagerWithInactiveNode) GetPrimaryNADForNamespace(_ string) (string, error) {
+	return "test-namespace/test-nad", nil
+}
+
+func (m *mockNetworkManagerWithInactiveNode) GetNetworkNameForNADKey(_ string) string {
+	return "test-udn"
+}
+
+func (m *mockNetworkManagerWithInactiveNode) NodeHasNetwork(_, _ string) bool {
+	return false
+}
+
+func (m *mockNetworkManagerWithInactiveNode) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
+	// New code paths resolve activity directly via GetActiveNetworkForNamespace.
+	// Returning nil netInfo means "network not active on this node".
+	return nil, nil
+}
+
+// mockNetworkManagerWithActiveUDN simulates a UDN active on this node.
+type mockNetworkManagerWithActiveUDN struct {
+	networkmanager.Interface
+	netInfo util.NetInfo
+}
+
+func (m *mockNetworkManagerWithActiveUDN) GetPrimaryNADForNamespace(_ string) (string, error) {
+	return "test-namespace/test-nad", nil
+}
+
+func (m *mockNetworkManagerWithActiveUDN) GetNetworkNameForNADKey(_ string) string {
+	return m.netInfo.GetNetworkName()
+}
+
+func (m *mockNetworkManagerWithActiveUDN) NodeHasNetwork(_, _ string) bool {
+	return true
+}
+
+func (m *mockNetworkManagerWithActiveUDN) GetActiveNetworkForNamespace(_ string) (util.NetInfo, error) {
+	return m.netInfo, nil
 }
 
 // verifyIPTablesRule checks if an iptables rule exists and asserts the expected state
@@ -253,6 +328,156 @@ var _ = Describe("DeleteEndpointSlice", func() {
 
 			// iptables rules should be deleted even though namespace lookup failed
 			verifyIPTablesRule(iptV4, "10.96.0.10", 80, 30090, false, "iptables rule should be deleted even when namespace lookup fails")
+		})
+	})
+})
+
+var _ = Describe("SyncServices", func() {
+	var (
+		fakeClient *util.OVNNodeClientset
+		watcher    *factory.WatchFactory
+		npw        *nodePortWatcher
+		iptV4      util.IPTablesHelper
+		iptV6      util.IPTablesHelper
+	)
+
+	const (
+		nodeName      = "test-node"
+		testNamespace = "test-namespace"
+		testService   = "test-service"
+	)
+
+	BeforeEach(func() {
+		var err error
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Gateway.Mode = config.GatewayModeLocal
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+		_ = nodenft.SetFakeNFTablesHelper()
+
+		fakeClient = &util.OVNNodeClientset{
+			KubeClient: fake.NewSimpleClientset(),
+		}
+		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset()
+		fakeClient.NetworkAttchDefClient = nadfake.NewSimpleClientset()
+		fakeClient.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+
+		watcher, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		err = watcher.Start()
+		Expect(err).NotTo(HaveOccurred())
+
+		iptV4, iptV6 = util.SetFakeIPTablesHelpers()
+		npw = initFakeNodePortWatcher(iptV4, iptV6)
+		npw.watchFactory = watcher
+		npw.networkManager = networkmanager.Default().Interface()
+
+		k := &kube.Kube{KClient: fakeClient.KubeClient}
+		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, false)
+	})
+
+	AfterEach(func() {
+		watcher.Shutdown()
+	})
+
+	Context("when namespace has invalid primary network", func() {
+		It("should skip service sync without failing startup", func() {
+			service := newService(testService, testNamespace, "10.96.0.20",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30091,
+				}},
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			npw.networkManager = &mockNetworkManagerWithInvalidPrimaryNetworkSkip{}
+
+			err := npw.SyncServices([]interface{}{service})
+			Expect(err).NotTo(HaveOccurred())
+
+			verifyIPTablesRule(iptV4, "10.96.0.20", 80, 30091, false,
+				"iptables rule should not be created when primary network is invalid")
+		})
+	})
+
+	Context("when UDN is inactive on this node", func() {
+		It("should skip service sync without installing rules", func() {
+			service := newService(testService, testNamespace, "10.96.0.30",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30092,
+				}},
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			npw.networkManager = &mockNetworkManagerWithInactiveNode{}
+
+			err := npw.SyncServices([]interface{}{service})
+			Expect(err).NotTo(HaveOccurred())
+
+			verifyIPTablesRule(iptV4, "10.96.0.30", 80, 30092, false,
+				"iptables rule should not be created when UDN is inactive on this node")
+		})
+	})
+
+	Context("when UDN is active on this node", func() {
+		It("should install nodeport rules", func() {
+			// Avoid openflow dependency in this test.
+			config.Gateway.AllowNoUplink = true
+			npw.ofportPhys = ""
+
+			service := newService(testService, testNamespace, "10.96.0.40",
+				[]corev1.ServicePort{{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+					NodePort:   30093,
+				}},
+				corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+
+			nad := ovntest.GenerateNAD("test-udn", "test-nad", testNamespace, types.Layer3Topology, "10.1.0.0/16", types.NetworkRolePrimary)
+			netInfo, err := util.ParseNADInfo(nad)
+			Expect(err).NotTo(HaveOccurred())
+			npw.networkManager = &mockNetworkManagerWithActiveUDN{netInfo: netInfo}
+
+			nodeName := npw.nodeIPManager.nodeName
+			epPortName := "http"
+			epPortValue := int32(8080)
+			epPortProtocol := corev1.ProtocolTCP
+			epSlice := &discovery.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testService + "ab23",
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						types.LabelUserDefinedServiceName: testService,
+					},
+					Annotations: map[string]string{
+						types.UserDefinedNetworkEndpointSliceAnnotation: netInfo.GetNetworkName(),
+					},
+				},
+				AddressType: discovery.AddressTypeIPv4,
+				Endpoints: []discovery.Endpoint{{
+					Addresses: []string{"10.244.0.9"},
+					NodeName:  &nodeName,
+				}},
+				Ports: []discovery.EndpointPort{{
+					Name:     &epPortName,
+					Protocol: &epPortProtocol,
+					Port:     &epPortValue,
+				}},
+			}
+			Expect(watcher.EndpointSliceInformer().GetStore().Add(epSlice)).To(Succeed())
+
+			err = npw.SyncServices([]interface{}{service})
+			Expect(err).NotTo(HaveOccurred())
+
+			verifyIPTablesRule(iptV4, "10.96.0.40", 80, 30093, true,
+				"iptables rule should be created when UDN is active on this node")
 		})
 	})
 })

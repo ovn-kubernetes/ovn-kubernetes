@@ -110,7 +110,7 @@ type matchKind int
 type cacheEntry struct {
 	pgName            string
 	hasNodeSelector   bool
-	subnetsKey        string
+	subnets           []*net.IPNet
 	efResourceVersion string
 	logHash           string
 }
@@ -422,20 +422,15 @@ func (oc *EFController) sync(key string) (updateErr error) {
 		}()
 
 		activeNetwork, netErr := oc.networkManager.GetActiveNetworkForNamespace(namespace)
-		if netErr != nil {
-			if util.IsUnprocessedActiveNetworkError(netErr) {
-				klog.V(5).Infof("Skipping egress firewall %s/%s: primary network not ready: %v", namespace, efName, netErr)
-				skipStatusUpdate = true
-				return nil
-			}
-			if util.IsInvalidPrimaryNetworkError(netErr) {
-				// Namespace requires P-UDN, but it does not exist. Remove EF config and surface error in status.
-				updateErr = netErr
-			} else {
-				return fmt.Errorf("failed to get active network for egress firewall %s/%s namespace: %w",
-					namespace, efName, netErr)
-			}
-		} else {
+		switch {
+		case netErr != nil:
+			// Failed to resolve active network; surface this in EF status.
+			updateErr = netErr
+		case activeNetwork == nil:
+			// No active network for this namespace in this controller context (e.g. filtered by D-UDN):
+			// cleanup stale EF config but don't report an EF status error.
+			skipStatusUpdate = true
+		default:
 			aclLoggingLevels, logErr := oc.getNamespaceACLLogging(namespace)
 			if logErr != nil {
 				return fmt.Errorf("failed to get acl logging levels for egress firewall %s/%s: %w",
@@ -444,7 +439,7 @@ func (oc *EFController) sync(key string) (updateErr error) {
 			ownerController := activeNetwork.GetNetworkName() + "-network-controller"
 			newEntry = &cacheEntry{
 				pgName:            libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController)),
-				subnetsKey:        subnetsKeyForNetInfo(activeNetwork),
+				subnets:           subnetsForNetInfo(activeNetwork),
 				efResourceVersion: ef.ResourceVersion,
 				logHash:           aclLogHash(aclLoggingLevels),
 			}
@@ -540,20 +535,19 @@ func (oc *EFController) sync(key string) (updateErr error) {
 	return
 }
 
-func subnetsKeyForNetInfo(netInfo util.NetInfo) string {
+func subnetsForNetInfo(netInfo util.NetInfo) []*net.IPNet {
 	if netInfo == nil {
-		return ""
+		return nil
 	}
 	subnets := netInfo.Subnets()
-	if len(subnets) == 0 {
-		return ""
+	unsortedSubnets := make([]*net.IPNet, 0, len(subnets))
+	for _, subnet := range subnets {
+		if subnet.CIDR == nil {
+			continue
+		}
+		unsortedSubnets = append(unsortedSubnets, subnet.CIDR)
 	}
-	keys := make([]string, 0, len(subnets))
-	for _, s := range subnets {
-		keys = append(keys, s.String())
-	}
-	slices.Sort(keys)
-	return strings.Join(keys, ",")
+	return util.CopyIPNets(unsortedSubnets)
 }
 
 func entriesEqual(a, b *cacheEntry) bool {
@@ -564,7 +558,7 @@ func entriesEqual(a, b *cacheEntry) bool {
 		return false
 	default:
 		return a.pgName == b.pgName &&
-			a.subnetsKey == b.subnetsKey &&
+			util.IsIPNetsEqual(a.subnets, b.subnets) &&
 			a.efResourceVersion == b.efResourceVersion &&
 			a.logHash == b.logHash
 	}
@@ -624,7 +618,7 @@ func (oc *EFController) addEgressFirewall(egressFirewall *egressfirewallapi.Egre
 
 // validateAndGetEgressFirewallDestination validates an egress firewall rule destination and returns
 // the parsed contents of the destination.
-func (oc *EFController) validateAndGetEgressFirewallDestination(namespace string, egressFirewallDestination egressfirewallapi.EgressFirewallDestination) (
+func (oc *EFController) validateAndGetEgressFirewallDestination(namespace string, egressFirewallDestination egressfirewallapi.EgressFirewallDestination, entry *cacheEntry) (
 	cidrSelector string,
 	dnsName string,
 	clusterSubnetIntersection []*net.IPNet,
@@ -644,15 +638,13 @@ func (oc *EFController) validateAndGetEgressFirewallDestination(namespace string
 			return "", "", nil, nil, err
 		}
 		cidrSelector = egressFirewallDestination.CIDRSelector
-		netInfo, err := oc.networkManager.GetActiveNetworkForNamespace(namespace)
-		if err != nil {
-			return "", "", nil, nil,
-				fmt.Errorf("failed to validate egress firewall destination: %w", err)
+		if entry == nil || entry.subnets == nil {
+			return "", "", nil, nil, fmt.Errorf("failed to "+
+				"validate egress firewall destination: missing cached subnets for namespace %s", namespace)
 		}
-		subnets := netInfo.Subnets()
-		for _, clusterSubnet := range subnets {
-			if clusterSubnet.CIDR.Contains(ipNet.IP) || ipNet.Contains(clusterSubnet.CIDR.IP) {
-				clusterSubnetIntersection = append(clusterSubnetIntersection, clusterSubnet.CIDR)
+		for _, clusterSubnet := range entry.subnets {
+			if clusterSubnet.Contains(ipNet.IP) || ipNet.Contains(clusterSubnet.IP) {
+				clusterSubnetIntersection = append(clusterSubnetIntersection, clusterSubnet)
 			}
 		}
 	} else {
@@ -680,7 +672,7 @@ func (oc *EFController) newEgressFirewallRule(namespace string, rawEgressFirewal
 	// fields of efr.
 	var err error
 	efr.to.cidrSelector, efr.to.dnsName, efr.to.clusterSubnetIntersection, efr.to.nodeSelector, err =
-		oc.validateAndGetEgressFirewallDestination(namespace, rawEgressFirewallRule.To)
+		oc.validateAndGetEgressFirewallDestination(namespace, rawEgressFirewallRule.To, entry)
 	if err != nil {
 		return efr, err
 	}
@@ -948,8 +940,8 @@ func (oc *EFController) moveACLsToNamespacedPortGroups(existingEFNamespaces map[
 			if namespace != "" && existingEFNamespaces[namespace] {
 				pgName, err := oc.getNamespacePortGroupName(namespace)
 				if err != nil {
-					return fmt.Errorf("failed to get port group name for egress firewall ACL move with "+
-						"namespace: %s, err: %w", namespace, err)
+					klog.Warningf("Skipping egress firewall ACL move for namespace %s: %v", namespace, err)
+					continue
 				}
 				// re-attach from ClusterPortGroupNameBase to namespaced port group.
 				// port group should exist, because namespace handler will create it.
@@ -1088,11 +1080,18 @@ func getNamespacePortGroupDbIDs(ns string, controller string) *libovsdbops.DbObj
 }
 
 func (oc *EFController) getNamespacePortGroupName(namespace string) (string, error) {
-	activeNetwork, err := oc.networkManager.GetActiveNetworkForNamespace(namespace)
+	nadKey, err := oc.networkManager.GetPrimaryNADForNamespace(namespace)
 	if err != nil {
-		return "", fmt.Errorf("failed to get active network for namespace %s: %w", namespace, err)
+		return "", fmt.Errorf("failed to get primary NAD for namespace %s: %w", namespace, err)
 	}
-	ownerController := activeNetwork.GetNetworkName() + "-network-controller"
+	networkName := types.DefaultNetworkName
+	if nadKey != types.DefaultNetworkName && nadKey != "" {
+		networkName = oc.networkManager.GetNetworkNameForNADKey(nadKey)
+		if networkName == "" {
+			return "", fmt.Errorf("failed to resolve network name for NAD %s in namespace %s", nadKey, namespace)
+		}
+	}
+	ownerController := networkName + "-network-controller"
 	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController)), nil
 }
 

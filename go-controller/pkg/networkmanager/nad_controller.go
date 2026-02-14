@@ -31,7 +31,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-	utiludn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/udn"
 )
 
 // nadController handles namespaced scoped NAD events and
@@ -839,6 +838,10 @@ func (c *nadController) nadNeedsUpdate(oldNAD, newNAD *nettypes.NetworkAttachmen
 		oldNAD.Annotations[types.OvnNetworkNameAnnotation] != newNAD.Annotations[types.OvnNetworkNameAnnotation]
 }
 
+// GetActiveNetworkForNamespace attempts to get the netInfo of a primary active network where this OVNK instance is running.
+// Returns DefaultNetwork if Network Segmentation disabled or namespace does not require primary UDN.
+// Returns nil if there is no active network.
+// Returns InvalidPrimaryNetworkError if a network should be present but is not.
 func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return &util.DefaultNetInfo{}, nil
@@ -847,6 +850,10 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 	// check if required UDN label is on namespace
 	ns, err := c.namespaceLister.Get(namespace)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// namespace is gone, no active network for it
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to get namespace %q: %w", namespace, err)
 	}
 	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; !exists {
@@ -854,49 +861,26 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 		return &util.DefaultNetInfo{}, nil
 	}
 
-	network, nad := c.getActiveNetworkForNamespace(namespace)
+	// primary UDN territory, check if our NAD controller to see if it has processed the network and if the
+	// network manager has rendered the network
+	network, primaryNAD := c.getActiveNetworkForNamespace(namespace)
 	if network != nil && network.IsPrimaryNetwork() {
-		// primary UDN found
+		// primary UDN network found in network controller
 		copy := util.NewMutableNetInfo(network)
-		copy.SetNADs(nad)
+		copy.SetNADs(primaryNAD)
 		return copy, nil
 	}
 
-	// no primary UDN found, make sure we just haven't processed it yet and no UDN / CUDN exists
-	udns, err := c.udnLister.UserDefinedNetworks(namespace).List(labels.Everything())
-	if err != nil {
-		return nil, fmt.Errorf("error getting user defined networks: %w", err)
-	}
-	for _, udn := range udns {
-		if utiludn.IsPrimaryNetwork(&udn.Spec) {
-			return nil, util.NewUnprocessedActiveNetworkError(namespace, udn.Name)
+	// no network exists in the network manager
+	if primaryNAD != "" {
+		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+			// primary NAD exists, no network, and DUDN is enabled, treat this like the network doesn't exist
+			return nil, nil
 		}
-	}
-	cudns, err := c.cudnLister.List(labels.Everything())
-	if err != nil {
-		return nil, fmt.Errorf("failed to list CUDNs: %w", err)
-	}
-	for _, cudn := range cudns {
-		if !utiludn.IsPrimaryNetwork(&cudn.Spec.Network) {
-			continue
-		}
-		// check the subject namespace referred by the specified namespace-selector
-		cudnNamespaceSelector, err := metav1.LabelSelectorAsSelector(&cudn.Spec.NamespaceSelector)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert CUDN %q namespaceSelector: %w", cudn.Name, err)
-		}
-		selectedNamespaces, err := c.namespaceLister.List(cudnNamespaceSelector)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list namespaces using selector %q: %w", cudnNamespaceSelector, err)
-		}
-		for _, ns := range selectedNamespaces {
-			if ns.Name == namespace {
-				return nil, util.NewUnprocessedActiveNetworkError(namespace, cudn.Name)
-			}
-		}
+		// primary NAD exists, but missing in network manager. This should never happen.
+		panic(fmt.Sprintf("NAD Controller broken consistency with Network Manager for primary NAD: %s", primaryNAD))
 	}
 
-	// namespace has required UDN label, but no UDN was found
 	return nil, util.NewInvalidPrimaryNetworkError(namespace)
 }
 
@@ -907,8 +891,11 @@ func (c *nadController) GetActiveNetworkForNamespaceFast(namespace string) util.
 
 // GetPrimaryNADForNamespace returns the full namespaced key of the
 // primary NAD for the given namespace, if one exists.
-// Returns default network if namespace has no primary UDN
+// Returns default network if namespace has no primary UDN or Network Segmentation is disabled
 func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	if !util.IsNetworkSegmentationSupportEnabled() {
+		return types.DefaultNetworkName, nil
+	}
 	c.RLock()
 	primary := c.primaryNADs[namespace]
 	c.RUnlock()
@@ -927,7 +914,7 @@ func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, err
 	}
 	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
 		// Namespace promises a primary UDN, but we haven't cached one yet.
-		return "", util.NewUnprocessedActiveNetworkError(namespace, "")
+		return "", util.NewInvalidPrimaryNetworkError(namespace)
 	}
 
 	// No required label: means default network only.

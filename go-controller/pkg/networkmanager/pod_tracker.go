@@ -191,7 +191,7 @@ func (c *PodTrackerController) getPrimaryNADForNamespaceFromLister(namespace str
 			return util.GetNADName(nad.Namespace, nad.Name), nil
 		}
 	}
-	return "", util.NewUnprocessedActiveNetworkError(namespace, "")
+	return "", util.NewInvalidPrimaryNetworkError(namespace)
 }
 
 // syncAll builds the cache on initial controller start

@@ -889,13 +889,14 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	}
 
 	klog.V(5).Infof("Adding service %s in namespace %s", service.Name, service.Namespace)
-
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
-			return nil
-		}
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
+	}
+
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	name := ktypes.NamespacedName{Namespace: service.Namespace, Name: service.Name}
@@ -977,10 +978,11 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
-			if util.IsInvalidPrimaryNetworkError(err) {
-				return utilerrors.Join(errors...)
-			}
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
 		}
 
 		if err = addServiceRules(new, netInfo, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw); err != nil {
@@ -1219,12 +1221,18 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		}
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
-		// The InvalidPrimaryNetworkError is returned when the UDN is not found because it has already been deleted.
-		if util.IsInvalidPrimaryNetworkError(err) {
+		if err != nil {
+			// During startup sync, avoid failing the entire processExisting loop for namespaces that
+			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
+			// be reconciled later via regular add/update events once the NAD exists.
+			if util.IsInvalidPrimaryNetworkError(err) {
+				continue
+			}
+			errors = append(errors, err)
 			continue
 		}
-		if err != nil {
-			errors = append(errors, err)
+		if netInfo == nil {
+			// network not active on our node
 			continue
 		}
 
@@ -1306,6 +1314,10 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(epSlice.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for endpointslice %s in namespace %s: %w", epSlice.Name, epSlice.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && !util.IsEndpointSliceForNetwork(epSlice, netInfo) {
@@ -1425,19 +1437,17 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 		// and allows graceful handling of deletion race conditions.
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
 		if err != nil {
-			// If the namespace was deleted, skip adding new service rules
-			if apierrors.IsNotFound(err) {
-				klog.V(5).Infof("Namespace not found for service %s/%s during endpoint slice delete, skipping adding service rules",
-					namespacedName.Namespace, namespacedName.Name)
-				return utilerrors.Join(errors...)
-			}
-			// If the UDN was deleted, skip adding new service rules
+			// If the UDN was deleted or not processed yet, skip adding new service rules
 			if util.IsInvalidPrimaryNetworkError(err) {
-				klog.V(5).Infof("Skipping addServiceRules for %s/%s during endpoint slice delete: primary network invalid: %v",
+				klog.V(5).Infof("Skipping addServiceRules for %s/%s during endpoint slice delete: primary network unavailable: %v",
 					namespacedName.Namespace, namespacedName.Name, err)
 				return utilerrors.Join(errors...)
 			}
 			errors = append(errors, fmt.Errorf("error getting active network for service %s/%s: %w", namespacedName.Namespace, namespacedName.Name, err))
+			return utilerrors.Join(errors...)
+		}
+		if netInfo == nil {
+			// network not active on our node
 			return utilerrors.Join(errors...)
 		}
 
@@ -1479,6 +1489,10 @@ func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discover
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(newEpSlice.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for endpointslice %s in namespace %s: %w", newEpSlice.Name, newEpSlice.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && !util.IsEndpointSliceForNetwork(newEpSlice, netInfo) {
@@ -1566,10 +1580,11 @@ func (npwipt *nodePortWatcherIptables) AddService(service *corev1.Service) error
 
 	netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
-			return nil
-		}
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if err := addServiceRules(service, netInfo, nil, false, nil); err != nil {
@@ -1597,10 +1612,11 @@ func (npwipt *nodePortWatcherIptables) UpdateService(old, new *corev1.Service) e
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
 		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
-			if util.IsInvalidPrimaryNetworkError(err) {
-				return utilerrors.Join(errors...)
-			}
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
 		}
 
 		if err = addServiceRules(new, netInfo, nil, false, nil); err != nil {
@@ -1640,6 +1656,21 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		}
 		// don't process headless service
 		if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
+			continue
+		}
+		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.GetNamespace())
+		if err != nil {
+			// During startup sync, avoid failing the entire processExisting loop for namespaces that
+			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
+			// be reconciled later via regular add/update events once the NAD exists.
+			if util.IsInvalidPrimaryNetworkError(err) {
+				continue
+			}
+			errors = append(errors, err)
+			continue
+		}
+		if netInfo == nil {
+			// network not on our node
 			continue
 		}
 		// Add correct iptables rules.

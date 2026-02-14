@@ -113,10 +113,16 @@ func (a *PodAllocator) Init() error {
 func (a *PodAllocator) getActiveNetworkForPod(pod *corev1.Pod) (util.NetInfo, error) {
 	activeNetwork, err := a.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 	if err != nil {
-		if util.IsUnprocessedActiveNetworkError(err) {
+		if util.IsInvalidPrimaryNetworkError(err) {
 			a.recordPodErrorEvent(pod, err)
 		}
 		return nil, err
+	}
+	// Cluster manager pod allocation should always have an active network
+	if activeNetwork == nil {
+		newErr := fmt.Errorf("no active network found for pod %s/%s", pod.Namespace, pod.Name)
+		a.recordPodErrorEvent(pod, newErr)
+		return nil, newErr
 	}
 	return activeNetwork, nil
 
@@ -131,7 +137,7 @@ func (a *PodAllocator) GetNetworkRole(pod *corev1.Pod) (string, error) {
 		pod,
 	)
 	if err != nil {
-		if util.IsUnprocessedActiveNetworkError(err) {
+		if util.IsInvalidPrimaryNetworkError(err) {
 			a.recordPodErrorEvent(pod, err)
 		}
 		return "", err

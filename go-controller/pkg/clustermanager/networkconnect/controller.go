@@ -407,16 +407,19 @@ func (c *Controller) mustProcessCNCForNAD(nad *nadv1.NetworkAttachmentDefinition
 					continue
 				}
 				for _, namespace := range namespaces {
-					primaryNAD, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+					nsPrimaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 					if err != nil {
-						if util.IsUnprocessedActiveNetworkError(err) || util.IsInvalidPrimaryNetworkError(err) {
+						if util.IsInvalidPrimaryNetworkError(err) {
 							continue
 						}
 						klog.Errorf("Failed to get active network for namespace %s: %v", namespace.Name, err)
 						continue
 					}
+					if nsPrimaryNetwork == nil {
+						continue
+					}
 					networkName := c.networkManager.GetNetworkNameForNADKey(nadKey)
-					if networkName != "" && networkName == primaryNAD.GetNetworkName() {
+					if networkName != "" && networkName == nsPrimaryNetwork.GetNetworkName() {
 						isSelected = true
 						break selectorLoop
 					}

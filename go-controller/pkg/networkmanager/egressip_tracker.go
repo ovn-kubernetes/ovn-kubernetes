@@ -250,7 +250,7 @@ func (t *EgressIPTrackerController) reconcileNamespace(key string) error {
 
 	primaryNAD, err := t.primaryNADForNamespace(ns.Name)
 	if err != nil {
-		if util.IsUnprocessedActiveNetworkError(err) {
+		if util.IsInvalidPrimaryNetworkError(err) {
 			// Namespace requires a primary network but none exists yet; NAD controller will requeue.
 			return nil
 		}
@@ -380,5 +380,5 @@ func (t *EgressIPTrackerController) getPrimaryNADForNamespaceFromLister(namespac
 	}
 
 	// The namespace declared it needs a primary UDN but none exists yet.
-	return "", util.NewUnprocessedActiveNetworkError(namespace, "")
+	return "", util.NewInvalidPrimaryNetworkError(namespace)
 }
