@@ -152,7 +152,7 @@ func (hca *hybridConnectSubnetAllocator) AddNetworkRange(network *net.IPNet, net
 
 	// Add this network range to the Layer3 allocator - each allocation gets a networkPrefix block
 	if err := hca.layer3Allocator.AddNetworkRange(network, networkPrefix); err != nil {
-		return fmt.Errorf("failed to add network range to Layer3 allocator: %v", err)
+		return fmt.Errorf("failed to add network range to Layer3 allocator: %w", err)
 	}
 
 	return nil
@@ -164,7 +164,7 @@ func (hca *hybridConnectSubnetAllocator) AddNetworkRange(network *net.IPNet, net
 func (hca *hybridConnectSubnetAllocator) AllocateLayer3Subnet(owner string) ([]*net.IPNet, error) {
 	subnets, err := hca.layer3Allocator.AllocateNetworks(owner)
 	if err != nil {
-		return nil, fmt.Errorf("Layer3 allocation failed for %s: %v", owner, err)
+		return nil, fmt.Errorf("Layer3 allocation failed for %s: %w", owner, err)
 	}
 	return subnets, nil
 }
@@ -186,19 +186,19 @@ func (hca *hybridConnectSubnetAllocator) AllocateLayer2Subnet(owner string) ([]*
 		return subnets, nil
 	}
 	if err != nil && !errors.Is(err, node.ErrSubnetAllocatorFull) {
-		return nil, fmt.Errorf("Layer2 allocation failed for %s: %v", owner, err)
+		return nil, fmt.Errorf("Layer2 allocation failed for %s: %w", owner, err)
 	}
 
 	// Current layer2 allocator is empty (no ranges added yet - lazy initialization) or
 	// full (ErrSubnetAllocatorFull) - expand it with new blocks and then allocate
 	if err := hca.expandLayer2Allocator(); err != nil {
-		return nil, fmt.Errorf("failed to expand Layer2 allocator: %v", err)
+		return nil, fmt.Errorf("failed to expand Layer2 allocator: %w", err)
 	}
 
 	// Retry allocation after expanding - this will come from the new block
 	subnets, err = hca.layer2Allocator.AllocateNetworks(owner)
 	if err != nil {
-		return nil, fmt.Errorf("Layer2 allocation failed after expansion for %s: %v", owner, err)
+		return nil, fmt.Errorf("Layer2 allocation failed after expansion for %s: %w", owner, err)
 	}
 
 	return subnets, nil
@@ -252,7 +252,7 @@ func (hca *hybridConnectSubnetAllocator) expandLayer2Allocator() error {
 
 	allocatedBlocks, err := hca.layer3Allocator.AllocateNetworks(blockOwnerName)
 	if err != nil {
-		return fmt.Errorf("failed to allocate layer2 blocks: %v", err)
+		return fmt.Errorf("failed to allocate layer2 blocks: %w", err)
 	}
 
 	// Track the layer2 block owner name
@@ -262,13 +262,13 @@ func (hca *hybridConnectSubnetAllocator) expandLayer2Allocator() error {
 	for _, block := range allocatedBlocks {
 		if utilnet.IsIPv6CIDR(block) && config.IPv6Mode {
 			if err := hca.layer2Allocator.AddNetworkRange(block, p2pIPV6SubnetMask); err != nil {
-				return fmt.Errorf("failed to add IPv6 range to layer2 allocator: %v", err)
+				return fmt.Errorf("failed to add IPv6 range to layer2 allocator: %w", err)
 			}
 		}
 		if utilnet.IsIPv4CIDR(block) && config.IPv4Mode {
 			// IPv4 block
 			if err := hca.layer2Allocator.AddNetworkRange(block, p2pIPV4SubnetMask); err != nil {
-				return fmt.Errorf("failed to add IPv4 range to layer2 allocator: %v", err)
+				return fmt.Errorf("failed to add IPv4 range to layer2 allocator: %w", err)
 			}
 		}
 	}
@@ -333,7 +333,7 @@ func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets m
 		case ovntypes.Layer3Topology:
 			// Simple: just mark in layer3 allocator
 			if err := hca.layer3Allocator.MarkAllocatedNetworks(owner, subnets...); err != nil {
-				return fmt.Errorf("failed to mark layer3 subnets for %s: %v", owner, err)
+				return fmt.Errorf("failed to mark layer3 subnets for %s: %w", owner, err)
 			}
 
 		case ovntypes.Layer2Topology:
@@ -354,7 +354,7 @@ func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets m
 					// Mark parent block in layer3 allocator (as a block)
 					err := hca.layer3Allocator.MarkAllocatedNetworks(blockOwnerName, parentNet)
 					if err != nil {
-						return fmt.Errorf("failed to mark block %s: %v", parentNet.String(), err)
+						return fmt.Errorf("failed to mark block %s: %w", parentNet.String(), err)
 					}
 
 					// Add range to layer2 allocator for /31 or /127 allocations
@@ -363,7 +363,7 @@ func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets m
 						prefixLen = p2pIPV6SubnetMask
 					}
 					if err := hca.layer2Allocator.AddNetworkRange(parentNet, prefixLen); err != nil {
-						return fmt.Errorf("failed to add layer2 range %s: %v", parentNet.String(), err)
+						return fmt.Errorf("failed to add layer2 range %s: %w", parentNet.String(), err)
 					}
 
 				}
@@ -373,7 +373,7 @@ func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets m
 			for _, subnet := range subnets {
 				// Mark the /31 or /127 subnet in layer2 allocator
 				if err := hca.layer2Allocator.MarkAllocatedNetworks(owner, subnet); err != nil {
-					return fmt.Errorf("failed to mark layer2 subnet %s for %s: %v", subnet.String(), owner, err)
+					return fmt.Errorf("failed to mark layer2 subnet %s for %s: %w", subnet.String(), owner, err)
 				}
 			}
 		}
