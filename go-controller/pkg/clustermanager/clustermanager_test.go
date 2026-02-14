@@ -1649,7 +1649,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-					const expectedNADContents = `{"cniVersion": "0.4.0", "name": "ovn-kubernetes", "type": "ovn-k8s-cni-overlay"}`
+					const expectedNADContents = `{"cniVersion": "1.1.0", "name": "ovn-kubernetes", "type": "ovn-k8s-cni-overlay"}`
 					gomega.Expect(nad.Spec.Config).To(gomega.Equal(expectedNADContents))
 
 					return nil

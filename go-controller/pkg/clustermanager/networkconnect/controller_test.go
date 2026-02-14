@@ -73,7 +73,7 @@ func newTestUDNNAD(name, namespace, network string, networkID string) *nadv1.Net
 		},
 		Spec: nadv1.NetworkAttachmentDefinitionSpec{
 			Config: fmt.Sprintf(
-				`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "10.0.0.0/16/24"}`,
+				`{"cniVersion": "1.1.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "10.0.0.0/16/24"}`,
 				network,
 				config.CNI.Plugin,
 				namespace,
@@ -601,7 +601,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					},
 					Spec: nadv1.NetworkAttachmentDefinitionSpec{
 						Config: fmt.Sprintf(
-							`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "secondary-ns/cudn-secondary", "subnets": "10.0.0.0/16/24"}`,
+							`{"cniVersion": "1.1.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "secondary-ns/cudn-secondary", "subnets": "10.0.0.0/16/24"}`,
 							network,
 							config.CNI.Plugin,
 						),
@@ -1204,7 +1204,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					},
 					Spec: nadv1.NetworkAttachmentDefinitionSpec{
 						// Invalid JSON config - missing required fields, will fail ParseNADInfo
-						Config: `{"cniVersion": "0.4.0", "name": "malformed", "type": "invalid-type"}`,
+						Config: `{"cniVersion": "1.1.0", "name": "malformed", "type": "invalid-type"}`,
 					},
 				}
 				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("malformed-ns").Create(

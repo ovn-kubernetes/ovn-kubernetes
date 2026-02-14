@@ -1240,7 +1240,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 				},
 			},
 			inpPrevResult: &current.Result{
-				CNIVersion: "1.0.0",
+				CNIVersion: "1.1.0",
 				Interfaces: []*current.Interface{{Name: "eth0"}},
 				IPs:        []*current.IPConfig{{Interface: &[]int{0}[0], Address: *ovntest.MustParseIPNet("192.168.1.15/24"), Gateway: ovntest.MustParseIP("192.168.1.1")}},
 			},
@@ -1255,7 +1255,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 				},
 			},
 			inpPrevResult: &current.Result{
-				CNIVersion: "1.0.0",
+				CNIVersion: "1.1.0",
 				Interfaces: []*current.Interface{{Name: "eth0", Sandbox: "blah"}},
 				IPs:        []*current.IPConfig{{Interface: &[]int{0}[0], Address: *ovntest.MustParseIPNet("192.168.1.15/24"), Gateway: ovntest.MustParseIP("192.168.1.1")}},
 			},
