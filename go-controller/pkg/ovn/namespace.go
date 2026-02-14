@@ -72,7 +72,7 @@ func (oc *DefaultNetworkController) addLocalPodToNamespace(ns string, ips []*net
 
 	defer nsUnlock()
 
-	ops, err := oc.addLocalPodToNamespaceLocked(nsInfo, ips, portUUID)
+	ops, err := oc.addLocalPodToNamespaceLocked(ns, nsInfo, ips, portUUID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -86,6 +86,9 @@ func (oc *DefaultNetworkController) addRemotePodToNamespace(ns string, ips []*ne
 	}
 
 	defer nsUnlock()
+	if !oc.shouldMaintainNamespaceAddressSetPodMembership(ns, nsInfo) {
+		return nil
+	}
 	return nsInfo.addressSet.AddAddresses(util.IPNetsIPToStringSlice(ips))
 }
 

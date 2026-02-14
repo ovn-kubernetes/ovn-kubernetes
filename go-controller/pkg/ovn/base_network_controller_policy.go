@@ -9,7 +9,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -227,6 +229,10 @@ func (bnc *BaseNetworkController) syncNetworkPolicies(networkPolicies []interfac
 		return err
 	}
 
+	if err := bnc.reconcileNamespaceAddressSetsForExistingLegacyPolicyPeers(networkPolicies); err != nil {
+		return err
+	}
+
 	// add default hairpin allow acl
 	err = bnc.addHairpinAllowACL()
 	if err != nil {
@@ -234,6 +240,135 @@ func (bnc *BaseNetworkController) syncNetworkPolicies(networkPolicies []interfac
 	}
 
 	return nil
+}
+
+// reconcileNamespaceAddressSetsForExistingLegacyPolicyPeers synchronizes
+// namespace address sets from existing namespaceSelector-only peers during the
+// policy sync phase on startup.
+// This is a one-time reconciliation used to avoid startup windows where legacy
+// namespace address sets are empty before network policies are fully rebuilt.
+func (bnc *BaseNetworkController) reconcileNamespaceAddressSetsForExistingLegacyPolicyPeers(networkPolicies []interface{}) error {
+	referencedNamespaces, err := bnc.getLegacyPolicyPeerNamespaces(networkPolicies)
+	if err != nil {
+		return err
+	}
+	namespaces, err := bnc.watchFactory.GetNamespaces()
+	if err != nil {
+		return fmt.Errorf("failed to list namespaces while reconciling namespace address sets: %w", err)
+	}
+
+	var errs []error
+	for _, namespace := range namespaces {
+		if bnc.isHostNetworkNamespace(namespace.Name) {
+			continue
+		}
+		if referencedNamespaces.Has(namespace.Name) {
+			nsInfo, nsUnlock := bnc.getNamespaceLocked(namespace.Name, true)
+			if nsInfo == nil || nsInfo.addressSet == nil {
+				if nsUnlock != nil {
+					nsUnlock()
+				}
+				continue
+			}
+			addressSet := nsInfo.addressSet
+			nsUnlock()
+
+			if err := addressSet.SetAddresses(util.StringSlice(bnc.getAllNamespacePodAddresses(namespace.Name))); err != nil {
+				errs = append(errs, fmt.Errorf("failed to sync namespace address set for namespace %s: %w", namespace.Name, err))
+			}
+			continue
+		}
+
+		if err := bnc.clearNamespaceAddressSetForPolicy(namespace.Name); err != nil {
+			errs = append(errs, fmt.Errorf("failed to clear namespace address set for namespace %s: %w", namespace.Name, err))
+		}
+	}
+
+	return utilerrors.Join(errs...)
+}
+
+func (bnc *BaseNetworkController) getLegacyPolicyPeerNamespaces(networkPolicies []interface{}) (sets.Set[string], error) {
+	namespaces, err := bnc.watchFactory.GetNamespaces()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list namespaces while evaluating legacy policy peers: %w", err)
+	}
+
+	referencedNamespaces := sets.New[string]()
+	selectorMatchesCache := map[string]sets.Set[string]{}
+
+	for _, npInterface := range networkPolicies {
+		policy, ok := npInterface.(*knet.NetworkPolicy)
+		if !ok {
+			return nil, fmt.Errorf("spurious object in syncNetworkPolicies: %v", npInterface)
+		}
+		applies, err := bnc.networkPolicyAppliesToController(policy.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		if !applies {
+			continue
+		}
+
+		for _, ingress := range policy.Spec.Ingress {
+			for _, peer := range ingress.From {
+				if err := collectLegacyPeerNamespaces(peer, namespaces, selectorMatchesCache, referencedNamespaces); err != nil {
+					return nil, err
+				}
+			}
+		}
+		for _, egress := range policy.Spec.Egress {
+			for _, peer := range egress.To {
+				if err := collectLegacyPeerNamespaces(peer, namespaces, selectorMatchesCache, referencedNamespaces); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	return referencedNamespaces, nil
+}
+
+func collectLegacyPeerNamespaces(peer knet.NetworkPolicyPeer, namespaces []*corev1.Namespace,
+	selectorMatchesCache map[string]sets.Set[string], referencedNamespaces sets.Set[string]) error {
+	if !useNamespaceAddrSet(peer) {
+		return nil
+	}
+	namespaceSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
+	if err != nil {
+		return fmt.Errorf("failed to parse namespace selector %v: %w", peer.NamespaceSelector, err)
+	}
+	cacheKey := namespaceSelector.String()
+	matchedNamespaces, found := selectorMatchesCache[cacheKey]
+	if !found {
+		matchedNamespaces = sets.New[string]()
+		for _, namespace := range namespaces {
+			if namespaceSelector.Matches(labels.Set(namespace.Labels)) {
+				matchedNamespaces.Insert(namespace.Name)
+			}
+		}
+		selectorMatchesCache[cacheKey] = matchedNamespaces
+	}
+	referencedNamespaces.Insert(matchedNamespaces.UnsortedList()...)
+	return nil
+}
+
+func (bnc *BaseNetworkController) networkPolicyAppliesToController(namespace string) (bool, error) {
+	if bnc.networkManager == nil {
+		return true, nil
+	}
+	netInfo, err := bnc.networkManager.GetActiveNetworkForNamespace(namespace)
+	if err != nil {
+		if util.IsInvalidPrimaryNetworkError(err) || apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get active network for namespace %s: %w", namespace, err)
+	}
+	if netInfo == nil {
+		// Dynamic UDN may not have resolved the active network yet for a namespace.
+		// Treat this as "does not apply to this controller yet" and retry on a future sync.
+		return false, nil
+	}
+	return bnc.GetNetworkName() == netInfo.GetNetworkName(), nil
 }
 
 func (bnc *BaseNetworkController) addHairpinAllowACL() error {
@@ -1371,6 +1506,24 @@ func (bnc *BaseNetworkController) cleanupNetworkPolicy(np *networkPolicy) error 
 	}
 	np.peerAddressSets = nil
 
+	// release references to namespace address sets used by namespaceSelector-only peers.
+	var referenceErrors []error
+	allGressPolicies := append(np.ingressPolicies, np.egressPolicies...)
+	for _, gp := range allGressPolicies {
+		for _, namespace := range gp.getNamespaceAddressSetNames() {
+			becameUnreferenced := bnc.removeNamespaceAddressSetReference(namespace)
+			if becameUnreferenced {
+				if err := bnc.clearNamespaceAddressSetForPolicy(namespace); err != nil {
+					referenceErrors = append(referenceErrors,
+						fmt.Errorf("failed to clear namespace address set for namespace %s: %w", namespace, err))
+				}
+			}
+		}
+	}
+	if len(referenceErrors) > 0 {
+		return utilerrors.Join(referenceErrors...)
+	}
+
 	// finally, delete netpol from existing networkPolicies
 	// this is the signal that cleanup was successful
 	bnc.networkPolicies.Delete(npKey)
@@ -1397,17 +1550,32 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPoli
 	}
 	updated := false
 	var errors []error
+	namespacesToRef := sets.New[string]()
+	namespacesToSync := sets.New[string]()
 	for _, obj := range objs {
 		namespace := obj.(*corev1.Namespace)
 		// addNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
 		nsUpdated, err := gp.addNamespaceAddressSet(namespace.Name, bnc.addressSetFactory)
 		if err != nil {
 			errors = append(errors, err)
-		} else if nsUpdated {
+			continue
+		}
+		namespacesToSync.Insert(namespace.Name)
+		if nsUpdated {
 			updated = true
+			namespacesToRef.Insert(namespace.Name)
 		}
 	}
 	np.RUnlock()
+
+	for namespace := range namespacesToRef {
+		bnc.addNamespaceAddressSetReference(namespace)
+	}
+	for namespace := range namespacesToSync {
+		if err := bnc.syncNamespaceAddressSetForPolicy(namespace); err != nil {
+			errors = append(errors, fmt.Errorf("failed to sync namespace address set for namespace %s: %w", namespace, err))
+		}
+	}
 	// unlock networkPolicy, before calling peerNamespaceUpdate
 	if updated {
 		err := bnc.peerNamespaceUpdate(np, gp)
@@ -1433,19 +1601,30 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorDel(np *networkPoli
 		return nil
 	}
 	updated := false
+	var errors []error
+	namespacesToClear := sets.New[string]()
 	for _, obj := range objs {
 		namespace := obj.(*corev1.Namespace)
+		namespacesToClear.Insert(namespace.Name)
 		// delNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
 		if gp.delNamespaceAddressSet(namespace.Name) {
 			updated = true
+			_ = bnc.removeNamespaceAddressSetReference(namespace.Name)
 		}
 	}
 	np.RUnlock()
+	for namespace := range namespacesToClear {
+		if err := bnc.clearNamespaceAddressSetForPolicy(namespace); err != nil {
+			errors = append(errors, fmt.Errorf("failed to clear namespace address set for namespace %s: %w", namespace, err))
+		}
+	}
 	// unlock networkPolicy, before calling peerNamespaceUpdate
 	if updated {
-		return bnc.peerNamespaceUpdate(np, gp)
+		if err := bnc.peerNamespaceUpdate(np, gp); err != nil {
+			errors = append(errors, err)
+		}
 	}
-	return nil
+	return utilerrors.Join(errors...)
 }
 
 // peerNamespaceUpdate updates gress ACLs, for this purpose it need to take nsInfo lock and np.RLock

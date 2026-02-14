@@ -205,7 +205,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceT.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(namespaceName, []string{tP.podIP})
+			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(namespaceName, []string{})
 
 			// port group is empty, because it will be filled by pod add logic
 			pgIDs := getNamespacePortGroupDbIDs(namespaceName, DefaultNetworkControllerName)

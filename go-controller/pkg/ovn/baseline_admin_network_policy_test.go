@@ -233,7 +233,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				banpSubjectPod.Labels["rv"] = "resourceVersionUTHack"
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpSubjectPod.Namespace).Update(context.TODO(), &banpSubjectPod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(banpSubjectNamespaceName, []string{t.podIP})
+				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(banpSubjectNamespaceName, []string{})
 				pg = getDefaultPGForANPSubject(banp.Name, []string{t.portUUID}, nil, true)
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				expectedDatabaseState = append(expectedDatabaseState, getDefaultNetExpectedPodsAndSwitches([]testPod{t}, []string{node1Name})...)
@@ -295,7 +295,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				banpPeerPod.Labels["rv"] = "resourceVersionUTHack"
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpPeerPod.Namespace).Update(context.TODO(), &banpPeerPod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(banpPeerNamespaceName, []string{t2.podIP})
+				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(banpPeerNamespaceName, []string{})
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				for _, acl := range acls {
 					acl := acl
@@ -659,7 +659,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				t.podIP = "10.128.1.5"
 				t.podMAC = "0a:58:0a:80:01:05"
 				pg = getDefaultPGForANPSubject(banp.Name, []string{t.portUUID}, newACLs, true)
-				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(banpSubjectNamespaceName, []string{t.podIP})
+				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(banpSubjectNamespaceName, []string{})
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				for _, acl := range newACLs {
 					acl := acl
@@ -684,7 +684,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				t2.podIP = "10.128.1.6"
 				t2.podMAC = "0a:58:0a:80:01:06"
-				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(banpPeerNamespaceName, []string{t2.podIP})
+				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(banpPeerNamespaceName, []string{})
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				for _, acl := range newACLs {
 					acl := acl
@@ -1054,8 +1054,8 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 
 				acls := getACLsForBANPRules(banp)
 				pg := getDefaultPGForANPSubject(banp.Name, []string{t.portUUID}, acls, true)
-				subjectNSASIPv4, subjectNSASIPv6 := buildNamespaceAddressSets(banpSubjectNamespaceName, []string{banpPodV4IP, banpPodV6IP})
-				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(banpPeerNamespaceName, []string{banpPodV4IP2, banpPodV6IP2})
+				subjectNSASIPv4, subjectNSASIPv6 := buildNamespaceAddressSets(banpSubjectNamespaceName, []string{})
+				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(banpPeerNamespaceName, []string{})
 				expectedDatabaseState := []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				expectedDatabaseState = append(expectedDatabaseState, getDefaultNetExpectedPodsAndSwitches([]testPod{t, t2}, []string{node1Name})...)
 				for _, acl := range acls {
@@ -1367,7 +1367,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				acls := getACLsForBANPRulesWithNamedPorts(banp, namedIPorts, namedEPorts)
 				pg := getDefaultPGForANPSubject(banp.Name, []string{}, acls, true)
 				subjectNSASIPv4, subjectNSASIPv6 := buildNamespaceAddressSets(banpSubjectNamespaceName, []string{})
-				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(banpPeerNamespaceName, []string{banpPodV4IP2, banpPodV6IP2})
+				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(banpPeerNamespaceName, []string{})
 				peerNS2ASIPv4, peerNS2ASIPv6 := buildNamespaceAddressSets(banpPeerNamespaceName+"2", []string{})
 				baseExpectedDatabaseState := []libovsdbtest.TestData{subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6, peerNS2ASIPv4, peerNS2ASIPv6}
 				peerASIngressRule0v4, peerASIngressRule0v6 := buildBANPAddressSets(banp, 0, []string{}, libovsdbutil.ACLIngress)
@@ -1405,7 +1405,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{L4Protocol: "udp", L3PodIP: banpPodV4IP, L3PodIPFamily: "ip4", L4PodPort: "5353"},
 					{L4Protocol: "udp", L3PodIP: banpPodV6IP, L3PodIPFamily: "ip6", L4PodPort: "5353"}}
 
-				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(banpSubjectNamespaceName, []string{banpPodV4IP, banpPodV6IP})
+				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(banpSubjectNamespaceName, []string{})
 				acls = getACLsForBANPRulesWithNamedPorts(banp, namedIPorts, namedEPorts)
 				pg = getDefaultPGForANPSubject(banp.Name, []string{t2.portUUID}, acls, true)
 				baseExpectedDatabaseState[0] = subjectNSASIPv4
@@ -1479,7 +1479,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{L4Protocol: "sctp", L3PodIP: banpPodV6IP2, L3PodIPFamily: "ip6", L4PodPort: "35356"}}
 				acls = getACLsForBANPRulesWithNamedPorts(banp, namedIPorts, namedEPorts)
 				pg = getDefaultPGForANPSubject(banp.Name, []string{t2.portUUID}, acls, true)
-				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(banpPeerNamespaceName, []string{"fe00:10:128:1::4", "10.128.1.4"}) // pod is gone from peer namespace address-set
+				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(banpPeerNamespaceName, []string{})
 				baseExpectedDatabaseState[2] = peerNSASIPv4
 				baseExpectedDatabaseState[3] = peerNSASIPv6
 				peerASEgressRule0v4, peerASEgressRule0v6 = buildBANPAddressSets(banp, 0, []string{"fe00:10:128:1::4", "10.128.1.4"}, libovsdbutil.ACLEgress)
