@@ -1381,6 +1381,37 @@ func (gw *GatewayManager) Cleanup() error {
 	return nil
 }
 
+// NewGatewayManagerForCleanup returns a minimal GatewayManager used only for Cleanup(). Used when
+// discovering gateway routers from the DB (e.g. stale cleanup when nodes are gone). layer2UseTransitRouter
+// selects the peer port cleanup path (transit router LRP vs join switch LSP).
+//
+// NOTE: transitRouterInfo is set to an empty struct (not nil) when layer2UseTransitRouter is true.
+// This is safe because Cleanup() only checks (transitRouterInfo != nil) to choose between
+// deleteGWRouterPeerRouterPort and deleteGWRouterPeerSwitchPort — neither of which accesses
+// transitRouterInfo fields. If Cleanup() is ever changed to dereference transitRouterInfo fields,
+// this constructor must be updated accordingly.
+func NewGatewayManagerForCleanup(
+	nbClient libovsdbclient.Client,
+	netInfo util.NetInfo,
+	clusterRouterName, joinSwitchName, gwRouterName, nodeName string,
+	layer2UseTransitRouter bool,
+) *GatewayManager {
+	var tri *transitRouterInfo
+	if layer2UseTransitRouter {
+		tri = &transitRouterInfo{}
+	}
+	return &GatewayManager{
+		nodeName:          nodeName,
+		clusterRouterName: clusterRouterName,
+		gwRouterName:      gwRouterName,
+		extSwitchName:     netInfo.GetNetworkScopedExtSwitchName(nodeName),
+		joinSwitchName:    joinSwitchName,
+		nbClient:          nbClient,
+		netInfo:           netInfo,
+		transitRouterInfo: tri,
+	}
+}
+
 func (gw *GatewayManager) delPbrAndNatRules(nodeName string) {
 	// delete the dnat_and_snat entry that we added for the management port IP
 	// Note: we don't need to delete any MAC bindings that are dynamically learned from OVN SB DB

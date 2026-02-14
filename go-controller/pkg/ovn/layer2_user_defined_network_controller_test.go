@@ -483,6 +483,95 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		),
 	)
 
+	It("primary layer 2 UDN: controller creates entities via init/watchers, then dummy Cleanup() removes them", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
+		app.Action = func(ctx *cli.Context) error {
+			netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
+			netConf := netInfo.netconf()
+			networkConfig, err := util.NewNetInfo(netConf)
+			Expect(err).NotTo(HaveOccurred())
+			mutableNetInfo := util.NewMutableNetInfo(networkConfig)
+			mutableNetInfoCleanup := util.NewMutableNetInfo(networkConfig)
+			mutableNetInfoCleanup.SetNetworkID(ovntypes.InvalidID)
+
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+			fakeNetworkManager := &testnm.FakeNetworkManager{
+				PrimaryNetworks: map[string]util.NetInfo{},
+			}
+			fakeNetworkManager.PrimaryNetworks[ns] = mutableNetInfo
+
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			nbZone := &nbdb.NBGlobal{Name: config.Default.Zone, UUID: config.Default.Zone}
+
+			// Minimal initialDB: no UDN entities. init() + watchers create them.
+			initialDB.NBData = append(initialDB.NBData, nbZone)
+			Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+
+			Expect(fakeOvn.networkManager.Start()).To(Succeed())
+			defer fakeOvn.networkManager.Stop()
+			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
+
+			// Run init() to create cluster-level entities, then watchers so node sync creates per-node entities.
+			l2Controller, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			Expect(l2Controller.init()).To(Succeed())
+			udnNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+			Expect(l2Controller.WatchNodes()).To(Succeed())
+			Expect(l2Controller.WatchPods()).To(Succeed())
+			Expect(l2Controller.WatchNetworkPolicy()).To(Succeed())
+
+			// Wait for the controller to create the Layer2 switch.
+			udnLSName := l2Controller.GetNetworkScopedSwitchName(ovntypes.OVNLayer2Switch)
+			Eventually(func(g Gomega) {
+				switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(fakeOvn.nbClient, func(ls *nbdb.LogicalSwitch) bool {
+					return ls.Name == udnLSName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(switches).NotTo(BeEmpty())
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			// Assert gateway router was created before cleanup.
+			udnGWRouterName := l2Controller.GetNetworkScopedGWRouterName(nodeName)
+			Eventually(func(g Gomega) {
+				routers, err := libovsdbops.FindLogicalRoutersWithPredicate(fakeOvn.nbClient, func(lr *nbdb.LogicalRouter) bool {
+					return lr.Name == udnGWRouterName
+				})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(routers).NotTo(BeEmpty())
+			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			// Dummy controller with InvalidID runs Cleanup() to remove all entities for this network.
+			dummyController, err := NewLayer2UserDefinedNetworkController(
+				&l2Controller.CommonNetworkControllerInfo,
+				mutableNetInfoCleanup,
+				fakeOvn.networkManager.Interface(),
+				nil,
+				NewPortCache(ctx.Done()),
+				nil,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dummyController.Cleanup()).To(Succeed())
+			Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone})))
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	})
+
 	It("controller should cleanup stale nodes on startup", func() {
 		app.Action = func(*cli.Context) error {
 			netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
