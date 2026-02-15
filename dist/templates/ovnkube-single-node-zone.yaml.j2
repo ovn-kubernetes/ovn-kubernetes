@@ -320,6 +320,13 @@ spec:
           requests:
             cpu: 100m
             memory: 300Mi
+          {%- if ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
+            {{ ovnkube_node_mgmt_port_dp_resource_name }}: {{ mgmt_port_vfs_count | default(1) }}
+          {%- endif %}
+          limits:
+          {%- if ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
+            {{ ovnkube_node_mgmt_port_dp_resource_name }}: {{ mgmt_port_vfs_count | default(1) }}
+          {%- endif %}
         env:
         {% if (enable_coredumps | default("false")) == "true" -%}
         - name: GOTRACEBACK
@@ -471,6 +478,8 @@ spec:
           value: "{{ ovn_no_overlay_enable }}"
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: "{{ ovnkube_node_mgmt_port_netdev }}"
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: "{{ ovnkube_node_mgmt_port_dp_resource_name }}"
         - name: OVN_EMPTY_LB_EVENTS
           value: "{{ ovn_empty_lb_events }}"
         - name: OVN_ACL_LOGGING_RATE_LIMIT
@@ -617,6 +626,8 @@ spec:
             nodeSelectorTerms:
             - matchExpressions:
               - key: k8s.ovn.org/dpu-host
+                operator: DoesNotExist
+              - key: k8s.ovn.org/dpu
                 operator: DoesNotExist
       volumes:
       # Common volumes
