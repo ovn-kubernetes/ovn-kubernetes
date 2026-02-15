@@ -278,6 +278,15 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			}, metav1.CreateOptions{})
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 
+			// Mirror production ordering: NAD controller notifies registered reconcilers
+			// after the primary NAD is observed, so namespace reconcile isn't dropped due
+			// to a transient "primary not found" window in informer caches.
+			primaryNADKey := util.GetNADName(tt.namespace, "primary")
+			g.Eventually(func() (string, error) {
+				return tracker.primaryNADForNamespace(tt.namespace)
+			}, 2*time.Second, 100*time.Millisecond).Should(gomega.Equal(primaryNADKey))
+			tracker.NADReconciler().Reconcile(primaryNADKey)
+
 			// Expect add events
 			g.Eventually(func() []callbackEvent {
 				gotMu.Lock()
