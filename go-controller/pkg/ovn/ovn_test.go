@@ -65,6 +65,7 @@ const (
 	fakePgUUID                  = "bf02f460-5058-4689-8fcb-d31a1e484ed2"
 	ovnClusterPortGroupUUID     = fakePgUUID
 	testICZone                  = "test"
+	coppUUID                    = "copp-UUID"
 )
 
 type userDefinedNetworkControllerInfo struct {
@@ -333,7 +334,7 @@ func generateUDNPostInitDB(testData []libovsdbtest.TestData) []libovsdbtest.Test
 	}
 
 	copp := &nbdb.Copp{
-		UUID:   "copp-UUID",
+		UUID:   coppUUID,
 		Name:   "ovnkube-default",
 		Meters: meters,
 	}
