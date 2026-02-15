@@ -222,6 +222,20 @@ var _ = Describe("Mananagement port DPU tests", func() {
 		})
 	})
 
+	Context("findNetdevByDeviceID", func() {
+		It("Returns error when deviceID is empty", func() {
+			mgmtPortDpuHost := &managementPortNetdev{
+				netdevDevName: "enp3s0f0v0",
+				deviceID:      "",
+			}
+
+			link, err := mgmtPortDpuHost.findNetdevByDeviceID()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no device ID available"))
+			Expect(link).To(BeNil())
+		})
+	})
+
 	Context("Create Management port DPU host", func() {
 		It("Fails if netdev link lookup failed", func() {
 			mgmtPortDpuHost := managementPortNetdev{
@@ -258,7 +272,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			cfg := &managementPortConfig{
 				hostSubnets: []*net.IPNet{ipnet},
 			}
-			mgmtPortDpuHost := newManagementPortNetdev("enp3s0f0v0", cfg, nil)
+			mgmtPortDpuHost := newManagementPortNetdev("enp3s0f0v0", "", cfg, nil)
 			linkMock := &mocks.Link{}
 			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
 				Name: "enp3s0f0v0", MTU: 1500, HardwareAddr: currentMgmtPortMac})
@@ -298,23 +312,30 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			cfg := &managementPortConfig{
 				hostSubnets: []*net.IPNet{ipnet},
 			}
-			mgmtPortDpuHost := managementPortNetdev{
-				cfg:           cfg,
-				netdevDevName: "enp3s0f0v0",
-			}
+			mgmtPortDpuHost := newManagementPortNetdev("enp3s0f0v0", "", cfg, nil)
 			linkMock := &mocks.Link{}
 			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
-				Name: "ovn-k8s-mp0", MTU: 1400, HardwareAddr: expectedMgmtPortMac})
+				Name: types.K8sMgmtIntfName, MTU: 1400, HardwareAddr: expectedMgmtPortMac})
+
+			// VF already configured: LinkByName returns the link with the final name, correct MTU & MAC.
+			// Since all attributes already match, bringupManagementPortLink only calls LinkSetUp
+			// (no LinkSetDown, rename, MAC or MTU changes).
+			netlinkOpsMock.On("LinkByName", "enp3s0f0v0").Return(linkMock, nil).Once()
+			netlinkOpsMock.On("LinkSetUp", linkMock).Return(nil)
+			execMock.AddFakeCmdsNoOutputNoError([]string{
+				"ovs-vsctl --timeout=15 set Open_vSwitch . external-ids:ovn-orig-mgmt-port-netdev-name=" + mgmtPortDpuHost.netdevDevName,
+			})
 
 			// mock createPlatformManagementPort, we fail it as it covers what we want to test without the
 			// need to mock the entire flow down to routes and iptable rules.
 			netlinkOpsMock.On("LinkByName", mock.Anything).Return(nil, fmt.Errorf(
-				"createPlatformManagementPort error")).Once()
+				"createPlatformManagementPort error"))
 
 			err = mgmtPortDpuHost.create()
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(
 				"createPlatformManagementPort error"))
+			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc)
 		})
 	})
 })
