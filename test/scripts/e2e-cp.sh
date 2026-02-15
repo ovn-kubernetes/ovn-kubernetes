@@ -229,6 +229,16 @@ if [ "${PARALLEL:-false}" = "true" ]; then
   export GINKGO_PARALLEL_NODES=10
   skip_label "$SERIAL_LABEL"
 fi
+if [ "$ENABLE_NO_OVERLAY" == true ]; then
+  # No-overlay mode uses underlying network infrastructure directly.
+  # Overlay-dependent features are not supported.
+  skip "Multicast"
+  skip "egress IP"
+  skip "EgressService"
+  # This test validates MTU reduction behavior specific to overlay mode (1500->1400).
+  # In no-overlay mode, pods use the full underlying network MTU without reduction.
+  skip "blocking ICMP needs frag"
+fi
 
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # No-overlay mode uses underlying network infrastructure directly.
