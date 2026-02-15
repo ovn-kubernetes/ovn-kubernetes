@@ -6939,7 +6939,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 
 				nodeSwitch.QOSRules = []string{"default-QoS-UUID"}
 
-				namespaceAddressSetv4, _ := buildNamespaceAddressSets(eipNamespace, []string{egressPodIP.String()})
+				namespaceAddressSetv4, _ := buildNamespaceAddressSets(eipNamespace, []string{})
 
 				egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
 				egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets([]string{egressPodIP.String()}, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
@@ -7319,7 +7319,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
 				egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets([]string{oldEgressPodIP}, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
 				egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets([]string{node1IPv4})
-				namespaceAddressSetv4, _ := buildNamespaceAddressSets(eipNamespace, []string{egressPodIP.String()})
+				namespaceAddressSetv4, _ := buildNamespaceAddressSets(eipNamespace, []string{})
 
 				expectedDatabaseStatewithPod := []libovsdbtest.TestData{
 					podEIPSNAT,
@@ -7466,7 +7466,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				podAddr = fmt.Sprintf("%s %s", podPortInfo.mac.String(), egressPodIP)
 				podLSP.Addresses = []string{podAddr}
 				podLSP.PortSecurity = []string{podAddr}
-				namespaceAddressSetv4.Addresses = []string{egressPodIP.String()}
+				namespaceAddressSetv4.Addresses = nil
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(finalDatabaseStatewithPod))
 				return nil
 			}
@@ -7743,7 +7743,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets([]string{egressPodIP[0].String()}, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
 					egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets([]string{node1IPv4, node2IPv4})
 
-					namespaceAddressSetv4, _ := buildNamespaceAddressSets(eipNamespace, []string{egressPodIP[0].String()})
+					namespaceAddressSetv4, _ := buildNamespaceAddressSets(eipNamespace, []string{})
 
 					expectedDatabaseStatewithPod := []libovsdbtest.TestData{
 						podEIPSNAT,
