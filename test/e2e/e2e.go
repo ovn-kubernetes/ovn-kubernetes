@@ -19,7 +19,6 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
@@ -358,54 +357,6 @@ func createServiceForPodsWithLabel(f *framework.Framework, namespace string, ser
 		return "", errors.Wrapf(err, "Failed to get service %s %s", service.Name, namespace)
 	}
 	return res.Spec.ClusterIP, nil
-}
-
-// HACK: 'container runtime' is statically set to docker. For EIP multi network scenario, we require ip6tables support to
-// allow isolated ipv6 networks and prevent the bridges from forwarding to each other.
-// Docker ipv6+ip6tables support is currently experimental (11/23) [1], and enabling this requires altering the
-// container runtime config. To avoid altering the runtime config, add ip6table rules to prevent the bridges talking
-// to each other. Not required to remove the iptables, because when we delete the network, the iptable rules will be removed.
-// Remove when this func when it is no longer experimental.
-// [1] https://docs.docker.com/config/daemon/ipv6/
-func isolateKinDIPv6Networks(networkA, networkB string) error {
-	if infraprovider.Get().Name() != "kind" {
-		// nothing to do
-		return nil
-	}
-	if containerengine.Get() != containerengine.Docker {
-		panic("unsupported container runtime")
-	}
-	var bridgeInfNames []string
-	// docker creates bridges by appending 12 chars from network ID to 'br-'
-	bridgeIDLimit := 12
-	exec := kexec.New()
-	for _, network := range []string{networkA, networkB} {
-		// output will be wrapped in single quotes
-		idByte, err := exec.Command("docker", "inspect", network, "--format", "'{{.Id}}'").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to inspect network %s: %v", network, err)
-		}
-		id := string(idByte)
-		if len(id) <= bridgeIDLimit+1 {
-			return fmt.Errorf("invalid bridge ID %q", id)
-		}
-		bridgeInfName := fmt.Sprintf("br-%s", id[1:bridgeIDLimit+1])
-		// validate bridge exists
-		_, err = exec.Command("ip", "link", "show", bridgeInfName).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("bridge %q doesnt exist: %v", bridgeInfName, err)
-		}
-		bridgeInfNames = append(bridgeInfNames, bridgeInfName)
-	}
-	if len(bridgeInfNames) != 2 {
-		return fmt.Errorf("expected two bridge names but found %d", len(bridgeInfNames))
-	}
-	_, err := exec.Command("sudo", "ip6tables", "-t", "filter", "-A", "FORWARD", "-i", bridgeInfNames[0], "-o", bridgeInfNames[1], "-j", "DROP").CombinedOutput()
-	if err != nil {
-		return err
-	}
-	_, err = exec.Command("sudo", "ip6tables", "-t", "filter", "-A", "FORWARD", "-i", bridgeInfNames[1], "-o", bridgeInfNames[0], "-j", "DROP").CombinedOutput()
-	return err
 }
 
 // forwardIPWithIPTables inserts an iptables rule to always accept source and destination of arg ip
