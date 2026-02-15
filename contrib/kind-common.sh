@@ -234,7 +234,11 @@ build_ovn_image() {
 }
 
 run_kubectl() {
-  kind export kubeconfig --name ${KIND_CLUSTER_NAME} 
+  # Skip kubeconfig export in container mode - it overwrites container IPs with localhost.
+  if [ "$RUN_IN_CONTAINER" != true ]; then
+    kind export kubeconfig --name ${KIND_CLUSTER_NAME}
+  fi
+
   local retries=0
   local attempts=10
   while true; do
