@@ -2058,6 +2058,32 @@ var _ = Describe("User Defined Network Controller", func() {
 			Expect(err).To(MatchError(expectedErr))
 		})
 
+		It("when namespace without pods is being deleted, should delete NAD in that namespace", func() {
+			const cudnName = "test-network"
+			testNs := testNamespace("blue")
+			cudn := testClusterUDN(cudnName, testNs.Name)
+			expectedNAD := testClusterUdnNAD(cudnName, testNs.Name)
+			c := newTestController(renderNadStub(expectedNAD), cudn, testNs)
+			Expect(c.Run()).To(Succeed())
+
+			By("verify NAD is created in namespace")
+			Eventually(func() error {
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudnName, metav1.GetOptions{})
+				return err
+			}).Should(Succeed())
+
+			By("mark namespace as terminating")
+			testNs.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+			_, err := cs.KubeClient.CoreV1().Namespaces().Update(context.Background(), testNs, metav1.UpdateOptions{})
+			Expect(err).ToNot(HaveOccurred())
+
+			By("verify NAD is deleted")
+			Eventually(func() bool {
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudnName, metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}).Should(BeTrue(), "NAD should be deleted when namespace is terminating")
+		})
+
 		It("when CR is deleted, CR has no finalizer, should succeed", func() {
 			deletedCUDN := testClusterUDN("test", "blue")
 			deletedCUDN.Finalizers = []string{}

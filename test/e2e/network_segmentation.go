@@ -1317,6 +1317,40 @@ spec:
 			}
 		})
 
+		It("should delete NAD when target namespace is terminating", func() {
+			testTerminatingNs := f.Namespace.Name + "terminating"
+
+			By("add new target namespace to CR namespace-selector")
+			patch := fmt.Sprintf(`[{"op": "add", "path": "./spec/namespaceSelector/matchExpressions/0/values/-", "value": "%s"}]`, testTerminatingNs)
+			_, err := e2ekubectl.RunKubectl("", "patch", clusterUserDefinedNetworkResource, testClusterUdnName, "--type=json", "-p="+patch)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("create the target namespace")
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   testTerminatingNs,
+					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+				}}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verify NAD is created in the namespace")
+			Eventually(func() error {
+				_, err := nadClient.NetworkAttachmentDefinitions(testTerminatingNs).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
+				return err
+			}, time.Second*15, time.Second*1).Should(Succeed(), "NAD should be created in target namespace")
+
+			By("delete the namespace to trigger termination")
+			err = cs.CoreV1().Namespaces().Delete(context.Background(), testTerminatingNs, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verify NAD is deleted from the terminating namespace")
+			Eventually(func() bool {
+				_, err := nadClient.NetworkAttachmentDefinitions(testTerminatingNs).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
+				return err != nil && kerrors.IsNotFound(err)
+			}, time.Second*30, time.Second*1).Should(BeTrue(),
+				"NAD should be deleted when namespace is terminating")
+		})
+
 		It("should create NAD in new created namespaces that apply to namespace-selector", func() {
 			testNewNs := f.Namespace.Name + "green"
 
