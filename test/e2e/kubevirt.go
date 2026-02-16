@@ -27,6 +27,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
 
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,7 +39,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
-	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
@@ -49,6 +49,7 @@ import (
 
 	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
@@ -72,7 +73,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 	if err := ipamclaimsv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	if err := nadapi.AddToScheme(scheme); err != nil {
+	if err := nadv1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -376,7 +377,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}).WithPolling(time.Second).WithTimeout(20*time.Minute).Should(BeTrue(), "should complete migration")
 			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 			Expect(vmi.Status.MigrationState.SourcePod).NotTo(BeEmpty())
-			Eventually(func() bool {
+			Eventually(func() corev1.PodPhase {
 				sourcePod := &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: namespace,
@@ -384,11 +385,9 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					},
 				}
 				err = crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(sourcePod), sourcePod)
-
-				Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(sourcePod), sourcePod)).To(Succeed())
-				By(fmt.Sprintf("sourcePod: %q, Phase: %s", sourcePod.Name, sourcePod.Status.Phase))
-				return podutil.IsPodReady(sourcePod)
-			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(BeFalse(), "should move source pod %s to Completed", vmi.Status.MigrationState.SourcePod)
+				Expect(err).NotTo(HaveOccurred())
+				return sourcePod.Status.Phase
+			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Equal(corev1.PodSucceeded), "should move source pod to Completed")
 			err = crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 			Expect(err).NotTo(HaveOccurred(), "should success retrieving vmi after migration")
 			Expect(vmi.Status.MigrationState.Failed).To(BeFalse(), func() string {
@@ -922,6 +921,8 @@ fi
 		nadClient, err = nadclient.NewForConfig(fr.ClientConfig())
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	Context("with cluster default network and migratable virtual machines", Ordered, func() {
 		AfterAll(func() {
 			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
 		})
@@ -990,7 +991,7 @@ write_files:
 			serverPort := svc.Spec.Ports[0].NodePort
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), fr.ClientSet, 1)
 			Expect(err).NotTo(HaveOccurred())
-			serverIPs := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
+			serverIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 			return serverIPs, serverPort
 		}
 		DescribeTable("should keep ip", func(td testData) {
@@ -1433,7 +1434,7 @@ write_files:
 				serverPort := svc.Spec.Ports[0].NodePort
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), fr.ClientSet, 1)
 				Expect(err).NotTo(HaveOccurred())
-				serverIPs := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
+				serverIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 				return serverIPs, serverPort
 			}
 		)
