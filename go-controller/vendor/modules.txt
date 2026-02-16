@@ -1337,7 +1337,6 @@ k8s.io/utils/io
 k8s.io/utils/lru
 k8s.io/utils/net
 k8s.io/utils/ptr
-k8s.io/utils/strings/slices
 k8s.io/utils/trace
 # kubevirt.io/api v1.0.0-alpha.0
 ## explicit; go 1.17

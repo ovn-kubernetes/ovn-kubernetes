@@ -10,7 +10,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listers "k8s.io/client-go/listers/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -110,21 +109,21 @@ func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podAdmissions []PodAd
 	}
 }
 
-func (p PodAdmission) ValidateCreate(_ context.Context, _ runtime.Object) (warnings admission.Warnings, err error) {
+func (p PodAdmission) ValidateCreate(_ context.Context, _ *corev1.Pod) (warnings admission.Warnings, err error) {
 	// Ignore creation, the webhook is configured to only handle pod/status updates
 	return nil, nil
 }
 
-func (p PodAdmission) ValidateDelete(_ context.Context, _ runtime.Object) (warnings admission.Warnings, err error) {
+func (p PodAdmission) ValidateDelete(_ context.Context, _ *corev1.Pod) (warnings admission.Warnings, err error) {
 	// Ignore creation, the webhook is configured to only handle pod/status updates
 	return nil, nil
 }
 
-var _ admission.CustomValidator = &PodAdmission{}
+var _ admission.Validator[*corev1.Pod] = &PodAdmission{}
 
-func (p PodAdmission) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (warnings admission.Warnings, err error) {
-	oldPod := oldObj.(*corev1.Pod)
-	newPod := newObj.(*corev1.Pod)
+func (p PodAdmission) ValidateUpdate(ctx context.Context, oldObj, newObj *corev1.Pod) (warnings admission.Warnings, err error) {
+	oldPod := oldObj
+	newPod := newObj
 
 	req, err := admission.RequestFromContext(ctx)
 	if err != nil {

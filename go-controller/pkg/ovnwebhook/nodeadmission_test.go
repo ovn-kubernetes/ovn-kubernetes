@@ -395,7 +395,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
+			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj.(*corev1.Node), tt.newObj.(*corev1.Node))
 			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
@@ -453,7 +453,7 @@ func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
+			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj.(*corev1.Node), tt.newObj.(*corev1.Node))
 			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
