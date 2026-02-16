@@ -1,0 +1,2549 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<link href="https://www.ovn.org/ovn-kubernetes/okeps/okep-5233-preconfigured-udn-addresses/" rel="canonical"/>
+<link href="../okep-5193-user-defined-networks/" rel="prev"/>
+<link href="../okep-5296-bgp/" rel="next"/>
+<link href="../../images/ovn-inside-k8s.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.1" name="generator"/>
+<title>Preconfigured UDN Addresses - OVN-Kubernetes</title>
+<link href="../../assets/stylesheets/main.484c7ddc.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.ab4e12ef.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+<link href="../../stylesheets/extra.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="light-blue" data-md-color-primary="blue" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#okep-5233-predefined-addresses-for-primary-user-defined-networks-workloads">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="OVN-Kubernetes" class="md-header__button md-logo" data-md-component="logo" href="../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../images/ovn-inside-k8s.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            OVN-Kubernetes
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Preconfigured UDN Addresses
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Blueprint" class="md-option" data-md-color-accent="light-blue" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="blue" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Blueprint">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 3A5.5 5.5 0 0 1 14 8.5c0 1.33-.47 2.55-1.26 3.5H21v9h-9v-8.26c-.95.79-2.17 1.26-3.5 1.26A5.5 5.5 0 0 1 3 8.5 5.5 5.5 0 0 1 8.5 3"></path></svg>
+</label>
+<input aria-label="Nerve Center" class="md-option" data-md-color-accent="purple" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="cyan" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Nerve Center">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m19.07 4.93-1.41 1.41A8.01 8.01 0 0 1 20 12a8 8 0 0 1-8 8 8 8 0 0 1-8-8c0-4.08 3.05-7.44 7-7.93v2.02C8.16 6.57 6 9.03 6 12a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-1.66-.67-3.16-1.76-4.24l-1.41 1.41C15.55 9.9 16 10.9 16 12a4 4 0 0 1-4 4 4 4 0 0 1-4-4c0-1.86 1.28-3.41 3-3.86v2.14c-.6.35-1 .98-1 1.72a2 2 0 0 0 2 2 2 2 0 0 0 2-2c0-.74-.4-1.38-1-1.72V2h-1A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10c0-2.76-1.12-5.26-2.93-7.07"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+</nav>
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+          
+  
+  
+    
+  
+  Overview
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../installation/launching-ovn-kubernetes-on-kind/">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../governance/CONTRIBUTING/">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api-reference/introduction/">
+          
+  
+  
+    
+  
+  API Reference Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../features/user-defined-networks/user-defined-networks/">
+          
+  
+  
+    
+  
+  Features
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../troubleshooting/debugging/">
+          
+  
+  
+    
+  
+  Troubleshooting
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../observability/metrics/">
+          
+  
+  
+    
+  
+  Observability
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="../okep-5085-localnet-api/">
+          
+  
+  
+    
+  
+  Enhancement Proposals
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../blog/">
+          
+  
+  
+    
+  
+  Blog
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="OVN-Kubernetes" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../images/ovn-inside-k8s.png"/>
+</a>
+    OVN-Kubernetes
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_1" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_1_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Overview
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/topology/">
+<span class="md-ellipsis">
+    
+  
+    Network Topology
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/gateway-modes/">
+<span class="md-ellipsis">
+    
+  
+    Gateway Modes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/traffic-flows/">
+<span class="md-ellipsis">
+    
+  
+    Traffic Flows
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/pod-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Pod Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/service-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Service Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/service-traffic-policy/">
+<span class="md-ellipsis">
+    
+  
+    Service Traffic Policy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/host-to-node-port-hairpin-trafficflow/">
+<span class="md-ellipsis">
+    
+  
+    Host To NodePort Hairpin
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/external-ip-and-loadbalancer-ingress/">
+<span class="md-ellipsis">
+    
+  
+    ExternalIPs/LoadBalancerIngress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/ovn-kubernetes-subnets/">
+<span class="md-ellipsis">
+    
+  
+    Internal Subnets
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../installation/launching-ovn-kubernetes-on-kind/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../installation/launching-ovn-kubernetes-with-helm/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes Using Helm
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/configuration/">
+<span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/cli-guide/">
+<span class="md-ellipsis">
+    
+  
+    CLI Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/example-pod-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Workloads on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/example-service-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Services on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/building-ovn-kubernetes/">
+<span class="md-ellipsis">
+    
+  
+    Setup and Building
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../governance/CONTRIBUTING/">
+<span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../governance/REVIEWING/">
+<span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/developer/">
+<span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/image-build/">
+<span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/documentation/">
+<span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/local_testing_guide/">
+<span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../ci/ci/">
+<span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/release/">
+<span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/introduction/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-ip-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-service-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-qos-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-firewall-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/admin-epbr-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/userdefinednetwork-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/routeadvertisements-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_1" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_1_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/user-defined-networks/user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    NetworkSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_2_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/admin-network-policy/">
+<span class="md-ellipsis">
+    
+  
+    AdminNetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/network-policy/">
+<span class="md-ellipsis">
+    
+  
+    NetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/egress-firewall/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    ClusterEgressControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_3_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    ClusterEgressControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-ip/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-service/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-qos/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-gateway/">
+<span class="md-ellipsis">
+    
+  
+    EgressGateway
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    InfrastructureSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_4_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    InfrastructureSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/infrastructure-security-controls/node-identity/">
+<span class="md-ellipsis">
+    
+  
+    NodeIdentity
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworking
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_5_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    MultiNetworking
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-homing/">
+<span class="md-ellipsis">
+    
+  
+    Multihoming
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-network-policies/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkPolicies
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-vtep/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkRails
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multicast/">
+<span class="md-ellipsis">
+    
+  
+    Multicast
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    NetworkQoS
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_7_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkQoS
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-qos-guide/">
+<span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hybrid-overlay/">
+<span class="md-ellipsis">
+    
+  
+    HybridOverlay
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_10" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Hardware Acceleration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_10_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_10">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Hardware Acceleration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hardware-offload/ovs-kernel/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with kernel datapath
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hardware-offload/ovs-doca/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with DOCA datapath
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_11" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    BGP Integration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_11_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_11">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    BGP Integration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/bgp-integration/route-advertisements/">
+<span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Troubleshooting
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/ovnkube-trace/">
+<span class="md-ellipsis">
+    
+  
+    OVNKube Trace
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/logging/">
+<span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/metrics/">
+<span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/sdn-dashboard/">
+<span class="md-ellipsis">
+    
+  
+    SDN Dashboard
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/ovn-observability/">
+<span class="md-ellipsis">
+    
+  
+    OVN observability
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Enhancement Proposals
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_8_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_8">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Enhancement Proposals
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5085-localnet-api/">
+<span class="md-ellipsis">
+    
+  
+    Localnet API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-4380-network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Network QoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5193-user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#problem-statement">
+<span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#goals">
+<span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#non-goals">
+<span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#proposed-solution">
+<span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+</a>
+<nav aria-label="Proposed Solution" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#primary-udn-configuration">
+<span class="md-ellipsis">
+      
+        Primary UDN configuration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#pod-network-identity">
+<span class="md-ellipsis">
+      
+        Pod network identity
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-details">
+<span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+</a>
+<nav aria-label="API Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layer2-user-defined-network-api-changes">
+<span class="md-ellipsis">
+      
+        Layer2 User Defined Network API changes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipamclaim-api-changes">
+<span class="md-ellipsis">
+      
+        IPAMClaim API changes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#usage-example">
+<span class="md-ellipsis">
+      
+        Usage Example
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#configurability">
+<span class="md-ellipsis">
+      
+        Configurability
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#networkselectionelement-annotation">
+<span class="md-ellipsis">
+      
+        NetworkSelectionElement annotation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#address-allocation">
+<span class="md-ellipsis">
+      
+        Address allocation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#testing-details">
+<span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#documentation-details">
+<span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks-known-limitations-and-mitigations">
+<span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-kubernetes-version-skew">
+<span class="md-ellipsis">
+      
+        OVN-Kubernetes Version Skew
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#alternatives">
+<span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5296-bgp/">
+<span class="md-ellipsis">
+    
+  
+    BGP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5094-layer2-transit-router/">
+<span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5494-ovn-kubernetes-mcp-server/">
+<span class="md-ellipsis">
+    
+  
+    MCP for Troubleshooting
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5552-dynamic-udn-node-allocation/">
+<span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5224-connecting-udns/okep-5224-connecting-udns/">
+<span class="md-ellipsis">
+    
+  
+    Connecting User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5259-no-overlay/">
+<span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5088-evpn/">
+<span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5674-dpu-healthcheck/">
+<span class="md-ellipsis">
+    
+  
+    DPU Healthcheck
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../../blog/">
+<span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Blog
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#problem-statement">
+<span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#goals">
+<span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#non-goals">
+<span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#proposed-solution">
+<span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+</a>
+<nav aria-label="Proposed Solution" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#primary-udn-configuration">
+<span class="md-ellipsis">
+      
+        Primary UDN configuration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#pod-network-identity">
+<span class="md-ellipsis">
+      
+        Pod network identity
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-details">
+<span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+</a>
+<nav aria-label="API Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layer2-user-defined-network-api-changes">
+<span class="md-ellipsis">
+      
+        Layer2 User Defined Network API changes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipamclaim-api-changes">
+<span class="md-ellipsis">
+      
+        IPAMClaim API changes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#usage-example">
+<span class="md-ellipsis">
+      
+        Usage Example
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#configurability">
+<span class="md-ellipsis">
+      
+        Configurability
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#networkselectionelement-annotation">
+<span class="md-ellipsis">
+      
+        NetworkSelectionElement annotation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#address-allocation">
+<span class="md-ellipsis">
+      
+        Address allocation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#testing-details">
+<span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#documentation-details">
+<span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks-known-limitations-and-mitigations">
+<span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-kubernetes-version-skew">
+<span class="md-ellipsis">
+      
+        OVN-Kubernetes Version Skew
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#alternatives">
+<span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="okep-5233-predefined-addresses-for-primary-user-defined-networks-workloads">OKEP-5233: Predefined addresses for primary user defined networks workloads<a class="headerlink" href="#okep-5233-predefined-addresses-for-primary-user-defined-networks-workloads" title="Permanent link">¶</a></h1>
+<ul>
+<li>Issue: <a href="https://github.com/ovn-org/ovn-kubernetes/issues/5233">#5233</a></li>
+</ul>
+<h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
+<p>Migrating legacy workloads with predefined network configurations (IP, MAC, default gateway)
+to OVN-Kubernetes is currently not possible. There is a need to import these workloads, preserving
+their network configuration, while also enabling non-NATed traffic to better integrate with
+existing infrastructures.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Enable pods on primary Layer2 User Defined Network (UDN) and Cluster UDN to use a predefined static network
+  configuration including IP address, MAC address, and default gateway.</li>
+<li>Ensure it is possible to enable non-NATed traffic for pods with predefined static network configuration
+  by exposing the Layer2 Cluster UDN through BGP (see <a href="#risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations</a> for current BGP support limitations).</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Modifying the default gateway and management IPs of a primary UDN after it was created.</li>
+<li>Modifying a pod's network configuration after the pod was created.</li>
+<li>Non-NATed traffic support in secondary networks.</li>
+<li>Predefined IP/MAC addresses support for pods in Layer3 UDNs.</li>
+<li>Configurable default gateway and infrastructure addresses in Layer3 UDNs.</li>
+<li>Predefined IP/MAC addresses support for pods in Localnet UDNs.</li>
+<li>Configuring default gateway and infrastructure addresses in Layer2 (Cluster) UDNs that do not belong to the networks subnets.</li>
+<li>No-downtime workload migration.</li>
+</ul>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<p>Legacy workloads, particularly virtual machines, are often set up with static
+network configurations. When migrating to OVN-Kubernetes UDNs,
+it should be possible to integrate these gradually to prevent disruptions.</p>
+<p>Currently, OVN-Kubernetes allocates IP addresses dynamically and it generates the MAC
+addresses from it. It sets the pod's default gateway to the first usable IP address of its subnet.
+For primary UDNs, it additionally reserves the second usable IP address for the internal management port which
+excludes it from being available for workloads.</p>
+<h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
+<ul>
+<li>
+<p>As a user, I want to define a custom default gateway IP for a new primary Layer2 UDN
+so that my migrated workloads can maintain their existing network configuration without disruption.</p>
+</li>
+<li>
+<p>As a user, I want the ability to configure a new primary Layer2 UDN with a custom management IP
+address to prevent IP conflicts with the workloads I am importing.</p>
+</li>
+<li>
+<p>As a user, I want to assign a predefined IP address and MAC address to a pod to ensure the
+network identity of my imported workload is maintained.</p>
+</li>
+<li>
+<p>As a user, I want to prevent OVN-Kubernetes from automatically assigning  IP addresses that are
+already in use by my existing infrastructure, so that I can migrate my services gradually without network conflicts.</p>
+</li>
+</ul>
+<h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">¶</a></h2>
+<h3 id="primary-udn-configuration">Primary UDN configuration<a class="headerlink" href="#primary-udn-configuration" title="Permanent link">¶</a></h3>
+<p>To support the migration of pre-configured workloads, the UDN and cluster UDN API has to
+be enhanced. The aim is to provide control over the IP addresses that OVN-Kubernetes
+consumes in the overlay network, this includes the default gateway and management IPs.
+The proposed changes are specified in the <a href="#layer2-user-defined-network-api-changes">Layer2 User Defined Network API changes</a> section.</p>
+<h3 id="pod-network-identity">Pod network identity<a class="headerlink" href="#pod-network-identity" title="Permanent link">¶</a></h3>
+<p>OVN-Kubernetes currently supports configuring pods' secondary network interfaces through
+the <code>k8s.v1.cni.cncf.io/networks</code> annotation, which contains a JSON array of
+<a href="https://github.com/k8snetworkplumbingwg/network-attachment-definition-client/blob/e12bd55d48a1f798a1720218819063f5903b72e3/pkg/apis/k8s.cni.cncf.io/v1/types.go#L136-L171">NetworkSelectionElement</a>
+objects. Additionally, it is possible to modify the cluster's default network attachment by
+setting the <code>v1.multus-cni.io/default-network</code> annotation to a singular NetworkSelectionElement
+object.</p>
+<p>To enable using predefined MAC and IP addresses on pods attached to a primary UDN,
+the <code>v1.multus-cni.io/default-network</code> will be reused, as it is a well-known annotation for
+configuring the pod's default network. The <code>k8s.v1.cni.cncf.io/networks</code> annotation is specific to
+secondary networks and expects a list of networks, which does not fit well with primary UDNs.
+With the proposed approach, the <code>k8s.ovn.org/primary-udn-ipamclaim</code> annotation, used to link a
+pod with a matching claim, will be deprecated in favor of the <code>IPAMClaimReference</code> field in the
+NetworkSelectionElement. When <code>IPAMClaimReference</code> is specified we will update its status to reflect
+the result of the IP allocation, see <a href="#ipamclaim-api-changes">IPAMClaim API changes</a>.
+OVN-Kubernetes will keep track of all allocated MAC and IP addresses to detect conflicts.
+When a conflict is detected, OVN-Kubernetes will emit a Kubernetes event to the pod indicating
+the specific conflict (IP or MAC address already in use) and prevent the pod from starting.</p>
+<pre class="mermaid"><code>%%{init: { 'sequence': {'messageAlign': 'left'} }}%%
+sequenceDiagram
+actor User
+participant K8s_API_Server as "K8s API Server"
+participant OVN_K_Controller as "OVN-Kubernetes"
+
+note over User, K8s_API_Server: Pre-Step: User defines UDN <br/> (Optional) with custom Default Gateway / Management IP
+
+User-&gt;&gt;K8s_API_Server: Create Pod with annotation: <br/> 'v1.multus-cni.io/default-network': <br/> [{ <br/> name: 'default', <br/> namespace: 'ovn-kubernetes',<br/> ips: ['10.0.0.10'], <br/> mac: '00:1A:2B:3C:4D:5E', <br/> ipam-claim-reference: 'my-claim' <br/> }]
+
+
+K8s_API_Server-&gt;&gt;OVN_K_Controller: Notify: New Pod Spec
+
+OVN_K_Controller-&gt;&gt;OVN_K_Controller: Parse 'v1.multus-cni.io/default-network' annotation <br/>Perform IP/MAC conflict check within UDN <br/> (Verify requested IP/MAC are not in use)
+
+
+alt "No IP/MAC Conflict"
+opt "IPAMClaimReference is specified in annotation"
+OVN_K_Controller-&gt;&gt;K8s_API_Server: Update Status conditions and addresses of referenced IPAMClaim
+end
+
+OVN_K_Controller-&gt;&gt;OVN_K_Controller: Configure Pod's Primary Network Interface
+note right of OVN_K_Controller: Pod provisioning succeeds
+else "IP/MAC Conflict Detected in UDN"
+opt "IPAMClaimReference is specified in annotation"
+OVN_K_Controller-&gt;&gt;K8s_API_Server: Update Status conditions of referenced IPAMClaim
+end
+OVN_K_Controller-&gt;&gt;K8s_API_Server: Emit IP/MAC Conflict error event to the Pod
+note right of OVN_K_Controller: Pod provisioning fails
+end
+</code></pre>
+<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
+<h4 id="layer2-user-defined-network-api-changes">Layer2 User Defined Network API changes<a class="headerlink" href="#layer2-user-defined-network-api-changes" title="Permanent link">¶</a></h4>
+<p>Proposed API change adds <code>infrastructureSubnets</code> <code>reservedSubnets</code> and <code>defaultGatewayIPs</code> fields to the <code>Layer2Config</code> which is a part of both
+the <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/udn.go#L47">UDN</a>
+and <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/cudn.go#L63">cluster UDN</a> specs:</p>
+<div class="highlight"><pre><span></span><code>// +kubebuilder:validation:XValidation:rule="has(self.ipam) &amp;&amp; has(self.ipam.mode) &amp;&amp; self.ipam.mode != 'Enabled' || has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.subnets)", message="Subnets must be unset when ipam.mode is Disabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || self.role == 'Secondary'", message="Disabled ipam.mode is only supported for Secondary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) &amp;&amp; self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) &amp;&amp; cidr(i).ip().family() == 6) || self.mtu &gt;= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) &amp;&amp; self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs must belong to one of the subnets specified in the subnets field"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || has(self.reservedSubnets) &amp;&amp; has(self.subnets)", message="reservedSubnets must be unset when subnets is unset"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || self.reservedSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="reservedSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".reservedSubnets"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || has(self.infrastructureSubnets) &amp;&amp; has(self.subnets)", message="infrastructureSubnets must be unset when subnets is unset"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="infrastructureSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".infrastructureSubnets"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs have to belong to infrastructureSubnets"</span>
+<span class="gi">+ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.reservedSubnets) || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved, cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))", message="infrastructureSubnets and reservedSubnets must not overlap"</span>
+type Layer2Config struct {
+
+// Role describes the network role in the pod.
+//
+// Allowed value is "Secondary".
+// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
+//
+// +kubebuilder:validation:Enum=Primary;Secondary
+// +kubebuilder:validation:Required
+// +required
+Role NetworkRole `json:"role"`
+
+// MTU is the maximum transmission unit for a network.
+// MTU is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.
+//
+// +kubebuilder:validation:Minimum=576
+// +kubebuilder:validation:Maximum=65536
+// +optional
+MTU int32 `json:"mtu,omitempty"`
+
+// Subnets are used for the pod network across the cluster.
+// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+//
+// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+// This field must be omitted if `ipam.mode` is `Disabled`.
+//
+// +optional
+Subnets DualStackCIDRs `json:"subnets,omitempty"`
+
+<span class="gi">+ // reservedSubnets specifies a list of CIDRs reserved for static IP assignment, excluded from automatic allocation.</span>
+<span class="gi">+ // reservedSubnets is optional. When omitted, all IP addresses in `subnets` are available for automatic assignment.</span>
+<span class="gi">+ // IPs from these ranges can still be requested through static IP assignment in pod annotations.</span>
+<span class="gi">+ // Each item should be in range of the specified CIDR(s) in `subnets`.</span>
+<span class="gi">+ // The maximum number of entries allowed is 25.</span>
+<span class="gi">+ // The format should match standard CIDR notation (for example, "10.128.0.0/16").</span>
+<span class="gi">+ // This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.</span>
+<span class="gi">+ // +optional</span>
+<span class="gi">+ // +kubebuilder:validation:MinItems=1</span>
+<span class="gi">+ // +kubebuilder:validation:MaxItems=25</span>
+<span class="gi">+ ReservedSubnets []CIDR `json:"reservedSubnets,omitempty"`</span>
+
+// JoinSubnets are used inside the OVN network topology.
+//
+// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+// This field is only allowed for "Primary" network.
+// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+// When omitted, the platform will choose a reasonable default which is subject to change over time.
+//
+// +optional
+JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
+
+<span class="gi">+ // infrastructureSubnets specifies a list of internal CIDR ranges that OVN-Kubernetes will reserve for internal network infrastructure.</span>
+<span class="gi">+ // Any IP addresses within these ranges cannot be assigned to workloads.</span>
+<span class="gi">+ // When omitted, OVN-Kubernetes will automatically allocate IP addresses from `subnets` for its infrastructure needs.</span>
+<span class="gi">+ // When `reservedSubnets` is also specified the CIDRs cannot overlap.</span>
+<span class="gi">+ // When `defaultGatewayIPs` is also specified  the default gateway IPs must belong to one of the CIDRs.</span>
+<span class="gi">+ // Each item should be in range of the specified CIDR(s) in `subnets`.</span>
+<span class="gi">+ // The maximum number of entries allowed is 10.</span>
+<span class="gi">+ // The format should match standard CIDR notation (for example, "10.128.0.0/16").</span>
+<span class="gi">+ // This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.</span>
+<span class="gi">+ // +optional</span>
+<span class="gi">+ // +kubebuilder:validation:MinItems=1</span>
+<span class="gi">+ // +kubebuilder:validation:MaxItems=10</span>
+<span class="gi">+ InfrastructureSubnets []CIDR `json:"infrastructureSubnets,omitempty"`</span>
+
+<span class="gi">+ // defaultGatewayIPs specifies the default gateway IP used in the internal OVN topology.</span>
+<span class="gi">+ //</span>
+<span class="gi">+ // Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.</span>
+<span class="gi">+ // This field is only allowed for "Primary" network.</span>
+<span class="gi">+ // It is not recommended to set this field without explicit need and understanding of the OVN network topology.</span>
+<span class="gi">+ // When omitted, an IP from network subnet is used.</span>
+<span class="gi">+ //</span>
+<span class="gi">+ // +optional</span>
+<span class="gi">+ DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`</span>
+
+// IPAM section contains IPAM-related configuration for the network.
+// +optional
+IPAM *IPAMConfig `json:"ipam,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="isIP(self)", message="IP is invalid"
+type IP string
+
+// +kubebuilder:validation:MinItems=1
+// +kubebuilder:validation:MaxItems=2
+// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isIP(self[0]) || !isIP(self[1]) || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
+type DualStackIPs []IP
+</code></pre></div>
+<p>The API changes mentioned above will be carried to the <code>NetworkAttachmentDefinition</code> JSON spec.</p>
+<h4 id="ipamclaim-api-changes">IPAMClaim API changes<a class="headerlink" href="#ipamclaim-api-changes" title="Permanent link">¶</a></h4>
+<p>The following pull request is tracking the IPAMClaim API change that introduces the status conditions:
+<a href="https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9">https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9</a></p>
+<p><a href="https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk">IPAMClaim CRD doc</a> - <code>IPAM allocation on behalf of other entities</code> section</p>
+<h3 id="usage-example">Usage Example<a class="headerlink" href="#usage-example" title="Permanent link">¶</a></h3>
+<p>A user migrating services wants to import a workload pod preserving it's original IP address.
+Workload data:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">IP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.100.205</span>
+<span class="nt">MAC</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">00:1A:2B:3C:4D:5E</span>
+<span class="nt">Default Gateway</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.100.2</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">network-l2</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="s">"Layer2"</span>
+<span class="w">  </span><span class="nt">layer2</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">    </span><span class="nt">subnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.100.0/24"</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">infrastructureSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.100.0/30"</span><span class="p p-Indicator">]</span><span class="w">  </span><span class="c1"># used for OVN-Kubernetes infrastructure</span>
+<span class="w">    </span><span class="nt">reservedSubnets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.100.200/29"</span><span class="p p-Indicator">]</span><span class="w">      </span><span class="c1"># reserved for workloads that will require predefined addresses</span>
+<span class="w">    </span><span class="nt">defaultGatewayIPs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"192.168.100.2"</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>With this configuration, OVN-Kubernetes automatically assigns IPs from <code>.4-.199</code> and <code>.208-.254</code> for new workloads, while pods can request specific IPs from the reserved range:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Pod</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">migrated-app</span>
+<span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">v1.multus-cni.io/default-network</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">      </span><span class="no">{"name": "default", "namespace": "ovn-kubernetes", "ips": ["192.168.100.205"], "mac": "00:1A:2B:3C:4D:5E", "ipam-claim-reference": "my-claim"}</span>
+<span class="nt">spec</span><span class="p">:</span>
+</code></pre></div>
+<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
+<h4 id="configurability">Configurability<a class="headerlink" href="#configurability" title="Permanent link">¶</a></h4>
+<p>The changes outlined in this enhancement should be configurable. This means a configuration knob
+is required to instruct OVN-Kubernetes on whether to process the annotation described in the
+<a href="#pod-network-identity">Pod network identity</a> section. The feature knob will be called <code>preconfigured-udn-addresses-enable</code>.</p>
+<h4 id="networkselectionelement-annotation">NetworkSelectionElement annotation<a class="headerlink" href="#networkselectionelement-annotation" title="Permanent link">¶</a></h4>
+<p>Currently, the <code>v1.multus-cni.io/default-network</code> annotation is only processed for the cluster default network.
+This enhancement will extend this behavior, allowing it to be applied to pods created in the primary Layer2 UDN as well.
+The annotation should only be processed for new pods, modifying it after the addresses were allocated won't
+be reflected in the pods network configuration and this should be blocked through a
+<a href="https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/">Validating Admission Policy</a>:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">admissionregistration.k8s.io/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ValidatingAdmissionPolicy</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">predefined-network-addresses</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">matchConstraints</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">resourceRules</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">apiGroups</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">""</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">apiVersions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"v1"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">operations</span><span class="p">:</span><span class="w">  </span><span class="p p-Indicator">[</span><span class="s">"UPDATE"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">resources</span><span class="p">:</span><span class="w">   </span><span class="p p-Indicator">[</span><span class="s">"pods"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">failurePolicy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Fail</span>
+<span class="w">  </span><span class="nt">validations</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="s">"('v1.multus-cni.io/default-network'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">oldObject.metadata.annotations)</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">('v1.multus-cni.io/default-network'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">object.metadata.annotations)"</span>
+<span class="w">      </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"The</span><span class="nv"> </span><span class="s">'v1.multus-cni.io/default-network'</span><span class="nv"> </span><span class="s">annotation</span><span class="nv"> </span><span class="s">cannot</span><span class="nv"> </span><span class="s">be</span><span class="nv"> </span><span class="s">changed</span><span class="nv"> </span><span class="s">after</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">pod</span><span class="nv"> </span><span class="s">was</span><span class="nv"> </span><span class="s">created"</span>
+</code></pre></div>
+<p>The <code>NetworkSelectionElement</code> structure has an extensive list of fields, this enhancement
+focuses only on the following:</p>
+<div class="highlight"><pre><span></span><code>type NetworkSelectionElement struct {
+    // Name contains the name of the Network object this element selects
+    Name string `json:"name"`
+    // Namespace contains the optional namespace that the network referenced
+    // by Name exists in
+    Namespace string `json:"namespace,omitempty"`
+    // IPRequest contains an optional requested IP addresses for this network
+    // attachment
+    IPRequest []string `json:"ips,omitempty"`
+    // MacRequest contains an optional requested MAC address for this
+    // network attachment
+    MacRequest string `json:"mac,omitempty"`
+    // IPAMClaimReference container the IPAMClaim name where the IPs for this
+    // attachment will be located.
+    IPAMClaimReference string `json:"ipam-claim-reference,omitempty"`
+}
+</code></pre></div>
+<p>Any other field set in the struct will be ignored by OVN-Kubernetes.</p>
+<p>When using the <code>v1.multus-cni.io/default-network</code> annotation, Multus strictly requires its value to reference an
+existing NAD. Multus then builds the CNI requests based on it.
+This proposal introduces a static default NAD object applied to the cluster. This object will serve as a
+stub to generate the CNI calls, preserving the current behavior:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.cni.cncf.io/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ovn-kubernetes</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="s">'{"cniVersion":</span><span class="nv"> </span><span class="s">"0.4.0",</span><span class="nv"> </span><span class="s">"name":</span><span class="nv"> </span><span class="s">"ovn-kubernetes",</span><span class="nv"> </span><span class="s">"type":</span><span class="nv"> </span><span class="s">"ovn-k8s-cni-overlay"}'</span>
+</code></pre></div>
+<p>With this approach, users must configure the <code>Name</code> to <code>default</code> and the <code>Namespace</code> to <code>ovn-kubernetes</code>.
+This configuration ensures Multus still references the default network while OVN-Kubernetes will internally use the
+primary UDN to handle MAC/IP requests from the NSE.</p>
+<blockquote>
+<p>The default NAD object specified above is already used when the default network is exposed through BGP as
+part of the route advertisement feature. The proposal is to have it available all the time.</p>
+</blockquote>
+<p>With <code>k8s.ovn.org/primary-udn-ipamclaim</code> being deprecated in favor of the <code>IPAMClaimReference</code> field
+in the <code>NetworkSelectionElement</code> we have to define the expected behavior. To avoid conflicting
+settings when <code>v1.multus-cni.io/default-network</code> is set the <code>k8s.ovn.org/primary-udn-ipamclaim</code> is
+going to be ignored, it will be reflected in the opposite scenario for backwards compatibility
+with a plan to remove it in a future release.
+Deprecation plan for the <code>k8s.ovn.org/primary-udn-ipamclaim</code> annotation:</p>
+<ul>
+<li>release-N - emit a warning event stating that the annotation is deprecated and will be removed in a future release.</li>
+<li>release-N+1 - fail to configure pods with the annotation set.</li>
+<li>release-N+2 - remove any code handling the annotation, effectively ignoring it.</li>
+</ul>
+<p>Note that <code>GatewayRequest</code> is not listed, the default gateway is an attribute of the network is not going to be
+configurable per pod.</p>
+<h3 id="address-allocation">Address allocation<a class="headerlink" href="#address-allocation" title="Permanent link">¶</a></h3>
+<p>OVN-Kubernetes currently <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/3ef29b9a32b04b7917a0afd6b0e9651d17242ed7/go-controller/pkg/util/net.go#L100-L113">generates</a>
+the overlay MAC addresses from the IPs:</p>
+<ul>
+<li>IPv4: It takes the four octets of the address (e.g <code>AA.BB.CC.DD</code>) and uses them to
+create the MAC address with a constant prefix (e.g. <code>0A:58:AA:BB:CC:DD</code>).</li>
+<li>IPv6: Computes a SHA256 checksum from the IPv6 string and uses the first four bytes for the MAC
+address with the <code>0A:58</code> constant prefix(e.g. <code>0A:58:SHA[0]:SHA[1]:SHA[2]:SHA[3]</code>).</li>
+</ul>
+<p>Although unlikely, we need to implement logic that ensures that the MAC address requested through
+the <code>NetworkSelectionElement</code> does not conflict with any other configured address on the UDN
+(including addresses consumed by OVN-Kubernetes).</p>
+<p>OVN-Kubernetes already persists the IP and MAC addresses in the <code>k8s.ovn.org/pod-networks</code> annotation for each pod:</p>
+<div class="highlight"><pre><span></span><code>// PodAnnotation describes the assigned network details for a single pod network. (The
+// actual annotation may include the equivalent of multiple PodAnnotations.)
+type PodAnnotation struct {
+// IPs are the pod's assigned IP addresses/prefixes
+IPs []*net.IPNet
+// MAC is the pod's assigned MAC address
+MAC net.HardwareAddr
+// Gateways are the pod's gateway IP addresses; note that there may be
+// fewer Gateways than IPs.
+Gateways []net.IP
+
+// GatewayIPv6LLA is the IPv6 Link Local Address for the pod's gateway, that is the address
+// that will be set as gateway with router advertisements
+// generated from the gateway router from the node where the pod is running.
+GatewayIPv6LLA net.IP
+
+// Routes are additional routes to add to the pod's network namespace
+Routes []PodRoute
+
+// TunnelID assigned to each pod for layer2 secondary networks
+TunnelID int
+
+// Role defines what role this network plays for the given pod.
+// Expected values are:
+// (1) "primary" if this network is the primary network of the pod.
+//     The "default" network is the primary network of any pod usually
+//     unless user-defined-network-segmentation feature has been activated.
+//     If network segmentation feature is enabled then any user defined
+//     network can be the primary network of the pod.
+// (2) "secondary" if this network is the secondary network of the pod.
+//     Only user defined networks can be secondary networks for a pod.
+// (3) "infrastructure-locked" is applicable only to "default" network if
+//     a user defined network is the "primary" network for this pod. This
+//     signifies the "default" network is only used for probing and
+//     is otherwise locked for all intents and purposes.
+// At a given time a pod can have only 1 network with role:"primary"
+Role string
+}
+</code></pre></div>
+<p>This annotation will be used to build an initial cache of allocated addresses at startup, which will then be updated
+dynamically at runtime and used for conflict detection.
+A similar approach is required for IP address conflict detection.
+When a conflict is detected the pod should not start and an appropriate event should be emitted.</p>
+<p>When the <code>NetworkSelectionElement</code> contains an <code>IPAMClaimReference</code> the referenced IPAMClaim should
+reflect the IP allocation status including error reporting through the newly introduced
+<code>Conditions</code> status field.
+In the opposite scenario where the <code>NetworkSelectionElement</code> does not specify the <code>IPAMClaimReference</code>
+the IP allocation is not persisted when the pod is removed.</p>
+<h3 id="testing-details">Testing Details<a class="headerlink" href="#testing-details" title="Permanent link">¶</a></h3>
+<p>The following scenarios should be covered in testing:</p>
+<ul>
+<li>VM workloads import into OVN-Kubernetes with no changes to the instances network configuration.</li>
+<li>Imported VM workloads can live-migrate to another node without any additional traffic disruption.</li>
+<li>'v1.multus-cni.io/default-network' cannot be changed after the pod was created.</li>
+<li>It should be possible to configure the pods MAC or the IP address without configuring the other.</li>
+<li>When <code>reservedSubnets</code> is configured automatic IP allocation should not use addresses specified in it.</li>
+<li>It should be possible to configure the pods IP address using the 'v1.multus-cni.io/default-network'
+even if the address is a part of the <code>reservedSubnets</code>.</li>
+<li>Requesting an IP address and default gateway IP that is not a part of the networks subnet should fail.</li>
+<li>Detect MAC and IP address conflicts between the requested addresses for a newly created pods and the addresses that
+are already allocated in the network.</li>
+<li>After configuring custom default gateway and management addresses on a Layer2 UDN the previous default
+IPs can be consumed by workloads(e.g. for 10.0.0.0/16 network create pods with 10.0.0.1 and 10.0.0.2 addresses).</li>
+<li>Modifying the  default gateway and management addresses on a Layer2 UDN should not be possible after the network
+was created.</li>
+</ul>
+<p>The scenarios mentioned above have to cover both IPv4 and IPv6 IP families.</p>
+<h3 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">¶</a></h3>
+<h2 id="risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations<a class="headerlink" href="#risks-known-limitations-and-mitigations" title="Permanent link">¶</a></h2>
+<ul>
+<li>
+<p>Modifying the 'v1.multus-cni.io/default-network' value after the pod was created could have unpredictable
+consequences.
+To mitigate this introduce a Validating Admission Policy described in <a href="#implementation-details">Implementation Details</a>.</p>
+</li>
+<li>
+<p>By allowing users to specify the IP and MAC addresses for the pods there is a risk of conflicts.
+To mitigate this OVN-Kubernetes will check that the requested addresses are not currently used in the UDN.
+There is still a risk that the user picks an address that's consumed by something outside of the UDN but that's beyond
+what OVN-Kubernetes controls and can check.</p>
+</li>
+<li>
+<p>The dynamic, per-node subnet allocation in Layer3 UDNs, where each node has a unique default gateway and
+management IP, makes user-specified UDN gateway/management IPs and static pod IP/MAC assignments very complex. This
+enhancement will not support Layer3 UDNs.</p>
+</li>
+<li>
+<p>BGP support today is limited to cluster UDNs, to ensure a non-NATed traffic for pods with predefined addresses
+the user has to use a cluster UDN to configure the network. This is a limitation unrelated to this enhancement
+and it is possible it will be solved in the future.</p>
+</li>
+<li>
+<p>By consuming the 'v1.multus-cni.io/default-network' annotation for altering the primary UDNs pod configuration the
+user won't be able to use it for configuring the cluster default network attachment. This is acceptable as there is
+currently no support for modifying the cluster default network through this annotation while using primary UDNs.
+If there is a requirement in the future another mechanism can be considered.</p>
+</li>
+<li>
+<p>OVN-Kubernetes computes MAC addresses from pod IPs rather than allocating them, which creates potential
+MAC address conflicts in a potential scenario where a MAC address previously used by a stopped VM gets consumed by
+OVN-Kubernetes for a dynamically allocated IP. To mitigate these conflicts, users will have to use a different
+MAC address and recreate the workload. For importing workloads that already use this prefix, a future enhancement
+could add a field to the Layer2 spec allowing users to specify a custom MAC prefix for the UDN.</p>
+</li>
+</ul>
+<h2 id="ovn-kubernetes-version-skew">OVN-Kubernetes Version Skew<a class="headerlink" href="#ovn-kubernetes-version-skew" title="Permanent link">¶</a></h2>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
+<ul>
+<li>
+<p>Instead of the <a href="#pod-network-identity">Pod network identity</a> approach, we could expand the
+IPAMClaim API. It currently lacks IP request capabilities, and using IPAMClaim for MAC addresses
+is confusing. Introducing a new API would mean deprecating the IPAMClaim, while managing
+upgrades and supporting both solutions for a period of time. This requires significant effort, which
+is not feasible at this time.</p>
+</li>
+<li>
+<p>As described in the <a href="#networkselectionelement-annotation">NetworkSelectionElement annotation</a> section, using the
+<code>v1.multus-cni.io/default-network</code> annotation means Multus strictly requires this annotation's value to reference an
+existing NAD. An alternative to the proposed approach would be to reference the NAD that defines the primary network.
+It was discarded as it would require OVN-Kubernetes to modify the CNI handling logic because multus
+would target the CNI requests towards the custom network. Additionally it would require users to determine the exact
+NAD name and namespace for every primary UDN pod needing custom MAC, IP, or IPAMClaim.</p>
+</li>
+</ul>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ul>
+<li>
+<p><a href="https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk">IPAMClaim CRD doc</a> - <code>IPAM allocation on behalf of other entities</code> section</p>
+</li>
+<li>
+<p>IPAMClaim status conditions pull request: <a href="https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9">https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9</a></p>
+</li>
+</ul>
+</article>
+</div>
+<script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      Copyright © OVN-Kubernetes a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">LF Projects Policies</a>.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+<script src="../../javascripts/gemini-api-key.js"></script>
+<script src="../../javascripts/theme.js"></script>
+<script src="../../javascripts/extra.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

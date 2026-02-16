@@ -1,0 +1,3245 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<link href="https://www.ovn.org/ovn-kubernetes/features/bgp-integration/route-advertisements/" rel="canonical"/>
+<link href="../../hardware-offload/ovs-doca/" rel="prev"/>
+<link href="../../../troubleshooting/debugging/" rel="next"/>
+<link href="../../../images/ovn-inside-k8s.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.1" name="generator"/>
+<title>Route Advertisements - OVN-Kubernetes</title>
+<link href="../../../assets/stylesheets/main.484c7ddc.min.css" rel="stylesheet"/>
+<link href="../../../assets/stylesheets/palette.ab4e12ef.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+<link href="../../../stylesheets/extra.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="light-blue" data-md-color-primary="blue" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#route-advertisements">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="OVN-Kubernetes" class="md-header__button md-logo" data-md-component="logo" href="../../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../../images/ovn-inside-k8s.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            OVN-Kubernetes
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Route Advertisements
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Blueprint" class="md-option" data-md-color-accent="light-blue" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="blue" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Blueprint">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 3A5.5 5.5 0 0 1 14 8.5c0 1.33-.47 2.55-1.26 3.5H21v9h-9v-8.26c-.95.79-2.17 1.26-3.5 1.26A5.5 5.5 0 0 1 3 8.5 5.5 5.5 0 0 1 8.5 3"></path></svg>
+</label>
+<input aria-label="Nerve Center" class="md-option" data-md-color-accent="purple" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="cyan" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Nerve Center">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m19.07 4.93-1.41 1.41A8.01 8.01 0 0 1 20 12a8 8 0 0 1-8 8 8 8 0 0 1-8-8c0-4.08 3.05-7.44 7-7.93v2.02C8.16 6.57 6 9.03 6 12a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-1.66-.67-3.16-1.76-4.24l-1.41 1.41C15.55 9.9 16 10.9 16 12a4 4 0 0 1-4 4 4 4 0 0 1-4-4c0-1.86 1.28-3.41 3-3.86v2.14c-.6.35-1 .98-1 1.72a2 2 0 0 0 2 2 2 2 0 0 0 2-2c0-.74-.4-1.38-1-1.72V2h-1A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10c0-2.76-1.12-5.26-2.93-7.07"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+</nav>
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../..">
+          
+  
+  
+    
+  
+  Overview
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../installation/launching-ovn-kubernetes-on-kind/">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../governance/CONTRIBUTING/">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../api-reference/introduction/">
+          
+  
+  
+    
+  
+  API Reference Guide
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="../../user-defined-networks/user-defined-networks/">
+          
+  
+  
+    
+  
+  Features
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../troubleshooting/debugging/">
+          
+  
+  
+    
+  
+  Troubleshooting
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../observability/metrics/">
+          
+  
+  
+    
+  
+  Observability
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../okeps/okep-5085-localnet-api/">
+          
+  
+  
+    
+  
+  Enhancement Proposals
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../../blog/">
+          
+  
+  
+    
+  
+  Blog
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="OVN-Kubernetes" class="md-nav__button md-logo" data-md-component="logo" href="../../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../../images/ovn-inside-k8s.png"/>
+</a>
+    OVN-Kubernetes
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_1" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../../..">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_1_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Overview
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/topology/">
+<span class="md-ellipsis">
+    
+  
+    Network Topology
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/gateway-modes/">
+<span class="md-ellipsis">
+    
+  
+    Gateway Modes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/traffic-flows/">
+<span class="md-ellipsis">
+    
+  
+    Traffic Flows
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/pod-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Pod Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/service-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Service Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/service-traffic-policy/">
+<span class="md-ellipsis">
+    
+  
+    Service Traffic Policy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/host-to-node-port-hairpin-trafficflow/">
+<span class="md-ellipsis">
+    
+  
+    Host To NodePort Hairpin
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/external-ip-and-loadbalancer-ingress/">
+<span class="md-ellipsis">
+    
+  
+    ExternalIPs/LoadBalancerIngress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../design/ovn-kubernetes-subnets/">
+<span class="md-ellipsis">
+    
+  
+    Internal Subnets
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../installation/launching-ovn-kubernetes-on-kind/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../installation/launching-ovn-kubernetes-with-helm/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes Using Helm
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../getting-started/configuration/">
+<span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../getting-started/cli-guide/">
+<span class="md-ellipsis">
+    
+  
+    CLI Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../getting-started/example-pod-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Workloads on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../getting-started/example-service-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Services on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../getting-started/building-ovn-kubernetes/">
+<span class="md-ellipsis">
+    
+  
+    Setup and Building
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../governance/CONTRIBUTING/">
+<span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../governance/REVIEWING/">
+<span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../developer-guide/developer/">
+<span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../developer-guide/image-build/">
+<span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../developer-guide/documentation/">
+<span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../developer-guide/local_testing_guide/">
+<span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../ci/ci/">
+<span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../developer-guide/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../developer-guide/release/">
+<span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/introduction/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/egress-ip-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/egress-service-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/egress-qos-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/egress-firewall-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/admin-epbr-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/userdefinednetwork-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../api-reference/routeadvertisements-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_1" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_1_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../user-defined-networks/user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    NetworkSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_2_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../network-security-controls/admin-network-policy/">
+<span class="md-ellipsis">
+    
+  
+    AdminNetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../network-security-controls/network-policy/">
+<span class="md-ellipsis">
+    
+  
+    NetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../network-security-controls/egress-firewall/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    ClusterEgressControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_3_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    ClusterEgressControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../cluster-egress-controls/egress-ip/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../cluster-egress-controls/egress-service/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../cluster-egress-controls/egress-qos/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../cluster-egress-controls/egress-gateway/">
+<span class="md-ellipsis">
+    
+  
+    EgressGateway
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    InfrastructureSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_4_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    InfrastructureSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../infrastructure-security-controls/node-identity/">
+<span class="md-ellipsis">
+    
+  
+    NodeIdentity
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworking
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_5_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    MultiNetworking
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../multiple-networks/multi-homing/">
+<span class="md-ellipsis">
+    
+  
+    Multihoming
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../multiple-networks/multi-network-policies/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkPolicies
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../multiple-networks/multi-vtep/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkRails
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../multicast/">
+<span class="md-ellipsis">
+    
+  
+    Multicast
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    NetworkQoS
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_7_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkQoS
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../network-qos-guide/">
+<span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../hybrid-overlay/">
+<span class="md-ellipsis">
+    
+  
+    HybridOverlay
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_10" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Hardware Acceleration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_10_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_10">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Hardware Acceleration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../hardware-offload/ovs-kernel/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with kernel datapath
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../hardware-offload/ovs-doca/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with DOCA datapath
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_5_11" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    BGP Integration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_5_11_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_11">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    BGP Integration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#prerequisites">
+<span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#motivation">
+<span class="md-ellipsis">
+      
+        Motivation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#how-to-enable-this-feature-on-an-ovn-kubernetes-cluster">
+<span class="md-ellipsis">
+      
+        How to enable this feature on an OVN-Kubernetes cluster?
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-facing-api-changes">
+<span class="md-ellipsis">
+      
+        User-facing API Changes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow-description">
+<span class="md-ellipsis">
+      
+        Workflow Description
+      
+    </span>
+</a>
+<nav aria-label="Workflow Description" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-routes-into-the-default-pod-network">
+<span class="md-ellipsis">
+      
+        Import routes into the default pod network
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-routes-from-the-default-vrf-into-a-cudn">
+<span class="md-ellipsis">
+      
+        Import routes from the default VRF into a CUDN
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#export-routes-to-the-default-pod-network">
+<span class="md-ellipsis">
+      
+        Export routes to the default pod network
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#export-routes-to-a-cudn-over-the-default-vrf">
+<span class="md-ellipsis">
+      
+        Export routes to a CUDN over the default VRF
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-and-export-routes-to-a-cudn-over-the-network-vrf-vrf-lite">
+<span class="md-ellipsis">
+      
+        Import and export routes to a CUDN over the network VRF (VRF-Lite)
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cudn-isolation">
+<span class="md-ellipsis">
+      
+        CUDN isolation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#overview">
+<span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#routeadvertisements-controller">
+<span class="md-ellipsis">
+      
+        RouteAdvertisements controller
+      
+    </span>
+</a>
+<nav aria-label="RouteAdvertisements controller" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#frrconfiguration-instances-generated-by-ovn-kubernetes">
+<span class="md-ellipsis">
+      
+        FRRConfiguration instances generated by OVN-Kubernetes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-network-controllers-impacts-in-ovn-configuration">
+<span class="md-ellipsis">
+      
+        OVN Network controllers: impacts in OVN configuration
+      
+    </span>
+</a>
+<nav aria-label="OVN Network controllers: impacts in OVN configuration" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-snat-behavior-with-bgp-advertisement">
+<span class="md-ellipsis">
+      
+        OVN SNAT behavior with BGP Advertisement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#route-import">
+<span class="md-ellipsis">
+      
+        Route import
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#host-network-controllers-impacts-on-host-networking-stack">
+<span class="md-ellipsis">
+      
+        Host network controllers: impacts on host networking stack
+      
+    </span>
+</a>
+<nav aria-label="Host network controllers: impacts on host networking stack" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ingress-ovs-flows">
+<span class="md-ellipsis">
+      
+        Ingress OVS flows
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#host-snat-behavior-with-bgp-advertisement">
+<span class="md-ellipsis">
+      
+        Host SNAT behavior with BGP Advertisement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#vrf-lite-isolation">
+<span class="md-ellipsis">
+      
+        VRF-Lite isolation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cudn-isolation_1">
+<span class="md-ellipsis">
+      
+        CUDN isolation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting">
+<span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+</a>
+<nav aria-label="Troubleshooting" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-routeadvertisements">
+<span class="md-ellipsis">
+      
+        Troubleshooting RouteAdvertisements
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-frr-k8s">
+<span class="md-ellipsis">
+      
+        Troubleshooting FRR-K8s
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-frr">
+<span class="md-ellipsis">
+      
+        Troubleshooting FRR
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-dataplane">
+<span class="md-ellipsis">
+      
+        Troubleshooting dataplane
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#best-practices">
+<span class="md-ellipsis">
+      
+        Best Practices
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#future-items">
+<span class="md-ellipsis">
+      
+        Future Items
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#known-limitations">
+<span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Troubleshooting
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../troubleshooting/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../troubleshooting/ovnkube-trace/">
+<span class="md-ellipsis">
+    
+  
+    OVNKube Trace
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../troubleshooting/logging/">
+<span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../observability/metrics/">
+<span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../observability/sdn-dashboard/">
+<span class="md-ellipsis">
+    
+  
+    SDN Dashboard
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../observability/ovn-observability/">
+<span class="md-ellipsis">
+    
+  
+    OVN observability
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Enhancement Proposals
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_8_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_8">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Enhancement Proposals
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5085-localnet-api/">
+<span class="md-ellipsis">
+    
+  
+    Localnet API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-4380-network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Network QoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5193-user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5233-preconfigured-udn-addresses/">
+<span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5296-bgp/">
+<span class="md-ellipsis">
+    
+  
+    BGP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5094-layer2-transit-router/">
+<span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5494-ovn-kubernetes-mcp-server/">
+<span class="md-ellipsis">
+    
+  
+    MCP for Troubleshooting
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5552-dynamic-udn-node-allocation/">
+<span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5224-connecting-udns/okep-5224-connecting-udns/">
+<span class="md-ellipsis">
+    
+  
+    Connecting User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5259-no-overlay/">
+<span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5088-evpn/">
+<span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../../okeps/okep-5674-dpu-healthcheck/">
+<span class="md-ellipsis">
+    
+  
+    DPU Healthcheck
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../../../blog/">
+<span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Blog
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../..">
+<span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#prerequisites">
+<span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#motivation">
+<span class="md-ellipsis">
+      
+        Motivation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#how-to-enable-this-feature-on-an-ovn-kubernetes-cluster">
+<span class="md-ellipsis">
+      
+        How to enable this feature on an OVN-Kubernetes cluster?
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-facing-api-changes">
+<span class="md-ellipsis">
+      
+        User-facing API Changes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow-description">
+<span class="md-ellipsis">
+      
+        Workflow Description
+      
+    </span>
+</a>
+<nav aria-label="Workflow Description" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-routes-into-the-default-pod-network">
+<span class="md-ellipsis">
+      
+        Import routes into the default pod network
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-routes-from-the-default-vrf-into-a-cudn">
+<span class="md-ellipsis">
+      
+        Import routes from the default VRF into a CUDN
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#export-routes-to-the-default-pod-network">
+<span class="md-ellipsis">
+      
+        Export routes to the default pod network
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#export-routes-to-a-cudn-over-the-default-vrf">
+<span class="md-ellipsis">
+      
+        Export routes to a CUDN over the default VRF
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-and-export-routes-to-a-cudn-over-the-network-vrf-vrf-lite">
+<span class="md-ellipsis">
+      
+        Import and export routes to a CUDN over the network VRF (VRF-Lite)
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cudn-isolation">
+<span class="md-ellipsis">
+      
+        CUDN isolation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#overview">
+<span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#routeadvertisements-controller">
+<span class="md-ellipsis">
+      
+        RouteAdvertisements controller
+      
+    </span>
+</a>
+<nav aria-label="RouteAdvertisements controller" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#frrconfiguration-instances-generated-by-ovn-kubernetes">
+<span class="md-ellipsis">
+      
+        FRRConfiguration instances generated by OVN-Kubernetes
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-network-controllers-impacts-in-ovn-configuration">
+<span class="md-ellipsis">
+      
+        OVN Network controllers: impacts in OVN configuration
+      
+    </span>
+</a>
+<nav aria-label="OVN Network controllers: impacts in OVN configuration" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-snat-behavior-with-bgp-advertisement">
+<span class="md-ellipsis">
+      
+        OVN SNAT behavior with BGP Advertisement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#route-import">
+<span class="md-ellipsis">
+      
+        Route import
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#host-network-controllers-impacts-on-host-networking-stack">
+<span class="md-ellipsis">
+      
+        Host network controllers: impacts on host networking stack
+      
+    </span>
+</a>
+<nav aria-label="Host network controllers: impacts on host networking stack" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ingress-ovs-flows">
+<span class="md-ellipsis">
+      
+        Ingress OVS flows
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#host-snat-behavior-with-bgp-advertisement">
+<span class="md-ellipsis">
+      
+        Host SNAT behavior with BGP Advertisement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#vrf-lite-isolation">
+<span class="md-ellipsis">
+      
+        VRF-Lite isolation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#cudn-isolation_1">
+<span class="md-ellipsis">
+      
+        CUDN isolation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting">
+<span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+</a>
+<nav aria-label="Troubleshooting" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-routeadvertisements">
+<span class="md-ellipsis">
+      
+        Troubleshooting RouteAdvertisements
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-frr-k8s">
+<span class="md-ellipsis">
+      
+        Troubleshooting FRR-K8s
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-frr">
+<span class="md-ellipsis">
+      
+        Troubleshooting FRR
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#troubleshooting-dataplane">
+<span class="md-ellipsis">
+      
+        Troubleshooting dataplane
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#best-practices">
+<span class="md-ellipsis">
+      
+        Best Practices
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#future-items">
+<span class="md-ellipsis">
+      
+        Future Items
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#known-limitations">
+<span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<nav aria-label="Navigation" class="md-path">
+<ol class="md-path__list">
+<li class="md-path__item">
+<a class="md-path__link" href="../../user-defined-networks/user-defined-networks/">
+<span class="md-ellipsis">
+    Features
+  </span>
+</a>
+</li>
+<li class="md-path__item">
+<a class="md-path__link" href="./">
+<span class="md-ellipsis">
+    BGP Integration
+  </span>
+</a>
+</li>
+</ol>
+</nav>
+<article class="md-content__inner md-typeset">
+<h1 id="route-advertisements">Route Advertisements<a class="headerlink" href="#route-advertisements" title="Permanent link">¶</a></h1>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<p>The Route Advertisements feature introduces BGP as a supported routing protocol
+with OVN-Kubernetes enabling the integration into different BGP user
+environments. The extent of the Route Advertisements feature and corresponding
+API allows importing routes from BGP peers on the provider network into OVN pod
+networks as well as exporting pod network and egress IP routes to BGP peers on
+the provider network. Both default pod network as well as primary Layer 3 and
+Layer 2 cluster-user-defined networks (CUDNs) are supported.</p>
+<blockquote>
+<p>[!NOTE]
+For purposes of this documentation, the external, physical network of the
+cluster which a user administers will be called the “provider network”.</p>
+</blockquote>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">¶</a></h2>
+<ul>
+<li><a href="https://github.com/metallb/frr-k8s">FRR-k8s</a></li>
+</ul>
+<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">¶</a></h2>
+<p>There are multiple driving factors which necessitate integrating BGP into
+OVN-Kubernetes:</p>
+<ul>
+<li>
+<p>Importing Routes from the Provider Network: Today there is no API for a user
+to be able to configure routes into OVN. In order for a user to change how
+egress traffic is routed, the user leverages local gateway mode. This mode
+forces traffic to hop through the Linux networking stack, and there a user can
+configure routes inside the host to control egress routing. This manual
+configuration would need to be performed and maintained across nodes and VRFs
+within each node.</p>
+</li>
+<li>
+<p>Exporting Routes into the Provider Network: There exists a need for provider
+networks to learn routes directly to pods today in Kubernetes. One such use case
+is integration with 3rd party load balancers, where they terminate a load
+balancer and then send packets directly to cluster nodes with the destination IP
+address being the pod IP itself. Today these load balancers rely on custom
+operators to detect which node a pod is scheduled to and then add routes into
+its load balancer to send the packet to the right node. By integrating BGP and
+advertising the pod subnets/addresses directly on the provider network, load
+balancers and other entities on the network would be able to reach the pod IPs
+directly.</p>
+</li>
+</ul>
+<p>Additionally, integrating BGP support paves the way for other BGP based features
+that might be implemented in the future, like:</p>
+<ul>
+<li>EVPN support to extend pod network isolation outside the cluster.</li>
+<li>No overlay mode to avoid the Geneve overhead.</li>
+</ul>
+<h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
+<ul>
+<li>As a user, I want to be able to leverage my existing BGP network to dynamically
+  learn routes to pods in my Kubernetes cluster.</li>
+<li>As a user, rather than having to maintain routes manually in each Kubernetes
+  node, as well as being constrained to using local gateway mode for respecting
+  user-defined routes; I want to use BGP so that I can dynamically advertise
+  egress routes for the Kubernetes pod traffic in either gateway mode.</li>
+<li>As an egress IP user, I want to use a pure routing implementation to handle
+  advertising egress IP movement across nodes.</li>
+<li>As a user, I want to extend CUDN isolation to the provider network over a
+  VRF-Lite type of VPN where I can restrict traffic of the CUDN to an interface
+  attached to the VRF associated with the CUDN.</li>
+</ul>
+<blockquote>
+<p>[!NOTE]
+The <a href="#cudn-isolation">isolation</a> between different pod networks is unaffected
+by this feature.</p>
+</blockquote>
+<h2 id="how-to-enable-this-feature-on-an-ovn-kubernetes-cluster">How to enable this feature on an OVN-Kubernetes cluster?<a class="headerlink" href="#how-to-enable-this-feature-on-an-ovn-kubernetes-cluster" title="Permanent link">¶</a></h2>
+<p>The <code>route-advertisements</code> feature must be enabled in the OVN-Kubernetes
+configuration. Please use the <code>Feature Config</code> option
+<code>enable-route-advertisements</code> under <code>OVNKubernetesFeatureConfig</code> config to
+enable it.</p>
+<h2 id="user-facing-api-changes">User-facing API Changes<a class="headerlink" href="#user-facing-api-changes" title="Permanent link">¶</a></h2>
+<p>A new OVN-Kubernetes API is introduced for this feature:
+<a href="../../../api-reference/routeadvertisements-api-spec/"><code>RouteAdvertisements</code></a>.</p>
+<h2 id="workflow-description">Workflow Description<a class="headerlink" href="#workflow-description" title="Permanent link">¶</a></h2>
+<p>OVN-Kubernetes integrates with FRR-k8s to provide BGP support and it must be
+deployed before enabling the <code>route-advertisements</code> feature.</p>
+<p>Once deployed, an initial FRR-k8s configuration must be done using its
+<code>FRRConfiguration</code> API which serves, among others, three purposes:</p>
+<ul>
+<li>Configure BGP peering.</li>
+<li>Configure route import.</li>
+<li>Serve as a template to the <code>FRRConfiguration</code> instances that OVN-Kubernetes
+  generates.</li>
+</ul>
+<p>Finally, route export is configured through <code>RouteAdvertisements</code> instances.
+Each <code>RouteAdvertisements</code> instance allows to select which pod networks to
+export routes for. It also allows to select which <code>FRRConfiguration</code> instances
+to use as template, and as a consequence, provides the flexibility to export
+routes in a different number of ways including: which BGP peers to export to,
+the use of iBGP or eBGP, etc.</p>
+<h3 id="import-routes-into-the-default-pod-network">Import routes into the default pod network<a class="headerlink" href="#import-routes-into-the-default-pod-network" title="Permanent link">¶</a></h3>
+<p>The following example represents an initial FRR-k8s configuration that
+configures FRR-k8s to have all the nodes establish a BGP peering session and
+receive routes in the <code>172.20.0.0/16</code> subnet:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">receive-filtered</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">neighbors</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.111.3</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">            </span><span class="nt">prefixes</span><span class="p">:</span>
+<span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">prefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.20.0.0/16</span>
+</code></pre></div>
+<p>This will result in the routes being installed in the main (default VRF) routing
+table on the nodes and used by the pod egress traffic in local gateway mode. As
+long as the <code>route-advertisements</code> feature is enabled, OVN-Kubernetes will
+synchronize the BGP routes from the default VRF to the default OVN pod network
+gateway router and hence used for the egress traffic of the pods on that network
+in shared gateway mode.</p>
+<blockquote>
+<p>[!NOTE]
+For two BGP routers to establish a peering session and exchange routes, their
+configurations must be mutually aligned: the <code>neighbor</code> configuration in the
+previous example must correspond to the remote BGP router's configuration
+(router ID, AS number, accept routes, etc...), and vice versa.</p>
+</blockquote>
+<h3 id="import-routes-from-the-default-vrf-into-a-cudn">Import routes from the default VRF into a CUDN<a class="headerlink" href="#import-routes-from-the-default-vrf-into-a-cudn" title="Permanent link">¶</a></h3>
+<p>Assuming we have a CUDN:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">advertise</span><span class="p">:</span><span class="w"> </span><span class="s">"true"</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer3</span>
+<span class="w">    </span><span class="nt">layer3</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="s">"22.100.0.0/16"</span>
+<span class="w">        </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+</code></pre></div>
+<p>After routes have been imported to the default VRF as in the previous example,
+a typical scenario is to import those routes from the default VRF to a CUDN as
+well. This can be achieved with:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">import-extranet</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">imports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vrf</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">      </span><span class="nt">vrf</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+</code></pre></div>
+<p>This will result in the routes being installed in the extranet VRF associated to
+the CUDN of the same name. If <code>route-advertisements</code> feature is enabled,
+OVN-Kubernetes will synchronize the BGP routes installed on a VRF to the OVN
+gateway router of the associated CUDN and hence will be used for the egress
+traffic of the pods on that network.</p>
+<blockquote>
+<p>[!NOTE]
+As long as the name of the CUDN is less than 16 characters, the corresponding
+VRF name for the network will have the same name. Otherwise the name will be
+pseudo-randomly generated and not easy to predict. Future enhancements will
+allow for the VRF name to be configurable.</p>
+<p>[!NOTE]
+If you export routes for a CUDN over the default VRF as detailed on the next
+sections, installed BGP routes in the default VRF are imported to the CUDN
+automatically and this configuration is not necessary.</p>
+</blockquote>
+<h3 id="export-routes-to-the-default-pod-network">Export routes to the default pod network<a class="headerlink" href="#export-routes-to-the-default-pod-network" title="Permanent link">¶</a></h3>
+<p>Assuming the <code>FRRConfiguration</code> examples that have been used previously, this
+example would advertise routes to the default pod network and its egress IPs:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">targetVRF</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">advertisements</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PodNetwork</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EgressIP</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">frrConfigurationSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">networkSelectors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DefaultNetwork</span>
+</code></pre></div>
+<p>This would advertise routes for the pod network to the BGP peers as defined on
+the selected <code>FRRConfiguration</code> instances; and make the necessary changes to
+correctly handle N/S traffic directly addressing IPs of that network.</p>
+<p>Currently, when the <code>advertisements</code> field includes <code>PodNetwork</code>, you must
+select all nodes with <code>nodeSelector</code>. However, if you are only advertising
+egress IPs, you can limit advertisements to egress IPs assigned to the selected
+nodes:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default-egressip</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">advertisements</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EgressIP</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">egress-nodes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bgp</span>
+<span class="w">  </span><span class="nt">frrConfigurationSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">networkSelectors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DefaultNetwork</span>
+</code></pre></div>
+<blockquote>
+<p>[!NOTE]
+Egress IPs will be advertised over the selected BGP sessions
+regardless of whether they are assigned to the same interface those sessions
+are established over or not, probably making the advertisements ineffective if
+they are not the same.</p>
+</blockquote>
+<h3 id="export-routes-to-a-cudn-over-the-default-vrf">Export routes to a CUDN over the default VRF<a class="headerlink" href="#export-routes-to-a-cudn-over-the-default-vrf" title="Permanent link">¶</a></h3>
+<p>Similarly, routes to pods on a CUDN can be advertised over the default VRF:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default-cudn</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">targetVRF</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">advertisements</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PodNetwork</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EgressIP</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">frrConfigurationSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">networkSelectors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetworks</span>
+<span class="w">    </span><span class="nt">clusterUserDefinedNetworkSelector</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">networkSelector</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">advertise</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p>Note that this configuration also results in the BGP installed routes of the
+default VRF to be imported to the CUDN VRF.</p>
+<p>Multiple types of network selectors can be specified making it possible to merge
+the previous two examples into one:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default-all</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">targetVRF</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">advertisements</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PodNetwork</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EgressIP</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">frrConfigurationSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">networkSelectors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DefaultNetwork</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetworks</span>
+<span class="w">    </span><span class="nt">clusterUserDefinedNetworkSelector</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">networkSelector</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">advertise</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<h3 id="import-and-export-routes-to-a-cudn-over-the-network-vrf-vrf-lite">Import and export routes to a CUDN over the network VRF (VRF-Lite)<a class="headerlink" href="#import-and-export-routes-to-a-cudn-over-the-network-vrf-vrf-lite" title="Permanent link">¶</a></h3>
+<p>It is also possible to import and export routes to a CUDN over a BGP session
+established over that network's VRF without involving the default VRF at all.</p>
+<p>To import, we define the proper <code>FRRConfiguration</code> first. This example is
+similar to how routes are imported for the default pod network with the
+exception that the BGP peering session is configured to happen over the CUDN VRF
+<code>extranet</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">receive-filtered-extranet</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">neighbors</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.221.3</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">            </span><span class="nt">prefixes</span><span class="p">:</span>
+<span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">prefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.20.0.0/16</span>
+<span class="w">      </span><span class="nt">vrf</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+</code></pre></div>
+<p>Then we define the <code>RouteAdvertisements</code> to export:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">targetVRF</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span>
+<span class="w">  </span><span class="nt">advertisements</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PodNetwork</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">  </span><span class="nt">frrConfigurationSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">use-for-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">  </span><span class="nt">networkSelectors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetworks</span>
+<span class="w">    </span><span class="nt">clusterUserDefinedNetworkSelector</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">networkSelector</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">advertise</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p><code>targetVRF</code> value <code>auto</code> is a magic helper value that tells OVN-Kubernetes to
+advertise each network over that network's VRF.</p>
+<p>When a CUDN is advertised only over its own VRF, OVN-Kubernetes interprets this
+as an explicit intention to isolate the network to that VRF and takes additional
+measures to ensure that no network traffic is leaked externally over the default
+VRF. This configuration is referred to as <code>VRF-Lite</code>. An external provider edge
+BGP router could map this isolated traffic to an EVPN achieving a similar use
+case as if EVPN were to be supported directly.</p>
+<blockquote>
+<p>[!NOTE]
+For the BGP session to be actually established over that network's VRF, at
+least one interface with proper IP configuration needs to be attached to the
+network's VRF. The CUDN egress traffic matching the learned routes will be
+routed through that interface. OVN-Kubernetes does not manage this interface
+nor its attachment to the network's VRF.</p>
+<p>[!NOTE]
+This configuration is only supported in local gateway mode.
+Additionally, this configuration does not support the advertisement of egress
+IPs.</p>
+</blockquote>
+<h2 id="cudn-isolation">CUDN isolation<a class="headerlink" href="#cudn-isolation" title="Permanent link">¶</a></h2>
+<p>User defined networks are isolated by default. In other words, users on CUDN A
+cannot access pods on CUDN B via their internal pod or service addresses. When
+advertising CUDNs via BGP on the same VRF (typically the default VRF), the
+behavior of inter-CUDN isolation is preserved: from the perspective of a CUDN,
+traffic addressing the subnet of a different CUDN will be considered N/S traffic
+and will egress the cluster towards the provider network; and if the provider
+network is able to route it back to the cluster by virtue of learned BGP routes,
+the traffic will still be dropped to upkeep the CUDN isolation promise.</p>
+<p>OVN-Kubernetes relaxes the default advertised UDN isolation behavior when the
+configuration flag <code>advertised-udn-isolation-mode</code> is set to <code>loose</code>. In this
+configuration, traffic addressing the subnet of a different CUDN will egress the
+cluster towards the provider network as before but, if routed back towards the
+cluster, connectivity will be allowed in this case.</p>
+<h2 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h2>
+<h3 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">¶</a></h3>
+<pre class="mermaid"><code>flowchart TD
+    S@{shape: sm-circ}
+
+    S--&gt;|User configures|T0
+
+    subgraph T0
+    J0@{shape: f-circ}
+    F0(FRRConfiguration)
+    R0(RouteAdvertisements)
+    C0(CUDNs)
+    J0--&gt;|to configure BGP peering and route import|F0
+    J0--&gt;|to export routes|R0
+    J0--&gt;|to add networks|C0
+    end
+
+    R0--&gt;|ovn-kubernetes configures|J1
+
+    subgraph T1
+    J1@{shape: f-circ}
+    F1(FRRConfiguration)
+    O1(OVN Networks)
+    H1(Host Networks)
+    J1--&gt;F1
+    J1--&gt;O1
+    J1--&gt;H1
+    end
+
+    F0--&gt;J2
+    F1--&gt;J2
+
+    subgraph T2
+    J2@{shape: f-circ}
+    F2{/etc/frr.conf}
+    J2 --&gt;|FRR-k8s configures|F2
+    end
+
+    F2--&gt;T3
+
+    subgraph T3
+    J3@{shape: f-circ}
+    E3@{shape: framed-circle}
+    F31(FRR advertises exported routes)
+    F32(FRR installs imported routes in host)
+    J3--&gt;F31--&gt;E3
+    J3--&gt;F32--&gt;E3
+    end
+
+    T3--&gt;T4
+
+    subgraph T4
+    J4@{shape: f-circ}
+    E4@{shape: framed-circle}
+    O4(ovn-kubernetes copies installed routes to OVN)
+    J4--&gt;O4--&gt;E4
+    end
+</code></pre>
+<p>The flowchart above gives an idea on what happens on different convergence
+timelines:</p>
+<ul>
+<li>T0: Initially a user configures CUDN networks, sets up BGP peering and route
+  import with <code>FRRConfiguration</code> instances and route export with
+  <code>RouteAdvertisements</code> instances.</li>
+<li>T1: OVN-Kubernetes reacts to the configured <code>RouteAdvertisements</code> and
+  generates the appropriate <code>FRRConfiguration</code> instances to export the selected
+  networks. OVN-Kubernetes then reconfigures those networks in both OVN and the
+  host stack so that they operate correctly when advertised.</li>
+<li>T2: FRR-k8s merges all the <code>FRRConfiguration</code> instances and configures its
+  internal FRR daemons.</li>
+<li>T3: FRR daemons export, import and install routes accordingly.</li>
+<li>T4: OVN-Kubernetes copies installed routes to the appropriate OVN networks.</li>
+</ul>
+<h3 id="routeadvertisements-controller">RouteAdvertisements controller<a class="headerlink" href="#routeadvertisements-controller" title="Permanent link">¶</a></h3>
+<p>The <code>RouteAdvertisements</code> controller reacts to <code>RouteAdvertisements</code> instances and
+generates the corresponding <code>FRRConfiguration</code> instances to export routes for the
+selected networks. It also annotates the NetworkAttachmentDefinition instances
+for the selected networks to instruct the OVN and host network controllers on
+each node to reconfigure the network.</p>
+<h4 id="frrconfiguration-instances-generated-by-ovn-kubernetes">FRRConfiguration instances generated by OVN-Kubernetes<a class="headerlink" href="#frrconfiguration-instances-generated-by-ovn-kubernetes" title="Permanent link">¶</a></h4>
+<p>When <code>RouteAdvertisements</code> instances are configured, OVN-Kubernetes generates
+additional <code>FRRConfiguration</code> instances in order for the selected network
+prefixes to be advertised, using the following logic:</p>
+<ul>
+<li>For each pair combination of selected network and selected node; and for each
+  selected <code>FRRConfiguration</code> to be used as template:<ul>
+<li>If the <code>FRRConfiguration</code> does not apply to the node, it is discarded.</li>
+<li>If a router defined in that <code>FRRConfiguration</code> does not apply to the
+  target VRF, it is discarded.</li>
+<li>An <code>FRRConfiguration</code> instance is generated that contains all routers that
+  were not discarded with the following modifications:<ul>
+<li>If advertising pod network:<ul>
+<li>Router <code>prefixes</code> and neighbors <code>toAdvertise</code> <code>prefixes</code> set to:<ul>
+<li>the network host subnet for default network or layer 3
+  topologies.</li>
+<li>the network subnet for layer 2 topologies.</li>
+</ul>
+</li>
+<li>Neighbors “toReceive” cleared defaulting to <code>filtered</code> mode with
+  no prefixes.</li>
+<li>If <code>targetVRF</code> and network VRF are different and <code>targetVRF</code> is
+  not “auto”, routes are imported reciprocally across both VRFs:<ul>
+<li>An import from the network VRF.</li>
+<li>An additional router on network VRF to import from target VRF.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>If advertising egress IPs: for each egress IP, if the egress IP
+  selects a namespace served by the selected network and it is assigned
+  to the selected node, the egress IP is added to “prefixes” and
+  neighbors “toAdvertise”.</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>This is an example of an <code>FRRConfiguration</code> instance generated for a node from
+previous <code>RouteAdvertisements</code> examples when a CUDN is advertised over the
+default VRF:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">k8s.ovn.org/route-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet/receive-filtered/master-1.ostest.test.metalkube.org</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">k8s.ovn.org/route-advertisements</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ovnk-generated-vl8gk</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">imports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vrf</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">      </span><span class="nt">neighbors</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.111.3</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toAdvertise</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">            </span><span class="nt">prefixes</span><span class="p">:</span>
+<span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">22.100.2.0/24</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">      </span><span class="nt">prefixes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">22.100.2.0/24</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">imports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vrf</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">      </span><span class="nt">vrf</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">extranet</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">kubernetes.io/hostname</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">master-1.ostest.test.metalkube.org</span>
+</code></pre></div>
+<p>This example <code>FRRConfiguration</code> instance applies to one of the nodes but you
+would see similar <code>FRRConfiguration</code> instances for the other selected nodes. In
+summary, the instance is instructing FRR-k8s to advertise the <code>22.100.2.0/24</code>
+prefix, which is the one assigned to pods hosted on that node for that network,
+over the session established towards the BGP peer <code>192.168.111.3</code> as instructed
+by the selected <code>FRRConfiguration</code> instances used as a template to generate this
+one.</p>
+<p>From this example, it is relevant to highlight a couple of things:</p>
+<ul>
+<li>When a CUDN is advertised over the default VRF, received routes on the default
+  VRF will also be imported to the VRF associated with the CUDN and become
+  available for use to that CUDN.</li>
+<li>A previously mentioned, this generated configuration only deals with the
+  advertisement of routes. Route reception must be configured manually as
+  detailed in previous sections. Particularly, cluster advertised routes are not
+  configured to be received by other cluster nodes as that would be problematic
+  for the intra-cluster connectivity.</li>
+</ul>
+<blockquote>
+<p>[!NOTE]
+<code>FRRConfiguration</code> instances generated in this manner by
+OVN-Kubernetes can't become selected by <code>RouteAdvertisements</code>.</p>
+</blockquote>
+<h3 id="ovn-network-controllers-impacts-in-ovn-configuration">OVN Network controllers: impacts in OVN configuration<a class="headerlink" href="#ovn-network-controllers-impacts-in-ovn-configuration" title="Permanent link">¶</a></h3>
+<p>OVN Network controllers on each node react to annotations on the
+NetworkAttachmentDefinition, processing the applicable <code>RouteAdvertisements</code>
+instances for the network and gathering information on how the network is being
+advertised.</p>
+<h4 id="ovn-snat-behavior-with-bgp-advertisement">OVN SNAT behavior with BGP Advertisement<a class="headerlink" href="#ovn-snat-behavior-with-bgp-advertisement" title="Permanent link">¶</a></h4>
+<p>Usually N/S egress traffic from a pod is SNATed to the node IP. This does not
+happen when the network is advertised. In that case the traffic egresses the
+cluster with the pod IP as source. In shared gateway mode this is handled with a
+conditional SNAT on the gateway routers OVN configuration for the network which
+ensures that E/W egress traffic (right now, only pod-to-node traffic) continues
+to be SNATed. </p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ovn-nbctl<span class="w"> </span>list<span class="w"> </span>nat
+...
+_uuid<span class="w">               </span>:<span class="w"> </span>7855a3a5-412c-4083-963c-b11aa80b7784
+allowed_ext_ips<span class="w">     </span>:<span class="w"> </span><span class="o">[]</span>
+exempted_ext_ips<span class="w">    </span>:<span class="w"> </span><span class="o">[]</span>
+external_ids<span class="w">        </span>:<span class="w"> </span><span class="o">{}</span>
+external_ip<span class="w">         </span>:<span class="w"> </span><span class="s2">"172.18.0.2"</span>
+external_mac<span class="w">        </span>:<span class="w"> </span><span class="o">[]</span>
+external_port_range<span class="w"> </span>:<span class="w"> </span><span class="s2">"32768-60999"</span>
+gateway_port<span class="w">        </span>:<span class="w"> </span><span class="o">[]</span>
+logical_ip<span class="w">          </span>:<span class="w"> </span><span class="s2">"10.244.1.3"</span>
+logical_port<span class="w">        </span>:<span class="w"> </span><span class="o">[]</span>
+match<span class="w">               </span>:<span class="w"> </span><span class="s2">"ip4.dst == </span><span class="nv">$a712973235162149816</span><span class="s2">"</span><span class="w"> </span><span class="c1"># added condition matching E/W traffic when advertised</span>
+options<span class="w">             </span>:<span class="w"> </span><span class="o">{</span><span class="nv">stateless</span><span class="o">=</span><span class="s2">"false"</span><span class="o">}</span>
+priority<span class="w">            </span>:<span class="w"> </span><span class="m">0</span>
+<span class="nb">type</span><span class="w">                </span>:<span class="w"> </span>snat
+
+...
+
+_uuid<span class="w">               </span>:<span class="w"> </span>7be1b70b-88c7-4482-85ff-487663be9eda
+addresses<span class="w">           </span>:<span class="w"> </span><span class="o">[</span><span class="s2">"172.18.0.2"</span>,<span class="w"> </span><span class="s2">"172.18.0.3"</span>,<span class="w"> </span><span class="s2">"172.18.0.4"</span>,<span class="w"> </span><span class="s2">"172.19.0.2"</span>,<span class="w"> </span><span class="s2">"172.19.0.3"</span>,<span class="w"> </span><span class="s2">"172.19.0.4"</span><span class="o">]</span>
+external_ids<span class="w">        </span>:<span class="w"> </span><span class="o">{</span>ip-family<span class="o">=</span>v4,<span class="w"> </span><span class="s2">"k8s.ovn.org/id"</span><span class="o">=</span><span class="s2">"default-network-controller:EgressIP:node-ips:v4:default"</span>,<span class="w"> </span><span class="s2">"k8s.ovn.org/name"</span><span class="o">=</span>node-ips,<span class="w"> </span><span class="s2">"k8s.ovn.org/owner-controller"</span><span class="o">=</span>default-network-controller,<span class="w"> </span><span class="s2">"k8s.ovn.org/owner-type"</span><span class="o">=</span>EgressIP,<span class="w"> </span><span class="nv">network</span><span class="o">=</span>default<span class="o">}</span>
+name<span class="w">                </span>:<span class="w"> </span>a712973235162149816
+...
+</code></pre></div>
+<p>For CUDNs in local gateway mode, this is handled on a similar way with a
+conditional SNAT to the network's masquerade IP which would then finally be
+SNATed to the node IP on the host.</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ovn-nbctl<span class="w"> </span>list<span class="w"> </span>nat
+...
+_uuid<span class="w">               </span>:<span class="w"> </span>61b26442-fa08-4aa8-b326-97afb71edab1
+allowed_ext_ips<span class="w">     </span>:<span class="w"> </span><span class="o">[]</span>
+exempted_ext_ips<span class="w">    </span>:<span class="w"> </span><span class="o">[]</span>
+external_ids<span class="w">        </span>:<span class="w"> </span><span class="o">{</span><span class="s2">"k8s.ovn.org/network"</span><span class="o">=</span>cluster_udn_udn-l2,<span class="w"> </span><span class="s2">"k8s.ovn.org/topology"</span><span class="o">=</span>layer2<span class="o">}</span>
+external_ip<span class="w">         </span>:<span class="w"> </span><span class="s2">"169.254.0.11"</span>
+external_mac<span class="w">        </span>:<span class="w"> </span><span class="o">[]</span>
+external_port_range<span class="w"> </span>:<span class="w"> </span><span class="s2">"32768-60999"</span>
+gateway_port<span class="w">        </span>:<span class="w"> </span><span class="o">[]</span>
+logical_ip<span class="w">          </span>:<span class="w"> </span><span class="s2">"22.100.0.0/16"</span>
+logical_port<span class="w">        </span>:<span class="w"> </span><span class="o">[]</span>
+match<span class="w">               </span>:<span class="w"> </span><span class="s2">"ip4.dst == </span><span class="nv">$a712973235162149816</span><span class="s2">"</span>
+options<span class="w">             </span>:<span class="w"> </span><span class="o">{</span><span class="nv">stateless</span><span class="o">=</span><span class="s2">"false"</span><span class="o">}</span>
+priority<span class="w">            </span>:<span class="w"> </span><span class="m">0</span>
+<span class="nb">type</span><span class="w">                </span>:<span class="w"> </span>snat
+...
+</code></pre></div>
+<p>Egress IP SNAT is unaffected.</p>
+<h4 id="route-import">Route import<a class="headerlink" href="#route-import" title="Permanent link">¶</a></h4>
+<p>When BGP routes get installed in a node's routing table, OVN-Kubernetes
+synchronizes them to the gateway router of the corresponding OVN network making
+them available for egress in shared gateway mode.</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ovn-nbctl<span class="w"> </span>lr-route-list<span class="w"> </span>076a4cba-c680-4fa3-ae2f-1ce7e0a1e153
+IPv4<span class="w"> </span>Routes
+Route<span class="w"> </span>Table<span class="w"> </span>&lt;main&gt;:
+<span class="w">           </span><span class="m">169</span>.254.0.0/17<span class="w">               </span><span class="m">169</span>.254.0.4<span class="w"> </span>dst-ip<span class="w"> </span>rtoe-GR_ovn-worker2
+<span class="w">            </span><span class="m">10</span>.244.0.0/16<span class="w">                </span><span class="m">100</span>.64.0.1<span class="w"> </span>dst-ip
+<span class="w">            </span><span class="m">172</span>.26.0.0/16<span class="w">                </span><span class="m">172</span>.18.0.5<span class="w"> </span>dst-ip<span class="w"> </span>rtoe-GR_ovn-worker2<span class="w">  </span><span class="c1"># learned route synced from host VRF</span>
+<span class="w">                </span><span class="m">0</span>.0.0.0/0<span class="w">                </span><span class="m">172</span>.18.0.1<span class="w"> </span>dst-ip<span class="w"> </span>rtoe-GR_ovn-worker2
+</code></pre></div>
+<h3 id="host-network-controllers-impacts-on-host-networking-stack">Host network controllers: impacts on host networking stack<a class="headerlink" href="#host-network-controllers-impacts-on-host-networking-stack" title="Permanent link">¶</a></h3>
+<h4 id="ingress-ovs-flows">Ingress OVS flows<a class="headerlink" href="#ingress-ovs-flows" title="Permanent link">¶</a></h4>
+<p>Flows are added to handle the ingress of N/S traffic addressing IPs of the
+advertised pod networks. This traffic is forwarded to the corresponding patch
+port of the network and is then handled by OVN with no extra changes required in
+shared gateway mode.</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-q76br<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ovs-ofctl<span class="w"> </span>dump-flows<span class="w"> </span>breth0
+...
+<span class="w"> </span><span class="c1"># flows forwarding pod networks to the corresponding patch ports</span>
+<span class="w"> </span><span class="nv">cookie</span><span class="o">=</span>0xdeff105,<span class="w"> </span><span class="nv">duration</span><span class="o">=</span><span class="m">445</span>.802s,<span class="w"> </span><span class="nv">table</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_packets</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_bytes</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">idle_age</span><span class="o">=</span><span class="m">445</span>,<span class="w"> </span><span class="nv">priority</span><span class="o">=</span><span class="m">300</span>,ip,in_port<span class="o">=</span><span class="m">1</span>,nw_dst<span class="o">=</span><span class="m">10</span>.244.0.0/24<span class="w"> </span><span class="nv">actions</span><span class="o">=</span>output:2
+<span class="w"> </span><span class="nv">cookie</span><span class="o">=</span>0xdeff105,<span class="w"> </span><span class="nv">duration</span><span class="o">=</span><span class="m">300</span>.323s,<span class="w"> </span><span class="nv">table</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_packets</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_bytes</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">idle_age</span><span class="o">=</span><span class="m">300</span>,<span class="w"> </span><span class="nv">priority</span><span class="o">=</span><span class="m">300</span>,ip,in_port<span class="o">=</span><span class="m">1</span>,nw_dst<span class="o">=</span><span class="m">22</span>.100.0.0/16<span class="w"> </span><span class="nv">actions</span><span class="o">=</span>output:3
+</code></pre></div>
+<p>In local gateway mode, the traffic is forwarded to the host networking stack
+from where it is routed to the network management port.</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ovs-ofctl<span class="w"> </span>dump-flows<span class="w"> </span>breth0
+<span class="w"> </span>...
+<span class="w"> </span><span class="c1"># flows forwarding pod networks to host</span>
+<span class="w"> </span><span class="nv">cookie</span><span class="o">=</span>0xdeff105,<span class="w"> </span><span class="nv">duration</span><span class="o">=</span><span class="m">57</span>.620s,<span class="w"> </span><span class="nv">table</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_packets</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_bytes</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">idle_age</span><span class="o">=</span><span class="m">57</span>,<span class="w"> </span><span class="nv">priority</span><span class="o">=</span><span class="m">300</span>,ip,in_port<span class="o">=</span><span class="m">1</span>,nw_dst<span class="o">=</span><span class="m">22</span>.100.0.0/16<span class="w"> </span><span class="nv">actions</span><span class="o">=</span>LOCAL
+<span class="w"> </span><span class="nv">cookie</span><span class="o">=</span>0xdeff105,<span class="w"> </span><span class="nv">duration</span><span class="o">=</span><span class="m">9589</span>.541s,<span class="w"> </span><span class="nv">table</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_packets</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">n_bytes</span><span class="o">=</span><span class="m">0</span>,<span class="w"> </span><span class="nv">idle_age</span><span class="o">=</span><span class="m">9706</span>,<span class="w"> </span><span class="nv">priority</span><span class="o">=</span><span class="m">300</span>,ip,in_port<span class="o">=</span><span class="m">1</span>,nw_dst<span class="o">=</span><span class="m">10</span>.244.1.0/24<span class="w"> </span><span class="nv">actions</span><span class="o">=</span>LOCAL
+<span class="w"> </span>...
+
+❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ip<span class="w"> </span>route
+...
+<span class="c1"># routing to the default pod network management port</span>
+<span class="m">10</span>.244.0.0/16<span class="w"> </span>via<span class="w"> </span><span class="m">10</span>.244.1.1<span class="w"> </span>dev<span class="w"> </span>ovn-k8s-mp0<span class="w"> </span>
+<span class="m">10</span>.244.1.0/24<span class="w"> </span>dev<span class="w"> </span>ovn-k8s-mp0<span class="w"> </span>proto<span class="w"> </span>kernel<span class="w"> </span>scope<span class="w"> </span>link<span class="w"> </span>src<span class="w"> </span><span class="m">10</span>.244.1.2
+...
+
+❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ip<span class="w"> </span>rule
+...
+<span class="c1"># for a CUDN, an ip rule takes care of routing on the correct VRF</span>
+<span class="m">2000</span>:<span class="w"> </span>from<span class="w"> </span>all<span class="w"> </span>to<span class="w"> </span><span class="m">22</span>.100.0.0/16<span class="w"> </span>lookup<span class="w"> </span><span class="m">1010</span>
+...
+
+❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ip<span class="w"> </span>r<span class="w"> </span>show<span class="w"> </span>table<span class="w"> </span><span class="m">1010</span>
+...
+<span class="c1"># also routing to the CUDN management port</span>
+<span class="m">22</span>.100.0.0/16<span class="w"> </span>dev<span class="w"> </span>ovn-k8s-mp1<span class="w"> </span>proto<span class="w"> </span>kernel<span class="w"> </span>scope<span class="w"> </span>link<span class="w"> </span>src<span class="w"> </span><span class="m">22</span>.100.0.2<span class="w"> </span>
+...
+</code></pre></div>
+<h4 id="host-snat-behavior-with-bgp-advertisement">Host SNAT behavior with BGP Advertisement<a class="headerlink" href="#host-snat-behavior-with-bgp-advertisement" title="Permanent link">¶</a></h4>
+<p>In the same way that was done for the OVN configuration, the host networking
+stack configuration is updated to inhibit the SNAT for N/S traffic.</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>nft<span class="w"> </span>list<span class="w"> </span>ruleset
+...
+<span class="w">  </span><span class="nb">set</span><span class="w"> </span>remote-node-ips-v4<span class="w"> </span><span class="o">{</span>
+<span class="w">    </span><span class="nb">type</span><span class="w"> </span>ipv4_addr
+<span class="w">    </span>comment<span class="w"> </span><span class="s2">"Block egress ICMP needs frag to remote Kubernetes nodes"</span>
+<span class="w">    </span><span class="nv">elements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="m">172</span>.18.0.3,<span class="w"> </span><span class="m">172</span>.18.0.4,
+<span class="w">           </span><span class="m">172</span>.19.0.2,<span class="w"> </span><span class="m">172</span>.19.0.4<span class="w"> </span><span class="o">}</span>
+<span class="w">  </span><span class="o">}</span>
+...
+<span class="w">  </span>chain<span class="w"> </span>ovn-kube-pod-subnet-masq<span class="w"> </span><span class="o">{</span>
+<span class="w">    </span><span class="c1"># ip daddr condition added if default pod network advertised</span>
+<span class="w">    </span>ip<span class="w"> </span>saddr<span class="w"> </span><span class="m">10</span>.244.1.0/24<span class="w"> </span>ip<span class="w"> </span>daddr<span class="w"> </span>@remote-node-ips-v4<span class="w"> </span>masquerade<span class="w"> </span><span class="c1"># ip daddr condition if advertised</span>
+<span class="w">  </span><span class="o">}</span>
+...
+</code></pre></div>
+<h4 id="vrf-lite-isolation">VRF-Lite isolation<a class="headerlink" href="#vrf-lite-isolation" title="Permanent link">¶</a></h4>
+<p>To ensure isolation in VRF-Lite configurations, the default route pointing to
+the default VRF gateway present on the network's VRF is inhibited. Thus only BGP
+installed routes will be used for N/S traffic.</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>ip<span class="w"> </span>r<span class="w"> </span>show<span class="w"> </span>table<span class="w"> </span><span class="m">1010</span>
+<span class="c1"># default match unreachable</span>
+unreachable<span class="w"> </span>default<span class="w"> </span>metric<span class="w"> </span><span class="m">4278198272</span><span class="w"> </span>
+...
+<span class="c1"># installed route going through interface attached to VRF</span>
+<span class="m">172</span>.26.0.0/16<span class="w"> </span>nhid<span class="w"> </span><span class="m">28</span><span class="w"> </span>via<span class="w"> </span><span class="m">172</span>.19.0.5<span class="w"> </span>dev<span class="w"> </span>eth1<span class="w"> </span>proto<span class="w"> </span>bgp<span class="w"> </span>metric<span class="w"> </span><span class="m">20</span><span class="w"> </span>
+</code></pre></div>
+<h4 id="cudn-isolation_1">CUDN isolation<a class="headerlink" href="#cudn-isolation_1" title="Permanent link">¶</a></h4>
+<p>To ensure CUDN isolation in local gateway mode filtering rules are added to the host configuration</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-n<span class="w"> </span>ovn-kubernetes<span class="w"> </span>ovnkube-node-vkmkt<span class="w"> </span>-c<span class="w"> </span>ovnkube-controller<span class="w"> </span>--<span class="w"> </span>nft<span class="w"> </span>list<span class="w"> </span>ruleset
+...
+<span class="w">  </span><span class="nb">set</span><span class="w"> </span>advertised-udn-subnets-v4<span class="w"> </span><span class="o">{</span>
+<span class="w">    </span><span class="nb">type</span><span class="w"> </span>ipv4_addr
+<span class="w">    </span>flags<span class="w"> </span>interval
+<span class="w">    </span>comment<span class="w"> </span><span class="s2">"advertised UDN V4 subnets"</span>
+<span class="w">    </span><span class="nv">elements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="m">22</span>.100.0.0/16<span class="w"> </span>comment<span class="w"> </span><span class="s2">"cluster_udn_udn-l2"</span><span class="w"> </span><span class="o">}</span>
+<span class="w">  </span><span class="o">}</span>
+...
+<span class="w">  </span>chain<span class="w"> </span>udn-bgp-drop<span class="w"> </span><span class="o">{</span>
+<span class="w">          </span>comment<span class="w"> </span><span class="s2">"Drop traffic generated locally towards advertised UDN subnets"</span>
+<span class="w">          </span><span class="nb">type</span><span class="w"> </span>filter<span class="w"> </span>hook<span class="w"> </span>output<span class="w"> </span>priority<span class="w"> </span>filter<span class="p">;</span><span class="w"> </span>policy<span class="w"> </span>accept<span class="p">;</span>
+<span class="w">          </span>ct<span class="w"> </span>state<span class="w"> </span>new<span class="w"> </span>ip<span class="w"> </span>daddr<span class="w"> </span>@advertised-udn-subnets-v4<span class="w"> </span>counter<span class="w"> </span>packets<span class="w"> </span><span class="m">0</span><span class="w"> </span>bytes<span class="w"> </span><span class="m">0</span><span class="w"> </span>drop
+<span class="w">          </span>ct<span class="w"> </span>state<span class="w"> </span>new<span class="w"> </span>ip6<span class="w"> </span>daddr<span class="w"> </span>@advertised-udn-subnets-v6<span class="w"> </span>counter<span class="w"> </span>packets<span class="w"> </span><span class="m">0</span><span class="w"> </span>bytes<span class="w"> </span><span class="m">0</span><span class="w"> </span>drop
+<span class="w">  </span><span class="o">}</span>
+...
+</code></pre></div>
+<p>These rules are inhibited if OVN-Kubernetes is configured in "loose advertised
+UDN isolation mode".</p>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">¶</a></h2>
+<h3 id="troubleshooting-routeadvertisements">Troubleshooting RouteAdvertisements<a class="headerlink" href="#troubleshooting-routeadvertisements" title="Permanent link">¶</a></h3>
+<p>Check <code>RouteAdvertisement</code> status for configuration errors:</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span>get<span class="w"> </span>ra
+NAME<span class="w">       </span>STATUS
+default<span class="w">    </span>Accepted
+extranet<span class="w">   </span>Not<span class="w"> </span>Accepted:<span class="w"> </span>configuration<span class="w"> </span>pending:<span class="w"> </span>no<span class="w"> </span>networks<span class="w"> </span>selected
+</code></pre></div>
+<p>Check that <code>FRRConfiguration</code> have been generated as expected:</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span>get<span class="w"> </span>frrconfiguration<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system
+NAME<span class="w">                   </span>AGE
+ovnk-generated-66plb<span class="w">   </span>14m
+ovnk-generated-fxncs<span class="w">   </span>13m
+ovnk-generated-grdfg<span class="w">   </span>14m
+ovnk-generated-qhz9b<span class="w">   </span>14m
+ovnk-generated-sgphk<span class="w">   </span>13m
+ovnk-generated-vtwpv<span class="w">   </span>13m
+receive-all<span class="w">            </span>14m
+</code></pre></div>
+<p>Expected <code>FRRConfiguration</code> are:
+- Any manual configuration done to import routes
+- MetalLB generated FRRConfiguration if in use
+- One of ovnk-generated-XXXXX configuration per RouteAdvertisement and selected FRRConfiguration/Node combination</p>
+<h3 id="troubleshooting-frr-k8s">Troubleshooting FRR-K8s<a class="headerlink" href="#troubleshooting-frr-k8s" title="Permanent link">¶</a></h3>
+<p>FRR-K8s merges all FRRConfiguration into a single FRR configuration for each
+node. The status of generating that configuration and applying it to FRR daemon
+running on each node is relayed through <code>FRRNodeStates</code>:</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span>get<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>frrnodestates
+NAME<span class="w">                </span>AGE
+ovn-control-plane<span class="w">   </span>16m
+ovn-worker<span class="w">          </span>16m
+ovn-worker2<span class="w">         </span>16m
+
+$<span class="w"> </span>oc<span class="w"> </span>describe<span class="w"> </span>-n<span class="w"> </span>openshift-frr-k8s<span class="w"> </span>frrnodestates<span class="w"> </span>worker-0.ostest.test.metalkube.org<span class="w"> </span>
+Name:<span class="w">         </span>worker-0.ostest.test.metalkube.org
+Namespace:<span class="w">    </span>
+Labels:<span class="w">       </span>&lt;none&gt;
+Annotations:<span class="w">  </span>&lt;none&gt;
+API<span class="w"> </span>Version:<span class="w">  </span>frrk8s.metallb.io/v1beta1
+Kind:<span class="w">         </span>FRRNodeState
+Metadata:
+<span class="w">  </span>Creation<span class="w"> </span>Timestamp:<span class="w">  </span><span class="m">2025</span>-09-10T11:29:44Z
+<span class="w">  </span>Generation:<span class="w">          </span><span class="m">1</span>
+<span class="w">  </span>Resource<span class="w"> </span>Version:<span class="w">    </span><span class="m">52036</span>
+<span class="w">  </span>UID:<span class="w">                 </span>34f67799-9642-40a3-a378-67ca3ad5dfd2
+Spec:
+Status:
+<span class="w">  </span>Last<span class="w"> </span>Conversion<span class="w"> </span>Result:<span class="w">  </span>success<span class="w"> </span><span class="c1"># whether FRRConfiguration merge and conversion to FRR config was successful </span>
+<span class="w">  </span>Last<span class="w"> </span>Reload<span class="w"> </span>Result:<span class="w">      </span>success<span class="w"> </span><span class="c1"># whether resulting FRR config was applied correctly</span>
+<span class="w">  </span>Running<span class="w"> </span>Config:
+<span class="w">    </span><span class="c1"># the FRR running config is displayed here</span>
+...
+</code></pre></div>
+<p>FRR-K8s provides metrics:</p>
+<div class="highlight"><pre><span></span><code>  Namespace = "frrk8s"
+  Subsystem = "bgp"
+
+  SessionUp = metric{
+    Name: "session_up",
+    Help: "BGP session state (1 is up, 0 is down)",
+  }
+
+  UpdatesSent = metric{
+    Name: "updates_total",
+    Help: "Number of BGP UPDATE messages sent",
+  }
+
+  Prefixes = metric{
+    Name: "announced_prefixes_total",
+    Help: "Number of prefixes currently being advertised on the BGP session",
+  }
+
+  ReceivedPrefixes = metric{
+    Name: "received_prefixes_total",
+    Help: "Number of prefixes currently being received on the BGP session",
+  }
+</code></pre></div>
+<h3 id="troubleshooting-frr">Troubleshooting FRR<a class="headerlink" href="#troubleshooting-frr" title="Permanent link">¶</a></h3>
+<p>FRR is deployed by FRR-K8s as a daemonset and runs on every node:</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>-o<span class="w"> </span>wide
+NAME<span class="w">                                     </span>READY<span class="w">   </span>STATUS<span class="w">    </span>RESTARTS<span class="w">   </span>AGE<span class="w">   </span>IP<span class="w">           </span>NODE<span class="w">                </span>NOMINATED<span class="w"> </span>NODE<span class="w">   </span>READINESS<span class="w"> </span>GATES
+frr-k8s-daemon-5cqbq<span class="w">                     </span><span class="m">6</span>/6<span class="w">     </span>Running<span class="w">   </span><span class="m">0</span><span class="w">          </span>22m<span class="w">   </span><span class="m">172</span>.18.0.4<span class="w">   </span>ovn-worker2<span class="w">         </span>&lt;none&gt;<span class="w">           </span>&lt;none&gt;
+frr-k8s-daemon-6hmzb<span class="w">                     </span><span class="m">6</span>/6<span class="w">     </span>Running<span class="w">   </span><span class="m">0</span><span class="w">          </span>22m<span class="w">   </span><span class="m">172</span>.18.0.3<span class="w">   </span>ovn-worker<span class="w">          </span>&lt;none&gt;<span class="w">           </span>&lt;none&gt;
+frr-k8s-daemon-gsmml<span class="w">                     </span><span class="m">6</span>/6<span class="w">     </span>Running<span class="w">   </span><span class="m">0</span><span class="w">          </span>22m<span class="w">   </span><span class="m">172</span>.18.0.2<span class="w">   </span>ovn-control-plane<span class="w">   </span>&lt;none&gt;<span class="w">           </span>&lt;none&gt;
+...
+</code></pre></div>
+<p>Different aspects of the running daemons can be checked through the <code>vtysh</code> CLI.
+Some examples are:</p>
+<ul>
+<li>The running configuration:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>$<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-ti<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>frr-k8s-daemon-5cqbq<span class="w"> </span>-c<span class="w"> </span>frr<span class="w"> </span>--<span class="w"> </span>vtysh<span class="w"> </span>-c<span class="w"> </span><span class="s2">"show running-conf"</span>
+Building<span class="w"> </span>configuration...
+
+Current<span class="w"> </span>configuration:
+!
+frr<span class="w"> </span>version<span class="w"> </span><span class="m">8</span>.5.3
+frr<span class="w"> </span>defaults<span class="w"> </span>traditional
+hostname<span class="w"> </span>ovn-worker2
+log<span class="w"> </span>file<span class="w"> </span>/etc/frr/frr.log<span class="w"> </span>informational
+log<span class="w"> </span>timestamp<span class="w"> </span>precision<span class="w"> </span><span class="m">3</span>
+no<span class="w"> </span>ip<span class="w"> </span>forwarding
+service<span class="w"> </span>integrated-vtysh-config
+!
+router<span class="w"> </span>bgp<span class="w"> </span><span class="m">64512</span>
+<span class="w"> </span>no<span class="w"> </span>bgp<span class="w"> </span>ebgp-requires-policy
+<span class="w"> </span>no<span class="w"> </span>bgp<span class="w"> </span>hard-administrative-reset
+...
+</code></pre></div>
+<ul>
+<li>The BGP session states:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-ti<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>frr-k8s-daemon-5cqbq<span class="w"> </span>-c<span class="w"> </span>frr<span class="w"> </span>--<span class="w"> </span>vtysh<span class="w"> </span>-c<span class="w"> </span><span class="s2">"show bgp neighbor 172.18.0.5"</span>
+BGP<span class="w"> </span>neighbor<span class="w"> </span>is<span class="w"> </span><span class="m">172</span>.18.0.5,<span class="w"> </span>remote<span class="w"> </span>AS<span class="w"> </span><span class="m">64512</span>,<span class="w"> </span><span class="nb">local</span><span class="w"> </span>AS<span class="w"> </span><span class="m">64512</span>,<span class="w"> </span>internal<span class="w"> </span>link
+<span class="w">  </span>…
+Hostname:<span class="w"> </span>78d5a0f1d3cd
+<span class="w">  </span>BGP<span class="w"> </span>version<span class="w"> </span><span class="m">4</span>,<span class="w"> </span>remote<span class="w"> </span>router<span class="w"> </span>ID<span class="w"> </span><span class="m">172</span>.18.0.5,<span class="w"> </span><span class="nb">local</span><span class="w"> </span>router<span class="w"> </span>ID<span class="w"> </span><span class="m">172</span>.18.0.4
+<span class="w">  </span>BGP<span class="w"> </span><span class="nv">state</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>Established,<span class="w"> </span>up<span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="m">00</span>:01:29
+<span class="w">  </span>...
+<span class="w">    </span>Last<span class="w"> </span>reset<span class="w"> </span><span class="m">00</span>:03:30,<span class="w">  </span>Peer<span class="w"> </span>closed<span class="w"> </span>the<span class="w"> </span>session
+...
+</code></pre></div>
+<ul>
+<li>The actual routes exchanged through BGP:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-ti<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>frr-k8s-daemon-5cqbq<span class="w"> </span>-c<span class="w"> </span>frr<span class="w"> </span>--<span class="w"> </span>vtysh<span class="w"> </span>-c<span class="w"> </span><span class="s2">"show bgp ipv4"</span>
+BGP<span class="w"> </span>table<span class="w"> </span>version<span class="w"> </span>is<span class="w"> </span><span class="m">2</span>,<span class="w"> </span><span class="nb">local</span><span class="w"> </span>router<span class="w"> </span>ID<span class="w"> </span>is<span class="w"> </span><span class="m">172</span>.18.0.4,<span class="w"> </span>vrf<span class="w"> </span>id<span class="w"> </span><span class="m">0</span>
+Default<span class="w"> </span><span class="nb">local</span><span class="w"> </span>pref<span class="w"> </span><span class="m">100</span>,<span class="w"> </span><span class="nb">local</span><span class="w"> </span>AS<span class="w"> </span><span class="m">64512</span>
+Status<span class="w"> </span>codes:<span class="w">  </span>s<span class="w"> </span>suppressed,<span class="w"> </span>d<span class="w"> </span>damped,<span class="w"> </span>h<span class="w"> </span>history,<span class="w"> </span>*<span class="w"> </span>valid,<span class="w"> </span>&gt;<span class="w"> </span>best,<span class="w"> </span><span class="o">=</span><span class="w"> </span>multipath,
+<span class="w">               </span>i<span class="w"> </span>internal,<span class="w"> </span>r<span class="w"> </span>RIB-failure,<span class="w"> </span>S<span class="w"> </span>Stale,<span class="w"> </span>R<span class="w"> </span>Removed
+Nexthop<span class="w"> </span>codes:<span class="w"> </span>@NNN<span class="w"> </span>nexthop<span class="err">'</span>s<span class="w"> </span>vrf<span class="w"> </span>id,<span class="w"> </span>&lt;<span class="w"> </span>announce-nh-self
+Origin<span class="w"> </span>codes:<span class="w">  </span>i<span class="w"> </span>-<span class="w"> </span>IGP,<span class="w"> </span>e<span class="w"> </span>-<span class="w"> </span>EGP,<span class="w"> </span>?<span class="w"> </span>-<span class="w"> </span>incomplete
+RPKI<span class="w"> </span>validation<span class="w"> </span>codes:<span class="w"> </span>V<span class="w"> </span>valid,<span class="w"> </span>I<span class="w"> </span>invalid,<span class="w"> </span>N<span class="w"> </span>Not<span class="w"> </span>found
+
+<span class="w">    </span>Network<span class="w">          </span>Next<span class="w"> </span>Hop<span class="w">            </span>Metric<span class="w"> </span>LocPrf<span class="w"> </span>Weight<span class="w"> </span>Path
+<span class="w"> </span>*&gt;<span class="w"> </span><span class="m">10</span>.244.0.0/24<span class="w">    </span><span class="m">0</span>.0.0.0<span class="w">                  </span><span class="m">0</span><span class="w">         </span><span class="m">32768</span><span class="w"> </span>i
+<span class="w"> </span>*&gt;<span class="w"> </span><span class="m">22</span>.100.0.0/16<span class="w">    </span><span class="m">0</span>.0.0.0<span class="w">                  </span><span class="m">0</span><span class="w">         </span><span class="m">32768</span><span class="w"> </span>i
+<span class="w"> </span>*&gt;i172.26.0.0/16<span class="w">    </span><span class="m">172</span>.18.0.5<span class="w">               </span><span class="m">0</span><span class="w">    </span><span class="m">100</span><span class="w">      </span><span class="m">0</span><span class="w"> </span>i
+
+
+Displayed<span class="w">  </span><span class="m">2</span><span class="w"> </span>routes<span class="w"> </span>and<span class="w"> </span><span class="m">2</span><span class="w"> </span>total<span class="w"> </span>paths
+</code></pre></div>
+<ul>
+<li>Routes installed on the host and their origin:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-ti<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>frr-k8s-daemon-5cqbq<span class="w"> </span>-c<span class="w"> </span>frr<span class="w"> </span>--<span class="w"> </span>vtysh<span class="w"> </span>-c<span class="w"> </span><span class="s2">"show ip route"</span>
+Codes:<span class="w"> </span>K<span class="w"> </span>-<span class="w"> </span>kernel<span class="w"> </span>route,<span class="w"> </span>C<span class="w"> </span>-<span class="w"> </span>connected,<span class="w"> </span>S<span class="w"> </span>-<span class="w"> </span>static,<span class="w"> </span>R<span class="w"> </span>-<span class="w"> </span>RIP,
+<span class="w">       </span>O<span class="w"> </span>-<span class="w"> </span>OSPF,<span class="w"> </span>I<span class="w"> </span>-<span class="w"> </span>IS-IS,<span class="w"> </span>B<span class="w"> </span>-<span class="w"> </span>BGP,<span class="w"> </span>E<span class="w"> </span>-<span class="w"> </span>EIGRP,<span class="w"> </span>N<span class="w"> </span>-<span class="w"> </span>NHRP,
+<span class="w">       </span>T<span class="w"> </span>-<span class="w"> </span>Table,<span class="w"> </span>v<span class="w"> </span>-<span class="w"> </span>VNC,<span class="w"> </span>V<span class="w"> </span>-<span class="w"> </span>VNC-Direct,<span class="w"> </span>F<span class="w"> </span>-<span class="w"> </span>PBR,
+<span class="w">       </span>f<span class="w"> </span>-<span class="w"> </span>OpenFabric,
+<span class="w">       </span>&gt;<span class="w"> </span>-<span class="w"> </span>selected<span class="w"> </span>route,<span class="w"> </span>*<span class="w"> </span>-<span class="w"> </span>FIB<span class="w"> </span>route,<span class="w"> </span>q<span class="w"> </span>-<span class="w"> </span>queued,<span class="w"> </span>r<span class="w"> </span>-<span class="w"> </span>rejected,<span class="w"> </span>b<span class="w"> </span>-<span class="w"> </span>backup
+<span class="w">       </span>t<span class="w"> </span>-<span class="w"> </span>trapped,<span class="w"> </span>o<span class="w"> </span>-<span class="w"> </span>offload<span class="w"> </span>failure
+
+...
+B&gt;*<span class="w"> </span><span class="m">172</span>.26.0.0/16<span class="w"> </span><span class="o">[</span><span class="m">200</span>/0<span class="o">]</span><span class="w"> </span>via<span class="w"> </span><span class="m">172</span>.18.0.5,<span class="w"> </span>breth0,<span class="w"> </span>weight<span class="w"> </span><span class="m">1</span>,<span class="w"> </span><span class="m">00</span>:41:11
+...
+</code></pre></div>
+<p>Most of these commands have variations to check the same information specific to
+a VRF:</p>
+<div class="highlight"><pre><span></span><code>❯<span class="w"> </span>kubectl<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-ti<span class="w"> </span>-n<span class="w"> </span>frr-k8s-system<span class="w"> </span>frr-k8s-daemon-gv76r<span class="w"> </span>-c<span class="w"> </span>frr<span class="w"> </span>--<span class="w"> </span>vtysh<span class="w"> </span>-c<span class="w"> </span><span class="s2">"show ip route vrf udn-l2"</span>
+Codes:<span class="w"> </span>K<span class="w"> </span>-<span class="w"> </span>kernel<span class="w"> </span>route,<span class="w"> </span>C<span class="w"> </span>-<span class="w"> </span>connected,<span class="w"> </span>S<span class="w"> </span>-<span class="w"> </span>static,<span class="w"> </span>R<span class="w"> </span>-<span class="w"> </span>RIP,
+<span class="w">       </span>O<span class="w"> </span>-<span class="w"> </span>OSPF,<span class="w"> </span>I<span class="w"> </span>-<span class="w"> </span>IS-IS,<span class="w"> </span>B<span class="w"> </span>-<span class="w"> </span>BGP,<span class="w"> </span>E<span class="w"> </span>-<span class="w"> </span>EIGRP,<span class="w"> </span>N<span class="w"> </span>-<span class="w"> </span>NHRP,
+<span class="w">       </span>T<span class="w"> </span>-<span class="w"> </span>Table,<span class="w"> </span>v<span class="w"> </span>-<span class="w"> </span>VNC,<span class="w"> </span>V<span class="w"> </span>-<span class="w"> </span>VNC-Direct,<span class="w"> </span>A<span class="w"> </span>-<span class="w"> </span>Babel,<span class="w"> </span>F<span class="w"> </span>-<span class="w"> </span>PBR,
+<span class="w">       </span>f<span class="w"> </span>-<span class="w"> </span>OpenFabric,
+<span class="w">       </span>&gt;<span class="w"> </span>-<span class="w"> </span>selected<span class="w"> </span>route,<span class="w"> </span>*<span class="w"> </span>-<span class="w"> </span>FIB<span class="w"> </span>route,<span class="w"> </span>q<span class="w"> </span>-<span class="w"> </span>queued,<span class="w"> </span>r<span class="w"> </span>-<span class="w"> </span>rejected,<span class="w"> </span>b<span class="w"> </span>-<span class="w"> </span>backup
+<span class="w">       </span>t<span class="w"> </span>-<span class="w"> </span>trapped,<span class="w"> </span>o<span class="w"> </span>-<span class="w"> </span>offload<span class="w"> </span>failure
+
+VRF<span class="w"> </span>udn-l2:
+...
+B&gt;*<span class="w"> </span><span class="m">172</span>.26.0.0/16<span class="w"> </span><span class="o">[</span><span class="m">200</span>/0<span class="o">]</span><span class="w"> </span>via<span class="w"> </span><span class="m">172</span>.18.0.5,<span class="w"> </span>breth0<span class="w"> </span><span class="o">(</span>vrf<span class="w"> </span>default<span class="o">)</span>,<span class="w"> </span>weight<span class="w"> </span><span class="m">1</span>,<span class="w"> </span><span class="m">01</span>:39:55
+...
+</code></pre></div>
+<h3 id="troubleshooting-dataplane">Troubleshooting dataplane<a class="headerlink" href="#troubleshooting-dataplane" title="Permanent link">¶</a></h3>
+<p>FRR applies its configuration to the host networking stack in the form of
+routes. Thus standard tooling can be used for dataplane troubleshooting:
+connectivity checks, tcpdump, ovn-trace, ovs-trace, ...</p>
+<h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">¶</a></h2>
+<p>TBD</p>
+<h2 id="future-items">Future Items<a class="headerlink" href="#future-items" title="Permanent link">¶</a></h2>
+<ul>
+<li>EVPN support</li>
+<li>No overlay support</li>
+</ul>
+<h2 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Permanent link">¶</a></h2>
+<ul>
+<li>The <code>route-advertisements</code> feature is only supported in inter-connect mode.</li>
+<li>Advertised CUDNs must have a name of length under 16 characters to use a
+  homonym and predictable VRF name.</li>
+<li>Pod network IPs must be advertised from all nodes. As such, a
+  <code>RouteAdvertisements</code> instance including <code>PodNetwork</code> as <code>advertisements</code> type
+  must select all nodes with its <code>nodeSelector</code>.</li>
+<li>VRF-Lite configurations are only supported in local gateway mode.</li>
+<li>Egress IP advertisements are not supported for Layer 2 CUDNs or in VRF-Lite
+  configurations.</li>
+<li>Egress IPs will be advertised over the selected BGP sessions regardless of
+  whether they are assigned to the same interface as those sessions are
+  established over or not, probably making the advertisements ineffective if
+  they are not the same.</li>
+</ul>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ul>
+<li><a href="https://github.com/metallb/frr-k8s">FRR-k8s</a></li>
+<li><a href="https://frrouting.org/">FRR</a></li>
+</ul>
+</article>
+</div>
+<script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      Copyright © OVN-Kubernetes a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">LF Projects Policies</a>.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+<script src="../../../javascripts/gemini-api-key.js"></script>
+<script src="../../../javascripts/theme.js"></script>
+<script src="../../../javascripts/extra.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

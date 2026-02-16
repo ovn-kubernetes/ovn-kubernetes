@@ -1,0 +1,3278 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<link href="https://www.ovn.org/ovn-kubernetes/okeps/okep-5094-layer2-transit-router/" rel="canonical"/>
+<link href="../okep-5296-bgp/" rel="prev"/>
+<link href="../okep-5494-ovn-kubernetes-mcp-server/" rel="next"/>
+<link href="../../images/ovn-inside-k8s.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.1" name="generator"/>
+<title>Layer2TransitRouter - OVN-Kubernetes</title>
+<link href="../../assets/stylesheets/main.484c7ddc.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.ab4e12ef.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+<link href="../../stylesheets/extra.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="light-blue" data-md-color-primary="blue" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#okep-5094-primary-udn-layer2-topology-improvements">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="OVN-Kubernetes" class="md-header__button md-logo" data-md-component="logo" href="../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../images/ovn-inside-k8s.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            OVN-Kubernetes
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Layer2TransitRouter
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Blueprint" class="md-option" data-md-color-accent="light-blue" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="blue" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Blueprint">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 3A5.5 5.5 0 0 1 14 8.5c0 1.33-.47 2.55-1.26 3.5H21v9h-9v-8.26c-.95.79-2.17 1.26-3.5 1.26A5.5 5.5 0 0 1 3 8.5 5.5 5.5 0 0 1 8.5 3"></path></svg>
+</label>
+<input aria-label="Nerve Center" class="md-option" data-md-color-accent="purple" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="cyan" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Nerve Center">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m19.07 4.93-1.41 1.41A8.01 8.01 0 0 1 20 12a8 8 0 0 1-8 8 8 8 0 0 1-8-8c0-4.08 3.05-7.44 7-7.93v2.02C8.16 6.57 6 9.03 6 12a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-1.66-.67-3.16-1.76-4.24l-1.41 1.41C15.55 9.9 16 10.9 16 12a4 4 0 0 1-4 4 4 4 0 0 1-4-4c0-1.86 1.28-3.41 3-3.86v2.14c-.6.35-1 .98-1 1.72a2 2 0 0 0 2 2 2 2 0 0 0 2-2c0-.74-.4-1.38-1-1.72V2h-1A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10c0-2.76-1.12-5.26-2.93-7.07"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+</nav>
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+          
+  
+  
+    
+  
+  Overview
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../installation/launching-ovn-kubernetes-on-kind/">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../governance/CONTRIBUTING/">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api-reference/introduction/">
+          
+  
+  
+    
+  
+  API Reference Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../features/user-defined-networks/user-defined-networks/">
+          
+  
+  
+    
+  
+  Features
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../troubleshooting/debugging/">
+          
+  
+  
+    
+  
+  Troubleshooting
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../observability/metrics/">
+          
+  
+  
+    
+  
+  Observability
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="../okep-5085-localnet-api/">
+          
+  
+  
+    
+  
+  Enhancement Proposals
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../blog/">
+          
+  
+  
+    
+  
+  Blog
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="OVN-Kubernetes" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../images/ovn-inside-k8s.png"/>
+</a>
+    OVN-Kubernetes
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_1" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_1_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Overview
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/topology/">
+<span class="md-ellipsis">
+    
+  
+    Network Topology
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/gateway-modes/">
+<span class="md-ellipsis">
+    
+  
+    Gateway Modes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/traffic-flows/">
+<span class="md-ellipsis">
+    
+  
+    Traffic Flows
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/pod-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Pod Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/service-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Service Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/service-traffic-policy/">
+<span class="md-ellipsis">
+    
+  
+    Service Traffic Policy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/host-to-node-port-hairpin-trafficflow/">
+<span class="md-ellipsis">
+    
+  
+    Host To NodePort Hairpin
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/external-ip-and-loadbalancer-ingress/">
+<span class="md-ellipsis">
+    
+  
+    ExternalIPs/LoadBalancerIngress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/ovn-kubernetes-subnets/">
+<span class="md-ellipsis">
+    
+  
+    Internal Subnets
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../installation/launching-ovn-kubernetes-on-kind/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../installation/launching-ovn-kubernetes-with-helm/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes Using Helm
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/configuration/">
+<span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/cli-guide/">
+<span class="md-ellipsis">
+    
+  
+    CLI Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/example-pod-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Workloads on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/example-service-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Services on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/building-ovn-kubernetes/">
+<span class="md-ellipsis">
+    
+  
+    Setup and Building
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../governance/CONTRIBUTING/">
+<span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../governance/REVIEWING/">
+<span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/developer/">
+<span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/image-build/">
+<span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/documentation/">
+<span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/local_testing_guide/">
+<span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../ci/ci/">
+<span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/release/">
+<span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/introduction/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-ip-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-service-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-qos-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-firewall-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/admin-epbr-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/userdefinednetwork-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/routeadvertisements-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_1" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_1_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/user-defined-networks/user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    NetworkSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_2_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/admin-network-policy/">
+<span class="md-ellipsis">
+    
+  
+    AdminNetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/network-policy/">
+<span class="md-ellipsis">
+    
+  
+    NetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/egress-firewall/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    ClusterEgressControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_3_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    ClusterEgressControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-ip/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-service/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-qos/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-gateway/">
+<span class="md-ellipsis">
+    
+  
+    EgressGateway
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    InfrastructureSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_4_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    InfrastructureSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/infrastructure-security-controls/node-identity/">
+<span class="md-ellipsis">
+    
+  
+    NodeIdentity
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworking
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_5_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    MultiNetworking
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-homing/">
+<span class="md-ellipsis">
+    
+  
+    Multihoming
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-network-policies/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkPolicies
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-vtep/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkRails
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multicast/">
+<span class="md-ellipsis">
+    
+  
+    Multicast
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    NetworkQoS
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_7_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkQoS
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-qos-guide/">
+<span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hybrid-overlay/">
+<span class="md-ellipsis">
+    
+  
+    HybridOverlay
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_10" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Hardware Acceleration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_10_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_10">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Hardware Acceleration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hardware-offload/ovs-kernel/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with kernel datapath
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hardware-offload/ovs-doca/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with DOCA datapath
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_11" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    BGP Integration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_11_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_11">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    BGP Integration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/bgp-integration/route-advertisements/">
+<span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Troubleshooting
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/ovnkube-trace/">
+<span class="md-ellipsis">
+    
+  
+    OVNKube Trace
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/logging/">
+<span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/metrics/">
+<span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/sdn-dashboard/">
+<span class="md-ellipsis">
+    
+  
+    SDN Dashboard
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/ovn-observability/">
+<span class="md-ellipsis">
+    
+  
+    OVN observability
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Enhancement Proposals
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_8_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_8">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Enhancement Proposals
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5085-localnet-api/">
+<span class="md-ellipsis">
+    
+  
+    Localnet API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-4380-network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Network QoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5193-user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5233-preconfigured-udn-addresses/">
+<span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5296-bgp/">
+<span class="md-ellipsis">
+    
+  
+    BGP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#problem-statement">
+<span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#goals">
+<span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#non-goals">
+<span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+<nav aria-label="Introduction" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layer2-default-gw-discovery-at-vms">
+<span class="md-ellipsis">
+      
+        Layer2 default gw discovery at VMs
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#virtual-machine-live-migration-and-default-gateway">
+<span class="md-ellipsis">
+      
+        Virtual machine live migration and default gateway
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layer2-topology-limitations-for-eip">
+<span class="md-ellipsis">
+      
+        Layer2 topology limitations for EIP
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+<nav aria-label="User-Stories/Use-Cases" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-1-seamless-live-migration">
+<span class="md-ellipsis">
+      
+        Story 1: seamless live migration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-2-eip-for-layer2-limitations">
+<span class="md-ellipsis">
+      
+        Story 2: EIP for layer2 limitations
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#proposed-solution">
+<span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+</a>
+<nav aria-label="Proposed Solution" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ports-switches-and-routers-topology">
+<span class="md-ellipsis">
+      
+        Ports, switches and routers topology
+      
+    </span>
+</a>
+<nav aria-label="Ports, switches and routers topology" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipv4">
+<span class="md-ellipsis">
+      
+        IPv4
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipv6">
+<span class="md-ellipsis">
+      
+        IPv6
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tunnel-keys-for-the-transit-switchesrouters">
+<span class="md-ellipsis">
+      
+        Tunnel keys for the transit switches/routers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#nat-configuration">
+<span class="md-ellipsis">
+      
+        NAT configuration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#static-routes-and-logical-router-policies">
+<span class="md-ellipsis">
+      
+        Static Routes and Logical Router Policies
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#router-to-router-direct-connection-without-a-switch">
+<span class="md-ellipsis">
+      
+        Router to router direct connection without a switch
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#transit-router-specifics">
+<span class="md-ellipsis">
+      
+        Transit router specifics
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#transit-subnet-conflict">
+<span class="md-ellipsis">
+      
+        Transit subnet conflict
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-details">
+<span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#at-ovnkube-node">
+<span class="md-ellipsis">
+      
+        At ovnkube-node
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#at-ovnkube-control-plane">
+<span class="md-ellipsis">
+      
+        At ovnkube-control-plane
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#rolling-upgrade-and-traffic-disruption">
+<span class="md-ellipsis">
+      
+        Rolling upgrade and traffic disruption
+      
+    </span>
+</a>
+<nav aria-label="Rolling upgrade and traffic disruption" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#remote-pod-traffic">
+<span class="md-ellipsis">
+      
+        Remote pod traffic
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-traffic-over-local-node">
+<span class="md-ellipsis">
+      
+        Egress traffic over local node
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egressingress-traffic-over-remote-node">
+<span class="md-ellipsis">
+      
+        Egress/Ingress traffic over remote node
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#upgrade-details">
+<span class="md-ellipsis">
+      
+        Upgrade Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#testing-details">
+<span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#documentation-details">
+<span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks-known-limitations-and-mitigations">
+<span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+</a>
+<nav aria-label="Risks, Known Limitations and Mitigations" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tunnel-keys-on-local-ports-of-distributed-switches-and-routers">
+<span class="md-ellipsis">
+      
+        Tunnel keys on local ports of distributed switches and routers
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-kubernetes-version-skew">
+<span class="md-ellipsis">
+      
+        OVN Kubernetes Version Skew
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#alternatives">
+<span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5494-ovn-kubernetes-mcp-server/">
+<span class="md-ellipsis">
+    
+  
+    MCP for Troubleshooting
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5552-dynamic-udn-node-allocation/">
+<span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5224-connecting-udns/okep-5224-connecting-udns/">
+<span class="md-ellipsis">
+    
+  
+    Connecting User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5259-no-overlay/">
+<span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5088-evpn/">
+<span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5674-dpu-healthcheck/">
+<span class="md-ellipsis">
+    
+  
+    DPU Healthcheck
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../../blog/">
+<span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Blog
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#problem-statement">
+<span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#goals">
+<span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#non-goals">
+<span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+<nav aria-label="Introduction" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layer2-default-gw-discovery-at-vms">
+<span class="md-ellipsis">
+      
+        Layer2 default gw discovery at VMs
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#virtual-machine-live-migration-and-default-gateway">
+<span class="md-ellipsis">
+      
+        Virtual machine live migration and default gateway
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#layer2-topology-limitations-for-eip">
+<span class="md-ellipsis">
+      
+        Layer2 topology limitations for EIP
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+<nav aria-label="User-Stories/Use-Cases" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-1-seamless-live-migration">
+<span class="md-ellipsis">
+      
+        Story 1: seamless live migration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-2-eip-for-layer2-limitations">
+<span class="md-ellipsis">
+      
+        Story 2: EIP for layer2 limitations
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#proposed-solution">
+<span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+</a>
+<nav aria-label="Proposed Solution" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ports-switches-and-routers-topology">
+<span class="md-ellipsis">
+      
+        Ports, switches and routers topology
+      
+    </span>
+</a>
+<nav aria-label="Ports, switches and routers topology" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipv4">
+<span class="md-ellipsis">
+      
+        IPv4
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipv6">
+<span class="md-ellipsis">
+      
+        IPv6
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tunnel-keys-for-the-transit-switchesrouters">
+<span class="md-ellipsis">
+      
+        Tunnel keys for the transit switches/routers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#nat-configuration">
+<span class="md-ellipsis">
+      
+        NAT configuration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#static-routes-and-logical-router-policies">
+<span class="md-ellipsis">
+      
+        Static Routes and Logical Router Policies
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#router-to-router-direct-connection-without-a-switch">
+<span class="md-ellipsis">
+      
+        Router to router direct connection without a switch
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#transit-router-specifics">
+<span class="md-ellipsis">
+      
+        Transit router specifics
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#transit-subnet-conflict">
+<span class="md-ellipsis">
+      
+        Transit subnet conflict
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-details">
+<span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#at-ovnkube-node">
+<span class="md-ellipsis">
+      
+        At ovnkube-node
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#at-ovnkube-control-plane">
+<span class="md-ellipsis">
+      
+        At ovnkube-control-plane
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#rolling-upgrade-and-traffic-disruption">
+<span class="md-ellipsis">
+      
+        Rolling upgrade and traffic disruption
+      
+    </span>
+</a>
+<nav aria-label="Rolling upgrade and traffic disruption" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#remote-pod-traffic">
+<span class="md-ellipsis">
+      
+        Remote pod traffic
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-traffic-over-local-node">
+<span class="md-ellipsis">
+      
+        Egress traffic over local node
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egressingress-traffic-over-remote-node">
+<span class="md-ellipsis">
+      
+        Egress/Ingress traffic over remote node
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#upgrade-details">
+<span class="md-ellipsis">
+      
+        Upgrade Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#testing-details">
+<span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#documentation-details">
+<span class="md-ellipsis">
+      
+        Documentation Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks-known-limitations-and-mitigations">
+<span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+</a>
+<nav aria-label="Risks, Known Limitations and Mitigations" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#tunnel-keys-on-local-ports-of-distributed-switches-and-routers">
+<span class="md-ellipsis">
+      
+        Tunnel keys on local ports of distributed switches and routers
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-kubernetes-version-skew">
+<span class="md-ellipsis">
+      
+        OVN Kubernetes Version Skew
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#alternatives">
+<span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="okep-5094-primary-udn-layer2-topology-improvements">OKEP-5094: Primary UDN Layer2 topology improvements<a class="headerlink" href="#okep-5094-primary-udn-layer2-topology-improvements" title="Permanent link">¶</a></h1>
+<ul>
+<li>Issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5094">#5094</a></li>
+</ul>
+<h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
+<p>The primary UDN layer2 topology presents some problems related to VM's live migration that are being addressed by
+ovn-kubernetes sending GARPs or unsolicited router advertisement and blocking some OVN router advertisements, although this fixes the issue, is not the most robust way to address the problem and adds complexity to ovn-kubernetes live migration mechanism.</p>
+<p>EgressIP logical router policies (LRP) for layer2 networks are applied on the gateway router, compared to the cluster router for layer3 networks.
+To ensure proper traffic load balancing for EgressIPs with multiple IPs defined, especially for pods running on the EgressIP nodes themselves, a workaround was introduced.
+This workaround configures the LRP for a pod on one of the EgressIP nodes to use the external gateway IP as one of the next hops to achieve proper load balancing.</p>
+<p>For the following EgressIP:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EgressIP</span>
+<span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">metadata</span><span class="p p-Indicator">:</span>
+<span class="w">    </span><span class="nt">annotations</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">k8s.ovn.org/egressip-mark</span><span class="p">:</span><span class="w"> </span><span class="s">"50000"</span>
+<span class="w w-Error">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">egressip-1</span>
+<span class="nn">...</span>
+<span class="w">  </span><span class="nt">spec</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">egressIPs</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.18.0.100</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.18.0.101</span>
+<span class="nn">...</span>
+<span class="w">  </span><span class="nt">status</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">items</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">egressIP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.18.0.100</span>
+<span class="w">      </span><span class="nt">node</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ovn-worker</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">egressIP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.18.0.101</span>
+<span class="w">      </span><span class="nt">node</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ovn-worker2</span>
+</code></pre></div>
+<p>The following LRP is present on ovn-worker for a local pod with IP <code>10.10.0.8</code>:</p>
+<div class="highlight"><pre><span></span><code>ovn-nbctl<span class="w"> </span>lr-policy-list<span class="w"> </span>GR_cluster_udn_l2network_ovn-worker
+Routing<span class="w"> </span>Policies
+<span class="w">       </span><span class="m">100</span><span class="w">                               </span>ip4.src<span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="m">10</span>.10.0.8<span class="w">         </span>reroute<span class="w">                </span><span class="m">100</span>.65.0.3,<span class="w"> </span><span class="m">172</span>.18.0.1<span class="w">               </span><span class="nv">pkt_mark</span><span class="o">=</span><span class="m">50000</span>
+</code></pre></div>
+<p>This policy redirects traffic the local external gateway <code>172.18.0.1</code>, or  to the join IP of the second egress node (ovn-worker2) <code>100.65.0.3</code>.</p>
+<p>While this approach works in most cases, it has the following limitations:</p>
+<ul>
+<li>Does not work when there's no default gateway.</li>
+<li><a href="https://issues.redhat.com/browse/OCPBUGS-48301">Does not work on platforms that use <code>/32</code> per node</a>.</li>
+<li>Does not respect multiple gateways and always sends traffic to one of the gateways.</li>
+</ul>
+<p>We can make use of the <a href="https://github.com/ovn-org/ovn/blob/c24b1aa3c724de1aa9fd2461f07e4127a6bfa190/NEWS#L42-L44">new transit router OVN topology entity</a> to fix these issues and changing the topology for primary UDN layer2.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">¶</a></h2>
+<ol>
+<li>For layer2 topology advertise default gw with same IP and MAC address independently of the node where
+   the vm is running.</li>
+<li>Keep all the layer2 topology features at current topology.</li>
+<li>Eliminate the dependency on external gateway IPs from layer2 EgressIP implementation.</li>
+<li>Make the new topology upgradable with minor disruption.</li>
+</ol>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
+<ol>
+<li>Support non interconnect or interconnect with multiple nodes per zone.</li>
+<li>Extend the layer2 topology changes to other topologies.</li>
+</ol>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<h3 id="layer2-default-gw-discovery-at-vms">Layer2 default gw discovery at VMs<a class="headerlink" href="#layer2-default-gw-discovery-at-vms" title="Permanent link">¶</a></h3>
+<p>Currently at layer2 topology the virtual machine related to default gw
+routing looks like the following for ipv4, where the .1 address is configured
+using DHCP and pods send an ARP that is only answered by the local gateway
+router with the gateway router mac.</p>
+<pre class="mermaid"><code>flowchart TD
+    classDef vmStyle fill:#0000FF,stroke:#ADD8E6,stroke-width:2px;
+
+    subgraph node1["node1"]
+        GR-node1["GR-node1"]
+        layer2-switch["Layer2 Switch"]
+        subgraph VM["Virtual Machine"]
+            class VM vmStyle;
+            route["default gw -&gt; 203.203.0.1 (0a:58:64:41:00:02)"]
+        end
+        VM --&gt;|"ARP 203.203.0.1"|layer2-switch
+    end
+    GR-node1 &lt;--&gt;|"router 203.203.0.1  (0a:58:64:41:00:02)"| layer2-switch
+    GR-node2 &lt;--&gt;|"remote 100.65.0.3   (0a:58:64:41:00:03)"| layer2-switch
+    GR-node3 &lt;--&gt;|"remote 100.65.0.4   (0a:58:64:41:00:04)"| layer2-switch
+
+    class VM vmStyle;
+</code></pre>
+<div class="highlight"><pre><span></span><code>$<span class="w"> </span>ip<span class="w"> </span>route
+default<span class="w"> </span>via<span class="w"> </span><span class="m">203</span>.203.0.1<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>proto<span class="w"> </span>dhcp<span class="w"> </span>metric<span class="w"> </span><span class="m">100</span>
+
+$<span class="w"> </span>ip<span class="w"> </span>neigh
+<span class="m">203</span>.203.0.1<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>lladdr<span class="w"> </span>0a:58:64:41:00:02<span class="w"> </span>REACHABLE
+</code></pre></div>
+<p>And this is how it looks for IPv6 where the <a href="https://datatracker.ietf.org/doc/html/rfc4861#section-4.2">RFC</a> dictates the default gw route
+is advertised with the link local address. So every gateway router connected to the
+switch will send a router advertisement after receiving the router solicitation from
+the virtual machine.
+<pre class="mermaid"><code>flowchart TD
+    classDef vmStyle fill:#0000FF,stroke:#ADD8E6,stroke-width:2px;
+
+    subgraph node1["node1"]
+        GR-node1["GR-node1"]
+        layer2-switch["Layer2 Switch"]
+        subgraph VM["Virtual Machine"]
+            class VM vmStyle;
+            route["default gw fe80::858:64ff:fe41:2 fe80::858:64ff:fe41:3 fe80::858:64ff:fe41:4"]
+        end
+        layer2-switch--&gt; VM
+
+    end
+    GR-node1 --&gt;|"RA fe80::858:64ff:fe41:2"| layer2-switch
+    GR-node2 --&gt;|"RA fe80::858:64ff:fe41:3"| layer2-switch
+    GR-node3 --&gt;|"RA fe80::858:64ff:fe41:4"| layer2-switch
+
+    class VM vmStyle;
+</code></pre></p>
+<div class="highlight"><pre><span></span><code>$<span class="w"> </span>ip<span class="w"> </span>-6<span class="w"> </span>route
+default<span class="w"> </span>proto<span class="w"> </span>ra<span class="w"> </span>metric<span class="w"> </span><span class="m">100</span><span class="w"> </span>pref<span class="w"> </span>low
+<span class="w">    </span>nexthop<span class="w"> </span>via<span class="w"> </span>fe80::858:64ff:fe41:2<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>weight<span class="w"> </span><span class="m">1</span>
+<span class="w">    </span>nexthop<span class="w"> </span>via<span class="w"> </span>fe80::858:64ff:fe41:3<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>weight<span class="w"> </span><span class="m">1</span>
+<span class="w">    </span>nexthop<span class="w"> </span>via<span class="w"> </span>fe80::858:64ff:fe41:4<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>weight<span class="w"> </span><span class="m">1</span>
+
+$<span class="w"> </span>ip<span class="w"> </span>neigh
+fe80::858:64ff:fe41:3<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>lladdr<span class="w"> </span>0a:58:64:41:00:03<span class="w"> </span>router<span class="w"> </span>STALE
+fe80::858:64ff:fe41:4<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>lladdr<span class="w"> </span>0a:58:64:41:00:04<span class="w"> </span>router<span class="w"> </span>STALE
+fe80::858:64ff:fe41:2<span class="w"> </span>dev<span class="w"> </span>eth0<span class="w"> </span>lladdr<span class="w"> </span>0a:58:64:41:00:02<span class="w"> </span>router<span class="w"> </span>STALE
+</code></pre></div>
+<p>This is a view of the logical router ports connected to the switch, take
+into account that the 203.203.0.1 is only "propagated" on the node where the
+vm is running:
+<div class="highlight"><pre><span></span><code>$<span class="w"> </span>ovnk<span class="w"> </span>ovn-control-plane<span class="w"> </span>ovn-nbctl<span class="w"> </span>show<span class="w"> </span>GR_test12_namespace.scoped_ovn-control-plane
+router<span class="w"> </span>2b9a5f29-ef44-4bda-8d39-45198353013b<span class="w"> </span><span class="o">(</span>GR_test12_namespace.scoped_ovn-control-plane<span class="o">)</span>
+<span class="w">    </span>port<span class="w"> </span>rtos-test12_namespace.scoped_ovn_layer2_switch
+<span class="w">        </span>mac:<span class="w"> </span><span class="s2">"0a:58:64:41:00:03"</span>
+<span class="w">        </span>ipv6-lla:<span class="w"> </span><span class="s2">"fe80::858:64ff:fe41:3"</span>
+<span class="w">        </span>networks:<span class="w"> </span><span class="o">[</span><span class="s2">"100.65.0.3/16"</span>,<span class="w"> </span><span class="s2">"2010:100:200::1/60"</span>,<span class="w"> </span><span class="s2">"203.203.0.1/16"</span>,<span class="w"> </span><span class="s2">"fd99::3/64"</span><span class="o">]</span>
+
+$<span class="w"> </span>ovnk<span class="w"> </span>ovn-worker<span class="w"> </span>ovn-nbctl<span class="w"> </span>show<span class="w"> </span>GR_test12_namespace.scoped_ovn-worker
+router<span class="w"> </span>dbbb9301-2311-4d2f-bfec-64e1caf78b8e<span class="w"> </span><span class="o">(</span>GR_test12_namespace.scoped_ovn-worker<span class="o">)</span>
+<span class="w">    </span>port<span class="w"> </span>rtos-test12_namespace.scoped_ovn_layer2_switch
+<span class="w">        </span>mac:<span class="w"> </span><span class="s2">"0a:58:64:41:00:02"</span>
+<span class="w">        </span>ipv6-lla:<span class="w"> </span><span class="s2">"fe80::858:64ff:fe41:2"</span>
+<span class="w">        </span>networks:<span class="w"> </span><span class="o">[</span><span class="s2">"100.65.0.2/16"</span>,<span class="w"> </span><span class="s2">"2010:100:200::1/60"</span>,<span class="w"> </span><span class="s2">"203.203.0.1/16"</span>,<span class="w"> </span><span class="s2">"fd99::2/64"</span><span class="o">]</span>
+
+$<span class="w"> </span>ovnk<span class="w"> </span>ovn-worker2<span class="w"> </span>ovn-nbctl<span class="w"> </span>show<span class="w"> </span>GR_test12_namespace.scoped_ovn-worker2
+router<span class="w"> </span>148b41ca-3641-449e-897e-0d63bf395233<span class="w"> </span><span class="o">(</span>GR_test12_namespace.scoped_ovn-worker2<span class="o">)</span>
+<span class="w">    </span>port<span class="w"> </span>rtos-test12_namespace.scoped_ovn_layer2_switch
+<span class="w">        </span>mac:<span class="w"> </span><span class="s2">"0a:58:64:41:00:04"</span>
+<span class="w">        </span>ipv6-lla:<span class="w"> </span><span class="s2">"fe80::858:64ff:fe41:4"</span>
+<span class="w">        </span>networks:<span class="w"> </span><span class="o">[</span><span class="s2">"100.65.0.4/16"</span>,<span class="w"> </span><span class="s2">"2010:100:200::1/60"</span>,<span class="w"> </span><span class="s2">"203.203.0.1/16"</span>,<span class="w"> </span><span class="s2">"fd99::4/64"</span><span class="o">]</span>
+</code></pre></div></p>
+<p>So the gist of it is that the default gw ip4 and ipv6 is dependent of where
+the VM is running, and that has important implications.</p>
+<p>Also having a multipath IPv6 default gateway means that the egress traffic is load balanced between nodes, across the geneve interconnect.</p>
+<h3 id="virtual-machine-live-migration-and-default-gateway">Virtual machine live migration and default gateway<a class="headerlink" href="#virtual-machine-live-migration-and-default-gateway" title="Permanent link">¶</a></h3>
+<p>When a virtual machine is live migrated, it is transferred from the node where it is
+running to a different one, in this case it can be from node1 to node2.</p>
+<p>After live migration has finished and the VM is running on a different node,
+the VM does <em>not</em> initiate any type of ARP or Router Solicitation to reconcile
+routes since from its point of view nothing has changed. This means it's running
+with the same network configuration, the consequence of that is that the
+VM will continue running with its default IPv4 gateway mac address pointing to node1 and
+for ipv6 it will continue to be the multipath default gw.</p>
+<p>One common scenario that triggers user live migrating VMs is related to
+doing some kind of node maintenance where the node need to go down. The VM is
+live migrated to a different node, then the node where it was original running
+is shutdown and some maintenance (e.g., hardware changes) is done before starting
+it up again.</p>
+<p>With that scenario in mind, after VM has live migrated:
+- the default IPv4 default gateway mac will point to a node that is currently down
+- one of default IPv6 gateway paths will be pointing to a node that is currently down.</p>
+<p>To fix that for IPv4, ovn-kubernetes sends a GARP after live migration to
+reconcile the default gw mac to the new node where the VM is running <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4964">Pull Request 4964</a>.</p>
+<p>For ipv6 there are changes to do something similar by blocking external gateway
+routers RAs <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4852">Pull Request 4852</a> and reconciling gateways with unsolicited router advertisements
+<a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4847">Pull Request 4847</a>.</p>
+<p>Although these fixes work, they are not very robust since messages can be lost
+or blocked so gateway do not get reconciled.</p>
+<p>This is how the topology will look after the virtual machine has being live migrated from node1 to node2
+and shutting down node1 after it.</p>
+<p>ipv4:
+<pre class="mermaid"><code>flowchart TD
+    classDef vmStyle fill:#0000FF,stroke:#ADD8E6,stroke-width:2px;
+    subgraph node1["node1
+    DOWN"]
+        GR-node1["GR-node1 (0a:58:64:41:00:02)"]
+    end
+    subgraph node2
+        GR-node2["GR-node2 (0a:58:64:41:00:03)"]
+        subgraph VM["Virtual Machine"]
+
+            class VM vmStyle;
+            route["default gw -&gt; 203.203.0.1 old node1 instead of node2
+            (0a:58:64:41:00:02)"]
+        end
+        VM --&gt;layer2-switch
+    end
+     subgraph node3
+        GR-node3["GR-node3 (0a:58:64:41:00:04)"]
+    end
+    GR-node1 &lt;--&gt;|"remote 100.65.0.2  (0a:58:64:41:00:02)"| layer2-switch
+    GR-node2 &lt;--&gt;|"router 203.203.0.1   (0a:58:64:41:00:03)"| layer2-switch
+    GR-node3 &lt;--&gt;|"remote 100.65.0.4   (0a:58:64:41:00:04)"| layer2-switch
+
+    class VM vmStyle;
+</code></pre></p>
+<p>ipv6:
+<pre class="mermaid"><code>flowchart TD
+    classDef vmStyle fill:#0000FF,stroke:#ADD8E6,stroke-width:2px;
+
+    subgraph node1["node1 (DOWN)"]
+
+        GR-node1["GR-node1 (fe80::858:64ff:fe41:2)"]
+    end
+    subgraph node2
+        GR-node2["GR-node2 (fe80::858:64ff:fe41:3)"]
+        layer2-switch["Layer2 Switch"]
+        subgraph VM["Virtual Machine"]
+
+            class VM vmStyle;
+            route["default gw
+            down(fe80::858:64ff:fe41:2)
+            fe80::858:64ff:fe41:3
+            fe80::858:64ff:fe41:4"]
+        end
+        layer2-switch--&gt; VM
+    end
+    subgraph node3
+        GR-node3["GR-node3 (fe80::858:64ff:fe41:4)"]
+    end
+
+    GR-node2 --&gt; layer2-switch
+    GR-node3 --&gt; layer2-switch
+
+    class VM vmStyle;
+</code></pre></p>
+<h3 id="layer2-topology-limitations-for-eip">Layer2 topology limitations for EIP<a class="headerlink" href="#layer2-topology-limitations-for-eip" title="Permanent link">¶</a></h3>
+<p>The current layer2 topology has some limitations with Egress IP.
+When multiple IPs are assigned to an Egress IP, and a pod is local to one
+of the egress nodes, only the egress path local to that node will be used.</p>
+<h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
+<h3 id="story-1-seamless-live-migration">Story 1: seamless live migration<a class="headerlink" href="#story-1-seamless-live-migration" title="Permanent link">¶</a></h3>
+<p>As a kubevirt user, I want to live migrate a virtual machine using layer2 primary UDN,
+so that TCP connections to the external network are not broken and downtime is minimum with network configuration
+not being changed within the virtual machine.</p>
+<p>For example: User has a virtual machine serving a video conference using TCP connection and the node
+where is running needs to be shut down, so user does a live migration to move to other nodes, the video
+should continue with minimum downtime without changing virtual machine network configuration.</p>
+<h3 id="story-2-eip-for-layer2-limitations">Story 2: EIP for layer2 limitations<a class="headerlink" href="#story-2-eip-for-layer2-limitations" title="Permanent link">¶</a></h3>
+<p>As an EIP L2 UDN user, new connections from a pod should be balanced correctly over multiple Egress IPs.</p>
+<h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">¶</a></h2>
+<p>The OVN community did introduce a new network topology element <a href="https://www.ovn.org/support/dist-docs/ovn-nb.5.html"><strong>transit router</strong></a> that allows logical routers that are shared between OVN availability zones, this make possible to use a cluster router similar to layer3 topology ovn_cluster_router for layer2
+so the logical router port that is connected to the layer2 switch will have just the .1 address and mac and ipv6 lla generated
+with it.</p>
+<h3 id="ports-switches-and-routers-topology">Ports, switches and routers topology<a class="headerlink" href="#ports-switches-and-routers-topology" title="Permanent link">¶</a></h3>
+<p>This is an overview of the topology with the transit subnet used to connect the transit_router and gateway routers directly (without a new logical switch - direct router port connections using the NB.Logical_Router_Port.peer field between the GR and the new transit_router).</p>
+<p>OVN routers cannot have multiple ports in the same subnet, so the trtor (transit router to gateway router) ports of the transit_router need to have the minimal possible subnet, to accommodate at least 2 IPs one per peer, from the
+transit switch subnet to connect the two peers, trtor (transit_router) &lt;-&gt; rtotr (GR).</p>
+<h4 id="ipv4">IPv4<a class="headerlink" href="#ipv4" title="Permanent link">¶</a></h4>
+<p>Address config
+<div class="highlight"><pre><span></span><code><span class="nt">subnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">203.203.0.0/24</span>
+<span class="nt">join-subnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.65.0.0/16</span>
+<span class="nt">transit-subnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.88.0.0/16</span>
+<span class="nt">transit-peers-node-subnet</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">node1</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.88.0.4/31</span>
+<span class="w">  </span><span class="nt">node2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.88.0.8/31</span>
+<span class="w">  </span><span class="nt">node3</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100.88.0.6/31</span>
+</code></pre></div></p>
+<p>The transit per node subnet has to reserve 2 addresses for the transit router side and gateway router side. </p>
+<p>Let's inspect node1 transit-peers-node-subnet with the <code>100.88.0.4/31</code> subnet: 
+GR and transit_router peers ports should use <code>100.88.0.4</code> and <code>100.88.0.5</code>.</p>
+<pre class="mermaid"><code>%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
+flowchart TD
+    classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
+    classDef portStyle fill:#3CB371,color:black,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["trtor-GR-node1
+            100.65.0.2/16 100.88.0.5/31 (0a:58:64:41:00:02)"]
+        end
+        subgraph VM["Virtual Machine"]
+            class VM vmStyle;
+            term["default gw
+            203.203.0.1
+            (0a:58:CB:CB:00:01)"]
+        end
+    end
+    subgraph node2
+        subgraph GR-node2
+            rtotr-GR-node2["rtotr-GR-node2 100.65.0.3/16 100.88.0.9/31 (0a:58:64:41:00:03)"]
+        end
+    end
+    subgraph node3
+        subgraph GR-node3
+            rtotr-GR-node3["rtotr-GR-node3 100.65.0.4/16 100.88.0.7/31 (0a:58:64:41:00:04)"]
+        end
+    end
+    subgraph layer2-switch
+        stor-transit_router["stor-transit_router
+        type: router"]
+    end
+    subgraph transit_router["transit_router "]
+        trtor-GR-node1["trtor-GR-node1 100.88.0.4/31"]
+        trtor-GR-node2["trtor-GR-node2 100.88.0.8/31"]
+        trtor-GR-node3["trtor-GR-node3 100.88.0.6/31"]
+        rtos-layer2-switch["rtos-layer2-switch 203.203.0.1 (0a:58:CB:CB:00:01)"]
+    end
+    rtotr-GR-node1 &lt;--&gt; trtor-GR-node1
+    rtotr-GR-node2 &lt;--&gt; trtor-GR-node2
+    rtotr-GR-node3 &lt;--&gt; trtor-GR-node3
+    VM &lt;--&gt;layer2-switch
+    rtos-layer2-switch &lt;--&gt; stor-transit_router
+
+    class VM vmStyle;
+    class rtotr-GR-node1 portStyle;
+    class rtotr-GR-node2 portStyle;
+    class rtotr-GR-node3 portStyle;
+    class trtor-GR-node1 portStyle;
+    class trtor-GR-node2 portStyle;
+    class trtor-GR-node3 portStyle;
+    class stor-transit_router portStyle;
+    class rtos-layer2-switch portStyle;
+    class GR-node1 routerStyle;
+    class GR-node2 routerStyle;
+    class GR-node3 routerStyle;
+    class transit_router routerStyle;
+    class layer2-switch switchStyle
+    class term termStyle;
+    class node1,node2,node3 nodeStyle;
+
+</code></pre>
+<p>As shown by the topology the VM default gw IP is the first address from the subnet <code>203.203.0.1</code> and the mac address is computed from it
+so this makes it <strong>independent</strong> of where the VM is running.</p>
+<h4 id="ipv6">IPv6<a class="headerlink" href="#ipv6" title="Permanent link">¶</a></h4>
+<p>Address config
+<div class="highlight"><pre><span></span><code><span class="nt">subnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2010:100:200::0/60</span>
+<span class="nt">join-subnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fd99::/64</span>
+<span class="nt">transit-subnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fd97::/64</span>
+<span class="nt">transit-peers-node-subnet</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">node1</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fd97::8/127</span>
+<span class="w">  </span><span class="nt">node2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fd97::6/127</span>
+<span class="w">  </span><span class="nt">node3</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fd97::4/127</span>
+</code></pre></div>
+In the case of IPv6 there is no broadcast concept so reserving two addresses (one bit) is enough that means the transit-peers-node-subnet size should
+be <code>128 - 1 = 127</code>.</p>
+<p>Again <code>ipcalc</code> we can inspect the subnet for node1:
+<div class="highlight"><pre><span></span><code>$<span class="w"> </span>ipcalc<span class="w"> </span>fd97::8/127
+Full<span class="w"> </span>Network:<span class="w">   </span>fd97:0000:0000:0000:0000:0000:0000:0008/127
+Network:<span class="w">    </span>fd97::8/127
+Netmask:<span class="w">    </span>ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">127</span>
+
+Address<span class="w"> </span>space:<span class="w">  </span>Unique<span class="w"> </span>Local<span class="w"> </span>Unicast
+HostMin:<span class="w">    </span>fd97::8
+HostMax:<span class="w">    </span>fd97::9
+Hosts/Net:<span class="w">  </span><span class="m">2</span>
+</code></pre></div>
+In this case the node1 gateway and ovn_cluster routers peer ports should use <code>fd97::8</code> and <code>fd97::9</code>.</p>
+<pre class="mermaid"><code>%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
+flowchart TD
+    classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
+    classDef portStyle fill:#3CB371,color:black,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["trtor-GR-node1
+            fd97::9/127 fd99::4/64 (0a:58:64:41:00:02)"]
+        end
+        subgraph VM["Virtual Machine"]
+            class VM vmStyle;
+            term["default gw
+            fe80::858:cbff:fecb:1
+            (0a:58:CB:CB:00:01)"]
+        end
+    end
+    subgraph node2
+        subgraph GR-node2
+            rtotr-GR-node2["rtotr-GR-node2 fd97::7/127 fd99::3/64 (0a:58:64:41:00:03)"]
+        end
+    end
+    subgraph node3
+        subgraph GR-node3
+            rtotr-GR-node3["rtotr-GR-node3 fd97::5/127 fd99::2/64 (0a:58:64:41:00:04)"]
+        end
+    end
+    subgraph layer2-switch
+        stor-transit_router["stor-transit_router
+        type: router"]
+    end
+    subgraph transit_router["transit_router "]
+        trtor-GR-node1["trtor-GR-node1 fd97::8/127"]
+        trtor-GR-node2["trtor-GR-node2 fd97::6/127"]
+        trtor-GR-node3["trtor-GR-node3 fd97::4/127"]
+        rtos-layer2-switch["rtos-layer2-switch 2010:100:200::1 (ipv6-lla: fe80::858:cbff:fecb:1) (0a:58:CB:CB:00:01)"]
+    end
+    rtotr-GR-node1 &lt;--&gt; trtor-GR-node1
+    rtotr-GR-node2 &lt;--&gt; trtor-GR-node2
+    rtotr-GR-node3 &lt;--&gt; trtor-GR-node3
+    VM &lt;--&gt;layer2-switch
+    rtos-layer2-switch &lt;--&gt; stor-transit_router
+
+    class VM vmStyle;
+    class rtotr-GR-node1 portStyle;
+    class rtotr-GR-node2 portStyle;
+    class rtotr-GR-node3 portStyle;
+    class trtor-GR-node1 portStyle;
+    class trtor-GR-node2 portStyle;
+    class trtor-GR-node3 portStyle;
+    class stor-transit_router portStyle;
+    class rtos-layer2-switch portStyle;
+    class GR-node1 routerStyle;
+    class GR-node2 routerStyle;
+    class GR-node3 routerStyle;
+    class transit_router routerStyle;
+    class layer2-switch switchStyle
+    class term termStyle;
+    class node1,node2,node3 nodeStyle;
+</code></pre>
+<p>According to RFC 4861/4862, routers advertise a link-local address
+(<code>fe80::/64</code>). Its Interface Identifier (IID) is derived from the
+router's MAC address (e.g., <code>fe80::858:cbff:fecb:1</code>). This LLA
+remains stable as a default gateway, independent of the virtual
+machine's hosting node.</p>
+<h4 id="tunnel-keys-for-the-transit-switchesrouters">Tunnel keys for the transit switches/routers<a class="headerlink" href="#tunnel-keys-for-the-transit-switchesrouters" title="Permanent link">¶</a></h4>
+<p>Every OVN switch and router has a unique tunnel key. It has to be manually allocated for all transit switches and routers,
+but "regular" (non-transit) switches and routers currently use automatic allocation by the northd.
+OVN has a reserved range of 2^16 for the transit switches and routers https://github.com/ovn-org/ovn/commit/969f7f54ea3868172f99119991d8d875bb8f240c
+that won't be assigned by the northd for the regular switches and routers to avoid conflict.</p>
+<p>We already use this key for the Layer3 transit switches and Layer2 switches. 
+So currently we can support not more than 2^16 (65K) UDNs or to be more precise, NADs, of any topology type
+(since the tunnel-key is allocated based on the network-id, which in turn is also allocated for Localnet networks). 
+Now we need more transit routers for the layer2 topology, but the allowed tunnel key range for all transit switches and routers stays the same.
+The same problem will arise when we get to UDN interconnect, because it will use even more transit routers.</p>
+<p>For this enhancement we have 3 options:
+1. We could just split the range into 3 equal parts, use the first part for transit switches, the second part for layer2 transit routers,
+and the third part for UDN interconnect transit routers. That means we could support up to 21K UDNs (NADs) and
+up to 21K UDN interconnects. If we ever hit the scale limit, we can proceed with option 4. For backwards-compatability, 
+the first 21K keys for transit switches/routers will be allocated in the old range, and the new keys will use the new range.
+This option doesn't allow adding more features that require tunnel keys in the future since the whole range will be already consumed.
+2. Second option is to use tunnel-keys outside the protected range. Current range is split into [0, 2^24-2^16-1] for northd
+allocation and [2^24-2^16, 2^24-1] for interconnect. Northd does sequential key allocation, that means
+(for single-node-zone) it will only use <code>(&lt;Number of UDNs&gt; + 1)*5</code> keys, so the following range <code>[(&lt;Number of UDNs&gt; + 1)*5; 2^24-2^16-1]</code>
+will be unused, and we could start allocating transit router keys from <code>2^24-2^16-1</code> going down. This is kind of dangerous
+as it only relies on the current northd behaviour.
+3. Another option (centralized) is to add ID allocation from the transit tunnel key range. There is no way to migrate existing transit 
+switches to the new tunnel key, because all nodes need to do that at the same time, and rolling upgrade won't help here.
+Since current limit for networkIDs is <code>4096</code> https://github.com/ovn-kubernetes/ovn-kubernetes/blob/8f6e3ee9883bb6eb2230cea5c1c138d6098c95b0/go-controller/pkg/networkmanager/api.go#L17
+we can consider [<code>first-interconnect-key</code>, <code>first-interconnect-key</code>+4095] to be reserved for the legacy transit switch keys,
+and use a new centralized transit keys allocation in the range [<code>first-interconnect-key</code>+4095, 2^24-1]. This option
+requires up to 2 new annotations on NADs, and makes the number of supported UDNs dependent on the number of UDN interconnects.
+4. Fourth approach (distributed) is to start assigning all datapath keys ourselves (for all switches and routers, currently it is done by the northd),
+then we could use the full tunnel-key range of <code>2^24</code> (16M). Every regular (non-transit) switch or router only has to use
+unique key within its zone (that is within node for single-node-zone IC). That means that every node could
+re-use the same keys for regular datapaths (but it won't work for multi-node zones, the question is whether we need to support it).
+Currently, every Layer3 topology (the most switches/routers) needs 7 keys (node switch, cluster router, join switch, 
+gw router, transit router, transit switch, ext switch), so we could reserve 20 keys per network (just to be safe).
+These keys could be derived from the network-id, and then we could support e.g. 100K UDNs (2M keys) + 1M UDN interconnects (1M keys),
+and still have 12M keys left.</p>
+<p>We have agreed that we want to avoid implementing option 4 for as long as possible, which means we need to use
+tunnel keys in the most efficient way, which means option 3 is the way to go.
+We will add error handling in case we run out of tunnel keys and document the dependency on supported number of UDNs
+vs UDN interconnects (e.g. we can support 65K Layer3 UDNs or 32K Layer2 UDNs).</p>
+<h4 id="nat-configuration">NAT configuration<a class="headerlink" href="#nat-configuration" title="Permanent link">¶</a></h4>
+<p>As much as possible everything related to conntrack should not be modified since doing so can affect tcp connections.</p>
+<p>The only nat rule that needs to be moved from GR to transit_router is the one SNATing the traffic from the network subnet that goes to the management port. This is needed because now ovn_custer_router is the router directly connected to the layer2 switch (instead of the GR). The rest of the NAT configurations can stay unchanged on the GR.</p>
+<div class="highlight"><pre><span></span><code>allowed_ext_ips     : []
+exempted_ext_ips    : []
+external_ids        : {"k8s.ovn.org/network"=test12_namespace-scoped, "k8s.ovn.org/topology"=layer2}
+external_ip         : "169.254.0.12"
+external_mac        : []
+external_port_range : ""
+gateway_port        : []
+logical_ip          : "203.203.0.0/16"
+logical_port        : rtos-test12_namespace.scoped_ovn_layer2_switch
+match               : "eth.dst == 0a:58:cb:cb:00:02"
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+</code></pre></div>
+<p>Also the fact that join IP at gateway router is kept allow to maintain all the NATing done with it at gateway router to define OVN load balancers to implement k8s services.</p>
+<h4 id="static-routes-and-logical-router-policies">Static Routes and Logical Router Policies<a class="headerlink" href="#static-routes-and-logical-router-policies" title="Permanent link">¶</a></h4>
+<p>Changing where routes and policies are configured does not affect TCP connections on upgrade so we can move some routes and policies from gateway router
+to transit_router without issues. In general it will be similar to the layer3 routes and policies.</p>
+<p>These will be the routes and policies configured on the new transit_router
+<div class="highlight"><pre><span></span><code>IPv4 Routes
+Route Table &lt;main&gt;:
+                10.96.0.1               203.203.0.2 dst-ip &lt;-- api service
+               10.96.0.10               203.203.0.2 dst-ip &lt;-- dns service
+               100.65.0.2                100.88.0.6 dst-ip &lt;-- node1 traffic use node2 gr peer ip
+               100.65.0.3               100.88.0.10 dst-ip &lt;-- node2 traffic use node2 gr peer ip
+               100.65.0.4               100.88.0.14 dst-ip &lt;-- node3 traffic use node2 gr peer ip
+           203.203.0.0/16               100.88.0.14 src-ip &lt;-- network egress traffic goes to local gateway router peer ip
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>      1004 inport == "rtos-test12_namespace.scoped_ovn_layer2_switch" &amp;&amp; ip4.dst == 172.18.0.3 /* test12_namespace.scoped_ovn_layer2_switch */         reroute               203.203.0.2
+      1004 inport == "rtos-test12_namespace.scoped_ovn_layer2_switch" &amp;&amp; ip6.dst == fc00:f853:ccd:e793::3 /* test12_namespace.scoped_ovn_layer2_switch */         reroute           2010:100:200::2
+       102 (ip4.src == $a10466913729612642039 || ip4.src == $a13607449821398607916) &amp;&amp; ip4.dst == $a3613486944346402462           allow
+       102 (ip4.src == $a10466913729612642039 || ip4.src == $a13607449821398607916) &amp;&amp; ip4.dst == $a712973235162149816           allow               pkt_mark=1008
+       102 (ip6.src == $a2718358047735721557 || ip6.src == $a13607452020421864338) &amp;&amp; ip6.dst == $a1091196985512978262           allow               pkt_mark=1008
+       102 (ip6.src == $a2718358047735721557 || ip6.src == $a13607452020421864338) &amp;&amp; ip6.dst == $a3613484745323146040           allow
+       102 ip4.src == 203.203.0.0/16 &amp;&amp; ip4.dst == 100.64.0.0/16           allow
+       102 ip4.src == 203.203.0.0/16 &amp;&amp; ip4.dst == 203.203.0.0/16           allow
+       102 ip6.src == 2010:100:200::/60 &amp;&amp; ip6.dst == 2010:100:200::/60           allow
+       102 ip6.src == 2010:100:200::/60 &amp;&amp; ip6.dst == fd98::/64           allow
+       102                                     pkt.mark == 42           allow
+</code></pre></div></p>
+<p>And these will be the gateway router configured routes (no policies needed):
+<div class="highlight"><pre><span></span><code>IPv4 Routes
+Route Table &lt;main&gt;:
+           169.254.0.0/17               169.254.0.4 dst-ip rtoe-GR_test12_namespace.scoped_ovn-control-plane
+           203.203.0.0/16               100.88.0.13 dst-ip rtotr-GR_test12_namespace.scoped_ovn-control-plane &lt;-- cluster ingress or egress reply traffic going towards the pod network via transit_router peer IP.
+                0.0.0.0/0                172.18.0.1 dst-ip rtoe-GR_test12_namespace.scoped_ovn-control-plane
+</code></pre></div></p>
+<p>The logical router policies for EgressIP will be present on the transit router, using transit node peer ip as the next hop:</p>
+<div class="highlight"><pre><span></span><code>100                               ip4.src == 10.10.0.8         reroute               100.88.0.6,100.88.0.10               pkt_mark=50000
+</code></pre></div>
+<p>This approach eliminates the dependency on external IP addresses while maintaining proper load balancing for EgressIPs with multiple IP addresses.</p>
+<h4 id="router-to-router-direct-connection-without-a-switch">Router to router direct connection without a switch<a class="headerlink" href="#router-to-router-direct-connection-without-a-switch" title="Permanent link">¶</a></h4>
+<p>To connect the transit_router to the local gateway router instead of using a join switch like the layer3 topology those ports can be connected each other directly
+using the <code>peer</code> field.</p>
+<p>This is how it looks the <code>trtor</code> port at transit_router:
+<div class="highlight"><pre><span></span><code>_uuid               : f697bce1-dac7-442d-9355-e298e1735c7b
+dhcp_relay          : []
+enabled             : []
+external_ids        : {"k8s.ovn.org/network"=test12_namespace-scoped, "k8s.ovn.org/topology"=layer2}
+gateway_chassis     : []
+ha_chassis_group    : []
+ipv6_prefix         : []
+ipv6_ra_configs     : {}
+mac                 : "0a:58:64:58:00:0d"
+name                : trtor-GR_test12_namespace.scoped_ovn-control-plane
+networks            : ["100.88.0.8/31", "fd97::8/127"]
+options             : {requested-tnl-key="4"}
+peer                : rtotr-GR_test12_namespace.scoped_ovn-control-plane &lt;------------- peer field
+status              : {}
+</code></pre></div></p>
+<p>And this is the <code>rtotr</code> port at GR:
+<div class="highlight"><pre><span></span><code>_uuid               : f9ab92f3-478c-41dd-b845-0d8ddf4a34e5
+dhcp_relay          : []
+enabled             : []
+external_ids        : {"k8s.ovn.org/network"=test12_namespace-scoped, "k8s.ovn.org/topology"=layer2}
+gateway_chassis     : []
+ha_chassis_group    : []
+ipv6_prefix         : []
+ipv6_ra_configs     : {}
+mac                 : "0a:58:64:41:00:04"
+name                : rtotr-GR_test12_namespace.scoped_ovn-control-plane
+networks            : ["100.65.0.4/16", "100.88.0.9/31", "fd97::9/127", "fd99::4/64"]
+options             : {gateway_mtu="1400"}
+peer                : trtor-GR_test12_namespace.scoped_ovn-control-plane &lt;-------------- peer field
+status              : {}
+</code></pre></div></p>
+<h4 id="transit-router-specifics">Transit router specifics<a class="headerlink" href="#transit-router-specifics" title="Permanent link">¶</a></h4>
+<p>For transit router to work the LRPs referencing the same gateway router peer should have a unique tunnel key and if they are remote also a
+requested chassis pointing to the gateway router node.</p>
+<p>Also in the case we still need to support conditional SNAT, the transit router port connected to the switch needs to be configured as gateway router port.</p>
+<pre class="mermaid"><code>%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
+flowchart TD
+    classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
+    classDef portStyle fill:#3CB371,color:black,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
+    subgraph node2
+        subgraph GR-node2
+            rtos-GR-node2["rtos-GR-node2 100.65.0.3/16 (0a:58:64:41:00:03)"]
+        end
+        subgraph layer2-switch_node2["layer2-switch"]
+            stor-GR-node1["stor-GR-node1
+            type: <b>remote</b><br/>requested-tnl-key: <b>4</b>"]
+            stor-GR-node2["stor-GR-node2
+            type: <b>router</b><br/>requested-tnl-key: <b>5</b>"]
+        end
+    end
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["trtor-GR-node1
+            100.65.0.2/16 100.88.0.5/31 (0a:58:64:41:00:02)"]
+        end
+        subgraph transit_router_node1["transit_router "]
+            trtor-GR-node1["trtor-GR-node1 100.88.0.4/31"]
+            rtos-layer2-switch["rtos-layer2-switch 203.203.0.1 (0a:58:CB:CB:00:01)"]
+        end
+        subgraph layer2-switch_node1["layer2-switch"]
+            stor-transit_router["stor-transit_router
+            type: <b>router</b><br/>requested-tnl-key: <b>4</b>"]
+            stor-GR-node1-node2["stor-GR-node2
+            type: <b>remote</b><br/>requested-tnl-key: <b>5</b>"]
+        end
+    end
+
+
+
+    rtotr-GR-node1 &lt;--&gt; trtor-GR-node1
+    rtos-layer2-switch &lt;--&gt; stor-transit_router
+    stor-GR-node1 &lt;--&gt; stor-transit_router
+    stor-GR-node2 &lt;--&gt; rtos-GR-node2
+    stor-GR-node1-node2 &lt;--&gt; stor-GR-node2
+
+    class VM vmStyle;
+    class rtotr-GR-node1 portStyle;
+    class rtos-GR-node2 portStyle;
+    class stor-GR-node2 portStyle;
+    class stor-GR-node1-node2 portStyle;
+    class stor-GR-node1 portStyle;
+    class trtor-GR-node1 portStyle;
+    class trtor-GR-node2 portStyle;
+    class stor-transit_router portStyle;
+    class rtos-layer2-switch portStyle;
+    class GR-node1 routerStyle;
+    class GR-node2 routerStyle;
+    class transit_router_node1 routerStyle;
+    class layer2-switch_node1 switchStyle;
+    class layer2-switch_node2 switchStyle;
+    class term termStyle;
+    class node1,node2 nodeStyle;
+</code></pre>
+<h3 id="transit-subnet-conflict">Transit subnet conflict<a class="headerlink" href="#transit-subnet-conflict" title="Permanent link">¶</a></h3>
+<p>Before this change Layer2 networks using Subnet overlapping with the <code>transitSubnet</code> were allowed to be created (and would be working just fine).
+Now it is not possible anymore, and we need to decide what to do in this case:
+1. Before upgrading to the new topology, check that no Layer2 networks with overlapping subnet are present.
+If they are, block the upgrade and inform the user to fix the issue. This option prevents the user from getting new topology
+for all networks until the next upgrade.
+2. Upgrade all nodes, but leave old topology for networks with overlapping subnet. Report an event/warning for the user to fix the issue.
+When the network is upgraded/re-created with non-overlapping subnet, it will get the new topology. Other networks will be
+properly upgraded.
+3. Add a new config field for Layer2 network similar to <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/ff3001ba43bf724e477ab45167dc55d929042774/go-controller/pkg/crd/userdefinednetwork/v1/shared.go#L178">JoinSubnets</a>
+to allow users to specify a custom transit subnet for the network, in case their Subnet overlaps with the default transit subnet.
+We don't allow UDN spec updates, so the only way to use this option (without introducing UDN spec updates) is to 
+re-create a UDN with the same fields + the new transit subnet and then migrate all the workloads to it.
+4. Automatically select non-overlapping transit subnet and report it via status (it may be needed to avoid subnet overlap for Connecting UDNs).
+Transit subnet is not exposed to pods, so it may be fine to select it automatically as opposed to joinSubnet.</p>
+<p>Options 1 and 2 will require one more release of supporting the old topology (and in the next release we break the 
+networks if they were not upgraded).
+We think that overlapping subnets is a likely scenario, and we want this upgrade to be as smooth as possible, so
+option 4 is the least disruptive.</p>
+<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
+<p>Every node will get a temporary annotation "k8s.ovn.org/layer2-topology-version: 2.0" that will be removed in the next
+ovn-k version (1.3 is the feature gets in 1.2).
+Every Layer2 and Layer3 NAD will get new annotations for tunnel keys distribution.</p>
+<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
+<h4 id="at-ovnkube-node">At ovnkube-node<a class="headerlink" href="#at-ovnkube-node" title="Permanent link">¶</a></h4>
+<p>Create a helper that is able to derive the peer IPs from the node annotation
+for the transit peers node subnet.</p>
+<p>The layer2 controller should do the following:
+- Adapt and call the syncNodeClusterRouterPort from layer3 that creates the LRP that connects to the switch at transit_router
+- Pass transit_router as cluster_name to the gateway init functions
+- Remove from gateway.go the code that was attaching GR to layer2 switch
+- Add to gateway.go the code that connects GR to transit_router using the peer ports
+- Change egressip.go so routes are configured at transit_router instead of gateway router.
+- Change the ZoneInterConnect handler to be able to add the transit router remote ports to transit_router
+- In general re-use as much Layer3 code as possible since these makes Layer2 topology similar to it.</p>
+<h4 id="at-ovnkube-control-plane">At ovnkube-control-plane<a class="headerlink" href="#at-ovnkube-control-plane" title="Permanent link">¶</a></h4>
+<p>At cluster manager at the zoneCluster controller calculate the peers node subnet
+and annotate the node.</p>
+<p>To calculate the transit router subnet for each node we have two options:
+- Derive it from the node-id (same we do for transit switch addrs. <code>offset := 2 * nodeID; subnet := 100.88.0.0 + offset /31</code>):
+  - good:
+    - No need to maintain the allocator lifecycle
+    - It's possible to entertain the idea of not annotating the node since the source of truth is the node-id
+  - bad:
+    - Add complexity in the form of node-id to subnet derivation code
+    - Make the transit peers node subnet dependent on node-id
+- Create a new subnet allocator that will re-sync on restarts and allocate
+  the subnet with it:
+  - good:
+    - Is simpler since it's matter of a new subnet allocator
+    - The transit peers node subnet is no longer dependent on node-id
+  - bad:
+    - Need to maintain the allocator lifecycle
+    - Use more memory</p>
+<p>We will go with the first option to avoid polluting already overloaded node annotations.</p>
+<h3 id="rolling-upgrade-and-traffic-disruption">Rolling upgrade and traffic disruption<a class="headerlink" href="#rolling-upgrade-and-traffic-disruption" title="Permanent link">¶</a></h3>
+<p>OpenShift upgrades work as follows: first the ovn-k pods are upgraded while the 
+workload pods are still running. We can't upgrade topology at this point, 
+because it includes SNAT for the management port move from the GR to the transit router, which is disruptive 
+for existing connections. Some time after that the node is drained (no more workload pods are left) 
+and rebooted, at this point ovn-k is restarted with no workload pods, which is the time 
+when we can make the topology upgrade.</p>
+<p>From the ovn-k side we need to figure out when is that time with no workload pods, so we will 
+introduce a function similar to https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5416/commits/8adda434a35831c49e9bd19b86888bfb074be89f#diff-214cf3919602fd060047b8d15fd6c0ca9d3ed3d42c47fff4b181a072c182b673R306 
+that will check whether a given network has already been updated and if not if it has running pods, 
+and only upgrade the topology when it doesn't.
+This means that we will have to leave the code for the previous topology version in place for one more release, 
+and only cleanup afterwards.</p>
+<p>This means, we don't need to worry about existing connections disruption (since the topology upgrade happens
+after the node reboot, so there are no running connections), but we need to make sure that new connections
+created when some nodes are upgraded and some are not will work and won't be disrupted.</p>
+<h4 id="remote-pod-traffic">Remote pod traffic<a class="headerlink" href="#remote-pod-traffic" title="Permanent link">¶</a></h4>
+<p>The pod to remote pod traffic is not affected since the logical switch will
+keep intact the pod's local and remote LSPs with its tunnel key.</p>
+<p>No downtime expected during upgrade</p>
+<h4 id="egress-traffic-over-local-node">Egress traffic over local node<a class="headerlink" href="#egress-traffic-over-local-node" title="Permanent link">¶</a></h4>
+<p>At normal egress without an egress IP, traffic exits through the node
+hosting the pod/VM. Therefore, a partial cluster upgrade does not impact
+the logical network topology.</p>
+<p>During the upgrade all the VMs are evicted from the node, hence, they'll be migrated to another node - 
+and the GR MACs will be updated via the VM migration process.</p>
+<h4 id="egressingress-traffic-over-remote-node">Egress/Ingress traffic over remote node<a class="headerlink" href="#egressingress-traffic-over-remote-node" title="Permanent link">¶</a></h4>
+<p>Both egress (using egressip feature) and ingress can come from a remote node,
+this introduces problematic scenarios that can happen during an upgrade:
+- A pod's node has new topology, but its ingress/egress node has old topology.
+- A pod's node has old topology, but its ingress/egress node has new topology.</p>
+<p>The following diagram show a possible topology to support those two scenarios:</p>
+<pre class="mermaid"><code>%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
+flowchart TD
+    classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
+    classDef portStyle fill:#3CB371,color:black,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
+    subgraph node2
+        subgraph GR-node2
+            rtos-GR-node2["rtos-GR-node2 100.65.0.3/16<br/>203.203.0.1 (0a:58:64:41:00:03)"]
+        end
+        subgraph layer2-switch_node2["layer2-switch"]
+            stor-GR-node1["stor-GR-node1
+            type: remote<br/>requested-tnl-key: 4<br/>100.65.0.2/16 (0a:58:64:41:00:02)"]
+            stor-GR-node2["stor-GR-node2
+            type: router<br/>requested-tnl-key: 5"]
+        end
+    end
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["rtotr-GR-node1
+            100.65.0.2/16 100.88.0.5/31 (0a:58:64:41:00:02)"]
+        end
+        subgraph transit_router_node1["transit_router "]
+            trtor-GR-node1["trtor-GR-node1 100.88.0.4/31"]
+            rtos-layer2-switch["trtos-layer2-switch 203.203.0.1 169.254.0.22/17 (0a:58:CB:CB:00:01)"]
+            trtos-layer2-switch-upgrade["<b>trtos-layer2-switch-upgrade</b> 100.65.255.254 (0a:58:64:41:00:02)"]
+        end
+        subgraph layer2-switch_node1["layer2-switch"]
+            stotr-layer2-switch["stotr-layer2-switch
+            type: router"]
+            stotr-layer2-switch-upgrade["<b>stotr-layer2-switch-upgrade</b>
+            type: router<br/>requested-tnl-key: 4"]
+            stor-GR-node1-node2["stor-GR-node2
+            type: remote<br/>requested-tnl-key: 5<br/>100.65.0.3/16 (0a:58:64:41:00:03)"]
+        end
+    end
+
+    rtotr-GR-node1 &lt;--&gt; trtor-GR-node1
+    rtos-layer2-switch &lt;--&gt; stotr-layer2-switch
+    stotr-layer2-switch-upgrade &lt;--&gt; stor-GR-node1
+    stor-GR-node2 &lt;--&gt; rtos-GR-node2
+    stor-GR-node1-node2 &lt;--&gt; stor-GR-node2
+    trtos-layer2-switch-upgrade &lt;--&gt; stotr-layer2-switch-upgrade
+
+    class VM vmStyle;
+    class rtotr-GR-node1 portStyle;
+    class rtos-GR-node2 portStyle;
+    class stor-GR-node2 portStyle;
+    class stor-GR-node1-node2 portStyle;
+    class stor-GR-node1 portStyle;
+    class trtor-GR-node1 portStyle;
+    class trtor-GR-node2 portStyle;
+    class stotr-layer2-switch portStyle;
+    class stotr-layer2-switch-upgrade portStyle;
+    class rtos-layer2-switch portStyle;
+    class trtos-layer2-switch-upgrade portStyle;
+    class GR-node1 routerStyle;
+    class GR-node2 routerStyle;
+    class transit_router_node1 routerStyle;
+    class layer2-switch_node1 switchStyle;
+    class layer2-switch_node2 switchStyle;
+    class term termStyle;
+    class node1,node2 nodeStyle;
+</code></pre>
+<p>The intermediate upgrade topology parts are bold, and will be removed once all nodes finish the upgrade.
+Nodes using the new topology must perform the following actions:
+- At the distributed switch:
+    - Retain <code>remote</code> type stor-GR LSPs from nodes still using the
+      old topology.
+    - Create a tmp <code>router</code> type stotr-upgrade LSP with <code>router-port</code> and same tunnel key as before
+      pointing to rtos-GR.
+  - Create a tmp transit router port <code>trtos-layer2-switch-upgrade</code> with the GR MAC address
+  - Add a dummy IP from the join subnet to the <code>trtos-layer2-switch-upgrade</code> port to enable pod on node1 -&gt; remote GR traffic.
+  - Add <code>trasit_router</code> routes to steer joinIP traffic for the ole nodes to the <code>trtos-layer2-switch-upgrade</code> port.
+    These routes look weird, but they work, like <code>100.65.0.3 100.65.0.3 dst-ip</code> for every joinIP of the old nodes. We need this because
+    in OVN routes with dst-ip and src-ip policies are evaluated at the same time and selected based on longest-prefix-match,
+    and we have the following route for pod network <code>10.10.0.0/24</code>:
+    <code>10.10.0.0/24                 10.10.0.2 src-ip</code>
+    Connected route for the join IP is based on the joinSubnet, which is always <code>/16</code>.
+    That means, that for traffic with src IP from the podSubnet dst IP from joinSubnet,
+    the winning route is joinIP if podSubnet mask is &lt;= 16 and podSubnet otherwise.
+    That is not the desired behavior, that is why we add always-winning routes (aka /32 or /128) for joinIPs.</p>
+<p>We need to make sure joinSubnet works between upgraded and non-upgraded nodes, as this is the only network that both topologies
+understand:
+- We need to make sure pod2 on node2 -&gt; <code>100.65.0.2</code> works (it is used e.g. for service reply traffic that came from node1 to pod2)
+  - pod2(<code>203.203.0.3</code>) -&gt; default GW (<code>203.203.0.1</code>)
+  - GR will ARP for <code>100.65.0.2</code> and hit layer2-switch -&gt; will use remote port <code>stor-GR-node1</code> config and ARP reply with <code>0a:58:64:41:00:02</code>
+  - <code>layer2-switch</code> sends packet to <code>0a:58:64:41:00:02</code> via <code>stor-GR-node1</code> with <code>tunnel-key=4</code>
+  - now we cross interconnect to node1 <code>stotr-layer2-switch-upgrade</code> 
+  - it sends packet to <code>trtos-layer2-switch-upgrade</code> on the <code>transit_router</code> via direct peer connection
+  - MAC address <code>0a:58:64:41:00:02</code> is owned by the port and will be accepted by the transit_router
+  - dst IP=<code>100.65.0.2</code> =&gt; route lookup =&gt; choose between old joinIP routes via port <code>trtos-layer2-switch-upgrade</code>
+  and new transit route <code>100.65.0.2/32</code> via <code>100.88.0.6</code>
+  - <code>transit_router</code> will choose <code>100.65.0.2/32</code> with the longest-prefix match and send it to the <code>GR-node1</code>
+- We need to make sure pod 1 on node1 -&gt; <code>100.65.0.3</code> works (it is used e.g. for service reply traffic that came from node2 to pod1)
+  - pod1(<code>203.203.0.2</code>) -&gt; default GW (<code>203.203.0.1</code>)
+  - <code>transit_router</code> will do route lookup and use <code>100.65.0.3/32</code> via <code>trtos-layer2-switch-upgrade</code> since it has the dummy IP
+    from the same subnet
+  - <code>transit_router</code> will ARP for <code>100.65.0.3</code> and go to the <code>layer2-switch</code>, which will use the remote port <code>stor-GR-node2</code> config
+    and ARP reply with <code>0a:58:64:41:00:03</code>
+  - <code>transit_router</code> sends packet to dst MAC <code>0a:58:64:41:00:03</code> via <code>trtos-layer2-switch-upgrade</code>
+  - <code>layer2-switch</code> sends it out via <code>stor-GR-node2</code> with <code>tunnel-key=5</code>
+  - <code>node2</code> handles the packet exactly as with the old topology</p>
+<p>For comparison, fully upgraded scenario for ingress service via node1 to local pod1 <code>203.203.0.2</code> looks like this:
+- incoming packet gets DNAT'ed to the <code>serviceIP</code> and SNAT'ed to the node masq IP (src=<code>169.254.0.2</code>), then comes to the GR
+- GR does its usual DNAT to the backend pod IP (dst=<code>203.203.0.2</code>) and SNAT to the joinIP (src=<code>100.65.0.2</code>)
+- GR sends the packet via <code>rtotr-GR-node1</code> to the <code>transit_router</code>
+- <code>transit_router</code> sends the packet (dst=<code>203.203.0.2</code>) directly to the <code>layer2-switch</code>, done
+Now reply:
+- pod1 (<code>203.203.0.2</code>) replies to <code>100.65.0.2</code> -&gt; default GW (<code>203.203.0.1</code>)
+- <code>transit_router</code> will ARP for <code>100.65.0.2</code> and get a reply from <code>GR-node1</code> via port <code>rtotr-GR-node1</code> with <code>0a:58:64:41:00:02</code>
+- <code>transit_router</code> will do route lookup and choose <code>100.65.0.2/32</code> via <code>100.88.0.6</code> with the longest-prefix match 
+  and send it to the <code>GR-node1</code>
+- the usual un-DNAT (dst=<code>169.254.0.2</code>), un-SNAT (src=<code>serviceIP</code>) happens here before being sent out</p>
+<p>Some of the scenarios that we care about:
+- Ingress traffic coming to GR via service
+  - upgraded GR -&gt; non-upgraded node pod: we SNAT to the same joinIP as before, reply traffic comes back to the 
+    <code>transit_router</code> because <code>trtos-layer2-switch-upgrade</code> port is configured with the GW MAC.
+  - non-upgraded GR -&gt; upgraded node pod: uses the same joinIP as before. Reply uses the newly assigned dummyIP
+    from the join subnet, to enable routing from the upgraded node pod to the joinIP subnet. Without the dummy IP
+    transit_router doesn't know what to do with the <code>dst: 100.65.0.3</code> traffic.
+- Egress IP traffic: uses the same joinIP to route as before, works similar to service traffic.</p>
+<p>The same GR MAC address is used on the GR port (<code>rtotr-GR-node1</code>) and the transit router port (<code>trtos-layer2-switch-upgrade</code>).
+That's fine because they're different L2 domains.</p>
+<p>Dummy IP can be resued on all nodes, since it is never used as a source or destination IP, it is only used for the routing decision.
+You may wonder why we need per-joinIP routes if dummyIP should be enough for routing decision based on the connected route.
+It is about longest prefix match algorithm that OVN uses. Without <code>/32</code> routes for every joinIP, we have 2 fighting routes for
+pod1-&gt;joinIP traffic, one with dummy IP <code>ip4.dst == 100.65.0.0/16</code> and another one for pod subnet <code>ip4.src == &lt;podSubnet&gt;</code> 
+(this one sends everything to the GR). So which route wins currently depends on the <code>podSubnet</code> netmask: 
+if it is <code>/16</code> or larger, dummy IP wins and everything works, otherwise pod subnet route wins and the traffic is blackholed.</p>
+<p>joinIP is not really needed in the new topology, but we will have to keep it during the upgrade, and we can't
+remove it after the upgrade is done, because there will be conntrack entries using it. Not too big of a deal,
+but a side effect of supporting the upgrade.
+There is a way to remove joinIPs eventually (not a part of this enhancement, but leaving here for future reference), 
+which requires 2 more upgrades:
+1. On the next upgrade replace all NATs using joinIPs with the transitIPs (at this point the new topology is used and all nodes understand
+transit IPs). This can only be done in the same manner as this upgrade (i.e. after the node reboots) to avoid disruption.
+Routes on the pod will also need to be updated.
+2. On the next-after-next upgrade we can safely remove joinIPs from the topology, since they shouldn't be used anymore.</p>
+<p>There is another aspect to this: joinSubnet is currently configurable in the Layer2 network spec, and it is exposed to the pods.
+So if we get rid of it and replace it with the transitSubnet, we need to remove that field and see if transitSubnet also
+needs to be configurable.</p>
+<h4 id="upgrade-details">Upgrade Details<a class="headerlink" href="#upgrade-details" title="Permanent link">¶</a></h4>
+<ol>
+<li>every node has to identify when it starts using new topology (so that the other nodes can switch from the switch 
+remote ports to the router remote ports). This can be done with annotations, but it either will have to be per-network 
+(which is a lot of updates) or it needs to check that absolutely no pods are present on the node for all layer2 networks, 
+and use node-scope annotation. The only downside of per-node annotation is that if any layer2 network for whatever (buggy)
+reason still has a local pod, none of the networks will be upgraded.
+Since the whole upgrade procedure relies on pod eviction before node reboot, it is ok to use per-node annotation. 
+The node will check that it has no running pods, and set the annotation "k8s.ovn.org/layer2-topology-version: 2.0".</li>
+<li>every node will need to upgrade to the intermediate topology, when it has no running pods (when the node has been drained and rebooted)</li>
+<li>ovnkube is updated on each node, no upgrade action is taken for the layer 2 topology. Networks continue to function as before.</li>
+<li>Once network has rolled out, OpenShift Machine Config Operator (MCO) will start draining and rebooting nodes to update the host OS.</li>
+<li>As each upgraded node comes up, it will modify its layer 2 networks as shown in <a href="#egressingress-traffic-over-remote-node">the upgrade topology</a>, 
+    the upgraded node will refuse to bring up any ovn-networked pods while the topology is updating.</li>
+<li>Other ovnkube pods will see this ovnkube pod's node event, and then reconfigure their remote port to directly connect to the router.</li>
+<li>After all nodes have added their annotation, the nodes will then remove the backwards compatible upgrade topology 
+    ("stotr-layer2-switch-upgrade" port, and the local join subnet address 100.65.255.254)</li>
+<li>During topology upgrade we also need to cleanup/remove old topology parts, like GR-switch ports, old GR routes and NATs, 
+    and these cleanups need to be idempotent and spread across multiple controllers.</li>
+<li>remove the upgrade topology artifacts (like extra ports or IPs) when all nodes finished upgrading.</li>
+</ol>
+<h3 id="testing-details">Testing Details<a class="headerlink" href="#testing-details" title="Permanent link">¶</a></h3>
+<ul>
+<li>Unit test checking topology will need to be adapted.</li>
+<li>E2e tests should be the same and pass since this is a refactoring not adding or removing features.</li>
+<li>Upgrade tests are the most difficult part in this case.</li>
+<li>Perform an upgrade while using all the ovn-kubernetes layer2 topology features and check that these continue working.</li>
+<li>Make sure old layer2 topology is preserved and keeps working until all pods are removed from the node</li>
+<li>We don't have such upgrade tests yet, and they don't make sense after this upgrade is done, so the suggestion is to
+    do this testing manually.</li>
+<li>Make sure VM live migration works during the upgrade.</li>
+</ul>
+<h3 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">¶</a></h3>
+<p>N/A</p>
+<h2 id="risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations<a class="headerlink" href="#risks-known-limitations-and-mitigations" title="Permanent link">¶</a></h2>
+<p>This topology repositions the NAT, which masquerades management port
+traffic, from the gateway router to the <code>transit_router</code>. This change
+might disrupt name resolution (DNS service access) and local gateway
+access to external traffic.</p>
+<p>However, disrupting dns resolution is not a big issue since client would retry the
+resolution</p>
+<p>Consider that there are plans to migrate the SNAT from the logical
+router to iptables on the nodes. If this occurs, the disruption
+would be resolved. Therefore, it might be advisable to await this
+enhancement's implementation before proceeding.</p>
+<h3 id="tunnel-keys-on-local-ports-of-distributed-switches-and-routers">Tunnel keys on local ports of distributed switches and routers<a class="headerlink" href="#tunnel-keys-on-local-ports-of-distributed-switches-and-routers" title="Permanent link">¶</a></h3>
+<p>In general, for OVN (transit) routers and switches the logical port keys (SB.Port_Binding.tunnel-key populated by ovn-northd 
+from the NB requested-tnl-key if any is provided or allocated otherwise) need to match on all chassis that process 
+traffic for the routers/switches.</p>
+<p>That's because the "logical ingress port" key is embedded in the geneve metadata of the packet that's tunneled between 
+chassis for routers/switches. Tunneling happens in between the logical ingress and egress pipelines. 
+OVN uses the logical ingress port key in the egress pipeline for various features (e.g., to-lport ACLs, SNAT). 
+In general, there's no guarantee ovn-northd won't be using the logical inport in the egress pipeline in the future for more features.</p>
+<p>In the OVN interconnect case the constraint also stands. If the native ovn-ic daemon were to be used to synchronize 
+transit switches (and routers in the future) it would ensure that in all AZ's NBs the logical switch ports would have 
+the same tunnel key. As ovn-kubernetes doesn't use the native ovn-ic daemon, it has to ensure itself that the constraint is satisfied.</p>
+<p>Note: In this specific case no current OVN feature would break if we didn't synchronize keys for the L2 network ports. However, it's best if we do.</p>
+<p>We will update the transit router to use the same tunnel key for transit router to layer2 switch ports across all nodes.
+But for the layer2 switch, we have a centralized tunnel key distribution logic via annotations, and there is a management port
+that is local and should use tunnel-key too, but it doesn't.
+We think it is ok to leave it as is (since this feature aka transit router doesn't change the layer2 switch and its tunnel key allocation logic),
+and we don't seem to use any of the "broken" features mentioned above.</p>
+<p>It still would be nice to address if we ever get to change the tunnel key allocation logic on the layer2 switch.</p>
+<h2 id="ovn-kubernetes-version-skew">OVN Kubernetes Version Skew<a class="headerlink" href="#ovn-kubernetes-version-skew" title="Permanent link">¶</a></h2>
+<p>which version is this feature planned to be introduced in?
+check repo milestones/releases to get this information for
+when the next release is planned for</p>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
+<p>N/A</p>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ul>
+<li>OVN Transit Router: https://www.ovn.org/support/dist-docs/ovn-nb.5.html</li>
+</ul>
+</article>
+</div>
+<script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      Copyright © OVN-Kubernetes a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">LF Projects Policies</a>.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+<script src="../../javascripts/gemini-api-key.js"></script>
+<script src="../../javascripts/theme.js"></script>
+<script src="../../javascripts/extra.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

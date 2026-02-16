@@ -1,0 +1,4090 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<link href="https://www.ovn.org/ovn-kubernetes/okeps/okep-5259-no-overlay/" rel="canonical"/>
+<link href="../okep-5224-connecting-udns/okep-5224-connecting-udns/" rel="prev"/>
+<link href="../okep-5088-evpn/" rel="next"/>
+<link href="../../images/ovn-inside-k8s.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.1" name="generator"/>
+<title>No-Overlay Mode - OVN-Kubernetes</title>
+<link href="../../assets/stylesheets/main.484c7ddc.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.ab4e12ef.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+<link href="../../stylesheets/extra.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="light-blue" data-md-color-primary="blue" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#okep-5259-no-overlay-mode-for-layer-3-networks-using-bgp">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="OVN-Kubernetes" class="md-header__button md-logo" data-md-component="logo" href="../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../images/ovn-inside-k8s.png"/>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            OVN-Kubernetes
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              No-Overlay Mode
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Blueprint" class="md-option" data-md-color-accent="light-blue" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="blue" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Blueprint">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 3A5.5 5.5 0 0 1 14 8.5c0 1.33-.47 2.55-1.26 3.5H21v9h-9v-8.26c-.95.79-2.17 1.26-3.5 1.26A5.5 5.5 0 0 1 3 8.5 5.5 5.5 0 0 1 8.5 3"></path></svg>
+</label>
+<input aria-label="Nerve Center" class="md-option" data-md-color-accent="purple" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="cyan" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Nerve Center">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m19.07 4.93-1.41 1.41A8.01 8.01 0 0 1 20 12a8 8 0 0 1-8 8 8 8 0 0 1-8-8c0-4.08 3.05-7.44 7-7.93v2.02C8.16 6.57 6 9.03 6 12a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-1.66-.67-3.16-1.76-4.24l-1.41 1.41C15.55 9.9 16 10.9 16 12a4 4 0 0 1-4 4 4 4 0 0 1-4-4c0-1.86 1.28-3.41 3-3.86v2.14c-.6.35-1 .98-1 1.72a2 2 0 0 0 2 2 2 2 0 0 0 2-2c0-.74-.4-1.38-1-1.72V2h-1A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10c0-2.76-1.12-5.26-2.93-7.07"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+</nav>
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+          
+  
+  
+    
+  
+  Overview
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../installation/launching-ovn-kubernetes-on-kind/">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../governance/CONTRIBUTING/">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api-reference/introduction/">
+          
+  
+  
+    
+  
+  API Reference Guide
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../features/user-defined-networks/user-defined-networks/">
+          
+  
+  
+    
+  
+  Features
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../troubleshooting/debugging/">
+          
+  
+  
+    
+  
+  Troubleshooting
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../observability/metrics/">
+          
+  
+  
+    
+  
+  Observability
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="../okep-5085-localnet-api/">
+          
+  
+  
+    
+  
+  Enhancement Proposals
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../blog/">
+          
+  
+  
+    
+  
+  Blog
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="OVN-Kubernetes" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="OVN-Kubernetes">
+<img alt="logo" src="../../images/ovn-inside-k8s.png"/>
+</a>
+    OVN-Kubernetes
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_1" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_1_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Overview
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/architecture/">
+<span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/topology/">
+<span class="md-ellipsis">
+    
+  
+    Network Topology
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/gateway-modes/">
+<span class="md-ellipsis">
+    
+  
+    Gateway Modes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/traffic-flows/">
+<span class="md-ellipsis">
+    
+  
+    Traffic Flows
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/pod-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Pod Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/service-creation-workflow/">
+<span class="md-ellipsis">
+    
+  
+    Service Creation Workflow
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/service-traffic-policy/">
+<span class="md-ellipsis">
+    
+  
+    Service Traffic Policy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/host-to-node-port-hairpin-trafficflow/">
+<span class="md-ellipsis">
+    
+  
+    Host To NodePort Hairpin
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/external-ip-and-loadbalancer-ingress/">
+<span class="md-ellipsis">
+    
+  
+    ExternalIPs/LoadBalancerIngress
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../design/ovn-kubernetes-subnets/">
+<span class="md-ellipsis">
+    
+  
+    Internal Subnets
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../installation/launching-ovn-kubernetes-on-kind/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../installation/launching-ovn-kubernetes-with-helm/">
+<span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes Using Helm
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/configuration/">
+<span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/cli-guide/">
+<span class="md-ellipsis">
+    
+  
+    CLI Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/example-pod-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Workloads on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/example-service-creation/">
+<span class="md-ellipsis">
+    
+  
+    Deploying Services on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/building-ovn-kubernetes/">
+<span class="md-ellipsis">
+    
+  
+    Setup and Building
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../governance/CONTRIBUTING/">
+<span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../governance/REVIEWING/">
+<span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/developer/">
+<span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/image-build/">
+<span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/documentation/">
+<span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/local_testing_guide/">
+<span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../ci/ci/">
+<span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../developer-guide/release/">
+<span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/introduction/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-ip-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-service-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-qos-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/egress-firewall-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/admin-epbr-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/userdefinednetwork-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api-reference/routeadvertisements-api-spec/">
+<span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_1" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_1_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_1">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/user-defined-networks/user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    NetworkSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_2_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/admin-network-policy/">
+<span class="md-ellipsis">
+    
+  
+    AdminNetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/network-policy/">
+<span class="md-ellipsis">
+    
+  
+    NetworkPolicy
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-security-controls/egress-firewall/">
+<span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    ClusterEgressControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_3_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    ClusterEgressControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-ip/">
+<span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-service/">
+<span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-qos/">
+<span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/cluster-egress-controls/egress-gateway/">
+<span class="md-ellipsis">
+    
+  
+    EgressGateway
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    InfrastructureSecurityControls
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_4_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    InfrastructureSecurityControls
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/infrastructure-security-controls/node-identity/">
+<span class="md-ellipsis">
+    
+  
+    NodeIdentity
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworking
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_5_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    MultiNetworking
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-homing/">
+<span class="md-ellipsis">
+    
+  
+    Multihoming
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-network-policies/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkPolicies
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multiple-networks/multi-vtep/">
+<span class="md-ellipsis">
+    
+  
+    MultiNetworkRails
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/multicast/">
+<span class="md-ellipsis">
+    
+  
+    Multicast
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    NetworkQoS
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_7_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkQoS
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/network-qos-guide/">
+<span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/live-migration/">
+<span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hybrid-overlay/">
+<span class="md-ellipsis">
+    
+  
+    HybridOverlay
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_10" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Hardware Acceleration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_10_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_10">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Hardware Acceleration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hardware-offload/ovs-kernel/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with kernel datapath
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/hardware-offload/ovs-doca/">
+<span class="md-ellipsis">
+    
+  
+    OVS Acceleration with DOCA datapath
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5_11" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    BGP Integration
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_11_label" class="md-nav" data-md-level="2">
+<label class="md-nav__title" for="__nav_5_11">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    BGP Integration
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../features/bgp-integration/route-advertisements/">
+<span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Troubleshooting
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/debugging/">
+<span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/ovnkube-trace/">
+<span class="md-ellipsis">
+    
+  
+    OVNKube Trace
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../troubleshooting/logging/">
+<span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_7" type="checkbox"/>
+<label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_7">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/metrics/">
+<span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/sdn-dashboard/">
+<span class="md-ellipsis">
+    
+  
+    SDN Dashboard
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../observability/ovn-observability/">
+<span class="md-ellipsis">
+    
+  
+    OVN observability
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_8" type="checkbox"/>
+<label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Enhancement Proposals
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_8_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_8">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Enhancement Proposals
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5085-localnet-api/">
+<span class="md-ellipsis">
+    
+  
+    Localnet API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-4380-network-qos/">
+<span class="md-ellipsis">
+    
+  
+    Network QoS
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5193-user-defined-networks/">
+<span class="md-ellipsis">
+    
+  
+    User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5233-preconfigured-udn-addresses/">
+<span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5296-bgp/">
+<span class="md-ellipsis">
+    
+  
+    BGP
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5094-layer2-transit-router/">
+<span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5494-ovn-kubernetes-mcp-server/">
+<span class="md-ellipsis">
+    
+  
+    MCP for Troubleshooting
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5552-dynamic-udn-node-allocation/">
+<span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5224-connecting-udns/okep-5224-connecting-udns/">
+<span class="md-ellipsis">
+    
+  
+    Connecting User Defined Networks
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#problem-statement">
+<span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#terminology">
+<span class="md-ellipsis">
+      
+        Terminology
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#goals">
+<span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#future-goals">
+<span class="md-ellipsis">
+      
+        Future Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#non-goals">
+<span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+<nav aria-label="User-Stories/Use-Cases" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-1-have-the-cluster-default-network-in-the-no-overlay-mode">
+<span class="md-ellipsis">
+      
+        Story 1: Have the cluster default network in the no-overlay mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-2-create-a-cudn-in-the-no-overlay-mode">
+<span class="md-ellipsis">
+      
+        Story 2: Create a CUDN in the no-overlay mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-3-deploy-networks-in-the-no-overlay-mode-without-external-bgp-routers">
+<span class="md-ellipsis">
+      
+        Story 3: Deploy networks in the no-overlay mode without external BGP routers
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#proposed-solution">
+<span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+</a>
+<nav aria-label="Proposed Solution" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#configuration-file-and-flags">
+<span class="md-ellipsis">
+      
+        Configuration File and Flags
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-details">
+<span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+</a>
+<nav aria-label="API Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#example-of-a-layer-3-cudn-with-no-overlay-mode-enabled">
+<span class="md-ellipsis">
+      
+        Example of a layer-3 CUDN with no-overlay mode enabled
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#traffic-path-in-shared-gateway-mode">
+<span class="md-ellipsis">
+      
+        Traffic Path in Shared Gateway Mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#traffic-path-in-local-gateway-mode">
+<span class="md-ellipsis">
+      
+        Traffic Path in Local Gateway Mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-routes-to-nodesubnets">
+<span class="md-ellipsis">
+      
+        Import Routes to NodeSubnets
+      
+    </span>
+</a>
+<nav aria-label="Import Routes to NodeSubnets" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#host-routing-tables">
+<span class="md-ellipsis">
+      
+        Host Routing Tables
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#gateway-router">
+<span class="md-ellipsis">
+      
+        Gateway Router
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#configurable-snat-for-egress-traffic">
+<span class="md-ellipsis">
+      
+        Configurable SNAT for Egress Traffic
+      
+    </span>
+</a>
+<nav aria-label="Configurable SNAT for Egress Traffic" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#shared-gateway-mode">
+<span class="md-ellipsis">
+      
+        Shared Gateway Mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#local-gateway-mode">
+<span class="md-ellipsis">
+      
+        Local Gateway Mode
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#udn-traffic-isolation">
+<span class="md-ellipsis">
+      
+        UDN Traffic Isolation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow">
+<span class="md-ellipsis">
+      
+        Workflow
+      
+    </span>
+</a>
+<nav aria-label="Workflow" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#enable-no-overlay-mode-for-the-default-network-with-unmanaged-routing">
+<span class="md-ellipsis">
+      
+        Enable No-overlay Mode for the Default Network with Unmanaged Routing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#enable-no-overlay-mode-for-the-default-network-with-managed-routing">
+<span class="md-ellipsis">
+      
+        Enable No-overlay Mode for the Default Network with Managed Routing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-unmanaged-routing">
+<span class="md-ellipsis">
+      
+        Create a ClusterUserDefinedNetwork in No-overlay Mode with Unmanaged Routing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-managed-routing">
+<span class="md-ellipsis">
+      
+        Create a ClusterUserDefinedNetwork in No-overlay Mode with Managed Routing
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#deployment-considerations">
+<span class="md-ellipsis">
+      
+        Deployment Considerations
+      
+    </span>
+</a>
+<nav aria-label="Deployment Considerations" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#bgp-topology">
+<span class="md-ellipsis">
+      
+        BGP Topology
+      
+    </span>
+</a>
+<nav aria-label="BGP Topology" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ebgp-peering-with-external-routers">
+<span class="md-ellipsis">
+      
+        eBGP Peering with External Routers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#full-mesh-ibgp-across-the-cluster">
+<span class="md-ellipsis">
+      
+        Full-Mesh iBGP across the Cluster
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#external-route-reflectors-for-larger-clusters">
+<span class="md-ellipsis">
+      
+        External Route Reflectors for Larger Clusters
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#feature-compatibility">
+<span class="md-ellipsis">
+      
+        Feature Compatibility
+      
+    </span>
+</a>
+<nav aria-label="Feature Compatibility" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#multiple-external-gateways-meg">
+<span class="md-ellipsis">
+      
+        Multiple External Gateways (MEG)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-ip">
+<span class="md-ellipsis">
+      
+        Egress IP
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#services">
+<span class="md-ellipsis">
+      
+        Services
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-service">
+<span class="md-ellipsis">
+      
+        Egress Service
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-firewall">
+<span class="md-ellipsis">
+      
+        Egress Firewall
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-qos">
+<span class="md-ellipsis">
+      
+        Egress QoS
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#network-policyanp">
+<span class="md-ellipsis">
+      
+        Network Policy/ANP
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipsec">
+<span class="md-ellipsis">
+      
+        IPsec
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#multicast">
+<span class="md-ellipsis">
+      
+        Multicast
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#userdefinednetworks-connect">
+<span class="md-ellipsis">
+      
+        UserDefinedNetworks Connect
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#testing-details">
+<span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks-known-limitations-and-mitigations">
+<span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+</a>
+<nav aria-label="Risks, Known Limitations and Mitigations" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks">
+<span class="md-ellipsis">
+      
+        Risks
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#known-limitations">
+<span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-kubernetes-version-skew">
+<span class="md-ellipsis">
+      
+        OVN Kubernetes Version Skew
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#alternatives">
+<span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5088-evpn/">
+<span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../okep-5674-dpu-healthcheck/">
+<span class="md-ellipsis">
+    
+  
+    DPU Healthcheck
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_9" type="checkbox"/>
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../../blog/">
+<span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+</a>
+<label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+<span class="md-nav__icon md-icon"></span>
+</label>
+</div>
+<nav aria-expanded="false" aria-labelledby="__nav_9_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_9">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Blog
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#problem-statement">
+<span class="md-ellipsis">
+      
+        Problem Statement
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#terminology">
+<span class="md-ellipsis">
+      
+        Terminology
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#goals">
+<span class="md-ellipsis">
+      
+        Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#future-goals">
+<span class="md-ellipsis">
+      
+        Future Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#non-goals">
+<span class="md-ellipsis">
+      
+        Non-Goals
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#introduction">
+<span class="md-ellipsis">
+      
+        Introduction
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#user-storiesuse-cases">
+<span class="md-ellipsis">
+      
+        User-Stories/Use-Cases
+      
+    </span>
+</a>
+<nav aria-label="User-Stories/Use-Cases" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-1-have-the-cluster-default-network-in-the-no-overlay-mode">
+<span class="md-ellipsis">
+      
+        Story 1: Have the cluster default network in the no-overlay mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-2-create-a-cudn-in-the-no-overlay-mode">
+<span class="md-ellipsis">
+      
+        Story 2: Create a CUDN in the no-overlay mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#story-3-deploy-networks-in-the-no-overlay-mode-without-external-bgp-routers">
+<span class="md-ellipsis">
+      
+        Story 3: Deploy networks in the no-overlay mode without external BGP routers
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#proposed-solution">
+<span class="md-ellipsis">
+      
+        Proposed Solution
+      
+    </span>
+</a>
+<nav aria-label="Proposed Solution" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#configuration-file-and-flags">
+<span class="md-ellipsis">
+      
+        Configuration File and Flags
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#api-details">
+<span class="md-ellipsis">
+      
+        API Details
+      
+    </span>
+</a>
+<nav aria-label="API Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#example-of-a-layer-3-cudn-with-no-overlay-mode-enabled">
+<span class="md-ellipsis">
+      
+        Example of a layer-3 CUDN with no-overlay mode enabled
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#implementation-details">
+<span class="md-ellipsis">
+      
+        Implementation Details
+      
+    </span>
+</a>
+<nav aria-label="Implementation Details" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#traffic-path-in-shared-gateway-mode">
+<span class="md-ellipsis">
+      
+        Traffic Path in Shared Gateway Mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#traffic-path-in-local-gateway-mode">
+<span class="md-ellipsis">
+      
+        Traffic Path in Local Gateway Mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#import-routes-to-nodesubnets">
+<span class="md-ellipsis">
+      
+        Import Routes to NodeSubnets
+      
+    </span>
+</a>
+<nav aria-label="Import Routes to NodeSubnets" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#host-routing-tables">
+<span class="md-ellipsis">
+      
+        Host Routing Tables
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#gateway-router">
+<span class="md-ellipsis">
+      
+        Gateway Router
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#configurable-snat-for-egress-traffic">
+<span class="md-ellipsis">
+      
+        Configurable SNAT for Egress Traffic
+      
+    </span>
+</a>
+<nav aria-label="Configurable SNAT for Egress Traffic" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#shared-gateway-mode">
+<span class="md-ellipsis">
+      
+        Shared Gateway Mode
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#local-gateway-mode">
+<span class="md-ellipsis">
+      
+        Local Gateway Mode
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#udn-traffic-isolation">
+<span class="md-ellipsis">
+      
+        UDN Traffic Isolation
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#workflow">
+<span class="md-ellipsis">
+      
+        Workflow
+      
+    </span>
+</a>
+<nav aria-label="Workflow" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#enable-no-overlay-mode-for-the-default-network-with-unmanaged-routing">
+<span class="md-ellipsis">
+      
+        Enable No-overlay Mode for the Default Network with Unmanaged Routing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#enable-no-overlay-mode-for-the-default-network-with-managed-routing">
+<span class="md-ellipsis">
+      
+        Enable No-overlay Mode for the Default Network with Managed Routing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-unmanaged-routing">
+<span class="md-ellipsis">
+      
+        Create a ClusterUserDefinedNetwork in No-overlay Mode with Unmanaged Routing
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-managed-routing">
+<span class="md-ellipsis">
+      
+        Create a ClusterUserDefinedNetwork in No-overlay Mode with Managed Routing
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#deployment-considerations">
+<span class="md-ellipsis">
+      
+        Deployment Considerations
+      
+    </span>
+</a>
+<nav aria-label="Deployment Considerations" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#bgp-topology">
+<span class="md-ellipsis">
+      
+        BGP Topology
+      
+    </span>
+</a>
+<nav aria-label="BGP Topology" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ebgp-peering-with-external-routers">
+<span class="md-ellipsis">
+      
+        eBGP Peering with External Routers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#full-mesh-ibgp-across-the-cluster">
+<span class="md-ellipsis">
+      
+        Full-Mesh iBGP across the Cluster
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#external-route-reflectors-for-larger-clusters">
+<span class="md-ellipsis">
+      
+        External Route Reflectors for Larger Clusters
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#feature-compatibility">
+<span class="md-ellipsis">
+      
+        Feature Compatibility
+      
+    </span>
+</a>
+<nav aria-label="Feature Compatibility" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#multiple-external-gateways-meg">
+<span class="md-ellipsis">
+      
+        Multiple External Gateways (MEG)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-ip">
+<span class="md-ellipsis">
+      
+        Egress IP
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#services">
+<span class="md-ellipsis">
+      
+        Services
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-service">
+<span class="md-ellipsis">
+      
+        Egress Service
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-firewall">
+<span class="md-ellipsis">
+      
+        Egress Firewall
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#egress-qos">
+<span class="md-ellipsis">
+      
+        Egress QoS
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#network-policyanp">
+<span class="md-ellipsis">
+      
+        Network Policy/ANP
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ipsec">
+<span class="md-ellipsis">
+      
+        IPsec
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#multicast">
+<span class="md-ellipsis">
+      
+        Multicast
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#userdefinednetworks-connect">
+<span class="md-ellipsis">
+      
+        UserDefinedNetworks Connect
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#testing-details">
+<span class="md-ellipsis">
+      
+        Testing Details
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks-known-limitations-and-mitigations">
+<span class="md-ellipsis">
+      
+        Risks, Known Limitations and Mitigations
+      
+    </span>
+</a>
+<nav aria-label="Risks, Known Limitations and Mitigations" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#risks">
+<span class="md-ellipsis">
+      
+        Risks
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#known-limitations">
+<span class="md-ellipsis">
+      
+        Known Limitations
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ovn-kubernetes-version-skew">
+<span class="md-ellipsis">
+      
+        OVN Kubernetes Version Skew
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#alternatives">
+<span class="md-ellipsis">
+      
+        Alternatives
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#references">
+<span class="md-ellipsis">
+      
+        References
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="okep-5259-no-overlay-mode-for-layer-3-networks-using-bgp">OKEP-5259: No-overlay Mode For Layer-3 Networks using BGP<a class="headerlink" href="#okep-5259-no-overlay-mode-for-layer-3-networks-using-bgp" title="Permanent link">¶</a></h1>
+<ul>
+<li>Issue: <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5259">#5259</a></li>
+</ul>
+<h2 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">¶</a></h2>
+<p>Currently, OVN-Kubernetes uses Geneve as its encapsulation method on the overlay
+network for east-west traffic; this adds overhead and reduces throughput. By
+leveraging OVN-Kubernetes support for BGP, we want to provide a way for users to
+enable a no-overlay mode, which would disable Geneve encapsulation and use
+direct routing between nodes for east-west traffic on selected networks.</p>
+<p>Many environments, particularly on-premise deployments or those with dedicated
+networking infrastructure, prefer to utilize the underlying physical network's
+routing capabilities directly. This "no-overlay" approach can offer several
+benefits:</p>
+<ul>
+<li>Improved Performance: Eliminates overlay protocol overhead, potentially
+  leading to lower latency and higher throughput for inter-pod communication.</li>
+<li>Leverage Existing Network Infrastructure: Integrates more seamlessly with
+  existing BGP-capable network devices, allowing direct routing to pod IPs.</li>
+<li>Reduced Resource Consumption: Fewer CPU cycles spent on
+  encapsulation/decapsulation.</li>
+</ul>
+<h2 id="terminology">Terminology<a class="headerlink" href="#terminology" title="Permanent link">¶</a></h2>
+<p>See <a href="https://ovn-kubernetes.io/okeps/okep-5193-user-defined-networks/#terminology">terminology</a> details.</p>
+<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>Support no-overlay mode for the cluster default network (CDN).</li>
+<li>Support no-overlay mode for Primary layer-3 ClusterUserDefinedNetworks
+  (CUDNs).</li>
+<li>The no-overlay mode is only supported for bare-metal clusters.</li>
+<li>A cluster can have networks operating in overlay and no-overlay modes
+  simultaneously.</li>
+<li>Use the BGP feature to exchange routes to pod subnets across the cluster.</li>
+<li>Allow direct communication without any overlay encapsulation for east-west
+  traffic.</li>
+<li>Maintain compatibility with existing OVN-Kubernetes features where applicable.</li>
+<li>Compatible with both local gateway and shared gateway modes.</li>
+<li>Do not compromise the existing advertised UDN isolation strict mode.</li>
+<li>Support a deployment option where no-overlay mode can be enabled with a
+  full-mesh BGP internal fabric managed by OVN-Kubernetes, allowing users to
+  leverage no-overlay mode without requiring external BGP infrastructure.</li>
+</ul>
+<h2 id="future-goals">Future Goals<a class="headerlink" href="#future-goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>When OVN-Kubernetes supports BGP for UserDefinedNetwork CRs, extend no-overlay
+  mode support for Primary layer-3 UDNs.</li>
+<li>Support toggling no-overlay mode on/off for an existing network. To support
+  this functionality, there are two things we need to consider.
+  First, in no-overlay mode, as there is no Geneve overhead, a network can have
+  the same MTU size as the provider network. However, overlay networks require a
+  smaller MTU (default 1400). We cannot modify a pod interface MTU without
+  restarting the pod, so OVN-Kubernetes must work with other external
+  controllers to accommodate such a migration.
+  Secondly, to facilitate a smooth, node-by-node migration, it's crucial to
+  allow networks to operate in a hybrid no-overlay and overlay mode.</li>
+<li>Address the advertised UDN isolation loose mode issue when no-overlay mode is
+  enabled.</li>
+<li>Support route-reflector BGP topology for the managed cluster internal BGP
+  fabric. If FRR node instances can act as a BGP route reflector, it enables
+  creation of an internal route reflector-based BGP network. However, it is not
+  currently supported by frr-k8s, which we use for integrating OVN-Kubernetes
+  with FRR. We will need to implement this feature in frr-k8s first before
+  supporting this.</li>
+</ul>
+<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">¶</a></h2>
+<ul>
+<li>This enhancement does not aim to change the default behavior of
+  OVN-Kubernetes, which will continue to use Geneve encapsulation for the
+  default network and any user-defined networks unless no-overlay mode is
+  explicitly enabled.</li>
+<li>This enhancement does not aim to change the existing CUDN lifecycle
+  management. The user must ensure that the CUDN CRs are correctly managed
+  according to the existing lifecycle management practices.</li>
+<li>This enhancement does not aim to implement no-overlay mode with the
+  centralized OVN architecture, as the BGP feature is only available in a
+  cluster running in interconnect mode.</li>
+<li>This enhancement does not aim to implement no-overlay mode for the layer-2
+  type of networks. The layer-2 type of networks is implemented by connecting
+  pods to the same OVN distributed logical switch. Pods on different nodes are
+  connected through a layer-2 segment using Geneve encapsulation. It's quite
+  challenging to implement a layer-2 network over a layer-3 infrastructure
+  without an overlay protocol.</li>
+<li>This enhancement does not aim to integrate no-overlay mode with the EVPN
+  feature.</li>
+<li>This enhancement does not aim to support users creating a no-overlay network
+  by manually creating a NetworkAttachmentDefinition (NAD) CR.</li>
+<li>This enhancement does not aim to support egress IP or egress service for
+  no-overlay networks. Both features leverage OVN-Kubernetes's logical routing
+  policy to steer pod egress traffic. They also rely on overlay tunnels to
+  transport pod egress traffic to egress nodes.</li>
+</ul>
+<h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">¶</a></h2>
+<p>In the <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/okeps/okep-5296-bgp.md#future-goals">OVN-Kubernetes BGP Integration
+enhancement</a>,
+no-overlay mode was briefly discussed. In this enhancement, we aim to describe
+the feature in detail, define the API changes we want to introduce for it, and
+address a number of concerns with respect to the existing BGP Integration and
+User-Defined Network Segmentation features.</p>
+<p>Avoiding Geneve encapsulation and using the provider network for east-west
+traffic stems from the need to minimize network overhead and maximize
+throughput. Users who intend to enable BGP on their clusters can leverage
+BGP-learned routes to achieve this. The goal is to provide users with an API to
+create networks (default or CUDN), with no-overlay mode enabled, allowing
+traffic to skip Geneve encapsulation (i.e., the overlay network) and simply make
+use of the learned routes in the underlay or provider network for inter-node
+communication.</p>
+<p>While BGP is the proposed solution for exchanging east-west routing information
+within a cluster, it is not the only possible option. Future implementations of
+no-overlay mode may incorporate additional routing technologies and protocols
+beyond BGP.</p>
+<h2 id="user-storiesuse-cases">User-Stories/Use-Cases<a class="headerlink" href="#user-storiesuse-cases" title="Permanent link">¶</a></h2>
+<h3 id="story-1-have-the-cluster-default-network-in-the-no-overlay-mode">Story 1: Have the cluster default network in the no-overlay mode<a class="headerlink" href="#story-1-have-the-cluster-default-network-in-the-no-overlay-mode" title="Permanent link">¶</a></h3>
+<p>As a cluster admin, I want to enable no-overlay mode for the cluster default
+network to integrate seamlessly with existing BGP-capable networks, achieve
+maximum network performance, and reduce overhead.</p>
+<h3 id="story-2-create-a-cudn-in-the-no-overlay-mode">Story 2: Create a CUDN in the no-overlay mode<a class="headerlink" href="#story-2-create-a-cudn-in-the-no-overlay-mode" title="Permanent link">¶</a></h3>
+<p>As a cluster admin, I want to enable no-overlay mode for a cluster user defined
+network to integrate seamlessly with existing BGP-capable networks and achieve
+maximum network performance.</p>
+<h3 id="story-3-deploy-networks-in-the-no-overlay-mode-without-external-bgp-routers">Story 3: Deploy networks in the no-overlay mode without external BGP routers<a class="headerlink" href="#story-3-deploy-networks-in-the-no-overlay-mode-without-external-bgp-routers" title="Permanent link">¶</a></h3>
+<p>As a cluster admin, I want to use no-overlay mode for intra-cluster traffic
+without advertising pod networks to the external network or depending on
+external BGP routers.</p>
+<h2 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">¶</a></h2>
+<p>This solution leverages the existing BGP feature to advertise each node's pod
+subnet via the CNCF project <a href="https://github.com/metallb/frr-k8s">FRR-K8s</a>. FRR
+routers managed by FRR-k8s then propagate these routes throughout the provider
+network, enabling direct pod-to-pod traffic without an overlay. A single cluster
+can simultaneously have networks in both overlay and no-overlay modes.</p>
+<p>When no-overlay mode is enabled for a network:</p>
+<ul>
+<li>
+<p>By default, when BGP advertisement is enabled, the BGP feature disables SNAT
+  for pod egress traffic leaving nodes. For users who only want to have
+  no-overlay mode but do not want to expose pod IPs externally, this behavior is
+  not ideal. To address this, users will be able to enable SNAT for
+  pod-to-external traffic. This will be configured via a new <code>outboundSNAT</code>
+  field in the <code>ClusterUserDefinedNetwork</code> CRD for CUDNs, and the
+  <code>outbound-snat</code> flag in the <code>[no-overlay]</code> section of the configuration file
+  for the default network.</p>
+</li>
+<li>
+<p>For east-west traffic:</p>
+</li>
+<li>Intra-node traffic remains unchanged, handled by the local OVN bridge.</li>
+<li>Inter-node traffic will follow the same path as north-south traffic, routed
+    via the underlay. Pod-to-pod, Pod-to-clusterIP traffic within the same
+    network will be forwarded by the provider network without encapsulation or
+    NAT. Pod-to-node egress traffic will be SNATed to the node IP at the source
+    node to allow a pod to access nodePort services in a different UDN.</li>
+</ul>
+<h3 id="configuration-file-and-flags">Configuration File and Flags<a class="headerlink" href="#configuration-file-and-flags" title="Permanent link">¶</a></h3>
+<p>For the default network transport, the new flag <code>transport</code> will be added to
+the <code>[default]</code> section of the configuration file:</p>
+<ul>
+<li>The <code>transport</code> flag accepts either <code>no-overlay</code> or
+  <code>geneve</code>, defaulting to <code>geneve</code>. Setting it to <code>no-overlay</code> configures the
+  default network to operate in no-overlay mode. More overlay transport
+  methods can be supported in the future. If
+  <code>transport=no-overlay</code> is set, but
+  no <code>RouteAdvertisements</code> CR is configured for advertising the default network,
+  ovnkube-cluster-manager will emit an event and log an error message.</li>
+</ul>
+<p>For the default network in no-overlay mode, the new flags <code>outbound-snat</code> and
+<code>routing</code> will be added to the <code>[no-overlay]</code> section of the configuration file:</p>
+<ul>
+<li>
+<p>The <code>outbound-snat</code> flag is a string flag to configure the SNAT behavior for
+  outbound traffic from pods on the default network. Supported values are
+  <code>enabled</code> or <code>disabled</code>. It is required when <code>transport=no-overlay</code>.</p>
+</li>
+<li>
+<p><code>enabled</code>: SNATs pod-to-external traffic to the node IP. This is useful when
+    pod IPs are not routable on the external network.</p>
+</li>
+<li><code>disabled</code>: Does not SNAT pod-to-external traffic. This requires pod IPs to
+    be routable on the external network.</li>
+</ul>
+<p>In no-overlay mode, pod-to-remote-pod traffic is never SNATed, regardless of
+  this flag's setting. However, traffic to remote nodes, the Kubernetes API
+  server, and DNS is always SNATed.</p>
+<ul>
+<li>
+<p>The <code>routing</code> flag is a string flag to configure whether the cluster default
+  network routing configuration is managed by OVN-Kubernetes or users. Supported
+  values are <code>managed</code> or <code>unmanaged</code>. It is required when
+  <code>transport=no-overlay</code>.</p>
+</li>
+<li>
+<p><code>managed</code>: OVN-Kubernetes manages the routing for the no-overlay network.
+    OVN-Kubernetes will generate the BGP configurations (RouteAdvertisements and
+    FRRConfiguration) to advertise the pod subnets, and set up BGP sessions
+    between nodes. In the managed routing mode, pod subnets will be advertised
+    to the default VRF of each node.</p>
+<p>Please note that the managed routing mode requires nodes to be directly
+connected at Layer 2. Therefore, the managed routing mode is not suitable
+for clusters that have nodes in different subnets, as pod subnets are not
+routable between nodes in different subnets. So normally, this option shall
+be used with <code>outbound-snat=enabled</code>.</p>
+<p>However, when the network is in the managed routing mode, users can still
+advertise the pod network to the external network by creating the
+RouteAdvertisements and FRRConfiguration CRs manually.</p>
+<p>More managed routing options can be specified by the flags in the section
+<code>[bgp-managed]</code> described below.</p>
+</li>
+<li>
+<p><code>unmanaged</code>: Users are responsible for managing the routing, including
+    creating the RouteAdvertisements and FRRConfiguration CRs to advertise the
+    pod subnets. It allows users to have more control over the BGP
+    configuration. Normally, this option shall be used with
+    <code>outbound-snat=disabled</code>.</p>
+<p>One day if other routing protocols are integrated with OVN-Kubernetes, users
+can use this option to manage the routing themselves.</p>
+</li>
+</ul>
+<p>To configure the internal BGP fabric that CDN and CUDNs in managed no-overlay
+mode will use, the configuration file will have a new section <code>[bgp-managed]</code>,
+with the following new flags:</p>
+<ul>
+<li>The <code>topology</code> flag specifies the BGP topology to use for the cluster internal
+  BGP fabric, with supported values of <code>full-mesh</code> initially, more topology
+  options can be added in the future.</li>
+</ul>
+<p>This flag is required when the CDN or any CUDN is configured in no-overlay
+  mode with <code>managed</code> routing. Configuration will fail if not provided. When
+  set, the <code>ovnkube-cluster-manager</code> generates FRRConfigurations to configure
+  the BGP topology for the cluster.</p>
+<p>If set to <code>full-mesh</code>, ovnkube-cluster-manager will generate FRRConfigurations
+  for all nodes to peer with each other in a full mesh. This topology is simpler
+  to configure but less scalable for large clusters.</p>
+<ul>
+<li>The <code>as-number</code> flag is used when no-overlay networks are configured with
+  managed routing. It is shared by both the cluster default network and CUDNs.
+  It specifies the AS number to be used by the BGP speakers on each node for its
+  default VRF. It's optional. The default AS number is <code>64512</code> if not specified.</li>
+</ul>
+<p>For CUDNs, no-overlay mode is configured via their respective CRs. Due to a BGP
+limitation, CUDNs with overlapping pod subnets cannot be advertised to the same
+VRF. To enable no-overlay mode for these networks, a VRF-lite configuration is
+required.</p>
+<p>Here is an example configuration file snippet for the default network in
+no-overlay mode:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[default]</span>
+<span class="na">transport</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">no-overlay</span>
+
+<span class="k">[no-overlay]</span>
+<span class="na">outbound-snat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">enabled</span>
+<span class="na">routing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">managed</span>
+
+<span class="k">[bgp-managed]</span>
+<span class="na">topology</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">full-mesh</span>
+<span class="na">as-number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">64514</span>
+</code></pre></div>
+<h3 id="api-details">API Details<a class="headerlink" href="#api-details" title="Permanent link">¶</a></h3>
+<p>We introduce new fields to the <code>spec.network</code> section of the
+ClusterUserDefinedNetwork (CUDN) CRD to control network transport technology:</p>
+<ul>
+<li><strong><code>transport</code></strong>: Specifies the transport technology used for the network.</li>
+<li>Supported values: <code>Geneve</code> or <code>NoOverlay</code></li>
+<li>It's optional, if not specified, it will be treated as <code>Geneve</code>.</li>
+<li>More transport methods can be supported in the future.</li>
+<li><strong><code>noOverlayOptions</code></strong>: Contains configuration for no-overlay mode. This is
+  required when <code>transport</code> is <code>NoOverlay</code>.</li>
+<li><code>outboundSNAT</code>: Defines the SNAT behavior for outbound traffic from pods.<ul>
+<li>Supported values: <code>Enabled</code> or <code>Disabled</code>. It is required when <code>transport</code>
+  is <code>NoOverlay</code>.</li>
+<li><code>Enabled</code>: SNATs pod-to-external traffic to the node IP. This is useful
+  when pod IPs are not routable on the external network.</li>
+<li><code>Disabled</code>: Does not SNAT pod-to-external traffic. This requires pod IPs
+  to be routable on the external network.</li>
+<li>Pod-to-remote-pod traffic is never SNATed in no-overlay mode.</li>
+</ul>
+</li>
+<li><code>routing</code>: Specifies whether the pod network routing configuration is
+    managed by OVN-Kubernetes or users. It is required when <code>transport</code> is
+    <code>NoOverlay</code>.<ul>
+<li>Supported values: <code>Managed</code> or <code>Unmanaged</code>.</li>
+<li><code>Managed</code>: OVN-Kubernetes manages the routing for the no-overlay network.
+  OVN-Kubernetes will generate the per-node BGP configurations to advertise
+  the pod subnets, and set up a full-mesh BGP topology where each node peers
+  with all other nodes in the cluster. In the managed routing mode, pod
+  subnets will be advertised to the default VRF of each node. When the
+  network is in the managed routing mode, users can still advertise the pod
+  network to the external network by creating the RouteAdvertisements and
+  FRRConfiguration CRs manually.</li>
+<li><code>Unmanaged</code>: Users are responsible for managing the routing, including
+  creating the RouteAdvertisements and FRRConfiguration CRs to advertise the
+  pod subnets. It allows users to have more control over the BGP
+  configuration. One day if other routing protocols are integrated with
+  OVN-Kubernetes, users can use this option to manage the routing
+  themselves.</li>
+</ul>
+</li>
+</ul>
+<p>The <code>spec</code> field of a ClusterUserDefinedNetwork CR is immutable. Therefore, the
+transport configuration cannot be changed after a ClusterUserDefinedNetwork CR is
+created.</p>
+<div class="highlight"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">TransportOption</span><span class="w"> </span><span class="kt">string</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">SNATOption</span><span class="w"> </span><span class="kt">string</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">RoutingOption</span><span class="w"> </span><span class="kt">string</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">TransportOptionNoOverlay</span><span class="w">  </span><span class="nx">TransportOption</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"NoOverlay"</span>
+<span class="w">    </span><span class="nx">TransportOptionGeneve</span><span class="w">     </span><span class="nx">TransportOption</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Geneve"</span>
+
+<span class="w">    </span><span class="nx">SNATEnabled</span><span class="w">  </span><span class="nx">SNATOption</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Enabled"</span>
+<span class="w">    </span><span class="nx">SNATDisabled</span><span class="w"> </span><span class="nx">SNATOption</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Disabled"</span>
+
+<span class="w">    </span><span class="nx">RoutingManaged</span><span class="w">   </span><span class="nx">RoutingOption</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Managed"</span>
+<span class="w">    </span><span class="nx">RoutingUnmanaged</span><span class="w"> </span><span class="nx">RoutingOption</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">"Unmanaged"</span>
+<span class="p">)</span>
+
+<span class="c1">// NoOverlayOptions contains configuration options for networks operating in no-overlay mode.</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">NoOverlayOptions</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// OutboundSNAT defines the SNAT behavior for outbound traffic from pods.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=Enabled;Disabled</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">OutboundSNAT</span><span class="w"> </span><span class="nx">SNATOption</span><span class="w"> </span><span class="s">`json:"outboundSNAT"`</span>
+<span class="w">    </span><span class="c1">// Routing specifies whether the pod network routing is managed by OVN-Kubernetes or users.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=Managed;Unmanaged</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">Routing</span><span class="w"> </span><span class="nx">RoutingOption</span><span class="w"> </span><span class="s">`json:"routing"`</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">NetworkSpec</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="o">...</span>
+<span class="w">    </span><span class="c1">// Transport describes the transport technology used for the network.</span>
+<span class="w">    </span><span class="c1">// Allowed values are "NoOverlay" and "Geneve".</span>
+<span class="w">    </span><span class="c1">// - "NoOverlay": The network operates in no-overlay mode.</span>
+<span class="w">    </span><span class="c1">// - "Geneve": The network uses Geneve overlay.</span>
+<span class="w">    </span><span class="c1">// Defaults to "Geneve" if not specified.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=NoOverlay;Geneve</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">Transport</span><span class="w"> </span><span class="nx">TransportOption</span><span class="w"> </span><span class="s">`json:"transport,omitempty"`</span>
+<span class="w">    </span><span class="c1">// NoOverlayOptions contains configuration for no-overlay mode.</span>
+<span class="w">    </span><span class="c1">// It is only allowed when Transport is "NoOverlay".</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="nx">NoOverlayOptions</span><span class="w"> </span><span class="o">*</span><span class="nx">NoOverlayOptions</span><span class="w"> </span><span class="s">`json:"noOverlayOptions,omitempty"`</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>To prevent a user from setting unsupported transport configurations in CUDN
+accidentally, we will add the following CEL validation rules to the
+<code>spec.network</code> field of the ClusterUserDefinedNetwork CRD.</p>
+<div class="highlight"><pre><span></span><code><span class="w">    </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">x-kubernetes-validations</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"transport</span><span class="nv"> </span><span class="s">'NoOverlay'</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">only</span><span class="nv"> </span><span class="s">supported</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">Layer3</span><span class="nv"> </span><span class="s">primary</span><span class="nv"> </span><span class="s">networks"</span>
+<span class="w">        </span><span class="nt">rule</span><span class="p">:</span><span class="w"> </span><span class="s">"!has(self.transport)</span><span class="nv"> </span><span class="s">||</span><span class="nv"> </span><span class="s">self.transport</span><span class="nv"> </span><span class="s">!=</span><span class="nv"> </span><span class="s">'NoOverlay'</span><span class="nv"> </span><span class="s">||</span><span class="nv"> </span><span class="s">(self.topology</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">'Layer3'</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">has(self.layer3)</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">self.layer3.role</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">'Primary')"</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"noOverlayOptions</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">required</span><span class="nv"> </span><span class="s">if</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">only</span><span class="nv"> </span><span class="s">if</span><span class="nv"> </span><span class="s">transport</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">'NoOverlay'"</span>
+<span class="w">        </span><span class="nt">rule</span><span class="p">:</span><span class="w"> </span><span class="s">"(has(self.transport)</span><span class="nv"> </span><span class="s">&amp;&amp;</span><span class="nv"> </span><span class="s">self.transport</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">'NoOverlay')</span><span class="nv"> </span><span class="s">==</span><span class="nv"> </span><span class="s">has(self.noOverlayOptions)"</span>
+</code></pre></div>
+<p>A new status condition will be added to the CUDN CR to indicate whether the
+transport is correctly configured for a CUDN. The UDN controller in the
+ovnkube-cluster-manager is responsible for setting this condition based on the
+transport configuration. The UDN controller will watch RouteAdvertisements CR
+events and validate whether a RouteAdvertisements CR is correctly configured to
+advertise the pod networks.</p>
+<p>Here is the definition of the new status condition:</p>
+<ul>
+<li><strong><code>TransportAccepted</code></strong>: Indicates whether the transport is
+  correctly configured.</li>
+<li><code>True</code>: The transport is correctly configured.</li>
+<li><code>False</code>: The transport is not correctly configured.</li>
+<li><code>Unknown</code>: The status of the transport configuration is unknown.</li>
+<li>This condition is only applicable when <code>spec.network.transport</code> is not set
+    to <code>Geneve</code>.</li>
+<li>For a no-overlay CUDN, this condition is set to <code>True</code> when:<ul>
+<li>A RouteAdvertisements CR is created to advertise the pod subnets of
+  the CUDN, and its status is <code>Accepted</code>.</li>
+<li>Otherwise, it will be set to <code>False</code> with an appropriate message.</li>
+</ul>
+</li>
+</ul>
+<p>If the transport is not configured or configured as <code>Geneve</code>, the UDN controller
+shall set the <code>TransportAccepted</code> condition like this:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TransportAccepted</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"GeneveTransportAccepted"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Geneve</span><span class="nv"> </span><span class="s">transport</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">been</span><span class="nv"> </span><span class="s">configured."</span>
+</code></pre></div>
+<p>If the transport is configured as <code>NoOverlay</code> and the RouteAdvertisements CR is
+created and its status is <code>Accepted</code>, the UDN controller shall set the
+<code>TransportAccepted</code> condition like this:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TransportAccepted</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlayTransportAccepted"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Transport</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">been</span><span class="nv"> </span><span class="s">configured</span><span class="nv"> </span><span class="s">as</span><span class="nv"> </span><span class="s">'no-overlay'."</span>
+</code></pre></div>
+<p>If no RouteAdvertisements CR is advertising the network, it shall update the
+CUDN status condition <code>TransportAccepted</code> to <code>False</code> with an appropriate
+message.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TransportAccepted</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"No</span><span class="nv"> </span><span class="s">RouteAdvertisements</span><span class="nv"> </span><span class="s">CR</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">advertising</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">pod</span><span class="nv"> </span><span class="s">networks."</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlayRouteAdvertisementsIsMissing"</span>
+</code></pre></div>
+<p>Or if the RouteAdvertisements CR exists but its status is not accepted:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">status</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TransportAccepted</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"False"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"RouteAdvertisements</span><span class="nv"> </span><span class="s">CR</span><span class="nv"> </span><span class="s">blue</span><span class="nv"> </span><span class="s">advertises</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">pod</span><span class="nv"> </span><span class="s">subnets,</span><span class="nv"> </span><span class="s">but</span><span class="nv"> </span><span class="s">its</span><span class="nv"> </span><span class="s">status</span><span class="nv"> </span><span class="s">is</span><span class="nv"> </span><span class="s">not</span><span class="nv"> </span><span class="s">accepted."</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlayRouteAdvertisementsNotAccepted"</span>
+</code></pre></div>
+<h4 id="example-of-a-layer-3-cudn-with-no-overlay-mode-enabled">Example of a layer-3 CUDN with no-overlay mode enabled<a class="headerlink" href="#example-of-a-layer-3-cudn-with-no-overlay-mode-enabled" title="Permanent link">¶</a></h4>
+<p>A layer-3 CUDN with no-overlay mode enabled should look like this:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-cudn</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchExpressions</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
+<span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
+<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"red"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"blue"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer3</span>
+<span class="w">    </span><span class="nt">layer3</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">      </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1500</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.10.0.0/16</span>
+<span class="w">        </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlay"</span>
+<span class="w">    </span><span class="nt">noOverlayOptions</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">outboundSNAT</span><span class="p">:</span><span class="w"> </span><span class="s">"Disabled"</span>
+<span class="w">      </span><span class="nt">routing</span><span class="p">:</span><span class="w"> </span><span class="s">"Unmanaged"</span>
+<span class="nt">status</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TransportAccepted</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlayTransportAccepted"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Transport</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">been</span><span class="nv"> </span><span class="s">configured</span><span class="nv"> </span><span class="s">as</span><span class="nv"> </span><span class="s">'no-overlay'."</span>
+</code></pre></div>
+<p>Or: if the routing is managed by OVN-Kubernetes:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-cudn</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchExpressions</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
+<span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
+<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"red"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"blue"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer3</span>
+<span class="w">    </span><span class="nt">layer3</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">      </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1500</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.10.0.0/16</span>
+<span class="w">        </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlay"</span>
+<span class="w">    </span><span class="nt">noOverlayOptions</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">outboundSNAT</span><span class="p">:</span><span class="w"> </span><span class="s">"Enabled"</span>
+<span class="w">      </span><span class="nt">routing</span><span class="p">:</span><span class="w"> </span><span class="s">"Managed"</span>
+<span class="nt">status</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">conditions</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">TransportAccepted</span>
+<span class="w">    </span><span class="nt">status</span><span class="p">:</span><span class="w"> </span><span class="s">"True"</span>
+<span class="w">    </span><span class="nt">reason</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlayTransportAccepted"</span>
+<span class="w">    </span><span class="nt">message</span><span class="p">:</span><span class="w"> </span><span class="s">"Transport</span><span class="nv"> </span><span class="s">has</span><span class="nv"> </span><span class="s">been</span><span class="nv"> </span><span class="s">configured</span><span class="nv"> </span><span class="s">as</span><span class="nv"> </span><span class="s">'no-overlay'."</span>
+</code></pre></div>
+<h3 id="implementation-details">Implementation Details<a class="headerlink" href="#implementation-details" title="Permanent link">¶</a></h3>
+<p>No-overlay mode relies on the BGP feature, which is exclusive to clusters
+deployed in the single-node zone interconnect mode. Therefore, no-overlay mode
+can only be enabled in clusters configured with single-node zone interconnect.</p>
+<p>For networks configured with no-overlay mode, the OVN topology requires minor
+adjustments. In the current interconnect architecture, a network can span all
+cluster nodes thanks to the cross-node logical links that OVN establishes
+between the transit switch and the ovn-cluster-router instances on each node.
+That is the logical representation of the OVN network, and in practice, these
+links are implemented through Geneve tunnels between every node in the cluster.</p>
+<p>To route pod traffic directly over the underlay, the network's logical topology
+is modified: the transit switch will not be created anymore, thus the
+<code>ZoneInterconnectHandler</code> in ovnkube-controller will not create a connection to
+the transit switch. As a result, static routes to remote pod subnets will not be
+added to the ovn_cluster_router. Instead, traffic will be forwarded using a
+source-based route, with the next hop determined by the cluster's gateway mode.
+ovn_cluster_router will route all east-west traffic to the provider network,
+following the same path as north-south traffic.</p>
+<p>The following diagram shows the OVN topology of a cluster with three networks:</p>
+<ul>
+<li>a CUDN (in green) that uses Geneve encapsulation (default behavior)</li>
+<li>a default network (in gray) that is operating in no-overlay mode</li>
+<li>a CUDN (in blue) that is operating in no-overlay mode</li>
+</ul>
+<p><img alt="No-overlay topology" src="../../images/no_overlay_topology.jpg"/></p>
+<h4 id="traffic-path-in-shared-gateway-mode">Traffic Path in Shared Gateway Mode<a class="headerlink" href="#traffic-path-in-shared-gateway-mode" title="Permanent link">¶</a></h4>
+<p>At the ovn_cluster_router, the pod-to-remote-pod egress traffic will be
+forwarded to the GatewayRouter via the join switch. Unlike the current route
+advertisement behavior, routes to remote pod subnets will be imported to
+the gateway router. Once the traffic reaches the GatewayRouter, it will be
+forwarded to the nexthop node according to the imported BGP routes.</p>
+<p>An example traffic path is as follows (assuming pod IP of 10.128.0.10 on node A,
+destined to remote pod 10.128.2.11 on node B):</p>
+<p>As the east-west traffic will not go through the transit switch, the static
+routes to remote pod subnets will not be added to the ovn_cluster_router
+anymore. The ovn_cluster_router routes all local pod egress traffic to the
+gateway router according to a source-based route (10.128.0.0/24). The routing
+table of the default network's ovn_cluster_router for node A would look like:</p>
+<div class="highlight"><pre><span></span><code>IPv4 Routes
+Route Table &lt;main&gt;:
+               100.64.0.4                100.64.0.4 dst-ip
+            10.128.0.0/24                100.64.0.4 src-ip
+            10.128.0.0/16                100.64.0.4 src-ip
+</code></pre></div>
+<p>And the routing table of the gateway router with learned BGP routes to remote pod
+subnets:</p>
+<div class="highlight"><pre><span></span><code>IPv4 Routes
+Route Table &lt;main&gt;:
+           169.254.0.0/17               169.254.0.4 dst-ip rtoe-GR_nodeA
+            10.128.0.0/16                100.64.0.1 dst-ip
+            10.128.1.0/24                172.18.0.2 dst-ip rtoe-rtoe-GR_nodeA
+            10.128.2.0/24                172.18.0.4 dst-ip rtoe-rtoe-GR_nodeA
+                0.0.0.0/0                172.18.0.1 dst-ip rtoe-rtoe-GR_nodeA
+</code></pre></div>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Pod1 on Node A
+    participant ovn_cluster_router Node A
+    participant OVN Gateway Router (GR) Node A
+    participant Underlay Physical Network
+    participant Node B
+
+    Pod1 on Node A-&gt;&gt;ovn_cluster_router Node A: Packet to remote Pod2 (10.128.2.11)
+    Note over ovn_cluster_router Node A: route lookup
+    ovn_cluster_router Node A-&gt;&gt;ovn_cluster_router Node A: Match the static source-based route (10.128.0.0/24 100.64.0.4)
+    ovn_cluster_router Node A-&gt;&gt;OVN Gateway Router (GR) Node A: Forward packet to GR via join switch
+    Note over OVN Gateway Router (GR) Node A: route lookup
+    OVN Gateway Router (GR) Node A-&gt;&gt;OVN Gateway Router (GR) Node A: Match BGP route: 10.128.2.0/24 via 172.18.0.3 (Node B's IP)
+    OVN Gateway Router (GR) Node A-&gt;&gt;Underlay Physical Network: Route packet out via breth0
+    Underlay Physical Network-&gt;&gt;Node B: Packet arrives at Node B
+    Note over Node B: Traffic is delivered to Pod2
+</code></pre>
+<p>And the reply path:</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Node B
+    participant Underlay Physical Network
+    participant OVN Gateway Router (GR) Node A
+    participant ovn_cluster_router Node A
+    participant Pod1 on Node A
+
+    Note over Node B: Traffic is delivered from Pod2
+    Node B-&gt;&gt;Underlay Physical Network: Packet leaves Node B
+    Underlay Physical Network-&gt;&gt;OVN Gateway Router (GR) Node A: Route packet in via breth0
+    Note over OVN Gateway Router (GR) Node A: route lookup
+    OVN Gateway Router (GR) Node A-&gt;&gt;OVN Gateway Router (GR) Node A: Match static route: 10.128.0.0/24 via 100.64.0.1 (Node A's pod subnet)
+    OVN Gateway Router (GR) Node A-&gt;&gt;ovn_cluster_router Node A: forwarded via the join switch
+    Note over ovn_cluster_router Node A: route lookup
+    ovn_cluster_router Node A-&gt;&gt;ovn_cluster_router Node A: Match the direct route to local pods
+    ovn_cluster_router Node A-&gt;&gt;Pod1 on Node A: Packet to local Pod1 (10.128.0.5) via the node switch
+</code></pre>
+<h4 id="traffic-path-in-local-gateway-mode">Traffic Path in Local Gateway Mode<a class="headerlink" href="#traffic-path-in-local-gateway-mode" title="Permanent link">¶</a></h4>
+<p>The pod-to-remote-pod egress traffic will enter the host VRF via the
+ovn-k8s-mpX interface. Then it will be forwarded to remote nodes according to
+the host routing table of the VRF.</p>
+<p>An example traffic path is as follows (assuming pod IP of 10.128.0.10,
+destined to remote pod 10.128.2.11):</p>
+<p>The routing table of the default VRF of node A which contains learned BGP routes:</p>
+<div class="highlight"><pre><span></span><code>10.128.0.0/16 via 10.128.2.1 dev ovn-k8s-mp0
+10.128.0.0/24 dev ovn-k8s-mp0 proto kernel scope link src 10.128.0.2
+10.128.1.0/24 nhid 30 via 172.18.0.2 dev eth0 proto bgp metric 20
+10.128.2.0/24 nhid 25 via 172.18.0.4 dev eth0 proto bgp metric 20
+</code></pre></div>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Pod1 on Node A
+    participant ovn_cluster_router Node A
+    participant Host VRF/Kernel Node A
+    participant Underlay Physical Network
+    participant Node B
+
+    Pod1 on Node A-&gt;&gt;ovn_cluster_router Node A: Packet to remote Pod2 (10.128.2.11)
+    ovn_cluster_router Node A-&gt;&gt;Host VRF/Kernel Node A: Forward packet to host via ovn-k8s-mp0
+    Note over Host VRF/Kernel Node A: BGP route lookup
+    Host VRF/Kernel Node A-&gt;&gt;Host VRF/Kernel Node A: Match BGP route in host table: 10.128.2.0/24 via 172.18.0.3 (Node B's IP)
+    Host VRF/Kernel Node A-&gt;&gt;Underlay Physical Network: Route packet out via breth0
+    Underlay Physical Network-&gt;&gt;Node B: Packet arrives at Node B
+    Note over Node B: Traffic is delivered to Pod2
+</code></pre>
+<p>And the reply path:</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant Node B
+    participant Underlay Physical Network
+    participant Host VRF/Kernel Node A
+    participant ovn_cluster_router Node A
+    participant Pod1 on Node A
+
+    Note over Node B: Traffic is delivered from Pod2
+    Node B-&gt;&gt;Underlay Physical Network: Packet leaves Node B
+    Underlay Physical Network-&gt;&gt;Host VRF/Kernel Node A: Route packet in via breth0
+    Note over Host VRF/Kernel Node A: route lookup
+    Host VRF/Kernel Node A-&gt;&gt;Host VRF/Kernel Node A: Match static route: 10.128.0.0/24 via 100.64.0.1 (Node A's pod subnet)
+    Host VRF/Kernel Node A -&gt;&gt;ovn_cluster_router Node A: forwarded via mp0
+    Note over ovn_cluster_router Node A: route lookup
+    ovn_cluster_router Node A-&gt;&gt;ovn_cluster_router Node A: Match the direct route to local pods
+    ovn_cluster_router Node A-&gt;&gt;Pod1 on Node A: Packet to local Pod1 (10.128.0.5) via the node switch
+</code></pre>
+<h4 id="import-routes-to-nodesubnets">Import Routes to NodeSubnets<a class="headerlink" href="#import-routes-to-nodesubnets" title="Permanent link">¶</a></h4>
+<p>Changes to BGP behavior are necessary to import node subnet routes into the
+gateway router and the host routing table of each node. A new <code>transport</code> key
+will be included in the OVN CNI NetConf (the NAD's spec.config JSON) to indicate
+the east-west transport protocol of the network. If a network operates in
+no-overlay mode, this key is set to <code>noOverlay</code>. Additionally, the <code>outboundSNAT</code>
+key will be included to indicate the SNAT behavior for outbound traffic from pods.
+This information can then be passed into the NetInfo object and utilized by the
+route import and gateway controller of ovnkube-controller.</p>
+<p>Note: Users must not set these fields manually; OVN-Kubernetes manages them.</p>
+<p>An example OVN-Kubernetes NAD may look like:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.cni.cncf.io/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">NetworkAttachmentDefinition</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">l3-network</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">    </span><span class="no">{</span>
+<span class="w">            </span><span class="no">"cniVersion": "0.3.1",</span>
+<span class="w">            </span><span class="no">"name": "l3-network",</span>
+<span class="w">            </span><span class="no">"type": "ovn-k8s-cni-overlay",</span>
+<span class="w">            </span><span class="no">"topology":"layer3",</span>
+<span class="w">            </span><span class="no">"mtu": 1500,</span>
+<span class="w">            </span><span class="no">"netAttachDefName": "default/l3-network",</span>
+<span class="w">            </span><span class="no">"role": "primary",</span>
+<span class="w">            </span><span class="no">"transport": "noOverlay",</span>
+<span class="w">            </span><span class="no">"outboundSNAT": "disabled"</span>
+<span class="w">    </span><span class="no">}</span>
+</code></pre></div>
+<h5 id="host-routing-tables">Host Routing Tables<a class="headerlink" href="#host-routing-tables" title="Permanent link">¶</a></h5>
+<p>To <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5140">maintain isolation between
+UDNs</a>, node BGP
+speakers do not accept routes to pod subnets by default. However, to route
+east-west traffic in no-overlay mode, these routes must be imported to the host
+routing table.</p>
+<h5 id="gateway-router">Gateway Router<a class="headerlink" href="#gateway-router" title="Permanent link">¶</a></h5>
+<p>Currently, BGP routes to other pod subnets are not imported into the gateway
+router, which ensures node-to-pod traffic traverses the OVN logical topology.
+However, we need the routes to be imported into the gateway router in no-overlay
+mode. We need to update the route import controller to check whether a network
+is in no-overlay mode and import the routes from the host routing table if so.</p>
+<h4 id="configurable-snat-for-egress-traffic">Configurable SNAT for Egress Traffic<a class="headerlink" href="#configurable-snat-for-egress-traffic" title="Permanent link">¶</a></h4>
+<p>By default, the OVN-Kubernetes BGP feature disables SNAT for all pod egress
+traffic when the pod network is advertised. The only exception is traffic
+destined to other nodes in the cluster (pod-to-node), which remains SNATed to
+the node IP to ensure nodePort services can be accessed across networks.</p>
+<p>However, this default behavior assumes all external destinations can route back
+to the pod IPs. This assumption fails for destinations reached via non-BGP
+routers (such as a default gateway). To address this, we introduce configurable
+SNAT behavior via:</p>
+<ul>
+<li><code>outboundSNAT</code> field in the ClusterUserDefinedNetwork CRD for CUDNs</li>
+<li><code>outbound-snat</code> flag in the <code>[no-overlay]</code> configuration section for the
+  default network</li>
+</ul>
+<p><strong>SNAT Behavior:</strong></p>
+<ul>
+<li>
+<p><strong><code>outboundSNAT: Disabled</code></strong> (or <code>outbound-snat=disabled</code>): Pod egress traffic
+  is not SNATed. Pod IPs must be routable on the external network.</p>
+</li>
+<li>
+<p><strong><code>outboundSNAT: Enabled</code></strong> (or <code>outbound-snat=enabled</code>): Pod egress traffic
+  to external destinations is SNATed to the node IP. This is intended for
+  deployments where pod networks are only advertised to an internal BGP fabric
+  and are not routable from external networks.</p>
+</li>
+</ul>
+<p><strong>Important:</strong> Regardless of this setting, pod-to-remote-pod traffic within the
+same network is never SNATed, while traffic to remote nodes, the Kubernetes API
+server, and DNS is always SNATed.</p>
+<h5 id="shared-gateway-mode">Shared Gateway Mode<a class="headerlink" href="#shared-gateway-mode" title="Permanent link">¶</a></h5>
+<p>When <code>outboundSNAT</code> is disabled, the existing BGP feature behavior is preserved:
+pod egress traffic is not SNATed (see <a href="../okep-5296-bgp/#route-advertisements">OKEP-5296</a>
+for details).</p>
+<p>When <code>outboundSNAT</code> is enabled, the gateway router maintains the default SNAT
+rule for pod-to-external traffic while exempting pod-to-remote-pod traffic. To
+achieve this, the network controllers in ovnkube-controller create an address
+set containing the pod subnets for each CUDN and the default network, then add
+an exemption rule using this address set.</p>
+<p>The implementation uses the <code>exempted_ext_ips</code> field rather than adding a
+negative match to the <code>match</code> field because negative matches in OVN SNAT rules
+are inefficient. Using <code>exempted_ext_ips</code> results in one OpenFlow rule per pod
+SNAT entry in the OVS bridge, providing better performance.</p>
+<p>In the following example, <code>10.128.0.0/24</code> is the pod subnet in the local node,
+<code>10.128.0.0/16</code> is the CIDR of the pod network. <code>outboundSNAT</code> is enabled.</p>
+<div class="highlight"><pre><span></span><code># Address_Set for the no-overlay pod network CIDR
+_uuid               : a718588e-0a9b-480e-9adb-2738e524b82d
+addresses           : ["10.128.0.0/16"]
+external_ids        : {ip-family=v4}
+name                : a15397791517117706455
+
+# per-pod SNAT rule in the Gateway Router (exclude pod-network destinations)
+_uuid               : cd9264de-f2c6-4528-8f53-c2ccb5b23c8d
+allowed_ext_ips     : []
+exempted_ext_ips    : ["a15397791517117706455"] # Exclude traffic to the pod Network
+external_ids        : {}
+external_ip         : "172.18.0.2"            # Node/GR external IP used for SNAT for the default network, or a Masquerade IP for a CUDN.
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "10.128.0.7"            # The local pod IP
+logical_port        : []
+match               : ""                      # SNAT all non-exempt destinations (node and external)
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+</code></pre></div>
+<p>For UDN, the behavior is similar. The UDN controller will create an address set
+for the UDN pod subnet and add an exemption rule to the Gateway Router of that
+UDN.</p>
+<p>In the following example, <code>10.10.1.0/24</code> is the pod subnet in the local node,
+<code>10.10.0.0/16</code> is the CIDR of the pod network. <code>outboundSNAT</code> is enabled.</p>
+<div class="highlight"><pre><span></span><code># Address_Set for the no-overlay UDN pod network CIDR
+_uuid               : a718588e-0a9b-480e-9adb-2738e524b85d
+addresses           : ["10.10.0.0/16"]
+external_ids        : {ip-family=v4}
+name                : a15397791517117706478
+
+# per-pod SNAT rule in the Gateway Router (exclude pod-network destinations)
+_uuid               : 5f72b7a5-e7fc-4d14-8dbf-70d5ba304452
+allowed_ext_ips     : []
+exempted_ext_ips    : ["a15397791517117706478"] # Exclude traffic to the pod Network
+external_ids        : {"k8s.ovn.org/network"=cluster_udn_e2e-test-bgp-1, "k8s.ovn.org/topology"=layer3}
+external_ip         : "169.254.0.12"            # Masquerade IP for the CUDN
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "10.10.1.0/24"            # The local pod subnet
+logical_port        : []
+match               : ""                        # SNAT all non-exempt destinations (node and external)
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+</code></pre></div>
+<h5 id="local-gateway-mode">Local Gateway Mode<a class="headerlink" href="#local-gateway-mode" title="Permanent link">¶</a></h5>
+<p>When <code>outboundSNAT</code> is disabled, the existing BGP feature behavior is preserved:
+pod egress traffic is not SNATed (see <a href="../okep-5296-bgp/#route-advertisements">OKEP-5296</a>
+for details).</p>
+<p>When <code>outboundSNAT</code> is enabled for the default network, pod egress traffic is
+forwarded to the host kernel by the ovn-cluster-router, where it is then SNATed
+to the node IP using nftables rules.</p>
+<p>In the following example, <code>10.128.0.0/24</code> is the pod subnet in the local node,
+<code>10.128.0.0/16</code> is the CIDR of the pod network. <code>outboundSNAT</code> is enabled for
+the network.</p>
+<div class="highlight"><pre><span></span><code>table ip nat {
+    chain postrouting {
+        type nat hook postrouting priority 100; policy accept;
+        # skip SNAT for pod-to-pod traffic
+        ip saddr 10.128.0.0/24 ip daddr 10.128.0.0/16 return
+        ip saddr 10.128.0.0/24 masquerade
+    }
+}
+</code></pre></div>
+<p>For UDN, before the pod egress traffic entering the host kernel, the
+ovn-cluster-router will perform a SNAT first to change source IP to the UDN
+masquerade IP. So instead of changing the nftables rules. The UDN controller in
+the ovnkube-controller will modify the SNAT rule in the ovn-cluster-router.</p>
+<p>In the following example, <code>10.10.1.0/24</code> is the pod subnet in the local node,
+<code>10.10.0.0/16</code> is the CIDR of the pod network. <code>outboundSNAT</code> is enabled for
+the network.</p>
+<div class="highlight"><pre><span></span><code># Address_Set for the no-overlay pod network CIDR
+_uuid               : a718588e-0a9b-480e-9adb-2738e524b85d
+addresses           : ["10.10.0.0/16"]
+external_ids        : {ip-family=v4}
+name                : a15397791517117706478
+
+# per-pod SNAT rule in the ovn-cluster-router (exclude pod-network destinations)
+_uuid               : 5f72b7a5-e7fc-4d14-8dbf-70d5ba304452
+allowed_ext_ips     : []
+exempted_ext_ips    : ["a15397791517117706478"] # Exclude traffic to the pod Network
+external_ids        : {"k8s.ovn.org/network"=cluster_udn_e2e-test-bgp-1, "k8s.ovn.org/topology"=layer3}
+external_ip         : "169.254.0.12"
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "10.10.1.0/24"
+logical_port        : rtos-cluster_udn_e2e.test.bgp.1_ovn-worker
+match               : ""                        # SNAT all non-exempt destinations (node and external)
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+</code></pre></div>
+<h4 id="udn-traffic-isolation">UDN Traffic Isolation<a class="headerlink" href="#udn-traffic-isolation" title="Permanent link">¶</a></h4>
+<p>Currently, for inter-UDN pod-to-pod traffic, OVN-Kubernetes supports 2 modes:
+loose and strict. In the strict mode, inter-UDN traffic is blocked by ACL rule
+defined in the node switch. In no-overlay mode, this isolation mode will still
+operate in the same way.</p>
+<p>In the loose mode, inter-UDN traffic is allowed to be routed by external
+routers. However, loose mode can be broken when multiple CUDNs are advertised to
+the same VRF. Because routes to pod subnets are learned by the host routing
+table and then imported into the gateway router, OVN-Kubernetes may route
+inter-UDN traffic directly, which violates the intended loose-mode behavior. We
+may address this limitation in the future by generating additional import-filter
+rules via FRR-K8s. One workaround is to use either eBGP on their external router,
+or iBGP with <code>next-hop-self</code> to ensure that inter-UDN traffic is routed by an
+external router instead of the node.</p>
+<h3 id="workflow">Workflow<a class="headerlink" href="#workflow" title="Permanent link">¶</a></h3>
+<h4 id="enable-no-overlay-mode-for-the-default-network-with-unmanaged-routing">Enable No-overlay Mode for the Default Network with Unmanaged Routing<a class="headerlink" href="#enable-no-overlay-mode-for-the-default-network-with-unmanaged-routing" title="Permanent link">¶</a></h4>
+<ol>
+<li>The frr-k8s pods shall be deployed on each node.</li>
+<li>
+<p>The cluster admin shall create a base FRRConfiguration CR that is used for
+   generating the per-node FRRConfiguration instances by OVN-Kubernetes.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">external-rr</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">neighbors</span><span class="p">:</span>
+<span class="w">      </span><span class="c1"># the external BGP route reflector</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">172.20.0.2</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">            </span><span class="nt">prefixes</span><span class="p">:</span>
+<span class="w">            </span><span class="c1"># accept pod subnets of the default network explicitly</span>
+<span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">prefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.128.0.0/16</span>
+<span class="w">              </span><span class="nt">ge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+</code></pre></div>
+</li>
+<li>
+<p>The cluster admin shall create a RouteAdvertisements CR to advertise the
+   default network. Make sure the RouteAdvertisements CR selects the
+   FRRConfiguration defined in the previous step.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RouteAdvertisements</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">advertisements</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PodNetwork</span>
+<span class="w">  </span><span class="c1"># Select the FRRConfiguration defined in step-2 with the custom label.</span>
+<span class="w">  </span><span class="nt">frrConfigurationSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchLabels</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">networkSelectors</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">networkSelectionType</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DefaultNetwork</span>
+<span class="w">  </span><span class="c1"># The empty nodeSelector selects all nodes. We don't support a network in an overlay and no-overlay hybrid mode.</span>
+<span class="w">  </span><span class="nt">nodeSelector</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+</code></pre></div>
+</li>
+<li>
+<p>The cluster admin enables no-overlay mode by running ovn-kubernetes with
+   config file below:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[default]</span>
+<span class="na">transport</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">no-overlay</span>
+
+<span class="k">[no-overlay]</span>
+<span class="na">routing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">unmanaged</span>
+<span class="na">outbound-snat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">disabled</span>
+</code></pre></div>
+</li>
+<li>
+<p>The default network controller in ovnkube-controller will create the OVN
+   virtual topology for the default network. Neither the transit switch nor the
+   static routes to remote pod subnets will be created.</p>
+</li>
+<li>
+<p>The default network controller in ovnkube-cluster-manager shall watch the
+   RouteAdvertisements CRs. It shall ensure at least one RouteAdvertisements CR
+   is correctly configured to advertise the pod networks and will validate the
+   RouteAdvertisements CR status. If the RouteAdvertisements CR is missing or
+   its status is not accepted, it shall report event and log an error message.</p>
+</li>
+<li>
+<p>The BGP feature is responsible for exchanging BGP routes to remote pod
+   subnets between nodes. Ultimately, these routes will be imported into the
+   gateway router.</p>
+</li>
+</ol>
+<h4 id="enable-no-overlay-mode-for-the-default-network-with-managed-routing">Enable No-overlay Mode for the Default Network with Managed Routing<a class="headerlink" href="#enable-no-overlay-mode-for-the-default-network-with-managed-routing" title="Permanent link">¶</a></h4>
+<ol>
+<li>
+<p>The frr-k8s pods shall be deployed on each node.</p>
+</li>
+<li>
+<p>In the Managed routing mode, the default network controller in
+   ovnkube-cluster-manager will create the RouteAdvertisements CR. A new
+   FRRConfiguration controller will be responsible for creating the base
+   FRRConfiguration CR which sets up the cluster internal BGP fabric. The
+   cluster admin only needs to start ovn-kubernetes with the following flags:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[default]</span>
+<span class="na">transport</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">no-overlay</span>
+
+<span class="k">[no-overlay]</span>
+<span class="na">routing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">managed</span>
+<span class="na">outbound-snat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">enabled</span>
+
+<span class="k">[bgp-managed]</span>
+<span class="na">topology</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">full-mesh</span>
+<span class="na">as-number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">64514</span>
+</code></pre></div>
+</li>
+<li>
+<p>The default network controller in ovnkube-cluster-manager will create a base
+   FRRConfiguration CR in the <code>frr-k8s-system</code> namespace, and a
+   RouteAdvertisements CR that advertises the default network. The generated
+   FRRConfiguration will configure BGP speakers on each node to advertise the
+   pod subnets and set up a full-mesh iBGP topology where each node peers with
+   all other nodes in the cluster.</p>
+</li>
+</ol>
+<p>When nodes are added or removed, the FRRConfiguration controller shall update
+   the base FRRConfiguration CR, and the per-node FRRConfiguration instances
+   accordingly.</p>
+<p>For example, if the cluster has 3 nodes with pod subnets <code>10.128.0.0/24</code>,
+   <code>10.128.1.0/24</code>, and <code>10.128.2.0/24</code>. The generated RouteAdvertisements CR
+   will look like:</p>
+<div class="highlight"><pre><span></span><code>```yaml
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: ovnk-managed-&lt;hash&gt;
+spec:
+  advertisements:
+  - PodNetwork
+  frrConfigurationSelector:
+    matchLabels:
+      k8s.ovn.org/managed-internal-fabric: bgp # Selects the base FRRConfiguration CR managed by OVN-Kubernetes
+  networkSelectors:
+  - networkSelectionType: DefaultNetwork
+  nodeSelector: {}
+```
+
+And the generated base FRRConfiguration CR for a full mesh BGP topology
+will look like:
+
+```yaml
+apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  name: ovnk-managed-&lt;hash&gt;
+  namespace: frr-k8s-system
+  labels:
+    k8s.ovn.org/managed-internal-fabric: bgp # This label is set on FRRConfigurations managed by OVN-Kubernetes to configure the internal fabric
+spec:
+  bgp:
+    routers:
+    - asn: 64514
+      neighbors:
+      # BGP peers with other nodes
+      - address: &lt;node1-ip&gt;
+        asn: 64514
+        toReceive:
+          # Allow to receive the routes to remote pod subnets.
+          # This is no-overlay specific behavior.
+          allowed:
+            prefixes:
+            - ge: 24
+              le: 24
+              prefix: 10.128.0.0/16
+      - address: &lt;node2-ip&gt;
+        asn: 64514
+        toReceive:
+          allowed:
+            prefixes:
+            - ge: 24
+              le: 24
+              prefix: 10.128.0.0/16
+      - address: &lt;node3-ip&gt;
+        asn: 64514
+        toReceive:
+          allowed:
+            prefixes:
+            - ge: 24
+              le: 24
+              prefix: 10.128.0.0/16
+```
+</code></pre></div>
+<p>The following steps are the same as steps 5 to 7 in the previous section.</p>
+<h4 id="create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-unmanaged-routing">Create a ClusterUserDefinedNetwork in No-overlay Mode with Unmanaged Routing<a class="headerlink" href="#create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-unmanaged-routing" title="Permanent link">¶</a></h4>
+<p>Here is a configuration example:</p>
+<ol>
+<li>The frr-k8s pods shall be deployed on each node.</li>
+<li>
+<p>A cluster admin wants to enable no-overlay mode for the blue network by
+   creating the following ClusterUserDefinedNetwork CR.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchExpressions</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
+<span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
+<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"ns1"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ns2"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer3</span>
+<span class="w">    </span><span class="nt">layer3</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">      </span><span class="c1"># The UDN MTU shall not be larger than the provider network's MTU.</span>
+<span class="w">      </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1500</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.10.0.0/16</span>
+<span class="w">        </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlay"</span>
+<span class="w">    </span><span class="nt">noOverlayOptions</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">outboundSNAT</span><span class="p">:</span><span class="w"> </span><span class="s">"Disabled"</span>
+<span class="w">      </span><span class="nt">routing</span><span class="p">:</span><span class="w"> </span><span class="s">"Unmanaged"</span>
+</code></pre></div>
+</li>
+<li>
+<p>The cluster admin has created an FRRConfiguration CR to peer with an external
+   BGP router <code>182.18.0.5</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="w">  </span><span class="c1"># A custom label</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="nt">neighbors</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">182.18.0.5</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">holdTime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1m30s</span>
+<span class="w">        </span><span class="nt">keepaliveTime</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30s</span>
+<span class="w">        </span><span class="nt">passwordSecret</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">        </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">179</span>
+<span class="w">        </span><span class="nt">toAdvertise</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="c1"># Allow to accept the routes to remote pod subnets.</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filtered</span>
+<span class="w">            </span><span class="nt">prefixes</span><span class="p">:</span>
+<span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">ge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">              </span><span class="nt">le</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">              </span><span class="nt">prefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.10.0.0/16</span>
+</code></pre></div>
+</li>
+<li>
+<p>The cluster admin advertises the CUDN pod network. In this example, the
+   <code>targetVRF</code> is not set, meaning routes to the pod networks will be advertised
+   to the default VRF.</p>
+</li>
+</ol>
+<p>If users want to advertise the pod networks to a specific VRF or deploy
+   VRF-lite they can set the <code>targetVRF</code> field in the RouteAdvertisements CR.</p>
+<div class="highlight"><pre><span></span><code>```yaml
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: blue
+spec:
+  # nodeSelector must be empty, since we don't support a network in an overlay and no-overlay hybrid mode.
+  nodeSelector: {}
+  frrConfigurationSelector:
+    matchLabels:
+    # Select the FRRConfiguration defined in step-3
+    network: blue
+  networkSelectors:
+  - networkSelectionType: ClusterUserDefinedNetwork
+    clusterUserDefinedNetworkSelector:
+      networkSelector:
+        matchLabels:
+          # Select the CUDN defined in step-2
+          network: blue
+  advertisements:
+  - PodNetwork
+```
+</code></pre></div>
+<ol>
+<li>
+<p>The UDN controller in ovnkube-controller will create the OVN virtual topology
+   for the UDN. Neither the transit switch nor the static routes to remote pod
+   subnets will be created.</p>
+</li>
+<li>
+<p>The UDN controller in ovnkube-cluster-manager will watch the
+   RouteAdvertisements events to check whether at least one RouteAdvertisements
+   CR is correctly configured to advertise the pod networks and its status is
+   <code>Accepted</code>. The UDN controller will update the status condition
+   <code>TransportAccepted</code> accordingly.</p>
+</li>
+<li>
+<p>The BGP feature is responsible for exchanging BGP routes to remote pod
+   subnets between nodes. Ultimately, these routes will be imported into the
+   gateway router.</p>
+</li>
+</ol>
+<h4 id="create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-managed-routing">Create a ClusterUserDefinedNetwork in No-overlay Mode with Managed Routing<a class="headerlink" href="#create-a-clusteruserdefinednetwork-in-no-overlay-mode-with-managed-routing" title="Permanent link">¶</a></h4>
+<ol>
+<li>
+<p>The frr-k8s pods shall be deployed on each node.</p>
+</li>
+<li>
+<p>In the Managed routing mode, a new FRRConfiguration controller will be
+   responsible for creating the base FRRConfiguration CR which sets up the
+   cluster internal BGP fabric. The cluster admin only needs to start
+   ovn-kubernetes with the following flags:</p>
+<div class="highlight"><pre><span></span><code><span class="k">[bgp-managed]</span>
+<span class="na">topology</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">full-mesh</span>
+<span class="na">as-number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">64514</span>
+</code></pre></div>
+</li>
+</ol>
+<p>The generated FRRConfiguration will be the same as the one described in the
+   managed default network section.</p>
+<ol>
+<li>
+<p>A cluster admin wants to enable no-overlay mode for the blue network by
+   creating the following ClusterUserDefinedNetwork CR.</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">k8s.ovn.org/v1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ClusterUserDefinedNetwork</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">blue</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">namespaceSelector</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">matchExpressions</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kubernetes.io/metadata.name</span>
+<span class="w">      </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">In</span>
+<span class="w">      </span><span class="nt">values</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"ns1"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"ns2"</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">topology</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Layer3</span>
+<span class="w">    </span><span class="nt">layer3</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Primary</span>
+<span class="w">      </span><span class="c1"># The UDN MTU shall not be larger than the provider network's MTU.</span>
+<span class="w">      </span><span class="nt">mtu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1500</span>
+<span class="w">      </span><span class="nt">subnets</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cidr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.10.0.0/16</span>
+<span class="w">        </span><span class="nt">hostSubnet</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24</span>
+<span class="w">    </span><span class="nt">transport</span><span class="p">:</span><span class="w"> </span><span class="s">"NoOverlay"</span>
+<span class="w">    </span><span class="nt">noOverlayOptions</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">outboundSNAT</span><span class="p">:</span><span class="w"> </span><span class="s">"Enabled"</span>
+<span class="w">      </span><span class="nt">routing</span><span class="p">:</span><span class="w"> </span><span class="s">"Managed"</span>
+</code></pre></div>
+</li>
+<li>
+<p>The UDN controller in ovnkube-cluster-manager will create a
+   RouteAdvertisements CR that advertises the blue network.</p>
+</li>
+</ol>
+<p>The generated RouteAdvertisements CR will look like:</p>
+<div class="highlight"><pre><span></span><code>```yaml
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: ovnk-managed-&lt;hash&gt;
+spec:
+  advertisements:
+  - PodNetwork
+  frrConfigurationSelector:
+    matchLabels:
+      k8s.ovn.org/managed-internal-fabric: bgp # Selects the base FRRConfiguration CR managed by OVN-Kubernetes
+  networkSelectors:
+  - networkSelectionType: ClusterUserDefinedNetwork
+    clusterUserDefinedNetworkSelector:
+      networkSelector:
+        matchLabels:
+          network: blue
+  nodeSelector: {}
+```
+</code></pre></div>
+<p>The following steps are the same as steps 5 to 7 in the previous section.</p>
+<h3 id="deployment-considerations">Deployment Considerations<a class="headerlink" href="#deployment-considerations" title="Permanent link">¶</a></h3>
+<h4 id="bgp-topology">BGP Topology<a class="headerlink" href="#bgp-topology" title="Permanent link">¶</a></h4>
+<p>The selected <code>FRRConfiguration</code> CR determines the deployment mode for the
+no-overlay network. There will be no new field added to the FRRConfiguration.
+The goal is to exchange the routes to the pod subnets across the cluster. The
+possible BGP topologies are varied. Users shall be able to choose any topology
+that is most suitable for their use case. However, frr and frr-k8s may not
+support some BGP features. Here we list some common deployment options.</p>
+<h5 id="ebgp-peering-with-external-routers">eBGP Peering with External Routers<a class="headerlink" href="#ebgp-peering-with-external-routers" title="Permanent link">¶</a></h5>
+<p>A common deployment model is to use eBGP to peer each node with an external BGP
+speaker, such as a Top-of-Rack (ToR) switch. This approach is often preferred in
+enterprise environments as it provides clear Autonomous System (AS) boundaries
+and allows for more advanced routing policies (e.g., AS path prepending, MEDs,
+and filtering based on AS paths).</p>
+<p>In this topology, the FRR instance on each node establishes an eBGP session with
+its upstream router. The upstream routers are then responsible for advertising
+the node subnet routes to the rest of the network. It is also possible for
+different groups of nodes (e.g. nodes in different racks) to belong to different
+Autonomous Systems.</p>
+<pre class="mermaid"><code>graph LR
+    subgraph AS 65002 [AS 65002: Rack 1]
+        direction LR
+        NodeA(Node A)
+        NodeB(Node B)
+    end
+    subgraph AS 65003 [AS 65003: Rack 2]
+        direction LR
+        NodeC(Node C)
+    end
+    subgraph AS 65001 [AS 65001: External Network]
+        direction LR
+        ToR1(ToR Switch 1)
+        ToR2(ToR Switch 2)
+    end
+    NodeA &lt;-- eBGP --&gt; ToR1
+    NodeB &lt;-- eBGP --&gt; ToR1
+    NodeC &lt;-- eBGP --&gt; ToR2
+    ToR1  &lt;-- iBGP --&gt; ToR2
+</code></pre>
+<h5 id="full-mesh-ibgp-across-the-cluster">Full-Mesh iBGP across the Cluster<a class="headerlink" href="#full-mesh-ibgp-across-the-cluster" title="Permanent link">¶</a></h5>
+<p>The FRR instance on each node maintains a full-mesh BGP peer relationship with
+all other nodes across the cluster. In this mode, users can enable no-overlay
+mode without relying on external BGP routes. Enabling <code>outboundSNAT</code> for the
+no-overlay network allows pod egress traffic to be SNATed to the node IP,
+enabling communication with external destinations even when the pod network is
+not advertised externally.</p>
+<p>This is particularly useful in smaller clusters or in environments where
+external BGP speakers are not available. However, it is important to note that a
+full-mesh iBGP setup can lead to increased CPU and memory consumption on the
+nodes, as each node must maintain a session with every other node.</p>
+<pre class="mermaid"><code>graph LR
+    subgraph AS 64512 [ AS 64512 ]
+      direction LR
+      A(Node A)
+      B(Node B)
+      C(Node C)
+      A &lt;-- iBGP --&gt; B
+      B &lt;-- iBGP --&gt; C
+      C &lt;-- iBGP --&gt; A
+    end
+</code></pre>
+<p>Here's an example FRRConfiguration:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frrk8s.metallb.io/v1beta1</span>
+<span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FRRConfiguration</span>
+<span class="nt">metadata</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">labels</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">network</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">receive-all</span>
+<span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">frr-k8s-system</span>
+<span class="nt">spec</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">bgp</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">routers</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">      </span><span class="c1"># All nodes are added as neighbors to setup a full-mesh BGP topology</span>
+<span class="w">      </span><span class="nt">neighbors</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.111.20</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">all</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.111.21</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">all</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">address</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.111.22</span>
+<span class="w">        </span><span class="nt">asn</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">64512</span>
+<span class="w">        </span><span class="nt">disableMP</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">        </span><span class="nt">toReceive</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">allowed</span><span class="p">:</span>
+<span class="w">            </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">all</span>
+</code></pre></div>
+<h5 id="external-route-reflectors-for-larger-clusters">External Route Reflectors for Larger Clusters<a class="headerlink" href="#external-route-reflectors-for-larger-clusters" title="Permanent link">¶</a></h5>
+<p>In a large cluster, a full-mesh BGP setup leads to more CPU and memory
+consumption on the nodes. Instead of every node peering with every other node,
+nodes peer only with external BGP route reflectors. This significantly reduces
+the number of BGP sessions each node needs to maintain, improving scalability.</p>
+<pre class="mermaid"><code>graph TD
+    subgraph AS 64512 [ AS 64512 ]
+        direction LR
+        subgraph "Route Reflector"
+            RR1(Route Reflector 1)
+        end
+        subgraph "Kubernetes Nodes"
+            NodeA(Node A)
+            NodeB(Node B)
+            NodeC(Node C)
+        end
+    end
+    NodeA &lt;-- iBGP --&gt; RR1
+    NodeB &lt;-- iBGP --&gt; RR1
+    NodeC &lt;-- iBGP --&gt; RR1
+</code></pre>
+<p>Users can also force the BGP routes to use the route reflector as the next hop
+by setting the <code>next-hop-self force</code> option on the iBGP neighbors. Such
+configuration can be used together with the UDN isolation loose mode to prevent
+inter-UDN traffic from being routed by the node.</p>
+<p>Here is an example of how to configure the iBGP neighbors on FRR routers:</p>
+<div class="highlight"><pre><span></span><code>  neighbor 172.18.0.2 activate
+  neighbor 172.18.0.2 route-reflector-client
+  neighbor 172.18.0.2 next-hop-self force
+</code></pre></div>
+<h3 id="feature-compatibility">Feature Compatibility<a class="headerlink" href="#feature-compatibility" title="Permanent link">¶</a></h3>
+<h4 id="multiple-external-gateways-meg">Multiple External Gateways (MEG)<a class="headerlink" href="#multiple-external-gateways-meg" title="Permanent link">¶</a></h4>
+<p>MEG cannot work with advertised networks, therefore MEG cannot work with
+networks operating in the no-overlay mode either.</p>
+<h4 id="egress-ip">Egress IP<a class="headerlink" href="#egress-ip" title="Permanent link">¶</a></h4>
+<p>Not supported.</p>
+<h4 id="services">Services<a class="headerlink" href="#services" title="Permanent link">¶</a></h4>
+<p>MetalLB will still be used in order to advertise services across the BGP fabric.</p>
+<h4 id="egress-service">Egress Service<a class="headerlink" href="#egress-service" title="Permanent link">¶</a></h4>
+<p>Not supported.</p>
+<h4 id="egress-firewall">Egress Firewall<a class="headerlink" href="#egress-firewall" title="Permanent link">¶</a></h4>
+<p>Full support.</p>
+<h4 id="egress-qos">Egress QoS<a class="headerlink" href="#egress-qos" title="Permanent link">¶</a></h4>
+<p>Full support.</p>
+<h4 id="network-policyanp">Network Policy/ANP<a class="headerlink" href="#network-policyanp" title="Permanent link">¶</a></h4>
+<p>Full support.</p>
+<h4 id="ipsec">IPsec<a class="headerlink" href="#ipsec" title="Permanent link">¶</a></h4>
+<p>Not supported.</p>
+<h4 id="multicast">Multicast<a class="headerlink" href="#multicast" title="Permanent link">¶</a></h4>
+<p>Not supported.</p>
+<p>OVN does not support routing multicast traffic to external networks. OVN logical
+routers only support forwarding multicast traffic between logical switches. It
+cannot exchange PIM messages with external routers. Additionally, FRR-K8s does
+not currently support configuring the FRR multicast functions (IGMP/MLD, PIM,
+etc.). Therefore, multicast is not supported in no-overlay mode.</p>
+<h4 id="userdefinednetworks-connect">UserDefinedNetworks Connect<a class="headerlink" href="#userdefinednetworks-connect" title="Permanent link">¶</a></h4>
+<p>Not supported.</p>
+<h3 id="testing-details">Testing Details<a class="headerlink" href="#testing-details" title="Permanent link">¶</a></h3>
+<ul>
+<li>E2E Testing Details
+  The E2E tests shall cover the following combinations:</li>
+<li>Gateway Modes: LGW and SGW</li>
+<li>IP Modes: IPv4, IPv6, and dual-stack</li>
+<li>BGP Topologies: iBGP with an external route reflector, full-mesh iBGP,
+    iBGP+eBGP combined and eBGP only.</li>
+<li>BGP VRF-lite with multiple CUDNs</li>
+<li>test suite: conformance, control-plane</li>
+<li>API Testing Details</li>
+<li>ClusterUserDefinedNetwork CR reports expected status conditions</li>
+<li>No-overlay mode cannot be enabled for UserDefinedNetworks</li>
+<li>Scale Testing Details</li>
+<li>The impact of the number of the imported BGP routes</li>
+<li>Performance Testing Details</li>
+<li>Test pod-to-pod throughput and latency</li>
+<li>Cross-Feature Testing Details - coverage for interaction with other features</li>
+<li>UDN isolation between UDNs in no-overlay mode<ul>
+<li>Default mode</li>
+<li>Loose mode</li>
+</ul>
+</li>
+<li>NetworkPolicy</li>
+<li>EgressFirewall</li>
+</ul>
+<h2 id="risks-known-limitations-and-mitigations">Risks, Known Limitations and Mitigations<a class="headerlink" href="#risks-known-limitations-and-mitigations" title="Permanent link">¶</a></h2>
+<h3 id="risks">Risks<a class="headerlink" href="#risks" title="Permanent link">¶</a></h3>
+<p>In the no-overlay mode, east-west traffic relies on the BGP network. Therefore,
+internal and external BGP speaker outages may impact cluster networking.</p>
+<p>The no-overlay mode inherits all limitations from the BGP integration feature.
+Consequently, multicast is not supported in no-overlay mode.</p>
+<p>As OVN is no longer delivering pod-to-pod traffic end-to-end, it will
+necessitate BGP knowledge for debugging.</p>
+<h3 id="known-limitations">Known Limitations<a class="headerlink" href="#known-limitations" title="Permanent link">¶</a></h3>
+<ul>
+<li>
+<p>Features that rely on OVN to deliver pod-to-pod traffic, such as IPSec,
+  EgressIP and EgressService, are not supported in no-overlay mode.
+  OVN-Kubernetes will report an event/warning.</p>
+</li>
+<li>
+<p>When users configure egress IP or egress service for no-overlay networks,
+  OVN-Kubernetes won't block the configuration or set a status condition to the
+  EgressIP or EgressService CR. As we believe such feature compatibility issues
+  are not no-overlay specific, it should be designed and addressed
+  comprehensively in future enhancements.</p>
+</li>
+<li>
+<p>The UDN loose mode isolation will be broken if multiple no-overlay UDNs are
+  advertised to the same VRF. Before this issue is resolved, if the user wants
+  to use loose mode with no-overlay, then they should either use eBGP on their
+  external router, or iBGP with next-hop-self to ensure that inter-UDN traffic
+  is routed by an external router instead of the node. However, the drawback of
+  this workaround is that all the intra-UDN traffic will be routed by the
+  external router too, which may add extra latency and increase the load on the
+  external router.</p>
+</li>
+<li>
+<p>The managed routing mode uses a full-mesh BGP topology where each node peers
+  with all other nodes in the cluster. This approach does not scale well for
+  large clusters, as the number of BGP sessions grows quadratically (N*(N-1)/2
+  sessions for N nodes), leading to increased CPU and memory consumption on each
+  node. For large-scale deployments, users should consider using the unmanaged
+  routing mode with external route reflectors or other scalable BGP topologies.</p>
+</li>
+<li>
+<p>Changing the transport type between Geneve and no-overlay for the cluster
+  default network is not supported. Users must create a new cluster with the
+  desired transport type configured at installation time.</p>
+</li>
+</ul>
+<h2 id="ovn-kubernetes-version-skew">OVN Kubernetes Version Skew<a class="headerlink" href="#ovn-kubernetes-version-skew" title="Permanent link">¶</a></h2>
+<p>To be discussed.</p>
+<h2 id="alternatives">Alternatives<a class="headerlink" href="#alternatives" title="Permanent link">¶</a></h2>
+<p>N/A</p>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ol>
+<li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/okeps/okep-5296-bgp.md">OKEP-5296: OVN-Kubernetes BGP Integration</a></li>
+<li><a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/okeps/okep-5193-user-defined-networks.md">OKEP-5193: User Defined Network Segmentation</a></li>
+</ol>
+</article>
+</div>
+<script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+<div class="md-copyright__highlight">
+      Copyright © OVN-Kubernetes a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">LF Projects Policies</a>.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+<script src="../../javascripts/gemini-api-key.js"></script>
+<script src="../../javascripts/theme.js"></script>
+<script src="../../javascripts/extra.js"></script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+window.mermaidConfig = {default: {
+    startOnLoad: false
+}};</script></body>
+</html>

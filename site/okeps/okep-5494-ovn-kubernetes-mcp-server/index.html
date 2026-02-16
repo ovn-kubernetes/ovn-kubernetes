@@ -1,0 +1,4697 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/okeps/okep-5494-ovn-kubernetes-mcp-server/">
+      
+      
+        <link rel="prev" href="../okep-5094-layer2-transit-router/">
+      
+      
+        <link rel="next" href="../okep-5552-dynamic-udn-node-allocation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/ovn-inside-k8s.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+    
+    
+      
+        <title>MCP for Troubleshooting - OVN-Kubernetes</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#okep-5494-model-context-protocol-for-troubleshooting-ovn-kubernetes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="OVN-Kubernetes" class="md-header__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+      
+  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            OVN-Kubernetes
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              MCP for Troubleshooting
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="light-blue"  aria-label="Blueprint"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Blueprint" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.5 3A5.5 5.5 0 0 1 14 8.5c0 1.33-.47 2.55-1.26 3.5H21v9h-9v-8.26c-.95.79-2.17 1.26-3.5 1.26A5.5 5.5 0 0 1 3 8.5 5.5 5.5 0 0 1 8.5 3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="cyan" data-md-color-accent="purple"  aria-label="Nerve Center"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Nerve Center" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m19.07 4.93-1.41 1.41A8.01 8.01 0 0 1 20 12a8 8 0 0 1-8 8 8 8 0 0 1-8-8c0-4.08 3.05-7.44 7-7.93v2.02C8.16 6.57 6 9.03 6 12a6 6 0 0 0 6 6 6 6 0 0 0 6-6c0-1.66-.67-3.16-1.76-4.24l-1.41 1.41C15.55 9.9 16 10.9 16 12a4 4 0 0 1-4 4 4 4 0 0 1-4-4c0-1.86 1.28-3.41 3-3.86v2.14c-.6.35-1 .98-1 1.72a2 2 0 0 0 2 2 2 2 0 0 0 2-2c0-.74-.4-1.38-1-1.72V2h-1A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10c0-2.76-1.12-5.26-2.93-7.07"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../.." class="md-tabs__link">
+          
+  
+  
+    
+  
+  Overview
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../installation/launching-ovn-kubernetes-on-kind/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../governance/CONTRIBUTING/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api-reference/introduction/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../features/user-defined-networks/user-defined-networks/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Features
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../troubleshooting/debugging/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Troubleshooting
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../observability/metrics/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Observability
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../okep-5085-localnet-api/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Enhancement Proposals
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../blog/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Blog
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="OVN-Kubernetes" class="md-nav__button md-logo" aria-label="OVN-Kubernetes" data-md-component="logo">
+      
+  <img src="../../images/ovn-inside-k8s.png" alt="logo">
+
+    </a>
+    OVN-Kubernetes
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ovn-org/ovn-kubernetes" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ovn-org/ovn-kubernetes
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_1" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../.." class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_1" id="__nav_1_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Overview
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/topology/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Network Topology
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/gateway-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/traffic-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/pod-creation-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pod Creation Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/service-creation-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service Creation Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/service-traffic-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service Traffic Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/host-to-node-port-hairpin-trafficflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Host To NodePort Hairpin
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/external-ip-and-loadbalancer-ingress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ExternalIPs/LoadBalancerIngress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/ovn-kubernetes-subnets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internal Subnets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/live-migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/launching-ovn-kubernetes-on-kind/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/launching-ovn-kubernetes-with-helm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Launching OVN-Kubernetes Using Helm
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/cli-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/example-pod-creation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying Workloads on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/example-service-creation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying Services on OVN-Kubernetes cluster
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/building-ovn-kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup and Building
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../governance/CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../governance/REVIEWING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reviewing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/developer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/image-build/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN-Kubernetes Container Images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/documentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/local_testing_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ci/ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Testing Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-ip-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-service-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-qos-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/egress-firewall-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/admin-epbr-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AdminPolicyBasedExternalRoutes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/userdefinednetwork-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/routeadvertisements-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RouteAdvertisements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Features
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Features
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Connectivity
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Universal Connectivity
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/user-defined-networks/user-defined-networks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UserDefinedNetwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkSecurityControls
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkSecurityControls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-security-controls/admin-network-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AdminNetworkPolicy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-security-controls/network-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkPolicy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-security-controls/egress-firewall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressFirewall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ClusterEgressControls
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ClusterEgressControls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-ip/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressIP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-service/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressService
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-qos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/cluster-egress-controls/egress-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EgressGateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    InfrastructureSecurityControls
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    InfrastructureSecurityControls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/infrastructure-security-controls/node-identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NodeIdentity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MultiNetworking
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    MultiNetworking
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multiple-networks/multi-homing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multihoming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multiple-networks/multi-network-policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MultiNetworkPolicies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multiple-networks/multi-vtep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MultiNetworkRails
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/multicast/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multicast
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkQoS
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    NetworkQoS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-qos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/network-qos-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/live-migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubevirt VM Live Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hybrid-overlay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HybridOverlay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_10" id="__nav_5_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Acceleration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Hardware Acceleration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hardware-offload/ovs-kernel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVS Acceleration with kernel datapath
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/hardware-offload/ovs-doca/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVS Acceleration with DOCA datapath
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BGP Integration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    BGP Integration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../features/bgp-integration/route-advertisements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Route Advertisements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Troubleshooting
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/ovnkube-trace/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVNKube Trace
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/sdn-dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDN Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/ovn-observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OVN observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Enhancement Proposals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Enhancement Proposals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5085-localnet-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Localnet API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-4380-network-qos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Network QoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5193-user-defined-networks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Defined Networks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5233-preconfigured-udn-addresses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Preconfigured UDN Addresses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5296-bgp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BGP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5094-layer2-transit-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Layer2TransitRouter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP for Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5552-dynamic-udn-node-allocation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dynamic UDN Node Allocation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5224-connecting-udns/okep-5224-connecting-udns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connecting User Defined Networks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5259-no-overlay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No-Overlay Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5088-evpn/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EVPN
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../okep-5674-dpu-healthcheck/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DPU Healthcheck
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../blog/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blog
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Blog
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="okep-5494-model-context-protocol-for-troubleshooting-ovn-kubernetes">OKEP-5494: Model Context Protocol for Troubleshooting OVN-Kubernetes<a class="headerlink" href="#okep-5494-model-context-protocol-for-troubleshooting-ovn-kubernetes" title="Permanent link">&para;</a></h1>
+<h1 id="problem-statement">Problem Statement<a class="headerlink" href="#problem-statement" title="Permanent link">&para;</a></h1>
+<p>Diagnosing an issue in <a href="https://ovn-kubernetes.io/">OVN-Kubernetes</a> network
+plugin is complex because it has many layers (Kubernetes, OVN-Kubernetes, OVN,
+OpenvSwitch, Kernel - especially Netfilter elements). Usually the person
+troubleshooting an issue has to approach it in a layered fashion and has
+to be fully aware of all the debugging tools each layer has to offer to
+then be able to pin point where the problem is. That is time consuming
+and requires years of expertise on each depth of the stack and across all
+features. Sometimes it also involves working with the layered community
+project teams like OVN and OVS since they hold more knowledge about their
+domain than engineers working on the OVN-Kubernetes plugin. Each
+troubleshooting session to understand where the packet is getting
+blackholed or dropped takes a lot of time to solve (unless it's trivial).</p>
+<h1 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h1>
+<p>The goal of this enhancement is to try to improve "troubleshooting time",
+"tool usage/typing time" and "erase the need to know how to use each of those
+tools to a parameter level detail" by exposing these tools using
+<a href="https://modelcontextprotocol.io/docs/learn/architecture#overview">Model Context Protocol</a> (MCP)
+and leveraging the backend Model's (Claude Sonnet4, Gemini2.5Pro, GPT-5, etc)
+knowledge and context to troubleshoot issues on live clusters or locally on
+containers with end user's databases loaded. This can go a long
+way in speeding up bug triages.</p>
+<ul>
+<li>Phase1 targets only ovn-kubernetes community members as target audience</li>
+<li>Build an OVN-Kubernetes MCP Server(s) that exposes all the tools required
+  to troubleshoot OVN-Kubernetes network plugin<ul>
+<li>This MCP Server(s) must also be aware of where to run these tools to
+  troubleshoot the issue in question on a cluster (i.e Which node? Which
+  pod? Which container?)</li>
+</ul>
+</li>
+<li>Add support to load a MCP Server against not just a real-time cluster
+  but also against a simulated environment constructed from information bundle
+  gathered or other debugging information extracted from a live cluster.
+  Examples are <a href="https://github.com/openshift/must-gather">must-gather</a> and
+  <a href="https://github.com/sosreport/sos">sos-reports</a> and how tools like
+  <a href="https://github.com/gmeghnag/omc">omc</a> or <a href="https://github.com/ryran/xsos">xsos</a>
+  can be leveraged</li>
+<li>Ensure that the tools we expose have read only permissions. Whether this means
+  we restrict the tools itself with read rights only OR expose only read actions
+  via the tools is to be discussed in proposal section.</li>
+<li>Support troubleshooting all features for OVN-Kubernetes<ul>
+<li>We must have extensive failure scenario and chaos tests injected to see
+  how good LLM is able to troubleshoot</li>
+<li>We must form a list of all common ovn-kubernetes bugs we have hit across
+  features (example all possible ways of running into staleSNATs)</li>
+<li>We must add benchmarking tests for evaluating the quality of troubleshooting
+  specific to CNI Networking.</li>
+</ul>
+</li>
+</ul>
+<h1 id="future-goals">Future Goals<a class="headerlink" href="#future-goals" title="Permanent link">&para;</a></h1>
+<ul>
+<li>Phase2 targets end-users and others using OVN-Kubernetes to troubleshoot
+  issues</li>
+<li>Expand the MCP server to not just provide tools but also relevant context
+  around OVN-Kubernetes implementation</li>
+<li>Creating a RAGing system with all internal docs and integrating that with
+  the prompt client for better results (would require improving our docs
+  first). This is especially important for the LLM to know how OVN-Kubernetes
+  implements each traffic flow and feature and what constructs are created
+  underneath into the layers. This might not be needed for older features
+  like EgressIPs that has plenty of online resources but for newer features
+  like RouteAdvertisements, the LLM may not know much without providing that
+  extra context.</li>
+<li>Investigate if there is potential for converting it also into a remediation
+  system (this would need write access)</li>
+<li>Work with the Layered project community teams (OVN, OpenvSwitch, Kernel)
+  for each of those layers to also own an MCP server since they know their
+  stack better. So instead of 1 OVN-Kubernetes MCP Server it would be a
+  bunch of servers each owned by specific upstream community projects for
+  better maintenance and ownership</li>
+<li>The same MCP Server could also potentially be used as a
+  "OVN-Kubernetes network plugin - know it better" chatbot but that is not
+  the initial goal here.</li>
+</ul>
+<h1 id="future-stretch-goals">Future-Stretch-Goals<a class="headerlink" href="#future-stretch-goals" title="Permanent link">&para;</a></h1>
+<ul>
+<li>Phase3 includes this getting productized and shipped to end-users using
+  OVN-Kubernetes in some far fetched future to run it on production to
+  troubleshoot. But this would require:<ul>
+<li>Having a better overall architecture for the wholesome agentic AI
+  troubleshooting solution on a cluster</li>
+<li>Solving the compute problem of how and where to run the model</li>
+<li>Having an air tight security vetting.</li>
+</ul>
+</li>
+</ul>
+<p>Running this stack in production is out-of-scope for this OKEP; it is a
+  future-stretch goal contingent on security and testing milestones.</p>
+<h1 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h1>
+<ul>
+<li>We will not be solving the problem around which LLM should be used. Most of
+  the good ones (based on community member experience) were proprietary (claude sonnet4
+  and gemini2.5pro) but testing all LLMs and coming up with which works the
+  best is not in scope<ul>
+<li>By not solving this problem as part of this enhancement, we risk having
+  to deal with "long-context windows causing hallucinations" but that's
+  where RAGing mentioned in future goals could help.</li>
+</ul>
+</li>
+<li>We will also not be developing our own model to teach and maintain it<ul>
+<li>By not solving this problem, we also risk relying on proprietary models
+  knowing and learning what we want them to learn but having no control on
+  how fast they learn it. Again RAGing could help here.</li>
+<li>So the quality here will heavily depend on how good the brain LLM is
+  which basically won't be in our control much.</li>
+</ul>
+</li>
+</ul>
+<h1 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">&para;</a></h1>
+<p>An engineer troubleshooting OVN-Kubernetes usually uses the following set of
+CLI tools in a layered fashion:</p>
+<ul>
+<li>Kubernetes and OVN-Kubernetes layer - this cluster state information is
+  gathered as part of must-gather for offline troubleshooting<ul>
+<li><strong>kubectl</strong> commands like list, get, describe, logs, exec, events to know
+  everything about the Kubernetes API state of the feature and to know what
+  the ovnkube pods were doing through the logs they generate during that
+  window</li>
+<li><strong>ovnkube-trace</strong> which executes ovn-trace and ovs ofproto trace and
+  detrace commands (this tool doesn't support all scenarios - it's not
+  maintained well)</li>
+<li>Future-tool - ovnkube CLI (need to ask NVIDIA what's the status here)<ul>
+<li>A place for K8s state-database syncer should/could potentially exist</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>OVN Layer - OVN databases are gathered as part of must-gather for
+  offline troubleshooting<ul>
+<li><strong>ovn-nbctl</strong> commands that are executed on the ovnkube node pods to
+  understand what OVN-Kubernetes created into northbound database via
+  libovsdbclient transactions</li>
+<li><strong>ovn-sbctl</strong> commands that are executed on the ovnkube node pods to
+  understand what northd created into southbound database</li>
+<li><strong>ovn-trace and detrace</strong> commands that are executed on the ovnkube node
+  pods to understand simulated packet flow tracing based on flows in
+  southbound database</li>
+<li><strong>ovn-appctl -t ovn-controller ct-zone-list</strong> to list all the conntrack
+  zone to OVN construct mapping for better understanding how the conntrack
+  commit of the packets happened</li>
+</ul>
+</li>
+<li>OpenvSwitch Layer - openvswitch database is usually gathered as part
+  of sos-report for offline troubleshooting<ul>
+<li><strong>ovs-ofctl dump-flows</strong> to debug specially the breth0 openflows
+  that OVN-Kubernetes creates on the gateway of each node</li>
+<li><strong>ovs-appctl dpctl/dump-flows</strong> to trace live packets run on a specific
+  node's ovs container (KIND) or on the node (OpenShift)</li>
+<li><strong>ovs-appctl ofproto/trace</strong> and detrace to run an ovs trace of the
+  packet based on the openflows</li>
+<li><strong>ovs-appctl dpctl/dump-conntrack</strong> to know all the conntrack zones used
+  for a specific connection</li>
+<li><strong>ovs-vsctl</strong> commands to list interfaces and bridges</li>
+<li><strong>retis</strong> to see packet drops in ovs</li>
+</ul>
+</li>
+<li>Netfilter/Kernel Layer - this information is usually gathered as part
+  of sos-report for offline troubleshooting<ul>
+<li><strong>ip util commands</strong> like <strong>ip r</strong> or <strong>ip a</strong> or <strong>ip rule list</strong> for
+  debugging VRFs, BGP learnt routes or the routes OVN-Kubernetes creates
+  on the node or custom routes that end user's add</li>
+<li><strong>nft list ruleset</strong> to understand what rules were created by
+  OVN-Kubernetes specially in routingViaHost=true gateway mode</li>
+<li><strong>iptables-save</strong> to list all iptables (Given iptables is deprecated,
+  I think we can skip this tool though for now 50% of ovn-kubernetes is
+  still on IPT)</li>
+<li><strong>conntrack</strong> -L or -E on the host itself</li>
+<li><strong>ip xfrm policy</strong> and <strong>ip xfrm state</strong> when using IPSEC</li>
+</ul>
+</li>
+<li>TCPDUMP - external open source tools, can't be used for offline
+  troubleshooting<ul>
+<li><strong>tcpdump</strong> is used for packet capture and analysis</li>
+<li><a href="https://github.com/cilium/pwru"><strong>pwru</strong></a> is used to know the kernel drop reason</li>
+<li><strong>libreswan</strong> <code>ipsec-stateus</code> and <code>ipsec-trafficstatus</code> commands</li>
+<li><strong>frr</strong> frr router config and routes learnt by BGP</li>
+</ul>
+</li>
+</ul>
+<p>Ideally speaking, there are metrics and events that via alerts also go to
+the dashboard which is probably what most end-users use to troubleshoot.
+So when we do the phase3 we would need to reconsider this stack of
+troubleshooting entirely for including other aspects like OVN-Kubernetes
+troubleshooting dashboard that the observability team created or the
+various packet drop tools observability team already exposes. But for
+the scope of this enhancement, for now, we will consider these above set
+of tools as MVP.</p>
+<p>As we can see, that's a lot of tools! So remembering the syntax for each of
+these tools always and executing them one-by-one and gathering the information
+at each layer, analysing them, and then moving to the next layer takes time
+for a human. Always during a remote analysis of bug report the part that takes
+the longest is the RCA by combing through all the data - same goes for
+troubleshooting a cluster (which is slightly easier when we have access to the
+cluster than analysing offline data). The fix is usually the easiest part (there are
+exceptions).</p>
+<div class="highlight"><pre><span></span><code>                    OVN-Kubernetes Architecture &amp; Troubleshooting Tools
+                              (Per Node Components)
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                           ovnkube-node pod                                 │
+│                                                                            │
+│  ┌─────────────────┐    ┌─────────────────┐         kubectl exec/logs      │
+│  │  ovnkube        │◄──►│      NBDB       │◄─────── ovn-nbctl show/list    │
+│  │  controller     │    │  (northbound)   │                                │
+│  └─────────────────┘    └─────────────────┘                                │
+│           │                       │                                        │
+│           │              ┌─────────────────┐                               │
+│           │              │     northd      │                               │
+│           │              └─────────────────┘                               │
+│           │                       │                                        │
+│           │              ┌─────────────────┐                               │
+│           └─────────────►│      SBDB       │◄─────── ovn-sbctl show/list   │
+│                          │  (southbound)   │         ovn-trace/detrace     │
+│                          └─────────────────┘                               │
+│                                   │                                        │
+│                          ┌─────────────────┐                               │
+│                          │ ovn-controller  │◄─────── ovn-appctl ct-zone    │
+│                          └─────────────────┘                               │
+│                                   │                                        │
+└───────────────────────────────────┼────────────────────────────────────────┘
+                                    │
+                          ┌─────────────────┐
+                          │       OVS       │◄─────── ovs-vsctl list
+                          │   (database)    │         ovs-appctl dpctl/
+                          └─────────────────┘         ovs-ofctl dump-flows
+                                   │                  retis (packet drops)
+                          ┌─────────────────┐
+                          │   OVS bridge    │◄─────── ovs-appctl ofproto/trace
+                          │   br-int/breth0 │
+                          └─────────────────┘
+                                   │
+                          ┌─────────────────┐
+                          │      NIC        │
+                          │   (physical)    │
+                          └─────────────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │         Host Network        │
+                    │                             │
+                    │  ip route/addr/rule ◄───────┼─────── ip commands
+                    │  nft ruleset        ◄───────┼─────── nft list ruleset
+                    │  iptables rules     ◄───────┼─────── iptables-save
+                    │  conntrack zones    ◄───────┼─────── conntrack -L/-E
+                    │                             │
+                    │  Network interfaces ◄───────┼─────── tcpdump/pwru
+                    └─────────────────────────────┘
+
+    Problem: Engineers must know WHERE to run WHICH tool on WHICH component
+             to troubleshoot issues across this distributed architecture
+</code></pre></div>
+<p>This enhancement aims to solve this pain point of reducing the time taken to
+execute these tools and analyse these results using MCP Servers and LLMs.</p>
+<h1 id="user-stories">User Stories<a class="headerlink" href="#user-stories" title="Permanent link">&para;</a></h1>
+<p><strong>As an OVN-Kubernetes developer</strong>, <strong>I want to</strong> troubleshoot my stack
+without needing to know every tool's parameter fields by-heart or by spending
+time looking it up each time I need to troubleshoot a feature <strong>so that</strong> I
+can spend my time efficiently. I just want to tell in plain english what I
+want and for the MCP server to execute those specific commands.</p>
+<p><strong>As an OVN-Kubernetes engineer</strong>, <strong>I want to</strong> troubleshoot my stack
+without needing to analyse each flow output of these tools when I need to
+troubleshoot a feature <strong>so that</strong> I can spend my time efficiently. I just
+want to tell in plain english what I want and for the LLM to help me analyze
+the output of the commands executed by the MCP Server. I understand that I
+will need to verify the reasoning thoroughly before accepting the RCA from AI.</p>
+<p><strong>As a new engineer joining the OVN-Kubernetes team</strong>, <strong>I want to</strong> retrieve
+specific information from different parts of the stack without having
+knowledge of the topology or tooling of the stack.</p>
+<h1 id="proposed-solution">Proposed Solution<a class="headerlink" href="#proposed-solution" title="Permanent link">&para;</a></h1>
+<p>We build a Golang MCP Server (could be split into a set of MCP Servers in the
+future) that exposes these tools in read only fashion and the LLM backend
+that has the required context will analyse the results of the execution and
+provide a response back to the prompter who has to verify it thoroughly. This
+MCP Server code will be in a new repo in
+<a href="https://github.com/ovn-kubernetes">ovn-kubernetes org</a> called
+<strong>ovn-kubernetes-mcp</strong>.</p>
+<h2 id="example-workflow-for-an-end-user">Example Workflow for an end-user<a class="headerlink" href="#example-workflow-for-an-end-user" title="Permanent link">&para;</a></h2>
+<ol>
+<li>An end-user can use any MCP Client to start a troubleshooting session via
+   prompting. The client connects with all the available servers (in our case
+   the OVN-Kubernetes MCP Server and maybe in the future all layered community
+   MCP Severs) and gathers their available tools and presents this information
+   to the LLM along with their schemas. Example: Using Cursor AI as your MCP
+   Client</li>
+<li>LLM will be able use its intelligence and analyze the end-user query and
+   choose the appropriate tools. Example: Using Claude Sonnet4 as your LLM
+   model</li>
+<li>MCP Client then receives the LLM's tool call and routes it to the
+   corresponding MCP Server which executes the tool and client then relays
+   the response back to the LLM</li>
+<li>LLM again uses its intelligence to analyze the responses</li>
+<li>LLM provides a RCA back to the end user</li>
+</ol>
+<p>The steps 2, 3 and 4 is repeated by the LLM and it intelligently does a step-by-step
+layered troubleshooting exercise to find the root cause.</p>
+<p>We may also include predefined and tested prompt steps in the documentation
+of our repo for helping end-users to give the LLM good context around
+OVN-Kubernetes and OVN and OVS. For example, provide the latest OVN man
+pages so that it has the current knowledge of OVN DB schemas and tools usage.
+Some standard preparation prompt can be maintained in the mcp-server repo
+as reference.</p>
+<div class="highlight"><pre><span></span><code>OVN-Kubernetes Troubleshooting MCP Architecture
+===============================================
+
+Engineer Query: &quot;Pod A can&#39;t reach Pod B on different nodes, consistent connection drops&quot;
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    MCP SERVERS (Layer-Specific Tools)                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐
+│   Kubernetes/K8s     │ │     OVN Layer        │ │   OpenvSwitch        │ │   Netfilter/         │ │   TCPDUMP/Debug      │
+│    MCP Server        │ │    MCP Server        │ │   Layer MCP          │ │   Kernel MCP         │ │    MCP Server        │
+│                      │ │                      │ │   Server             │ │   Server             │ │                      │
+│ Tools:               │ │ Tools:               │ │                      │ │                      │ │ Tools:               │
+│ • kubectl_get        │ │ • ovn_nbctl_show     │ │ Tools:               │ │ Tools:               │ │ • tcpdump_capture    │
+│ • kubectl_describe   │ │ • ovn_nbctl_list     │ │ • ovs_ofctl_flows    │ │ • ip_route_show      │ │ • tcpdump_analyze    │
+│ • kubectl_logs       │ │ • ovn_sbctl_show     │ │ • ovs_appctl_dpctl   │ │ • ip_addr_show       │ │ • pwru_trace         │
+│ • kubectl_exec       │ │ • ovn_sbctl_list     │ │ • ovs_ofproto_trace  │ │ • ip_rule_show       │ │                      │
+│ • kubectl_events     │ │ • ovn_trace          │ │ • ovs_appctl_conntr  │ │ • nft_list_ruleset   │ │                      │
+│ • ovnkube_trace      │ │ • ovn_detrace        │ │ • ovs_vsctl_show     │ │ • iptables_save      │ │                      │
+│                      │ │ • ovn_controller_ct  │ │ • retis_capture      │ │ • conntrack_list     │ │                      │
+│                      │ │                      │ │                      │ │ • conntrack_events   │ │                      │
+└──────────────────────┘ └──────────────────────┘ └──────────────────────┘ └──────────────────────┘ └──────────────────────┘
+
+                                │ All tools aggregated
+                                ▼
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           MCP CLIENT                                         │
+│                    (OVN-K8s Troubleshoot AI)                                 │
+│                                                                              │
+│ Unified Tool Interface:                                                      │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │ Layer 1 (K8s):    kubectl_*, ovnkube_trace                               │ │
+│ │ Layer 2 (OVN):    ovn_nbctl_*, ovn_sbctl_*, ovn_trace_*                  │ │
+│ │ Layer 3 (OVS):    ovs_ofctl_*, ovs_appctl_*, ovs_vsctl_*, retis_*        │ │
+│ │ Layer 4 (Kernel): ip_*, nft_*, iptables_*, conntrack_*                   │ │
+│ │ Layer 5 (Debug):  tcpdump_*, pwru_*                                      │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                        │ Present unified interface
+                        ▼
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        LLM (OVN-K8s Expert)                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<p>Doing multiple MCP Servers has clear advantages like each layer owning their
+toolset, independent development and maintenance, granular RBAC, reusability,
+one server can't affect the other. Given we would need to align with different
+layered communities later on for a fully supported set of servers from their
+side which might take several releases, for the phase1 here, we plan to build
+our own monolithic server that could then be split into multiple servers later
+on. A single unified server is simpler, faster to iterate on.</p>
+<p>So our current implementation design looks like this:</p>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                              MCP Client                                     │
+│                        &quot;Debug pod connectivity issues&quot;                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                 MCP Protocol
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        OVN-Kubernetes MCP Server                             │
+│                                                                              │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────────────────┐  │
+│  │   Kubernetes    │  │  Live Cluster   │  │      Offline Bundle          │  │
+│  │     Layer       │  │   Execution     │  │       Execution              │  │
+│  │                 │  │                 │  │                              │  │
+│  │ • kubectl get   │  │ kubectl exec    │  │ Offline artifacts parser     │  │
+│  │ • kubectl desc  │  │                 │  │ tools.                       │  │
+│  │ • kubectl logs  │  │ Direct API      │  │ Example: xsos and omc        │  │
+│  └─────────────────┘  └─────────────────┘  └──────────────────────────────┘  │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │                      Tool Categories                                 │    │
+│  │                                                                      │    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐ │    │
+│  │  │ OVN Layer   │  │ OVS Layer   │  │Kernel Layer  │  │External     │ │    │
+│  │  │             │  │             │  │              │  │Tools        │ │    │
+│  │  │ ovn-nbctl   │  │ ovs-ofctl   │  │ ip route     │  │ tcpdump     │ │    │
+│  │  │ ovn-sbctl   │  │ ovs-appctl  │  │ nft list     │  │ pwru        │ │    │
+│  │  │ ovn-trace   │  │ ovs-vsctl   │  │ conntrack    │  │ retis       │ │    │
+│  │  │ ovn-detrace │  │ ovs-dpctl   │  │ iptables-save│  │             │ │    │
+│  │  │ ovn-appctl  │  │ ovs-ofproto │  │              │  │             │ │    │
+│  │  └─────────────┘  └─────────────┘  └──────────────┘  └─────────────┘ │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │                      Security &amp; RBAC                                 │    │
+│  │                                                                      │    │
+│  │ • ovn-troubleshooter ClusterRole (read-only)                         │    │
+│  │ • Command parameter validation                                       │    │
+│  │ • Node-specific targeting required                                   │    │
+│  │ • Write operations blocked                                           │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                           ┌───────────┼───────────┐
+                           │           │           │
+                           ▼           ▼           ▼
+                      ┌────────┐  ┌────────┐  ┌────────┐
+                      │ Node1  │  │ Node2  │  │ NodeN  │
+                      │        │  │        │  │        │
+                      │ovnkube-│  │ovnkube-│  │ovnkube-│
+                      │node pod│  │node pod│  │node pod│
+                      │        │  │        │  │        │
+                      │ ovn-nb │  │ ovn-nb │  │ ovn-nb │
+                      │ ovn-sb │  │ ovn-sb │  │ ovn-sb │
+                      │ ovs    │  │ ovs    │  │ ovs    │
+                      └────────┘  └────────┘  └────────┘
+
+Data Flow Examples:
+├─ Live: kubectl exec ovnkube-node-xyz -c nb-ovsdb -- ovn-nbctl show
+├─ Live: kubectl debug node/worker-1 -- ovs-ofctl dump-flows br-int
+├─ Live: kubectl debug node/worker-1 -- ip route show table all
+├─ Offline: Parse must-gather/ovn-kubernetes/ovn-northbound.db
+├─ Offline: Parse sos-report/node-1/openvswitch/ovs-ofctl_dump-flows
+└─ Offline: Parse sos-report/node-1/networking/ip_route
+</code></pre></div>
+<p>Note: Some of the layers like Kubernetes and Offline Debugging have
+existing servers like <a href="https://github.com/containers/kubernetes-mcp-server">kubernetes-mcp-server</a>
+and <a href="https://github.com/shivprakashmuley/mustgather-mcp-server">mustgather-mcp-server</a>
+can be re-used together with ovn-kubernetes-mcp server for holistic
+end user experience. However kubernetes-mcp-server exposes <code>kubectl-exec</code>
+which has security implications (although they also have a read-only
+mode where only read commands are exposed).</p>
+<p>Note2: Feeding container logs to LLM will make the context window
+full pretty fast. We need to investigate a method to ensure we are
+filtering out relevant logs to feed.</p>
+<h2 id="implementation-details-of-the-ovn-kubernetes-mcp-server">Implementation Details of the OVN-Kubernetes MCP Server<a class="headerlink" href="#implementation-details-of-the-ovn-kubernetes-mcp-server" title="Permanent link">&para;</a></h2>
+<p>See the Alternatives section for other ideas that were discarded.</p>
+<h3 id="chosen-approach-direct-cli-tool-exposure-idea1">Chosen Approach: Direct CLI Tool Exposure (Idea1)<a class="headerlink" href="#chosen-approach-direct-cli-tool-exposure-idea1" title="Permanent link">&para;</a></h3>
+<p>The initial implementation takes a pragmatic approach by directly exposing the
+existing CLI tools (<code>ovn-nbctl</code>, <code>ovn-sbctl</code>, <code>ovs-vsctl</code>, etc.) as MCP tools.
+While this approach may seem less elegant than creating higher-level wrapper
+abstractions to connect to the database (see discarded alternatives), it
+offers the fastest path to value for OVN-Kubernetes engineers who are already
+familiar with these tools but want to leverage LLM assistance for command
+construction and output analysis. The CLI-based approach is also optimal for
+exposing the complete troubleshooting toolkit across all layers of the stack.
+Most other discarded ideas only addressed OVSDB access and reusability
+concerns while failing to provide the holistic set of tools needed for
+comprehensive root cause analysis like running packet traces.</p>
+<p>The MCP server acts as a secure execution bridge, translating natural language
+troubleshooting requests into appropriate CLI commands.</p>
+<p><strong>Advantages</strong>:</p>
+<ul>
+<li><strong>Fastest Time to Value</strong>: Leverages existing tools that engineers already
+  know</li>
+<li><strong>Zero Deployment Overhead</strong>: All required CLI binaries are already present
+  in the pods and nodes within the cluster</li>
+<li><strong>Comprehensive Coverage</strong>: Only approach that provides access to the
+  complete troubleshooting toolkit across all stack layers</li>
+<li><strong>Security Controls</strong>: Enables read-only access enforcement by exposing
+  only the tools with read-only access (get/list)</li>
+<li><strong>No version compatibility issues</strong> between the MCP server tools and the
+  cluster's installed versions when running on live cluster environments</li>
+</ul>
+<p><strong>Trade-offs</strong>:</p>
+<ul>
+<li><strong>Limited Reusability</strong>: Somewhat specific to OVN-Kubernetes deployment
+  patterns and can't be reused in other layers like OVS</li>
+</ul>
+<p>This approach was selected as the optimal balance between security,
+functionality, and development effort.</p>
+<h2 id="security-model-and-rbac-constraints">Security Model and RBAC Constraints<a class="headerlink" href="#security-model-and-rbac-constraints" title="Permanent link">&para;</a></h2>
+<p>No matter how we approach this implementation, it is impossible to totally
+secure the execution of networking troubleshooting tools at this stage. Most
+networking tools require privileged access to function properly, creating
+inherent security trade-offs. The goal is therefore to minimize blast radius
+through layered controls rather than achieve perfect isolation.</p>
+<p><strong>Kubernetes Layer Security:</strong></p>
+<ul>
+<li><code>kubectl exec</code> and <code>kubectl debug node</code> operations require cluster-admin level
+  privileges by design. Avoid exposing generic exec in the K8s layer.
+  Prefer direct Kubernetes API reads (<code>get</code>, <code>list</code>, <code>logs</code>, <code>events</code>).</li>
+<li>Alternative approach using custom debug containers
+  (<code>kubectl debug node --image=&lt;custom-image&gt;</code>) with volume mounts to database
+  files reduces some attack surface but remains intrusive</li>
+<li><strong>Mitigation</strong>: Expose only Kubernetes API read operations (<code>get</code>, <code>list</code>,
+  <code>logs</code>, <code>events</code>); remove any generic exec tool in this layer.</li>
+<li><strong>Constraint</strong>: MCP Server service account requires elevated privileges
+  (including <code>pods/exec</code>) despite being conceptually a "troubleshooter" role</li>
+</ul>
+<p>At first, for the kubernetes layer, we thought of leveraging the opensource
+<a href="https://github.com/containers/kubernetes-mcp-server">kubernetes-mcp-server</a>.
+So whatever security posture they use for now, can be adopted. They have a
+<code>read-only</code> mode and a mode where write can be done via kubectl exec.
+Later, after getting reviews, this enhancement has changed the approach
+and pivotted towards opting into a more secure approach of adding a
+tool that is a wrapper on top of <code>kubectl-exec</code> without directly exposing
+kubectl-exec. So instead of relying on <code>kubernetes-mcp-server</code>, our
+<code>ovn-kubernetes-mcp</code> will take the more secure approach of only using
+<code>kubectl_exec</code> as an implementation detail but not directly expose it.
+Downside of this is that we will need to also account for get or list
+resources command being duplicated into <code>ovn-kubernetes-mcp</code>. So we
+would need to implement the tools we need also on the kubernetes layer
+ourselves.</p>
+<p><strong>OVN/OVS Database Layer Security:</strong></p>
+<ul>
+<li>Unix socket-based database access prevents using SSL certificate-based
+  authentication and authorization</li>
+<li>Database connections inherit the security context of the container executing
+  the commands</li>
+<li><strong>Mitigation</strong>: Command parameter validation to ensure only read-only
+  database operations (<code>show</code>, <code>list</code>, <code>dump</code>) while blocking modification
+  commands (<code>set</code>, <code>add</code>, <code>remove</code>)</li>
+<li><strong>Long-term Path</strong>: Requires RBAC-enabled CLI execution even against local
+  unix socket.</li>
+</ul>
+<p><strong>Host/Kernel Layer Security:</strong></p>
+<ul>
+<li>Kernel-level networking tools (<code>ip</code>, <code>nft</code>, <code>conntrack</code>) inherently require
+  root system access</li>
+<li>Current tooling lacks granular RBAC capabilities - tools are typically
+  all-or-nothing from a privilege perspective</li>
+<li><strong>External Tools Note</strong>: Tools like <code>tcpdump -i any</code> can be highly intrusive
+  as they capture all network traffic on the host, requiring careful
+  consideration of privacy and performance impact while being chosen for
+  execution.</li>
+<li><strong>Short-term Mitigation</strong>: Strict command allowlisting exposing only read
+  operations (<code>ip route show</code>, <code>nft list ruleset</code>) while blocking modification
+  commands (<code>ip route add</code>, <code>nft add rule</code>)</li>
+<li><strong>Long-term Path</strong>: Requires RBAC-enabled wrapper tools from upstream
+  layered community teams (example netfilter, kernel networking)</li>
+</ul>
+<h2 id="distributed-execution-context">Distributed Execution Context<a class="headerlink" href="#distributed-execution-context" title="Permanent link">&para;</a></h2>
+<p>MCP Server will only be supported on interconnect mode.</p>
+<h3 id="ovn-kubernetes-architecture-challenge"><strong>OVN-Kubernetes Architecture Challenge</strong><a class="headerlink" href="#ovn-kubernetes-architecture-challenge" title="Permanent link">&para;</a></h3>
+<p>In OVN-Kubernetes interconnect architecture, each node maintains its own local
+instances of critical databases and services:</p>
+<ul>
+<li><strong>Northbound Database</strong>: Local OVN northbound database per node</li>
+<li><strong>Southbound Database</strong>: Local OVN southbound database per node</li>
+<li><strong>OpenVSwitch Database</strong>: Node-specific OVS database and flow tables</li>
+<li><strong>Host Networking</strong>: Node-specific routing tables, conntrack zones, and
+  kernel state</li>
+</ul>
+<p>This distributed architecture means that troubleshooting commands must be executed
+on the specific node where the relevant data resides.</p>
+<h3 id="node-targeted-command-execution"><strong>Node-Targeted Command Execution</strong><a class="headerlink" href="#node-targeted-command-execution" title="Permanent link">&para;</a></h3>
+<p><strong>Node Selection Strategy</strong>: All tools requiring node-specific data accept a
+<code>node_name</code> parameter as a required argument. The MCP server uses this
+parameter to:</p>
+<ol>
+<li><strong>Pod Selection</strong>: Locate the appropriate <code>ovnkube-node</code> pod running on the
+   specified node using <code>pod.spec.nodeName</code> matching</li>
+<li><strong>Container Targeting</strong>: Route OVN database commands to the correct
+   container within the ovnkube-node pod (e.g., <code>nb-ovsdb</code>, <code>sb-ovsdb</code>
+   containers)</li>
+<li><strong>Execution Context</strong>: Execute host-level commands via
+   <code>kubectl debug node/&lt;node_name&gt; --image &lt;&gt;</code> for direct host access</li>
+</ol>
+<p><strong>LLM Responsibility</strong>: The LLM must determine the appropriate target node(s)
+based on the troubleshooting context:</p>
+<ul>
+<li><strong>Pod-specific issues</strong>: Use the node where the problematic pod is scheduled
+  (<code>kubectl get pod -o wide</code>)</li>
+<li><strong>Network flow analysis</strong>: Target nodes along the packet path (source node,
+  destination node, gateway nodes)</li>
+<li><strong>Cluster-wide analysis</strong>: Potentially execute commands across multiple
+  nodes for correlation</li>
+</ul>
+<p>We need to account for testing the LLM Responsibility side which is not
+something we can guarantee but something we are offloading to the LLM that we
+won't solve.</p>
+<h2 id="deployment-strategy">Deployment Strategy<a class="headerlink" href="#deployment-strategy" title="Permanent link">&para;</a></h2>
+<h3 id="flexible-deployment-modes"><strong>Flexible Deployment Modes</strong><a class="headerlink" href="#flexible-deployment-modes" title="Permanent link">&para;</a></h3>
+<p>The MCP server is designed for flexible deployment without requiring elaborate
+cluster infrastructure. Multiple deployment modes support different use cases
+and security requirements:</p>
+<p><strong>CLI Tool Mode (Simplest)</strong>:</p>
+<ul>
+<li>Run the MCP server binary directly on a machine with <code>kubectl</code> access
+  to the target cluster</li>
+<li>Server uses existing cluster credentials and executes commands via standard
+  CLI tools</li>
+<li>Suitable for both live cluster troubleshooting</li>
+<li>Offline data based troubleshooting analysis would still need corresponding
+  parser tools to be run locally where the debug artifact files are hosted</li>
+<li>No cluster deployment required - operates entirely through external API
+  access</li>
+</ul>
+<p><strong>Debug Container Mode</strong>:</p>
+<ul>
+<li>Package the MCP server as a container image that the LLM can select for
+  <code>kubectl debug node --image=&lt;mcp-server-image&gt;</code> operations</li>
+<li>This custom debug image contains the MCP server binary along with all
+  necessary troubleshooting tools</li>
+<li>Reduces blast radius compared to using default debug images with full host
+  access</li>
+<li>The LLM chooses this image when it needs to execute commands requiring
+  direct host access</li>
+</ul>
+<p><strong>Future Considerations</strong>:</p>
+<ul>
+<li>More elaborate deployment patterns (DaemonSet, Deployment) can be considered
+  when we think of use cases beyond ovn-kubernetes developers</li>
+</ul>
+<h2 id="testing-strategy">Testing Strategy<a class="headerlink" href="#testing-strategy" title="Permanent link">&para;</a></h2>
+<p><strong>Unit Testing - MCP Server Tools</strong>:</p>
+<ul>
+<li>Straightforward validation of individual tool execution and parameter
+  handling. Use <a href="https://github.com/modelcontextprotocol/inspector">mcp-inspector</a>.</li>
+<li>Mock cluster responses to test command routing and error handling</li>
+<li>Verify security controls and command allowlisting functionality</li>
+</ul>
+<p><strong>Integration Testing - The Complex Challenge</strong>:</p>
+<ul>
+<li><strong>Real Failure Scenario Reproduction</strong>: Design test scenarios based on past
+  bugs and commonly occurring incidents</li>
+<li><strong>Chaos Engineering Integration</strong>: Implement controlled failure injection to
+  create realistic troubleshooting scenarios</li>
+<li><strong>LLM Reasoning Validation</strong>: The most critical and challenging aspect -
+  verifying that the LLM can produce meaningful root cause analysis from tool
+  outputs</li>
+</ul>
+<h3 id="scenario-based-test-design"><strong>Scenario-Based Test Design</strong><a class="headerlink" href="#scenario-based-test-design" title="Permanent link">&para;</a></h3>
+<p><strong>Historical Incident Replay</strong>:</p>
+<ul>
+<li>Collect must-gather and sos-report bundles from past bugs</li>
+<li>Use these as offline test datasets to validate LLM troubleshooting accuracy</li>
+<li>Build regression test suite ensuring consistent analysis quality over time</li>
+</ul>
+<p><strong>Synthetic Failure Scenarios</strong>:</p>
+<p>Some examples include:
+* Network policy and EgressIP misconfigurations
+* Pod connectivity failures across nodes
+* Gateway flow issues and routing problems
+* OVN database inconsistencies specially around EgressIPs</p>
+<p><strong>LLM Capability Assessment</strong>:</p>
+<ul>
+<li>Measure accuracy of root cause identification - depends on how much
+  OVN-Kubernetes feature specific context it has</li>
+<li>Evaluate quality of troubleshooting step recommendations</li>
+<li>Test correlation of multi-layer data analysis</li>
+<li>Validate handling of incomplete or missing data scenarios</li>
+</ul>
+<h3 id="success-metrics"><strong>Success Metrics</strong><a class="headerlink" href="#success-metrics" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Accuracy</strong>: Percentage of correct root cause identifications in known
+  failure scenarios</li>
+<li><strong>Completeness</strong>: Coverage of troubleshooting steps recommended vs. manual
+  expert analysis</li>
+<li><strong>Efficiency</strong>: Time reduction compared to manual troubleshooting workflows</li>
+<li><strong>Safety</strong>: Verification that only read-only operations are executed as
+  intended</li>
+</ul>
+<h2 id="documentation-details">Documentation Details<a class="headerlink" href="#documentation-details" title="Permanent link">&para;</a></h2>
+<p>OKEP for the MCP Server will be on
+<a href="https://ovn-kubernetes.io/">https://ovn-kubernetes.io/</a> . All end-user
+documentation will be on the new repo's docs folder.</p>
+<ul>
+<li><strong>Getting Started Guide</strong>: MCP client setup and initial configuration</li>
+<li><strong>Troubleshooting Scenarios</strong>: Common use cases and example natural language
+  queries</li>
+<li><strong>Tool Reference</strong>: Available tools and their capabilities across all stack
+  layers</li>
+<li><strong>Security Model</strong>: Warning around security considerations</li>
+<li><strong>Deployment Options</strong>: CLI mode vs. debug container mode setup instructions</li>
+<li><strong>Offline Analysis</strong>: Must-gather and sos-report analysis workflows</li>
+</ul>
+<h2 id="alternative-implementation-ideas">Alternative Implementation Ideas<a class="headerlink" href="#alternative-implementation-ideas" title="Permanent link">&para;</a></h2>
+<h3 id="idea0-using-existing-kubernetes-mcp-server-with-generic-bash-execution">Idea0: Using Existing kubernetes-mcp-server with Generic Bash Execution<a class="headerlink" href="#idea0-using-existing-kubernetes-mcp-server-with-generic-bash-execution" title="Permanent link">&para;</a></h3>
+<p><strong>Approach</strong>: Use the existing kubernetes-mcp-server's <code>pods_exec</code> tool to run
+arbitrary bash commands like <code>ovn-nbctl show</code> or <code>ip route</code> directly through
+<code>kubectl exec</code> or <code>kubectl debug</code> sessions, without building any specialized
+tooling.</p>
+<p><strong>Rationale</strong>: This approach would provide immediate access to all CLI tools
+without any development effort, leveraging the LLM's knowledge of command
+syntax to construct appropriate bash commands.</p>
+<p><strong>Why Discarded</strong>:</p>
+<ul>
+<li><strong>Security Risk</strong>: Allowing arbitrary bash command execution creates
+  significant security vulnerabilities. There's no protection against
+  destructive commands like <code>ovn-nbctl set</code> operations that could modify live
+  database state.</li>
+<li><strong>Lack of Access Control</strong>: No way to enforce read-only operations or
+  validate command parameters before execution.</li>
+<li><strong>Separation of Concerns</strong>: The LLM should focus on analysis and
+  troubleshooting logic, not on understanding the security implications of
+  direct system access.</li>
+<li><strong>Blast Radius</strong>: Any compromise or LLM hallucination could potentially
+  execute dangerous commands on production systems.</li>
+</ul>
+<p>The fundamental principle that "each layer knows best about how/what tools to
+allow with proper read access" makes a controlled wrapper approach essential
+rather than direct bash execution.</p>
+<h3 id="idea1-chosen-approach-direct-cli-tool-exposure">Idea1: Chosen Approach: Direct CLI Tool Exposure<a class="headerlink" href="#idea1-chosen-approach-direct-cli-tool-exposure" title="Permanent link">&para;</a></h3>
+<p>See the proposed solution section.</p>
+<h3 id="idea2-libovsdb-client-golang-wrapper">Idea2: libovsdb-client Golang Wrapper<a class="headerlink" href="#idea2-libovsdb-client-golang-wrapper" title="Permanent link">&para;</a></h3>
+<p><strong>Approach</strong>: Build a Golang MCP server using <code>NewOVSDBClient</code> to directly
+query OVSDB instances with proper RBAC controls implemented through OVSDB's
+native access control mechanisms.</p>
+<p><strong>Advantages</strong>:
+* <strong>High Reusability</strong>: Could be shared across OVN, OVS, and OVN-Kubernetes
+  projects
+* <strong>Native RBAC</strong>: Leverages OVSDB's built-in role-based access controls
+* <strong>Structured Output</strong>: Returns structured data rather than CLI text parsing</p>
+<p><strong>Why Discarded</strong>:
+* <strong>Deployment Model</strong>: Would require running as a DaemonSet on each node or
+  shipping binaries to ovnkube-node pods
+* <strong>Scope Limitation</strong>: Only addresses database access, missing ovn and ovs
+  flow trace simulation and host networking tools</p>
+<h3 id="idea3-ovsdb-client-binary-wrapper">Idea3: ovsdb-client Binary Wrapper<a class="headerlink" href="#idea3-ovsdb-client-binary-wrapper" title="Permanent link">&para;</a></h3>
+<p><strong>Approach</strong>: Create a wrapper around the existing <code>ovsdb-client</code> binary
+(owned by the OVS team) to provide structured database access.</p>
+<p><strong>Advantages</strong>:
+* <strong>High Reusability</strong>: Could be shared across OVN, OVS, and OVN-Kubernetes
+  projects
+* <strong>Native RBAC</strong>: Leverages OVSDB's built-in role-based access controls</p>
+<p><strong>Why Discarded</strong>:
+* <strong>Ownership</strong>: We could argue this wrapper better belongs in the openvswitch
+  community then in OVN-Kubernetes org
+* <strong>Scope Limitation</strong>: Only addresses database access, missing ovn and ovs
+  flow trace simulation and host networking tools
+* In future once we reach out to OVN and OVS communities to see what
+  they plan to do, we could revisit it.</p>
+<h3 id="idea4-direct-database-access-wrapper">Idea4: Direct Database Access Wrapper<a class="headerlink" href="#idea4-direct-database-access-wrapper" title="Permanent link">&para;</a></h3>
+<p><strong>Approach</strong>: Build wrapper for direct database read operations bypassing CLI
+and client tools entirely.</p>
+<p><strong>Advantages</strong>:
+* <strong>High Reusability</strong>: Could be shared across OVN, OVS, and OVN-Kubernetes
+  projects</p>
+<p><strong>Why Discarded</strong>: Building from scratch when there's no real need to -
+existing CLI tools already provide all necessary functionality with proven
+reliability.</p>
+<h1 id="known-risks-and-limitations">Known Risks and Limitations<a class="headerlink" href="#known-risks-and-limitations" title="Permanent link">&para;</a></h1>
+<ul>
+<li>AI! We can trust it only as much as we can throw it.<ul>
+<li>Quality of this troubleshooter depends on the LLM's intelligence</li>
+<li>Quality of the MCP Server itself is however in our own hands and can be
+  enhanced based on user experience</li>
+</ul>
+</li>
+<li>Security! We know that we cannot fully eliminate the risk</li>
+<li>Performance/Scalability: MCPs are a relatively new concept. So aspects like
+  how many tools could we expose per server and upto what point it scales etc
+  are unknowns. We will need to try and test it in our PoCs as we develop this.</li>
+<li>With sending bulky logs and debug details we also have danger of context
+    window running out. We need to ensure we filter out relevant logs.</li>
+<li>Token consumption and context window bloating.</li>
+<li>Other potential problems we need to rule out during testing:<ul>
+<li>Poor tool selection: LLMs struggle to choose the right tool from too many options</li>
+<li>Parameter hallucination: Agents invoke tools with incorrect or fabricated parameters</li>
+<li>Misinterpretation: Responses from tools are more likely to be misunderstood</li>
+<li>Attention spreading: The model's attention gets distributed thinly across many options</li>
+</ul>
+</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © OVN-Kubernetes a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">LF Projects Policies</a>.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.indexes", "navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.path", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/gemini-api-key.js"></script>
+      
+        <script src="../../javascripts/theme.js"></script>
+      
+        <script src="../../javascripts/extra.js"></script>
+      
+    
+  </body>
+</html>
