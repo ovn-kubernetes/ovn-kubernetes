@@ -611,6 +611,8 @@ const (
 	inspectNetworkMACKeyStr        = "{{ with index .NetworkSettings.Networks %q }}{{ .MacAddress }}{{ end }}"
 	inspectNetworkContainersKeyStr = "{{ range $key, $value := .Containers }}{{ printf \"%s\\n\" $value.Name}}{{ end }}'"
 	emptyValue                     = "<no value>"
+	// Docker 29+ returns "invalid IP" for IP fields
+	emptyIPValue                   = "invalid IP"
 )
 
 func isNetworkAttachedToContainer(networkName, containerName string) bool {
@@ -719,7 +721,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 		}
 		valueStr := strings.Trim(string(value), "\n")
 		valueStr = strings.Trim(valueStr, "'")
-		if valueStr == emptyValue {
+		if valueStr == emptyValue || valueStr == emptyIPValue {
 			return "", nil
 		}
 		return valueStr, nil
