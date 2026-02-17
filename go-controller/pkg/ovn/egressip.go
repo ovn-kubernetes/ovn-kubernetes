@@ -3188,6 +3188,9 @@ func (e *EgressIPController) createReroutePolicyOps(ni util.NetInfo, ops []ovsdb
 		}
 		addPktMarkToLRPOptions(options, mark.String())
 	}
+	// Enable connection-tracked ECMP to ensure all packets from the same connection
+	// use the same nexthop, preventing connection resets with multiple egress IPs
+	options["ecmp_symmetric_reply"] = "true"
 	dbIDs := getEgressIPLRPReRouteDbIDs(egressIPName, podNamespace, podName, ipFamily, ni.GetNetworkName(), e.controllerName)
 	p := libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, nil)
 	// Handle all pod IPs that match the egress IP address family
