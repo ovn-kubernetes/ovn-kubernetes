@@ -1,0 +1,22 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: allow-from-clients-{{.Replica}}
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{.JobName}}-{{.Iteration}}
+      podSelector:
+        matchLabels:
+          app: client
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-burner-service-latency
+    ports:
+    - protocol: TCP
+      port: 8080
