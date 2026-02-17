@@ -2,12 +2,9 @@ package netlinkdevicemanager
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -16,33 +13,199 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// ManagedAliasPrefix is the prefix used in IFLA_IFALIAS to mark devices managed by this controller.
+// Interface defines the contract for NetlinkDeviceManager Controller.
+//
+// # Design: Asynchronous API
+//
+// All mutating methods (EnsureLink, DeleteLink) are
+// asynchronous: they store the desired state and return immediately. A single
+// background worker goroutine performs all netlink I/O, serializing kernel
+// operations and applying rate-limited retry on transient failures.
+//
+// This design was chosen over a synchronous "apply-and-return-error" approach
+// for three reasons:
+//
+//  1. Cross-device dependencies. Unlike routes, devices depend on each other:
+//     a VXLAN requires its master bridge, an SVI requires both a VLAN parent
+//     (bridge) and a master (VRF, managed by a different controller). When a
+//     dependency is missing, synchronous apply cannot return an actionable error
+//     — the caller cannot resolve the dependency; a synchronous error would
+//     only force the caller to implement retry/backoff (or poll/track
+//     dependency readiness), often delaying convergence. The async model
+//     classifies this as DeviceStatePending and retries promptly when the
+//     dependency appears via a netlink event, without caller involvement.
+//
+//  2. Multi-step I/O. Each device reconciliation involves multiple netlink
+//     calls (create, set alias, set master, apply bridge port settings, bring
+//     up, sync addresses). A synchronous model must either hold a lock across
+//     all of these (blocking all other callers and the event handler for the
+//     full duration) or release the lock during I/O (duplicating the
+//     reconciler's staleness-check logic and creating a second I/O path that
+//     competes with the background worker). The async model avoids both:
+//     a single worker goroutine owns all I/O, API methods never block on
+//     kernel operations, and the workqueue deduplicates keys so bursty
+//     netlink events collapse into fewer reconciles.
+//
+//  3. Single linearization point (policy + state machine in one place).
+//     With a synchronous API, netlink events and periodic reconciliation,
+//     multiple code paths would perform netlink I/O. To be correct, each
+//     path must enforce the same invariants ("still desired?", "do we
+//     own it?", current ifindex/kernel state, error classification/backoff,
+//     state transitions). Any drift between paths creates subtle races
+//     (e.g. resurrecting a deleted device or acting on stale state). The
+//     async workqueue funnels all I/O and state transitions through one
+//     reconciler goroutine, so these invariants are implemented once and
+//     applied consistently. A "synchronous but centralized" design
+//     would still need to serialize all entrypoints through that same
+//     reconciler, which effectively converges on the workqueue pattern.
+//
+// Because the API is asynchronous, downstream controllers that depend on
+// device readiness (e.g., EVPN waiting for the bridge before attaching OVS
+// ports) are notified via the DeviceReconciler subscriber interface.
+//
+// Callers that need synchronous confirmation can poll GetDeviceState after
+// calling EnsureLink. A dedicated synchronous interface may be added in the
+// future if specific use cases (e.g., synchronous startup sequences) require
+// it.
+//
+// # Startup Contract
+//
+// Controllers MUST call EnsureLink for all previously-existing desired devices
+// before calling Run. On startup, Run performs orphan cleanup: it scans the
+// kernel for devices with our ownership alias that are not in the desired state
+// store and deletes them. If the store is empty, all previously-managed devices
+// will be removed.
+//
+// # Ownership
+//
+// Devices created through EnsureLink are marked with an IFLA_IFALIAS prefix
+// ("ovn-k8s-ndm:"). Only devices with this alias are considered owned and may
+// be modified or deleted. Devices without the alias (or with a foreign alias)
+// are never touched — if a name collision occurs, the reconciler sets the
+// device state to DeviceStateBlocked (discoverable via GetDeviceState or
+// subscriber notification).
+//
+// # Supported Device Types
+//
+// The manager supports Bridge, Vxlan, Vlan, Vrf, and Dummy device types.
+type Interface interface {
+	// EnsureLink declares the desired configuration for a device.
+	//
+	// Behavior is asynchronous: the configuration is stored and a
+	// reconciliation is enqueued. The method returns nil once the intent is
+	// recorded; it does not wait for the device to be created or updated in
+	// the kernel. Only validation errors (invalid name, unsupported type)
+	// are returned synchronously.
+	//
+	// Updates are handled in-place: callers may call EnsureLink again with
+	// a changed config for the same device name. There is no need to call
+	// DeleteLink before re-calling EnsureLink. The reconciler
+	// transparently chooses the least-disruptive strategy: mutable
+	// attributes are patched on the existing device while immutable
+	// attributes trigger an automatic delete+recreate.
+	//
+	// If the device already exists in the store with an identical config,
+	// this is a no-op — no reconciliation is enqueued, except for Blocked
+	// devices where the caller may know the external conflict was resolved.
+	//
+	// If a dependency (Master, VLANParent) does not exist in the kernel,
+	// the device is marked DeviceStatePending and automatically retried
+	// when the dependency appears via netlink event.
+	//
+	// Full-state semantics: the provided config is the complete desired
+	// state. Attributes not specified are treated as "use kernel default."
+	// Addresses, if non-nil, are declarative — exactly the listed addresses
+	// will exist on the device.
+	EnsureLink(cfg DeviceConfig) error
+
+	// DeleteLink removes a device from the desired state.
+	//
+	// Behavior is asynchronous: the device is removed from the store and
+	// a reconciliation is enqueued to delete it from the kernel. The
+	// method returns nil once the intent is recorded.
+	//
+	// Only devices with our ownership alias are deleted from the kernel.
+	DeleteLink(name string) error
+
+	// Has returns true if a device is registered in the desired state store.
+	Has(name string) bool
+
+	// GetConfig returns a copy of the config for a managed device, or nil
+	// if the device is not in the store.
+	GetConfig(name string) *DeviceConfig
+
+	// ListDevicesByVLANParent returns configs for all devices whose
+	// VLANParent matches the given name.
+	ListDevicesByVLANParent(parentName string) []DeviceConfig
+
+	// IsDeviceReady returns true if the device exists in the store and its
+	// state is DeviceStateReady (kernel state matches desired config).
+	IsDeviceReady(name string) bool
+
+	// GetDeviceState returns the lifecycle state of a managed device.
+	// Returns DeviceStateUnknown if the device is not in the store (never
+	// declared via EnsureLink, or already removed via DeleteLink).
+	GetDeviceState(name string) DeviceState
+
+	// RegisterDeviceReconciler registers a subscriber to be notified on
+	// device state transitions. The subscriber's ReconcileDevice method is
+	// called with the device name whenever the device's state changes
+	// (e.g., Pending→Ready, Ready→Failed). Subscribers should map the
+	// device name to their own work items and re-queue them — heavy
+	// processing should not be done inline.
+	//
+	// Safe to call before or after Run(). Subscribers that register after
+	// Run() will receive notifications for all subsequent state transitions;
+	// they can query current state of devices they care about via
+	// GetDeviceState or IsDeviceReady.
+	RegisterDeviceReconciler(r DeviceReconciler)
+
+	// Run starts the background reconciler and netlink event listener.
+	//
+	// Callers MUST call EnsureLink for all desired devices before Run.
+	// On startup, Run performs orphan cleanup (removing devices with our
+	// alias not in the store) and then begins processing the reconciliation
+	// queue. Netlink events are subscribed to before the worker starts to
+	// prevent missed events.
+	//
+	// The reconciler runs until stopCh is closed. doneWg is decremented
+	// when the reconciler has fully stopped.
+	Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error
+}
+
+// DeviceState represents the lifecycle state of a managed device.
+type DeviceState string
+
+const (
+	DeviceStateUnknown DeviceState = ""        // Not in store (never declared or already deleted)
+	DeviceStateReady   DeviceState = "Ready"   // Device matches desired state in kernel
+	DeviceStatePending DeviceState = "Pending" // Waiting for dependency (master, VLANParent)
+	DeviceStateFailed  DeviceState = "Failed"  // Transient kernel error (will retry with backoff)
+	DeviceStateBlocked DeviceState = "Blocked" // External device conflict (NotOwnedError)
+)
+
+// DeviceReconciler is notified when device state transitions.
+// Implementations should re-queue their own work, not do heavy processing inline.
+type DeviceReconciler interface {
+	ReconcileDevice(key string) error
+}
+
+// managedAliasPrefix is the prefix used in IFLA_IFALIAS to mark devices managed by this controller.
 // This allows safe cleanup: only delete devices with this prefix.
 // Format: "ovn-k8s-ndm:<type>:<name>" for debugging and collision avoidance.
-const ManagedAliasPrefix = "ovn-k8s-ndm:"
+const managedAliasPrefix = "ovn-k8s-ndm:"
 
-// MaxInterfaceNameLength is the maximum length for Linux interface names.
+// maxInterfaceNameLength is the maximum length for Linux interface names.
 // Linux's IFNAMSIZ is 16 (including null terminator), so max usable length is 15.
-const MaxInterfaceNameLength = 15
-
-// validateInterfaceName checks if an interface name is valid.
-// Returns an error if the name is empty or exceeds the Linux limit.
-func validateInterfaceName(name, context string) error {
-	if name == "" {
-		return fmt.Errorf("%s name is empty", context)
-	}
-	if len(name) > MaxInterfaceNameLength {
-		return fmt.Errorf("%s name %q exceeds maximum length of %d characters (got %d)",
-			context, name, MaxInterfaceNameLength, len(name))
-	}
-	return nil
-}
+const maxInterfaceNameLength = 15
 
 // NotOwnedError is returned when an operation is blocked because the device
 // exists but is not owned by us (no alias or foreign alias).
@@ -62,23 +225,23 @@ func IsNotOwnedError(err error) bool {
 	return errors.As(err, &notOwned)
 }
 
-// isOurDevice returns true only if the device has our alias prefix.
-// This is the single source of truth for ownership:
-//   - Empty alias = unknown ownership, NOT ours (could be human-created or other automation)
-//   - Foreign alias = definitely NOT ours
-//   - Our prefix = ours, safe to modify/delete
-func isOurDevice(link netlink.Link) bool {
-	return strings.HasPrefix(link.Attrs().Alias, ManagedAliasPrefix)
-}
+// defaultReconcilePeriod is the default interval for periodic sync as a safety net.
+const defaultReconcilePeriod = 60 * time.Second
 
-// DefaultReconcilePeriod is the default interval for periodic sync as a safety net.
-const DefaultReconcilePeriod = 60 * time.Second
+// Key prefixes for workqueue item type routing.
+// Workqueue deduplicates by key, so rapid updates to the same device coalesce.
+const (
+	deviceKeyPrefix = "device/"  // e.g., "device/br-evpn"
+	fullSyncKey     = "fullsync" // Startup: orphan cleanup + re-enqueue all
+	syncKey         = "sync"     // Periodic: re-enqueue all (no orphan scan)
+)
 
 // DeviceConfig represents the complete desired configuration for a network device.
 // Controllers provide the FULL configuration; manager enforces EXACTLY what's provided.
 type DeviceConfig struct {
 	// Link is the netlink device (Bridge, Vxlan, Vlan, Device, etc.)
 	// Must include all desired attributes in LinkAttrs (Name, HardwareAddr, etc.)
+	// IMPORTANT: Use netlink.NewLinkAttrs() to create a new LinkAttrs struct with default values.
 	Link netlink.Link
 
 	// Master is the name of the master device (e.g., bridge name for VXLAN, VRF name for SVI)
@@ -86,14 +249,14 @@ type DeviceConfig struct {
 	Master string
 
 	// VLANParent is the name of the parent device for VLAN interfaces.
-	// If set, the parent's current ifindex is resolved at creation time.
-	// This is more resilient than relying on Link.(*netlink.Vlan).ParentIndex
-	// because ifindex can change if the parent is deleted and recreated.
+	// Required for *netlink.Vlan devices. The parent's current ifindex is
+	// resolved at creation time, which is resilient to parent recreation
+	// (ifindex changes).
 	// If the parent doesn't exist yet, config is stored as pending and retried on netlink events.
 	VLANParent string
 
 	// BridgePortSettings configures bridge port-specific settings.
-	// Only applicable when Master is set (device is attached to a bridge).
+	// Only applicable when Master is set and is a bridge.
 	// Settings are applied after the device is attached to the bridge.
 	// Typically used for VXLAN ports that need vlan_tunnel=on, neigh_suppress=on, learning=off.
 	BridgePortSettings *BridgePortSettings
@@ -103,7 +266,7 @@ type DeviceConfig struct {
 	// Semantics:
 	//   - nil:           No address management. Existing addresses are preserved.
 	//   - empty slice:   Declarative empty state. All addresses will be removed
-	//                    (except auto-configured link-local fe80::/10).
+	//                    (except link-local: IPv6 fe80::/10 and IPv4 169.254.0.0/16).
 	//   - non-empty:     Declarative. Exactly these addresses will exist.
 	//                    Missing addresses are added, extra addresses are removed
 	//                    (except link-local).
@@ -112,9 +275,22 @@ type DeviceConfig struct {
 	// Other Addr fields (Flags, Scope, Label, ValidLft, PreferredLft) are
 	// applied when adding but not used for comparison.
 	//
-	// Link-local addresses (fe80::/10) are never auto-removed because they
-	// are kernel-managed and removing them can break IPv6 functionality.
+	// Link-local addresses (IPv6 fe80::/10 and IPv4 169.254.0.0/16) are
+	// never auto-removed because they are kernel-managed and removing them
+	// can break network functionality.
 	Addresses []netlink.Addr
+
+	// VIDVNIMappings specifies VID↔VNI tunnel mappings for VXLAN bridge ports.
+	// Only valid when Link is *netlink.Vxlan and Master is set (bridge master).
+	//
+	// Semantics:
+	//   - nil:           No mapping management. Existing mappings are preserved.
+	//   - empty slice:   Declarative empty state. All stale mappings will be removed.
+	//   - non-empty:     Declarative. Exactly these mappings will exist.
+	//                    Missing mappings are added, stale mappings are removed.
+	//
+	// Each VID and each VNI must be unique within the slice.
+	VIDVNIMappings []VIDVNIMapping
 }
 
 // VIDVNIMapping represents a single VID↔VNI mapping for bridge VXLAN configuration.
@@ -130,107 +306,222 @@ type BridgePortSettings struct {
 	Learning      bool // Enable MAC learning
 }
 
-// BridgePortVLAN configures VLAN membership on a bridge port.
-type BridgePortVLAN struct {
-	VID      int  // VLAN ID
-	PVID     bool // Set as Port VLAN ID (native VLAN)
-	Untagged bool // Egress untagged
-}
-
 // managedDevice tracks a device with its config and status
 type managedDevice struct {
-	cfg     DeviceConfig // Complete desired config
-	pending bool         // True if waiting for dependency (e.g., VRF, parent)
+	cfg        DeviceConfig // Complete desired config
+	state      DeviceState  // Lifecycle state (Ready, Pending, Failed, Blocked)
+	lastError  error        // Last error from reconciliation (preserved for status/debug)
+	generation uint64       // Monotonic counter incremented by EnsureLink on config change; used by reconciler for staleness detection
 }
 
-// managedVIDVNIMappings tracks VID/VNI mappings for a VXLAN device
-type managedVIDVNIMappings struct {
-	bridgeName string          // Parent bridge name (for self VLAN)
-	vxlanName  string          // VXLAN device name
-	mappings   []VIDVNIMapping // Desired mappings
-}
-
-// managedPortVLAN tracks VLAN configuration for a bridge port
-type managedPortVLAN struct {
-	linkName string         // Device name
-	vlan     BridgePortVLAN // Desired VLAN config
-}
-
-// Controller manages Linux network device lifecycle.
-// Returns errors for immediate caller feedback AND self-heals via periodic sync.
-// Uses full-scan reconciliation on every sync cycle.
+// Controller manages Linux network device lifecycle using a workqueue-based reconciler.
+// Public API methods store desired state and enqueue work; a single worker goroutine
+// performs all netlink I/O. Self-heals via periodic sync, orphan cleanup, and netlink
+// event-driven reconciliation.
 type Controller struct {
-	mu      *sync.Mutex
-	store   map[string]*managedDevice // device name -> managed device info
-	started bool                      // True after Run() called
+	mu    sync.RWMutex
+	store map[string]*managedDevice // device name -> managed device info
+
+	reconciler    controller.Reconciler // workqueue reconciler (single worker, all I/O)
+	subscribersMu sync.RWMutex          // protects subscribers slice; allows post-Run() registration
+	subscribers   []DeviceReconciler
 
 	// ReconcilePeriod is the interval for periodic sync as a safety net.
 	// Defaults to DefaultReconcilePeriod. Can be overridden before calling Run().
 	ReconcilePeriod time.Duration
-
-	// Stores for mappings and port VLANs (desired state for self-healing)
-	// Note: Bridge port settings are stored in DeviceConfig.BridgePortSettings
-	vidVNIMappingStore map[string]*managedVIDVNIMappings   // vxlanName -> mappings
-	portVLANStore      map[string]map[int]*managedPortVLAN // linkName -> vid -> VLAN config
-
-	// Pending deletes (tombstones) for self-healing deletion retries
-	// When DeleteLink() fails, the device is added here and retried in sync()
-	pendingDeletes map[string]struct{} // device name -> needs deletion
 }
 
 // NewController creates a new NetlinkDeviceManager with default settings.
 // The ReconcilePeriod can be overridden before calling Run() if needed.
 func NewController() *Controller {
-	return &Controller{
-		mu:                 &sync.Mutex{},
-		store:              make(map[string]*managedDevice),
-		ReconcilePeriod:    DefaultReconcilePeriod,
-		vidVNIMappingStore: make(map[string]*managedVIDVNIMappings),
-		portVLANStore:      make(map[string]map[int]*managedPortVLAN),
-		pendingDeletes:     make(map[string]struct{}),
+	c := &Controller{
+		store:           make(map[string]*managedDevice),
+		ReconcilePeriod: defaultReconcilePeriod,
+	}
+
+	c.reconciler = controller.NewReconciler("netlink-device-manager", &controller.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   c.reconcileWorkqueue,
+		Threadiness: 1,                           // Single worker — serializes all netlink I/O
+		MaxAttempts: controller.InfiniteAttempts, // Self-healing: infinite retries
+	})
+
+	return c
+}
+
+// reconcileWorkqueue routes workqueue items to appropriate handlers based on key prefix.
+// This is the single entry point for all I/O — called by the workqueue worker goroutine.
+func (c *Controller) reconcileWorkqueue(key string) error {
+	klog.V(5).Infof("NetlinkDeviceManager: reconciling %s", key)
+	switch {
+	case strings.HasPrefix(key, deviceKeyPrefix):
+		return c.reconcileDeviceKey(strings.TrimPrefix(key, deviceKeyPrefix))
+	case key == fullSyncKey:
+		return c.reconcileFullSyncKey()
+	case key == syncKey:
+		return c.reconcileSyncKey()
+	default:
+		klog.Warningf("NetlinkDeviceManager: unknown reconcile key: %s", key)
+		return nil
 	}
 }
 
-// EnsureLink stores the desired device configuration and creates/updates it in the kernel.
-//
-// Semantics:
-//   - Provide the COMPLETE desired configuration
-//   - Manager ensures device exists with specified master and brings it up
-//   - If device exists with same stored config, this is a no-op (idempotent)
-//
-// Return values:
-//   - nil: Device created/updated successfully, OR stored as pending (dependency missing).
-//     Pending devices are retried automatically on netlink events and periodic sync.
-//   - NotOwnedError: Device exists but is not owned by us (name collision with external device).
-//     Caller should check IsNotOwnedError() and decide:
-//     a) Try a different name: call DeleteLink() then EnsureLink() with new name
-//     b) Wait for external device to be deleted: manager retries on netlink event
-//     c) Give up: call DeleteLink() to remove intent
-//     IMPORTANT: Caller should NOT requeue aggressively - manager handles retries internally.
-//   - Other error: Transient failure (e.g., permission denied), caller may requeue.
-//
-// Reconciliation behavior:
-//   - Mutable LinkAttrs (MTU, TxQLen, HardwareAddr, Alias): Updated via LinkModify
-//   - Master attachment: Re-attached if changed
-//   - BridgePortSettings: Re-applied if changed
-//   - Up state: Ensured on every sync
-//   - Immutable attrs (VxlanId, VlanId, VRF Table, etc.): Triggers delete+recreate
-//
-// Ownership contract:
-//   - The manager stores cfg by reference. Caller MUST NOT mutate cfg.Link or
-//     cfg.BridgePortSettings after this call returns.
-//   - Create a fresh DeviceConfig for each call if reusing struct instances.
-//
-// Controllers MUST call EnsureLink for all desired devices BEFORE calling Run()
-// to establish the desired state for startup reconciliation.
+// reconcileDeviceKey is the core device reconciler.
+// Handles both create/update (device in store) and delete (device not in store).
+// Pattern: Lock → copy config → Unlock → I/O outside lock → Lock → update state → Unlock → notify.
+func (c *Controller) reconcileDeviceKey(name string) error {
+	// Read config under RLock
+	c.mu.RLock()
+	unlock := sync.OnceFunc(c.mu.RUnlock)
+	defer unlock()
 
-func (c *Controller) EnsureLink(cfg DeviceConfig) error {
+	device, exists := c.store[name]
+	if !exists {
+		unlock()
+		// Not desired — delete from kernel if present.
+		err := deleteDevice(name)
+		if err != nil && !IsNotOwnedError(err) {
+			return err // rate-limited retry
+		}
+		c.notifySubscribers(name)
+		return nil
+	}
+	// Snapshot config for lock-free I/O. Shallow-copy Link so downstream
+	// functions can mutate it without affecting the stored config.
+	cfg := device.cfg
+	cfg.Link = cloneLink(cfg.Link)
+	gen := device.generation
+	previousState := device.state
+	unlock()
+
+	// All netlink I/O OUTSIDE lock
+	modified, err := applyDeviceConfig(&cfg)
+
+	// Update state under Lock
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	unlock = sync.OnceFunc(c.mu.Unlock)
+	defer unlock()
 
+	device, stillExists := c.store[name]
+	if !stillExists {
+		return nil // Deleted during I/O — re-queued key will handle delete
+	}
+
+	// Staleness guard: if config was replaced during I/O (concurrent EnsureLink
+	// incremented generation), skip state update. The replacement already
+	// enqueued a fresh reconcile that will apply the current config.
+	if device.generation != gen {
+		return nil
+	}
+
+	var newState DeviceState
+	var reconcileErr error
+
+	switch {
+	case err == nil:
+		newState = DeviceStateReady
+		device.lastError = nil
+	case isDependencyError(err):
+		newState = DeviceStatePending
+		device.lastError = err // Preserve reason: "pending on X (reason)" for status/debug
+		// return nil: don't retry via rate-limited backoff
+		// Will be re-triggered by netlink event when dependency appears
+	case IsNotOwnedError(err):
+		newState = DeviceStateBlocked
+		device.lastError = err
+		// return nil: permanent condition, no point retrying
+		// Will be re-triggered by netlink event when external device removed
+	default:
+		newState = DeviceStateFailed
+		device.lastError = err
+		reconcileErr = err // return error → rate-limited retry via workqueue
+	}
+
+	device.state = newState
+	unlock()
+
+	// Notify subscribers OUTSIDE lock (avoids deadlock if subscriber calls GetDeviceState).
+	// Notify on state transitions OR when kernel state was modified.
+	if previousState != newState || modified {
+		c.notifySubscribers(name)
+	}
+
+	return reconcileErr
+}
+
+// cleanupOrphanedDevices scans kernel for devices with our alias that are NOT in the
+// desired state store, and deletes them. Used during startup/resubscribe.
+//
+// Note: a device could be re-desired (via EnsureLink) between the scan and the delete.
+// We don't re-check for this — if we delete a re-desired device, the worker will
+// recreate it immediately since EnsureLink already enqueued the key.
+func (c *Controller) cleanupOrphanedDevices() error {
+	// Scan kernel — I/O, no lock needed
+	links, err := util.GetNetLinkOps().LinkList()
+	if err != nil {
+		return fmt.Errorf("failed to list links: %w", err)
+	}
+
+	// Find orphans — check store under RLock (read-only check)
+	c.mu.RLock()
+	var orphans []netlink.Link
+	for _, link := range links {
+		if isOurDevice(link) {
+			name := link.Attrs().Name
+			if _, desired := c.store[name]; !desired {
+				orphans = append(orphans, link)
+			}
+		}
+	}
+	c.mu.RUnlock()
+
+	// Delete orphans
+	var deleted int
+	for _, link := range orphans {
+		name := link.Attrs().Name
+		klog.V(5).Infof("NetlinkDeviceManager: deleting orphaned device %s", name)
+		if err := util.GetNetLinkOps().LinkDelete(link); err != nil {
+			klog.Errorf("NetlinkDeviceManager: failed to delete orphan %s: %v", name, err)
+		} else {
+			deleted++
+		}
+	}
+	if deleted > 0 {
+		klog.Infof("NetlinkDeviceManager: cleaned up %d orphaned devices", deleted)
+	}
+	return nil
+}
+
+// reconcileFullSyncKey runs orphan cleanup then re-enqueues all items.
+// Used at startup and after netlink resubscribe.
+func (c *Controller) reconcileFullSyncKey() error {
+	if err := c.cleanupOrphanedDevices(); err != nil {
+		klog.Errorf("NetlinkDeviceManager: orphan cleanup failed: %v", err)
+		// Continue — enqueue items anyway
+	}
+	return c.reconcileSyncKey()
+}
+
+// reconcileSyncKey re-enqueues all stored items for individual reconciliation.
+// Used for periodic sync. Does NOT do orphan cleanup (that's fullsync).
+func (c *Controller) reconcileSyncKey() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for name := range c.store {
+		c.reconciler.Reconcile(deviceKeyPrefix + name)
+	}
+	return nil
+}
+
+// validateConfig checks that a DeviceConfig is well-formed.
+func (cfg *DeviceConfig) validateConfig() error {
 	name := cfg.deviceName()
 	if err := validateInterfaceName(name, "device"); err != nil {
 		return err
+	}
+	if err := validateLinkType(cfg.Link); err != nil {
+		return fmt.Errorf("device %q: %w", name, err)
 	}
 	if cfg.Master != "" {
 		if err := validateInterfaceName(cfg.Master, "master"); err != nil {
@@ -242,134 +533,107 @@ func (c *Controller) EnsureLink(cfg DeviceConfig) error {
 			return err
 		}
 	}
+	for _, addr := range cfg.Addresses {
+		if addr.IPNet != nil && isLinkLocalAddress(addr.IPNet.IP) {
+			return fmt.Errorf("device %q: link-local address %s cannot be managed (kernel-managed)", name, addr.IPNet)
+		}
+	}
+	if cfg.VIDVNIMappings != nil {
+		if _, ok := cfg.Link.(*netlink.Vxlan); !ok {
+			return fmt.Errorf("device %q: VIDVNIMappings is only valid for VXLAN devices, got %T", name, cfg.Link)
+		}
+		if cfg.Master == "" {
+			return fmt.Errorf("device %q: VIDVNIMappings requires a bridge master", name)
+		}
+		if err := validateMappings(cfg.VIDVNIMappings); err != nil {
+			return fmt.Errorf("device %q: %w", name, err)
+		}
+	}
+	return nil
+}
 
-	// Check if config is unchanged (idempotent)
+// EnsureLink stores the desired device configuration and enqueues it for reconciliation.
+//
+// INVARIANT: This relies on MaxAttempts = InfiniteAttempts. If MaxAttempts
+// were finite, a Failed device with unchanged config could be dropped from
+// the workqueue and never retried (periodic sync would eventually catch it,
+// but the gap could be up to ReconcilePeriod).
+func (c *Controller) EnsureLink(cfg DeviceConfig) error {
+	if err := cfg.validateConfig(); err != nil {
+		return err
+	}
+
+	name := cfg.deviceName()
+
+	// Defensive copy: prevent data race if caller mutates the slices/link after return.
+	cfg.Addresses = slices.Clone(cfg.Addresses)
+	cfg.VIDVNIMappings = slices.Clone(cfg.VIDVNIMappings)
+	cfg.Link = cloneLink(cfg.Link)
+
+	c.mu.Lock()
+	unlock := sync.OnceFunc(c.mu.Unlock)
+	defer unlock()
+
+	var gen uint64
+	state := DeviceStatePending // default for new devices; existing devices preserve their state
 	if existing := c.store[name]; existing != nil {
 		if configsEqual(&existing.cfg, &cfg) {
-			if !existing.pending {
-				klog.V(5).Infof("NetlinkDeviceManager: %s already in desired state, skipping", name)
-				return nil
+			// Config unchanged. Re-enqueue only for Blocked devices — the caller
+			// may know the external conflict was resolved and wants to force retry.
+			// Don't re-enqueue Failed — the workqueue already has it in rate-limited
+			// backoff. Reconcile() bypasses the rate limiter (queue.Add), so calling
+			// it here would reset the backoff and cause rapid retries.
+			if existing.state == DeviceStateBlocked {
+				unlock()
+				c.reconciler.Reconcile(deviceKeyPrefix + name)
 			}
-			// Config unchanged but pending - don't overwrite, just skip
-			// Manager will retry via periodic sync and netlink events
-			klog.V(5).Infof("NetlinkDeviceManager: %s is pending, manager will retry", name)
 			return nil
 		}
+		gen = existing.generation
+		// preserve last reconciliation result so the reconciler detects the real state transition
+		// and notifies subscribers
+		state = existing.state
 	}
 
-	// Store desired state (new or changed config)
-	c.store[name] = &managedDevice{
-		cfg:     cfg,
-		pending: false,
-	}
+	// Store desired config, increment generation, and enqueue.
+	c.store[name] = &managedDevice{cfg: cfg, state: state, generation: gen + 1}
+	unlock()
 
-	// If not started yet, just store - will be applied in fullReconcile
-	if !c.started {
-		return nil
-	}
-
-	// Apply immediately (netlink I/O under lock)
-	return c.ensureDevice(name, &cfg)
-}
-
-// ensureDevice applies device config and tracks pending state on dependency errors.
-// Wraps applyDeviceConfig() with controller-level retry semantics: if a dependency is missing,
-// the device is marked pending and will be retried when the dependency appears.
-// Must be called with c.mu held.
-func (c *Controller) ensureDevice(name string, cfg *DeviceConfig) error {
-	if err := applyDeviceConfig(name, cfg); err != nil {
-		// Mark as pending if dependency not ready - will retry on netlink event or sync
-		if isDependencyError(err) {
-			if device := c.store[name]; device != nil {
-				device.pending = true
-			}
-			klog.V(4).Infof("NetlinkDeviceManager: %s stored as pending (dependency not ready): %v", name, err)
-			return nil
-		}
-		// Ownership conflict - return error so caller can decide
-		if IsNotOwnedError(err) {
-			klog.Warningf("NetlinkDeviceManager: %s blocked by external device: %v", name, err)
-			return err
-		}
-		// Other error - return to caller
-		klog.Errorf("NetlinkDeviceManager: failed to ensure %s: %v", name, err)
-		return fmt.Errorf("failed to ensure device %s: %w", name, err)
-	}
-
-	// Success - clear pending flag
-	if device := c.store[name]; device != nil {
-		device.pending = false
-	}
+	c.reconciler.Reconcile(deviceKeyPrefix + name)
 	return nil
 }
 
-// DeleteLink removes a device from the desired state and deletes it from the kernel.
-// If kernel deletion fails, the device is retried in sync(). Returns error for caller to retry.
-//
-// Cleans up entries keyed by device name (mappings if VXLAN, port VLANs).
-// Cross-referenced entries are preserved: if bridge "br0" is deleted, mappings on "vxlan0"
-// that reference "br0" remain in desired state. This allows self-healing when the bridge
-// is recreated. To permanently remove mappings, delete the VXLAN or call DeleteBridgeMappings().
+// DeleteLink removes a device from the desired state and enqueues reconciliation.
+// The worker will see the device absent from store and delete it from the kernel.
 func (c *Controller) DeleteLink(name string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	unlock := sync.OnceFunc(c.mu.Unlock)
+	defer unlock()
 
 	_, wasManaged := c.store[name]
-	_, isPendingDelete := c.pendingDeletes[name]
-	if !wasManaged && !isPendingDelete {
-		klog.V(5).Infof("NetlinkDeviceManager: %s not managed, nothing to delete", name)
+	if !wasManaged {
 		return nil
 	}
 
-	// Remove from desired state and related stores
 	delete(c.store, name)
-	c.cleanupRelatedStores(name)
+	unlock()
 
-	// Before Run(), just update desired state - fullReconcile() will clean stale devices
-	if !c.started {
-		delete(c.pendingDeletes, name)
-		klog.V(5).Infof("NetlinkDeviceManager: %s removed from desired state (not started yet)", name)
-		return nil
-	}
-
-	// Try kernel deletion (I/O under lock)
-	if err := deleteDevice(name); err != nil {
-		// Don't tombstone if device isn't ours (some external change took over the device) - retrying won't help
-		if IsNotOwnedError(err) {
-			delete(c.pendingDeletes, name)
-			klog.Warningf("NetlinkDeviceManager: cannot delete %s: %v (device exists but not ours)", name, err)
-			return nil // Treat as success - we removed from desired state
-		}
-		// Tombstone for retry
-		c.pendingDeletes[name] = struct{}{}
-		klog.Errorf("NetlinkDeviceManager: failed to delete %s, will retry: %v", name, err)
-		return fmt.Errorf("failed to delete device %s: %w", name, err)
-	}
-
-	delete(c.pendingDeletes, name)
-	klog.V(4).Infof("NetlinkDeviceManager: deleted device %s", name)
+	c.reconciler.Reconcile(deviceKeyPrefix + name)
 	return nil
-}
-
-// cleanupRelatedStores removes configuration entries keyed by device name.
-// Must be called with c.mu held.
-func (c *Controller) cleanupRelatedStores(name string) {
-	delete(c.vidVNIMappingStore, name)
-	delete(c.portVLANStore, name)
 }
 
 // Has checks if a device is registered in the desired state.
 func (c *Controller) Has(name string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	_, ok := c.store[name]
 	return ok
 }
 
 // GetConfig returns the config for a managed device, or nil if not managed.
 func (c *Controller) GetConfig(name string) *DeviceConfig {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	existing := c.store[name]
 	if existing == nil {
 		return nil
@@ -378,244 +642,151 @@ func (c *Controller) GetConfig(name string) *DeviceConfig {
 	return &cfgCopy
 }
 
-// EnsureBridgeMappings ensures a VXLAN device has exactly the specified VID/VNI mappings.
-// It also ensures the bridge has the corresponding VLANs configured with 'self' flag.
-//
-// Semantics:
-// - Provide ALL desired mappings (full-state, not incremental)
-// - Manager stores desired state for periodic sync/self-healing
-// - Computes diff between current and desired mappings
-// - Stale mappings are removed, missing mappings are added
-// - Returns aggregated error if any operation fails (caller can requeue)
-//
-// Constraints:
-// - Each VNI must be unique within the mappings (no two VIDs mapping to the same VNI)
-// - Each VID must be unique within the mappings
-func (c *Controller) EnsureBridgeMappings(bridgeName, vxlanName string, mappings []VIDVNIMapping) error {
-	// Validate uniqueness constraints
-	if err := validateMappingsUniqueness(mappings); err != nil {
-		return fmt.Errorf("invalid mappings for %s: %w", vxlanName, err)
-	}
-
-	// Copy the mappings slice to avoid races if caller mutates the original
-	mappingsCopy := slices.Clone(mappings)
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.vidVNIMappingStore[vxlanName] = &managedVIDVNIMappings{
-		bridgeName: bridgeName,
-		vxlanName:  vxlanName,
-		mappings:   mappingsCopy,
-	}
-
-	// Before Run(), just store desired state - fullReconcile() will apply on startup
-	if !c.started {
-		klog.V(5).Infof("NetlinkDeviceManager: stored mappings for %s (not started yet)", vxlanName)
-		return nil
-	}
-
-	// Get current mappings and compute diff
-	currentMappings, err := getVIDVNIMappings(vxlanName)
-	if err != nil {
-		klog.V(5).Infof("NetlinkDeviceManager: failed to get current mappings for %s: %v", vxlanName, err)
-		currentMappings = nil
-	}
-
-	toAdd, toRemove := diffMappings(currentMappings, mappingsCopy)
-	if len(toAdd) == 0 && len(toRemove) == 0 {
-		return nil
-	}
-
-	// Apply changes
-	var errs []error
-	for _, m := range toRemove {
-		if err := removeVIDVNIMapping(vxlanName, m); err != nil {
-			klog.Errorf("NetlinkDeviceManager: failed to remove mapping VID=%d VNI=%d from %s: %v",
-				m.VID, m.VNI, vxlanName, err)
-			errs = append(errs, err)
+// ListDevicesByVLANParent returns configs for all devices with the given VLANParent.
+func (c *Controller) ListDevicesByVLANParent(parentName string) []DeviceConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var result []DeviceConfig
+	for _, device := range c.store {
+		if device.cfg.VLANParent == parentName {
+			cfgCopy := device.cfg
+			result = append(result, cfgCopy)
 		}
 	}
-	for _, m := range toAdd {
-		if err := addVIDVNIMapping(bridgeName, vxlanName, m); err != nil {
-			klog.Errorf("NetlinkDeviceManager: failed to add mapping VID=%d VNI=%d to %s: %v",
-				m.VID, m.VNI, vxlanName, err)
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) > 0 {
-		klog.V(4).Infof("NetlinkDeviceManager: %s mappings updated (+%d/-%d, errors=%d)",
-			vxlanName, len(toAdd), len(toRemove), len(errs))
-		return fmt.Errorf("failed to apply %d/%d mappings on %s: %w",
-			len(errs), len(toAdd)+len(toRemove), vxlanName, errors.Join(errs...))
-	}
-
-	if len(toAdd) > 0 || len(toRemove) > 0 {
-		klog.V(4).Infof("NetlinkDeviceManager: %s mappings updated (+%d/-%d)",
-			vxlanName, len(toAdd), len(toRemove))
-	}
-	return nil
+	return result
 }
 
-// EnsureBridgePortVLAN ensures a bridge port has the specified VLAN membership.
-//
-// Semantics:
-// - Manager stores desired state for periodic sync/self-healing
-// - Returns error if operation fails (caller can requeue)
-//
-// Used for OVS ports attached to Linux bridge that need VLAN tagging.
-// TODO: Consider if we should handle OVS port lifecycle as well in this controller.
-func (c *Controller) EnsureBridgePortVLAN(linkName string, vlan BridgePortVLAN) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Initialize nested map if needed
-	if c.portVLANStore[linkName] == nil {
-		c.portVLANStore[linkName] = make(map[int]*managedPortVLAN)
+// IsDeviceReady returns true if the device exists in store and is in Ready state.
+func (c *Controller) IsDeviceReady(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if d, ok := c.store[name]; ok {
+		return d.state == DeviceStateReady
 	}
-	c.portVLANStore[linkName][vlan.VID] = &managedPortVLAN{
-		linkName: linkName,
-		vlan:     vlan,
-	}
-
-	// Before Run(), just store desired state - fullReconcile() will apply on startup
-	if !c.started {
-		klog.V(5).Infof("NetlinkDeviceManager: stored port VLAN %d for %s (not started yet)", vlan.VID, linkName)
-		return nil
-	}
-
-	// Check if update needed
-	current, err := getBridgePortVLAN(linkName, vlan.VID)
-	if err == nil && ptr.Equal(current, &vlan) {
-		klog.V(5).Infof("NetlinkDeviceManager: VLAN %d already configured on %s, skipping", vlan.VID, linkName)
-		return nil
-	}
-
-	// Apply VLAN (I/O under lock)
-	return applyBridgePortVLAN(linkName, vlan)
+	return false
 }
 
-// DeleteBridgePortVLAN removes a VLAN from the port VLAN store and from the kernel.
-func (c *Controller) DeleteBridgePortVLAN(linkName string, vid int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// GetDeviceState returns the current state of a managed device.
+// Returns DeviceStateUnknown if the device is not in the store
+// (never declared via EnsureLink, or already removed via DeleteLink).
+func (c *Controller) GetDeviceState(name string) DeviceState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if d, ok := c.store[name]; ok {
+		return d.state
+	}
+	return DeviceStateUnknown
+}
 
-	// Remove from store
-	if vlans := c.portVLANStore[linkName]; vlans != nil {
-		delete(vlans, vid)
-		if len(vlans) == 0 {
-			delete(c.portVLANStore, linkName)
+// RegisterDeviceReconciler registers a reconciler to be notified on device state transitions.
+// Safe to call before or after Run(). Subscribers that register after Run() will receive
+// notifications for all subsequent state transitions.
+func (c *Controller) RegisterDeviceReconciler(r DeviceReconciler) {
+	c.subscribersMu.Lock()
+	c.subscribers = append(c.subscribers, r)
+	c.subscribersMu.Unlock()
+}
+
+// notifySubscribers calls ReconcileDevice(name) on all registered subscribers.
+// Called from the worker goroutine after state transitions.
+// MUST be called OUTSIDE c.mu to avoid deadlock (subscribers may call GetDeviceState).
+func (c *Controller) notifySubscribers(name string) {
+	c.subscribersMu.RLock()
+	subscribers := c.subscribers
+	c.subscribersMu.RUnlock()
+
+	for _, sub := range subscribers {
+		if err := sub.ReconcileDevice(name); err != nil {
+			klog.Warningf("NetlinkDeviceManager: subscriber error for device %s: %v", name, err)
 		}
 	}
+}
 
-	// Before Run(), just update desired state - don't touch kernel
-	if !c.started {
+// linkChanBufferSize is the buffer size for the netlink event channel.
+// The buffer decouples the kernel socket drain rate from event processing,
+// absorbing bursts (e.g., during startup or bulk reconfiguration) without
+// tearing down the subscription.
+const linkChanBufferSize = 100
+
+// subscribeLinkEvents creates a buffered channel and subscribes to netlink link
+// events. Returns the channel on success or nil on failure.
+func subscribeLinkEvents(stopCh <-chan struct{}, onError func(error)) chan netlink.LinkUpdate {
+	ch := make(chan netlink.LinkUpdate, linkChanBufferSize)
+	options := netlink.LinkSubscribeOptions{
+		ErrorCallback: onError,
+	}
+	if err := netlink.LinkSubscribeWithOptions(ch, stopCh, options); err != nil {
+		onError(err)
 		return nil
 	}
-
-	// Remove from kernel
-	return deleteBridgePortVLAN(linkName, vid)
+	return ch
 }
 
-// deleteBridgePortVLAN removes a VLAN from a bridge port in the kernel.
-func deleteBridgePortVLAN(linkName string, vid int) error {
-	nlOps := util.GetNetLinkOps()
-
-	link, err := nlOps.LinkByName(linkName)
-	if err != nil {
-		if nlOps.IsLinkNotFoundError(err) {
-			// Device already gone - nothing to remove (idempotent)
-			return nil
-		}
-		return fmt.Errorf("failed to get link %s: %w", linkName, err)
-	}
-
-	// For port VLANs: self=false, master=true
-	if err := nlOps.BridgeVlanDel(link, uint16(vid), false, false, false, true); err != nil {
-		if !nlOps.IsEntryNotFoundError(err) {
-			return fmt.Errorf("failed to delete VLAN %d from port %s: %w", vid, linkName, err)
-		}
-	}
-
-	klog.V(4).Infof("NetlinkDeviceManager: deleted VLAN %d from port %s", vid, linkName)
-	return nil
-}
-
-// Run starts the controller and watches for netlink events.
+// Run starts the controller's workqueue reconciler and netlink event listener.
 // Controllers should call EnsureLink for all desired devices BEFORE calling Run().
-//
-// Parameters:
-//   - stopCh: When closed, signals the controller to stop watching for events and exit.
-//     The caller is responsible for closing this channel when shutdown is desired.
-//   - doneWg: The controller calls doneWg.Add(1) on start and doneWg.Done() on exit.
-//     Callers can use doneWg.Wait() to block until the controller has fully stopped.
-//
-// Returns an error if the initial netlink subscription fails. Once running, netlink
-// errors are logged but do not cause Run to return; the controller will attempt to
-// resubscribe automatically.
 func (c *Controller) Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error {
-	linkSubscribeOptions := netlink.LinkSubscribeOptions{
-		ErrorCallback: func(err error) {
-			klog.Errorf("NetlinkDeviceManager: error in LinkSubscribe callback: %v", err)
-		},
-	}
-
-	subscribe := func() (bool, chan netlink.LinkUpdate, error) {
-		linkChan := make(chan netlink.LinkUpdate)
-		if err := netlink.LinkSubscribeWithOptions(linkChan, stopCh, linkSubscribeOptions); err != nil {
-			return false, nil, err
-		}
-		// Full reconcile on startup/resubscribe
-		c.fullReconcile()
-		return true, linkChan, nil
-	}
-
-	return c.runInternal(stopCh, doneWg, subscribe)
-}
-
-type subscribeFn func() (bool, chan netlink.LinkUpdate, error)
-
-func (c *Controller) runInternal(stopCh <-chan struct{}, doneWg *sync.WaitGroup, subscribe subscribeFn) error {
-	// Copy ReconcilePeriod to avoid races if caller modifies it after Run() starts
 	reconcilePeriod := c.ReconcilePeriod
 
-	c.mu.Lock()
-	c.started = true
-	c.mu.Unlock()
-
-	subscribed, linkChan, err := subscribe()
-	if err != nil {
-		return fmt.Errorf("error during netlink subscribe: %w", err)
+	// Subscribe to netlink events BEFORE starting workers.
+	// This ensures no events are missed between worker startup and subscription.
+	onSubscribeError := func(err error) {
+		klog.Errorf("NetlinkDeviceManager: netlink subscribe error: %v", err)
 	}
+	linkChan := subscribeLinkEvents(stopCh, onSubscribeError)
+
+	// Start reconciler with orphan cleanup as initial sync.
+	if err := controller.StartWithInitialSync(
+		c.cleanupOrphanedDevices,
+		c.reconciler,
+	); err != nil {
+		return fmt.Errorf("failed to start reconciler: %w", err)
+	}
+
+	// Queue initial sync (not fullsync — orphan cleanup already ran via StartWithInitialSync)
+	c.reconciler.Reconcile(syncKey)
 
 	doneWg.Add(1)
 	go func() {
 		defer doneWg.Done()
+		defer controller.Stop(c.reconciler)
 
 		syncTimer := time.NewTicker(reconcilePeriod)
 		defer syncTimer.Stop()
 
 		for {
+			// Exit immediately if stopCh is closed
+			// Handle race condition between stopCh and events.
+			select {
+			case <-stopCh:
+				klog.Info("NetlinkDeviceManager: stopping")
+				return
+			default:
+			}
+
 			select {
 			case update, ok := <-linkChan:
-				syncTimer.Reset(reconcilePeriod)
+				// Note: we do NOT reset the periodic sync timer on link events.
+				// Resetting would starve periodic sync on busy nodes with many
+				// netlink events. The periodic sync is a hard safety net.
 				if !ok {
-					// Channel closed, resubscribe
-					if subscribed, linkChan, err = subscribe(); err != nil {
-						klog.Errorf("NetlinkDeviceManager: error during netlink resubscribe: %v", err)
+					// The channel is closed when the subscribe goroutine exits.
+					// Resubscribe and trigger a full sync to catch missed events.
+					klog.Warning("NetlinkDeviceManager: netlink channel closed, resubscribing")
+					linkChan = subscribeLinkEvents(stopCh, onSubscribeError)
+					if linkChan != nil {
+						c.reconciler.Reconcile(fullSyncKey)
 					}
 					continue
 				}
-				// Process the link update
 				c.handleLinkUpdate(update.Link)
 
 			case <-syncTimer.C:
 				klog.V(5).Info("NetlinkDeviceManager: periodic sync")
-				c.sync()
-				if !subscribed {
-					if subscribed, linkChan, err = subscribe(); err != nil {
-						klog.Errorf("NetlinkDeviceManager: error during netlink resubscribe: %v", err)
+				c.reconciler.Reconcile(syncKey)
+				if linkChan == nil {
+					linkChan = subscribeLinkEvents(stopCh, onSubscribeError)
+					if linkChan != nil {
+						c.reconciler.Reconcile(fullSyncKey)
 					}
 				}
 
@@ -626,433 +797,124 @@ func (c *Controller) runInternal(stopCh <-chan struct{}, doneWg *sync.WaitGroup,
 		}
 	}()
 
-	klog.Info("NetlinkDeviceManager is running")
+	klog.Info("NetlinkDeviceManager: running")
 	return nil
 }
 
-// handleLinkUpdate processes a single netlink link update event.
-// This is the reactive dependency resolution mechanism.
+// handleLinkUpdate enqueues reconciliation for devices affected by a netlink event.
 func (c *Controller) handleLinkUpdate(link netlink.Link) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	linkName := link.Attrs().Name
 	klog.V(5).Infof("NetlinkDeviceManager: link update for %s", linkName)
 
-	// Retry pending devices that depend on this link.
-	// Design note: Linear scan should be fine here because we expect a small number of pending devices.
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Queue the device itself for reconciliation
+	if _, exists := c.store[linkName]; exists {
+		c.reconciler.Reconcile(deviceKeyPrefix + linkName)
+	}
+
+	// Queue devices that depend on this link.
 	for name, device := range c.store {
-		if !device.pending {
-			continue
-		}
-		// Check if this device was waiting for the updated link
-		if device.cfg.Master != linkName && device.cfg.VLANParent != linkName {
-			continue
-		}
-
-		klog.V(4).Infof("NetlinkDeviceManager: retrying pending device %s (dependency %s appeared)", name, linkName)
-		if err := applyDeviceConfig(name, &device.cfg); err != nil {
-			if isDependencyError(err) {
-				// Still waiting for dependency - keep pending, will retry on next event
-				klog.V(5).Infof("NetlinkDeviceManager: %s still pending: %v", name, err)
-			} else if IsNotOwnedError(err) {
-				// Ownership conflict - clear pending, don't retry until user intervenes
-				device.pending = false
-				klog.Warningf("NetlinkDeviceManager: %s blocked by external device: %v", name, err)
-			} else {
-				// Other error (e.g., kernel error) - clear pending to avoid infinite retry loop
-				// Device will be retried on periodic reconcile, not on every netlink event
-				device.pending = false
-				klog.Errorf("NetlinkDeviceManager: failed to create pending device %s (will retry on sync): %v", name, err)
+		// Skip failed devices, they are already in rate-limited backoff.
+		if device.state != DeviceStateFailed {
+			if device.cfg.Master == linkName || device.cfg.VLANParent == linkName {
+				c.reconciler.Reconcile(deviceKeyPrefix + name)
 			}
-		} else {
-			device.pending = false
-			klog.V(4).Infof("NetlinkDeviceManager: pending device %s created successfully", name)
 		}
 	}
-
-	// Also ensure the managed device itself if it exists in our store
-	if device := c.store[linkName]; device != nil {
-		if err := applyDeviceConfig(linkName, &device.cfg); err != nil {
-			if isDependencyError(err) {
-				device.pending = true
-				klog.V(5).Infof("NetlinkDeviceManager: %s pending on dependency: %v", linkName, err)
-			} else if IsNotOwnedError(err) {
-				// Device exists but is not ours - someone took over the name
-				klog.Warningf("NetlinkDeviceManager: %s ownership lost: %v", linkName, err)
-			} else {
-				klog.Warningf("NetlinkDeviceManager: error ensuring managed device %s: %v", linkName, err)
-			}
-		} else {
-			device.pending = false
-		}
-	}
-
-	// Sync mappings immediately for traffic continuity.
-	// VID/VNI mappings are on the critical path - without them, VXLAN encap/decap fails.
-	//
-	// If this link is a VXLAN with mappings, sync immediately
-	if m, exists := c.vidVNIMappingStore[linkName]; exists {
-		c.syncMappingsForVXLAN(linkName, m)
-	}
-	// If this link is a bridge, sync any VXLANs using it immediately.
-	// Linear scan is fine for typical deployments with a small number of VXLANs.
-	for vxlanName, m := range c.vidVNIMappingStore {
-		if m.bridgeName == linkName {
-			c.syncMappingsForVXLAN(vxlanName, m)
-		}
-	}
-	// Note: port VLANs (for OVS ports) are synced via periodic sync(),
-	// not on individual link events (would require tracking OVS port names).
 }
 
-// fullReconcile creates missing devices, updates changed ones, and deletes stale ones.
-// Runs on startup to sync all devices.
-func (c *Controller) fullReconcile() {
-	start := time.Now()
-	klog.Info("NetlinkDeviceManager: starting full reconcile")
-
-	c.mu.Lock()
-
-	// Get all links in kernel with our alias prefix
-	links, err := util.GetNetLinkOps().LinkList()
+// requireLink looks up a netlink device by name, returning a DependencyError if missing.
+func requireLink(name string) (netlink.Link, error) {
+	link, err := util.GetNetLinkOps().LinkByName(name)
 	if err != nil {
-		c.mu.Unlock()
-		klog.Errorf("NetlinkDeviceManager: failed to list links: %v", err)
-		return
-	}
-	managedDevs := make(map[string]netlink.Link)
-	for _, link := range links {
-		if isOurDevice(link) {
-			managedDevs[link.Attrs().Name] = link
+		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+			return nil, &DependencyError{Dependency: name, Reason: "not found"}
 		}
+		return nil, err
 	}
-
-	var created, updated, deleted, pending int
-
-	// Ensure all desired devices exist
-	for name, device := range c.store {
-		_, inKernel := managedDevs[name]
-		if err := applyDeviceConfig(name, &device.cfg); err != nil {
-			if isDependencyError(err) {
-				device.pending = true
-				pending++
-				klog.V(4).Infof("NetlinkDeviceManager: %s marked pending (dependency not ready)", name)
-			} else if IsNotOwnedError(err) {
-				klog.Warningf("NetlinkDeviceManager: %s blocked by external device: %v", name, err)
-			} else {
-				klog.Errorf("NetlinkDeviceManager: failed to ensure %s: %v", name, err)
-			}
-		} else {
-			device.pending = false
-			if inKernel {
-				updated++
-			} else {
-				created++
-			}
-		}
-	}
-
-	// Delete stale devices (in kernel but not in desired state)
-	for name, link := range managedDevs {
-		if _, desired := c.store[name]; !desired {
-			klog.V(4).Infof("NetlinkDeviceManager: deleting stale device %s", name)
-			if err := util.GetNetLinkOps().LinkDelete(link); err != nil {
-				klog.Errorf("NetlinkDeviceManager: failed to delete stale %s: %v", name, err)
-			} else {
-				deleted++
-			}
-		}
-	}
-
-	klog.Infof("NetlinkDeviceManager: full reconcile devices completed in %v (created=%d, updated=%d, deleted=%d, pending=%d)",
-		time.Since(start), created, updated, deleted, pending)
-
-	c.mu.Unlock()
-
-	// Apply all other stores (mappings, port VLANs, pending deletes)
-	// Note: Bridge port settings are applied as part of device creation/update via DeviceConfig.BridgePortSettings
-	c.syncMappings()
-	c.syncPortVLANs()
-	c.syncDeletes()
-
-	klog.Infof("NetlinkDeviceManager: full reconcile completed in %v", time.Since(start))
-}
-
-// sync ensures all managed resources are in desired state.
-// Performs a full scan of all managed resources to catch any external drift.
-//
-// Called periodically as defensive measure - normally netlink events should catch everything.
-//
-// NOTE: In future if the number of devices increases, a fast/slow audit pattern
-// could be implemented where full scans happen less frequently and most cycles only
-// process pending/dirty entries.
-func (c *Controller) sync() {
-	c.syncDevices()
-	c.syncMappings()
-	c.syncPortVLANs()
-	c.syncDeletes()
-}
-
-// syncDeletes retries pending deletions (tombstones).
-// Called on every sync cycle to ensure failed deletions eventually succeed.
-func (c *Controller) syncDeletes() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if len(c.pendingDeletes) == 0 {
-		return
-	}
-
-	klog.V(4).Infof("NetlinkDeviceManager: retrying %d pending deletes", len(c.pendingDeletes))
-
-	for name := range c.pendingDeletes {
-		// Skip if device was re-added to desired state (EnsureLink called)
-		if _, stillDesired := c.store[name]; stillDesired {
-			delete(c.pendingDeletes, name)
-			klog.V(4).Infof("NetlinkDeviceManager: skipping delete of %s (now desired)", name)
-			continue
-		}
-
-		if err := deleteDevice(name); err != nil {
-			klog.V(5).Infof("NetlinkDeviceManager: delete retry failed for %s: %v", name, err)
-			// Leave in pendingDeletes for next sync
-		} else {
-			delete(c.pendingDeletes, name)
-			klog.V(4).Infof("NetlinkDeviceManager: successfully deleted %s on retry", name)
-		}
-	}
-}
-
-// syncDevices syncs all managed devices.
-func (c *Controller) syncDevices() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for name, device := range c.store {
-		if err := applyDeviceConfig(name, &device.cfg); err != nil {
-			if isDependencyError(err) {
-				device.pending = true
-			} else if IsNotOwnedError(err) {
-				klog.Warningf("NetlinkDeviceManager: %s blocked by external device: %v", name, err)
-				// Keep in store for retry when external device is removed
-			} else {
-				klog.Errorf("NetlinkDeviceManager: sync failed for %s: %v", name, err)
-			}
-		} else {
-			device.pending = false
-		}
-	}
-}
-
-// syncMappings syncs VID/VNI mappings.
-func (c *Controller) syncMappings() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for vxlanName, m := range c.vidVNIMappingStore {
-		c.syncMappingsForVXLAN(vxlanName, m)
-	}
-}
-
-// syncMappingsForVXLAN syncs VID/VNI mappings for a VXLAN device.
-// Must be called with c.mu held.
-func (c *Controller) syncMappingsForVXLAN(vxlanName string, m *managedVIDVNIMappings) {
-	current, err := getVIDVNIMappings(vxlanName)
-	if err != nil {
-		klog.Warningf("NetlinkDeviceManager: sync mappings - failed to get current for %s: %v (will retry on next sync)", vxlanName, err)
-		return
-	}
-
-	toAdd, toRemove := diffMappings(current, m.mappings)
-	if len(toAdd) == 0 && len(toRemove) == 0 {
-		return
-	}
-
-	var errCount int
-	for _, mapping := range toRemove {
-		if err := removeVIDVNIMapping(vxlanName, mapping); err != nil {
-			klog.Warningf("NetlinkDeviceManager: sync mappings - failed to remove VID=%d VNI=%d from %s: %v",
-				mapping.VID, mapping.VNI, vxlanName, err)
-			errCount++
-		}
-	}
-	for _, mapping := range toAdd {
-		if err := addVIDVNIMapping(m.bridgeName, vxlanName, mapping); err != nil {
-			klog.Warningf("NetlinkDeviceManager: sync mappings - failed to add VID=%d VNI=%d to %s: %v",
-				mapping.VID, mapping.VNI, vxlanName, err)
-			errCount++
-		}
-	}
-
-	if len(toAdd) > 0 || len(toRemove) > 0 {
-		klog.V(4).Infof("NetlinkDeviceManager: sync mappings %s (+%d/-%d, errors=%d)",
-			vxlanName, len(toAdd), len(toRemove), errCount)
-	}
-}
-
-// syncPortVLANs syncs bridge port VLAN configurations.
-// Always does a full scan of all stored port VLANs.
-func (c *Controller) syncPortVLANs() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var synced int
-	for _, vlans := range c.portVLANStore {
-		for _, v := range vlans {
-			current, err := getBridgePortVLAN(v.linkName, v.vlan.VID)
-			if err != nil {
-				// VLAN doesn't exist, need to add
-				if err := applyBridgePortVLAN(v.linkName, v.vlan); err != nil {
-					klog.Warningf("NetlinkDeviceManager: failed to sync port VLAN %d on %s: %v", v.vlan.VID, v.linkName, err)
-				} else {
-					synced++
-				}
-				continue
-			}
-
-			if ptr.Equal(current, &v.vlan) {
-				continue
-			}
-
-			if err := applyBridgePortVLAN(v.linkName, v.vlan); err != nil {
-				klog.Warningf("NetlinkDeviceManager: failed to sync port VLAN %d on %s: %v", v.vlan.VID, v.linkName, err)
-			} else {
-				synced++
-			}
-		}
-	}
-
-	if synced > 0 {
-		klog.V(5).Infof("NetlinkDeviceManager: synced %d port VLAN entries", synced)
-	}
+	return link, nil
 }
 
 // resolveDependencies validates and resolves name-based dependencies to ifindices.
-// Returns a resolved config copy with ParentIndex set for VLANs.
-// Returns DependencyError if any required dependency doesn't exist yet.
-//
-// This function:
-//   - Errors if VLANParent is set but Link isn't *netlink.Vlan (invalid config)
-//   - Errors if Link is VLAN but neither VLANParent nor ParentIndex is set (invalid config)
-//   - Validates VLAN parent exists (by name or by ifindex, returns DependencyError if missing)
-//   - Resolves VLANParent name → ParentIndex
-//   - Validates Master exists (returns DependencyError if missing)
-//
-// The returned config is safe to use for create/update operations.
-// The original config is never modified (store integrity preserved).
-func resolveDependencies(cfg *DeviceConfig) (*DeviceConfig, error) {
-	// Validate: VLANParent only makes sense for VLAN devices
-	if cfg.VLANParent != "" {
-		if _, ok := cfg.Link.(*netlink.Vlan); !ok {
-			linkType := "nil"
-			if cfg.Link != nil {
-				linkType = cfg.Link.Type()
-			}
-			return nil, fmt.Errorf("invalid DeviceConfig: VLANParent set but Link is %s, not VLAN", linkType)
-		}
+// Callers must ensure cfg.Link can be safely mutated.
+// Returns DependencyError if a required dependency doesn't exist yet.
+func resolveDependencies(cfg *DeviceConfig) error {
+	vlan, isVlan := cfg.Link.(*netlink.Vlan)
+
+	if !isVlan && cfg.VLANParent != "" {
+		return fmt.Errorf("invalid DeviceConfig: VLANParent set but Link is %T, not *netlink.Vlan", cfg.Link)
+	}
+	if isVlan && cfg.VLANParent == "" {
+		return fmt.Errorf("invalid DeviceConfig: VLAN %q requires VLANParent", cfg.deviceName())
 	}
 
-	// Validate: VLAN devices must have either VLANParent or ParentIndex
-	// A VLAN without a parent cannot be created or meaningfully updated.
-	if vlan, ok := cfg.Link.(*netlink.Vlan); ok {
-		if cfg.VLANParent == "" && vlan.ParentIndex == 0 {
-			return nil, fmt.Errorf("invalid DeviceConfig: VLAN %q requires VLANParent or ParentIndex", cfg.deviceName())
-		}
-		// For legacy style (ParentIndex set directly), validate parent exists.
-		// This ensures uniform dependency handling for both name-based and ifindex-based parents.
-		if cfg.VLANParent == "" && vlan.ParentIndex > 0 {
-			if _, err := util.GetNetLinkOps().LinkByIndex(vlan.ParentIndex); err != nil {
-				if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-					return nil, &DependencyError{
-						Dependency: fmt.Sprintf("parent ifindex %d", vlan.ParentIndex),
-						Reason:     "VLAN parent not found",
-					}
-				}
-				return nil, fmt.Errorf("failed to check VLAN parent ifindex %d: %w", vlan.ParentIndex, err)
-			}
-		}
-	}
-
-	// Validate Master exists before any destructive operations
 	if cfg.Master != "" {
-		if _, err := util.GetNetLinkOps().LinkByName(cfg.Master); err != nil {
-			if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-				return nil, &DependencyError{Dependency: cfg.Master, Reason: "master not found"}
-			}
-			return nil, fmt.Errorf("failed to check master %s: %w", cfg.Master, err)
+		if _, err := requireLink(cfg.Master); err != nil {
+			return fmt.Errorf("master: %w", err)
 		}
 	}
 
-	// No VLAN parent to resolve - return original config (no copy needed)
-	if cfg.VLANParent == "" {
-		return cfg, nil
-	}
-
-	// Resolve VLANParent name to ifindex
-	parent, err := util.GetNetLinkOps().LinkByName(cfg.VLANParent)
-	if err != nil {
-		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-			return nil, &DependencyError{Dependency: cfg.VLANParent, Reason: "VLAN parent not found"}
+	if isVlan {
+		parent, err := requireLink(cfg.VLANParent)
+		if err != nil {
+			return fmt.Errorf("VLAN parent: %w", err)
 		}
-		return nil, fmt.Errorf("failed to check VLAN parent %s: %w", cfg.VLANParent, err)
+		vlan.ParentIndex = parent.Attrs().Index
 	}
 
-	// Defensive copy: don't mutate the stored config
-	resolved := *cfg
-	vlan := cfg.Link.(*netlink.Vlan) // Already validated above
-	vlanCopy := *vlan
-	vlanCopy.ParentIndex = parent.Attrs().Index
-	resolved.Link = &vlanCopy
-
-	return &resolved, nil
+	return nil
 }
 
 // applyDeviceConfig creates or updates a single device in the kernel.
+// Returns (modified, err) where modified indicates whether kernel state was
+// actually changed.
+//
 // Ownership rules:
 //   - If device doesn't exist: create it with our alias
 //   - If device exists with our alias: update or recreate as needed
 //   - If device exists without our alias: return NotOwnedError (could be human-created)
-func applyDeviceConfig(name string, cfg *DeviceConfig) error {
+func applyDeviceConfig(cfg *DeviceConfig) (bool, error) {
+	name := cfg.deviceName()
 	// Resolve all dependencies first. For the delete-then-recreate path, this ensures
 	// we never delete an existing device unless all dependencies are present to recreate it.
 	// For new devices, early failure here is equivalent to failure in createDevice() -
 	// both return DependencyError and mark the config pending. But for existing devices,
 	// failing after delete would leave us in a worse state (device gone, can't recreate).
-	resolvedCfg, err := resolveDependencies(cfg)
-	if err != nil {
-		return err
+	if err := resolveDependencies(cfg); err != nil {
+		return false, err
 	}
-
+	modified := false
 	// Check if device already exists
 	link, err := util.GetNetLinkOps().LinkByName(name)
 	if err == nil {
 		// Device exists - verify ownership before modifying
-		if !isOurDevice(link) {
-			currentAlias := link.Attrs().Alias
-			if currentAlias == "" {
-				return &NotOwnedError{DeviceName: name, Reason: "no alias (may be externally managed)"}
-			}
-			return &NotOwnedError{DeviceName: name, Reason: fmt.Sprintf("foreign alias %q", currentAlias)}
+		if err := checkOwnership(link); err != nil {
+			return modified, err
 		}
 
 		// Check for critical mismatches (immutable attributes that require recreate)
-		if hasCriticalMismatch(link, resolvedCfg) {
+		if hasCriticalMismatch(link, cfg) {
 			klog.Warningf("NetlinkDeviceManager: device %s has critical config drift, recreating", name)
 			if err := util.GetNetLinkOps().LinkDelete(link); err != nil {
-				return fmt.Errorf("failed to delete mismatched device %s: %w", name, err)
+				return modified, fmt.Errorf("failed to delete mismatched device %s: %w", name, err)
 			}
+			modified = true
 			// Fall through to create
 		} else {
 			// Device exists with correct critical attrs, update mutable attrs
-			return updateDevice(link, resolvedCfg)
+			return updateDevice(link, cfg)
 		}
 	} else if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
-		return fmt.Errorf("failed to check device %s: %w", name, err)
+		return modified, fmt.Errorf("failed to check device %s: %w", name, err)
 	}
 
 	// Device doesn't exist (or was just deleted), create it
-	return createDevice(resolvedCfg)
+	if err := createDevice(cfg); err != nil {
+		return modified, err
+	}
+	return true, nil
 }
 
 // hasCriticalMismatch checks if the existing device has immutable attributes
@@ -1064,7 +926,7 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 
 	// Type mismatch is always critical
 	if existing.Type() != cfg.Link.Type() {
-		klog.V(4).Infof("NetlinkDeviceManager: type mismatch for %s: %s != %s",
+		klog.V(5).Infof("NetlinkDeviceManager: type mismatch for %s: %s != %s",
 			cfg.deviceName(), existing.Type(), cfg.Link.Type())
 		return true
 	}
@@ -1074,7 +936,7 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 		// VRF table ID is immutable
 		if e, ok := existing.(*netlink.Vrf); ok {
 			if e.Table != desired.Table {
-				klog.V(4).Infof("NetlinkDeviceManager: VRF %s table mismatch: %d != %d",
+				klog.V(5).Infof("NetlinkDeviceManager: VRF %s table mismatch: %d != %d",
 					cfg.deviceName(), e.Table, desired.Table)
 				return true
 			}
@@ -1089,7 +951,7 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 			if desired.VlanFiltering != nil {
 				existingFiltering := e.VlanFiltering != nil && *e.VlanFiltering
 				if *desired.VlanFiltering != existingFiltering {
-					klog.V(4).Infof("NetlinkDeviceManager: bridge %s vlan_filtering mismatch: %v != %v",
+					klog.V(5).Infof("NetlinkDeviceManager: bridge %s vlan_filtering mismatch: %v != %v",
 						cfg.deviceName(), existingFiltering, *desired.VlanFiltering)
 					return true
 				}
@@ -1100,7 +962,7 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 					existingPVID = *e.VlanDefaultPVID
 				}
 				if *desired.VlanDefaultPVID != existingPVID {
-					klog.V(4).Infof("NetlinkDeviceManager: bridge %s vlan_default_pvid mismatch: %d != %d",
+					klog.V(5).Infof("NetlinkDeviceManager: bridge %s vlan_default_pvid mismatch: %d != %d",
 						cfg.deviceName(), existingPVID, *desired.VlanDefaultPVID)
 					return true
 				}
@@ -1111,27 +973,27 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 		// VXLAN VNI, src addr, port, FlowBased, VniFilter are immutable
 		if e, ok := existing.(*netlink.Vxlan); ok {
 			if e.VxlanId != desired.VxlanId {
-				klog.V(4).Infof("NetlinkDeviceManager: VXLAN %s VNI mismatch: %d != %d",
+				klog.V(5).Infof("NetlinkDeviceManager: VXLAN %s VNI mismatch: %d != %d",
 					cfg.deviceName(), e.VxlanId, desired.VxlanId)
 				return true
 			}
-			if desired.SrcAddr != nil && !e.SrcAddr.Equal(desired.SrcAddr) {
-				klog.V(4).Infof("NetlinkDeviceManager: VXLAN %s src addr mismatch: %v != %v",
+			if desired.SrcAddr != nil && (e.SrcAddr == nil || !e.SrcAddr.Equal(desired.SrcAddr)) {
+				klog.V(5).Infof("NetlinkDeviceManager: VXLAN %s src addr mismatch: %v != %v",
 					cfg.deviceName(), e.SrcAddr, desired.SrcAddr)
 				return true
 			}
 			if desired.Port > 0 && e.Port != desired.Port {
-				klog.V(4).Infof("NetlinkDeviceManager: VXLAN %s port mismatch: %d != %d",
+				klog.V(5).Infof("NetlinkDeviceManager: VXLAN %s port mismatch: %d != %d",
 					cfg.deviceName(), e.Port, desired.Port)
 				return true
 			}
-			if desired.FlowBased && !e.FlowBased {
-				klog.V(4).Infof("NetlinkDeviceManager: VXLAN %s FlowBased mismatch: %v != %v",
+			if desired.FlowBased != e.FlowBased {
+				klog.V(5).Infof("NetlinkDeviceManager: VXLAN %s FlowBased mismatch: %v != %v",
 					cfg.deviceName(), e.FlowBased, desired.FlowBased)
 				return true
 			}
-			if desired.VniFilter && !e.VniFilter {
-				klog.V(4).Infof("NetlinkDeviceManager: VXLAN %s VniFilter mismatch: %v != %v",
+			if desired.VniFilter != e.VniFilter {
+				klog.V(5).Infof("NetlinkDeviceManager: VXLAN %s VniFilter mismatch: %v != %v",
 					cfg.deviceName(), e.VniFilter, desired.VniFilter)
 				return true
 			}
@@ -1143,27 +1005,33 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 		// so ParentIndex contains the resolved ifindex.
 		if e, ok := existing.(*netlink.Vlan); ok {
 			if e.VlanId != desired.VlanId {
-				klog.V(4).Infof("NetlinkDeviceManager: VLAN %s ID mismatch: %d != %d",
+				klog.V(5).Infof("NetlinkDeviceManager: VLAN %s ID mismatch: %d != %d",
 					cfg.deviceName(), e.VlanId, desired.VlanId)
 				return true
 			}
 			if desired.ParentIndex > 0 && e.ParentIndex != desired.ParentIndex {
-				klog.V(4).Infof("NetlinkDeviceManager: VLAN %s parent mismatch: ifindex %d != %d",
+				klog.V(5).Infof("NetlinkDeviceManager: VLAN %s parent mismatch: ifindex %d != %d",
 					cfg.deviceName(), e.ParentIndex, desired.ParentIndex)
 				return true
 			}
 			if desired.VlanProtocol != 0 && e.VlanProtocol != desired.VlanProtocol {
-				klog.V(4).Infof("NetlinkDeviceManager: VLAN %s protocol mismatch: %d != %d",
+				klog.V(5).Infof("NetlinkDeviceManager: VLAN %s protocol mismatch: %d != %d",
 					cfg.deviceName(), e.VlanProtocol, desired.VlanProtocol)
 				return true
 			}
 			desiredMAC := desired.Attrs().HardwareAddr
 			if len(desiredMAC) > 0 && !bytes.Equal(e.Attrs().HardwareAddr, desiredMAC) {
-				klog.V(4).Infof("NetlinkDeviceManager: VLAN %s MAC mismatch: %v != %v",
+				klog.V(5).Infof("NetlinkDeviceManager: VLAN %s MAC mismatch: %v != %v",
 					cfg.deviceName(), e.Attrs().HardwareAddr, desiredMAC)
 				return true
 			}
 		}
+
+	case *netlink.Dummy:
+		// No type-specific immutable fields
+
+	default:
+		panic(fmt.Sprintf("BUG: unsupported device type %T for %q reached hasCriticalMismatch", cfg.Link, cfg.deviceName()))
 	}
 
 	return false
@@ -1177,21 +1045,12 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 func createDevice(cfg *DeviceConfig) error {
 	name := cfg.deviceName()
 
-	// Creates the device
+	// Set alias before creation.
+	cfg.Link.Attrs().Alias = cfg.alias()
+
 	link, err := createLink(cfg)
 	if err != nil {
 		return err
-	}
-
-	// Set alias for ownership tracking.
-	// Without alias, the device becomes unmanageable (we won't recognize it as ours).
-	if err := util.GetNetLinkOps().LinkSetAlias(link, cfg.alias()); err != nil {
-		// Rollback: delete the device we just created
-		klog.Errorf("NetlinkDeviceManager: failed to set alias on %s, rolling back: %v", name, err)
-		if delErr := util.GetNetLinkOps().LinkDelete(link); delErr != nil {
-			klog.Errorf("NetlinkDeviceManager: rollback failed, device %s may be orphaned: %v", name, delErr)
-		}
-		return fmt.Errorf("failed to set alias on device %s: %w", name, err)
 	}
 
 	// Set master if specified (Master existence already validated by resolveDependencies,
@@ -1207,28 +1066,33 @@ func createDevice(cfg *DeviceConfig) error {
 		if err := util.GetNetLinkOps().LinkSetMaster(link, masterLink); err != nil {
 			return fmt.Errorf("failed to set master %s for device %s: %w", cfg.Master, name, err)
 		}
-		klog.V(4).Infof("NetlinkDeviceManager: set master %s for device %s", cfg.Master, name)
+		klog.V(5).Infof("NetlinkDeviceManager: set master %s for device %s", cfg.Master, name)
 
 		// Apply bridge port settings after attaching to master (required for settings to take effect)
 		if cfg.BridgePortSettings != nil {
-			if err := applyBridgePortSettings(name, *cfg.BridgePortSettings); err != nil {
+			if err := applyBridgePortSettings(link, *cfg.BridgePortSettings); err != nil {
 				return fmt.Errorf("failed to apply bridge port settings for %s: %w", name, err)
 			}
-			klog.V(4).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
+			klog.V(5).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
 		}
 	}
 
 	// Bring the device up after creation
 	if err := ensureDeviceUp(link); err != nil {
-		return fmt.Errorf("failed to bring up %s: %w", name, err)
+		return err
 	}
 
 	// Sync addresses if configured
-	if err := syncAddresses(name, cfg); err != nil {
-		return fmt.Errorf("failed to sync addresses on %s: %w", name, err)
+	if err := syncAddresses(link, cfg); err != nil {
+		return err
 	}
 
-	klog.V(4).Infof("NetlinkDeviceManager: created device %s", name)
+	// Sync VID/VNI mappings (VXLAN bridge ports only)
+	if err := syncVIDVNIMappings(link, cfg); err != nil {
+		return err
+	}
+
+	klog.V(5).Infof("NetlinkDeviceManager: created device %s", name)
 	return nil
 }
 
@@ -1245,17 +1109,19 @@ func createDevice(cfg *DeviceConfig) error {
 //
 // Immutable attributes (VNI, SrcAddr, VlanId, etc.) are handled by hasCriticalMismatch
 // which triggers delete+recreate instead.
-func updateDevice(link netlink.Link, cfg *DeviceConfig) error {
+func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 	name := cfg.deviceName()
 	currentAttrs := link.Attrs()
+	modified := false
 
 	// Only call LinkModify if there are actual differences to apply.
 	// This prevents unnecessary netlink events.
 	if needsLinkModify(link, cfg) {
 		modifiedLink := prepareLinkForModify(link, cfg)
 		if err := util.GetNetLinkOps().LinkModify(modifiedLink); err != nil {
-			return fmt.Errorf("failed to modify link %s: %w", name, err)
+			return modified, fmt.Errorf("failed to modify link %s: %w", name, err)
 		}
+		modified = true
 		klog.V(5).Infof("NetlinkDeviceManager: applied LinkModify for device %s", name)
 	}
 
@@ -1267,49 +1133,62 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) error {
 		masterLink, err := util.GetNetLinkOps().LinkByName(cfg.Master)
 		if err != nil {
 			if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-				return &DependencyError{Dependency: cfg.Master, Reason: "master not found (deleted after validation)"}
+				return modified, &DependencyError{Dependency: cfg.Master, Reason: "master not found (deleted after validation)"}
 			}
-			return fmt.Errorf("failed to find master %s: %w", cfg.Master, err)
+			return modified, fmt.Errorf("failed to find master %s: %w", cfg.Master, err)
 		}
 		if currentAttrs.MasterIndex != masterLink.Attrs().Index {
 			if err := util.GetNetLinkOps().LinkSetMaster(link, masterLink); err != nil {
-				return fmt.Errorf("failed to set master %s for device %s: %w", cfg.Master, name, err)
+				return modified, fmt.Errorf("failed to set master %s for device %s: %w", cfg.Master, name, err)
 			}
 			masterChanged = true
-			klog.V(4).Infof("NetlinkDeviceManager: updated master %s for device %s", cfg.Master, name)
+			modified = true
+			klog.V(5).Infof("NetlinkDeviceManager: updated master %s for device %s", cfg.Master, name)
 		}
+	} else if currentAttrs.MasterIndex != 0 {
+		// Desired config has no master, but device is currently attached to one.
+		// Detach to match the declarative "no master" intent.
+		if err := util.GetNetLinkOps().LinkSetNoMaster(link); err != nil {
+			return modified, fmt.Errorf("failed to detach %s from master: %w", name, err)
+		}
+		modified = true
+		klog.V(5).Infof("NetlinkDeviceManager: detached device %s from master (ifindex %d)", name, currentAttrs.MasterIndex)
 	}
 
 	// Apply bridge port settings if configured (not handled by LinkModify).
-	if err := ensureBridgePortSettings(name, cfg, masterChanged); err != nil {
-		return err
+	if err := ensureBridgePortSettings(link, cfg, masterChanged); err != nil {
+		return modified, err
 	}
 
 	if err := ensureDeviceUp(link); err != nil {
-		return fmt.Errorf("failed to bring up %s: %w", name, err)
+		return modified, err
 	}
 
 	// Sync addresses if configured
-	if err := syncAddresses(name, cfg); err != nil {
-		return fmt.Errorf("failed to sync addresses on %s: %w", name, err)
+	if err := syncAddresses(link, cfg); err != nil {
+		return modified, err
 	}
 
-	return nil
+	// Sync VID/VNI mappings (VXLAN bridge ports only)
+	if err := syncVIDVNIMappings(link, cfg); err != nil {
+		return modified, err
+	}
+
+	return modified, nil
 }
 
 // needsLinkModify checks if any mutable attributes differ between current link and desired config.
 // Returns true if LinkModify should be called to reconcile differences.
 // This prevents unnecessary LinkModify calls that would trigger netlink events.
 func needsLinkModify(current netlink.Link, cfg *DeviceConfig) bool {
-	// Check if alias differs (ownership marker, generated from config)
 	if current.Attrs().Alias != cfg.alias() {
 		return true
 	}
-	return !linkMutableFieldsEqual(current, cfg.Link)
+	return !linkMutableFieldsMatch(current, cfg.Link)
 }
 
 // prepareLinkForModify creates a Link object suitable for LinkModify.
-// It includes all mutable fields that linkMutableFieldsEqual checks.
+// It includes all mutable fields that linkMutableFieldsMatch checks.
 func prepareLinkForModify(existing netlink.Link, cfg *DeviceConfig) netlink.Link {
 	desiredAttrs := cfg.Link.Attrs()
 	baseAttrs := netlink.LinkAttrs{
@@ -1321,7 +1200,9 @@ func prepareLinkForModify(existing netlink.Link, cfg *DeviceConfig) netlink.Link
 		Alias:        cfg.alias(),
 	}
 
-	// Handle type-specific mutable fields
+	// Handle type-specific mutable fields.
+	// Each supported type must have an explicit case to ensure the correct
+	// IFLA_INFO_KIND is sent in the netlink message.
 	switch desired := cfg.Link.(type) {
 	case *netlink.Vxlan:
 		return &netlink.Vxlan{
@@ -1334,8 +1215,20 @@ func prepareLinkForModify(existing netlink.Link, cfg *DeviceConfig) netlink.Link
 			VlanFiltering:   desired.VlanFiltering,
 			VlanDefaultPVID: desired.VlanDefaultPVID,
 		}
+	case *netlink.Vrf:
+		return &netlink.Vrf{
+			LinkAttrs: baseAttrs,
+			Table:     desired.Table,
+		}
+	case *netlink.Vlan:
+		return &netlink.Vlan{
+			LinkAttrs: baseAttrs,
+			VlanId:    desired.VlanId,
+		}
+	case *netlink.Dummy:
+		return &netlink.Dummy{LinkAttrs: baseAttrs}
 	default:
-		return &netlink.Device{LinkAttrs: baseAttrs}
+		panic(fmt.Sprintf("BUG: unsupported device type %T for %q", cfg.Link, cfg.deviceName()))
 	}
 }
 
@@ -1343,27 +1236,48 @@ func prepareLinkForModify(existing netlink.Link, cfg *DeviceConfig) netlink.Link
 // Only deletes devices that have our alias prefix (ownership check).
 func deleteDevice(name string) error {
 	link, err := util.GetNetLinkOps().LinkByName(name)
-	if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-		return nil // Already gone
-	}
 	if err != nil {
+		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+			return nil // Already gone
+		}
 		return fmt.Errorf("failed to find device %s for deletion: %w", name, err)
 	}
 
 	// Safety check - only delete if it's ours
-	if !isOurDevice(link) {
-		alias := link.Attrs().Alias
-		if alias == "" {
-			return &NotOwnedError{DeviceName: name, Reason: "no alias (may be externally managed)"}
-		}
-		return &NotOwnedError{DeviceName: name, Reason: fmt.Sprintf("foreign alias %q", alias)}
+	if err := checkOwnership(link); err != nil {
+		return err
 	}
 
 	if err := util.GetNetLinkOps().LinkDelete(link); err != nil {
 		return fmt.Errorf("failed to delete device %s: %w", name, err)
 	}
-	klog.V(4).Infof("NetlinkDeviceManager: deleted device %s", name)
+	klog.V(5).Infof("NetlinkDeviceManager: deleted device %s", name)
 	return nil
+}
+
+// cloneLink returns a shallow copy of the concrete struct behind a netlink.Link
+// interface. Slice/pointer fields within the struct (e.g. HardwareAddr)
+// are not recursively copied.
+func cloneLink(link netlink.Link) netlink.Link {
+	switch l := link.(type) {
+	case *netlink.Bridge:
+		cp := *l
+		return &cp
+	case *netlink.Vxlan:
+		cp := *l
+		return &cp
+	case *netlink.Vlan:
+		cp := *l
+		return &cp
+	case *netlink.Vrf:
+		cp := *l
+		return &cp
+	case *netlink.Dummy:
+		cp := *l
+		return &cp
+	default:
+		panic(fmt.Sprintf("BUG: unsupported device type %T for cloneLink", link))
+	}
 }
 
 // createLink creates a netlink device and returns the created link.
@@ -1381,19 +1295,11 @@ func createLink(cfg *DeviceConfig) (netlink.Link, error) {
 	return link, nil
 }
 
-// ensureDeviceUp brings a device up if it's not already.
+// ensureDeviceUp brings a device up. LinkSetUp is idempotent so no
+// need to check current state first.
 func ensureDeviceUp(link netlink.Link) error {
-	name := link.Attrs().Name
-	// Re-fetch to get current state
-	link, err := util.GetNetLinkOps().LinkByName(name)
-	if err != nil {
-		return fmt.Errorf("failed to get link %s: %w", name, err)
-	}
-	if link.Attrs().Flags&net.FlagUp != 0 {
-		return nil // Already up
-	}
 	if err := util.GetNetLinkOps().LinkSetUp(link); err != nil {
-		return fmt.Errorf("failed to set link %s up: %w", name, err)
+		return fmt.Errorf("failed to set link %s up: %w", link.Attrs().Name, err)
 	}
 	return nil
 }
@@ -1401,19 +1307,15 @@ func ensureDeviceUp(link netlink.Link) error {
 // syncAddresses ensures the device has exactly the desired addresses.
 // If cfg.Addresses is nil, no address management is performed (existing addresses preserved).
 // Link-local addresses (fe80::/10) are never removed automatically.
-func syncAddresses(name string, cfg *DeviceConfig) error {
+func syncAddresses(currentLink netlink.Link, cfg *DeviceConfig) error {
 	if cfg.Addresses == nil {
 		return nil // No address management requested
 	}
 
 	nlOps := util.GetNetLinkOps()
+	name := currentLink.Attrs().Name
 
-	link, err := nlOps.LinkByName(name)
-	if err != nil {
-		return fmt.Errorf("failed to get link %s for address sync: %w", name, err)
-	}
-
-	current, err := nlOps.AddrList(link, netlink.FAMILY_ALL)
+	current, err := nlOps.AddrList(currentLink, netlink.FAMILY_ALL)
 	if err != nil {
 		return fmt.Errorf("failed to list addresses on %s: %w", name, err)
 	}
@@ -1432,14 +1334,14 @@ func syncAddresses(name string, cfg *DeviceConfig) error {
 
 	for key := range toAdd {
 		addr := desiredMap[key]
-		if err := nlOps.AddrAdd(link, addr); err != nil {
+		if err := nlOps.AddrAdd(currentLink, addr); err != nil {
 			// EEXIST is fine - address already exists (race or concurrent add)
 			if !nlOps.IsAlreadyExistsError(err) {
 				errs = append(errs, fmt.Errorf("failed to add address %s to %s: %w", key, name, err))
 				continue
 			}
 		}
-		klog.V(4).Infof("NetlinkDeviceManager: added address %s to %s", key, name)
+		klog.V(5).Infof("NetlinkDeviceManager: added address %s to %s", key, name)
 	}
 
 	for key := range toRemove {
@@ -1447,14 +1349,14 @@ func syncAddresses(name string, cfg *DeviceConfig) error {
 		if isLinkLocalAddress(addr.IP) {
 			continue // Never remove link-local addresses
 		}
-		if err := nlOps.AddrDel(link, addr); err != nil {
+		if err := nlOps.AddrDel(currentLink, addr); err != nil {
 			// EADDRNOTAVAIL/ENOENT is fine - address already gone
 			if !nlOps.IsEntryNotFoundError(err) {
 				errs = append(errs, fmt.Errorf("failed to remove address %s from %s: %w", key, name, err))
 				continue
 			}
 		}
-		klog.V(4).Infof("NetlinkDeviceManager: removed address %s from %s", key, name)
+		klog.V(5).Infof("NetlinkDeviceManager: removed address %s from %s", key, name)
 	}
 
 	if len(errs) > 0 {
@@ -1475,73 +1377,126 @@ func addrListToMap(addrs []netlink.Addr) map[string]*netlink.Addr {
 	return result
 }
 
-// isLinkLocalAddress returns true for IPv6 link-local addresses (fe80::/10).
+// isLinkLocalAddress returns true for link-local addresses (IPv6 fe80::/10 or IPv4 169.254.0.0/16).
 // These addresses are kernel-managed and should not be removed automatically.
 func isLinkLocalAddress(ip net.IP) bool {
 	return ip != nil && ip.IsLinkLocalUnicast()
 }
 
-// getVIDVNIMappings retrieves current VID/VNI mappings for a specific VXLAN device.
-// Uses `bridge -j vlan tunnelshow dev <name>` command for per-device filtering.
+// syncVIDVNIMappings ensures the VXLAN device has exactly the desired VID/VNI mappings.
+// If cfg.VIDVNIMappings is nil, no mapping management is performed.
 //
-// Note: netlink.BridgeVlanTunnelShow() returns a flat list without ifindex,
-// making it impossible to filter by device. We use the bridge command until
-// the netlink library adds per-device tunnel info listing.
-// TODO: Consider improving netlink.BridgeVlanTunnelShow().
-func getVIDVNIMappings(vxlanName string) ([]VIDVNIMapping, error) {
-	// Execute: bridge -j vlan tunnelshow dev <vxlanName>
-	output, err := runBridgeCmd("-j", "vlan", "tunnelshow", "dev", vxlanName)
+// Each mapping consists of four kernel components:
+//  1. Bridge self VLAN (on the bridge device)
+//  2. VXLAN VID membership (on the VXLAN bridge port)
+//  3. VNI filter entry (on the VXLAN device)
+//  4. Tunnel-info (VID→VNI mapping on the VXLAN bridge port)
+//
+// For removals, we diff against current tunnel-info (the only queryable component).
+// For additions, we always ensure ALL desired mappings on every cycle rather than
+// relying on tunnel-info as a proxy for full state. This is critical because the
+// other three components can be independently removed (e.g., bridge self VLAN deleted
+// externally) while tunnel-info remains intact, and addVIDVNIMapping is idempotent
+// (handles EEXIST for each component).
+func syncVIDVNIMappings(link netlink.Link, cfg *DeviceConfig) error {
+	if cfg.VIDVNIMappings == nil {
+		return nil
+	}
+	if cfg.Master == "" {
+		return nil
+	}
+
+	nlOps := util.GetNetLinkOps()
+	name := link.Attrs().Name
+
+	bridgeLink, err := nlOps.LinkByName(cfg.Master)
 	if err != nil {
-		// Device may not exist yet or no mappings - return empty
-		klog.V(5).Infof("NetlinkDeviceManager: could not get bridge mappings for %s: %v", vxlanName, err)
+		if nlOps.IsLinkNotFoundError(err) {
+			return &DependencyError{Dependency: cfg.Master, Reason: "bridge not found for VID/VNI mappings"}
+		}
+		return fmt.Errorf("failed to get bridge %s for mappings: %w", cfg.Master, err)
+	}
+
+	current, err := getVIDVNIMappings(link)
+	if err != nil {
+		return fmt.Errorf("failed to read current mappings for %s: %w", name, err)
+	}
+
+	toRemove := staleMappings(current, cfg.VIDVNIMappings)
+
+	var errs []error
+
+	for _, mapping := range toRemove {
+		if err := removeVIDVNIMapping(link, mapping); err != nil {
+			klog.Warningf("NetlinkDeviceManager: failed to remove mapping VID=%d VNI=%d from %s: %v",
+				mapping.VID, mapping.VNI, name, err)
+			errs = append(errs, err)
+		}
+	}
+
+	for _, mapping := range cfg.VIDVNIMappings {
+		if err := addVIDVNIMapping(bridgeLink, link, mapping); err != nil {
+			klog.Warningf("NetlinkDeviceManager: failed to ensure mapping VID=%d VNI=%d on %s: %v",
+				mapping.VID, mapping.VNI, name, err)
+			errs = append(errs, err)
+		}
+	}
+
+	if len(cfg.VIDVNIMappings) > 0 || len(toRemove) > 0 {
+		klog.V(5).Infof("NetlinkDeviceManager: mappings %s (ensured=%d, removed=%d, errors=%d)",
+			name, len(cfg.VIDVNIMappings), len(toRemove), len(errs))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to apply %d mappings on %s: %w", len(errs), name, errors.Join(errs...))
+	}
+	return nil
+}
+
+// getVIDVNIMappings retrieves current VID/VNI mappings for a VXLAN device.
+func getVIDVNIMappings(link netlink.Link) ([]VIDVNIMapping, error) {
+	nlOps := util.GetNetLinkOps()
+	name := link.Attrs().Name
+
+	tunnels, err := nlOps.BridgeVlanTunnelShowDev(link)
+	if err != nil {
+		klog.V(5).Infof("NetlinkDeviceManager: could not get tunnel info for %s: %v", name, err)
 		return nil, err
 	}
 
-	// Parse JSON output
-	// Format: [{"ifname":"vxlan1","vlans":[{"vlan":10,"tunid":100},{"vlan":20,"tunid":200}]}]
-	var ports []struct {
-		IfName string `json:"ifname"`
-		VLANs  []struct {
-			VLAN  int `json:"vlan"`
-			TunID int `json:"tunid"`
-		} `json:"vlans"`
-	}
-
-	if err := json.Unmarshal([]byte(output), &ports); err != nil {
-		klog.V(5).Infof("NetlinkDeviceManager: failed to parse bridge vlan tunnelshow JSON for %s: %v", vxlanName, err)
-		return nil, err
-	}
-
-	// Find the port matching our device
 	var mappings []VIDVNIMapping
-	for _, port := range ports {
-		if port.IfName != vxlanName {
-			continue
-		}
-		for _, vlan := range port.VLANs {
-			if vlan.TunID > 0 {
-				mappings = append(mappings, VIDVNIMapping{
-					VID: uint16(vlan.VLAN),
-					VNI: uint32(vlan.TunID),
-				})
-			}
+	for _, t := range tunnels {
+		if t.TunId > 0 {
+			mappings = append(mappings, VIDVNIMapping{
+				VID: t.Vid,
+				VNI: t.TunId,
+			})
 		}
 	}
 
-	klog.V(5).Infof("NetlinkDeviceManager: found %d existing VID/VNI mappings on %s", len(mappings), vxlanName)
+	klog.V(5).Infof("NetlinkDeviceManager: found %d existing VID/VNI mappings on %s", len(mappings), name)
 	return mappings, nil
 }
 
-// validateMappingsUniqueness checks that all VIDs and VNIs are unique within the mappings.
-// This is required because:
+// validateMappings checks VID/VNI ranges and uniqueness constraints.
+// Range: VID [1, 4094], VNI [1, 16777215].
+// Uniqueness is required because:
 //   - Two VIDs mapping to the same VNI would cause removeVIDVNIMapping to delete the VNI filter
 //     entry still needed by the other VID
 //   - Duplicate VIDs would be ambiguous
-func validateMappingsUniqueness(mappings []VIDVNIMapping) error {
+const maxVNI = 1<<24 - 1 // 16777215
+
+func validateMappings(mappings []VIDVNIMapping) error {
 	seenVIDs := make(map[uint16]bool)
 	seenVNIs := make(map[uint32]bool)
 
 	for _, m := range mappings {
+		if m.VID < 1 || m.VID > 4094 {
+			return fmt.Errorf("VID %d out of valid range [1, 4094]", m.VID)
+		}
+		if m.VNI < 1 || m.VNI > maxVNI {
+			return fmt.Errorf("VNI %d out of valid range [1, %d]", m.VNI, maxVNI)
+		}
 		if seenVIDs[m.VID] {
 			return fmt.Errorf("duplicate VID %d", m.VID)
 		}
@@ -1554,30 +1509,15 @@ func validateMappingsUniqueness(mappings []VIDVNIMapping) error {
 	return nil
 }
 
-// diffMappings computes the difference between current and desired mappings.
-// Returns lists of mappings to add and remove.
-func diffMappings(current, desired []VIDVNIMapping) (toAdd, toRemove []VIDVNIMapping) {
-	currentSet := sets.New(current...)
-	desiredSet := sets.New(desired...)
-
-	return desiredSet.Difference(currentSet).UnsortedList(),
-		currentSet.Difference(desiredSet).UnsortedList()
+// staleMappings returns mappings present in current but not in desired.
+func staleMappings(current, desired []VIDVNIMapping) []VIDVNIMapping {
+	return sets.New(current...).Difference(sets.New(desired...)).UnsortedList()
 }
 
 // addVIDVNIMapping adds a VID/VNI mapping to a VXLAN device.
 // This function does NOT hold any locks - caller must ensure thread safety.
-func addVIDVNIMapping(bridgeName, vxlanName string, m VIDVNIMapping) error {
+func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error {
 	nlOps := util.GetNetLinkOps()
-
-	// Get link objects for netlink calls
-	bridgeLink, err := nlOps.LinkByName(bridgeName)
-	if err != nil {
-		return fmt.Errorf("failed to get bridge %s: %w", bridgeName, err)
-	}
-	vxlanLink, err := nlOps.LinkByName(vxlanName)
-	if err != nil {
-		return fmt.Errorf("failed to get VXLAN %s: %w", vxlanName, err)
-	}
 
 	// 1. Add VID to bridge with 'self' flag
 	// This is required for the bridge to recognize the VLAN
@@ -1613,24 +1553,12 @@ func addVIDVNIMapping(bridgeName, vxlanName string, m VIDVNIMapping) error {
 }
 
 // removeVIDVNIMapping removes a VID/VNI mapping from a VXLAN device.
-// Uses native netlink calls.
 // This function does NOT hold any locks - caller must ensure thread safety.
 // Note: Unlike addVIDVNIMapping, this does NOT remove the bridge self VID because:
 // 1. Other VXLAN mappings or ports might still use that VID
 // 2. Bridge self VIDs are automatically cleaned up by the kernel when the bridge is deleted
-func removeVIDVNIMapping(vxlanName string, m VIDVNIMapping) error {
+func removeVIDVNIMapping(vxlanLink netlink.Link, m VIDVNIMapping) error {
 	nlOps := util.GetNetLinkOps()
-
-	// Get link object for netlink calls
-	vxlanLink, err := nlOps.LinkByName(vxlanName)
-	if err != nil {
-		if nlOps.IsLinkNotFoundError(err) {
-			// Device already gone - nothing to remove (idempotent)
-			klog.V(5).Infof("NetlinkDeviceManager: VXLAN %s not found for mapping removal, skipping", vxlanName)
-			return nil
-		}
-		return fmt.Errorf("failed to get VXLAN %s for mapping removal: %w", vxlanName, err)
-	}
 
 	// Remove in reverse order of add for symmetry.
 	var errs []error
@@ -1657,7 +1585,7 @@ func removeVIDVNIMapping(vxlanName string, m VIDVNIMapping) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to remove mapping from %s: %w", vxlanName, errors.Join(errs...))
+		return fmt.Errorf("failed to remove mapping from %s: %w", vxlanLink.Attrs().Name, errors.Join(errs...))
 	}
 	return nil
 }
@@ -1665,22 +1593,24 @@ func removeVIDVNIMapping(vxlanName string, m VIDVNIMapping) error {
 // ensureBridgePortSettings applies bridge port settings if needed.
 // Settings are applied if: master was just changed, or settings differ from current.
 // If current settings can't be read, we skip to avoid loops (periodic reconciliation will retry).
-func ensureBridgePortSettings(name string, cfg *DeviceConfig, masterChanged bool) error {
+func ensureBridgePortSettings(link netlink.Link, cfg *DeviceConfig, masterChanged bool) error {
 	if cfg.BridgePortSettings == nil || cfg.Master == "" {
 		return nil
 	}
 
+	name := link.Attrs().Name
+
 	// Master just changed - always apply settings
 	if masterChanged {
-		if err := applyBridgePortSettings(name, *cfg.BridgePortSettings); err != nil {
+		if err := applyBridgePortSettings(link, *cfg.BridgePortSettings); err != nil {
 			return fmt.Errorf("failed to apply bridge port settings for %s: %w", name, err)
 		}
-		klog.V(4).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
+		klog.V(5).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
 		return nil
 	}
 
 	// Check if settings differ from current
-	current, err := getBridgePortSettings(name)
+	current, err := getBridgePortSettings(link)
 	if err != nil {
 		// Can't read current settings - log and skip.
 		// This can happen if device is not yet attached to a bridge.
@@ -1689,10 +1619,10 @@ func ensureBridgePortSettings(name string, cfg *DeviceConfig, masterChanged bool
 	}
 
 	if !ptr.Equal(current, cfg.BridgePortSettings) {
-		if err := applyBridgePortSettings(name, *cfg.BridgePortSettings); err != nil {
+		if err := applyBridgePortSettings(link, *cfg.BridgePortSettings); err != nil {
 			return fmt.Errorf("failed to apply bridge port settings for %s: %w", name, err)
 		}
-		klog.V(4).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
+		klog.V(5).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
 	}
 
 	return nil
@@ -1700,19 +1630,15 @@ func ensureBridgePortSettings(name string, cfg *DeviceConfig, masterChanged bool
 
 // getBridgePortSettings retrieves current bridge port settings for a device.
 // Uses native netlink Protinfo from the link attributes.
-func getBridgePortSettings(linkName string) (*BridgePortSettings, error) {
+func getBridgePortSettings(link netlink.Link) (*BridgePortSettings, error) {
 	nlOps := util.GetNetLinkOps()
-
-	link, err := nlOps.LinkByName(linkName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get link %s: %w", linkName, err)
-	}
+	name := link.Attrs().Name
 
 	// Use LinkGetProtinfo which performs a proper AF_BRIDGE dump to get bridge port info.
 	// This is more reliable than link.Attrs().Protinfo which is not populated by LinkByName.
 	protinfo, err := nlOps.LinkGetProtinfo(link)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bridge port info for %s: %w", linkName, err)
+		return nil, fmt.Errorf("failed to get bridge port info for %s: %w", name, err)
 	}
 
 	return &BridgePortSettings{
@@ -1723,85 +1649,25 @@ func getBridgePortSettings(linkName string) (*BridgePortSettings, error) {
 }
 
 // applyBridgePortSettings sets bridge port settings.
-func applyBridgePortSettings(linkName string, settings BridgePortSettings) error {
+func applyBridgePortSettings(link netlink.Link, settings BridgePortSettings) error {
 	nlOps := util.GetNetLinkOps()
-
-	link, err := nlOps.LinkByName(linkName)
-	if err != nil {
-		return fmt.Errorf("failed to get link %s: %w", linkName, err)
-	}
+	name := link.Attrs().Name
 
 	// Set VLAN tunnel mode
 	if err := nlOps.LinkSetVlanTunnel(link, settings.VLANTunnel); err != nil {
-		return fmt.Errorf("failed to set vlan_tunnel on %s: %w", linkName, err)
+		return fmt.Errorf("failed to set vlan_tunnel on %s: %w", name, err)
 	}
 
 	// Set neighbor suppress mode
 	if err := nlOps.LinkSetBrNeighSuppress(link, settings.NeighSuppress); err != nil {
-		return fmt.Errorf("failed to set neigh_suppress on %s: %w", linkName, err)
+		return fmt.Errorf("failed to set neigh_suppress on %s: %w", name, err)
 	}
 
 	// Set learning mode
 	if err := nlOps.LinkSetLearning(link, settings.Learning); err != nil {
-		return fmt.Errorf("failed to set learning on %s: %w", linkName, err)
+		return fmt.Errorf("failed to set learning on %s: %w", name, err)
 	}
 
-	return nil
-}
-
-// getBridgePortVLAN retrieves current VLAN configuration for a specific VID on a port.
-func getBridgePortVLAN(linkName string, vid int) (*BridgePortVLAN, error) {
-	// Get the link
-	link, err := util.GetNetLinkOps().LinkByName(linkName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get link %s: %w", linkName, err)
-	}
-
-	// Get VLAN list for this interface
-	vlansMap, err := netlink.BridgeVlanList()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bridge vlan list: %w", err)
-	}
-
-	// Find VLANs for our interface
-	vlans, ok := vlansMap[int32(link.Attrs().Index)]
-	if !ok {
-		return nil, fmt.Errorf("no vlan info for %s", linkName)
-	}
-
-	// Find the specific VID
-	for _, vlan := range vlans {
-		if int(vlan.Vid) == vid {
-			return &BridgePortVLAN{
-				VID:      vid,
-				PVID:     vlan.PortVID(),
-				Untagged: vlan.EngressUntag(),
-			}, nil
-		}
-	}
-
-	return nil, fmt.Errorf("VID %d not found on %s", vid, linkName)
-}
-
-// applyBridgePortVLAN adds a VLAN to a bridge port.
-// Uses native netlink calls.
-func applyBridgePortVLAN(linkName string, vlan BridgePortVLAN) error {
-	nlOps := util.GetNetLinkOps()
-
-	// Get the link
-	link, err := nlOps.LinkByName(linkName)
-	if err != nil {
-		return fmt.Errorf("failed to get link %s: %w", linkName, err)
-	}
-
-	// Add VLAN with flags
-	// BridgeVlanAdd(link, vid, pvid, untagged, self, master)
-	// For port VLANs: self=false, master=true
-	if err := nlOps.BridgeVlanAdd(link, uint16(vlan.VID), vlan.PVID, vlan.Untagged, false, true); err != nil {
-		if !nlOps.IsAlreadyExistsError(err) {
-			return fmt.Errorf("failed to add VLAN %d to port %s: %w", vlan.VID, linkName, err)
-		}
-	}
 	return nil
 }
 
@@ -1813,56 +1679,58 @@ func (cfg *DeviceConfig) deviceName() string {
 	return cfg.Link.Attrs().Name
 }
 
-// deviceType returns the type of the link for alias generation
-func (cfg *DeviceConfig) deviceType() string {
-	if cfg.Link == nil {
-		return "unknown"
-	}
-	return cfg.Link.Type()
-}
-
 // alias generates the ownership alias for this device.
 // Format: "ovn-k8s-ndm:<type>:<name>" for debugging and collision avoidance.
 func (cfg *DeviceConfig) alias() string {
-	return ManagedAliasPrefix + cfg.deviceType() + ":" + cfg.deviceName()
+	linkType := "unknown"
+	if cfg.Link != nil {
+		linkType = cfg.Link.Type()
+	}
+	return managedAliasPrefix + linkType + ":" + cfg.deviceName()
 }
 
-// linkMutableFieldsEqual compares mutable link attributes that can be updated via LinkModify.
-// This only checks fields that can be modified in-place; immutable fields like type are
-// checked separately in configsEqual and hasCriticalMismatch.
-func linkMutableFieldsEqual(a, b netlink.Link) bool {
-	aAttrs := a.Attrs()
-	bAttrs := b.Attrs()
+// linkMutableFieldsMatch reports whether current already satisfies desired for mutable
+// link attributes that can be updated via LinkModify. Zero-valued fields in desired are
+// treated as "unspecified, don't care" to avoid triggering unnecessary LinkModify calls
+// that would keep generating netlink events.
+// This is directional: Match(a, b) does NOT imply Match(b, a).
+// Immutable fields like type are checked separately in hasCriticalMismatch.
+//
+// FIELD CONTRACT: This function and prepareLinkForModify must cover the same mutable
+// fields. hasCriticalMismatch must cover all immutable fields. Together they must be
+// exhaustive over all type-specific fields NDM manages. Tests enforce this invariant.
+func linkMutableFieldsMatch(current, desired netlink.Link) bool {
+	curAttrs := current.Attrs()
+	desAttrs := desired.Attrs()
 
-	// Common mutable LinkAttrs
-	// Only compare fields where b (desired) has an explicit non-zero value.
-	// Zero value means "unspecified, don't care" - avoid triggering unnecessary
-	// LinkModify calls that would keep generating netlink events.
-	if bAttrs.MTU != 0 && aAttrs.MTU != bAttrs.MTU {
+	if desAttrs.MTU != 0 && curAttrs.MTU != desAttrs.MTU {
 		return false
 	}
-	if bAttrs.TxQLen != 0 && aAttrs.TxQLen != bAttrs.TxQLen {
+	// TxQLen: -1 means "unset" (from NewLinkAttrs()), 0 means "set to zero"
+	if desAttrs.TxQLen >= 0 && curAttrs.TxQLen != desAttrs.TxQLen {
 		return false
 	}
-	if len(bAttrs.HardwareAddr) > 0 && !bytes.Equal(aAttrs.HardwareAddr, bAttrs.HardwareAddr) {
+	if len(desAttrs.HardwareAddr) > 0 && !bytes.Equal(curAttrs.HardwareAddr, desAttrs.HardwareAddr) {
 		return false
 	}
 
 	// VXLAN-specific mutable fields
-	aVxlan, aIsVxlan := a.(*netlink.Vxlan)
-	bVxlan, bIsVxlan := b.(*netlink.Vxlan)
-	if aIsVxlan && bIsVxlan {
-		if aVxlan.Learning != bVxlan.Learning {
+	curVxlan, curIsVxlan := current.(*netlink.Vxlan)
+	desVxlan, desIsVxlan := desired.(*netlink.Vxlan)
+	if curIsVxlan && desIsVxlan {
+		if curVxlan.Learning != desVxlan.Learning {
 			return false
 		}
 	}
 
 	// Bridge-specific mutable fields
-	aBridge, aIsBridge := a.(*netlink.Bridge)
-	bBridge, bIsBridge := b.(*netlink.Bridge)
-	if aIsBridge && bIsBridge {
-		if !ptr.Equal(aBridge.VlanFiltering, bBridge.VlanFiltering) ||
-			!ptr.Equal(aBridge.VlanDefaultPVID, bBridge.VlanDefaultPVID) {
+	curBridge, curIsBridge := current.(*netlink.Bridge)
+	desBridge, desIsBridge := desired.(*netlink.Bridge)
+	if curIsBridge && desIsBridge {
+		if desBridge.VlanFiltering != nil && !ptr.Equal(curBridge.VlanFiltering, desBridge.VlanFiltering) {
+			return false
+		}
+		if desBridge.VlanDefaultPVID != nil && !ptr.Equal(curBridge.VlanDefaultPVID, desBridge.VlanDefaultPVID) {
 			return false
 		}
 	}
@@ -1870,15 +1738,90 @@ func linkMutableFieldsEqual(a, b netlink.Link) bool {
 	return true
 }
 
-// configsEqual compares two DeviceConfigs for equality of stored configuration.
-// Compares DeviceConfig fields and critical Link attributes that require device recreation.
-// For VXLAN devices, this includes SrcAddr, Port, and VxlanId which cannot be changed in-place.
+// linkMutableFieldsEqual performs strict symmetric equality of mutable link fields.
+// Unlike linkMutableFieldsMatch, zero-valued fields are significant.
+func linkMutableFieldsEqual(a, b netlink.Link) bool {
+	return linkMutableFieldsMatch(a, b) && linkMutableFieldsMatch(b, a)
+}
+
+// linkImmutableFieldsEqual performs strict symmetric equality of immutable link fields.
+// These are fields that require device deletion and recreation if they differ.
+//
+// FIELD CONTRACT: Every field checked here must also be checked by hasCriticalMismatch.
+// hasCriticalMismatch may additionally check fields that are covered by
+// linkMutableFieldsMatch for configsEqual purposes (e.g., Bridge VlanFiltering,
+// VLAN HardwareAddr). The behavioral test matrix verifies that
+// linkMutableFieldsMatch ∪ linkImmutableFieldsEqual ∪ configsEqual inline checks
+// covers all managed fields.
+func linkImmutableFieldsEqual(a, b netlink.Link) bool {
+	if a.Type() != b.Type() {
+		return false
+	}
+
+	switch aTyped := a.(type) {
+	case *netlink.Vrf:
+		bTyped := b.(*netlink.Vrf) // safe: type guard above
+		if aTyped.Table != bTyped.Table {
+			return false
+		}
+
+	case *netlink.Vxlan:
+		bTyped := b.(*netlink.Vxlan) // safe: type guard above
+		if aTyped.VxlanId != bTyped.VxlanId ||
+			!ipEqual(aTyped.SrcAddr, bTyped.SrcAddr) ||
+			aTyped.Port != bTyped.Port ||
+			aTyped.FlowBased != bTyped.FlowBased ||
+			aTyped.VniFilter != bTyped.VniFilter {
+			return false
+		}
+
+	case *netlink.Vlan:
+		bTyped := b.(*netlink.Vlan) // safe: type guard above
+		if aTyped.VlanId != bTyped.VlanId ||
+			aTyped.VlanProtocol != bTyped.VlanProtocol {
+			return false
+		}
+
+	case *netlink.Bridge, *netlink.Dummy:
+		// No type-specific immutable fields (type itself is checked above)
+
+	default:
+		panic(fmt.Sprintf("BUG: unsupported device type %T", a))
+	}
+
+	return true
+}
+
+// ipEqual compares two net.IP values for equality, handling nil and
+// different byte-length representations (4-byte vs 16-byte IPv4).
+func ipEqual(a, b net.IP) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equal(b)
+}
+
+// configsEqual compares two DeviceConfigs for equality of all managed fields.
+// Composed from building blocks that each cover a specific field category:
+//   - DeviceConfig-level fields (name, master, vlanparent, bridgeport settings)
+//   - linkMutableFieldsEqual (MTU, TxQLen, HardwareAddr, type-specific mutable fields)
+//   - linkImmutableFieldsEqual (type-specific immutable fields: VNI, table, ParentIndex, etc.)
+//   - addressesEqual (IP addresses, order-independent, IPNet-only)
+//
+// The only per-type logic here is VLAN ParentIndex, which depends on DeviceConfig.VLANParent
+// (a DeviceConfig-level field) and thus can't be handled by linkImmutableFieldsEqual.
 func configsEqual(a, b *DeviceConfig) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
 
-	// Compare DeviceConfig fields
+	if (a.Link == nil) != (b.Link == nil) {
+		return false
+	}
+
 	if a.deviceName() != b.deviceName() ||
 		a.Master != b.Master ||
 		a.VLANParent != b.VLANParent ||
@@ -1886,52 +1829,18 @@ func configsEqual(a, b *DeviceConfig) bool {
 		return false
 	}
 
-	// Link type must match (immutable - requires recreation if different)
-	if a.Link.Type() != b.Link.Type() {
-		return false
-	}
-
-	// Compare mutable link attributes
 	if !linkMutableFieldsEqual(a.Link, b.Link) {
 		return false
 	}
-
-	// Compare VXLAN immutable fields
-	aVxlan, aIsVxlan := a.Link.(*netlink.Vxlan)
-	bVxlan, bIsVxlan := b.Link.(*netlink.Vxlan)
-	if aIsVxlan != bIsVxlan {
+	if !linkImmutableFieldsEqual(a.Link, b.Link) {
 		return false
 	}
-	if aIsVxlan && bIsVxlan {
-		if !aVxlan.SrcAddr.Equal(bVxlan.SrcAddr) ||
-			aVxlan.Port != bVxlan.Port ||
-			aVxlan.VxlanId != bVxlan.VxlanId ||
-			aVxlan.FlowBased != bVxlan.FlowBased ||
-			aVxlan.VniFilter != bVxlan.VniFilter {
-			return false
-		}
-	}
 
-	// Compare VLAN-specific fields (can't use struct comparison: contains maps)
-	aVlan, aIsVlan := a.Link.(*netlink.Vlan)
-	bVlan, bIsVlan := b.Link.(*netlink.Vlan)
-	if aIsVlan != bIsVlan {
-		return false
-	}
-	if aIsVlan && bIsVlan {
-		if aVlan.VlanId != bVlan.VlanId {
-			return false
-		}
-		// For legacy style (VLANParent == ""), compare ParentIndex directly.
-		// When VLANParent is set, the name comparison above is sufficient
-		// since ParentIndex is resolved at apply time.
-		if a.VLANParent == "" && b.VLANParent == "" && aVlan.ParentIndex != bVlan.ParentIndex {
-			return false
-		}
-	}
-
-	// Compare Addresses (nil vs non-nil is significant)
 	if !addressesEqual(a.Addresses, b.Addresses) {
+		return false
+	}
+
+	if !vidVNIMappingsEqual(a.VIDVNIMappings, b.VIDVNIMappings) {
 		return false
 	}
 
@@ -1942,14 +1851,19 @@ func configsEqual(a, b *DeviceConfig) bool {
 // Two slices are equal if they have the same addresses (by IPNet string).
 // nil and empty slice are treated as different (nil = no management, empty = want no addresses).
 func addressesEqual(a, b []netlink.Addr) bool {
-	// nil check: nil means "don't manage", empty means "manage but want none"
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	if a == nil && b == nil {
-		return true
+	if a == nil || b == nil {
+		return a == nil && b == nil
 	}
 	return sets.KeySet(addrListToMap(a)).Equal(sets.KeySet(addrListToMap(b)))
+}
+
+// vidVNIMappingsEqual compares two VIDVNIMapping slices for equality (order-independent).
+// nil and empty slice are treated as different (nil = no management, empty = want no mappings).
+func vidVNIMappingsEqual(a, b []VIDVNIMapping) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return sets.New(a...).Equal(sets.New(b...))
 }
 
 // isDependencyError checks if the error is a dependency error
@@ -1977,22 +1891,56 @@ func (e *DependencyError) Unwrap() error {
 	return ErrDependencyPending
 }
 
-// runBridgeCmd executes a bridge command and returns stdout.
-// bridgeCmdTimeout is the maximum time to wait for a bridge command to complete.
-// This prevents the controller from hanging indefinitely if the subprocess stalls.
-const bridgeCmdTimeout = 10 * time.Second
-
-func runBridgeCmd(args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), bridgeCmdTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "bridge", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("bridge %v timed out after %v", args, bridgeCmdTimeout)
-		}
-		return "", fmt.Errorf("bridge %v failed: %w, output: %s", args, err, output)
+// validateLinkType returns an error if the link type is not supported by the manager.
+func validateLinkType(link netlink.Link) error {
+	switch link.(type) {
+	case *netlink.Bridge, *netlink.Vxlan, *netlink.Vlan, *netlink.Vrf, *netlink.Dummy:
+		return nil
+	default:
+		return fmt.Errorf("unsupported link type %T; supported: Bridge, Vxlan, Vlan, Vrf, Dummy", link)
 	}
-	return string(output), nil
+}
+
+// validateInterfaceName checks if an interface name is valid for Linux.
+// Returns an error if the name is empty, exceeds IFNAMSIZ-1, contains
+// characters rejected by the kernel (/, NUL, whitespace), or is reserved.
+func validateInterfaceName(name, context string) error {
+	if name == "" {
+		return fmt.Errorf("%s name is empty", context)
+	}
+	if len(name) > maxInterfaceNameLength {
+		return fmt.Errorf("%s name %q exceeds maximum length of %d characters (got %d)",
+			context, name, maxInterfaceNameLength, len(name))
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("%s name %q is reserved", context, name)
+	}
+	if strings.ContainsAny(name, "/\x00") {
+		return fmt.Errorf("%s name %q contains invalid characters", context, name)
+	}
+	if strings.ContainsAny(name, " \t\n") {
+		return fmt.Errorf("%s name %q contains whitespace", context, name)
+	}
+	return nil
+}
+
+// isOurDevice returns true only if the device has our alias prefix.
+// This is the single source of truth for ownership:
+//   - Empty alias = unknown ownership, NOT ours (could be human-created or other automation)
+//   - Foreign alias = definitely NOT ours
+//   - Our prefix = ours, safe to modify/delete
+func isOurDevice(link netlink.Link) bool {
+	return strings.HasPrefix(link.Attrs().Alias, managedAliasPrefix)
+}
+
+// checkOwnership returns nil if the device is ours, or a NotOwnedError explaining why not.
+func checkOwnership(link netlink.Link) error {
+	if isOurDevice(link) {
+		return nil
+	}
+	alias := link.Attrs().Alias
+	if alias == "" {
+		return &NotOwnedError{DeviceName: link.Attrs().Name, Reason: "no alias (may be externally managed)"}
+	}
+	return &NotOwnedError{DeviceName: link.Attrs().Name, Reason: fmt.Sprintf("foreign alias %q", alias)}
 }
