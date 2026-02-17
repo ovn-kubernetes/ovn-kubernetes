@@ -65,8 +65,8 @@ This feature requires OVS 3.4 and linux kernel 6.11.
 
 - Observability is enabled by setting the `--enable-observability` flag in the `ovnkube` binary.
 - For now all mentioned features are enabled by this flag at the same time.
-- `ovnkube-observ` binary is used to see the samples. Samples are only generated when the real traffic matching the ACLs
-is sent through the OVS. An example output is:
+- To start observing and display the samples, run `ovnkube-observ -add-ovs-collector`. Samples are only generated when the real traffic matching the ACLs is sent through the OVS. An example output is:
+
 ```
 OVN-K message: Allowed by default allow from local node policy, direction ingress
 src=10.129.2.2, dst=10.129.2.5
