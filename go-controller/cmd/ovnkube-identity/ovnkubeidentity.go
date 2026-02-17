@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovnwebhook"
@@ -370,6 +371,25 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 		}
 		webhookMux.Handle("/pod", podHandler)
 	}
+
+	egressIPWebhook := admission.WithCustomValidator(
+		scheme.Scheme,
+		&egressipv1.EgressIP{},
+		ovnwebhook.NewEgressIPAdmissionWebhook(cliCfg.extraAllowedUsers.Value()...),
+	).WithRecoverPanic(true)
+
+	egressIPHandler, err := admission.StandaloneWebhook(
+		egressIPWebhook,
+		admission.StandaloneOptions{
+			Logger:      logger.WithName("egressip.network-identity"),
+			MetricsPath: "egressip.network-identity",
+		},
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to setup the egress IP admission webhook: %w", err)
+	}
+	webhookMux.Handle("/egressip", egressIPHandler)
 
 	cfg := &tls.Config{
 		NextProtos: []string{"h2"},
