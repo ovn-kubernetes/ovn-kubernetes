@@ -43,6 +43,7 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	testutils "k8s.io/kubernetes/test/utils"
+	"k8s.io/kubectl/pkg/util/podutils"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -377,7 +378,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}).WithPolling(time.Second).WithTimeout(20*time.Minute).Should(BeTrue(), "should complete migration")
 			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 			Expect(vmi.Status.MigrationState.SourcePod).NotTo(BeEmpty())
-			Eventually(func() corev1.PodPhase {
+			Eventually(func() bool {
 				sourcePod := &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: namespace,
@@ -386,8 +387,9 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				}
 				err = crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(sourcePod), sourcePod)
 				Expect(err).NotTo(HaveOccurred())
-				return sourcePod.Status.Phase
-			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Equal(corev1.PodSucceeded), "should move source pod to Completed")
+				By(fmt.Sprintf("sourcePod: %q, Phase: %s", sourcePod.Name, sourcePod.Status.Phase))
+				return !podutils.IsPodReady(sourcePod)
+			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(BeTrue(), "source pod should not be ready after migration")
 			err = crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 			Expect(err).NotTo(HaveOccurred(), "should success retrieving vmi after migration")
 			Expect(vmi.Status.MigrationState.Failed).To(BeFalse(), func() string {

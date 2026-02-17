@@ -96,6 +96,96 @@ func notifyProxy(ipsToNotify []*net.IPNet) error {
 	return nil
 }
 
+// notifyDirectNeighbors sends GARPs/NAs with the real MAC addresses of
+// same-subnet pods and the gateway. This is used when a VM migrates back to
+// the node owning its subnet so the VM's neighbor cache is updated from
+// ARP proxy MAC to the actual MACs, allowing direct L2 communication on the
+// same switch.
+func notifyDirectNeighbors(watchFactory *factory.WatchFactory, pod *corev1.Pod, podAnnotation *util.PodAnnotation, nadName string) error {
+	nodeOwningSubnet, err := findNodeOwningSubnet(watchFactory, podAnnotation, nadName)
+	if err != nil {
+		return err
+	}
+	if nodeOwningSubnet == nil {
+		return nil
+	}
+
+	pods, err := watchFactory.GetAllPods()
+	if err != nil {
+		return err
+	}
+	vmName := ExtractVMNameFromPod(pod)
+	if vmName == nil {
+		return fmt.Errorf("missing virtual machine name label at pod %s/%s", pod.Namespace, pod.Name)
+	}
+	for _, podToNotify := range pods {
+		if podToNotify.Spec.NodeName != nodeOwningSubnet.Name {
+			continue
+		}
+		peerAnnotation, err := util.UnmarshalPodAnnotation(podToNotify.Annotations, nadName)
+		if err != nil {
+			klog.Errorf("kubevirt: failed unmarshaling pod annotation for pod %s/%s: %v", podToNotify.Namespace, podToNotify.Name, err)
+			continue
+		}
+		if util.PodCompleted(podToNotify) {
+			continue
+		}
+		obtainedVMName := ExtractVMNameFromPod(podToNotify)
+		if obtainedVMName != nil && *obtainedVMName == *vmName {
+			continue
+		}
+		mac := peerAnnotation.MAC
+		for _, ip := range peerAnnotation.IPs {
+			if ip.IP.To4() != nil {
+				garp, err := util.NewGARP(ip.IP, &mac)
+				if err != nil {
+					klog.Errorf("kubevirt: failed creating GARP for IP %s with MAC %s: %v", ip.IP, mac, err)
+					continue
+				}
+				if err := util.BroadcastGARP(types.K8sMgmtIntfName, garp); err != nil {
+					return fmt.Errorf("failed sending GARP: %w", err)
+				}
+			} else {
+				na, err := ndp.NewNeighborAdvertisement(ip.IP, &mac)
+				if err != nil {
+					klog.Errorf("kubevirt: failed creating NA for IP %s with MAC %s: %v", ip.IP, mac, err)
+					continue
+				}
+				if err := ndp.SendUnsolicitedNeighborAdvertisement(types.K8sMgmtIntfName, na); err != nil {
+					return fmt.Errorf("failed sending Unsolicited NA: %w", err)
+				}
+			}
+		}
+	}
+
+	// Send GARPs for gateway IPs with the LRP MAC so the VM's
+	// gateway neighbor entry is updated from arp_proxy MAC to
+	// the real LRP MAC on the subnet-owning switch.
+	for _, gw := range podAnnotation.Gateways {
+		gwMAC := util.IPAddrToHWAddr(gw)
+		if gw.To4() != nil {
+			garp, err := util.NewGARP(gw, &gwMAC)
+			if err != nil {
+				klog.Errorf("kubevirt: failed creating GARP for gateway IP %s: %v", gw, err)
+				continue
+			}
+			if err := util.BroadcastGARP(types.K8sMgmtIntfName, garp); err != nil {
+				return fmt.Errorf("failed sending gateway GARP: %w", err)
+			}
+		} else {
+			na, err := ndp.NewNeighborAdvertisement(gw, &gwMAC)
+			if err != nil {
+				klog.Errorf("kubevirt: failed creating NA for gateway IP %s: %v", gw, err)
+				continue
+			}
+			if err := ndp.SendUnsolicitedNeighborAdvertisement(types.K8sMgmtIntfName, na); err != nil {
+				return fmt.Errorf("failed sending gateway Unsolicited NA: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 func deleteStaleLogicalSwitchPorts(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
 	vmPods, err := findVMRelatedPods(watchFactory, pod)
 	if err != nil {
@@ -114,12 +204,13 @@ func deleteStaleLogicalSwitchPorts(watchFactory *factory.WatchFactory, nbClient 
 		if !isStale {
 			continue
 		}
+		lspName := util.GetLogicalPortName(vmPod.Namespace, vmPod.Name)
 		lsp := &nbdb.LogicalSwitchPort{
-			Name: util.GetLogicalPortName(vmPod.Namespace, vmPod.Name),
+			Name: lspName,
 		}
 		lsp, err = libovsdbops.GetLogicalSwitchPort(nbClient, lsp)
 		if err != nil {
-			klog.Errorf("kubevirt: failed retrieving LSP %q: %v", lsp.Name, err)
+			klog.Errorf("kubevirt: failed retrieving LSP %q: %v", lspName, err)
 			continue
 		}
 		logicalSwitch := &nbdb.LogicalSwitch{

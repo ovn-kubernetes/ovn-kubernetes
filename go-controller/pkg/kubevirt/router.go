@@ -210,35 +210,46 @@ func reconcileClusterDefaultNetworkLocalZoneNeighbours(watchFactory *factory.Wat
 
 	vmRunningAtCurrentNode := pod.Spec.NodeName == currentNode
 
-	// Now that the VM is running at a node not owning his subnet, using pod's mac
-	// will not work since it's a different switch so overwrite those neighbors with
-	// proxy mac from gatway
-	if !currentNodeOwnsSubnet && vmRunningAtCurrentNode {
-		ipsToNotify, err := findRunningPodsIPsFromPodSubnet(watchFactory, pod, podAnnotation, nadName)
-		if err != nil {
-			return fmt.Errorf("failed discovering pod IPs within VM's subnet to update neighbors VM: %w", err)
-		}
-		// Include the gateway IPs in the notification list. After PR#5773 [1]
-		// DHCP advertises the actual subnet gateway IP instead of the link-local
-		// 169.254.1.1 address. Before migration, the VM resolves its gateway
-		// (e.g. 10.244.2.1) to the node's real router port (LRP) MAC because
-		// the LRP's ARP responder has higher priority than arp_proxy on the
-		// subnet-owning switch. After migration, the VM is on a different switch
-		// where that LRP MAC doesn't exist, so we must send a GARP to update
-		// the VM's gateway neighbor entry to the arp_proxy MAC. This bug was
-		// masked in e2e tests by PR#4755 [2] which changed connectivity test
-		// checks.
-		// [1] https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5773
-		// [2] https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4755
-		for _, gw := range podAnnotation.Gateways {
-			mask := net.CIDRMask(32, 32)
-			if gw.To4() == nil {
-				mask = net.CIDRMask(128, 128)
+	if vmRunningAtCurrentNode {
+		// Now that the VM is running at a node not owning his subnet, using pod's mac
+		// will not work since it's a different switch so overwrite those neighbors with
+		// proxy mac from gatway
+		if !currentNodeOwnsSubnet {
+			ipsToNotify, err := findRunningPodsIPsFromPodSubnet(watchFactory, pod, podAnnotation, nadName)
+			if err != nil {
+				return fmt.Errorf("failed discovering pod IPs within VM's subnet to update neighbors VM: %w", err)
 			}
-			ipsToNotify = append(ipsToNotify, &net.IPNet{IP: gw, Mask: mask})
-		}
-		if err := notifyProxy(ipsToNotify); err != nil {
-			return err
+			// Include the gateway IPs in the notification list. After PR#5773 [1]
+			// DHCP advertises the actual subnet gateway IP instead of the link-local
+			// 169.254.1.1 address. Before migration, the VM resolves its gateway
+			// (e.g. 10.244.2.1) to the node's real router port (LRP) MAC because
+			// the LRP's ARP responder has higher priority than arp_proxy on the
+			// subnet-owning switch. After migration, the VM is on a different switch
+			// where that LRP MAC doesn't exist, so we must send a GARP to update
+			// the VM's gateway neighbor entry to the arp_proxy MAC. This bug was
+			// masked in e2e tests by PR#4755 [2] which changed connectivity test
+			// checks.
+			// [1] https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5773
+			// [2] https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4755
+			for _, gw := range podAnnotation.Gateways {
+				mask := net.CIDRMask(32, 32)
+				if gw.To4() == nil {
+					mask = net.CIDRMask(128, 128)
+				}
+				ipsToNotify = append(ipsToNotify, &net.IPNet{IP: gw, Mask: mask})
+			}
+			if err := notifyProxy(ipsToNotify); err != nil {
+				return err
+			}
+		} else {
+			// When vm is migrated back to node owning the subnet we need
+			// to update the VM's neighbor cache: replace arp_proxy MACs
+			// with the real MACs of same-subnet pods and the gateway,
+			// since they are now on the same switch and can communicate
+			// directly at L2.
+			if err := notifyDirectNeighbors(watchFactory, pod, podAnnotation, nadName); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
