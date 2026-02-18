@@ -104,7 +104,7 @@ require (
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/urfave/cli/v2 v2.27.2 // indirect
 	github.com/vincent-petithory/dataurl v1.0.0 // indirect
-	github.com/vishvananda/netlink v1.3.1 // indirect
+	github.com/vishvananda/netlink v1.3.2-0.20260202165720-5d38a3fd2f2c // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240312152122-5f08fbb34913 // indirect
