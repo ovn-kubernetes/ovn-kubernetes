@@ -129,10 +129,7 @@ func (d *DNS) updateOne(dns string) (bool, error) {
 		res.retryCount = 0
 	}
 
-	changed := false
-	if !ipsEqual(res.ips, ips) {
-		changed = true
-	}
+	changed := !ipsEqual(res.ips, ips)
 	res.ips = ips
 	res.ttl = ttl
 	res.nextQueryTime = time.Now().Add(res.ttl)

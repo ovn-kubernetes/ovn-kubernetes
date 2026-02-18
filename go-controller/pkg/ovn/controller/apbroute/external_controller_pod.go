@@ -63,10 +63,10 @@ func getPodIPs(pod *corev1.Pod) sets.Set[string] {
 func getMultusIPsFromNetworkName(pod *corev1.Pod, networkName string) (sets.Set[string], error) {
 	foundGws := sets.New[string]()
 	var multusNetworks []nettypes.NetworkStatus
-	err := json.Unmarshal([]byte(pod.ObjectMeta.Annotations[nettypes.NetworkStatusAnnot]), &multusNetworks)
+	err := json.Unmarshal([]byte(pod.Annotations[nettypes.NetworkStatusAnnot]), &multusNetworks)
 	if err != nil {
 		return nil, fmt.Errorf("unable to unmarshall annotation on pod %s %s '%s': %v",
-			pod.Name, nettypes.NetworkStatusAnnot, pod.ObjectMeta.Annotations[nettypes.NetworkStatusAnnot], err)
+			pod.Name, nettypes.NetworkStatusAnnot, pod.Annotations[nettypes.NetworkStatusAnnot], err)
 	}
 	for _, multusNetwork := range multusNetworks {
 		if multusNetwork.Name == networkName {

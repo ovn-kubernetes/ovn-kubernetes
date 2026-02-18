@@ -927,7 +927,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		for _, status := range statusAssignments {
 			// Add the status if it's not already in the cache, or if it exists but is in pending state
 			// (meaning it was populated during EIP sync and needs to be processed for the pod).
-			if value, exists := podState.egressStatuses.statusMap[status]; !exists || value == egressStatusStatePending {
+			if value, exists := podState.statusMap[status]; !exists || value == egressStatusStatePending {
 				remainingAssignments = append(remainingAssignments, status)
 			} else if podIPsChanged {
 				// A pod can be re-created with the same name but a different IP.
@@ -936,7 +936,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			}
 			// Detect stale EIP status entries (same EgressIP reassigned to a different node)
 			// and queue the outdated entry for cleanup.
-			if staleStatus := podState.egressStatuses.hasStaleEIPStatus(status); staleStatus != nil {
+			if staleStatus := podState.hasStaleEIPStatus(status); staleStatus != nil {
 				staleAssignments = append(staleAssignments, *staleStatus)
 			}
 		}
@@ -971,7 +971,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		if err != nil {
 			klog.Warningf("Failed to delete stale EgressIP status %s/%v for pod %s: %v", name, staleStatus, podKey, err)
 		}
-		delete(podState.egressStatuses.statusMap, staleStatus)
+		delete(podState.statusMap, staleStatus)
 	}
 	if len(reprogramAssignments) > 0 {
 		klog.V(2).Infof("Pod %s IPs changed, forcing egress IP status reprogram for statuses: %+v", podKey, reprogramAssignments)
@@ -1019,7 +1019,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 				if err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets); err != nil {
 					return fmt.Errorf("unable to create egressip configuration for pod %s/%s/%v, err: %w", pod.Namespace, pod.Name, podIPNets, err)
 				}
-				podState.egressStatuses.statusMap[status] = ""
+				podState.statusMap[status] = ""
 				return nil
 			}
 			return e.nodeZoneState.DoWithLock(nodesToLock[1], func(_ string) error {
@@ -1027,7 +1027,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 				if err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets); err != nil {
 					return fmt.Errorf("unable to create egressip configuration for pod %s/%s/%v, err: %w", pod.Namespace, pod.Name, podIPNets, err)
 				}
-				podState.egressStatuses.statusMap[status] = ""
+				podState.statusMap[status] = ""
 				return nil
 			})
 		})
@@ -1066,7 +1066,7 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 					podStatus.standbyEgressIPNames.Delete(name)
 					return nil
 				}
-				if ok := podStatus.egressStatuses.contains(statusToRemove); !ok {
+				if ok := podStatus.contains(statusToRemove); !ok {
 					// we can continue here since this pod was not managed by this statusToRemove
 					return nil
 				}
@@ -1094,13 +1094,13 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 					if err := e.addExternalGWPodSNAT(cachedNetwork, podNamespace, podName, statusToRemove); err != nil {
 						return err
 					}
-					podStatus.egressStatuses.delete(statusToRemove)
+					podStatus.delete(statusToRemove)
 					return nil
 				})
 				if err != nil {
 					return err
 				}
-				if len(podStatus.egressStatuses.statusMap) == 0 && len(podStatus.standbyEgressIPNames) == 0 {
+				if len(podStatus.statusMap) == 0 && len(podStatus.standbyEgressIPNames) == 0 {
 					// pod could be managed by more than one egressIP
 					// so remove the podKey from cache only if we are sure
 					// there are no more egressStatuses managing this pod
@@ -1112,7 +1112,7 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 						return fmt.Errorf("cannot delete egressPodIPs for the pod %s from the address set: err: %v", podKey, err)
 					}
 					e.podAssignment.Delete(podKey)
-				} else if len(podStatus.egressStatuses.statusMap) == 0 && len(podStatus.standbyEgressIPNames) > 0 {
+				} else if len(podStatus.statusMap) == 0 && len(podStatus.standbyEgressIPNames) > 0 {
 					klog.V(2).Infof("Pod %s has standby egress IP %+v", podKey, podStatus.standbyEgressIPNames.UnsortedList())
 					podStatus.egressIPName = "" // we have deleted the current egressIP that was managing the pod
 					if err := e.addStandByEgressIPAssignment(cachedNetwork, podKey, podStatus); err != nil {
@@ -1182,7 +1182,7 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 		podStatus.standbyEgressIPNames.Delete(name)
 	} else {
 		for _, statusToRemove := range statusesToRemove {
-			if ok := podStatus.egressStatuses.contains(statusToRemove); !ok {
+			if ok := podStatus.contains(statusToRemove); !ok {
 				// we can continue here since this pod was not managed by this statusToRemove
 				continue
 			}
@@ -1197,14 +1197,14 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
 						return err
 					}
-					podStatus.egressStatuses.delete(statusToRemove)
+					podStatus.delete(statusToRemove)
 					return nil
 				}
 				return e.nodeZoneState.DoWithLock(nodesToLock[1], func(_ string) error {
 					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
 						return err
 					}
-					podStatus.egressStatuses.delete(statusToRemove)
+					podStatus.delete(statusToRemove)
 					return nil
 				})
 			})
@@ -1215,7 +1215,7 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 	}
 	// Delete the key if there are no more status assignments to keep
 	// for the pod and no other assigned standby EgressIPs.
-	if len(podStatus.egressStatuses.statusMap) == 0 && len(podStatus.standbyEgressIPNames) == 0 {
+	if len(podStatus.statusMap) == 0 && len(podStatus.standbyEgressIPNames) == 0 {
 		// pod could be managed by more than one egressIP
 		// so remove the podKey from cache only if we are sure
 		// there are no more egressStatuses managing this pod
@@ -1226,7 +1226,7 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 			}
 		}
 		e.podAssignment.Delete(podKey)
-	} else if len(podStatus.egressStatuses.statusMap) == 0 && len(podStatus.standbyEgressIPNames) > 0 && assignStandby {
+	} else if len(podStatus.statusMap) == 0 && len(podStatus.standbyEgressIPNames) > 0 && assignStandby {
 		// If the pod is no longer assigned an active EgressIP, promote a standby EgressIP to active.
 		// If the pod is already deleted, addStandByEgressIPAssignment is a no-op, so calling it is safe.
 		// The pod's state is removed from the podAssignment cache when deletePodEgressIPAssignments is invoked
@@ -1834,7 +1834,7 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache)
 					// populate podState.egressStatuses with assigned node for active egressIP IPs.
 					if podState.egressIPName == egressIPName {
 						for egressIPIP, nodeName := range egressIPCache.egressIPToAssignedNodes[egressIPName] {
-							podState.egressStatuses.statusMap[egressipv1.EgressIPStatusItem{
+							podState.statusMap[egressipv1.EgressIPStatusItem{
 								EgressIP: egressIPIP, Node: nodeName}] = egressStatusStatePending
 						}
 					}
@@ -2592,7 +2592,7 @@ func (pas *podAssignmentState) Clone() *podAssignmentState {
 		podIPs:               make([]net.IP, 0, len(pas.podIPs)),
 		network:              pas.network,
 	}
-	clone.egressStatuses = egressStatuses{make(map[egressipv1.EgressIPStatusItem]string, len(pas.egressStatuses.statusMap))}
+	clone.egressStatuses = egressStatuses{make(map[egressipv1.EgressIPStatusItem]string, len(pas.statusMap))}
 	for k, v := range pas.statusMap {
 		clone.statusMap[k] = v
 	}
@@ -3781,11 +3781,7 @@ func (e *EgressIPController) ensureDefaultNoReRouteQosRulesForNode(ni util.NetIn
 			return nil, fmt.Errorf("failed to get existing IPv6 QOS rules: %v", err)
 		}
 	}
-	qosExists := false
-	if e.v4 && e.v6 && len(existingQoSes) == 2 {
-		// no need to create QoS Rule ops; already exists; dualstack
-		qosExists = true
-	}
+	qosExists := e.v4 && e.v6 && len(existingQoSes) == 2
 	if len(existingQoSes) == 1 && ((e.v4 && !e.v6) || (e.v6 && !e.v4)) {
 		// no need to create QoS Rule ops; already exists; single stack
 		qosExists = true

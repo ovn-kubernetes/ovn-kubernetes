@@ -931,7 +931,7 @@ func getExGwPodIPs(gatewayPod *corev1.Pod) (sets.Set[string], error) {
 	foundGws := sets.New[string]()
 	if gatewayPod.Annotations[util.RoutingNetworkAnnotation] != "" {
 		var multusNetworks []nettypes.NetworkStatus
-		err := json.Unmarshal([]byte(gatewayPod.ObjectMeta.Annotations[nettypes.NetworkStatusAnnot]), &multusNetworks)
+		err := json.Unmarshal([]byte(gatewayPod.Annotations[nettypes.NetworkStatusAnnot]), &multusNetworks)
 		if err != nil {
 			return nil, fmt.Errorf("unable to unmarshall annotation k8s.v1.cni.cncf.io/network-status on pod %s: %v",
 				gatewayPod.Name, err)

@@ -4468,7 +4468,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
 
-				node1.ObjectMeta.Annotations[util.OVNNodeHostCIDRs] = fmt.Sprintf("[\"%s\", \"%s\"]", node1IPv4CIDR, node1IPv6CIDR)
+				node1.Annotations[util.OVNNodeHostCIDRs] = fmt.Sprintf("[\"%s\", \"%s\"]", node1IPv4CIDR, node1IPv6CIDR)
 				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node1, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
@@ -7636,14 +7636,8 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							Items: []corev1.Pod{egressPod1},
 						},
 					)
-					isNode1Local := true
-					if node1Zone == "remote" {
-						isNode1Local = false
-					}
-					isNode2Local := true
-					if node2Zone == "remote" {
-						isNode2Local = false
-					}
+					isNode1Local := node1Zone != "remote"
+					isNode2Local := node2Zone != "remote"
 					fakeOvn.controller.localZoneNodes.Store(node1.Name, isNode1Local)
 					fakeOvn.controller.localZoneNodes.Store(node2.Name, isNode2Local)
 					err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(node1.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)}, nil)

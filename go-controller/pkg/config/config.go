@@ -2926,7 +2926,7 @@ func parseAddress(urlString string) (string, OvnDBScheme, error) {
 	var parsedAddress, scheme string
 	var parsedScheme OvnDBScheme
 
-	urlString = strings.Replace(urlString, "//", "", -1)
+	urlString = strings.ReplaceAll(urlString, "//", "")
 	for _, ovnAddress := range strings.Split(urlString, ",") {
 		splits := strings.SplitN(ovnAddress, ":", 2)
 		if len(splits) != 2 {
@@ -2959,12 +2959,12 @@ func parseAddress(urlString string) (string, OvnDBScheme, error) {
 		}
 	}
 
-	switch {
-	case scheme == "ssl":
+	switch scheme {
+	case "ssl":
 		parsedScheme = OvnDBSchemeSSL
-	case scheme == "tcp":
+	case "tcp":
 		parsedScheme = OvnDBSchemeTCP
-	case scheme == "unix":
+	case "unix":
 		parsedScheme = OvnDBSchemeUnix
 	default:
 		return "", "", fmt.Errorf("unknown OVN DB scheme %q", scheme)
@@ -3031,16 +3031,16 @@ func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnA
 		return nil, err
 	}
 
-	switch {
-	case auth.Scheme == OvnDBSchemeSSL:
+	switch auth.Scheme {
+	case OvnDBSchemeSSL:
 		if auth.PrivKey == "" || auth.Cert == "" || auth.CACert == "" || auth.CertCommonName == "" {
 			return nil, fmt.Errorf("must specify private key, certificate, CA certificate, and common name used in the certificate for 'ssl' scheme")
 		}
-	case auth.Scheme == OvnDBSchemeTCP:
+	case OvnDBSchemeTCP:
 		if auth.PrivKey != "" || auth.Cert != "" || auth.CACert != "" {
 			return nil, fmt.Errorf("certificate or key given; perhaps you mean to use the 'ssl' scheme?")
 		}
-	case auth.Scheme == OvnDBSchemeUnix:
+	case OvnDBSchemeUnix:
 		if auth.PrivKey != "" || auth.Cert != "" || auth.CACert != "" {
 			return nil, fmt.Errorf("certificate or key given; perhaps you mean to use the 'ssl' scheme?")
 		}
@@ -3194,7 +3194,7 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 	// when DPU is used, management port is always backed by a representor. On the
 	// host side, it needs to be provided through --ovnkube-node-mgmt-port-netdev.
 	// On the DPU, it is derrived from the annotation exposed on the host side.
-	if OvnKubeNode.Mode == types.NodeModeDPU && !(OvnKubeNode.MgmtPortNetdev == "" && OvnKubeNode.MgmtPortDPResourceName == "") {
+	if OvnKubeNode.Mode == types.NodeModeDPU && (OvnKubeNode.MgmtPortNetdev != "" || OvnKubeNode.MgmtPortDPResourceName != "") {
 		return fmt.Errorf("ovnkube-node-mgmt-port-netdev or ovnkube-node-mgmt-port-dp-resource-name must not be provided")
 	}
 	if OvnKubeNode.Mode == types.NodeModeDPUHost && OvnKubeNode.MgmtPortNetdev == "" && OvnKubeNode.MgmtPortDPResourceName == "" {

@@ -151,7 +151,7 @@ func runHybridOverlay(ctx *cli.Context) error {
 	}()
 
 	// run until cancelled
-	<-ctx.Context.Done()
+	<-ctx.Done()
 	close(stopChan)
 	wg.Wait()
 	return nil

@@ -85,7 +85,7 @@ func generateInitialFlowCacheEntry(mgmtInterfaceAddr, drIP, drMAC string) *flowC
 	Expect(err).NotTo(HaveOccurred())
 	gwIfAddr := util.GetNodeGatewayIfAddr(ipNet)
 	gwPortMAC := util.IPAddrToHWAddr(gwIfAddr.IP)
-	drMACRaw := strings.Replace(drMAC, ":", "", -1)
+	drMACRaw := strings.ReplaceAll(drMAC, ":", "")
 	return &flowCacheEntry{
 		flows: []string{
 			"table=0,priority=0,actions=drop",

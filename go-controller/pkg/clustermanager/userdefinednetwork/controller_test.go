@@ -227,7 +227,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			It("should fail when foreign NAD exist", func() {
 				udn := testPrimaryUDN()
 				foreignNad := testNAD()
-				foreignNad.ObjectMeta.OwnerReferences = nil
+				foreignNad.OwnerReferences = nil
 				c = newTestController(noopRenderNadStub(), udn, foreignNad, testNamespace("test"))
 				Expect(c.Run()).To(Succeed())
 
@@ -1758,7 +1758,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		It("should fail when NAD owner-reference is malformed", func() {
 			udn := testPrimaryUDN()
 			mutatedNAD := testNAD()
-			mutatedNAD.ObjectMeta.OwnerReferences = []metav1.OwnerReference{{Kind: "DifferentKind"}}
+			mutatedNAD.OwnerReferences = []metav1.OwnerReference{{Kind: "DifferentKind"}}
 			c := newTestController(noopRenderNadStub(), udn, mutatedNAD, testNamespace("test"))
 
 			_, err := c.syncUserDefinedNetwork(udn)
@@ -2426,7 +2426,7 @@ func testNADWithDeletionTimestamp(ts time.Time) *netv1.NetworkAttachmentDefiniti
 
 func testNamespace(name string) *corev1.Namespace {
 	ns := invalidTestNamespace(name)
-	ns.ObjectMeta.Labels[ovntypes.RequiredUDNNamespaceLabel] = ""
+	ns.Labels[ovntypes.RequiredUDNNamespaceLabel] = ""
 	return ns
 }
 

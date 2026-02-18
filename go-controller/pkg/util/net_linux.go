@@ -354,7 +354,7 @@ func LinkAddrGetIPNet(link netlink.Link, ip net.IP) (*net.IPNet, error) {
 			link.Attrs().Name, err)
 	}
 	for _, addr := range addrs {
-		if addr.IPNet.IP.Equal(ip) {
+		if addr.IP.Equal(ip) {
 			return addr.IPNet, nil
 		}
 	}
@@ -599,17 +599,18 @@ func DeleteConntrack(ip string, port int32, protocol corev1.Protocol, ipFilterTy
 	}
 
 	filter := &netlink.ConntrackFilter{}
-	if protocol == corev1.ProtocolUDP {
+	switch protocol {
+	case corev1.ProtocolUDP:
 		// 17 = UDP protocol
 		if err := filter.AddProtocol(17); err != nil {
 			return 0, fmt.Errorf("could not add Protocol UDP to conntrack filter %v", err)
 		}
-	} else if protocol == corev1.ProtocolSCTP {
+	case corev1.ProtocolSCTP:
 		// 132 = SCTP protocol
 		if err := filter.AddProtocol(132); err != nil {
 			return 0, fmt.Errorf("could not add Protocol SCTP to conntrack filter %v", err)
 		}
-	} else if protocol == corev1.ProtocolTCP {
+	case corev1.ProtocolTCP:
 		// 6 = TCP protocol
 		if err := filter.AddProtocol(6); err != nil {
 			return 0, fmt.Errorf("could not add Protocol TCP to conntrack filter %v", err)

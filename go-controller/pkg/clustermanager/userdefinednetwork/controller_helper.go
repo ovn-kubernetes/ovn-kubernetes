@@ -94,13 +94,13 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 		}
 	}
 
-	if reflect.DeepEqual(nadCopy.Spec.Config, desiredNAD.Spec.Config) && reflect.DeepEqual(nadCopy.ObjectMeta.Labels, desiredNAD.ObjectMeta.Labels) &&
+	if reflect.DeepEqual(nadCopy.Spec.Config, desiredNAD.Spec.Config) && reflect.DeepEqual(nadCopy.Labels, desiredNAD.Labels) &&
 		reflect.DeepEqual(desiredNAD.Annotations, nadCopy.Annotations) {
 		return nadCopy, nil
 	}
 
 	nadCopy.Spec.Config = desiredNAD.Spec.Config
-	nadCopy.ObjectMeta.Labels = desiredNAD.ObjectMeta.Labels
+	nadCopy.Labels = desiredNAD.Labels
 	nadCopy.Annotations = desiredNAD.Annotations
 	updatedNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadCopy.Namespace).Update(context.Background(), nadCopy, metav1.UpdateOptions{})
 	if err != nil {
