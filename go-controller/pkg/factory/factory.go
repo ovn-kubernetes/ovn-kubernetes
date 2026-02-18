@@ -1366,20 +1366,39 @@ func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, sel l
 	intInf := inf.internalInformers[wf.internalInformerIndex]
 
 	intInf.Lock()
-	defer intInf.Unlock()
 
 	// we are going to add a handler, we need to update the atomic signal that handlers exist now
 	// so that we do not miss events after we list current items.
 	// We need to do this after we get internal informer lock, to preserve that we can be the only one updating
 	// the atomic and preserve known state of the atomic while the handler is going to be added in the future
-	hadZeroHandlers := atomic.CompareAndSwapUint32(&intInf.hasHandlers, hasNoHandler, hasHandler)
+	atomic.CompareAndSwapUint32(&intInf.hasHandlers, hasNoHandler, hasHandler)
 
-	items := make([]interface{}, 0)
+	// get list of items to use for initial add
+	infItems := inf.inf.GetStore().List()
+	items := make([]interface{}, 0, len(infItems))
+	for _, obj := range infItems {
+		if filterFunc(obj) {
+			items = append(items, obj)
+		}
+	}
+
+	// add handler with initial add, keeping informer locked
+	handlerID := atomic.AddUint64(&wf.handlerCounter.counter, 1)
+	handler := inf.addHandler(wf.internalInformerIndex, handlerID, priority, filterFunc, funcs, items)
+	klog.V(5).Infof("Added %v event handler %d", objType, handler.id)
+
+	// unlock informer, the workers (queuemap goroutines) can now resume processing. The handler we added
+	// is disabled, so it will be buffering events for now
+	intInf.Unlock()
+
+	// re-list items during informer lock to get accurate information to sync with
+	items = make([]interface{}, 0, len(items))
 	for _, obj := range inf.inf.GetStore().List() {
 		if filterFunc(obj) {
 			items = append(items, obj)
 		}
 	}
+
 	if processExisting != nil {
 		// Process existing items as a set so the caller can clean up
 		// after a restart or whatever. We will wrap it with retries to ensure it succeeds.
@@ -1392,17 +1411,14 @@ func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, sel l
 			return true, nil
 		})
 		if err != nil {
-			// handler is not going to be added, restore previous value if needed
-			if hadZeroHandlers {
-				atomic.StoreUint32(&intInf.hasHandlers, hasNoHandler)
-			}
+			wf.removeHandler(objType, handler)
 			return nil, err
 		}
 	}
 
-	handlerID := atomic.AddUint64(&wf.handlerCounter.counter, 1)
-	handler := inf.addHandler(wf.internalInformerIndex, handlerID, priority, filterFunc, funcs, items)
-	klog.V(5).Infof("Added %v event handler %d", objType, handler.id)
+	// sync is done, turn on the handler
+	handler.Enable()
+
 	return handler, nil
 }
 
