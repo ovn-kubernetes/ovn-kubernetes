@@ -212,6 +212,8 @@ const (
 	ClusterSwitchLBGroupName = "clusterSwitchLBGroup"
 	ClusterRouterLBGroupName = "clusterRouterLBGroup"
 
+	CustomServiceIP = OvnK8sPrefix + "/" + "cluster-ip"
+
 	// key for network name external-id
 	NetworkExternalID = OvnK8sPrefix + "/" + "network"
 	// key for node name external-id
