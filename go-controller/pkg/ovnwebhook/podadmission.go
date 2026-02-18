@@ -16,7 +16,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -35,22 +34,37 @@ var interconnectPodAnnotations = map[string]checkPodAnnot{
 			return fmt.Errorf("the annotation is not allowed on host networked pods")
 		}
 
-		podAnnot, err := util.UnmarshalPodAnnotation(map[string]string{util.OvnPodAnnotationName: v.value}, types.DefaultNetworkName)
-		if err != nil {
-			return err
+		// Parse annotation to discover all network keys present
+		podNetworks := make(map[string]json.RawMessage)
+		if err := json.Unmarshal([]byte(v.value), &podNetworks); err != nil {
+			return fmt.Errorf("failed to unmarshal pod annotation: %v", err)
 		}
+
 		node, err := nodeLister.Get(nodeName)
 		if err != nil {
 			return fmt.Errorf("could not get info on node %s from client: %w", nodeName, err)
 		}
 
-		subnets, err := util.ParseNodeHostSubnetAnnotation(node, types.DefaultNetworkName)
-		if err != nil {
-			return err
-		}
-		for _, ip := range podAnnot.IPs {
-			if !util.IsContainedInAnyCIDR(ip, subnets...) {
-				return fmt.Errorf("%s does not belong to %s node", ip, nodeName)
+		for nadKey := range podNetworks {
+			podAnnot, err := util.UnmarshalPodAnnotation(map[string]string{util.OvnPodAnnotationName: v.value}, nadKey)
+			if err != nil {
+				return err
+			}
+
+			subnets, err := util.ParseNodeHostSubnetAnnotation(node, nadKey)
+			if err != nil {
+				if util.IsAnnotationNotSetError(err) {
+					// Node may not have subnet info for this network yet (e.g., Layer2
+					// UDN networks that don't have per-node subnets, or the node hasn't
+					// been annotated for this network yet). Skip IP validation in this case.
+					continue
+				}
+				return err
+			}
+			for _, ip := range podAnnot.IPs {
+				if !util.IsContainedInAnyCIDR(ip, subnets...) {
+					return fmt.Errorf("%s does not belong to %s node", ip, nodeName)
+				}
 			}
 		}
 		return nil
