@@ -1047,9 +1047,13 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     add_ocp_dnsnameresolver_to_coredns_config
     update_coredns_deployment_image
 fi
+
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  deploy_frr_external_container
-  deploy_bgp_external_server
+  # Phase 1a: Deploy external FRR container (before OVN installation)
+  run_bgp_setup deploy-frr
+
+  # Phase 1b: Deploy BGP server container (before OVN installation)
+  run_bgp_setup deploy-bgp-server
 fi
 build_ovn_image
 detect_apiserver_url
@@ -1088,7 +1092,8 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   fi
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_frr_k8s
+  # Phase 2: Install frr-k8s and create FRRConfiguration (after OVN is installed)
+  run_bgp_setup install-frr-k8s
 fi
 
 interconnect_arg_check
