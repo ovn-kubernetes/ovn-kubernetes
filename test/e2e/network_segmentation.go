@@ -88,6 +88,154 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	Context("CRD validation", func() {
+
+		testUDN := func(netConfig networkAttachmentConfigParams, errorSubstrings []string) {
+			By("create UDN CR")
+			netConfig.name = randomNetworkMetaName()
+			netConfig.namespace = f.Namespace.Name
+			udnManifest := generateUserDefinedNetworkManifest(&netConfig)
+			cleanup, err := createManifest(netConfig.namespace, udnManifest)
+
+			if errorSubstrings != nil {
+				Expect(err).To(HaveOccurred())
+				for _, errorMessage := range errorSubstrings {
+					Expect(err.Error()).To(ContainSubstring(errorMessage))
+				}
+			} else {
+				// error is not expected
+				defer func() {
+					cleanup()
+					By("delete UDN CR")
+					_, err := e2ekubectl.RunKubectl("", "delete", "userdefinednetwork", "-n", netConfig.namespace,
+						netConfig.name, "--wait", fmt.Sprintf("--timeout=%ds", 120))
+					Expect(err).NotTo(HaveOccurred())
+				}()
+				Expect(err).ShouldNot(HaveOccurred(), "creating manifest must succeed")
+				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+			}
+		}
+
+		testCUDN := func(netConfig networkAttachmentConfigParams, errorSubstrings []string) {
+			By("create CUDN CR")
+			netConfig.name = randomNetworkMetaName()
+			netConfig.namespace = f.Namespace.Name
+			cudnManifest := generateClusterUserDefinedNetworkManifest(&netConfig)
+			cleanup, err := createManifest("", cudnManifest)
+
+			if errorSubstrings != nil {
+				Expect(err).To(HaveOccurred())
+				for _, errorMessage := range errorSubstrings {
+					Expect(err.Error()).To(ContainSubstring(errorMessage))
+				}
+			} else {
+				// error is not expected
+				defer func() {
+					cleanup()
+					By("delete CUDN")
+					_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", netConfig.name, "--wait", fmt.Sprintf("--timeout=%ds", 120))
+					Expect(err).NotTo(HaveOccurred())
+				}()
+				Expect(err).ShouldNot(HaveOccurred(), "creating manifest must succeed")
+				Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+			}
+		}
+
+		DescribeTable(
+			"should be able to reject incorrect parameters and accept correct ones",
+			func(
+				netConfig networkAttachmentConfigParams,
+				errorSubstrings []string, // empty if no error is expected
+			) {
+				if netConfig.topology == "layer2" && !isInterconnectEnabled() {
+					const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4958"
+					e2eskipper.Skipf(
+						"Test skipped for layer2 topology due to known issue for non-IC deployments. Upstream issue: %s", upstreamIssue,
+					)
+				}
+
+				// Test both UDN and CUDN for the given netConfig
+				testTypes := []string{"UDN", "CUDN"}
+				for _, testType := range testTypes {
+					netConfig := netConfig
+					By(fmt.Sprintf("Testing %s", testType))
+					switch testType {
+					case "UDN":
+						testUDN(netConfig, errorSubstrings)
+					case "CUDN":
+						testCUDN(netConfig, errorSubstrings)
+					default:
+						Fail("Invalid test type. Must be 'UDN' or 'CUDN'")
+					}
+				}
+			},
+			Entry(
+				"L3 - correct CIDR",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("10.128.0.0/16/24", "2014:100:200::0/48/64"),
+					role:     "primary",
+				},
+				nil, // no error
+			),
+			Entry(
+				"L3 - incorrect IPv4 host subnet",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("10.128.0.0/16/32", "2014:100:200::0/48/64"),
+					role:     "primary",
+				},
+				[]string{"HostSubnet must < 32 for ipv4 CIDR"},
+			),
+			Entry(
+				"L3 - incorrect IPv6 host subnet",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("10.128.0.0/16/24", "2014:100:200::0/48/128"),
+					role:     "primary",
+				},
+				[]string{"hostSubnet in body should be less than or equal to 127"},
+			),
+			Entry(
+				"L3 - incorrect IPv4 and IPv6 host subnets",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("10.128.0.0/16/32", "2014:100:200::0/48/128"),
+					role:     "primary",
+				},
+				[]string{"HostSubnet must < 32 for ipv4 CIDR", "hostSubnet in body should be less than or equal to 127"},
+			),
+			Entry(
+				"L3 - incorrect host subnet less than cluster subnet",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("10.128.0.0/16/8", "2014:100:200::0/64/48"),
+					role:     "primary",
+				},
+				[]string{"subnets[0]: Invalid value: \"object\": HostSubnet must be smaller than CIDR subnet",
+					"subnets[1]: Invalid value: \"object\": HostSubnet must be smaller than CIDR subnet"},
+			),
+			Entry(
+				"L3 - two IPv4 subnets",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("10.128.0.0/16/24", "10.0.0.0/16/24"),
+					role:     "primary",
+				},
+				[]string{"When 2 CIDRs are set, they must be from different IP families"},
+			),
+			Entry(
+				"L3 - two IPv6 subnets",
+				networkAttachmentConfigParams{
+					topology: "layer3",
+					cidr:     correctCIDRFamily("2014:100:200::0/48/64", "2015:100:200::0/48/64"),
+					role:     "primary",
+				},
+				[]string{"When 2 CIDRs are set, they must be from different IP families"},
+			),
+		)
+	})
+
 	Context("a user defined primary network", func() {
 
 		DescribeTableSubtree("created using",
@@ -2047,7 +2195,7 @@ func generateLayer3Subnets(cidrs string) []string {
 		case 2:
 			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s"}`, cidrSplit[0], cidrSplit[1]))
 		case 3:
-			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %q }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
+			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %s }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
 		default:
 			panic(fmt.Sprintf("invalid layer3 subnet: %v", cidr))
 		}
