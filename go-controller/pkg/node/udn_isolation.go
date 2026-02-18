@@ -112,6 +112,11 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 				klog.Infof("Found kubelet cgroup path: %s", m.kubeletCgroupPath)
 				return filepath.SkipAll
 			}
+			if d.Name() == "k3s.service" || d.Name() == "k3s-agent.service" {
+				m.kubeletCgroupPath = strings.TrimPrefix(path, "/sys/fs/cgroup/")
+				klog.Infof("Found k3s cgroup path: %s", m.kubeletCgroupPath)
+				return filepath.SkipAll
+			}
 			return nil
 		})
 		if err != nil || m.kubeletCgroupPath == "" {
@@ -347,6 +352,7 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 
 	signalChan := make(chan *dbus.Signal, 100)
 	conn.Signal(signalChan)
+	watchUnits := sets.New[string]("kubelet.service", "k3s.service", "k3s-agent.service")
 
 	// run until context is cancelled
 	go func() {
@@ -372,15 +378,17 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 				escapedUnit := parts[5]
 				unitName := strings.ReplaceAll(escapedUnit, "_2e", ".")
 
-				if unitName == "kubelet.service" {
-					changes := signal.Body[1].(map[string]dbus.Variant)
-					if state, exists := changes["ActiveState"]; exists {
-						newState := state.Value().(string)
-						if newState == "active" {
-							klog.Info("Kubelet restarted, re-applying isolation")
-							if err := m.updateKubeletCgroup(); err != nil {
-								klog.Errorf("Failed to re-apply isolation: %v", err)
-							}
+				if !watchUnits.Has(unitName) {
+					continue
+				}
+
+				changes := signal.Body[1].(map[string]dbus.Variant)
+				if state, exists := changes["ActiveState"]; exists {
+					newState := state.Value().(string)
+					if newState == "active" {
+						klog.Infof("%s restarted, re-applying isolation", unitName)
+						if err := m.updateKubeletCgroup(); err != nil {
+							klog.Errorf("Failed to re-apply isolation after %s restart: %v", unitName, err)
 						}
 					}
 				}
