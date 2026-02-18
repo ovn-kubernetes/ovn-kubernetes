@@ -190,18 +190,20 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 		nsNames [4]string
 	)
 	BeforeEach(func() {
+		nsNames[0] = fr.Namespace.Name
+		suffix := framework.RandomSuffix()
+		nsNames[1] = fmt.Sprintf("anp-peer-restricted-%s", suffix)
+		nsNames[2] = fmt.Sprintf("anp-peer-open-%s", suffix)
+		nsNames[3] = fmt.Sprintf("anp-peer-unknown-%s", suffix)
+
 		By("creating an admin network policy")
-		err := makeAdminNetworkPolicy(anpName, "10", fr.Namespace.Name)
+		err := makeAdminNetworkPolicy(anpName, "10", fr.Namespace.Name, nsNames[1], nsNames[2], nsNames[3])
 		Expect(err).NotTo(HaveOccurred())
 
 		By("configuring the ACL logging level for the ANP")
 		Expect(setANPACLLogSeverity(anpName, initialDenyACLSeverity, initialAllowACLSeverity, initialPassACLSeverity)).To(Succeed())
 
 		By("creating peer namespaces that are selected by the admin network policy")
-		nsNames[0] = fr.Namespace.Name
-		nsNames[1] = "anp-peer-restricted"
-		nsNames[2] = "anp-peer-open"
-		nsNames[3] = "anp-peer-unknown"
 		for _, ns := range nsNames[1:] {
 			_, err = e2ekubectl.RunKubectl("default", "create", "ns", ns)
 			Expect(err).NotTo(HaveOccurred())
@@ -309,7 +311,7 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 		}, maxPokeRetries*pokeInterval, pokeInterval).Should(BeTrue())
 
 		By("creating a baseline admin network policy")
-		err = makeBaselineAdminNetworkPolicy(fr.Namespace.Name)
+		err = makeBaselineAdminNetworkPolicy(fr.Namespace.Name, nsNames[1], nsNames[3])
 		Expect(err).NotTo(HaveOccurred())
 
 		By("configuring the ACL logging level for the BANP")
@@ -956,7 +958,7 @@ func makeDenyAllPolicy(f *framework.Framework, ns string, policyName string) (*k
 	return f.ClientSet.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), policy, metav1.CreateOptions{})
 }
 
-func makeAdminNetworkPolicy(anpName, priority, anpSubjectNS string) error {
+func makeAdminNetworkPolicy(anpName, priority, anpSubjectNS, restrictedPeerNS, openPeerNS, unknownPeerNS string) error {
 	anpYaml := "anp.yaml"
 	var anpConfig = fmt.Sprintf(`apiVersion: policy.networking.k8s.io/v1alpha1
 kind: AdminNetworkPolicy
@@ -974,20 +976,20 @@ spec:
     to:
     - namespaces:
         matchLabels:
-          kubernetes.io/metadata.name: anp-peer-restricted
+          kubernetes.io/metadata.name: %s
   - name: "deny-to-open"
     action: "Deny"
     to:
     - namespaces:
         matchLabels:
-          kubernetes.io/metadata.name: anp-peer-open
+          kubernetes.io/metadata.name: %s
   - name: "pass-to-unknown"
     action: "Pass"
     to:
     - namespaces:
         matchLabels:
-          kubernetes.io/metadata.name: anp-peer-unknown
-`, anpName, priority, anpSubjectNS)
+          kubernetes.io/metadata.name: %s
+`, anpName, priority, anpSubjectNS, restrictedPeerNS, openPeerNS, unknownPeerNS)
 
 	if err := os.WriteFile(anpYaml, []byte(anpConfig), 0644); err != nil {
 		framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -1003,7 +1005,7 @@ spec:
 	return err
 }
 
-func makeBaselineAdminNetworkPolicy(banpSubjectNS string) error {
+func makeBaselineAdminNetworkPolicy(banpSubjectNS, restrictedPeerNS, unknownPeerNS string) error {
 	banpYaml := "banp.yaml"
 	var banpConfig = fmt.Sprintf(`apiVersion: policy.networking.k8s.io/v1alpha1
 kind: BaselineAdminNetworkPolicy
@@ -1020,14 +1022,14 @@ spec:
     to:
     - namespaces:
         matchLabels:
-          kubernetes.io/metadata.name: anp-peer-restricted
+          kubernetes.io/metadata.name: %s
   - name: "deny-to-unknown"
     action: "Deny"
     to:
     - namespaces:
         matchLabels:
-          kubernetes.io/metadata.name: anp-peer-unknown
-`, banpSubjectNS)
+          kubernetes.io/metadata.name: %s
+`, banpSubjectNS, restrictedPeerNS, unknownPeerNS)
 
 	if err := os.WriteFile(banpYaml, []byte(banpConfig), 0644); err != nil {
 		framework.Failf("Unable to write CRD config to disk: %v", err)
