@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -391,6 +392,45 @@ func pokeExternalIpService(externalContainer infraapi.ExternalContainer, protoco
 			return true
 		}
 	}
+	return false
+}
+
+// pokeServiceFromPod connects to clientPodName inside clientPodNamespace and runs a curl against targetIP:targetPort.
+// Within maxTries limit, it expects to find all nodesHostnames.
+// Command is passed as an escaped value to http://<host>:<port>/shell?=cmd=<command>.
+func pokeServiceFromPod(clientPodNamespace, clientPodName, targetIP string, targetPort int, command string,
+	maxTries int, expectedResults sets.Set[string]) bool {
+	responses := sets.New[string]()
+
+	if utilnet.IsIPv6String(targetIP) {
+		targetIP = fmt.Sprintf("[%s]", targetIP)
+	}
+
+	for i := 0; i < maxTries; i++ {
+		cmd := []string{
+			"exec", clientPodName, "--", "curl", "--max-time", "10", "-g", "-q", "-s",
+			fmt.Sprintf("http://%s:%d/shell?cmd=%s", targetIP, targetPort, url.QueryEscape(command)),
+		}
+		framework.Logf("Running command %q, try %d", cmd, i)
+		if output, err := e2ekubectl.RunKubectl(clientPodNamespace, cmd...); err == nil {
+			outputStruct := struct {
+				Output string `json:"output"`
+			}{}
+			if err := json.Unmarshal([]byte(output), &outputStruct); err != nil {
+				framework.Logf("Error unmarshalling command output, try: %d, err: %q", i, err)
+				continue
+			}
+			responses.Insert(strings.Trim(outputStruct.Output, "\n"))
+		} else {
+			framework.Logf("Error running command, try: %d, err: %q", i, err)
+		}
+		if responses.Equal(expectedResults) {
+			framework.Logf("Found all expected results %+v after %d tries", expectedResults, i)
+			return true
+		}
+	}
+	framework.Logf("Did not find all expected results %+v after %d tries, only got %+v",
+		expectedResults, maxTries, responses)
 	return false
 }
 
@@ -1107,6 +1147,7 @@ func checkNumberOfETPRules(backendNodeName string, value int, pattern string) wa
 		return isExpected, nil
 	}
 }
+
 func checkNumberOfNFTElements(backendNodeName string, value int, name string) wait.ConditionFunc {
 	return func() (bool, error) {
 		numberOfNFTElements := countNFTablesElements(backendNodeName, name)
@@ -1129,6 +1170,7 @@ func checkIPTablesRulesPresent(backendNodeName string, patterns []string) wait.C
 		return isExpected, nil
 	}
 }
+
 func checkNFTElementsPresent(backendNodeName, name string, sets [][]string) wait.ConditionFunc {
 	return func() (bool, error) {
 		numMatches := countNFTablesRulesMatches(backendNodeName, name, sets)

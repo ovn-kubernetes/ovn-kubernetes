@@ -1,6 +1,7 @@
 package services
 
 import (
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -75,4 +76,165 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 		}, UDNNetInfo),
 	)
 
+}
+
+func TestIsHostEndpoint(t *testing.T) {
+	// Save and restore original config
+	oldClusterSubnet := config.Default.ClusterSubnets
+	defer func() {
+		config.Default.ClusterSubnets = oldClusterSubnet
+	}()
+
+	// Setup test cluster subnets
+	_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
+	_, cidr6, _ := net.ParseCIDR("fe00::/64")
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{CIDR: cidr4, HostSubnetLength: 26},
+		{CIDR: cidr6, HostSubnetLength: 26},
+	}
+
+	tests := []struct {
+		name     string
+		ip       string
+		expected bool
+	}{
+		{
+			name:     "IP in cluster subnet - not host endpoint",
+			ip:       "10.128.1.5",
+			expected: false,
+		},
+		{
+			name:     "IP outside cluster subnet - is host endpoint",
+			ip:       "192.168.1.5",
+			expected: true,
+		},
+		{
+			name:     "IPv6 in cluster subnet - not host endpoint",
+			ip:       "fe00::5",
+			expected: false,
+		},
+		{
+			name:     "IPv6 outside cluster subnet - is host endpoint",
+			ip:       "fd00::5",
+			expected: true,
+		},
+		{
+			name:     "IP at lower cluster subnet boundary - not host endpoint",
+			ip:       "10.128.0.0",
+			expected: false,
+		},
+		{
+			name:     "IP at upper cluster subnet boundary - not host endpoint",
+			ip:       "10.128.255.255",
+			expected: false,
+		},
+		// The following 2 cases show edge cases with invalid IP addresses and show that existing code isn't
+		// prepared to handle those. This is a potential TBD / TODO.
+		{
+			name:     "Empty IP - is host endpoint",
+			ip:       "",
+			expected: true,
+		},
+		{
+			name:     "Unparsable IP - is host endpoint",
+			ip:       "garbage",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsHostEndpoint(tt.ip)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestHasHostEndpoints(t *testing.T) {
+	// Save and restore original config
+	oldClusterSubnet := config.Default.ClusterSubnets
+	defer func() {
+		config.Default.ClusterSubnets = oldClusterSubnet
+	}()
+
+	// Setup test cluster subnets
+	_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
+	_, cidr6, _ := net.ParseCIDR("fe00::/64")
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{CIDR: cidr4, HostSubnetLength: 26},
+		{CIDR: cidr6, HostSubnetLength: 26},
+	}
+
+	tests := []struct {
+		name     string
+		lbes     util.LBEndpointsList
+		expected bool
+	}{
+		{
+			name: "all endpoints in cluster subnet",
+			lbes: util.LBEndpointsList{
+				{V4IPs: []string{"10.128.1.5", "10.128.1.6"}},
+			},
+			expected: false,
+		},
+		{
+			name: "has host endpoint in V4IPs",
+			lbes: util.LBEndpointsList{
+				{V4IPs: []string{"10.128.1.5", "192.168.1.10"}},
+			},
+			expected: true,
+		},
+		{
+			name: "has host endpoint in V6IPs",
+			lbes: util.LBEndpointsList{
+				{V6IPs: []string{"fe00::1", "fd00::1"}},
+			},
+			expected: true,
+		},
+		{
+			name: "all endpoints in cluster subnet - mixed v4 and v6",
+			lbes: util.LBEndpointsList{
+				{
+					V4IPs: []string{"10.128.1.5"},
+					V6IPs: []string{"fe00::1"},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "host endpoint in first LBEndpoint",
+			lbes: util.LBEndpointsList{
+				{V4IPs: []string{"192.168.1.10"}},
+				{V4IPs: []string{"10.128.1.5"}},
+			},
+			expected: true,
+		},
+		{
+			name: "host endpoint in second LBEndpoint",
+			lbes: util.LBEndpointsList{
+				{V4IPs: []string{"10.128.1.5"}},
+				{V4IPs: []string{"192.168.1.10"}},
+			},
+			expected: true,
+		},
+		{
+			name:     "empty endpoints",
+			lbes:     util.LBEndpointsList{},
+			expected: false,
+		},
+		{
+			name: "endpoint with empty IP lists",
+			lbes: util.LBEndpointsList{
+				{V4IPs: []string{}, V6IPs: []string{}},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := hasHostEndpoints(tt.lbes)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

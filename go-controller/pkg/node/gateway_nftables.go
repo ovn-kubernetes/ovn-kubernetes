@@ -55,7 +55,7 @@ func getNoSNATNodePortRules(svcPort corev1.ServicePort) []*knftables.Element {
 // "mgmtport-no-snat-services-v4" and "mgmtport-no-snat-services-v6" sets to prevent SNAT
 // of sourceIP when passing through the management port, for an `externalTrafficPolicy:
 // Local` service *without* NodePorts.
-func getNoSNATLoadBalancerIPRules(svcPort corev1.ServicePort, localEndpoints util.PortToLBEndpoints) []*knftables.Element {
+func getNoSNATLoadBalancerIPRules(svcPort corev1.ServicePort, localEndpoints util.PortToLBEndpointsList) []*knftables.Element {
 	var nftRules []*knftables.Element
 	protocol := strings.ToLower(string(svcPort.Protocol))
 
@@ -175,7 +175,7 @@ func recreateNFTMap(mapName string, keepNFTElems []*knftables.Element) error {
 
 // getGatewayNFTRules returns nftables rules for service. This must be used in conjunction
 // with getGatewayIPTRules.
-func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []*knftables.Element {
+func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEndpointsList, svcHasLocalHostNetEndPnt bool) []*knftables.Element {
 	rules := make([]*knftables.Element, 0)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {

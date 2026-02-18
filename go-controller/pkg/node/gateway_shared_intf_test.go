@@ -4,15 +4,19 @@
 package node
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
@@ -152,7 +156,11 @@ func verifyIPTablesRule(ipt util.IPTablesHelper, serviceIP string, servicePort, 
 
 // setupServiceAndEndpointSliceWithRules creates a service and endpoint slice, adds them to npw,
 // and verifies iptables rules are created. Returns the created endpoint slice.
-func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTablesHelper, svcName, namespace, serviceIP, endpointIP string, servicePort, nodePort int32, annotations map[string]string) *discovery.EndpointSlice {
+func setupServiceAndEndpointSliceWithRules(fakeClient *util.OVNNodeClientset, npw *nodePortWatcher,
+	ipt util.IPTablesHelper, svcName, namespace, serviceIP, endpointIP string, servicePort, nodePort int32,
+	annotations map[string]string, setSvcAllocLBNodePorts bool, setEndpointNodeName bool) *discovery.EndpointSlice {
+
+	// Add everything for the service first ...
 	// Create service
 	service := newService(svcName, namespace, serviceIP,
 		[]corev1.ServicePort{{
@@ -163,7 +171,22 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTabl
 			NodePort:   nodePort,
 		}},
 		corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, false, false)
+	if setSvcAllocLBNodePorts {
+		service.Spec.AllocateLoadBalancerNodePorts = ptr.To(false)
+	}
 
+	// Add service to the fake client so it's available in the informer
+	_, err := fakeClient.KubeClient.CoreV1().Services(namespace).Create(context.TODO(), service, metav1.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+
+	// Add service and endpoint slice
+	// By running AddService before the endpoint slice was created, this will trigger additional logic
+	// (Endpointslice %s ADD event in namespace %s is updating rules) in AddEndpointSlice for localEndpoints (see
+	// AddEndpointSlice test).
+	err = npw.AddService(service)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Now, add the endpoint slice.
 	// Create endpoint slice with endpoints
 	epPortName := "http"
 	epPortValue := servicePort + 8000 // Match targetPort
@@ -184,8 +207,11 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTabl
 			},
 		},
 	)
+	if setEndpointNodeName {
+		epSlice.Endpoints[0].NodeName = ptr.To(nodeName)
+	}
 
-	// Apply annotations if provided
+	// Apply annotations if provided (must be done before creating in fake client)
 	if len(annotations) > 0 {
 		if epSlice.Annotations == nil {
 			epSlice.Annotations = make(map[string]string)
@@ -195,9 +221,14 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTabl
 		}
 	}
 
-	// Add service and endpoint slice
-	err := npw.AddService(service)
+	_, err = fakeClient.KubeClient.DiscoveryV1().EndpointSlices(namespace).Create(context.TODO(), epSlice, metav1.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred())
+
+	// Wait for the informer cache to sync the endpoint slice
+	Eventually(func() ([]*discovery.EndpointSlice, error) {
+		return npw.watchFactory.GetServiceEndpointSlices(namespace, svcName, types.DefaultNetworkName)
+	}).WithTimeout(5*time.Second).WithPolling(10*time.Millisecond).ShouldNot(BeEmpty(),
+		"endpoint slice should be available in informer cache")
 
 	err = npw.AddEndpointSlice(epSlice)
 	Expect(err).NotTo(HaveOccurred())
@@ -207,6 +238,94 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, ipt util.IPTabl
 
 	return epSlice
 }
+
+var _ = Describe("AddEndpointSlice", func() {
+	var (
+		fakeClient *util.OVNNodeClientset
+		watcher    *factory.WatchFactory
+		npw        *nodePortWatcher
+		iptV4      util.IPTablesHelper
+		iptV6      util.IPTablesHelper
+	)
+
+	const (
+		nodeName      = "test-node"
+		testNamespace = "test-namespace"
+		testService   = "test-service"
+	)
+
+	BeforeEach(func() {
+		var err error
+		// Restore global default values before each test
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Gateway.Mode = config.GatewayModeLocal
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+
+		fakeClient = &util.OVNNodeClientset{
+			KubeClient: fake.NewSimpleClientset(),
+		}
+		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset()
+		fakeClient.NetworkAttchDefClient = nadfake.NewSimpleClientset()
+		fakeClient.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+
+		watcher, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		err = watcher.Start()
+		Expect(err).NotTo(HaveOccurred())
+
+		// Initialize nodePortWatcher with default network manager
+		iptV4, iptV6 = util.SetFakeIPTablesHelpers()
+		npw = initFakeNodePortWatcher(iptV4, iptV6)
+		npw.watchFactory = watcher
+		npw.networkManager = networkmanager.Default().Interface()
+
+		// Initialize nodeIPManager (required for GetLocalEligibleEndpointAddresses)
+		k := &kube.Kube{KClient: fakeClient.KubeClient}
+		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, false)
+	})
+
+	AfterEach(func() {
+		watcher.Shutdown()
+	})
+
+	Context("when endpoint slice with local endpoints and service with AllocateLoadBalancerNodePorts=false is added", func() {
+		It("triggers delServiceRules, addServiceRules and updateServiceInfo", func() {
+			// Setup service and endpoint slice with iptables rules
+			// Add UDN annotation to simulate a mirrored UDN EndpointSlice
+			_ = setupServiceAndEndpointSliceWithRules(fakeClient, npw, iptV4, testService, testNamespace, "10.96.0.2", "10.244.0.2", 80, 30081,
+				map[string]string{types.UserDefinedNetworkEndpointSliceAnnotation: "test-udn"}, true, true)
+
+			// iptables rules should be present.
+			verifyIPTablesRule(iptV4, "10.96.0.2", 80, 30081, true, "iptables rule should be present")
+
+			Expect(npw.serviceInfo).To(HaveLen(1), "serviceInfo map should contain exactly one service")
+
+			// localEndpoints should be present in serviceInfo.
+			svcInfo, ok := npw.serviceInfo[apitypes.NamespacedName{Namespace: testNamespace, Name: testService}]
+			Expect(ok).To(BeTrue(), fmt.Sprintf("npw.serviceInfo does not contain key %s/%s", testNamespace, testService))
+			Expect(svcInfo.localEndpoints).To(Equal(
+				util.PortToLBEndpointsList{
+					"TCP/http": util.LBEndpointsList{
+						util.LBEndpoints{
+							Port:  8080,
+							V4IPs: []string{"10.244.0.2"},
+						},
+					},
+				}))
+
+			// Verify localHostNetworkEndpoints should be empty.
+			Expect(svcInfo.localHostNetworkEndpoints).To(BeEmpty(),
+				"localHostNetworkEndpoints should be empty for non-host-networked pods")
+
+			// Verify the service object is correctly stored.
+			Expect(svcInfo.service).NotTo(BeNil())
+			Expect(svcInfo.service.Name).To(Equal(testService))
+			Expect(svcInfo.service.Namespace).To(Equal(testNamespace))
+			Expect(svcInfo.service.Spec.AllocateLoadBalancerNodePorts).To(Equal(ptr.To(false)))
+		})
+	})
+})
 
 var _ = Describe("DeleteEndpointSlice", func() {
 	var (
@@ -262,8 +381,8 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		It("should execute delServiceRules and gracefully skip addServiceRules", func() {
 			// Setup service and endpoint slice with iptables rules
 			// Add UDN annotation to simulate a mirrored UDN EndpointSlice
-			epSlice := setupServiceAndEndpointSliceWithRules(npw, iptV4, testService, testNamespace, "10.96.0.2", "10.244.0.2", 80, 30081,
-				map[string]string{types.UserDefinedNetworkEndpointSliceAnnotation: "test-udn"})
+			epSlice := setupServiceAndEndpointSliceWithRules(fakeClient, npw, iptV4, testService, testNamespace, "10.96.0.2", "10.244.0.2", 80, 30081,
+				map[string]string{types.UserDefinedNetworkEndpointSliceAnnotation: "test-udn"}, false, false)
 
 			// Replace network manager with one that returns InvalidPrimaryNetworkError
 			// This simulates UDN deletion scenario
@@ -283,7 +402,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 	Context("when network lookup returns other errors", func() {
 		It("should execute delServiceRules but return error from network lookup", func() {
 			// Setup service and endpoint slice with iptables rules
-			epSlice := setupServiceAndEndpointSliceWithRules(npw, iptV4, testService, testNamespace, "10.96.0.3", "10.244.0.3", 80, 30082, nil)
+			epSlice := setupServiceAndEndpointSliceWithRules(fakeClient, npw, iptV4, testService, testNamespace, "10.96.0.3", "10.244.0.3", 80, 30082, nil, false, false)
 
 			// Replace network manager with one that returns a generic error
 			npw.networkManager = &mockNetworkManagerWithError{}
@@ -318,7 +437,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 	Context("when namespace is deleted before processing endpoint slice", func() {
 		It("should clean up old rules even when namespace is gone", func() {
 			// Setup service and endpoint slice with iptables rules
-			epSlice := setupServiceAndEndpointSliceWithRules(npw, iptV4, testService, testNamespace, "10.96.0.10", "10.244.0.5", 80, 30090, nil)
+			epSlice := setupServiceAndEndpointSliceWithRules(fakeClient, npw, iptV4, testService, testNamespace, "10.96.0.10", "10.244.0.5", 80, 30090, nil, false, false)
 
 			// Simulate namespace not found error
 			npw.networkManager = &mockNetworkManagerWithNamespaceNotFoundError{}
@@ -330,6 +449,108 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			verifyIPTablesRule(iptV4, "10.96.0.10", 80, 30090, false, "iptables rule should be deleted even when namespace lookup fails")
 		})
 	})
+
+	When("GetActiveNetworkForNamespace returns a valid netInfo", func() {
+		It("should clean up old rules and readd the same rules", func() {
+			// Setup service and endpoint slice with iptables rules
+			epSlice := setupServiceAndEndpointSliceWithRules(fakeClient, npw, iptV4, testService, testNamespace, "10.96.0.10", "10.244.0.5", 80, 30090, nil, false, false)
+
+			npw.networkManager = networkmanager.Default().Interface()
+			err := npw.DeleteEndpointSlice(epSlice)
+			// Verify no error (graceful handling)
+			Expect(err).NotTo(HaveOccurred())
+
+			// iptables rules should be deleted and readded after deletion.
+			verifyIPTablesRule(iptV4, "10.96.0.10", 80, 30090, true, "iptables rule should exist")
+		})
+	})
+})
+
+var _ = Describe("generateETPLocalDNATActions", func() {
+	var npw *nodePortWatcher
+
+	BeforeEach(func() {
+		// Restore global default values before each test
+		Expect(config.PrepareTestConfig()).To(Succeed())
+
+		// Initialize a minimal nodePortWatcher for testing
+		npw = &nodePortWatcher{
+			ofportPhys:  "1234",
+			gatewayIPv4: "192.0.2.1",
+			gatewayIPv6: "2000::1",
+			ofm: &openflowManager{
+				groupCache: map[string]map[uint32]string{},
+			},
+		}
+	})
+
+	DescribeTable("no gateway is set", func(flowProtocol string) {
+		var lbes = util.LBEndpointsList{}
+		var key = "service1"
+		npw.gatewayIPv4 = ""
+		npw.gatewayIPv6 = ""
+
+		_, err := npw.generateETPLocalDNATActions(key, flowProtocol, lbes)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("gateway IP not available for protocol %s", flowProtocol))
+	},
+		Entry("IPv4", "tcp4"),
+		Entry("IPv6", "tcp6"),
+	)
+
+	When("empty lbes are provided", func() {
+		It("fails", func() {
+			var lbes = util.LBEndpointsList{}
+			var key = "service1"
+			var flowProtocol = "tcp4"
+			_, err := npw.generateETPLocalDNATActions(key, flowProtocol, lbes)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("no load balancer endpoints provided for %s", key))
+		})
+	})
+
+	DescribeTable("lbes with length 1 is provided it returns a ct() flow", func(flowProtocol, gateway string) {
+		var lbes = util.LBEndpointsList{
+			util.LBEndpoints{
+				Port: 8080,
+			},
+		}
+		var key = "service1"
+		str, err := npw.generateETPLocalDNATActions(key, flowProtocol, lbes)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(str).To(ContainSubstring("ct(commit,zone=64003,nat(dst=%s:8080),table=6", gateway))
+	},
+		Entry("IPv4", "tcp4", "192.0.2.1"),
+		Entry("IPv6", "tcp6", "[2000::1]"),
+	)
+
+	DescribeTable("lbes with length 2 is provided it returns a group ID",
+		func(flowProtocol, groupID string, groupCache map[string]map[uint32]string) {
+			var lbes = util.LBEndpointsList{
+				util.LBEndpoints{
+					Port: 8080,
+				},
+				util.LBEndpoints{
+					Port: 8081,
+				},
+			}
+			var key = "service1"
+			str, err := npw.generateETPLocalDNATActions(key, flowProtocol, lbes)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(str).To(Equal(groupID))
+			Expect(npw.ofm.groupCache).To(Equal(groupCache))
+		},
+		Entry("IPv4", "tcp4", "group:0", map[string]map[uint32]string{
+			"service1": {
+				0: "type=select,bucket=bucket_id:0,actions=ct(commit,zone=64003,nat(dst=192.0.2.1:8080),table=6)," +
+					"bucket=bucket_id:1,actions=ct(commit,zone=64003,nat(dst=192.0.2.1:8081),table=6)",
+			}}),
+		Entry("IPv6", "tcp6", "group:0", map[string]map[uint32]string{
+			"service1": {
+				0: "type=select,bucket=bucket_id:0,actions=ct(commit,zone=64003,nat(dst=[2000::1]:8080),table=6)," +
+					"bucket=bucket_id:1,actions=ct(commit,zone=64003,nat(dst=[2000::1]:8081),table=6)",
+			}}),
+	)
 })
 
 var _ = Describe("SyncServices", func() {

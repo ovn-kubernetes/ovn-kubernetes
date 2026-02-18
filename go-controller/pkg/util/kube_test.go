@@ -3,7 +3,6 @@ package util
 import (
 	"context"
 	"fmt"
-	"net"
 	"reflect"
 	"testing"
 
@@ -446,13 +445,16 @@ func TestPodScheduled(t *testing.T) {
 }
 
 var (
-	testNode   string          = "testNode"
-	otherNode                  = "otherNode"
-	ep1Address string          = "10.244.0.3"
-	ep2Address string          = "10.244.0.4"
-	ep3Address string          = "10.244.1.3"
-	tcpv1      corev1.Protocol = corev1.ProtocolTCP
-	udpv1      corev1.Protocol = corev1.ProtocolUDP
+	testNode       string          = "testNode"
+	otherNode                      = "otherNode"
+	ep1Address     string          = "10.244.0.3"
+	ep2Address     string          = "10.244.0.4"
+	ep3Address     string          = "10.244.1.3"
+	ep1AddressIPv6 string          = "fc00::3"
+	ep2AddressIPv6 string          = "fc00::4"
+	ep3AddressIPv6 string          = "fc00::1:3"
+	tcpv1          corev1.Protocol = corev1.ProtocolTCP
+	udpv1          corev1.Protocol = corev1.ProtocolUDP
 
 	httpsPortName   string = "https"
 	httpsPortValue  int32  = int32(443)
@@ -594,48 +596,6 @@ func TestGetEndpointAddresses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			answer := GetEligibleEndpointAddressesFromSlices([]*discovery.EndpointSlice{tt.endpointSlice}, service)
-			if !reflect.DeepEqual(answer, tt.want) {
-				t.Errorf("got %v, want %v", answer, tt.want)
-			}
-		})
-	}
-}
-
-func TestHasLocalHostNetworkEndpoints(t *testing.T) {
-	ep1IP := net.ParseIP(ep1Address)
-	if ep1IP == nil {
-		t.Errorf("error parsing ep1 address %s", ep1Address)
-	}
-	nodeAddresses := []net.IP{ep1IP}
-	var tests = []struct {
-		name           string
-		localEndpoints PortToLBEndpoints
-		want           bool
-	}{
-		{
-			"Tests with local endpoints that include the node address",
-			PortToLBEndpoints{"test": LBEndpoints{
-				V4IPs: []string{ep1Address, ep2Address},
-			}},
-			true,
-		},
-		{
-			"Tests against a different local endpoint than the node address",
-			PortToLBEndpoints{"test": LBEndpoints{
-				V4IPs: []string{ep2Address},
-			}},
-			false,
-		},
-		{
-			"Tests against no local endpoints",
-			PortToLBEndpoints{"test": LBEndpoints{}},
-			false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			answer := HasLocalHostNetworkEndpoints(tt.localEndpoints, nodeAddresses)
 			if !reflect.DeepEqual(answer, tt.want) {
 				t.Errorf("got %v, want %v", answer, tt.want)
 			}
