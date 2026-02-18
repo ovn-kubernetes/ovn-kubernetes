@@ -122,6 +122,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					},
 					Entry(
 						"L2 primary UDN, cluster-networked pods",
+						SpecTimeout(5*time.Minute),
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
@@ -132,6 +133,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 					Entry(
 						"L3 primary UDN, cluster-networked pods",
+						SpecTimeout(5*time.Minute),
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
@@ -142,6 +144,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 					Entry(
 						"L2 primary UDN, host-networked pods",
+						SpecTimeout(5*time.Minute),
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
@@ -152,6 +155,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 					Entry(
 						"L3 primary UDN, host-networked pods",
+						SpecTimeout(5*time.Minute),
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
@@ -230,6 +234,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					},
 					Entry(
 						"L2 secondary UDN",
+						SpecTimeout(5*time.Minute),
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
@@ -239,6 +244,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 					),
 					Entry(
 						"L3 secondary UDN",
+						SpecTimeout(5*time.Minute),
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
