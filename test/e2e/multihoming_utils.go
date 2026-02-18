@@ -102,6 +102,8 @@ type networkAttachmentConfigParams struct {
 	role                string
 	mtu                 int
 	physicalNetworkName string
+	labelKey            string
+	labelValue          string
 }
 
 type networkAttachmentConfig struct {
@@ -199,11 +201,12 @@ type podConfiguration struct {
 	nodeSelector           map[string]string
 	isPrivileged           bool
 	labels                 map[string]string
-	annotations                  map[string]string
+	annotations            map[string]string
 	requiresExtraNamespace bool
 	hostNetwork            bool
 	ipRequestFromSubnet    string
 	usesExternalRouter     bool
+	staticIP               string // IP address without CIDR suffix, set by withStaticIPMAC
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
