@@ -323,7 +323,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			By(fmt.Sprintf("remove iperf3 log for %s: %s", address, stage))
 			output, err := execFn(fmt.Sprintf("rm -f %s", iperfLogFile))
 			if err != nil {
-				return fmt.Errorf("failed removing iperf3 log file %s: %w", output, err)
+				return fmt.Errorf("failed removing iperf3 log file %s: %s: %w", iperfLogFile, output, err)
 			}
 
 			By(fmt.Sprintf("check iperf3 connectivity for %s: %s", address, stage))
