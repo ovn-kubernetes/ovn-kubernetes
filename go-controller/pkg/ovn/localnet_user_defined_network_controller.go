@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -223,6 +224,9 @@ func NewLocalnetUserDefinedNetworkController(
 			},
 		},
 	}
+	oc.addressSetManager = addresssetmanager.NewAddressSetManager(oc.watchFactory.PodCoreInformer(),
+		oc.watchFactory.NamespaceInformer(), oc.nbClient, oc.addressSetFactory,
+		oc.controllerName, oc.GetNetInfo(), oc.getNetworkNameForNADKeyFunc())
 
 	if oc.allocatesPodAnnotation() {
 		var claimsReconciler persistentips.PersistentAllocations
