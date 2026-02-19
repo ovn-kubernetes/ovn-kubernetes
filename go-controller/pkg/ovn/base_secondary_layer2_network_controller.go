@@ -10,6 +10,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	zoneinterconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -171,20 +172,34 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 	logicalSwitch := nbdb.LogicalSwitch{
 		Name:        switchName,
 		ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(oc.GetNetInfo()),
+		OtherConfig: map[string]string{},
 	}
 
 	hostSubnets := make([]*net.IPNet, 0, len(clusterSubnets))
+	// might use these later
+	var nodeLRPMAC net.HardwareAddr
+	var gwIfAddrv4, gwIfAddrv6 *net.IPNet
 	for _, clusterSubnet := range clusterSubnets {
 		subnet := clusterSubnet.CIDR
 		hostSubnets = append(hostSubnets, subnet)
 		if utilnet.IsIPv6CIDR(subnet) {
-			logicalSwitch.OtherConfig = map[string]string{"ipv6_prefix": subnet.IP.String()}
+			logicalSwitch.OtherConfig["ipv6_prefix"] = subnet.IP.String()
+			gwIfAddrv6 = oc.GetNodeGatewayIP(subnet)
+			if len(nodeLRPMAC) == 0 {
+				// only derive mac from IPv6 if there is no IPv4
+				nodeLRPMAC = util.IPAddrToHWAddr(gwIfAddrv6.IP)
+			}
 		} else {
-			logicalSwitch.OtherConfig = map[string]string{"subnet": subnet.String()}
+			logicalSwitch.OtherConfig["subnet"] = subnet.String()
+			gwIfAddrv4 = oc.GetNodeGatewayIP(subnet)
+			nodeLRPMAC = util.IPAddrToHWAddr(gwIfAddrv4.IP)
 		}
 	}
 
-	if oc.isLayer2Interconnect() {
+	var lsps []*nbdb.LogicalSwitchPort
+	var acls []*nbdb.ACL
+	switch {
+	case oc.isLayer2WithInterconnectTransport():
 		tunnelKey := zoneinterconnect.BaseTransitSwitchTunnelKey + oc.GetNetworkID()
 		if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() {
 			if len(oc.GetTunnelKeys()) != 2 {
@@ -196,15 +211,47 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 		if err != nil {
 			return nil, err
 		}
+	case oc.Transport() == types.NetworkTransportEVPN:
+		// enable IGMP snooping to send multicast traffic just to registered
+		// pods, flood unregistered
+		logicalSwitch.OtherConfig["mcast_snoop"] = "true"
+		logicalSwitch.OtherConfig["mcast_flood_unregistered"] = "true"
+		logicalSwitch.OtherConfig["mcast_querier"] = "false"
+		// connect the switch to the EVPN macvrf
+		macvrfportName := util.GetMACVRFPortName(switchName)
+		macvrfport := &nbdb.LogicalSwitchPort{
+			Name:      macvrfportName,
+			Addresses: []string{"unknown"},
+			ExternalIDs: map[string]string{
+				types.NetworkExternalID:  oc.GetNetworkName(),
+				types.TopologyExternalID: oc.TopologyType(),
+			},
+		}
+		lsps = append(lsps, macvrfport)
+		acls = getDenyARPAndNSOnMACVRF(oc.controllerName, macvrfportName, nodeLRPMAC, gwIfAddrv4, gwIfAddrv6)
 	}
 
 	if clusterLoadBalancerGroupUUID != "" && switchLoadBalancerGroupUUID != "" {
 		logicalSwitch.LoadBalancerGroup = []string{clusterLoadBalancerGroupUUID, switchLoadBalancerGroupUUID}
 	}
 
-	err := libovsdbops.CreateOrUpdateLogicalSwitch(oc.nbClient, &logicalSwitch)
+	ops, err := libovsdbops.CreateOrUpdateACLsOps(oc.nbClient, nil, oc.GetSamplingConfig(), acls...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ACLs: %w", err)
+	}
+
+	for _, acl := range acls {
+		logicalSwitch.ACLs = append(logicalSwitch.ACLs, acl.UUID)
+	}
+
+	ops, err = libovsdbops.CreateOrUpdateLogicalSwitchPortsAndSwitchOps(oc.nbClient, ops, &logicalSwitch, lsps...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logical switch %+v: %v", logicalSwitch, err)
+	}
+
+	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsps, ops)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transact logical switch operations: %w", err)
 	}
 
 	if err = oc.lsManager.AddOrUpdateSwitch(switchName, hostSubnets, reservedSubnets, excludeSubnets...); err != nil {
@@ -287,4 +334,57 @@ func (oc *BaseLayer2UserDefinedNetworkController) syncIPAMClaims(ipamClaims []in
 
 func dummyPod() *corev1.Pod {
 	return &corev1.Pod{Spec: corev1.PodSpec{NodeName: ""}}
+}
+
+// getDenyARPAndNSOnMACVRF provides ACLs to drop ARP and NS from pods to the
+// gateway IP on the MACVRF port. Even though these requests are unicast, OVN is
+// flooding them for historic reasons. We don't want these request to be flooded
+// over the EVPN overlay.
+func getDenyARPAndNSOnMACVRF(controllerName, macvrfportName string, nodeLRPMAC net.HardwareAddr, gwIfAddrv4, gwIfAddrv6 *net.IPNet) []*nbdb.ACL {
+	var acls []*nbdb.ACL
+	if gwIfAddrv4 != nil {
+		acls = append(acls, libovsdbutil.BuildACLWithDefaultTier(
+			libovsdbops.NewDbObjectIDs(
+				libovsdbops.ACLUDN,
+				controllerName,
+				map[libovsdbops.ExternalIDKey]string{
+					libovsdbops.ObjectNameKey:      "DenyOnMACVRF-GatewayARP",
+					libovsdbops.PolicyDirectionKey: string(libovsdbutil.ACLIngress),
+				},
+			),
+			types.DefaultDenyPriority,
+			fmt.Sprintf(
+				"outport==%q && eth.dst==%s && arp & arp.op==1 && arp.tpa==%s",
+				macvrfportName,
+				nodeLRPMAC.String(),
+				gwIfAddrv4.IP.String(),
+			),
+			nbdb.ACLActionDrop,
+			nil,
+			libovsdbutil.LportIngress,
+		))
+	}
+	if gwIfAddrv6 != nil {
+		acls = append(acls, libovsdbutil.BuildACLWithDefaultTier(
+			libovsdbops.NewDbObjectIDs(
+				libovsdbops.ACLUDN,
+				controllerName,
+				map[libovsdbops.ExternalIDKey]string{
+					libovsdbops.ObjectNameKey:      "DenyOnMACVRF-GatewayNS",
+					libovsdbops.PolicyDirectionKey: string(libovsdbutil.ACLIngress),
+				},
+			),
+			types.DefaultDenyPriority,
+			fmt.Sprintf(
+				"outport==%q && eth.dst==%s && nd && icmp.type==135 && nd.target==%s",
+				macvrfportName,
+				nodeLRPMAC.String(),
+				gwIfAddrv4.IP.String(),
+			),
+			nbdb.ACLActionDrop,
+			nil,
+			libovsdbutil.LportIngress,
+		))
+	}
+	return acls
 }

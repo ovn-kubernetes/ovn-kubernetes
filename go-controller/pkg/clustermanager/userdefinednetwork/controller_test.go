@@ -54,6 +54,8 @@ var _ = Describe("User Defined Network Controller", func() {
 		// Enable EVPN for EVPN-related tests
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
+		// satisfy EVPN LGW restriction, otherwise no effect
+		config.Gateway.Mode = config.GatewayModeLocal
 	})
 
 	AfterEach(func() {

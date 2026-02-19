@@ -551,11 +551,8 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 	oc.defaultCOPPUUID = defaultCOPPUUID
 
 	if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() {
-		if len(oc.GetTunnelKeys()) != 2 {
-			return fmt.Errorf("layer2 network %s with transit router enabled requires exactly 2 tunnel keys, got: %v", oc.GetNetworkName(), oc.GetTunnelKeys())
-		}
-		if _, err = oc.newTransitRouter(oc.GetTunnelKeys()[1]); err != nil {
-			return fmt.Errorf("failed to create OVN transit router for network %q: %v", oc.GetNetworkName(), err)
+		if _, err = oc.newClusterRouter(); err != nil {
+			return fmt.Errorf("failed to create OVN cluster router for network %q: %v", oc.GetNetworkName(), err)
 		}
 	}
 
@@ -757,13 +754,9 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 	var errs []error
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
-		if syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
-			portUpdateFn := oc.addRouterSetupForRemoteNodeGR
-			if !config.Layer2UsesTransitRouter {
-				portUpdateFn = oc.addSwitchPortForRemoteNodeGR
-			}
-			if err := portUpdateFn(node); err != nil {
-				err = fmt.Errorf("failed to add the remote zone node %s's remote LRP, %w", node.Name, err)
+		if syncZoneIC && oc.hasInterconnectTransport() {
+			err := oc.addInterconnectSetupForRemoteNode(node)
+			if err != nil {
 				errs = append(errs, err)
 				oc.syncZoneICFailed.Store(node.Name, true)
 			} else {
@@ -779,6 +772,19 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 		oc.recordNodeErrorEvent(node, err)
 	}
 	return err
+}
+
+func (oc *Layer2UserDefinedNetworkController) addInterconnectSetupForRemoteNode(node *corev1.Node) error {
+	var err error
+	if config.Layer2UsesTransitRouter {
+		err = oc.addRouterSetupForRemoteNodeGR(node)
+	} else {
+		err = oc.addSwitchPortForRemoteNodeGR(node)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to add the remote zone node %s's remote port: %w", node.Name, err)
+	}
+	return nil
 }
 
 func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node *corev1.Node) error {
@@ -1023,22 +1029,28 @@ func (oc *Layer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 			}
 			oc.gatewayManagers.Delete(node.Name)
 		}
-	} else {
-		if config.Layer2UsesTransitRouter {
-			// this is a no-op for local nodes
-			if err := oc.cleanupRouterSetupForRemoteNodeGR(node.Name); err != nil {
-				return fmt.Errorf("failed to cleanup remote node %q gateway: %w", node.Name, err)
-			}
-		} else if config.OVNKubernetesFeature.EnableInterconnect { // Legacy check - pre-transit router
-			if err := oc.delPortForRemoteNodeGR(node); err != nil {
-				return fmt.Errorf("failed to cleanup remote zone node %s's remote LRP, %w", node.Name, err)
-			}
+	} else if oc.hasInterconnectTransport() {
+		if err := oc.cleanupInterconnectSetupForRemoteNode(node); err != nil {
+			return err
 		}
 	}
 	oc.localZoneNodes.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 	oc.syncZoneICFailed.Delete(node.Name)
+	return nil
+}
+
+func (oc *Layer2UserDefinedNetworkController) cleanupInterconnectSetupForRemoteNode(node *corev1.Node) error {
+	var err error
+	if config.Layer2UsesTransitRouter {
+		err = oc.cleanupRouterSetupForRemoteNodeGR(node.Name)
+	} else {
+		err = oc.delPortForRemoteNodeGR(node)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to cleanup the remote zone node %s's remote port: %w", node.Name, err)
+	}
 	return nil
 }
 
@@ -1132,11 +1144,28 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 	}, nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) newTransitRouter(tunnelKey int) (*nbdb.LogicalRouter, error) {
-	return oc.gatewayTopologyFactory.NewTransitRouter(
-		oc.GetNetInfo(),
-		oc.defaultCOPPUUID, strconv.Itoa(tunnelKey),
-	)
+// newClusterRouter creates the cluster router for the network. This router is a
+// transit router if the interconnect overlay is in use.
+func (oc *Layer2UserDefinedNetworkController) newClusterRouter() (*nbdb.LogicalRouter, error) {
+	switch {
+	case oc.hasInterconnectTransport():
+		tunnelKeys := oc.GetTunnelKeys()
+		if len(tunnelKeys) != 2 {
+			return nil, fmt.Errorf("layer2 network %s with transit router enabled requires exactly 2 tunnel keys, got: %v", oc.GetNetworkName(), tunnelKeys)
+		}
+		return oc.gatewayTopologyFactory.NewTransitRouter(
+			oc.GetNetworkScopedClusterRouterName(),
+			oc.GetNetInfo(),
+			oc.defaultCOPPUUID,
+			strconv.Itoa(tunnelKeys[1]),
+		)
+	default:
+		return oc.gatewayTopologyFactory.NewClusterRouter(
+			oc.GetNetworkScopedClusterRouterName(),
+			oc.GetNetInfo(),
+			oc.defaultCOPPUUID,
+		)
+	}
 }
 
 func (oc *Layer2UserDefinedNetworkController) newGatewayManager(nodeName string) *GatewayManager {

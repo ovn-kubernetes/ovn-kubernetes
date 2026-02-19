@@ -157,6 +157,12 @@ func GetExtPortName(bridgeID, nodeName string) string {
 	return bridgeID + "_" + nodeName
 }
 
+// GetMACVRFPortName returns the logical switch port name used for a MACVRF
+// attachment.
+func GetMACVRFPortName(switchName string) string {
+	return types.MACVRFPortPrefix + switchName
+}
+
 // GetPatchPortName determines the name of the patch port on the external
 // bridge, which connects to br-int
 func GetPatchPortName(bridgeID, nodeName string) string {
