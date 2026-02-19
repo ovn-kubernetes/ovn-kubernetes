@@ -495,6 +495,20 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
 func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	networkName := oc.GetNetworkName()
+
+	// For primary Layer2 UDN only: when this is a cleanup-only controller (dummy for stale UDN
+	// cleanup; GetNetworkID() is InvalidID because netInfo was never reconciled from a NAD),
+	// discover and cleanup all gateway routers from the NB DB. DB-driven cleanup works even
+	// when nodes are already gone.
+	if oc.IsPrimaryNetwork() && oc.GetNetworkID() == types.InvalidID {
+		if err := cleanupGatewayRoutersForNetworkFromDB(oc.nbClient, oc.GetNetInfo(),
+			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkScopedJoinSwitchName()); err != nil {
+			return fmt.Errorf("failed to cleanup gateway routers for network %s: %w", networkName, err)
+		}
+	}
+
+	// Switch that holds management ports is deleted below (BaseLayer2UserDefinedNetworkController.cleanup);
+	// LSPs are cascade-deleted with the logical switch.
 	if err := oc.BaseLayer2UserDefinedNetworkController.cleanup(); err != nil {
 		return fmt.Errorf("failed to cleanup network %q: %w", networkName, err)
 	}
@@ -531,13 +545,8 @@ func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	}
 
 	// remove load balancer groups
-	lbGroups := make([]*nbdb.LoadBalancerGroup, 0, 3)
-	for _, lbGroupUUID := range []string{oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID} {
-		lbGroups = append(lbGroups, &nbdb.LoadBalancerGroup{UUID: lbGroupUUID})
-	}
-	if err := libovsdbops.DeleteLoadBalancerGroups(oc.nbClient, lbGroups); err != nil {
-		klog.Errorf("Failed to delete load balancer groups on network: %q, error: %v", oc.GetNetworkName(), err)
-	}
+	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
+		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
 
 	return nil
 }

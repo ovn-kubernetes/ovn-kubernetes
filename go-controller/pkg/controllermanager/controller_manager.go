@@ -92,15 +92,17 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }
 
-// newDummyNetworkController creates a dummy network controller used to clean up specific network
-func (cm *ControllerManager) newDummyNetworkController(topoType, netName string) (networkmanager.NetworkController, error) {
+// newDummyNetworkController creates a dummy network controller used to clean up specific network.
+// role is the NetworkRoleExternalID from stale OVN entities (e.g. "primary" or "secondary") so that
+// the dummy's netInfo.IsPrimaryNetwork() is correct for Layer2 gateway cleanup.
+func (cm *ControllerManager) newDummyNetworkController(topoType, netName, role string) (networkmanager.NetworkController, error) {
 	// Pass a shallow clone of the watch factory, this allows multiplexing
 	// informers for user-defined Networks.
 	cnci, err := cm.newCommonNetworkControllerInfo(cm.watchFactory.ShallowClone())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network controller info %w", err)
 	}
-	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType})
+	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType, Role: role})
 	switch topoType {
 	case ovntypes.Layer3Topology:
 		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
@@ -112,33 +114,38 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName string)
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }
 
-// Find all the OVN logical switches/routers for the secondary networks
-func findAllSecondaryNetworkLogicalEntities(nbClient libovsdbclient.Client) ([]*nbdb.LogicalSwitch,
+// findAllUserDefinedNetworkLogicalEntities returns all OVN logical switches and
+// routers that belong to user-defined networks (primary or secondary). Same
+// predicate as original: entities have NetworkExternalID and NetworkRoleExternalID
+// (TopologyExternalID always co-exists with NetworkExternalID per CleanupStaleNetworks).
+// Caller reads role and topoType from entity ExternalIDs for dummy controller creation.
+// Used on controller restart to remove stale entities for deleted UDNs.
+func findAllUserDefinedNetworkLogicalEntities(nbClient libovsdbclient.Client) ([]*nbdb.LogicalSwitch,
 	[]*nbdb.LogicalRouter, error) {
 
-	belongsToSecondaryNetwork := func(externalIDs map[string]string) bool {
+	belongsToUserDefinedNetwork := func(externalIDs map[string]string) bool {
 		_, hasNetworkExternalID := externalIDs[ovntypes.NetworkExternalID]
-		networkRole, hasNetworkRoleExternalID := externalIDs[ovntypes.NetworkRoleExternalID]
-		return hasNetworkExternalID && hasNetworkRoleExternalID && networkRole == ovntypes.NetworkRoleSecondary
+		_, hasNetworkRoleExternalID := externalIDs[ovntypes.NetworkRoleExternalID]
+		return hasNetworkExternalID && hasNetworkRoleExternalID
 	}
 
 	p1 := func(item *nbdb.LogicalSwitch) bool {
-		return belongsToSecondaryNetwork(item.ExternalIDs)
+		return belongsToUserDefinedNetwork(item.ExternalIDs)
 	}
-	nodeSwitches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, p1)
+	switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, p1)
 	if err != nil {
-		klog.Errorf("Failed to get all logical switches of secondary network error: %v", err)
+		klog.Errorf("Failed to get all logical switches of user-defined networks: %v", err)
 		return nil, nil, err
 	}
 	p2 := func(item *nbdb.LogicalRouter) bool {
-		return belongsToSecondaryNetwork(item.ExternalIDs)
+		return belongsToUserDefinedNetwork(item.ExternalIDs)
 	}
-	clusterRouters, err := libovsdbops.FindLogicalRoutersWithPredicate(nbClient, p2)
+	routers, err := libovsdbops.FindLogicalRoutersWithPredicate(nbClient, p2)
 	if err != nil {
-		klog.Errorf("Failed to get all distributed logical routers: %v", err)
+		klog.Errorf("Failed to get all logical routers of user-defined networks: %v", err)
 		return nil, nil, err
 	}
-	return nodeSwitches, clusterRouters, nil
+	return switches, routers, nil
 }
 
 func (cm *ControllerManager) GetDefaultNetworkController() networkmanager.ReconcilableNetworkController {
@@ -155,8 +162,9 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 		}
 	}
 
-	// Get all the existing secondary networks and its logical entities
-	switches, routers, err := findAllSecondaryNetworkLogicalEntities(cm.nbClient)
+	// Get all the existing user-defined network logical entities (primary and secondary).
+	// For a given network, all switches/routers have the same role external ID (primary or secondary).
+	switches, routers, err := findAllUserDefinedNetworkLogicalEntities(cm.nbClient)
 	if err != nil {
 		return err
 	}
@@ -170,11 +178,15 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 			// network still exists, no cleanup to do
 			continue
 		}
+		role := ls.ExternalIDs[ovntypes.NetworkRoleExternalID]
+		if _, ok := staleNetworkControllers[netName]; ok {
+			// already have a dummy controller for this network (from an earlier entity)
+			continue
+		}
 		// Create dummy network controllers to clean up logical entities
 		klog.V(5).Infof("Found stale %s network %s", topoType, netName)
-		if oc, err := cm.newDummyNetworkController(topoType, netName); err == nil {
+		if oc, err := cm.newDummyNetworkController(topoType, netName, role); err == nil {
 			staleNetworkControllers[netName] = oc
-			continue
 		}
 	}
 	for _, lr := range routers {
@@ -185,11 +197,15 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 			// network still exists, no cleanup to do
 			continue
 		}
+		role := lr.ExternalIDs[ovntypes.NetworkRoleExternalID]
+		if _, ok := staleNetworkControllers[netName]; ok {
+			// already have a dummy controller for this network (from an earlier entity)
+			continue
+		}
 		// Create dummy network controllers to clean up logical entities
 		klog.V(5).Infof("Found stale %s network %s", topoType, netName)
-		if oc, err := cm.newDummyNetworkController(topoType, netName); err == nil {
+		if oc, err := cm.newDummyNetworkController(topoType, netName, role); err == nil {
 			staleNetworkControllers[netName] = oc
-			continue
 		}
 	}
 
