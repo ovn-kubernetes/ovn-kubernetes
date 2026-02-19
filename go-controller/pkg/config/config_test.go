@@ -1032,53 +1032,6 @@ cluster-subnets=172.18.0.0/23
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
-	It("overrides config file and defaults with CLI legacy --init-gateways option", func() {
-		err := os.WriteFile(cfgFile.Name(), []byte(`[gateway]
-mode=local
-`), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		app.Action = func(ctx *cli.Context) error {
-			var cfgPath string
-			cfgPath, err = InitConfig(ctx, kexec.New(), nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(Gateway.Mode).To(gomega.Equal(GatewayModeShared))
-			return nil
-		}
-		cliArgs := []string{
-			app.Name,
-			"-config-file=" + cfgFile.Name(),
-			"-init-gateways",
-		}
-		err = app.Run(cliArgs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	It("overrides config file and defaults with CLI legacy --gateway-local option", func() {
-		err := os.WriteFile(cfgFile.Name(), []byte(`[gateway]
-mode=shared
-`), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		app.Action = func(ctx *cli.Context) error {
-			var cfgPath string
-			cfgPath, err = InitConfig(ctx, kexec.New(), nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(Gateway.Mode).To(gomega.Equal(GatewayModeLocal))
-			return nil
-		}
-		cliArgs := []string{
-			app.Name,
-			"-config-file=" + cfgFile.Name(),
-			"-init-gateways",
-			"-gateway-local",
-		}
-		err = app.Run(cliArgs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
 	It("honors legacy [kubernetes] metrics config file options", func() {
 		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
 metrics-bind-address=1.1.1.1:8080
