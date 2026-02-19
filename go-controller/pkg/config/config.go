@@ -966,14 +966,6 @@ var CommonFlags = []cli.Flag{
 		Destination: &cliConfig.Default.OpenFlowProbe,
 		Value:       Default.OpenFlowProbe,
 	},
-	&cli.IntFlag{
-		Name: "ofctrl-wait-before-clear",
-		Usage: "Maximum number of milliseconds that ovn-controller waits before " +
-			"clearing existing flows during start up, to make sure the initial flow " +
-			"compute is complete and avoid data plane interruptions.",
-		Destination: &cliConfig.Default.OfctrlWaitBeforeClear,
-		Value:       Default.OfctrlWaitBeforeClear,
-	},
 	&cli.BoolFlag{
 		Name: "monitor-all",
 		Usage: "Enable monitoring all data from SB DB instead of conditionally " +
@@ -1736,6 +1728,14 @@ var OVNGatewayFlags = []cli.Flag{
 		Name:        "gateway-local",
 		Usage:       "DEPRECATED; use --gateway-mode instead",
 		Destination: &gatewayLocal,
+	},
+	&cli.IntFlag{
+		Name: "ofctrl-wait-before-clear",
+		Usage: "DEPRECATED; Maximum number of milliseconds that ovn-controller waits before " +
+			"clearing existing flows during start up, to make sure the initial flow " +
+			"compute is complete and avoid data plane interruptions. Not supported since OVN 25.03.",
+		Destination: &cliConfig.Default.OfctrlWaitBeforeClear,
+		Value:       Default.OfctrlWaitBeforeClear,
 	},
 }
 
