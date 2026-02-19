@@ -214,7 +214,6 @@ func NewLocalnetUserDefinedNetworkController(
 					addressSetFactory:           addressSetFactory,
 					networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 					sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-					podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 					stopChan:                    stopChan,
 					wg:                          &sync.WaitGroup{},
 					cancelableCtx:               util.NewCancelableContext(),

@@ -153,8 +153,7 @@ type BaseNetworkController struct {
 	// make sure to keep this order to avoid deadlocks
 	sharedNetpolPortGroups *syncmap.SyncMap[*defaultDenyPortGroups]
 
-	podSelectorAddressSets *syncmap.SyncMap[*PodSelectorAddressSet]
-	addressSetManager      *addresssetmanager.AddressSetManager
+	addressSetManager *addresssetmanager.AddressSetManager
 
 	// stopChan per controller
 	stopChan chan struct{}

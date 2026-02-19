@@ -368,7 +368,6 @@ func NewLayer3UserDefinedNetworkController(
 				addressSetFactory:           addressSetFactory,
 				networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 				sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-				podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 				stopChan:                    stopChan,
 				wg:                          &sync.WaitGroup{},
 				localZoneNodes:              &sync.Map{},
