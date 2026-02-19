@@ -17,8 +17,8 @@ The hostsubnet-prefix-length is optional and if unspecified defaults to 24. The
 hostsubnet-prefix-length defines how many IP addresses are dedicated to each node
 and may be different for each entry. (default "10.128.0.0/14/23")
 .TP
-\fB\--k8s-service-cidr\fR value
-A CIDR notation IP range from which k8s assigns service cluster IPs.
+\fB\--k8s-service-cidrs\fR value
+CIDR notation IP ranges from which k8s assigns service cluster IPs.
 This should be the same as the one provided for kube-apiserver's
 \fB\--service-cluster-ip-range\fR option.
 .TP

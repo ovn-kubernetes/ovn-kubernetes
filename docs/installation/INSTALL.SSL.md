@@ -171,7 +171,7 @@ sudo ovnkube -k8s-kubeconfig kubeconfig.yaml -loglevel=4 \
  -k8s-apiserver="http://$CENTRAL_IP:8080" \
  -logfile="/var/log/ovn-kubernetes/ovnkube.log" \
  -init-master="$NODE_NAME" -cluster-subnets=$CLUSTER_IP_SUBNET \
- -k8s-service-cidr=$SERVICE_IP_SUBNET \
+ -k8s-service-cidrs=$SERVICE_IP_SUBNET \
  -nodeport \
  -nb-address="ssl:$CENTRAL_IP:6641" \
  -sb-address="ssl:$CENTRAL_IP:6642" \
@@ -194,7 +194,7 @@ sudo ovnkube -k8s-kubeconfig kubeconfig.yaml -loglevel=4 \
  -k8s-apiserver="http://$CENTRAL_IP:8080" \
  -logfile="/var/log/ovn-kubernetes/ovnkube-cluster-manager.log" \
  -init-cluster-manager="$NODE_NAME" -cluster-subnets=$CLUSTER_IP_SUBNET \
- -k8s-service-cidr=$SERVICE_IP_SUBNET
+ -k8s-service-cidrs=$SERVICE_IP_SUBNET
 ```
 
 And when you start your ovnkube utility on nodes, you should pass the SSL
@@ -216,6 +216,6 @@ sudo ovnkube -k8s-kubeconfig $HOME/kubeconfig.yaml -loglevel=4 \
     -sb-client-cacert /etc/openvswitch/cacert.pem \
     -sb-cert-common-name ovncontroller \
     -init-gateways \
-    -k8s-service-cidr=$SERVICE_IP_SUBNET \
+    -k8s-service-cidrs=$SERVICE_IP_SUBNET \
     -cluster-subnets=$CLUSTER_IP_SUBNET
 ```
