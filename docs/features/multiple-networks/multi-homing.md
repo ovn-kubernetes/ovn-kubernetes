@@ -304,6 +304,37 @@ spec:
 > specifying a static IP address for the pod is only possible when the
   attachment configuration does **not** feature subnets.
 
+### Multiple interfaces on the same network
+OVN-Kubernetes supports attaching a pod to the same non-primary user-defined
+network multiple times, allowing the pod to have multiple interfaces connected
+to the same network. This is useful for workloads that require multiple network
+interfaces on the same network for advanced networking scenarios. Note that only
+layer 2 and layer 3 networks are supported.
+
+To request multiple interfaces on the same network, specify the network
+multiple times in the `k8s.v1.cni.cncf.io/networks` annotation:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    k8s.v1.cni.cncf.io/networks: l3-network,l3-network
+  name: multi-nic-pod
+  namespace: ns1
+spec:
+  containers:
+  - args:
+    - pause
+    image: registry.k8s.io/e2e-test-images/agnhost:2.36
+    imagePullPolicy: IfNotPresent
+    name: agnhost-container
+```
+
+In this example, the pod will have two interfaces both connected to the
+`l3-network`. Each interface will receive its own IP address from the
+network's subnet.
+
 ### Persistent IP addresses for virtualization workloads
 OVN-Kubernetes provides persistent IP addresses for virtualization workloads,
 allowing VMs to have the same IP addresses when they migrate, when they restart,
@@ -395,8 +426,6 @@ overridden with the following command line options:
 ## Limitations
 OVN-Kubernetes currently does **not** support:
 
-- the same attachment configured multiple times in the same pod - i.e.
-  `k8s.v1.cni.cncf.io/networks: l3-network,l3-network` is invalid.
 - updates to the network selection elements lists - i.e. `k8s.v1.cni.cncf.io/networks` annotation
 - external IPAM - i.e. the user can't define the IPAM attribute in the configuration. They must use the subnets
   attribute.

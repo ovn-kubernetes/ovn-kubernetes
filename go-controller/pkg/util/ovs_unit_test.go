@@ -3,7 +3,9 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,7 +101,9 @@ func TestRunOVNretry(t *testing.T) {
 	// Variables below are defined in ovs.go
 	ovnCmdRetryCount = 0
 	ovnCmdRetryInterval = 1 * time.Millisecond
-	runCmdExecRunner = mockExecRunner
+	// below is defined in ovs.go
+	RunCmdExecRunner = mockExecRunner
+	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 
 	// Used for "test path when PID changes" test case
@@ -308,7 +312,7 @@ func TestRunOVNNorthAppCtl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	// note runner.ovndir is defined in ovs.go file and so is ovnRunDir var with an initial value
@@ -390,7 +394,7 @@ func TestRunOVNControllerAppCtl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	// note runner.ovndir is defined in ovs.go file and so is ovnRunDir var with an initial value
@@ -472,7 +476,7 @@ func TestRunOvsVswitchdAppCtl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 
@@ -549,7 +553,7 @@ func TestDefaultExecRunner_RunCmd(t *testing.T) {
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// tests in other files in the package would set runCmdExecRunner to mocks.ExecRunner,
 	// for this test we want to ensure the non-mock instance is used
-	runCmdExecRunner = &defaultExecRunner{}
+	RunCmdExecRunner = &defaultExecRunner{}
 
 	tests := []struct {
 		desc             string
@@ -582,7 +586,7 @@ func TestDefaultExecRunner_RunCmd(t *testing.T) {
 			if tc.cmd != nil {
 				ovntest.ProcessMockFnList(&tc.cmd.(*mock_k8s_io_utils_exec.Cmd).Mock, tc.onRetArgsCmdList)
 			}
-			_, _, e := runCmdExecRunner.RunCmd(tc.cmd, tc.cmdPath, tc.envVars, tc.cmdArg)
+			_, _, e := RunCmdExecRunner.RunCmd(tc.cmd, tc.cmdPath, tc.envVars, tc.cmdArg)
 
 			assert.Equal(t, tc.expectedErr, e)
 			mockCmd.AssertExpectations(t)
@@ -902,7 +906,7 @@ func TestRunOVSOfctl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -964,7 +968,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1039,7 +1043,7 @@ func TestRunOVSVsctl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1080,7 +1084,7 @@ func TestRunOVSAppctlWithTimeout(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1124,7 +1128,7 @@ func TestRunOVNAppctlWithTimeout(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1168,7 +1172,7 @@ func TestRunOVNNbctlWithTimeout(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1214,7 +1218,7 @@ func TestRunOVNNbctl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1257,7 +1261,7 @@ func TestRunOVNSbctlWithTimeout(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1303,7 +1307,7 @@ func TestRunOVNSbctl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1346,7 +1350,7 @@ func TestRunOVSDBClient(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1389,7 +1393,7 @@ func TestRunOVSDBTool(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go.
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1432,7 +1436,7 @@ func TestRunOVSDBClientOVNNB(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1475,7 +1479,7 @@ func TestRunOVNNBAppCtl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1518,7 +1522,7 @@ func TestRunOVNSBAppCtl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1561,7 +1565,7 @@ func TestRunIP(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1596,7 +1600,7 @@ func TestRunSysctl(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1631,7 +1635,7 @@ func TestAddOFFlowWithSpecificAction(t *testing.T) {
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	mockExecRunner := new(mocks.ExecRunner)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1678,7 +1682,7 @@ func TestReplaceOFFlows(t *testing.T) {
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	mockExecRunner := new(mocks.ExecRunner)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1693,14 +1697,14 @@ func TestReplaceOFFlows(t *testing.T) {
 			expectedErr:             fmt.Errorf("failed to execute ovs-ofctl command"),
 			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{nil, nil, fmt.Errorf("failed to execute ovs-ofctl command")}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*bytes.Buffer"}},
+			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*util.openFlowStdinReader"}},
 		},
 		{
 			desc:                    "positive: run `ovs-ofctl` command",
 			expectedErr:             nil,
 			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("testblah")), bytes.NewBuffer([]byte("")), nil}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*bytes.Buffer"}},
+			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*util.openFlowStdinReader"}},
 		},
 	}
 	for i, tc := range tests {
@@ -1720,12 +1724,50 @@ func TestReplaceOFFlows(t *testing.T) {
 	}
 }
 
+func TestOpenFlowStdinReader(t *testing.T) {
+	tests := []struct {
+		desc  string
+		flows []string
+	}{
+		{
+			desc:  "empty flow list",
+			flows: []string{},
+		},
+		{
+			desc:  "single flow",
+			flows: []string{"table=0,priority=0,actions=NORMAL"},
+		},
+		{
+			desc:  "multiple flows",
+			flows: []string{"a", "b", "c"},
+		},
+		{
+			desc:  "includes empty flow",
+			flows: []string{"a", "", "c"},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			r := &openFlowStdinReader{flows: tc.flows}
+			out, err := io.ReadAll(r)
+			require.NoError(t, err)
+			assert.Equal(t, strings.Join(tc.flows, "\n"), string(out))
+
+			buf := make([]byte, 1)
+			n, eof := r.Read(buf)
+			assert.Equal(t, 0, n)
+			assert.Equal(t, io.EOF, eof)
+		})
+	}
+}
+
 func TestGetOVNDBServerInfo(t *testing.T) {
 	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
@@ -1780,7 +1822,7 @@ func TestDetectSCTPSupport(t *testing.T) {
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below is defined in ovs.go
-	runCmdExecRunner = mockExecRunner
+	RunCmdExecRunner = mockExecRunner
 	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
 

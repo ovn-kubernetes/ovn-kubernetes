@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ovnkube-single-node-zone-dpu
+description: Helm chart to deploy single node zone stack on DPUs
+type: application
+version: 1.2.0
+appVersion: "1.2.0"

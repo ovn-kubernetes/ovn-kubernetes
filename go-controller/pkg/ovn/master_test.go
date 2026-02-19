@@ -1731,7 +1731,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 					Name: "newNode",
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets":    fmt.Sprintf("{\"default\":[\"%s\", \"fd02:0:0:2::2895/64\"]}", newNodeSubnet),
-						"k8s.ovn.org/node-chassis-id": "2",
+						"k8s.ovn.org/node-chassis-id": chassisIDForNode("newNode"),
 						util.OvnNodeID:                "2",
 					},
 				},
@@ -1793,7 +1793,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 					Name: "newNode",
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets":                   fmt.Sprintf("{\"default\":[\"%s\"]}", newNodeIpv4Subnet),
-						"k8s.ovn.org/node-chassis-id":                "2",
+						"k8s.ovn.org/node-chassis-id":                chassisIDForNode("newNode"),
 						"k8s.ovn.org/node-gateway-router-lrp-ifaddr": "{\"ipv4\":\"100.64.0.2/16\"}",
 					},
 				},
@@ -1906,7 +1906,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			newNodeSubnet := "10.1.2.0/24"
 			transitSwitchSubnet := "100.88.0.3/16"
 			testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\"]}", newNodeSubnet)
-			testNode.Annotations["k8s.ovn.org/node-chassis-id"] = "2"
+			testNode.Annotations["k8s.ovn.org/node-chassis-id"] = chassisIDForNode(testNode.Name)
 			testNode.Annotations["k8s.ovn.org/node-transit-switch-port-ifaddr"] = fmt.Sprintf("{\"ipv4\":\"%s\"}", transitSwitchSubnet)
 			testNode.Annotations["k8s.ovn.org/zone-name"] = "foo"
 			updatedNode, err := fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode, metav1.CreateOptions{})
@@ -2135,15 +2135,15 @@ func TestController_syncNodes(t *testing.T) {
 		{
 			name: "removes stale chassis and chassis private",
 			initialSBDB: []libovsdbtest.TestData{
-				&sbdb.Chassis{Name: "chassis-node1", Hostname: node1Name},
-				&sbdb.ChassisPrivate{Name: "chassis-node1"},
-				&sbdb.Chassis{Name: "chassis-node2", Hostname: nodeRmName},
-				&sbdb.ChassisPrivate{Name: "chassis-node2"},
-				&sbdb.ChassisPrivate{Name: "chassis-node3"},
+				&sbdb.Chassis{Name: chassisIDForNode(node1Name), Hostname: node1Name},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode(node1Name)},
+				&sbdb.Chassis{Name: chassisIDForNode(nodeRmName), Hostname: nodeRmName},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode(nodeRmName)},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode("node3")},
 			},
 			expectedSBDB: []libovsdbtest.TestData{
-				&sbdb.Chassis{Name: "chassis-node1", Hostname: node1Name},
-				&sbdb.ChassisPrivate{Name: "chassis-node1"},
+				&sbdb.Chassis{Name: chassisIDForNode(node1Name), Hostname: node1Name},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode(node1Name)},
 			},
 		},
 	}
@@ -2159,6 +2159,9 @@ func TestController_syncNodes(t *testing.T) {
 			testNode := corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-chassis-id": chassisIDForNode(node1Name),
+					},
 				},
 			}
 
@@ -2243,20 +2246,20 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						"k8s.ovn.org/node-chassis-id": "chassis-node1-dpu",
+						"k8s.ovn.org/node-chassis-id": chassisIDForNode("node1-dpu"),
 					},
 				},
 			},
 			name: "removes stale chassis when ovn running on DPU",
 			initialSBDB: []libovsdbtest.TestData{
-				&sbdb.Chassis{Name: "chassis-node1-dpu", Hostname: "node1"},
-				&sbdb.ChassisPrivate{Name: "chassis-node1-dpu"},
-				&sbdb.Chassis{Name: "chassis-node1", Hostname: "node1"},
-				&sbdb.ChassisPrivate{Name: "chassis-node1"},
+				&sbdb.Chassis{Name: chassisIDForNode("node1-dpu"), Hostname: "node1"},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode("node1-dpu")},
+				&sbdb.Chassis{Name: chassisIDForNode("node1"), Hostname: "node1"},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode("node1")},
 			},
 			expectedSBDB: []libovsdbtest.TestData{
-				&sbdb.Chassis{Name: "chassis-node1-dpu", Hostname: "node1"},
-				&sbdb.ChassisPrivate{Name: "chassis-node1-dpu"},
+				&sbdb.Chassis{Name: chassisIDForNode("node1-dpu"), Hostname: "node1"},
+				&sbdb.ChassisPrivate{Name: chassisIDForNode("node1-dpu")},
 			},
 		},
 	}

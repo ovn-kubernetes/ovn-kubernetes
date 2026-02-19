@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
@@ -202,7 +204,7 @@ func newEndpointSlice(svcName, namespace string, endpoints []discovery.Endpoint,
 	}
 }
 
-func makeConntrackFilter(ip string, port int, protocol corev1.Protocol) *netlink.ConntrackFilter {
+func makeConntrackFilter(ip string, port int, protocol corev1.Protocol, filterType netlink.ConntrackFilterType) *netlink.ConntrackFilter {
 	filter := &netlink.ConntrackFilter{}
 
 	var err error
@@ -221,15 +223,17 @@ func makeConntrackFilter(ip string, port int, protocol corev1.Protocol) *netlink
 	}
 	ipAddress := net.ParseIP(ip)
 	Expect(ipAddress).NotTo(BeNil())
-	err = filter.AddIP(netlink.ConntrackOrigDstIP, ipAddress)
+	err = filter.AddIP(filterType, ipAddress)
 	Expect(err).NotTo(HaveOccurred())
 
 	return filter
 }
 
 type ctFilterDesc struct {
-	ip   string
-	port int
+	ip         string
+	port       int
+	protocol   corev1.Protocol
+	filterType netlink.ConntrackFilterType
 }
 
 func addConntrackMocks(nlMock *mocks.NetLinkOps, filterDescs []ctFilterDesc) {
@@ -240,7 +244,7 @@ func addConntrackMocks(nlMock *mocks.NetLinkOps, filterDescs []ctFilterDesc) {
 			OnCallMethodArgs: []interface{}{
 				netlink.ConntrackTableType(netlink.ConntrackTable),
 				netlink.InetFamily(netlink.FAMILY_V4),
-				makeConntrackFilter(ctf.ip, ctf.port, corev1.ProtocolTCP),
+				makeConntrackFilter(ctf.ip, ctf.port, ctf.protocol, ctf.filterType),
 			},
 			RetArgList: []interface{}{uint(1), nil},
 		})
@@ -1387,6 +1391,174 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("inits iptables rules and openflows with LoadBalancer where ETP=local, SGW mode, with named ports, with "+
+			"host networked pods and with external IP", func() {
+			app.Action = func(*cli.Context) error {
+				nodeName := "node"
+				svcPortName := "https-port"
+				svcTargetPortName := "https-target"
+				svcStatusIPMode := corev1.LoadBalancerIPModeVIP
+				config.Gateway.Mode = config.GatewayModeShared
+				svcNodePort := int32(31111)
+				svcPort := int32(8080)
+				externalIP := "1.1.1.1"
+				svcStatusIP := "5.5.5.5"
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: "ovs-ofctl show ",
+					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: "ovs-ofctl show ",
+					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
+				})
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Name:       svcPortName,
+							NodePort:   svcNodePort,
+							Protocol:   corev1.ProtocolTCP,
+							Port:       svcPort,
+							TargetPort: intstr.FromString(svcTargetPortName),
+						},
+					},
+					corev1.ServiceTypeLoadBalancer,
+					[]string{externalIP},
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
+								IP:     svcStatusIP,
+								IPMode: &svcStatusIPMode,
+							}},
+						},
+					},
+					true, false,
+				)
+				epPortValue := int32(8888)
+				epPortProtocol := corev1.ProtocolTCP
+				ep1 := discovery.Endpoint{
+					Addresses: []string{"192.168.18.15"}, // host-networked endpoint local to this node
+					NodeName:  &nodeName,
+				}
+				epPort1 := discovery.EndpointPort{
+					Name:     &svcPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
+				}
+				endpointSlice := *newEndpointSlice(
+					"service1",
+					"namespace1",
+					[]discovery.Endpoint{ep1},
+					[]discovery.EndpointPort{epPort1},
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service, &endpointSlice).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				expectedTables := map[string]util.FakeTable{
+					"nat": {
+						"PREROUTING": []string{
+							"-j OVN-KUBE-ETP",
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+						},
+						"OUTPUT": []string{
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-NODEPORT": []string{
+							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								service.Spec.Ports[0].NodePort,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+						},
+						"OVN-KUBE-EXTERNALIP": []string{
+							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								svcStatusIP,
+								service.Spec.Ports[0].Port,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								externalIP,
+								service.Spec.Ports[0].Port,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+						},
+						"OVN-KUBE-ETP": []string{},
+						"OVN-KUBE-ITP": []string{},
+					},
+					"filter": {},
+					"mangle": {
+						"OUTPUT": []string{
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-ITP": []string{},
+					},
+				}
+				expectedNodePortFlows := []string{
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=%d, "+
+						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)", svcNodePort, v4localnetGatewayIP, epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					fmt.Sprintf("cookie=0xe352697d7a317b80, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+						"actions=ct(zone=64003 nat,table=7)", epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
+				expectedLBIngressFlows := []string{
+					fmt.Sprintf("cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=%s, "+
+						"actions=output:LOCAL", svcStatusIP),
+					fmt.Sprintf("cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, tcp, nw_dst=%s, tp_dst=%d, "+
+						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)",
+						svcStatusIP, svcPort, v4localnetGatewayIP, epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					fmt.Sprintf("cookie=0xe352697d7a317b80, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+						"actions=ct(zone=64003 nat,table=7)", epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
+				expectedLBExternalIPFlows := []string{
+					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=%s, "+
+						"actions=output:LOCAL", externalIP),
+					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, tcp, nw_dst=%s, tp_dst=%d, "+
+						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)",
+						externalIP, svcPort, v4localnetGatewayIP, epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					fmt.Sprintf("cookie=0xe352697d7a317b80, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+						"actions=ct(zone=64003 nat,table=7)", epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
+
+				f4 := iptV4.(*util.FakeIPTables)
+				err = f4.MatchState(expectedTables, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
+				Expect(flows).To(Equal(expectedNodePortFlows))
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
+				Expect(flows).To(Equal(expectedLBIngressFlows))
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
+				Expect(flows).To(Equal(expectedLBExternalIPFlows))
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("inits iptables rules with DualStack NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(31111)
@@ -1619,7 +1791,7 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"1.1.1.1", 8032}, {"10.129.0.2", 8032}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"1.1.1.1", 8032, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"10.129.0.2", 8032, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 				Eventually(func() bool {
@@ -1708,7 +1880,7 @@ var _ = Describe("Node Operations", func() {
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 0}, {"192.168.18.15", 31111}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 0, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 				Eventually(fExec.CalledMatchesExpected, "2s").Should(BeTrue(), fExec.ErrorDesc)
@@ -1759,6 +1931,415 @@ var _ = Describe("Node Operations", func() {
 					expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("on update", func() {
+		It("deletes conntrack entries for UDP ports when target port changes", func() {
+			app.Action = func(*cli.Context) error {
+				nodePort := int32(31111)
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   nodePort,
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new targetPort
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[0].TargetPort = intstr.FromInt(5454)
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion expectations
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter("192.168.18.15", int(nodePort), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 2
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries for UDP ports when port changes", func() {
+			app.Action = func(*cli.Context) error {
+				nodePort := int32(31111)
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   nodePort,
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new port
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[0].Port = 54
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion expectations
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter("192.168.18.15", int(nodePort), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 2
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("does not delete conntrack entries when TCP service target port changes", func() {
+			app.Action = func(*cli.Context) error {
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolTCP,
+							Port:       int32(80),
+							TargetPort: intstr.FromInt(8080),
+						},
+					},
+					corev1.ServiceTypeClusterIP,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update TCP service with new targetPort
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[0].TargetPort = intstr.FromInt(9090)
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was not called
+				Consistently(func() bool {
+					netlinkMock.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters")
+					return true
+				}, "1s", "100ms").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries for UDP when ExternalIP changes", func() {
+			app.Action = func(*cli.Context) error {
+				externalIP1 := "1.1.1.1"
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeClusterIP,
+					[]string{externalIP1},
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new ExternalIP
+				updatedService := service.DeepCopy()
+				updatedService.Spec.ExternalIPs = []string{"2.2.2.2"}
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion for old ExternalIP
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(externalIP1, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 1
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries for UDP when LoadBalancer IP changes", func() {
+			app.Action = func(*cli.Context) error {
+				lbIP1 := "1.1.1.1"
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeLoadBalancer,
+					[]string{},
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
+								IP: lbIP1,
+							}},
+						},
+					},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new LoadBalancer IP
+				updatedService := service.DeepCopy()
+				updatedService.Status.LoadBalancer.Ingress[0].IP = "2.2.2.2"
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion for old LoadBalancer IP
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(lbIP1, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 1
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries only for changed UDP ports in multi-port service", func() {
+			app.Action = func(*cli.Context) error {
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(80),
+							TargetPort: intstr.FromInt(8080),
+						},
+					},
+					corev1.ServiceTypeClusterIP,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service - change only port 80's targetPort
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[1].TargetPort = intstr.FromInt(9090)
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion ONLY for port 80
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, 80, corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion called once for port 80 only
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 1
+				}, "2s").Should(BeTrue())
 
 				return nil
 			}
@@ -1848,7 +2429,7 @@ var _ = Describe("Node Operations", func() {
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.10.10.1", 8034}, {"10.129.0.2", 8034}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.10.10.1", 8034, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"10.129.0.2", 8034, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
@@ -1976,11 +2557,11 @@ var _ = Describe("Node Operations", func() {
 				}).Should(Equal(expectedLBExternalIPFlows2))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{
-					{"1.1.1.1", 8080},
-					{"1.1.1.2", 8080},
-					{"5.5.5.5", 8080},
-					{"192.168.18.15", 31111},
-					{"10.129.0.2", 8080},
+					{"1.1.1.1", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
+					{"1.1.1.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
+					{"5.5.5.5", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
+					{"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
+					{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP},
 				})
 
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
@@ -2195,7 +2776,7 @@ var _ = Describe("Node Operations", func() {
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).Should(Succeed())
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 38034}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 38034, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
@@ -2332,7 +2913,7 @@ var _ = Describe("Node Operations", func() {
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
@@ -2478,7 +3059,7 @@ var _ = Describe("Node Operations", func() {
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
@@ -2615,7 +3196,7 @@ var _ = Describe("Node Operations", func() {
 				expectedFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
 					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
-					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
+					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
 
@@ -2628,7 +3209,7 @@ var _ = Describe("Node Operations", func() {
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
@@ -2773,7 +3354,7 @@ var _ = Describe("Node Operations", func() {
 				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 
@@ -2909,7 +3490,7 @@ var _ = Describe("Node Operations", func() {
 				expectedFlows := []string{
 					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=31111, actions=ct(commit,zone=64003,nat(dst=10.244.0.1:443),table=6)",
 					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
-					"cookie=0x453ae29bcbbc08bd, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
+					"cookie=0x8ba455e19afe30d1, priority=110, in_port=LOCAL, tcp, tp_src=443, actions=ct(zone=64003 nat,table=7)",
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
 
@@ -2921,7 +3502,7 @@ var _ = Describe("Node Operations", func() {
 
 				Expect(fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")).To(Equal(expectedFlows))
 
-				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
+				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}, {"192.168.18.15", 31111, corev1.ProtocolTCP, netlink.ConntrackOrigDstIP}})
 				Expect(fakeClient.KubeClient.CoreV1().Services(service.Namespace).Delete(
 					context.Background(), service.Name, metav1.DeleteOptions{})).To(Succeed())
 

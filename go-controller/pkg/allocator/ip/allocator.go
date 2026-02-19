@@ -55,6 +55,11 @@ func IsErrAllocated(err error) bool {
 	return errors.Is(err, ErrAllocated)
 }
 
+// IsErrFull returns true if err is of type ErrFull
+func IsErrFull(err error) bool {
+	return errors.Is(err, ErrFull)
+}
+
 type ErrNotInRange struct {
 	ValidRange string
 }

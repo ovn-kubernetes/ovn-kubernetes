@@ -252,11 +252,22 @@ func (c *Controller) syncDefaultEndpointSlice(ctx context.Context, key string) e
 		return err
 	}
 
-	if namespacePrimaryNetwork.IsDefault() || !namespacePrimaryNetwork.IsPrimaryNetwork() {
+	if namespacePrimaryNetwork == nil || namespacePrimaryNetwork.IsDefault() || !namespacePrimaryNetwork.IsPrimaryNetwork() {
 		return nil
 	}
 
 	klog.Infof("Processing %s/%s EndpointSlice in %q primary network", namespace, name, namespacePrimaryNetwork.GetNetworkName())
+
+	nadKey, err := c.networkManager.GetPrimaryNADForNamespace(namespace)
+	if err != nil {
+		return err
+	}
+	if nadKey == types.DefaultNetworkName {
+		return fmt.Errorf("no primary NAD found for namespace %s", namespace)
+	}
+	if networkName := c.networkManager.GetNetworkNameForNADKey(nadKey); networkName == "" || networkName != namespacePrimaryNetwork.GetNetworkName() {
+		return fmt.Errorf("primary NAD %s does not match network %s", nadKey, namespacePrimaryNetwork.GetNetworkName())
+	}
 
 	defaultEndpointSlice, err := c.endpointSliceLister.EndpointSlices(namespace).Get(name)
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -316,7 +327,7 @@ func (c *Controller) syncDefaultEndpointSlice(ctx context.Context, key string) e
 		}
 	}
 
-	currentMirror, err := c.mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointSlice, namespacePrimaryNetwork)
+	currentMirror, err := c.mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointSlice, namespacePrimaryNetwork, nadKey)
 	if err != nil {
 		return err
 	}
@@ -349,7 +360,7 @@ func isManagedByDefault(endpointSlice *v1.EndpointSlice) bool {
 // getPodIP retrieves the IP address of a specified Pod within a given namespace and network.
 // If the pod is host networked it returns default pod IP from the status ignoring the network.
 // Otherwise, it unmarshals the Pod's network annotation, and matches the IP from the provided network.
-func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (string, error) {
+func (c *Controller) getPodIP(name, namespace, nadKey string, isIPv6 bool) (string, error) {
 	var podIP string
 	pod, err := c.podLister.Pods(namespace).Get(name)
 	if err != nil {
@@ -370,7 +381,7 @@ func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (str
 
 		podIP = ipAddr.String()
 	} else {
-		net, err := util.UnmarshalPodAnnotation(pod.Annotations, network)
+		net, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 		if err != nil {
 			return "", err
 		}
@@ -388,7 +399,7 @@ func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (str
 
 // mirrorEndpointSlice creates or updates a mirrored EndpointSlice based on the provided defaultEndpointSlice.
 // The mirrored EndpointSlice will have custom labels set and will be managed by the current controller.
-func (c *Controller) mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointSlice *v1.EndpointSlice, network util.NetInfo) (*v1.EndpointSlice, error) {
+func (c *Controller) mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointSlice *v1.EndpointSlice, network util.NetInfo, nadKey string) (*v1.EndpointSlice, error) {
 	var currentMirror *v1.EndpointSlice
 	if mirroredEndpointSlice != nil {
 		currentMirror = mirroredEndpointSlice.DeepCopy()
@@ -428,13 +439,9 @@ func (c *Controller) mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointS
 
 	currentMirror.Endpoints = make([]v1.Endpoint, len(defaultEndpointSlice.Endpoints))
 	isIPv6 := defaultEndpointSlice.AddressType == v1.AddressTypeIPv6
-	nadList := network.GetNADs()
-	if len(nadList) != 1 {
-		return nil, fmt.Errorf("expected one NAD in %s network, got: %d", network.GetNetworkName(), len(nadList))
-	}
 	for i, endpoint := range defaultEndpointSlice.Endpoints {
 		if endpoint.TargetRef != nil && endpoint.TargetRef.Kind == "Pod" {
-			podIP, err := c.getPodIP(endpoint.TargetRef.Name, endpoint.TargetRef.Namespace, nadList[0], isIPv6)
+			podIP, err := c.getPodIP(endpoint.TargetRef.Name, endpoint.TargetRef.Namespace, nadKey, isIPv6)
 			if err != nil {
 				return nil, fmt.Errorf("failed to determine the Pod IP of: %s/%s: %v", endpoint.TargetRef.Namespace, endpoint.TargetRef.Name, err)
 			}

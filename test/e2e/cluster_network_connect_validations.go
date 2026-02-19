@@ -11,7 +11,7 @@ import (
 	testscenariocnc "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario/clusternetworkconnect"
 )
 
-var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkSegmentation, func() {
+var _ = Describe("ClusterNetworkConnect: API validations", feature.NetworkConnect, func() {
 	DescribeTable("api-server should reject invalid ClusterNetworkConnect CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {

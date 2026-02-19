@@ -4,9 +4,16 @@ import (
 	"context"
 	"errors"
 
+	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
+
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/record"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
+	rainformers "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
+	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -18,15 +25,31 @@ const (
 	MaxNetworks = 4096
 )
 
+// NADReconciler is a level-driven controller notified of NAD key changes.
+type NADReconciler controller.Reconciler
+
+type watchFactory interface {
+	NADInformer() nadinformers.NetworkAttachmentDefinitionInformer
+	UserDefinedNetworkInformer() userdefinednetworkinformer.UserDefinedNetworkInformer
+	ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer
+	NamespaceInformer() coreinformers.NamespaceInformer
+	RouteAdvertisementsInformer() rainformers.RouteAdvertisementsInformer
+	NodeCoreInformer() coreinformers.NodeInformer
+	PodCoreInformer() coreinformers.PodInformer
+	EgressIPInformer() egressipinformer.EgressIPInformer
+}
+
 // Interface is the main package entrypoint and provides network related
 // information to the rest of the project.
 type Interface interface {
 	// GetActiveNetworkForNamespace returns a copy of the primary network for
-	// the namespace if any or the default network otherwise. If there is a
-	// primary UDN defined but the NAD has not been processed yet, returns
-	// ErrNetworkControllerTopologyNotManaged. Used for controllers that are not
-	// capable of reconciling primary network changes. If unsure, use this one
-	// and not GetActiveNetworkForNamespaceFast.
+	// the namespace if any or the default network otherwise.
+	// If the network is non-existent for a legitimate reason (namespace gone or
+	// filtered by Dynamic UDN) it returns nil NetInfo and no error.
+	// If the network is non-existent, but should exist, return InvalidPrimaryNetworkError.
+	// If unsure, use this one and not GetActiveNetworkForNamespaceFast.
+	// Note this function is filtered by Dynamic UDN, so if your caller wants NAD/Network
+	// information without D-UDN filtering, use GetPrimaryNADForNamespace.
 	GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error)
 
 	// GetActiveNetworkForNamespaceFast returns the primary network for the
@@ -36,6 +59,12 @@ type Interface interface {
 	// by controllers capable of reconciling primary network changes. If unsure,
 	// use GetActiveNetworkForNamespace.
 	GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo
+
+	// GetPrimaryNADForNamespace returns the full namespaced key of the
+	// primary NAD for the given namespace, if one exists.
+	// Returns default network if namespace has no primary UDN.
+	// This function is not filtered based on Dynamic UDN.
+	GetPrimaryNADForNamespace(namespace string) (string, error)
 
 	// GetNetwork returns the network of the given name or nil if unknown
 	GetNetwork(name string) util.NetInfo
@@ -48,9 +77,29 @@ type Interface interface {
 	// DoWithLock takes care of locking and unlocking while iterating over all role primary user defined networks.
 	DoWithLock(f func(network util.NetInfo) error) error
 	GetActiveNetworkNamespaces(networkName string) ([]string, error)
-	// RegisterNADHandler allows external entities to register callback functions to be executed when
-	// a NAD is deleted/created/updated. These operations should be non-blocking and lightweight.
-	RegisterNADHandler(handler handlerFunc) error
+
+	// GetNetInfoForNADKey returns a copy of the  cached network info for the given NAD key, or nil if unknown.
+	// This is a cheap lookup that does not parse the NAD object; it relies on NAD controller state.
+	GetNetInfoForNADKey(nadKey string) util.NetInfo
+	// GetNetworkNameForNADKey returns the network name mapped to the NAD key, or empty if unknown.
+	// This uses NAD controller state and does not parse the NAD object.
+	GetNetworkNameForNADKey(nadKey string) string
+	// GetNADKeysForNetwork returns NAD keys mapped to the network name, or empty if unknown.
+	// This uses NAD controller state and does not parse the NAD object.
+	GetNADKeysForNetwork(networkName string) []string
+	// RegisterNADReconciler registers a reconciler to be notified of NAD changes.
+	RegisterNADReconciler(r NADReconciler) (uint64, error)
+	// DeRegisterNADReconciler removes a previously registered reconciler.
+	DeRegisterNADReconciler(id uint64) error
+
+	// GetNetworkByID returns the network with the given ID or nil if not found.
+	// This is an O(1) lookup using an internal index.
+	GetNetworkByID(id int) util.NetInfo
+
+	// NodeHasNetwork returns true if the given node has at least one pod/egress IP using any NAD
+	// for the specified network with Dynamic UDN.
+	// If Dynamic UDN is disabled, it always returns true.
+	NodeHasNetwork(node, networkName string) bool
 }
 
 // Controller handles the runtime of the package
@@ -84,6 +133,7 @@ func NewForCluster(
 		ovnClient,
 		recorder,
 		tunnelKeysAllocator,
+		"",
 	)
 }
 
@@ -93,6 +143,10 @@ func NewForZone(
 	cm ControllerManager,
 	wf watchFactory,
 ) (Controller, error) {
+	z := zone
+	if zone == types.OvnDefaultZone {
+		z = ""
+	}
 	return new(
 		"zone-nad-controller",
 		zone,
@@ -102,6 +156,7 @@ func NewForZone(
 		nil,
 		nil,
 		nil,
+		z,
 	)
 }
 
@@ -120,6 +175,7 @@ func NewForNode(
 		nil,
 		nil,
 		nil,
+		node,
 	)
 }
 
@@ -135,8 +191,9 @@ func new(
 	ovnClient *util.OVNClusterManagerClientset,
 	recorder record.EventRecorder,
 	tunnelKeysAllocator *id.TunnelKeysAllocator,
+	filterNADsOnNode string,
 ) (Controller, error) {
-	return newController(name, zone, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator)
+	return newController(name, zone, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode)
 }
 
 // ControllerManager manages controllers. Needs to be provided in order to build
@@ -178,6 +235,9 @@ type BaseNetworkController interface {
 type NetworkController interface {
 	BaseNetworkController
 	Cleanup() error
+	// HandleNetworkRefChange is only used by nadControllers with Dynamic UDN
+	// to inform the network controller that a relevant NAD has become active or inactive.
+	HandleNetworkRefChange(node string, active bool)
 }
 
 // defaultNetworkManager assumes the default network is
@@ -197,6 +257,10 @@ func (nm defaultNetworkManager) Stop() {}
 
 func (nm defaultNetworkManager) GetActiveNetworkForNamespace(string) (util.NetInfo, error) {
 	return &util.DefaultNetInfo{}, nil
+}
+
+func (nm defaultNetworkManager) GetPrimaryNADForNamespace(_ string) (string, error) {
+	return types.DefaultNetworkName, nil
 }
 
 func (nm defaultNetworkManager) GetActiveNetworkForNamespaceFast(string) util.NetInfo {
@@ -225,8 +289,28 @@ func (nm defaultNetworkManager) GetActiveNetwork(network string) util.NetInfo {
 	return &util.DefaultNetInfo{}
 }
 
-func (nm defaultNetworkManager) RegisterNADHandler(_ handlerFunc) error {
-	return nil
+func (nm defaultNetworkManager) GetNetInfoForNADKey(_ string) util.NetInfo { return nil }
+
+func (nm defaultNetworkManager) GetNetworkNameForNADKey(_ string) string { return "" }
+
+func (nm defaultNetworkManager) GetNADKeysForNetwork(_ string) []string { return nil }
+
+func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) (uint64, error) {
+	return 0, nil
+}
+
+func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) error { return nil }
+
+func (nm defaultNetworkManager) GetNetworkByID(id int) util.NetInfo {
+	if id != types.DefaultNetworkID {
+		return nil
+	}
+	return &util.DefaultNetInfo{}
+}
+
+func (nm defaultNetworkManager) NodeHasNetwork(_ string, _ string) bool {
+	// default network is never filtered
+	return true
 }
 
 var def Controller = &defaultNetworkManager{}

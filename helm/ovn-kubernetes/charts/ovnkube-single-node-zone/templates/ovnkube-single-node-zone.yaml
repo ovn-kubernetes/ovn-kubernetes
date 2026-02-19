@@ -64,6 +64,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -74,7 +77,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel | quote }}
         - name: K8S_APISERVER
@@ -126,6 +129,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -136,7 +142,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_SB
           value: {{ default "-vconsole:info -vfile:info" .Values.sbLogLevel | quote }}
         - name: K8S_APISERVER
@@ -191,13 +197,16 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: {{ default "-vconsole:info -vfile:info" .Values.northdLogLevel | quote }}
         - name: K8S_APISERVER
@@ -271,6 +280,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
           readOnly: true
@@ -289,10 +301,14 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        {{ if .Values.global.enableCoredumps -}}
+        - name: GOTRACEBACK
+          value: "crash"
+        {{ end -}}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.ovnkubeNodeLogLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -399,8 +415,6 @@ spec:
           value: {{ default "" .Values.global.extGatewayNetworkInterface | quote }}
         - name: OVN_SSL_ENABLE
           value: {{ include "isSslEnabled" . | quote }}
-        - name: OVN_DISABLE_OVN_IFACE_ID_VER
-          value: {{ hasKey .Values.global "disableIfaceIdVer" | ternary .Values.global.disableIfaceIdVer false | quote }}
         - name: OVN_REMOTE_PROBE_INTERVAL
           value: {{ default 100000 .Values.global.remoteProbeInterval | quote }}
         - name: OVN_MONITOR_ALL
@@ -417,10 +431,22 @@ spec:
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: {{ hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false | quote }}
+        - name: OVN_EVPN_ENABLE
+          value: {{ hasKey .Values.global "enableEVPN" | ternary .Values.global.enableEVPN false | quote }}
+        - name: OVN_NETWORK_CONNECT_ENABLE
+          value: {{ default "" .Values.global.enableNetworkConnect | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
         - name: OVN_EMPTY_LB_EVENTS
@@ -480,13 +506,16 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: {{ default "-vconsole:info" .Values.ovnControllerLogLevel | quote }}
         - name: K8S_APISERVER
@@ -535,7 +564,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -553,6 +582,8 @@ spec:
             nodeSelectorTerms:
             - matchExpressions:
               - key: k8s.ovn.org/dpu-host
+                operator: DoesNotExist
+              - key: k8s.ovn.org/dpu
                 operator: DoesNotExist
       volumes:
       # Common volumes
@@ -596,6 +627,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch

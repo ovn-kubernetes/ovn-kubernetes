@@ -234,8 +234,21 @@ func (g *gateway) DeleteEndpointSlice(epSlice *discovery.EndpointSlice) error {
 	return utilerrors.Join(errors...)
 }
 
+// canHandleBridgeEgressIP returns true if this node should handle EgressIP
+// configuration on the bridge. Returns false if:
+// - Network segmentation (UDN) is not enabled
+// - Interconnect is not enabled
+// - Gateway mode is disabled
+// - Running in DPU-host mode (EgressIP is handled by ovnkube on the DPU where OVS runs)
+func canHandleBridgeEgressIP() bool {
+	return util.IsNetworkSegmentationSupportEnabled() &&
+		config.OVNKubernetesFeature.EnableInterconnect &&
+		config.Gateway.Mode != config.GatewayModeDisabled &&
+		config.OvnKubeNode.Mode != types.NodeModeDPUHost
+}
+
 func (g *gateway) AddEgressIP(eip *egressipv1.EgressIP) error {
-	if !util.IsNetworkSegmentationSupportEnabled() || !config.OVNKubernetesFeature.EnableInterconnect || config.Gateway.Mode == config.GatewayModeDisabled {
+	if !canHandleBridgeEgressIP() {
 		return nil
 	}
 	isSyncRequired, err := g.bridgeEIPAddrManager.AddEgressIP(eip)
@@ -251,7 +264,7 @@ func (g *gateway) AddEgressIP(eip *egressipv1.EgressIP) error {
 }
 
 func (g *gateway) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) error {
-	if !util.IsNetworkSegmentationSupportEnabled() || !config.OVNKubernetesFeature.EnableInterconnect || config.Gateway.Mode == config.GatewayModeDisabled {
+	if !canHandleBridgeEgressIP() {
 		return nil
 	}
 	isSyncRequired, err := g.bridgeEIPAddrManager.UpdateEgressIP(oldEIP, newEIP)
@@ -267,7 +280,7 @@ func (g *gateway) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) error {
 }
 
 func (g *gateway) DeleteEgressIP(eip *egressipv1.EgressIP) error {
-	if !util.IsNetworkSegmentationSupportEnabled() || !config.OVNKubernetesFeature.EnableInterconnect || config.Gateway.Mode == config.GatewayModeDisabled {
+	if !canHandleBridgeEgressIP() {
 		return nil
 	}
 	isSyncRequired, err := g.bridgeEIPAddrManager.DeleteEgressIP(eip)
@@ -283,7 +296,7 @@ func (g *gateway) DeleteEgressIP(eip *egressipv1.EgressIP) error {
 }
 
 func (g *gateway) SyncEgressIP(eips []interface{}) error {
-	if !util.IsNetworkSegmentationSupportEnabled() || !config.OVNKubernetesFeature.EnableInterconnect || config.Gateway.Mode == config.GatewayModeDisabled {
+	if !canHandleBridgeEgressIP() {
 		return nil
 	}
 	if err := g.bridgeEIPAddrManager.SyncEgressIP(eips); err != nil {

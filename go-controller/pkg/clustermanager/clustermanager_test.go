@@ -18,6 +18,9 @@ import (
 
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	networkconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -860,7 +863,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				clientSet := util.GetOVNClientset(nad1, nad2)
 
 				// init the allocator that should reserve already allocated keys for test1
-				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient)
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// check that reserving different keys for test2 will fail
 				err = allocator.ReserveKeys("test1", []int{16711685, 16715779})
@@ -878,6 +881,330 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				ids, err = allocator.AllocateKeys("test3", 3, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16711686, 16715781}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("check for CNC tunnel keys allocations", func() {
+			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkConnect = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				// CNC uses networkID 4097 (4096+1) which allocates from the idsAllocator range
+				// The idsAllocator starts at 16715779 (16711683 + 4096)
+				// create CNC with already allocated tunnel key
+				cnc1 := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc1",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "16715779",
+						},
+					},
+				}
+				// create CNC without tunnel key annotation
+				cnc2 := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc2",
+					},
+				}
+				clientSet := util.GetOVNClientset(cnc1, cnc2)
+
+				// init the allocator that should reserve already allocated key for cnc1
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// check that reserving different keys for cnc1 will fail
+				err = allocator.ReserveKeys("cnc1", []int{16715780})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715780] for the resource cnc1. It is already allocated with different ids [16715779]"))
+				// now try to allocate key for cnc1 (using networkID 4097 as CNCs do)
+				// and check that returned ID is the already reserved one
+				ids, err := allocator.AllocateKeys("cnc1", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715779}))
+				// now allocate id for cnc2 (which had no annotation, also using networkID 4097)
+				ids, err = allocator.AllocateKeys("cnc2", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715780}))
+				// now try cnc3 to make sure IDs of cnc1 and cnc2 are not allocated again
+				ids, err = allocator.AllocateKeys("cnc3", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715781}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("check for combined NAD and CNC tunnel keys allocations", func() {
+			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkConnect = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				// create NAD with already allocated tunnel keys
+				// NAD with networkID 2 gets keys: [16711685 (preserved), 16715779 (idsAllocator)]
+				nad1 := testing.GenerateNAD("test1", "test1", "test", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				nad1.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715779]",
+				}
+				// create CNC with already allocated tunnel key
+				// CNC uses networkID 4097, so it gets keys from idsAllocator range (16715779+)
+				cnc1 := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc1",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "16715780",
+						},
+					},
+				}
+				clientSet := util.GetOVNClientset(nad1, cnc1)
+
+				// init the allocator that should reserve keys for both NAD and CNC
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// verify NAD keys are reserved (networkID 2 => first key from preserved range)
+				ids, err := allocator.AllocateKeys("test1", 2, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715779}))
+				// verify CNC key is reserved (networkID 4097 => all keys from idsAllocator)
+				ids, err = allocator.AllocateKeys("cnc1", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715780}))
+				// test conflict: CNC tries to reserve NAD's random pool key (16715779)
+				err = allocator.ReserveKeys("conflicting-cnc", []int{16715779})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("already reserved"))
+				// test conflict: NAD tries to reserve CNC's key (16715780)
+				err = allocator.ReserveKeys("conflicting-nad", []int{16715780})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("already reserved"))
+				// allocate new keys for a new NAD (networkID 3) and ensure reserved keys are not reused
+				ids, err = allocator.AllocateKeys("newnetwork", 3, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				// first key: 16711686 (preserved range for networkID 3)
+				// second key: 16715781 (skipping 16715779 for test1 and 16715780 for cnc1)
+				gomega.Expect(ids).To(gomega.Equal([]int{16711686, 16715781}))
+				// allocate new keys for a resource with networkID > 4096 (like CNCs do)
+				// this should get ALL keys from the random pool, no deterministic key
+				ids, err = allocator.AllocateKeys("newresource", 4097, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				// both keys from random pool: 16715782, 16715783 (skipping all previously allocated)
+				gomega.Expect(ids).To(gomega.Equal([]int{16715782, 16715783}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("CNC tunnel key and subnet allocations at cluster manager (re)start", func() {
+			app.Action = func(ctx *cli.Context) error {
+				// Create two namespaces that the CNC's Primary UDN selector will match
+				// Note: k8s.ovn.org/primary-user-defined-network label is required for primary UDNs
+				ns1 := &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "frontend-ns",
+						Labels: map[string]string{
+							"tier": "frontend",
+							"k8s.ovn.org/primary-user-defined-network": "",
+						},
+					},
+				}
+				ns2 := &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "backend-ns",
+						Labels: map[string]string{
+							"tier": "backend",
+							"k8s.ovn.org/primary-user-defined-network": "",
+						},
+					},
+				}
+
+				// Create two primary UDNs - the UDN controller will create the corresponding NADs
+				// UDN1 gets network ID 2 (layer3_2), UDN2 gets network ID 3 (layer3_3)
+				udn1 := &udnv1.UserDefinedNetwork{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "frontend-udn",
+						Namespace: "frontend-ns",
+					},
+					Spec: udnv1.UserDefinedNetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role: udnv1.NetworkRolePrimary,
+							Subnets: []udnv1.Layer3Subnet{
+								{CIDR: "10.128.0.0/16", HostSubnet: 24},
+							},
+						},
+					},
+				}
+				udn2 := &udnv1.UserDefinedNetwork{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "backend-udn",
+						Namespace: "backend-ns",
+					},
+					Spec: udnv1.UserDefinedNetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role: udnv1.NetworkRolePrimary,
+							Subnets: []udnv1.Layer3Subnet{
+								{CIDR: "10.129.0.0/16", HostSubnet: 24},
+							},
+						},
+					},
+				}
+
+				// Create a CNC with pre-populated tunnel key annotation
+				// This simulates a cluster manager restart scenario where tunnel key was already allocated
+				// Note: We don't pre-populate subnet annotation because network IDs are assigned dynamically
+				cnc := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-cnc",
+						Annotations: map[string]string{
+							// Pre-populate tunnel key (CNC uses networkID 4097+, so from idsAllocator range)
+							util.OvnConnectRouterTunnelKeyAnnotation: "16715781",
+						},
+					},
+					Spec: networkconnect.ClusterNetworkConnectSpec{
+						NetworkSelectors: apitypes.NetworkSelectors{
+							{
+								NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+								PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+									NamespaceSelector: metav1.LabelSelector{
+										MatchExpressions: []metav1.LabelSelectorRequirement{
+											{
+												Key:      "tier",
+												Operator: metav1.LabelSelectorOpIn,
+												Values:   []string{"frontend", "backend"},
+											},
+										},
+									},
+								},
+							},
+						},
+						ConnectSubnets: []networkconnect.ConnectSubnet{
+							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+						},
+						Connectivity: []networkconnect.ConnectivityType{networkconnect.PodNetwork},
+					},
+				}
+
+				kubeFakeClient := fake.NewSimpleClientset(ns1, ns2)
+				fakeClient := util.GetOVNClientset(udn1, udn2, cnc)
+				fakeClient.KubeClient = kubeFakeClient
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableNetworkConnect = true
+
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient.GetClusterManagerClientset())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = f.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				c, cancel := context.WithCancel(ctx.Context)
+				defer cancel()
+				clusterManager, err := NewClusterManager(fakeClient.GetClusterManagerClientset(), f, "identity", nil)
+				gomega.Expect(clusterManager).NotTo(gomega.BeNil())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = clusterManager.Start(c)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				defer clusterManager.Stop()
+
+				// Verify that cluster manager preserved the tunnel key annotation on the CNC
+				gomega.Eventually(func() (int, error) {
+					updatedCNC, err := fakeClient.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.TODO(), "test-cnc", metav1.GetOptions{})
+					if err != nil {
+						return 0, err
+					}
+					tunnelKeyStr := updatedCNC.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]
+					if tunnelKeyStr == "" {
+						return 0, fmt.Errorf("tunnel key annotation not set")
+					}
+					return strconv.Atoi(tunnelKeyStr)
+				}, 5).Should(gomega.Equal(16715781)) // Should preserve the pre-populated value
+
+				// Wait for NADs to be created by UDN controller and get their network IDs
+				var frontendNetworkID, backendNetworkID string
+				gomega.Eventually(func() error {
+					nad1, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("frontend-ns").Get(
+						context.TODO(), "frontend-udn", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					nad2, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("backend-ns").Get(
+						context.TODO(), "backend-udn", metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					frontendNetworkID = nad1.Annotations[ovntypes.OvnNetworkIDAnnotation]
+					backendNetworkID = nad2.Annotations[ovntypes.OvnNetworkIDAnnotation]
+					if frontendNetworkID == "" || backendNetworkID == "" {
+						return fmt.Errorf("network IDs not yet assigned")
+					}
+					return nil
+				}, 10).Should(gomega.Succeed())
+
+				// Verify that cluster manager allocated subnets for both networks
+				// Use the actual network IDs from the NADs
+				gomega.Eventually(func() (string, error) {
+					updatedCNC, err := fakeClient.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.TODO(), "test-cnc", metav1.GetOptions{})
+					if err != nil {
+						return "", err
+					}
+					return updatedCNC.Annotations["k8s.ovn.org/network-connect-subnet"], nil
+				}, 10).Should(gomega.SatisfyAll(
+					// Should have subnet allocations for both networks using their actual network IDs
+					gomega.ContainSubstring(fmt.Sprintf("layer3_%s", frontendNetworkID)),
+					gomega.ContainSubstring(fmt.Sprintf("layer3_%s", backendNetworkID)),
+					// Both subnets should be from the connect subnet range (192.168.0.0/16) with /24 prefix
+					gomega.MatchRegexp(`"layer3_\d+":\{"ipv4":"192\.168\.\d+\.0/24"\}.*"layer3_\d+":\{"ipv4":"192\.168\.\d+\.0/24"\}`),
+				))
+
+				// Verify the tunnel key is preserved after CNC update (triggers re-reconciliation)
+				// Update CNC with a label to trigger reconciliation
+				updatedCNC, err := fakeClient.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+					context.TODO(), "test-cnc", metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				if updatedCNC.Labels == nil {
+					updatedCNC.Labels = make(map[string]string)
+				}
+				updatedCNC.Labels["test-update"] = "trigger-reconcile"
+				_, err = fakeClient.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+					context.TODO(), updatedCNC, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify tunnel key is still preserved after reconciliation
+				gomega.Eventually(func() (int, error) {
+					cnc, err := fakeClient.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.TODO(), "test-cnc", metav1.GetOptions{})
+					if err != nil {
+						return 0, err
+					}
+					tunnelKeyStr := cnc.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]
+					if tunnelKeyStr == "" {
+						return 0, fmt.Errorf("tunnel key annotation not set")
+					}
+					return strconv.Atoi(tunnelKeyStr)
+				}, 5).Should(gomega.Equal(16715781)) // Should still be the same pre-populated value
+
 				return nil
 			}
 

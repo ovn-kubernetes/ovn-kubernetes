@@ -71,19 +71,6 @@ func WithIPv6DNSServer(dnsServer string) func(*dhcpConfigs) {
 	}
 }
 
-func EnsureDHCPOptionsForMigratablePod(controllerName string, nbClient libovsdbclient.Client, watchFactory *factory.WatchFactory, pod *corev1.Pod, ips []*net.IPNet, lsp *nbdb.LogicalSwitchPort) error {
-	dnsServerIPv4, dnsServerIPv6, err := RetrieveDNSServiceClusterIPs(watchFactory)
-	if err != nil {
-		return fmt.Errorf("failed retrieving dns service cluster ip: %v", err)
-	}
-
-	return EnsureDHCPOptionsForLSP(controllerName, nbClient, pod, ips, lsp,
-		WithIPv4Router(ARPProxyIPv4),
-		WithIPv4DNSServer(dnsServerIPv4),
-		WithIPv6DNSServer(dnsServerIPv6),
-	)
-}
-
 func EnsureDHCPOptionsForLSP(controllerName string, nbClient libovsdbclient.Client, pod *corev1.Pod, ips []*net.IPNet, lsp *nbdb.LogicalSwitchPort, opts ...DHCPConfigsOpt) error {
 	vmKey := ExtractVMNameFromPod(pod)
 	if vmKey == nil {

@@ -27,13 +27,13 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 	ginkgo.Context("on a user defined primary network", func() {
 		const (
 			nadName                      = "tenant-red"
-			userDefinedNetworkIPv4Subnet = "172.31.0.0/16" // last subnet in private range 172.16.0.0/12 (rfc1918)
+			userDefinedNetworkIPv4Subnet = "172.16.0.0/16" // first subnet in private range 172.16.0.0/12 (rfc1918)
 			userDefinedNetworkIPv6Subnet = "2014:100:200::0/60"
-			customL2IPv4Gateway          = "172.31.0.3"
+			customL2IPv4Gateway          = "172.16.0.3"
 			customL2IPv6Gateway          = "2014:100:200::3"
-			customL2IPv4ReservedCIDR     = "172.31.1.0/24"
+			customL2IPv4ReservedCIDR     = "172.16.1.0/24"
 			customL2IPv6ReservedCIDR     = "2014:100:200::100/120"
-			customL2IPv4InfraCIDR        = "172.31.0.0/30"
+			customL2IPv4InfraCIDR        = "172.16.0.0/30"
 			customL2IPv6InfraCIDR        = "2014:100:200::/122"
 			nodeHostnameKey              = "kubernetes.io/hostname"
 			workerOneNodeName            = "ovn-worker"

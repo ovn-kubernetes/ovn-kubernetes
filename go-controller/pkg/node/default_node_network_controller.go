@@ -42,6 +42,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/ovspinning"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
@@ -702,60 +703,6 @@ func getOVNSBZone() (string, error) {
 	return dbZone, nil
 }
 
-/** HACK BEGIN **/
-// TODO(tssurya): Remove this HACK a few months from now.
-// checkOVNSBNodeLRSR returns true if the logical router static route for the
-// the given nodeSubnet is present in the SBDB
-func checkOVNSBNodeLRSR(nodeSubnet *net.IPNet) bool {
-	var matchv4, matchv6 string
-	v6 := true
-	v4 := true
-	if config.IPv6Mode && utilnet.IsIPv6CIDR(nodeSubnet) {
-		matchv6 = fmt.Sprintf("match=\"reg7 == 0 && ip6.dst == %s\"", nodeSubnet)
-		stdout, stderr, err := util.RunOVNSbctl("--bare", "--columns", "_uuid", "find", "logical_flow", matchv6)
-		klog.Infof("Upgrade Hack: checkOVNSBNodeLRSR for node - %s : match %s : stdout - %s : stderr - %s : err %v",
-			nodeSubnet, matchv6, stdout, stderr, err)
-		v6 = (err == nil && stderr == "" && stdout != "")
-	}
-	if config.IPv4Mode && !utilnet.IsIPv6CIDR(nodeSubnet) {
-		matchv4 = fmt.Sprintf("match=\"reg7 == 0 && ip4.dst == %s\"", nodeSubnet)
-		stdout, stderr, err := util.RunOVNSbctl("--bare", "--columns", "_uuid", "find", "logical_flow", matchv4)
-		klog.Infof("Upgrade Hack: checkOVNSBNodeLRSR for node - %s : match %s : stdout - %s : stderr - %s : err %v",
-			nodeSubnet, matchv4, stdout, stderr, err)
-		v4 = (err == nil && stderr == "" && stdout != "")
-	}
-	return v6 && v4
-}
-
-func fetchLBNames() string {
-	stdout, stderr, err := util.RunOVNSbctl("--bare", "--columns", "name", "find", "Load_Balancer")
-	if err != nil || stderr != "" {
-		klog.Errorf("Upgrade hack: fetchLBNames could not fetch services %v/%v", err, stderr)
-		return stdout // will be empty and we will retry
-	}
-	klog.Infof("Upgrade Hack: fetchLBNames: stdout - %s : stderr - %s : err %v", stdout, stderr, err)
-	return stdout
-}
-
-// lbExists returns true if the OVN load balancer for the corresponding namespace/name
-// was created
-func lbExists(lbNames, namespace, name string) bool {
-	stitchedServiceName := "Service_" + namespace + "/" + name
-	match := strings.Contains(lbNames, stitchedServiceName)
-	klog.Infof("Upgrade Hack: lbExists for service - %s/%s/%s : match - %v",
-		namespace, name, stitchedServiceName, match)
-	return match
-}
-
-func portExists(namespace, name string) bool {
-	lspName := fmt.Sprintf("logical_port=%s", util.GetLogicalPortName(namespace, name))
-	stdout, stderr, err := util.RunOVNSbctl("--bare", "--columns", "_uuid", "find", "Port_Binding", lspName)
-	klog.Infof("Upgrade Hack: portExists for pod - %s/%s : stdout - %s : stderr - %s", namespace, name, stdout, stderr)
-	return err == nil && stderr == "" && stdout != ""
-}
-
-/** HACK END **/
-
 // Init executes the first steps to start the DefaultNodeNetworkController.
 // It is split from Start() and executed before UserDefinedNodeNetworkController (UDNNC)
 // to allow UDNNC to reference the openflow manager created in Init.
@@ -766,13 +713,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	var node *corev1.Node
 	var subnets []*net.IPNet
 	var cniServer *cni.Server
-
-	// Setting debug log level during node bring up to expose bring up process.
-	// Log level is returned to configured value when bring up is complete.
-	var level klog.Level
-	if err := level.Set("5"); err != nil {
-		klog.Errorf("Setting klog \"loglevel\" to 5 failed, err: %v", err)
-	}
 
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
 		if err = configureGlobalForwarding(); err != nil {
@@ -826,12 +766,9 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", config.Default.Zone, err, err1)
 		}
 
-		// if its nonIC OR IC=true and if its phase1 OR if its IC to IC upgrades
-		if !config.OVNKubernetesFeature.EnableInterconnect || sbZone == types.OvnDefaultZone || util.HasNodeMigratedZone(node) { // if its nonIC or if its phase1
-			for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
-				if err := auth.SetDBAuth(); err != nil {
-					return err
-				}
+		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
+			if err := auth.SetDBAuth(); err != nil {
+				return err
 			}
 		}
 
@@ -951,9 +888,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
-	if err := level.Set(strconv.Itoa(config.Logging.Level)); err != nil {
-		klog.Errorf("Reset of initial klog \"loglevel\" failed, err: %v", err)
-	}
 	nc.sbZone = sbZone
 
 	return nil
@@ -965,24 +899,11 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	klog.Infof("Starting the default node network controller")
 
 	var err error
-	var node *corev1.Node
 
 	if nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
 	}
 
-	// Setting debug log level during node bring up to expose bring up process.
-	// Log level is returned to configured value when bring up is complete.
-	var level klog.Level
-	if err := level.Set("5"); err != nil {
-		klog.Errorf("Setting klog \"loglevel\" to 5 failed, err: %v", err)
-	}
-
-	if node, err = nc.watchFactory.GetNode(nc.name); err != nil {
-		return fmt.Errorf("error retrieving node %s: %v", nc.name, err)
-	}
-
-	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
 	waiter := newStartupWaiter()
 
 	// Complete gateway initialization
@@ -1009,125 +930,6 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			return err
 		}
 	}
-
-	/** HACK BEGIN **/
-	// TODO(tssurya): Remove this HACK a few months from now. This has been added only to
-	// minimize disruption for upgrades when moving to interconnect=true.
-	// We want the legacy ovnkube-master to wait for remote ovnkube-node to
-	// signal it using "k8s.ovn.org/remote-zone-migrated" annotation before
-	// considering a node as remote when we upgrade from "global" (1 zone IC)
-	// zone to multi-zone. This is so that network disruption for the existing workloads
-	// is negligible and until the point where ovnkube-node flips the switch to connect
-	// to the new SBDB, it would continue talking to the legacy RAFT ovnkube-sbdb to ensure
-	// OVN/OVS flows are intact.
-	// STEP1: ovnkube-node start's up in remote zone and sets the "k8s.ovn.org/zone-name" above.
-	// STEP2: We delay the flip of connection for ovnkube-node(ovn-controller) to the new remote SBDB
-	//        until the new remote ovnkube-controller has finished programming all the K8s core objects
-	//        like routes, services and pods. Until then the ovnkube-node will talk to legacy SBDB.
-	// STEP3: Once we get the signal that the new SBDB is ready, we set the "k8s.ovn.org/remote-zone-migrated" annotation
-	// STEP4: We call setDBAuth to now point to new SBDB
-	// STEP5: Legacy ovnkube-master sees "k8s.ovn.org/remote-zone-migrated" annotation on this node and now knows that
-	//        this node has remote-zone-migrated successfully and tears down old setup and creates new IC resource
-	//        plumbing (takes 80ms based on what we saw in CI runs so we might still have that small window of disruption).
-	// NOTE: ovnkube-node in DPU host mode doesn't go through upgrades for OVN-IC and has no SBDB to connect to. Thus this part shall be skipped.
-	var syncNodes, syncServices, syncPods bool
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
-		klog.Info("Upgrade Hack: Interconnect is enabled")
-		var err1 error
-		start := time.Now()
-		err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 300*time.Second, true, func(_ context.Context) (bool, error) {
-			// we loop through all the nodes in the cluster and ensure ovnkube-controller has finished creating the LRSR required for pod2pod overlay communication
-			if !syncNodes {
-				nodes, err := nc.watchFactory.GetNodes()
-				if err != nil {
-					err1 = fmt.Errorf("upgrade hack: error retrieving node %s: %v", nc.name, err)
-					return false, nil
-				}
-				for _, node := range nodes {
-					node := *node
-					if nc.name != node.Name && util.GetNodeZone(&node) != config.Default.Zone && !util.NoHostSubnet(&node) {
-						nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(&node, types.DefaultNetworkName)
-						if err != nil {
-							if util.IsAnnotationNotSetError(err) {
-								klog.Infof("Skipping node %q. k8s.ovn.org/node-subnets annotation was not found", node.Name)
-								continue
-							}
-							err1 = fmt.Errorf("unable to fetch node-subnet annotation for node %s: err, %v", node.Name, err)
-							return false, nil
-						}
-						for _, nodeSubnet := range nodeSubnets {
-							klog.Infof("Upgrade Hack: node %s, subnet %s", node.Name, nodeSubnet)
-							if !checkOVNSBNodeLRSR(nodeSubnet) {
-								err1 = fmt.Errorf("upgrade hack: unable to find LRSR for node %s", node.Name)
-								return false, nil
-							}
-						}
-					}
-				}
-				klog.Infof("Upgrade Hack: Syncing nodes took %v", time.Since(start))
-				syncNodes = true
-			}
-			// we loop through all existing services in the cluster and ensure ovnkube-controller has finished creating LoadBalancers required for services to work
-			if !syncServices {
-				services, err := nc.watchFactory.GetServices()
-				if err != nil {
-					err1 = fmt.Errorf("upgrade hack: error retrieving the services %v", err)
-					return false, nil
-				}
-				lbNames := fetchLBNames()
-				for _, s := range services {
-					// don't process headless service
-					if !util.ServiceTypeHasClusterIP(s) || !util.IsClusterIPSet(s) {
-						continue
-					}
-					if !lbExists(lbNames, s.Namespace, s.Name) {
-						return false, nil
-					}
-				}
-				klog.Infof("Upgrade Hack: Syncing services took %v", time.Since(start))
-				syncServices = true
-			}
-			if !syncPods {
-				pods, err := nc.watchFactory.GetAllPods()
-				if err != nil {
-					err1 = fmt.Errorf("upgrade hack: error retrieving the services %v", err)
-					return false, nil
-				}
-				for _, p := range pods {
-					if !util.PodScheduled(p) || util.PodCompleted(p) || util.PodWantsHostNetwork(p) {
-						continue
-					}
-					if p.Spec.NodeName != nc.name {
-						// remote pod
-						continue
-					}
-					if !portExists(p.Namespace, p.Name) {
-						return false, nil
-					}
-				}
-				klog.Infof("Upgrade Hack: Syncing pods took %v", time.Since(start))
-				syncPods = true
-			}
-			return true, nil
-		})
-		if err != nil {
-			return fmt.Errorf("upgrade hack: failed while waiting for the remote ovnkube-controller to be ready: %v, %v", err, err1)
-		}
-		if err := util.SetNodeZoneMigrated(nodeAnnotator, nc.sbZone); err != nil {
-			return fmt.Errorf("upgrade hack: failed to set node zone annotation for node %s: %w", nc.name, err)
-		}
-		if err := nodeAnnotator.Run(); err != nil {
-			return fmt.Errorf("upgrade hack: failed to set node %s annotations: %w", nc.name, err)
-		}
-		klog.Infof("ovnkube-node %s finished annotating node with remote-zone-migrated; took: %v", nc.name, time.Since(start))
-		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
-			if err := auth.SetDBAuth(); err != nil {
-				return fmt.Errorf("upgrade hack: Unable to set the authentication towards OVN local dbs")
-			}
-		}
-		klog.Infof("Upgrade hack: ovnkube-node %s finished setting DB Auth; took: %v", nc.name, time.Since(start))
-	}
-	/** HACK END **/
 
 	// Wait for management port and gateway resources to be created by the master
 	klog.Infof("Waiting for gateway and management port readiness...")
@@ -1171,7 +973,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			defer nc.wg.Done()
 			nodeController.Run(nc.stopChan)
 		}()
-	} else {
+	} else if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		// attempt to cleanup the possibly stale bridge
 		_, stderr, err := util.RunOVSVsctl("--if-exists", "del-br", "br-ext")
 		if err != nil {
@@ -1181,10 +983,6 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		if err != nil {
 			klog.Errorf("Deletion of port int on  br-int failed: %v (%v)", err, stderr)
 		}
-	}
-
-	if err := level.Set(strconv.Itoa(config.Logging.Level)); err != nil {
-		klog.Errorf("Reset of initial klog \"loglevel\" failed, err: %v", err)
 	}
 
 	// start management port controller
@@ -1284,7 +1082,17 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	nc.wg.Add(1)
 	go func() {
 		defer nc.wg.Done()
-		ovspinning.Run(nc.stopChan)
+		podResClient, err := podresourcesapi.New()
+		if err != nil {
+			klog.Errorf("Failed to initialize PodResourcesAPI client: %v", err)
+			return
+		}
+		defer func() {
+			if err := podResClient.Close(); err != nil {
+				klog.V(4).Infof("Error closing PodResourcesAPI client: %v", err)
+			}
+		}()
+		ovspinning.Run(ctx, nc.stopChan, podResClient)
 	}()
 
 	klog.Infof("Default node network controller initialized and ready.")
@@ -1294,7 +1102,12 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 // Stop gracefully stops the controller
 // deleteLogicalEntities will never be true for default network
 func (nc *DefaultNodeNetworkController) Stop() {
+	if nc.stopChan == nil {
+		klog.Infof("Default node network controller is already stopped")
+		return
+	}
 	close(nc.stopChan)
+	nc.stopChan = nil
 	nc.wg.Wait()
 }
 
@@ -1371,12 +1184,22 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 					klog.Errorf("Failed to get service port for endpoint %s: %v", oldIPStr, err)
 					continue
 				}
-				// upon update and delete events, flush conntrack only for UDP
-				klog.V(5).Infof("Deleting conntrack entry for endpoint %s, port %d, protocol %s", oldIPStr, servicePort.Port, *oldPort.Protocol)
-				if err := util.DeleteConntrackServicePort(oldIPStr, servicePort.Port, *oldPort.Protocol,
+				// upon update and delete events, flush UDP conntrack for Service port
+				if _, err := util.DeleteConntrackServicePort(oldIPStr, servicePort.Port, *oldPort.Protocol,
 					netlink.ConntrackReplyAnyIP, nil); err != nil {
 					klog.Errorf("Failed to delete conntrack entry for %s port %d: %v", oldIPStr, servicePort.Port, err)
 					errors = append(errors, err)
+				}
+
+				// Flush UDP conntrack entries for NodePort (and LoadBalancer services that allocate NodePorts)
+				// TODO: Once vishvananda/netlink support ConntrackFilterType '--reply-port-src', we can use one DeleteConntrackServicePort() call
+				//       conntrack entries for both ClusterIP and NodePort.
+				if util.ServiceTypeHasNodePort(svc) && servicePort.NodePort > 0 {
+					if _, err := util.DeleteConntrackServicePort(oldIPStr, servicePort.NodePort, *oldPort.Protocol,
+						netlink.ConntrackReplyAnyIP, nil); err != nil {
+						klog.Errorf("Failed to delete conntrack entry for %s NodePort %d: %v", oldIPStr, servicePort.NodePort, err)
+						errors = append(errors, err)
+					}
 				}
 			}
 		}
@@ -1601,9 +1424,23 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 }
 
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big
-// enough to carry the `config.Default.MTU` and the Geneve header. If the MTU is not big
-// enough, it will return an error
+// enough to carry the `config.Default.MTU` and the Geneve header (if overlay transport is used).
+// If the MTU is not big enough, it will return an error
 func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
+	// calc required MTU
+	var requiredMTU int
+	if config.Gateway.SingleNode || config.Default.Transport == types.NetworkTransportNoOverlay {
+		requiredMTU = config.Default.MTU
+	} else {
+		if config.IPv4Mode && !config.IPv6Mode {
+			// we run in single-stack IPv4 only
+			requiredMTU = config.Default.MTU + types.GeneveHeaderLengthIPv4
+		} else {
+			// we run in single-stack IPv6 or dual-stack mode
+			requiredMTU = config.Default.MTU + types.GeneveHeaderLengthIPv6
+		}
+	}
+
 	// OVN allows `external_ids:ovn-encap-ip` to be a list of IPs separated by comma
 	ovnEncapIps := strings.Split(config.Default.EffectiveEncapIP, ",")
 	for _, ip := range ovnEncapIps {
@@ -1614,20 +1451,6 @@ func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 		interfaceName, mtu, err := util.GetIFNameAndMTUForAddress(ovnEncapIP)
 		if err != nil {
 			return fmt.Errorf("could not get MTU for the interface with address %s: %w", ovnEncapIP, err)
-		}
-
-		// calc required MTU
-		var requiredMTU int
-		if config.Gateway.SingleNode {
-			requiredMTU = config.Default.MTU
-		} else {
-			if config.IPv4Mode && !config.IPv6Mode {
-				// we run in single-stack IPv4 only
-				requiredMTU = config.Default.MTU + types.GeneveHeaderLengthIPv4
-			} else {
-				// we run in single-stack IPv6 or dual-stack mode
-				requiredMTU = config.Default.MTU + types.GeneveHeaderLengthIPv6
-			}
 		}
 
 		if mtu < requiredMTU {

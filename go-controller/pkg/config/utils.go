@@ -56,6 +56,8 @@ func ParseClusterSubnetEntriesWithDefaults(clusterSubnetCmd string, ipv4HostLeng
 
 	ipv4HostLengthAllowed := ipv4HostLength != 0
 	ipv6HostLengthAllowed := ipv6HostLength != 0
+	// when multiple ipv4 entries are specified, they all have to have the same host subnet length
+	ipv4HostSubnet := 0
 
 	for _, clusterEntry := range clusterEntriesList {
 		clusterEntry := strings.TrimSpace(clusterEntry)
@@ -101,6 +103,16 @@ func ParseClusterSubnetEntriesWithDefaults(clusterSubnetCmd string, ipv4HostLeng
 
 			if !ipv6 && parsedClusterEntry.HostSubnetLength > 32 {
 				return nil, NewInvalidIPv4HostSubnetError()
+			}
+
+			if !ipv6 {
+				if ipv4HostSubnet == 0 {
+					// this is the first ipv4 entry we are processing, record its host subnet length
+					ipv4HostSubnet = parsedClusterEntry.HostSubnetLength
+				} else if parsedClusterEntry.HostSubnetLength != ipv4HostSubnet {
+					return nil, fmt.Errorf("all IPv4 cluster subnet entries must have the same host subnet length; found %d and %d",
+						ipv4HostSubnet, parsedClusterEntry.HostSubnetLength)
+				}
 			}
 
 			if parsedClusterEntry.HostSubnetLength <= entryMaskLength {

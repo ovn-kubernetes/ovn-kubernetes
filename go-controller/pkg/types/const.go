@@ -69,6 +69,12 @@ const (
 	TransitRouterToSwitchPrefix = "trtos-"
 	SwitchToTransitRouterPrefix = "stotr-"
 
+	// Connect router prefix (for ClusterNetworkConnect feature)
+	ConnectRouterPrefix = "connect_router_"
+	// Connect router port prefixes (for ClusterNetworkConnect)
+	ConnectRouterToRouterPrefix = "crtor-"
+	RouterToConnectRouterPrefix = "rtocr-"
+
 	// DefaultACLTier Priorities
 
 	// Default routed multicast allow acl rule priority
@@ -116,6 +122,7 @@ const (
 	EgressSVCReroutePriority              = 101
 	EgressIPReroutePriority               = 100
 	EgressIPRerouteQoSRulePriority        = 103
+	NetworkConnectPolicyPriority          = 9001
 	// priority of logical router policies on a nodes gateway router
 	EgressIPSNATMarkPriority           = 95
 	EgressLiveMigrationReroutePriority = 10
@@ -154,6 +161,9 @@ const (
 	OvnRateLimitingMeter = "rate-limiter"
 	PacketsPerSecond     = "pktps"
 	MeterAction          = "drop"
+
+	// Default COPP object name
+	DefaultCOPPName = "ovnkube-default"
 
 	// OVN-K8S annotation & taint constants
 	OvnK8sPrefix = "k8s.ovn.org"
@@ -241,6 +251,11 @@ const (
 	// nor secondary
 	NetworkRoleInfrastructure = "infrastructure-locked"
 	NetworkRoleNone           = "none"
+
+	// Network transport types - canonical format (lowercase)
+	NetworkTransportGeneve    = "geneve"
+	NetworkTransportNoOverlay = "no-overlay"
+	NetworkTransportEVPN      = "evpn"
 
 	// db index keys
 	// PrimaryIDKey is used as a primary client index

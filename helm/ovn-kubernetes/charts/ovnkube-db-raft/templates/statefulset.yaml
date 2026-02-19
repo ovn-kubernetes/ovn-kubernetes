@@ -98,7 +98,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel }}
         - name: K8S_APISERVER
@@ -171,7 +171,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_SB
           value: {{ default "-vconsole:info -vfile:info" .Values.sbLogLevel }}
         - name: K8S_APISERVER
@@ -236,8 +236,12 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        {{ if .Values.global.enableCoredumps -}}
+        - name: GOTRACEBACK
+          value: "crash"
+        {{ end -}}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.dbCheckerLogLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE

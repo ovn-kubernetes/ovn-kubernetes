@@ -68,7 +68,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		ovntest.DelLink("breth0")
 	})
 
-	It("ensure UDNGateway is not invoked when feature gate is OFF", func() {
+	ovntest.OnSupportedPlatformsIt("ensure UDNGateway is not invoked when feature gate is OFF", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = false
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		factoryMock := factoryMocks.NodeWatchFactory{}
@@ -93,7 +93,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(controller.gateway).To(BeNil())
 	})
-	It("ensure UDNGateway is invoked for Primary UDNs when feature gate is ON", func() {
+	ovntest.OnSupportedPlatformsIt("ensure UDNGateway is invoked for Primary UDNs when feature gate is ON", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		factoryMock := factoryMocks.NodeWatchFactory{}
@@ -125,7 +125,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		Expect(err.Error()).To(ContainSubstring("could not create management port"), err.Error())
 		Expect(controller.gateway).To(Not(BeNil()))
 	})
-	It("ensure UDNGateway is not invoked for Primary UDNs when feature gate is ON but network is not Primary", func() {
+	ovntest.OnSupportedPlatformsIt("ensure UDNGateway is not invoked for Primary UDNs when feature gate is ON but network is not Primary", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		factoryMock := factoryMocks.NodeWatchFactory{}

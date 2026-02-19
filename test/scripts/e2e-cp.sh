@@ -40,12 +40,19 @@ skip() {
   SKIPPED_TESTS+=$*
 }
 
-SKIPPED_LABELED_TESTS=""
+LABELED_TESTS=""
 skip_label() {
-  if [ "$SKIPPED_LABELED_TESTS" != "" ]; then
-  	SKIPPED_LABELED_TESTS+=" && "
+  if [ "$LABELED_TESTS" != "" ]; then
+  	LABELED_TESTS+=" && "
   fi
-  SKIPPED_LABELED_TESTS+="!($*)"
+  LABELED_TESTS+="!($*)"
+}
+
+require_label() {
+  if [ "$LABELED_TESTS" != "" ]; then
+  	LABELED_TESTS+=" && "
+  fi
+  LABELED_TESTS+="$*"
 }
 
 if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
@@ -148,9 +155,14 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 
-BGP_TESTS="BGP"
+SERIAL_LABEL="Serial"
+if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
+  require_label "$SERIAL_LABEL"
+  shift # don't "focus" on Serial since we filter by label
+fi
+
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
-  skip $BGP_TESTS
+  skip_label "Feature:RouteAdvertisements"
 else
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
     # Filter out extended RouteAdvertisements tests to keep job run time down
@@ -175,6 +187,11 @@ else
       # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5569
       skip "Multi Homing"
     fi
+    if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
+      # Skip IPv6/dual-stack multihoming secondary network tests in IPv4-only clusters.
+      skip "Multi Homing.*L3 - routed - secondary network with IPv6 subnet"
+      skip "Multi Homing.*L3 - routed - secondary network with a dual stack configuration"
+    fi
     # these tests require metallb but the configuration we do for it is not compatible with the configuration we do to advertise the default network
     # TODO: consolidate configuration
     skip "Load Balancer Service Tests with MetalLB"
@@ -188,6 +205,7 @@ else
     skip "e2e egress IP validation Cluster Default Network Should validate egress IP logic when one pod is managed by more than one egressIP object"
     skip "e2e egress IP validation Cluster Default Network Should re-assign egress IPs when node readiness / reachability goes down/up"
     skip "Pod to external server PMTUD when a client ovnk pod targeting an external server is created when tests are run towards the agnhost echo server queries to the hostNetworked server pod on another node shall work for UDP"
+    skip "e2e egress IP validation Cluster Default Network Should handle EIP reassignment correctly on namespace and pod label updates, and EIP object updates"
 
     # https://issues.redhat.com/browse/OCPBUGS-55028
     skip "e2e egress IP validation Cluster Default Network \[secondary-host-eip\]"
@@ -203,6 +221,27 @@ else
     skip "Services when a nodePort service targeting a pod with hostNetwork:false is created when tests are run towards the agnhost echo service queries to the nodePort service shall work for UDP"
     skip "Services when a nodePort service targeting a pod with hostNetwork:true is created when tests are run towards the agnhost echo service queries to the nodePort service shall work for UDP"
   fi
+fi
+
+# if we set PARALLEL=true, skip serial test
+if [ "${PARALLEL:-false}" = "true" ]; then
+  export GINKGO_PARALLEL=y
+  export GINKGO_PARALLEL_NODES=10
+  skip_label "$SERIAL_LABEL"
+fi
+
+if [ "$ENABLE_NO_OVERLAY" == true ]; then
+  # No-overlay mode uses underlying network infrastructure directly.
+  # Overlay-dependent features are not supported.
+  skip_label "Feature:Multicast"
+  skip_label "Feature:EgressIP"
+  skip_label "Feature:EgressService"
+  # This test validates MTU reduction behavior specific to overlay mode (1500->1400).
+  # In no-overlay mode, pods use the full underlying network MTU without reduction.
+  skip "blocking ICMP needs frag"
+  # This test validates MTU reduction due to Geneve encapsulation overhead (1400->1342).
+  # In no-overlay mode, there is no encapsulation and thus no MTU overhead.
+  skip "Pod to pod TCP with low MTU"
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
@@ -227,7 +266,7 @@ go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
         -ginkgo.timeout ${TEST_TIMEOUT}m \
         -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
         -ginkgo.skip="${SKIPPED_TESTS}" \
-        ${SKIPPED_LABELED_TESTS:+-ginkgo.label-filter="${SKIPPED_LABELED_TESTS}"} \
+        ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
         -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
         -provider skeleton \
         -kubeconfig ${KUBECONFIG} \

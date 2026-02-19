@@ -170,7 +170,7 @@ func (oc *DefaultNetworkController) updateNamespace(old, newer *corev1.Namespace
 					if util.PodWantsHostNetwork(pod) {
 						continue
 					}
-					podIPs, err := util.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
+					podIPs, err := util.GetPodIPsOfNetwork(pod, oc.GetNetInfo(), nil)
 					if err != nil {
 						errors = append(errors, fmt.Errorf("unable to get pod %q IPs for SNAT rule removal err (%v)", logicalPort, err))
 					}

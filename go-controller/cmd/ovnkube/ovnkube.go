@@ -17,6 +17,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
@@ -69,14 +70,19 @@ func getFlagsByCategory() map[string][]cli.Flag {
 	m := map[string][]cli.Flag{}
 	m["Generic Options"] = config.CommonFlags
 	m["CNI Options"] = config.CNIFlags
+	m["Feature Flags"] = config.OVNK8sFeatureFlags
 	m["K8s-related Options"] = config.K8sFlags
 	m["OVN Northbound DB Options"] = config.OvnNBFlags
 	m["OVN Southbound DB Options"] = config.OvnSBFlags
 	m["OVN Gateway Options"] = config.OVNGatewayFlags
+	m["Cluster Manager Options"] = config.ClusterManagerFlags
+	m["Cluster Manager HA Options"] = config.ClusterMgrHAFlags
 	m["Master HA Options"] = config.MasterHAFlags
 	m["OVN Kube Node Options"] = config.OvnKubeNodeFlags
 	m["Monitoring Options"] = config.MonitoringFlags
 	m["IPFIX Flow Tracing Options"] = config.IPFIXFlags
+	m["Metrics Options"] = config.MetricsFlags
+	m["Hybrid Overlay Options"] = config.HybridOverlayFlags
 
 	return m
 }
@@ -598,7 +604,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	// start the prometheus server to serve OVS and OVN Metrics (default port: 9476)
 	// Note: for ovnkube node mode dpu-host no metrics is required as ovs/ovn is not running on the node.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.Metrics.OVNMetricsBindAddress != "" {
-		metricsScrapeInterval := 30
 
 		if ovsClient == nil {
 			ovsClient, err = libovsdb.NewOVSClient(ctx.Done())
@@ -608,13 +613,44 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			}
 		}
 		if ovsClient != nil {
-			if config.Metrics.ExportOVSMetrics {
-				metrics.RegisterOvsMetricsWithOvnMetrics(ovsClient, metricsScrapeInterval, ctx.Done())
+			opts := metrics.MetricServerOptions{
+				BindAddress:                config.Metrics.OVNMetricsBindAddress,
+				CertFile:                   config.Metrics.NodeServerCert,
+				KeyFile:                    config.Metrics.NodeServerPrivKey,
+				EnableOVSMetrics:           config.Metrics.ExportOVSMetrics,
+				EnableOVNControllerMetrics: true,
+				EnableOVNNorthdMetrics:     true,
+				EnableOVNDBMetrics:         true,
 			}
-			metrics.RegisterOvnMetrics(ovnClientset.KubeClient, runMode.identity,
-				ovsClient, metricsScrapeInterval, ctx.Done())
-			metrics.StartOVNMetricsServer(config.Metrics.OVNMetricsBindAddress,
-				config.Metrics.NodeServerCert, config.Metrics.NodeServerPrivKey, ctx.Done(), wg)
+
+			if !config.OVNKubernetesFeature.EnableInterconnect {
+				// In Central mode, OVNKube Node doesn't need to register OVN Northd and DB metrics unless
+				// OVNKube Master Pod is running on this node.
+				opts.EnableOVNNorthdMetrics = false
+				opts.EnableOVNDBMetrics = false
+			}
+
+			metricsServer := metrics.StartOVNMetricsServer(opts, ovsClient, ovnClientset.KubeClient, ctx.Done(), wg)
+
+			if !config.OVNKubernetesFeature.EnableInterconnect {
+				// In Central mode, check if the OVNKube Master Pod is running on this node;
+				// and if it is, the OVN Northd and DB Metrics will be registered.
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 300*time.Second, true, func(_ context.Context) (bool, error) {
+						return metrics.CheckPodRunsOnGivenNode(ovnClientset.KubeClient, []string{"ovn-db-pod=true"}, runMode.identity, true)
+					})
+					if err != nil {
+						klog.Infof("Not registering OVN Northd and DB Metrics, because OVNKube Master Pod is not running on this node(%s)",
+							runMode.identity)
+					} else {
+						klog.Info("Found OVNKube Master Pod running on this node, registering OVN Northd and DB Metrics")
+						metricsServer.EnableOVNNorthdMetrics()
+						metricsServer.EnableOVNDBMetrics()
+					}
+				}()
+			}
 		}
 	}
 

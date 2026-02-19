@@ -12,7 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/listers/core/v1"
+	listersv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -400,12 +400,12 @@ func TestController_allocateNodeSubnets_ReleaseOnError(t *testing.T) {
 	}
 }
 
-func newFakeNodeLister(nodes []*corev1.Node) v1.NodeLister {
+func newFakeNodeLister(nodes []*corev1.Node) listersv1.NodeLister {
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 	for _, node := range nodes {
 		_ = indexer.Add(node)
 	}
-	return v1.NewNodeLister(indexer)
+	return listersv1.NewNodeLister(indexer)
 }
 
 func TestController_CleanupStaleAnnotation(t *testing.T) {
@@ -446,5 +446,107 @@ func TestController_CleanupStaleAnnotation(t *testing.T) {
 	// check that unrelated annotation is not changed, and stale one is cleaned up
 	if !reflect.DeepEqual(nodes.Items[0].Annotations, map[string]string{"leave-me": "value"}) {
 		t.Fatalf("Expected annotation %s to be cleaned up, got %v", util.OVNNodeGRLRPAddrs, nodes.Items[0].Annotations)
+	}
+}
+
+// TestNodeAllocator_HandleDeleteNode verifies that HandleDeleteNode correctly releases
+// both standard cluster subnets and hybrid overlay subnets (if enabled) when a node is deleted.
+func TestNodeAllocator_HandleDeleteNode(t *testing.T) {
+	origHybridEnabled := config.HybridOverlay.Enabled
+	origHybridSubnets := config.HybridOverlay.ClusterSubnets
+	origClusterSubnets := config.Default.ClusterSubnets
+	origNoHostSubnetNodes := config.Kubernetes.NoHostSubnetNodes
+	t.Cleanup(func() {
+		config.HybridOverlay.Enabled = origHybridEnabled
+		config.HybridOverlay.ClusterSubnets = origHybridSubnets
+		config.Default.ClusterSubnets = origClusterSubnets
+		config.Kubernetes.NoHostSubnetNodes = origNoHostSubnetNodes
+	})
+
+	config.HybridOverlay.Enabled = true
+	config.HybridOverlay.ClusterSubnets = []config.CIDRNetworkEntry{
+		{CIDR: ovntest.MustParseIPNet("10.0.0.0/16"), HostSubnetLength: 24},
+	}
+
+	ranges, err := rangesFromStrings([]string{"172.16.0.0/16"}, []int{24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Default.ClusterSubnets = ranges
+
+	netInfo, err := util.NewNetInfo(
+		&ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{Name: types.DefaultNetworkName},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	na := &NodeAllocator{
+		netInfo:                netInfo,
+		clusterSubnetAllocator: NewSubnetAllocator(),
+		nodeLister:             newFakeNodeLister([]*corev1.Node{}),
+	}
+	if na.hasHybridOverlayAllocation() {
+		na.hybridOverlaySubnetAllocator = NewSubnetAllocator()
+	}
+
+	if !na.hasHybridOverlayAllocation() {
+		t.Fatal("Hybrid overlay allocation should be enabled given the test configuration")
+	}
+
+	if err := na.Init(); err != nil {
+		t.Fatalf("Failed to initialize node allocator: %v", err)
+	}
+
+	nodeName := "node-delete-test"
+	if !na.hasNodeSubnetAllocation() {
+		t.Fatal("Node subnet allocation should be enabled")
+	}
+
+	allocated, _, err := na.allocateNodeSubnets(na.clusterSubnetAllocator, nodeName, nil, true, false)
+	if err != nil {
+		t.Fatalf("Failed to allocate subnet: %v", err)
+	}
+	if len(allocated) == 0 {
+		t.Fatal("No subnet allocated")
+	}
+
+	v4used, _ := na.clusterSubnetAllocator.Usage()
+	if v4used != 1 {
+		t.Fatalf("Expected 1 allocated subnet, got %d", v4used)
+	}
+
+	if na.hasHybridOverlayAllocation() {
+		if _, _, err := na.allocateNodeSubnets(na.hybridOverlaySubnetAllocator, nodeName, nil, true, false); err != nil {
+			t.Fatalf("Failed to allocate hybrid overlay subnet: %v", err)
+		}
+		hoUsed, _ := na.hybridOverlaySubnetAllocator.Usage()
+		if hoUsed != 1 {
+			t.Fatalf("Expected 1 allocated hybrid overlay subnet, got %d", hoUsed)
+		}
+	}
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodeName,
+		},
+	}
+
+	if err := na.HandleDeleteNode(node); err != nil {
+		t.Fatalf("HandleDeleteNode failed: %v", err)
+	}
+
+	v4usedAfter, _ := na.clusterSubnetAllocator.Usage()
+	if v4usedAfter != 0 {
+		t.Errorf("Subnet leak detected! Expected 0 allocated subnets, got %d", v4usedAfter)
+	}
+
+	if na.hasHybridOverlayAllocation() {
+		hoUsedAfter, _ := na.hybridOverlaySubnetAllocator.Usage()
+		if hoUsedAfter != 0 {
+			t.Errorf("Hybrid overlay subnet leak detected! Expected 0 allocated subnets, got %d", hoUsedAfter)
+		}
 	}
 }

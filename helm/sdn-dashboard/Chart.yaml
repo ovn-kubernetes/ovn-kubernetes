@@ -1,8 +1,8 @@
 apiVersion: "v2"
 description: "A Helm chart for sdn-dashboard"
 name: "sdn-dashboard"
-version: "1.1.0"
+version: "1.2.0"
 home: https://www.ovn.org/
 sources:
   - https://github.com/ovn-org/ovn-kubernetes
-appVersion: "1.1.0"
+appVersion: "1.2.0"

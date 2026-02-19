@@ -381,7 +381,7 @@ func (b *BridgeConfiguration) IsGatewayReady() bool {
 	return true
 }
 
-func (b *BridgeConfiguration) SetOfPorts() error {
+func (b *BridgeConfiguration) ConfigureBridgePorts() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	// Get ofport of patchPort
@@ -402,6 +402,7 @@ func (b *BridgeConfiguration) SetOfPorts() error {
 	}
 
 	// Get ofport representing the host. That is, host representor port in case of DPUs, ovsLocalPort otherwise.
+	var hostOVSInterfaceName string
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
 		var stderr string
 		hostRep, err := util.GetDPUHostInterface(b.bridgeName)
@@ -414,6 +415,7 @@ func (b *BridgeConfiguration) SetOfPorts() error {
 			return fmt.Errorf("failed to get ofport of host interface %s, stderr: %q, error: %v",
 				hostRep, stderr, err)
 		}
+		hostOVSInterfaceName = hostRep
 	} else {
 		var err error
 		if b.gwIfaceRep != "" {
@@ -421,8 +423,40 @@ func (b *BridgeConfiguration) SetOfPorts() error {
 			if err != nil {
 				return fmt.Errorf("failed to get ofport of bypass rep %s, error: %v", b.gwIfaceRep, err)
 			}
+			hostOVSInterfaceName = b.gwIfaceRep
 		} else {
 			b.ofPortHost = nodetypes.OvsLocalPort
+			hostOVSInterfaceName = b.bridgeName
+		}
+	}
+
+	// Ensure the host port on the bridge carries the configured VLAN tag when requested.
+	if hostOVSInterfaceName != "" && config.Gateway.VLANID != 0 {
+		ifaceUUID, stderr, err := util.RunOVSVsctl("--data=bare", "--no-heading", "--columns=_uuid",
+			"find", "Interface", fmt.Sprintf("name=%s", hostOVSInterfaceName))
+		if err != nil {
+			return fmt.Errorf("failed to find interface %s on bridge %s, stderr: %q, error: %v",
+				hostOVSInterfaceName, b.bridgeName, stderr, err)
+		}
+		ifaceUUID = strings.TrimSpace(ifaceUUID)
+		if ifaceUUID == "" {
+			return fmt.Errorf("failed to determine interface UUID for %s on bridge %s", hostOVSInterfaceName, b.bridgeName)
+		}
+
+		portName, stderr, err := util.RunOVSVsctl("--data=bare", "--no-heading", "--columns=name",
+			"find", "Port", fmt.Sprintf("interface=%s", ifaceUUID))
+		if err != nil {
+			return fmt.Errorf("failed to find port for interface %s on bridge %s, stderr: %q, error: %v",
+				hostOVSInterfaceName, b.bridgeName, stderr, err)
+		}
+		portName = strings.TrimSpace(portName)
+		if portName == "" {
+			return fmt.Errorf("failed to determine port for host interface %s on bridge %s", hostOVSInterfaceName, b.bridgeName)
+		}
+		if _, stderr, err = util.RunOVSVsctl("set", "Port", portName,
+			fmt.Sprintf("tag=%d", config.Gateway.VLANID)); err != nil {
+			return fmt.Errorf("failed to set VLAN tag on port %s for bridge %s, stderr: %q, error: %v",
+				portName, b.bridgeName, stderr, err)
 		}
 	}
 

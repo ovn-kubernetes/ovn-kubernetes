@@ -152,6 +152,10 @@ func (p *UserDefinedPrimaryNetwork) ensureActiveNetwork(namespace string) error 
 	if err != nil {
 		return err
 	}
+	// CNI should always have an active network for a pod on our node
+	if activeNetwork == nil {
+		return fmt.Errorf("no active network found for namespace %s", namespace)
+	}
 	if activeNetwork.IsDefault() {
 		return fmt.Errorf("missing primary user defined network NAD for namespace '%s'", namespace)
 	}

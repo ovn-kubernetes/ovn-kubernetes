@@ -323,6 +323,9 @@ func createOrUpdateLogicalSwitchPortsOps(nbClient libovsdbclient.Client, ops []o
 	opModels := make([]operationModel, 0, len(lsps)+1)
 
 	for _, lsp := range lsps {
+		if err := validateRequestedChassisOption(lsp.Options); err != nil {
+			return nil, err
+		}
 		opModel := createOrUpdateLogicalSwitchPortOpModelWithCustomFields(sw, lsp, createLSP, customFields)
 		opModels = append(opModels, opModel)
 	}
@@ -479,39 +482,4 @@ func DeleteLogicalSwitchPortsWithPredicateOps(nbClient libovsdbclient.Client, op
 
 	m := newModelClient(nbClient)
 	return m.DeleteOps(ops, opModels...)
-}
-
-// UpdateLogicalSwitchPortSetOptions sets options on the provided logical switch
-// port adding any missing, removing the ones set to an empty value and updating
-// existing
-func UpdateLogicalSwitchPortSetOptions(nbClient libovsdbclient.Client, lsp *nbdb.LogicalSwitchPort) error {
-	options := lsp.Options
-	lsp, err := GetLogicalSwitchPort(nbClient, lsp)
-	if err != nil {
-		return err
-	}
-
-	if lsp.Options == nil {
-		lsp.Options = map[string]string{}
-	}
-
-	for k, v := range options {
-		if v == "" {
-			delete(lsp.Options, k)
-		} else {
-			lsp.Options[k] = v
-		}
-	}
-
-	opModel := operationModel{
-		// For LSP's Name is a valid index, so no predicate is needed
-		Model:          lsp,
-		OnModelUpdates: []interface{}{&lsp.Options},
-		ErrNotFound:    true,
-		BulkOp:         false,
-	}
-
-	m := newModelClient(nbClient)
-	_, err = m.CreateOrUpdate(opModel)
-	return err
 }

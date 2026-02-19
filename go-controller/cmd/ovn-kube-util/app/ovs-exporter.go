@@ -2,10 +2,9 @@ package app
 
 import (
 	"context"
-	"net/http"
+	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/urfave/cli/v2"
 
 	"k8s.io/klog/v2"
@@ -16,8 +15,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-var metricsScrapeInterval int
-
 var OvsExporterCommand = cli.Command{
 	Name:  "ovs-exporter",
 	Usage: "",
@@ -26,15 +23,11 @@ var OvsExporterCommand = cli.Command{
 			Name:  "metrics-bind-address",
 			Usage: `The IP address and port for the metrics server to serve on (default ":9310")`,
 		},
-		&cli.IntFlag{
-			Name:        "metrics-interval",
-			Usage:       "The interval in seconds at which ovs metrics are collected",
-			Value:       30,
-			Destination: &metricsScrapeInterval,
-		},
 	},
 	Action: func(ctx *cli.Context) error {
-		stopChan := make(chan struct{})
+		innerCtx, cancel := context.WithCancel(ctx.Context)
+		defer cancel()
+
 		bindAddress := ctx.String("metrics-bind-address")
 		if bindAddress == "" {
 			bindAddress = "0.0.0.0:9310"
@@ -45,31 +38,38 @@ var OvsExporterCommand = cli.Command{
 		}
 
 		// start the ovsdb client for ovs metrics monitoring
-		ovsClient, err := libovsdb.NewOVSClient(stopChan)
+		ovsClient, err := libovsdb.NewOVSClient(innerCtx.Done())
 		if err != nil {
 			klog.Errorf("Error initializing ovs client: %v", err)
+			return err
 		}
 
-		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
+		wg := &sync.WaitGroup{}
 
-		// register ovs metrics that will be served off of /metrics path
-		metrics.RegisterStandaloneOvsMetrics(ovsClient, metricsScrapeInterval, stopChan)
+		opts := metrics.MetricServerOptions{
+			BindAddress:      bindAddress,
+			EnableOVSMetrics: true,
+			OnFatalError:     cancel,
+		}
 
-		server := &http.Server{Addr: bindAddress, Handler: mux}
+		_ = metrics.StartOVNMetricsServer(opts, ovsClient, nil, innerCtx.Done(), wg)
+
+		// run until cancelled (by OS signal or fatal error)
+		<-innerCtx.Done()
+		klog.Info("Shutdown signal received, stopping metrics server...")
+
+		// Wait for all goroutines to finish with a timeout
+		done := make(chan struct{})
 		go func() {
-			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				klog.Exitf("Metrics server exited with error: %v", err)
-			}
+			wg.Wait()
+			close(done)
 		}()
 
-		// run until cancelled
-		<-ctx.Context.Done()
-		close(stopChan)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			klog.Errorf("Error stopping metrics server: %v", err)
+		select {
+		case <-done:
+			klog.Info("Metrics server stopped gracefully")
+		case <-time.After(10 * time.Second):
+			klog.Warning("Timeout waiting for metrics server to stop")
 		}
 
 		return nil

@@ -5,6 +5,7 @@ The current Maintainers Group for the ovn-kubernetes Project consists of:
 | [Girish Moodalbail](https://github.com/girishmg) | NVIDIA | All things ovnkube |
 | [Jaime Caamaño Ruiz](https://github.com/jcaamano) | Red Hat | All things ovnkube |
 | [Nadia Pinaeva](https://github.com/npinaeva) | NVIDIA  | All things ovnkube |
+| [Patryk Diak](https://github.com/kyrtapz)   | Red Hat | All things ovnkube |
 | [Surya Seetharaman](https://github.com/tssurya)   | Red Hat | All things ovnkube |
 | [Tim Rozet](https://github.com/trozet)   | NVIDIA | All things ovnkube |
 

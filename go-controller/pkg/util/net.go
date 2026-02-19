@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -329,10 +330,52 @@ func GenerateRandMAC() (net.HardwareAddr, error) {
 func CopyIPNets(ipnets []*net.IPNet) []*net.IPNet {
 	copy := make([]*net.IPNet, len(ipnets))
 	for i := range ipnets {
-		ipnet := *ipnets[i]
-		copy[i] = &ipnet
+		if ipnets[i] == nil {
+			continue
+		}
+		copy[i] = &net.IPNet{
+			IP:   slices.Clone(ipnets[i].IP),
+			Mask: slices.Clone(ipnets[i].Mask),
+		}
 	}
 	return copy
+}
+
+func isIPNetEqual(ipn1, ipn2 *net.IPNet) bool {
+	if ipn1 == ipn2 {
+		return true
+	}
+	if ipn1 == nil || ipn2 == nil {
+		return false
+	}
+	m1, _ := ipn1.Mask.Size()
+	m2, _ := ipn2.Mask.Size()
+	return m1 == m2 && ipn1.IP.Equal(ipn2.IP)
+}
+
+// IsIPNetsEqual returns true if both IPNet slices are equal in length and values, regardless of order.
+func IsIPNetsEqual(ipn1, ipn2 []*net.IPNet) bool {
+	if len(ipn1) != len(ipn2) {
+		return false
+	}
+	used := make([]bool, len(ipn2))
+	for i := range ipn1 {
+		found := false
+		for j := range ipn2 {
+			if used[j] {
+				continue
+			}
+			if isIPNetEqual(ipn1[i], ipn2[j]) {
+				used[j] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // IPsToNetworkIPs returns the network CIDRs of the provided IP CIDRs

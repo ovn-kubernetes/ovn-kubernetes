@@ -27,7 +27,8 @@ import (
 )
 
 type CNIPluginLibOps interface {
-	AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error
+	AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error
+	ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error
 	SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error)
 }
 
@@ -35,16 +36,34 @@ type defaultCNIPluginLibOps struct{}
 
 var cniPluginLibOps CNIPluginLibOps = &defaultCNIPluginLibOps{}
 
-func (defaultCNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu int) error {
+func (defaultCNIPluginLibOps) AddRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error {
 	route := &netlink.Route{
 		LinkIndex: dev.Attrs().Index,
 		Scope:     netlink.SCOPE_UNIVERSE,
 		Dst:       ipn,
 		Gw:        gw,
 		MTU:       mtu,
+		Table:     table,
 	}
 
 	return util.GetNetLinkOps().RouteAdd(route)
+}
+
+func (defaultCNIPluginLibOps) ReplaceRouteECMP(ipn *net.IPNet, gw net.IP, devs []netlink.Link, mtu int) error {
+	ecmpRoute := &netlink.Route{
+		Dst: ipn,
+		MTU: mtu,
+	}
+
+	ecmpRoute.MultiPath = make([]*netlink.NexthopInfo, len(devs))
+	for i, dev := range devs {
+		ecmpRoute.MultiPath[i] = &netlink.NexthopInfo{
+			LinkIndex: dev.Attrs().Index,
+			Gw:        gw,
+			Hops:      0, // Weight (0 means weight of 1)
+		}
+	}
+	return util.GetNetLinkOps().RouteReplace(ecmpRoute)
 }
 
 func (defaultCNIPluginLibOps) SetupVeth(contVethName string, hostVethName string, mtu int, contVethMac string, hostNS ns.NetNS) (net.Interface, net.Interface, error) {
@@ -192,13 +211,100 @@ func setupNetwork(link netlink.Link, ifInfo *PodInterfaceInfo) error {
 		}
 	}
 	for _, gw := range ifInfo.Gateways {
-		if err := cniPluginLibOps.AddRoute(nil, gw, link, ifInfo.RoutableMTU); err != nil {
+		if err := cniPluginLibOps.AddRoute(nil, gw, link, ifInfo.RoutableMTU, 0); err != nil {
 			return fmt.Errorf("failed to add gateway route to link '%s': %v", link.Attrs().Name, err)
 		}
 	}
+
+	// all pod links of the same secondary UDN up to the current one
+	var links []netlink.Link
+	var iptableNum int
+
+	if len(ifInfo.PodIfNamesOfSameNAD) != 0 {
+		// this is a pod with multiple interfaces of the same non-primary UDN, we need to configure the following sysctl configuration
+		// stop ARP flux and stop RP filter drop from happening
+		//   sysctl -w net.ipv4.conf.<linkName>.arp_ignore=1 # only reply to ARP requests if its sent to the IP on this interface
+		//   sysctl -w net.ipv4.conf.<linkName>.arp_announce=2 # when sending ARP use the IP that belongs to this interface
+		//   sysctl -w net.ipv4.conf.<linkName>.rp_filter=2 # allow reverse path filter check to pass if there is any route to the source
+		linkName := link.Attrs().Name
+		if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/arp_ignore", linkName), 1); err != nil {
+			return fmt.Errorf("failed to set arp_ignore for %s: %v", linkName, err)
+		}
+		if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/arp_announce", linkName), 2); err != nil {
+			return fmt.Errorf("failed to set arp_announce for %s: %v", linkName, err)
+		}
+		if err := setSysctl(fmt.Sprintf("/proc/sys/net/ipv4/conf/%s/rp_filter", linkName), 2); err != nil {
+			return fmt.Errorf("failed to set rp_filter for %s: %v", linkName, err)
+		}
+
+		if len(ifInfo.Routes) != 0 {
+			// needs ip table for each Pod interface of the same secondary UDN, table number start from 100
+			iptableNum = 100 + link.Attrs().Index
+
+			// ECMP routes are needed
+			// get all the Pod interface names of the same nadName
+			// up to the current link name. This is used for configuring ECMP routes via multiple pod interfaces
+			links = make([]netlink.Link, 0, len(ifInfo.PodIfNamesOfSameNAD))
+			for _, ifName := range ifInfo.PodIfNamesOfSameNAD {
+				if ifName == link.Attrs().Name {
+					// loop all pod interfaces of the same secondary UDN until the current pod interface
+					links = append(links, link)
+					break
+				}
+				ifLink, err := util.GetNetLinkOps().LinkByName(ifName)
+				if err != nil {
+					return fmt.Errorf("failed to lookup pod interface %s when setup route for link %s: %v", ifName, link.Attrs().Name, err)
+				}
+				links = append(links, ifLink)
+			}
+
+			// ip rules are needed to force traffic from an ip to egress the correct interface via a route table for that interface:
+			//   ip rule add from <IP_on_this_interface> table <iptableNum>
+			for _, ip := range ifInfo.IPs {
+				rule := netlink.NewRule()
+				rule.Src = util.GetIPNetFullMaskFromIP(ip.IP)
+				rule.Table = iptableNum
+				if err := util.GetNetLinkOps().RuleAdd(rule); err != nil {
+					return fmt.Errorf("failed to add IP rule for %s to table %d: %v", ip.IP, iptableNum, err)
+				}
+
+				// add scope link route to the specific table
+				route := &netlink.Route{
+					LinkIndex: link.Attrs().Index,
+					Scope:     netlink.SCOPE_LINK,
+					Dst:       util.IPsToNetworkIPs(ip)[0],
+					Table:     iptableNum,
+				}
+				if err := util.GetNetLinkOps().RouteAdd(route); err != nil {
+					return fmt.Errorf("failed to add link scope route to %v via %v to table %v: %v", ip, linkName, iptableNum, err)
+				}
+			}
+		}
+	}
+
 	for _, route := range ifInfo.Routes {
-		if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU); err != nil {
-			return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+		if len(ifInfo.PodIfNamesOfSameNAD) == 0 {
+			// if there is no other interface of the same NAD, just add route directly
+			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, 0); err != nil {
+				return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+			}
+		} else {
+			if len(links) == 1 {
+				// if this is the first pod interface of this NAD, just add route directly
+				if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, 0); err != nil {
+					return fmt.Errorf("failed to add pod route %v via %v: %v", route.Dest, route.NextHop, err)
+				}
+			} else {
+				// otherwise replace it with ECMP routes
+				if err := cniPluginLibOps.ReplaceRouteECMP(route.Dest, route.NextHop, links, ifInfo.RoutableMTU); err != nil {
+					return fmt.Errorf("failed to replace pod route %v via %v through links %v: %v", route.Dest, route.NextHop, links, err)
+				}
+			}
+
+			// add ECMP route to specific IP route table
+			if err := cniPluginLibOps.AddRoute(route.Dest, route.NextHop, link, ifInfo.RoutableMTU, iptableNum); err != nil {
+				return fmt.Errorf("failed to add pod route %v nexthop %v via %v table %v: %v", route.Dest, route.NextHop, link.Attrs().Name, iptableNum, err)
+			}
 		}
 	}
 
@@ -428,12 +534,12 @@ func getPfEncapIP(deviceID string) (string, error) {
 }
 
 // ConfigureOVS performs OVS configurations in order to set up Pod networking
-func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
+func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceName string,
 	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, getter PodInfoGetter) error {
 
 	ifaceID := util.GetIfaceId(namespace, podName)
 	if ifInfo.NetName != types.DefaultNetworkName {
-		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADName)
+		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADKey)
 	}
 	initialPodUID := ifInfo.PodUID
 	ipStrs := make([]string, len(ifInfo.IPs))
@@ -447,7 +553,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	}
 
 	klog.Infof("ConfigureOVS: namespace: %s, podName: %s, hostIfaceName: %s, network: %s, NAD %s, SandboxID: %q, PCI device ID: %s, UID: %q, MAC: %s, IPs: %v",
-		namespace, podName, hostIfaceName, ifInfo.NetName, ifInfo.NADName, sandboxID, deviceID, initialPodUID, ifInfo.MAC, ipStrs)
+		namespace, podName, hostIfaceName, ifInfo.NetName, ifInfo.NADKey, sandboxID, deviceID, initialPodUID, ifInfo.MAC, ipStrs)
 
 	// Find and remove any existing OVS port with this iface-id. Pods can
 	// have multiple sandboxes if some are waiting for garbage collection,
@@ -470,16 +576,16 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	if err == nil && len(extIds) == 1 {
 		extId := extIds[0]
 		ifaceIDStr := util.GetExternalIDValByKey(extId, "iface-id")
-		nadNameString := util.GetExternalIDValByKey(extId, types.NADExternalID)
+		nadKeyString := util.GetExternalIDValByKey(extId, types.NADExternalID)
 		// if NADExternalID does not exists, it is default network
-		if nadNameString == "" {
-			nadNameString = types.DefaultNetworkName
+		if nadKeyString == "" {
+			nadKeyString = types.DefaultNetworkName
 		}
 		if ifaceIDStr != ifaceID {
 			return fmt.Errorf("OVS port %s was added for iface-id (%s), now readding it for (%s)", hostIfaceName, ifaceIDStr, ifaceID)
 		}
-		if nadNameString != ifInfo.NADName {
-			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, nadNameString, ifInfo.NADName)
+		if nadKeyString != ifInfo.NADKey {
+			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, nadKeyString, ifInfo.NADKey)
 		}
 	}
 
@@ -492,6 +598,11 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 		fmt.Sprintf("external_ids:iface-id=%s", ifaceID),
 		fmt.Sprintf("external_ids:iface-id-ver=%s", initialPodUID),
 		fmt.Sprintf("external_ids:sandbox=%s", sandboxID),
+	}
+
+	// pod interface name, used to identify CNI request with the same NAD
+	if podIfName != "" {
+		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:pod-if-name=%s", podIfName))
 	}
 
 	// In case of multi-vtep, host has multipe NICs and each NIC has a VTEP interface, the mapping
@@ -538,7 +649,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 
 	if ifInfo.NetName != types.DefaultNetworkName {
 		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:%s=%s", types.NetworkExternalID, ifInfo.NetName))
-		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, ifInfo.NADName))
+		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, ifInfo.NADKey))
 	} else {
 		ovsArgs = append(ovsArgs, []string{"--", "--if-exists", "remove", "interface", hostIfaceName, "external_ids", types.NetworkExternalID}...)
 		ovsArgs = append(ovsArgs, []string{"--", "--if-exists", "remove", "interface", hostIfaceName, "external_ids", types.NADExternalID}...)
@@ -614,7 +725,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	}
 
 	if !ifInfo.IsDPUHostMode {
-		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, getter)
+		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, getter)
 		if err != nil {
 			pr.deletePort(hostIface.Name, pr.PodNamespace, pr.PodName)
 			return nil, err
@@ -798,7 +909,7 @@ func (pr *PodRequest) deletePodConntrack() {
 				continue
 			}
 		}
-		err = util.DeleteConntrack(ip.Address.IP.String(), 0, "", netlink.ConntrackReplyAnyIP, nil)
+		_, err = util.DeleteConntrack(ip.Address.IP.String(), 0, "", netlink.ConntrackReplyAnyIP, nil)
 		if err != nil {
 			klog.Errorf("Failed to delete Conntrack Entry for %s: %v", ip.Address.IP.String(), err)
 			continue

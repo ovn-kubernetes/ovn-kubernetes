@@ -97,13 +97,32 @@ spec:
         # ovnkube-node dpu-host mounts
         - mountPath: /var/run/ovn
           name: var-run-ovn
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        {{- if .Values.global.enableNetworkSegmentation }}
+        - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
+          name: host-devinfo-dp
+          readOnly: true
+        {{- end }}
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
+            {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
+            {{ .Values.mgmtPortVFResourceName }}: {{ .Values.mgmtPortVFsCount }}
+            {{- end }}
+          limits:
+            {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
+            {{ .Values.mgmtPortVFResourceName }}: {{ .Values.mgmtPortVFsCount }}
+            {{- end }}
         env:
+        {{ if .Values.global.enableCoredumps -}}
+        - name: GOTRACEBACK
+          value: "crash"
+        {{ end -}}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.logLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -149,7 +168,7 @@ spec:
         - name: OVN_GATEWAY_MODE
           value: {{ default "shared" .Values.global.gatewayMode }}
         - name: OVN_GATEWAY_OPTS
-          value: {{ default "" .Values.global.gatewayOps | quote }}
+          value: {{ default "" .Values.global.gatewayOpts | quote }}
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: {{ default "" .Values.global.enableHybridOverlay | quote }}
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
@@ -202,8 +221,20 @@ spec:
           value: {{ hasKey .Values.global "enableNetworkQos" | ternary .Values.global.enableNetworkQos false | quote }}
         - name: OVNKUBE_NODE_MODE
           value: "dpu-host"
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
-          value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
+          value: {{ default "" .Values.nodeMgmtPortNetdev | quote }}
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: {{ default "" .Values.mgmtPortVFResourceName | quote }}
+        - name: OVN_ENABLE_INTERCONNECT
+          value: {{ default "false" .Values.global.enableInterconnect | quote }}
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:
@@ -255,5 +286,13 @@ spec:
           path: /run/systemd
       - name: var-run-ovn
         emptyDir: {}
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
+      {{- if .Values.global.enableNetworkSegmentation }}
+      - name: host-devinfo-dp
+        hostPath:
+          path: /var/run/k8s.cni.cncf.io/devinfo/dp
+      {{- end }}
       tolerations:
       - operator: "Exists"

@@ -18,6 +18,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/portalloc"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -28,11 +29,13 @@ import (
 func IsProvider() bool {
 	_, err := exec.LookPath("kubectl")
 	if err != nil {
-		panic("kubectl must be installed")
+		framework.Logf("kubectl is not installed: %v", err)
+		return false
 	}
 	currentCtx, err := exec.Command("kubectl", "config", "current-context").CombinedOutput()
 	if err != nil {
-		panic(fmt.Sprintf("unable to get current cluster context: %v", err))
+		framework.Logf("unable to get current cluster context: %v", err)
+		return false
 	}
 	if strings.Contains(string(currentCtx), "kind-ovn") {
 		return true
@@ -65,6 +68,10 @@ func (k *kind) GetNetwork(name string) (api.Network, error) {
 	return getNetwork(name)
 }
 
+func (k *kind) ListNetworks() ([]string, error) {
+	return listNetworks()
+}
+
 func (k *kind) GetExternalContainerNetworkInterface(container api.ExternalContainer, network api.Network) (api.NetworkInterface, error) {
 	return getNetworkInterface(container.Name, network.Name())
 }
@@ -74,11 +81,15 @@ func (k *kind) GetK8NodeNetworkInterface(container string, network api.Network) 
 }
 
 func (k *kind) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) {
-	if !doesContainerNameExist(nodeName) {
+	exists, err := doesContainerNameExist(nodeName)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if container %q exists: %w", nodeName, err)
+	}
+	if !exists {
 		return "", fmt.Errorf("cannot exec into container %q because it doesn't exist: %w", nodeName, api.NotFound)
 	}
 	if len(cmd) == 0 {
-		panic("ExecK8NodeCommand(): insufficient command arguments")
+		return "", fmt.Errorf("ExecK8NodeCommand(): insufficient command arguments")
 	}
 	cmdArgs := append([]string{"exec", nodeName}, cmd...)
 	stdOut, err := exec.Command(containerengine.Get().String(), cmdArgs...).CombinedOutput()
@@ -89,7 +100,11 @@ func (k *kind) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) 
 }
 
 func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd []string) (string, error) {
-	if !doesContainerNameExist(container.Name) {
+	exists, err := doesContainerNameExist(container.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if container %q exists: %w", container.Name, err)
+	}
+	if !exists {
 		return "", fmt.Errorf("cannot exec into container %q because it doesn't exist: %w", container.Name, api.NotFound)
 	}
 	cmdArgs := append([]string{"exec", container.Name}, cmd...)
@@ -101,7 +116,11 @@ func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd
 }
 
 func (k *kind) GetExternalContainerLogs(container api.ExternalContainer) (string, error) {
-	if !doesContainerNameExist(container.Name) {
+	exists, err := doesContainerNameExist(container.Name)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if container %q exists: %w", container.Name, err)
+	}
+	if !exists {
 		return "", fmt.Errorf("container %q doesn't exist, therefore no logs can be retrieved: %w", container.Name, api.NotFound)
 	}
 	stdOut, err := exec.Command(containerengine.Get().String(), "logs", container.Name).CombinedOutput()
@@ -117,6 +136,72 @@ func (k *kind) GetExternalContainerPort() uint16 {
 
 func (k *kind) GetK8HostPort() uint16 {
 	return k.hostPort.Allocate()
+}
+
+func (k *kind) GetDefaultTimeoutContext() *framework.TimeoutContext {
+	return framework.NewTimeoutContext()
+}
+
+// getContainerState returns the state of a container by name
+// Returns empty string if container doesn't exist
+func getContainerState(containerName string) (string, error) {
+	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-a", "-f", fmt.Sprintf("name=^%s$", containerName), "--format", "{{.State}}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to check container state for %s: %s (%s)", containerName, err, stdOut)
+	}
+
+	state := strings.TrimSpace(string(stdOut))
+	return state, nil
+}
+
+func (k *kind) ShutdownNode(nodeName string) error {
+	state, err := getContainerState(nodeName)
+	if err != nil {
+		return err
+	}
+
+	if state == "" {
+		return fmt.Errorf("cannot shutdown node %q because it doesn't exist: %w", nodeName, api.NotFound)
+	}
+
+	// If container is already stopped/exited, consider it success
+	if state == "exited" || state == "stopped" {
+		framework.Logf("Node %s is already stopped (state: %s)", nodeName, state)
+		return nil
+	}
+
+	framework.Logf("Shutting down node %s (current state: %s)", nodeName, state)
+	stdOut, err := exec.Command(containerengine.Get().String(), "stop", nodeName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to shutdown node %s: %s (%s)", nodeName, err, stdOut)
+	}
+	framework.Logf("Successfully shut down node %s", nodeName)
+	return nil
+}
+
+func (k *kind) StartNode(nodeName string) error {
+	state, err := getContainerState(nodeName)
+	if err != nil {
+		return err
+	}
+
+	if state == "" {
+		return fmt.Errorf("cannot start node %q because it doesn't exist: %w", nodeName, api.NotFound)
+	}
+
+	// If container is already running, consider it success
+	if state == "running" || state == "up" {
+		framework.Logf("Node %s is already running (state: %s)", nodeName, state)
+		return nil
+	}
+
+	framework.Logf("Starting node %s (current state: %s)", nodeName, state)
+	stdOut, err := exec.Command(containerengine.Get().String(), "start", nodeName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start node %s: %s (%s)", nodeName, err, stdOut)
+	}
+	framework.Logf("Successfully started node %s", nodeName)
+	return nil
 }
 
 func (k *kind) NewTestContext() api.Context {
@@ -143,7 +228,11 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 	if valid, err := container.IsValidPreCreateContainer(); !valid {
 		return container, err
 	}
-	if doesContainerNameExist(container.Name) {
+	exists, err := doesContainerNameExist(container.Name)
+	if err != nil {
+		return container, fmt.Errorf("failed to check if container %s exists: %w", container.Name, err)
+	}
+	if exists {
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
 	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
@@ -199,7 +288,11 @@ func (c *contextKind) DeleteExternalContainer(container api.ExternalContainer) e
 
 func (c *contextKind) deleteExternalContainer(container api.ExternalContainer) error {
 	// check if it is present before deleting
-	if !doesContainerNameExist(container.Name) {
+	exists, err := doesContainerNameExist(container.Name)
+	if err != nil {
+		return fmt.Errorf("failed to check if container %s exists: %w", container.Name, err)
+	}
+	if !exists {
 		return nil
 	}
 	stdOut, err := exec.Command(containerengine.Get().String(), "rm", "-f", container.Name).CombinedOutput()
@@ -230,7 +323,11 @@ func (c *contextKind) CreateNetwork(name string, subnets ...string) (api.Network
 
 func (c *contextKind) createNetwork(name string, subnets ...string) (api.Network, error) {
 	network := containerEngineNetwork{name, nil}
-	if doesNetworkExist(name) {
+	exists, err := doesNetworkExist(name)
+	if err != nil {
+		return network, fmt.Errorf("failed to check if network %s exists: %w", name, err)
+	}
+	if exists {
 		attachedContainers, err := getContainerAttachedToNetwork(name)
 		if err != nil {
 			framework.Logf("failed to get containers attached to network %s: %v", name, err)
@@ -267,7 +364,11 @@ func (c *contextKind) AttachNetwork(network api.Network, container string) (api.
 }
 
 func (c *contextKind) attachNetwork(network api.Network, container string) (api.NetworkInterface, error) {
-	if !doesNetworkExist(network.Name()) {
+	exists, err := doesNetworkExist(network.Name())
+	if err != nil {
+		return api.NetworkInterface{}, fmt.Errorf("failed to check if network %s exists: %w", network.Name(), err)
+	}
+	if !exists {
 		return api.NetworkInterface{}, fmt.Errorf("network %s doesn't exist", network.Name())
 	}
 	if isNetworkAttachedToContainer(network.Name(), container) {
@@ -289,7 +390,11 @@ func (c *contextKind) DetachNetwork(network api.Network, container string) error
 }
 
 func (c *contextKind) detachNetwork(network api.Network, container string) error {
-	if !doesNetworkExist(network.Name()) {
+	exists, err := doesNetworkExist(network.Name())
+	if err != nil {
+		return fmt.Errorf("failed to check if network %s exists: %w", network.Name(), err)
+	}
+	if !exists {
 		return nil
 	}
 	if !isNetworkAttachedToContainer(network.Name(), container) {
@@ -310,7 +415,12 @@ func (c *contextKind) DeleteNetwork(network api.Network) error {
 
 func (c *contextKind) deleteNetwork(network api.Network) error {
 	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (done bool, err error) {
-		if !doesNetworkExist(network.Name()) {
+		exists, err := doesNetworkExist(network.Name())
+		if err != nil {
+			framework.Logf("failed to check if network %s exists: %v", network.Name(), err)
+			return false, nil
+		}
+		if !exists {
 			return true, nil
 		}
 		// ensure all containers are disconnected from the network and if any are found, disconnect it.
@@ -378,33 +488,39 @@ func (c *contextKind) SetupUnderlay(f *framework.Framework, underlay api.Underla
 		underlay.BridgeName = secondaryBridge
 	}
 
-	const (
-		ovsKubeNodeLabel = "app=ovnkube-node"
-	)
+	c.AddCleanUpFn(func() error {
+		// Find the OVS pods again to cover cases that restart the PODs
+		ovsPods, err := findOVSPods(f)
+		if err != nil {
+			return fmt.Errorf("failed finding OVS pods during kind underlay tear down: %w", err)
+		}
+		for _, ovsPod := range ovsPods {
+			if underlay.BridgeName != deploymentconfig.Get().ExternalBridgeName() {
+				if err := removeOVSBridge(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName); err != nil {
+					return fmt.Errorf("failed to remove OVS bridge %s for pod %s/%s during cleanup: %w", underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
+				}
+			}
+			if err := configureBridgeMappings(
+				ovsPod.Namespace,
+				ovsPod.Name,
+				defaultNetworkBridgeMapping(),
+			); err != nil {
+				return fmt.Errorf("failed to restore default bridge mappings for pod %s/%s during cleanup: %w", ovsPod.Namespace, ovsPod.Name, err)
+			}
+		}
+		return nil
+	})
 
-	ovsPodList, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
-		context.Background(),
-		metav1.ListOptions{LabelSelector: ovsKubeNodeLabel},
-	)
+	ovsPods, err := findOVSPods(f)
 	if err != nil {
-		return fmt.Errorf("failed to list OVS pods with label %q at namespace %q: %w", ovsKubeNodeLabel, deploymentconfig.Get().OVNKubernetesNamespace(), err)
+		return fmt.Errorf("failed finding OVS pods during kind underlay setup: %w", err)
 	}
-
-	if len(ovsPodList.Items) == 0 {
-		return fmt.Errorf("no pods with label %q in namespace %q", ovsKubeNodeLabel, deploymentconfig.Get().OVNKubernetesNamespace())
-	}
-	for _, ovsPod := range ovsPodList.Items {
+	for _, ovsPod := range ovsPods {
 		if underlay.BridgeName != deploymentconfig.Get().ExternalBridgeName() {
 			underlayInterface, err := getNetworkInterface(ovsPod.Spec.NodeName, underlay.PhysicalNetworkName)
 			if err != nil {
 				return fmt.Errorf("failed to get underlay interface for network %s on node %s: %w", underlay.PhysicalNetworkName, ovsPod.Spec.NodeName, err)
 			}
-			c.AddCleanUpFn(func() error {
-				if err := removeOVSBridge(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName); err != nil {
-					return fmt.Errorf("failed to remove OVS bridge %s for pod %s/%s during cleanup: %w", underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
-				}
-				return nil
-			})
 			if err := ensureOVSBridge(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName); err != nil {
 				return fmt.Errorf("failed to add OVS bridge %s for pod %s/%s: %w", underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
 			}
@@ -418,17 +534,6 @@ func (c *contextKind) SetupUnderlay(f *framework.Framework, underlay api.Underla
 				}
 			}
 		}
-		c.AddCleanUpFn(func() error {
-			if err := configureBridgeMappings(
-				ovsPod.Namespace,
-				ovsPod.Name,
-				defaultNetworkBridgeMapping(),
-			); err != nil {
-				return fmt.Errorf("failed to restore default bridge mappings for pod %s/%s during cleanup: %w", ovsPod.Namespace, ovsPod.Name, err)
-			}
-			return nil
-		})
-
 		if err := configureBridgeMappings(
 			ovsPod.Namespace,
 			ovsPod.Name,
@@ -438,8 +543,8 @@ func (c *contextKind) SetupUnderlay(f *framework.Framework, underlay api.Underla
 			return fmt.Errorf("failed to configure bridge mappings for pod %s/%s for logical network %s to bridge %s: %w", ovsPod.Namespace, ovsPod.Name, underlay.LogicalNetworkName, underlay.BridgeName, err)
 		}
 	}
-	return nil
 
+	return nil
 }
 
 func (c *contextKind) AddCleanUpFn(cleanUpFn func() error) {
@@ -506,6 +611,8 @@ const (
 	inspectNetworkMACKeyStr        = "{{ with index .NetworkSettings.Networks %q }}{{ .MacAddress }}{{ end }}"
 	inspectNetworkContainersKeyStr = "{{ range $key, $value := .Containers }}{{ printf \"%s\\n\" $value.Name}}{{ end }}'"
 	emptyValue                     = "<no value>"
+	// Docker 29+ returns "invalid IP" for IP fields
+	emptyIPValue                   = "invalid IP"
 )
 
 func isNetworkAttachedToContainer(networkName, containerName string) bool {
@@ -517,34 +624,49 @@ func isNetworkAttachedToContainer(networkName, containerName string) bool {
 	return true
 }
 
-func doesContainerNameExist(name string) bool {
-	// check if it is present before retrieving logs
-	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-f", fmt.Sprintf("name=^%s$", name), "-q").CombinedOutput()
+func doesContainerNameExist(name string) (bool, error) {
+	state, err := getContainerState(name)
 	if err != nil {
-		panic(fmt.Sprintf("failed to check if external container (%s) exists: %v (%s)", name, err, stdOut))
+		return false, err
 	}
-	if string(stdOut) == "" {
-		return false
-	}
-	return true
+	// Empty state means container doesn't exist
+	return state != "", nil
 }
 
-func doesNetworkExist(networkName string) bool {
-	dataBytes, err := exec.Command(containerengine.Get().String(), "network", "ls", "--format", nameFormat).CombinedOutput()
+func listNetworks() ([]string, error) {
+	output, err := exec.Command(containerengine.Get().String(), "network", "ls", "--format", nameFormat).CombinedOutput()
 	if err != nil {
-		panic(err.Error())
+		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
-	for _, existingNetworkName := range strings.Split(strings.Trim(string(dataBytes), "\n"), "\n") {
-		if existingNetworkName == networkName {
-			return true
+	var networks []string
+	for _, name := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if name != "" {
+			networks = append(networks, name)
 		}
 	}
-	return false
+	return networks, nil
+}
+
+func doesNetworkExist(networkName string) (bool, error) {
+	networks, err := listNetworks()
+	if err != nil {
+		return false, err
+	}
+	for _, name := range networks {
+		if name == networkName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func getNetwork(networkName string) (containerEngineNetwork, error) {
 	n := containerEngineNetwork{name: networkName}
-	if !doesNetworkExist(networkName) {
+	exists, err := doesNetworkExist(networkName)
+	if err != nil {
+		return n, fmt.Errorf("failed to check if network %s exists: %w", networkName, err)
+	}
+	if !exists {
 		return n, api.NotFound
 	}
 	configs := make([]containerEngineNetworkConfig, 0, 1)
@@ -590,10 +712,18 @@ func getContainerAttachedToNetwork(networkName string) ([]string, error) {
 
 func getNetworkInterface(containerName, networkName string) (api.NetworkInterface, error) {
 	var ni = api.NetworkInterface{}
-	if !doesNetworkExist(networkName) {
+	exists, err := doesNetworkExist(networkName)
+	if err != nil {
+		return ni, fmt.Errorf("failed to check if network %q exists: %w", networkName, err)
+	}
+	if !exists {
 		return ni, fmt.Errorf("failed to find network %q: %w", networkName, api.NotFound)
 	}
-	if !doesContainerNameExist(containerName) {
+	exists, err = doesContainerNameExist(containerName)
+	if err != nil {
+		return ni, fmt.Errorf("failed to check if container %q exists: %w", containerName, err)
+	}
+	if !exists {
 		return ni, fmt.Errorf("failed to find container %q: %w", containerName, api.NotFound)
 	}
 	getContainerNetwork := func(inspectTemplate string) (string, error) {
@@ -605,53 +735,51 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 		}
 		valueStr := strings.Trim(string(value), "\n")
 		valueStr = strings.Trim(valueStr, "'")
-		if valueStr == emptyValue {
+		if valueStr == emptyValue || valueStr == emptyIPValue {
 			return "", nil
 		}
 		return valueStr, nil
 	}
 
-	getIPFamilyFlagForIPRoute2 := func(ipStr string) string {
+	getIPFamilyForIPRoute2 := func(ipStr string) (string, error) {
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
-			panic("invalid IP")
+			return "", fmt.Errorf("invalid IP address: %s", ipStr)
 		}
 		if utilnet.IsIPv6(ip) {
-			return "-6"
+			return "inet6", nil
 		}
-		return "-4"
+		return "inet", nil
 	}
 
 	getInterfaceNameUsingIP := func(ip string) (string, error) {
-		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "-br", getIPFamilyFlagForIPRoute2(ip), "a", "sh").CombinedOutput()
+		ipFamily, err := getIPFamilyForIPRoute2(ip)
 		if err != nil {
-			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command 'ip -br a sh': err %v, out: %s", ip, containerName,
-				err, allInfAddrBytes)
+			return "", fmt.Errorf("failed to get IP family for %s: %w", ip, err)
 		}
-		var ipLine string
+		cmdArgs := []string{"exec", "-i", containerName, "ip", "-o", "-f", ipFamily, "addr", "show"}
+		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), cmdArgs...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command %q: err %v, out: %s", ip, containerName,
+				strings.Join(cmdArgs[3:], " "), err, allInfAddrBytes)
+		}
+		var infName string
 		for _, line := range strings.Split(string(allInfAddrBytes), "\n") {
 			if strings.Contains(line, ip) {
-				ipLine = line
+				fields := strings.Fields(line)
+				if len(fields) < 2 {
+					return "", fmt.Errorf("failed to parse 'ip addr' output line %q", line)
+				}
+				infName = strings.TrimSuffix(fields[1], ":")
+				if strings.Contains(infName, "@") {
+					infName = strings.SplitN(infName, "@", 2)[0]
+				}
 				break
 			}
 		}
-		if ipLine == "" {
+		if infName == "" {
 			return "", fmt.Errorf("failed to find IP %q within 'ip a' command on container %q:\n\n%q", ip, containerName, string(allInfAddrBytes))
 		}
-		ipLineSplit := strings.Split(ipLine, " ")
-		if len(ipLine) == 0 {
-			return "", fmt.Errorf("failed to find interface name from 'ip a' output line %q", ipLine)
-		}
-		infNames := ipLineSplit[0]
-		splitChar := " "
-		if strings.Contains(infNames, "@") {
-			splitChar = "@"
-		}
-		infNamesSplit := strings.Split(infNames, splitChar)
-		if len(infNamesSplit) == 0 {
-			return "", fmt.Errorf("failed to extract inf name + veth name from %q splitting by %q", infNames, splitChar)
-		}
-		infName := infNamesSplit[0]
 		// validate its an interface name on the Node with iproute2
 		out, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "link", "show", infName).CombinedOutput()
 		if err != nil {
@@ -661,7 +789,6 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 		return infName, nil // second value is veth in 'host' netns
 	}
 
-	var err error
 	ni.IPv4Gateway, err = getContainerNetwork(inspectNetworkIPv4GWKeyStr)
 	if err != nil {
 		// may not be available
@@ -692,7 +819,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv6 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv6, err)
+			framework.Logf("failed to get network interface name using IPv6 address %s: %v", ni.IPv6, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)
@@ -727,4 +854,20 @@ func condenseErrors(errs []error) error {
 		err = errors.Join(err, e)
 	}
 	return err
+}
+
+func findOVSPods(f *framework.Framework) ([]corev1.Pod, error) {
+	const ovsKubeNodeLabel = "app=ovnkube-node"
+	ovsPodList, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
+		context.Background(),
+		metav1.ListOptions{LabelSelector: ovsKubeNodeLabel},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list OVS pods with label %q at namespace %q: %w", ovsKubeNodeLabel, deploymentconfig.Get().OVNKubernetesNamespace(), err)
+	}
+
+	if len(ovsPodList.Items) == 0 {
+		return nil, fmt.Errorf("no pods with label %q in namespace %q", ovsKubeNodeLabel, deploymentconfig.Get().OVNKubernetesNamespace())
+	}
+	return ovsPodList.Items, nil
 }

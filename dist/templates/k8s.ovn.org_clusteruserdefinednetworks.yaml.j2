@@ -91,6 +91,156 @@ spec:
               network:
                 description: Network is the user-defined-network spec
                 properties:
+                  evpn:
+                    description: |-
+                      EVPN contains configuration for EVPN mode.
+                      This is only allowed when Transport is "EVPN".
+                    properties:
+                      ipVRF:
+                        description: |-
+                          IPVRF contains the IP-VRF configuration for Layer 3 EVPN.
+                          This field is required for Layer3 topology and optional for Layer2 topology.
+                        properties:
+                          routeTarget:
+                            description: |-
+                              RouteTarget is the import/export route target for this VRF.
+                              If not specified, it will be auto-generated as "<AS (Autonomous System)>:<VNI (Virtual Network Identifier)>".
+                              Auto-generation will use 2-byte AS if VNI > 65535, since 4-byte AS/IPv4 only allows 2-byte local admin.
+
+                              Follows FRR EVPN L3 Route-Target format (A.B.C.D:MN|EF:OPQR|GHJK:MN|*:OPQR|*:MN):
+                                - EF:OPQR   = 2-byte AS (1-65535) : local admin (4 bytes, 1-4294967295)
+                                - GHJK:MN   = 4-byte AS (65536-4294967295) : local admin (2 bytes, 1-65535)
+                                - A.B.C.D:MN = IPv4 address : local admin (2 bytes, 1-65535)
+                                - *:OPQR    = wildcard AS : local admin (4 bytes, 1-4294967295) - for import matching
+                                - *:MN      = wildcard AS : local admin (2 bytes, 1-65535) - for import matching
+
+                              The 6-byte value constraint (RFC 4360) means AS size + local admin size = 6 bytes.
+                            maxLength: 21
+                            type: string
+                            x-kubernetes-validations:
+                            - message: RT must contain exactly one colon
+                              rule: self.split(':').size() == 2
+                            - message: RT global administrator must be either '*',
+                                an IPv4 address, or a number
+                              rule: self.split(':').size() != 2 || (self.startsWith('*:')
+                                || isIP(self.split(':')[0]) || self.split(':')[0].matches('[0-9]+'))
+                            - message: RT local administrator must be a number
+                              rule: self.split(':').size() != 2 || self.split(':')[1].matches('[0-9]+')
+                            - message: RT with wildcard global administrator must
+                                have format *:OPQR where OPQR <= 4294967295
+                              rule: self.split(':').size() != 2 || !self.startsWith('*:')
+                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                <= 4294967295u)
+                            - message: RT with IPv4 global administrator must have
+                                format A.B.C.D:MN where MN <= 65535
+                              rule: self.split(':').size() != 2 || !self.split(':')[0].contains('.')
+                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                <= 65535u)
+                            - message: RT with 4-byte ASN global administrator must
+                                have format GHJK:MN where GHJK <= 4294967295 and MN
+                                <= 65535
+                              rule: self.split(':').size() != 2 || self.startsWith('*:')
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
+                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                <= 65535u || uint(self.split(':')[1]) <= 65535u
+                            - message: RT with 2-byte ASN global administrator must
+                                have format EF:OPQR where EF <= 65535 and OPQR <=
+                                4294967295
+                              rule: self.split(':').size() != 2 || self.startsWith('*:')
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
+                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                > 65535u || uint(self.split(':')[1]) <= 4294967295u
+                          vni:
+                            description: |-
+                              VNI is the Virtual Network Identifier for this VRF.
+                              VNI is a 24-bit field in the VXLAN header (RFC 7348), allowing values from 1 to 16777215.
+                              but in the future this could be having different limit for other dataplane implementations.
+                              Must be unique across all EVPN configurations in the cluster.
+                            format: int32
+                            maximum: 16777215
+                            minimum: 1
+                            type: integer
+                        required:
+                        - vni
+                        type: object
+                      macVRF:
+                        description: |-
+                          MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.
+                          This field is required for Layer2 topology and forbidden for Layer3 topology.
+                        properties:
+                          routeTarget:
+                            description: |-
+                              RouteTarget is the import/export route target for this VRF.
+                              If not specified, it will be auto-generated as "<AS (Autonomous System)>:<VNI (Virtual Network Identifier)>".
+                              Auto-generation will use 2-byte AS if VNI > 65535, since 4-byte AS/IPv4 only allows 2-byte local admin.
+
+                              Follows FRR EVPN L3 Route-Target format (A.B.C.D:MN|EF:OPQR|GHJK:MN|*:OPQR|*:MN):
+                                - EF:OPQR   = 2-byte AS (1-65535) : local admin (4 bytes, 1-4294967295)
+                                - GHJK:MN   = 4-byte AS (65536-4294967295) : local admin (2 bytes, 1-65535)
+                                - A.B.C.D:MN = IPv4 address : local admin (2 bytes, 1-65535)
+                                - *:OPQR    = wildcard AS : local admin (4 bytes, 1-4294967295) - for import matching
+                                - *:MN      = wildcard AS : local admin (2 bytes, 1-65535) - for import matching
+
+                              The 6-byte value constraint (RFC 4360) means AS size + local admin size = 6 bytes.
+                            maxLength: 21
+                            type: string
+                            x-kubernetes-validations:
+                            - message: RT must contain exactly one colon
+                              rule: self.split(':').size() == 2
+                            - message: RT global administrator must be either '*',
+                                an IPv4 address, or a number
+                              rule: self.split(':').size() != 2 || (self.startsWith('*:')
+                                || isIP(self.split(':')[0]) || self.split(':')[0].matches('[0-9]+'))
+                            - message: RT local administrator must be a number
+                              rule: self.split(':').size() != 2 || self.split(':')[1].matches('[0-9]+')
+                            - message: RT with wildcard global administrator must
+                                have format *:OPQR where OPQR <= 4294967295
+                              rule: self.split(':').size() != 2 || !self.startsWith('*:')
+                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                <= 4294967295u)
+                            - message: RT with IPv4 global administrator must have
+                                format A.B.C.D:MN where MN <= 65535
+                              rule: self.split(':').size() != 2 || !self.split(':')[0].contains('.')
+                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                <= 65535u)
+                            - message: RT with 4-byte ASN global administrator must
+                                have format GHJK:MN where GHJK <= 4294967295 and MN
+                                <= 65535
+                              rule: self.split(':').size() != 2 || self.startsWith('*:')
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
+                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                <= 65535u || uint(self.split(':')[1]) <= 65535u
+                            - message: RT with 2-byte ASN global administrator must
+                                have format EF:OPQR where EF <= 65535 and OPQR <=
+                                4294967295
+                              rule: self.split(':').size() != 2 || self.startsWith('*:')
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
+                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                > 65535u || uint(self.split(':')[1]) <= 4294967295u
+                          vni:
+                            description: |-
+                              VNI is the Virtual Network Identifier for this VRF.
+                              VNI is a 24-bit field in the VXLAN header (RFC 7348), allowing values from 1 to 16777215.
+                              but in the future this could be having different limit for other dataplane implementations.
+                              Must be unique across all EVPN configurations in the cluster.
+                            format: int32
+                            maximum: 16777215
+                            minimum: 1
+                            type: integer
+                        required:
+                        - vni
+                        type: object
+                      vtep:
+                        description: VTEP is the name of the VTEP CR that defines
+                          VTEP IPs for EVPN.
+                        minLength: 1
+                        type: string
+                    required:
+                    - vtep
+                    type: object
+                    x-kubernetes-validations:
+                    - message: at least one of macVRF or ipVRF must be specified
+                      rule: has(self.macVRF) || has(self.ipVRF)
                   layer2:
                     description: Layer2 is the Layer2 topology configuration.
                     properties:
@@ -614,6 +764,29 @@ spec:
                         IPv6 subnet is used
                       rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                         isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280'
+                  noOverlay:
+                    description: |-
+                      NoOverlay contains configuration for no-overlay mode.
+                      This is only allowed when Transport is "NoOverlay".
+                    properties:
+                      outboundSNAT:
+                        description: OutboundSNAT defines the SNAT behavior for outbound
+                          traffic from pods.
+                        enum:
+                        - Enabled
+                        - Disabled
+                        type: string
+                      routing:
+                        description: Routing specifies whether the pod network routing
+                          is managed by OVN-Kubernetes or users.
+                        enum:
+                        - Managed
+                        - Unmanaged
+                        type: string
+                    required:
+                    - outboundSNAT
+                    - routing
+                    type: object
                   topology:
                     description: |-
                       Topology describes network configuration.
@@ -626,6 +799,19 @@ spec:
                     - Layer2
                     - Layer3
                     - Localnet
+                    type: string
+                  transport:
+                    description: |-
+                      Transport describes the transport technology for pod-to-pod traffic.
+                      Allowed values are "NoOverlay", "Geneve", and "EVPN".
+                      - "NoOverlay": The network operates in no-overlay mode.
+                      - "Geneve": The network uses Geneve overlay.
+                      - "EVPN": The network uses EVPN transport.
+                      When omitted, the default behaviour is Geneve.
+                    enum:
+                    - NoOverlay
+                    - Geneve
+                    - EVPN
                     type: string
                 required:
                 - topology
@@ -643,6 +829,39 @@ spec:
                     forbidden otherwise
                   rule: 'has(self.topology) && self.topology == ''Localnet'' ? has(self.localnet):
                     !has(self.localnet)'
+                - message: transport 'NoOverlay' is only supported for Layer3 primary
+                    networks
+                  rule: '!has(self.transport) || self.transport != ''NoOverlay'' ||
+                    (self.topology == ''Layer3'' && has(self.layer3) && self.layer3.role
+                    == ''Primary'')'
+                - message: spec.noOverlay is required when type transport is 'NoOverlay'
+                  rule: '!has(self.transport) || self.transport != ''NoOverlay'' ||
+                    has(self.noOverlay)'
+                - message: spec.noOverlay is forbidden when transport type is not
+                    'NoOverlay'
+                  rule: self.transport == 'NoOverlay' || !has(self.noOverlay)
+                - message: transport 'EVPN' is only supported for Layer2 or Layer3
+                    primary networks
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || ((self.topology
+                    == ''Layer2'' && has(self.layer2) && self.layer2.role == ''Primary'')
+                    || (self.topology == ''Layer3'' && has(self.layer3) && self.layer3.role
+                    == ''Primary''))'
+                - message: spec.evpn field is required when transport is 'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || has(self.evpn)'
+                - message: spec.evpn field is forbidden when transport is not 'EVPN'
+                  rule: self.transport == 'EVPN' || !has(self.evpn)
+                - message: spec.evpn.macVRF field is required for Layer2 topology
+                    when transport is 'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
+                    != ''Layer2'' || (has(self.evpn) && has(self.evpn.macVRF))'
+                - message: spec.evpn.ipVRF field is required for Layer3 topology when
+                    transport is 'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
+                    != ''Layer3'' || (has(self.evpn) && has(self.evpn.ipVRF))'
+                - message: spec.evpn.macVRF field is forbidden for Layer3 topology
+                    when transport is 'EVPN'
+                  rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
+                    != ''Layer3'' || !has(self.evpn) || !has(self.evpn.macVRF)'
                 - message: Network spec is immutable
                   rule: self == oldSelf
             required:

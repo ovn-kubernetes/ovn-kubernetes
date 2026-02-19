@@ -35,16 +35,19 @@ type DefaultGatewayReconciler struct {
 	watchFactory  *factory.WatchFactory
 	netInfo       util.NetInfo
 	interfaceName string
+	// getNetworkNameForNADKey resolves NAD keys to network names for UDNs.
+	getNetworkNameForNADKey func(nadKey string) string
 }
 
 // NewDefaultGatewayReconciler creates a new instance of DefaultGatewayReconciler.
 // It takes a WatchFactory for managing resource watches, a NetInfo object for network information,
 // and the name of the network interface to send ARPs or RAs as parameters.
-func NewDefaultGatewayReconciler(watchFactory *factory.WatchFactory, netInfo util.NetInfo, interfaceName string) *DefaultGatewayReconciler {
+func NewDefaultGatewayReconciler(watchFactory *factory.WatchFactory, netInfo util.NetInfo, interfaceName string, getNetworkNameForNADKey func(nadKey string) string) *DefaultGatewayReconciler {
 	return &DefaultGatewayReconciler{
-		watchFactory:  watchFactory,
-		netInfo:       netInfo,
-		interfaceName: interfaceName,
+		watchFactory:            watchFactory,
+		netInfo:                 netInfo,
+		interfaceName:           interfaceName,
+		getNetworkNameForNADKey: getNetworkNameForNADKey,
 	}
 }
 
@@ -93,7 +96,7 @@ func findVMRelatedPodsWithListerFn(listPodsFn listPodsFn, pod *corev1.Pod) ([]*c
 
 // findPodAnnotation will return the the OVN pod
 // annotation from any other pod annotated with the same VM as pod
-func findPodAnnotation(client *factory.WatchFactory, pod *corev1.Pod, nadName string) (*util.PodAnnotation, error) {
+func findPodAnnotation(client *factory.WatchFactory, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
 	vmPods, err := findVMRelatedPods(client, pod)
 	if err != nil {
 		return nil, fmt.Errorf("failed finding related pods for pod %s/%s when looking for network info: %v", pod.Namespace, pod.Name, err)
@@ -105,7 +108,7 @@ func findPodAnnotation(client *factory.WatchFactory, pod *corev1.Pod, nadName st
 	}
 
 	for _, vmPod := range vmPods {
-		podAnnotation, err := util.UnmarshalPodAnnotation(vmPod.Annotations, nadName)
+		podAnnotation, err := util.UnmarshalPodAnnotation(vmPod.Annotations, nadKey)
 		if err == nil {
 			return podAnnotation, nil
 		}
@@ -118,16 +121,16 @@ func findPodAnnotation(client *factory.WatchFactory, pod *corev1.Pod, nadName st
 // to the target vm pod so ip address follow vm during migration. This has to
 // done before creating the LSP to be sure that Address field get configured
 // correctly at the target VM pod LSP.
-func EnsurePodAnnotationForVM(watchFactory *factory.WatchFactory, kube *kube.KubeOVN, pod *corev1.Pod, nadName string) (*util.PodAnnotation, error) {
+func EnsurePodAnnotationForVM(watchFactory *factory.WatchFactory, kube *kube.KubeOVN, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
 	if !IsPodLiveMigratable(pod) {
 		return nil, nil
 	}
 
-	if podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName); err == nil {
+	if podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey); err == nil {
 		return podAnnotation, nil
 	}
 
-	podAnnotation, err := findPodAnnotation(watchFactory, pod, nadName)
+	podAnnotation, err := findPodAnnotation(watchFactory, pod, nadKey)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +148,7 @@ func EnsurePodAnnotationForVM(watchFactory *factory.WatchFactory, kube *kube.Kub
 		// Informer cache should not be mutated, so get a copy of the object
 		modifiedPod = pod.DeepCopy()
 		if podAnnotation != nil {
-			modifiedPod.Annotations, err = util.MarshalPodAnnotation(modifiedPod.Annotations, podAnnotation, nadName)
+			modifiedPod.Annotations, err = util.MarshalPodAnnotation(modifiedPod.Annotations, podAnnotation, nadKey)
 			if err != nil {
 				return err
 			}
@@ -218,12 +221,12 @@ func ZoneContainsPodSubnet(lsManager *logicalswitchmanager.LogicalSwitchManager,
 
 // nodeContainsPodSubnet will return true if the node subnet annotation
 // contains the subnets from the argument
-func nodeContainsPodSubnet(watchFactory *factory.WatchFactory, nodeName string, podAnnotation *util.PodAnnotation, nadName string) (bool, error) {
+func nodeContainsPodSubnet(watchFactory *factory.WatchFactory, nodeName string, podAnnotation *util.PodAnnotation, netName string) (bool, error) {
 	node, err := watchFactory.GetNode(nodeName)
 	if err != nil {
 		return false, err
 	}
-	nodeHostSubNets, err := util.ParseNodeHostSubnetAnnotation(node, nadName)
+	nodeHostSubNets, err := util.ParseNodeHostSubnetAnnotation(node, netName)
 	if err != nil {
 		return false, err
 	}
@@ -318,7 +321,7 @@ func FindLiveMigratablePods(watchFactory *factory.WatchFactory) ([]*corev1.Pod, 
 
 // allocateSyncMigratablePodIPs will refill ip pool in
 // case the node has take over the vm subnet for live migrated vms
-func allocateSyncMigratablePodIPs(watchFactory *factory.WatchFactory, lsManager *logicalswitchmanager.LogicalSwitchManager, nodeName, nadName string, pod *corev1.Pod, allocatePodIPsOnSwitch func(*corev1.Pod, *util.PodAnnotation, string, string) (string, error)) (*ktypes.NamespacedName, string, *util.PodAnnotation, error) {
+func allocateSyncMigratablePodIPs(watchFactory *factory.WatchFactory, lsManager *logicalswitchmanager.LogicalSwitchManager, nodeName, nadKey string, pod *corev1.Pod, allocatePodIPsOnSwitch func(*corev1.Pod, *util.PodAnnotation, string, string) (string, error)) (*ktypes.NamespacedName, string, *util.PodAnnotation, error) {
 	isStale, err := IsMigratedSourcePodStale(watchFactory, pod)
 	if err != nil {
 		return nil, "", nil, err
@@ -331,7 +334,7 @@ func allocateSyncMigratablePodIPs(watchFactory *factory.WatchFactory, lsManager 
 
 	vmKey := ExtractVMNameFromPod(pod)
 
-	annotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	annotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	if err != nil {
 		return nil, "", nil, nil
 	}
@@ -341,7 +344,7 @@ func allocateSyncMigratablePodIPs(watchFactory *factory.WatchFactory, lsManager 
 	if !zoneContainsPodSubnet || (nodeName != "" && switchName != nodeName) {
 		return vmKey, "", annotation, nil
 	}
-	expectedLogicalPortName, err := allocatePodIPsOnSwitch(pod, annotation, nadName, switchName)
+	expectedLogicalPortName, err := allocatePodIPsOnSwitch(pod, annotation, nadKey, switchName)
 	if err != nil {
 		return vmKey, "", nil, err
 	}
@@ -350,9 +353,9 @@ func allocateSyncMigratablePodIPs(watchFactory *factory.WatchFactory, lsManager 
 
 // AllocateSyncMigratablePodIPsOnZone will refill ip pool in
 // with pod's IPs if those IPs belong to the zone
-func AllocateSyncMigratablePodIPsOnZone(watchFactory *factory.WatchFactory, lsManager *logicalswitchmanager.LogicalSwitchManager, nadName string, pod *corev1.Pod, allocatePodIPsOnSwitch func(*corev1.Pod, *util.PodAnnotation, string, string) (string, error)) (*ktypes.NamespacedName, string, *util.PodAnnotation, error) {
+func AllocateSyncMigratablePodIPsOnZone(watchFactory *factory.WatchFactory, lsManager *logicalswitchmanager.LogicalSwitchManager, nadKey string, pod *corev1.Pod, allocatePodIPsOnSwitch func(*corev1.Pod, *util.PodAnnotation, string, string) (string, error)) (*ktypes.NamespacedName, string, *util.PodAnnotation, error) {
 	// We care about the whole zone so we pass the nodeName empty
-	return allocateSyncMigratablePodIPs(watchFactory, lsManager, nadName, "", pod, allocatePodIPsOnSwitch)
+	return allocateSyncMigratablePodIPs(watchFactory, lsManager, "", nadKey, pod, allocatePodIPsOnSwitch)
 }
 
 // ZoneContainsPodSubnetOrUntracked returns whether a pod with its corresponding
@@ -577,11 +580,15 @@ func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration
 	}
 
 	targetPod := liveMigration.TargetPod
-	if len(r.netInfo.GetNADs()) != 1 {
-		return fmt.Errorf("expected only one nad for network %q, got %d", r.netInfo.GetNetworkName(), len(r.netInfo.GetNADs()))
+	nadKeys, err := util.PodNADKeys(targetPod, r.netInfo, r.getNetworkNameForNADKey)
+	if err != nil {
+		return err
+	}
+	if len(nadKeys) != 1 {
+		return fmt.Errorf("expected only one NAD key for network %q, got %d", r.netInfo.GetNetworkName(), len(nadKeys))
 	}
 
-	targetPodAnnotation, err := util.UnmarshalPodAnnotation(targetPod.Annotations, r.netInfo.GetNADs()[0])
+	targetPodAnnotation, err := util.UnmarshalPodAnnotation(targetPod.Annotations, nadKeys[0])
 	if err != nil {
 		return ovntypes.NewSuppressedError(fmt.Errorf("failed parsing ovn pod annotation for pod '%s/%s' and network %q: %w", targetPod.Namespace, targetPod.Name, r.netInfo.GetNetworkName(), err))
 	}

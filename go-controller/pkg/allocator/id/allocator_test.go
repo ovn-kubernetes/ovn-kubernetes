@@ -5,6 +5,43 @@ import (
 	"testing"
 )
 
+func TestIDAllocator_ReleaseID(t *testing.T) {
+	t.Run("returns allocated ID when releasing", func(t *testing.T) {
+		allocator := NewIDAllocator("test", 10)
+		id, err := allocator.AllocateID("resource1")
+		if err != nil {
+			t.Fatalf("AllocateID() unexpected error: %v", err)
+		}
+
+		got := allocator.ReleaseID("resource1")
+		if got != id {
+			t.Errorf("ReleaseID() = %d, want %d", got, id)
+		}
+		if allocator.GetID("resource1") != -1 {
+			t.Error("GetID() should return -1 after release")
+		}
+	})
+
+	t.Run("returns -1 when releasing already released resource", func(t *testing.T) {
+		allocator := NewIDAllocator("test", 10)
+		if _, err := allocator.AllocateID("resource1"); err != nil {
+			t.Fatalf("AllocateID() unexpected error: %v", err)
+		}
+		allocator.ReleaseID("resource1")
+
+		if got := allocator.ReleaseID("resource1"); got != -1 {
+			t.Errorf("ReleaseID() = %d, want -1", got)
+		}
+	})
+
+	t.Run("returns -1 when releasing non-existent resource", func(t *testing.T) {
+		allocator := NewIDAllocator("test", 10)
+		if got := allocator.ReleaseID("nonexistent"); got != -1 {
+			t.Errorf("ReleaseID() = %d, want -1", got)
+		}
+	})
+}
+
 func TestIDsAllocator(t *testing.T) {
 	// create allocator with range [3, 8]
 	allocator := newIDsAllocator("test", 6, 3)

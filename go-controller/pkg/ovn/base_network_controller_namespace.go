@@ -396,6 +396,7 @@ func (bnc *BaseNetworkController) getAllNamespacePodAddresses(ns string) []net.I
 	}
 
 	var ips []net.IP
+	resolver := bnc.getNetworkNameForNADKeyFunc()
 	// Get all the pods in the namespace and append their IP to the address_set
 	existingPods, err := bnc.watchFactory.GetPods(ns)
 	if err != nil {
@@ -404,7 +405,7 @@ func (bnc *BaseNetworkController) getAllNamespacePodAddresses(ns string) []net.I
 		ips = make([]net.IP, 0, len(existingPods))
 		for _, pod := range existingPods {
 			if !util.PodWantsHostNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) {
-				podIPs, err := util.GetPodIPsOfNetwork(pod, bnc.GetNetInfo())
+				podIPs, err := util.GetPodIPsOfNetwork(pod, bnc.GetNetInfo(), resolver)
 				if err != nil {
 					klog.Warningf("Failed to get IPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 					continue
@@ -448,7 +449,7 @@ func (bnc *BaseNetworkController) getNamespacePortGroupName(namespace string) st
 // failure indicates it should be retried later.
 func (bsnc *BaseNetworkController) removeRemoteZonePodFromNamespaceAddressSet(pod *corev1.Pod) error {
 	podDesc := fmt.Sprintf("pod %s/%s/%s", bsnc.GetNetworkName(), pod.Namespace, pod.Name)
-	podIfAddrs, err := util.GetPodCIDRsWithFullMask(pod, bsnc.GetNetInfo())
+	podIfAddrs, err := util.GetPodCIDRsWithFullMask(pod, bsnc.GetNetInfo(), bsnc.getNetworkNameForNADKeyFunc())
 	if err != nil {
 		// maybe the pod is not scheduled yet or addLSP has not happened yet, so it doesn't have IPs.
 		// let us ignore deletion failures for podIPs not found because

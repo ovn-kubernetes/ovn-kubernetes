@@ -1,0 +1,49 @@
+---
+global:
+  measurements:
+    - name: podLatency
+    - name: pprof
+      pprofInterval: 1m
+      pprofDirectory: pprof-data
+      pprofTargets:
+      - name: ovnkube-controller
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/profile?seconds=30
+      - name: ovnkube-control-plane
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/profile?seconds=30
+      - name: ovnkube-controller-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {app: ovnkube-node}
+        url: http://localhost:9410/debug/pprof/heap?seconds=30
+      - name: ovnkube-control-plane-heap
+        namespace: "ovn-kubernetes"
+        labelSelector: {name: ovnkube-control-plane}
+        url: http://localhost:9411/debug/pprof/heap?seconds=30
+jobs:
+  - name: kubelet-density-cni
+    jobIterations: 100
+    qps: 10
+    burst: 10
+    namespacedIterations: false 
+    namespace: kubelet-density-cni
+    waitWhenFinished: true
+    podWait: false 
+    preLoadImages: true
+    preLoadPeriod: 2m
+    churnConfig:
+      percent: 10
+      cycles: 10
+      mode: objects
+    objects:
+
+      - objectTemplate: workloads/templates/kubelet-density-cni/webserver-deployment.yml
+        replicas: 1
+
+      - objectTemplate: workloads/templates/kubelet-density-cni/webserver-service.yml
+        replicas: 1
+
+      - objectTemplate: workloads/templates/kubelet-density-cni/curl-deployment.yml
+        replicas: 1

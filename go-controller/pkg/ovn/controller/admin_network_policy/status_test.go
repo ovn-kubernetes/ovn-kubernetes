@@ -147,6 +147,177 @@ func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi
 	return controller, nil
 }
 
+func TestDoesStatusNeedAnUpdate(t *testing.T) {
+	tests := []struct {
+		name              string
+		existingCondition *metav1.Condition
+		newCondition      metav1.Condition
+		expectedResult    bool
+	}{
+		{
+			name:              "nil existing condition should need update",
+			existingCondition: nil,
+			newCondition: metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "success",
+			},
+			expectedResult: true,
+		},
+		{
+			name: "same status, reason, message should not need update",
+			existingCondition: &metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "success",
+			},
+			newCondition: metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "success",
+			},
+			expectedResult: false,
+		},
+		{
+			name: "different status should need update",
+			existingCondition: &metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionFalse,
+				Reason:  "SetupFailed",
+				Message: "error",
+			},
+			newCondition: metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "success",
+			},
+			expectedResult: true,
+		},
+		{
+			name: "different reason should need update",
+			existingCondition: &metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "OldReason",
+				Message: "success",
+			},
+			newCondition: metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "NewReason",
+				Message: "success",
+			},
+			expectedResult: true,
+		},
+		{
+			name: "different message should need update",
+			existingCondition: &metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "old message",
+			},
+			newCondition: metav1.Condition{
+				Type:    "Ready-In-Zone-test",
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "new message",
+			},
+			expectedResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := doesStatusNeedAnUpdate(tt.existingCondition, tt.newCondition)
+			if result != tt.expectedResult {
+				t.Errorf("doesStatusNeedAnUpdate() = %v, want %v", result, tt.expectedResult)
+			}
+		})
+	}
+}
+
+func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+	controller, err := newANPController(
+		anpapi.AdminNetworkPolicyList{
+			Items: []anpapi.AdminNetworkPolicy{initialANP},
+		},
+		anpapi.BaselineAdminNetworkPolicyList{
+			Items: []anpapi.BaselineAdminNetworkPolicy{initialBANP},
+		},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// First call - should make an API call to set status to Ready
+	err = controller.updateANPStatusToReady(initialANP.Name)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Wait for the status to be reflected in the lister
+	g.Eventually(func() int {
+		latestANP, err := controller.anpLister.Get(initialANP.Name)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		return len(latestANP.Status.Conditions)
+	}).Should(gomega.Equal(1))
+
+	// Get the number of actions after first update
+	actionsAfterANPFirstUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
+
+	// Second call with same status - should NOT make an API call
+	err = controller.updateANPStatusToReady(initialANP.Name)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Verify no new actions were added (ApplyStatus was skipped)
+	actionsAfterANPSecondUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
+	g.Expect(actionsAfterANPSecondUpdate).To(gomega.Equal(actionsAfterANPFirstUpdate),
+		"Expected no new API calls when status is unchanged, but got %d new actions",
+		actionsAfterANPSecondUpdate-actionsAfterANPFirstUpdate)
+
+	// Third call with different status (NotReady) - SHOULD make an API call
+	err = controller.updateANPStatusToNotReady(initialANP.Name, "something went wrong")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Verify a new action WAS added (ApplyStatus was called)
+	actionsAfterANPThirdUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
+	g.Expect(actionsAfterANPThirdUpdate).To(gomega.Equal(actionsAfterANPFirstUpdate+1),
+		"Expected 1 new API call when status changed to NotReady, but got %d new actions",
+		actionsAfterANPThirdUpdate-actionsAfterANPSecondUpdate)
+
+	// Now test BANP
+	err = controller.updateBANPStatusToReady(initialBANP.Name)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	g.Eventually(func() int {
+		latestBANP, err := controller.banpLister.Get(initialBANP.Name)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		return len(latestBANP.Status.Conditions)
+	}).Should(gomega.Equal(1))
+
+	actionsAfterBANPFirstUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
+
+	// Second call with same status - should NOT make an API call
+	err = controller.updateBANPStatusToReady(initialBANP.Name)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	actionsAfterBANPSecondUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
+	g.Expect(actionsAfterBANPSecondUpdate).To(gomega.Equal(actionsAfterBANPFirstUpdate),
+		"Expected no new API calls when BANP status is unchanged")
+
+	// Third call with different status (NotReady) - SHOULD make an API call
+	err = controller.updateBANPStatusToNotReady(initialBANP.Name, "something went wrong")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Verify a new action WAS added (ApplyStatus was called)
+	actionsAfterBANPThirdUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
+	g.Expect(actionsAfterBANPThirdUpdate).To(gomega.Equal(actionsAfterBANPFirstUpdate+1),
+		"Expected 1 new API call when BANP status changed to NotReady, but got %d new actions",
+		actionsAfterBANPThirdUpdate-actionsAfterBANPSecondUpdate)
+}
+
 func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	anpName := "harry-potter"
 	banpName := "jon-snow"

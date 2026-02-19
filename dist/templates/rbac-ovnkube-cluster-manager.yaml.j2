@@ -77,6 +77,8 @@ rules:
           - clusteruserdefinednetworks
           - routeadvertisements
           - networkqoses
+          - clusternetworkconnects
+          - vteps
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
@@ -88,6 +90,7 @@ rules:
           - clusteruserdefinednetworks/status
           - clusteruserdefinednetworks/finalizers
           - routeadvertisements/status
+          - clusternetworkconnects # Unlike core kubernetes objects, for CRDs there is strict enforcement of status subresource permissions. Since CM has to annotate CNC we need to provide full object patch permissions.
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:
@@ -133,5 +136,5 @@ rules:
     - apiGroups: ["frrk8s.metallb.io"]
       resources:
           - frrconfigurations
-      verbs: [ "create", "delete", "list", "patch", "update", "watch" ]
+      verbs: [ "create", "delete", "get", "list", "patch", "update", "watch" ]
     {%- endif %}

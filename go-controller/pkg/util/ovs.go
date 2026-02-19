@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"path/filepath"
 	"regexp"
@@ -174,7 +175,7 @@ func (runsvc *defaultExecRunner) RunCmd(cmd kexec.Cmd, cmdPath string, envVars [
 	return stdout, stderr, err
 }
 
-var runCmdExecRunner ExecRunner = &defaultExecRunner{}
+var RunCmdExecRunner ExecRunner = &defaultExecRunner{}
 
 // SetExec validates executable paths and saves the given exec interface
 // to be used for running various OVS and OVN utilites
@@ -301,17 +302,17 @@ func ResetRunner() {
 var runCounter uint64
 
 func runCmd(cmd kexec.Cmd, cmdPath string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
-	return runCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
+	return RunCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
 }
 
 func run(cmdPath string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
 	cmd := runner.exec.Command(cmdPath, args...)
-	return runCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
+	return RunCmdExecRunner.RunCmd(cmd, cmdPath, []string{}, args...)
 }
 
 func runWithEnvVars(cmdPath string, envVars []string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
 	cmd := runner.exec.Command(cmdPath, args...)
-	return runCmdExecRunner.RunCmd(cmd, cmdPath, envVars, args...)
+	return RunCmdExecRunner.RunCmd(cmd, cmdPath, envVars, args...)
 }
 
 // RunOVSOfctl runs a command via ovs-ofctl.
@@ -669,11 +670,69 @@ func AddOFFlowWithSpecificAction(bridgeName, action string) (string, string, err
 	return strings.Trim(stdout.String(), "\" \n"), stderr.String(), err
 }
 
+// openFlowStdinReader incrementally renders a flow slice as a newline-delimited
+// stream for ovs-ofctl stdin without constructing one large joined string.
+type openFlowStdinReader struct {
+	flows      []string
+	flowIndex  int
+	flowOffset int
+	needEOL    bool
+}
+
+// Read implements io.Reader over r.flows, producing output equivalent to
+// strings.Join(flows, "\n"), but in small chunks to reduce peak allocations.
+func (r *openFlowStdinReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	// Fast path: no flows left and no pending delimiter.
+	if r.flowIndex >= len(r.flows) && !r.needEOL {
+		return 0, io.EOF
+	}
+
+	total := 0
+	for total < len(p) {
+		if r.needEOL {
+			// Emit exactly one '\n' between flows.
+			p[total] = '\n'
+			total++
+			r.needEOL = false
+			if total == len(p) {
+				return total, nil
+			}
+			continue
+		}
+
+		if r.flowIndex >= len(r.flows) {
+			break
+		}
+
+		flow := r.flows[r.flowIndex]
+		if r.flowOffset >= len(flow) {
+			// Current flow was fully consumed; advance and schedule delimiter if
+			// there is another flow.
+			r.flowIndex++
+			r.flowOffset = 0
+			r.needEOL = r.flowIndex < len(r.flows)
+			continue
+		}
+
+		// Copy as much of the current flow as fits in caller's buffer.
+		copied := copy(p[total:], flow[r.flowOffset:])
+		total += copied
+		r.flowOffset += copied
+	}
+
+	if total == 0 {
+		return 0, io.EOF
+	}
+	return total, nil
+}
+
 // ReplaceOFFlows replaces flows in the bridge with a slice of flows
 func ReplaceOFFlows(bridgeName string, flows []string) (string, string, error) {
 	args := []string{"-O", "OpenFlow13", "--bundle", "replace-flows", bridgeName, "-"}
-	stdin := &bytes.Buffer{}
-	stdin.Write([]byte(strings.Join(flows, "\n")))
+	stdin := &openFlowStdinReader{flows: flows}
 
 	cmd := runner.exec.Command(runner.ofctlPath, args...)
 	cmd.SetStdin(stdin)
@@ -911,10 +970,10 @@ func GetOVSPortPodInfo(hostIfName string) (bool, string, string, error) {
 		return false, "", "", nil
 	}
 	sandbox := GetExternalIDValByKey(stdout, "sandbox")
-	nadName := GetExternalIDValByKey(stdout, types.NADExternalID)
+	nadkey := GetExternalIDValByKey(stdout, types.NADExternalID)
 	// if network_name does not exists, it is default network
-	if nadName == "" {
-		nadName = types.DefaultNetworkName
+	if nadkey == "" {
+		nadkey = types.DefaultNetworkName
 	}
-	return true, sandbox, nadName, nil
+	return true, sandbox, nadkey, nil
 }

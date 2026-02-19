@@ -2,6 +2,7 @@ package routeadvertisements
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -148,11 +149,18 @@ func (tn testNode) Node() *corev1.Node {
 	}
 }
 
+type testPrefixSelector struct {
+	Prefix string
+	LE     uint32
+	GE     uint32
+}
+
 type testNeighbor struct {
 	ASN       uint32
 	Address   string
 	DisableMP *bool
 	Advertise []string
+	Receive   []testPrefixSelector
 }
 
 func (tn testNeighbor) Neighbor() frrapi.Neighbor {
@@ -169,6 +177,22 @@ func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 	}
 	if tn.DisableMP != nil {
 		n.DisableMP = *tn.DisableMP
+	}
+	if len(tn.Receive) > 0 {
+		prefixSelectors := make([]frrapi.PrefixSelector, 0, len(tn.Receive))
+		for _, ps := range tn.Receive {
+			prefixSelectors = append(prefixSelectors, frrapi.PrefixSelector{
+				Prefix: ps.Prefix,
+				LE:     ps.LE,
+				GE:     ps.GE,
+			})
+		}
+		n.ToReceive = frrapi.Receive{
+			Allowed: frrapi.AllowedInPrefixes{
+				Mode:     frrapi.AllowRestricted,
+				Prefixes: prefixSelectors,
+			},
+		}
 	}
 
 	return n
@@ -198,14 +222,16 @@ func (tr testRouter) Router() frrapi.Router {
 }
 
 type testFRRConfig struct {
-	Name         string
-	Namespace    string
-	Generation   int
-	Labels       map[string]string
-	Annotations  map[string]string
-	Routers      []*testRouter
-	NodeSelector map[string]string
-	OwnUpdate    bool
+	Name              string
+	Namespace         string
+	Generation        int
+	Labels            map[string]string
+	Annotations       map[string]string
+	Routers           []*testRouter
+	NodeSelector      map[string]string
+	OwnUpdate         bool
+	RawConfig         string
+	RawConfigPriority int
 }
 
 func (tf testFRRConfig) FRRConfiguration() *frrapi.FRRConfiguration {
@@ -225,6 +251,10 @@ func (tf testFRRConfig) FRRConfiguration() *frrapi.FRRConfiguration {
 	}
 	for _, r := range tf.Routers {
 		f.Spec.BGP.Routers = append(f.Spec.BGP.Routers, r.Router())
+	}
+	if tf.RawConfig != "" {
+		f.Spec.Raw.Config = tf.RawConfig
+		f.Spec.Raw.Priority = tf.RawConfigPriority
 	}
 	if tf.OwnUpdate {
 		f.ManagedFields = append(f.ManagedFields, metav1.ManagedFieldsEntry{
@@ -264,15 +294,19 @@ func (te testEIP) EgressIP() *eiptypes.EgressIP {
 }
 
 type testNAD struct {
-	Name        string
-	Namespace   string
-	Network     string
-	Subnet      string
-	Labels      map[string]string
-	Annotations map[string]string
-	IsSecondary bool
-	Topology    string
-	OwnUpdate   bool
+	Name                  string
+	Namespace             string
+	Network               string
+	Subnet                string
+	Labels                map[string]string
+	Annotations           map[string]string
+	IsSecondary           bool
+	Topology              string
+	OwnUpdate             bool
+	EVPNMACVRFVNI         int32
+	EVPNMACVRFRouteTarget string
+	EVPNIPVRFVNI          int32
+	EVPNIPVRFRouteTarget  string
 }
 
 func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
@@ -295,27 +329,52 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 		)
 		nad.ObjectMeta.OwnerReferences = []metav1.OwnerReference{ownerRef}
 	}
-	topology := tn.Topology
-	switch {
-	case tn.IsSecondary:
-		nad.Spec.Config = fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"%s\", \"type\": \"%s\", \"topology\": \"%s\", \"netAttachDefName\": \"%s\", \"subnets\": \"%s\"}",
-			tn.Network,
-			config.CNI.Plugin,
-			topology,
-			tn.Namespace+"/"+tn.Name,
-			tn.Subnet,
-		)
-	case tn.Topology != "":
-		nad.Spec.Config = fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"%s\", \"type\": \"%s\", \"topology\": \"%s\", \"netAttachDefName\": \"%s\", \"role\": \"primary\", \"subnets\": \"%s\"}",
-			tn.Network,
-			config.CNI.Plugin,
-			topology,
-			tn.Namespace+"/"+tn.Name,
-			tn.Subnet,
-		)
-	default:
-		nad.Spec.Config = fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"%s\", \"type\": \"%s\"}", tn.Network, config.CNI.Plugin)
+
+	// Build the config as a map to properly marshal EVPN config
+	cniConfig := map[string]interface{}{
+		"cniVersion":       "0.4.0",
+		"name":             tn.Network,
+		"type":             config.CNI.Plugin,
+		"netAttachDefName": tn.Namespace + "/" + tn.Name,
 	}
+
+	if tn.Topology != "" {
+		cniConfig["topology"] = tn.Topology
+	}
+	if tn.Subnet != "" {
+		cniConfig["subnets"] = tn.Subnet
+	}
+	if tn.Topology != "" && !tn.IsSecondary {
+		cniConfig["role"] = "primary"
+	}
+
+	// Add EVPN configuration if present
+	if tn.EVPNMACVRFVNI > 0 || tn.EVPNIPVRFVNI > 0 {
+		evpnConfig := map[string]interface{}{}
+		if tn.EVPNMACVRFVNI > 0 {
+			macvrf := map[string]interface{}{
+				"vni": tn.EVPNMACVRFVNI,
+			}
+			if tn.EVPNMACVRFRouteTarget != "" {
+				macvrf["routeTarget"] = tn.EVPNMACVRFRouteTarget
+			}
+			evpnConfig["macVRF"] = macvrf
+		}
+		if tn.EVPNIPVRFVNI > 0 {
+			ipvrf := map[string]interface{}{
+				"vni": tn.EVPNIPVRFVNI,
+			}
+			if tn.EVPNIPVRFRouteTarget != "" {
+				ipvrf["routeTarget"] = tn.EVPNIPVRFRouteTarget
+			}
+			evpnConfig["ipVRF"] = ipvrf
+		}
+		cniConfig["evpn"] = evpnConfig
+	}
+
+	configBytes, _ := json.Marshal(cniConfig)
+	nad.Spec.Config = string(configBytes)
+
 	if tn.OwnUpdate {
 		nad.ManagedFields = append(nad.ManagedFields, metav1.ManagedFieldsEntry{
 			Manager: fieldManager,
@@ -372,6 +431,7 @@ func TestController_reconcile(t *testing.T) {
 		namespaces           []*testNamespace
 		eips                 []*testEIP
 		reconcile            string
+		transport            string
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
 		expectFRRConfigs     []*testFRRConfig
@@ -782,6 +842,37 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionTrue,
 		},
 		{
+			name:      "reconciles pod RouteAdvertisement for default network in no-overlay mode with ToReceive routes",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			transport: types.NetworkTransportNoOverlay,
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Receive: []testPrefixSelector{{Prefix: "1.2.0.0/16"}}},
+						}},
+					},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.0.0/24"}, Receive: []testPrefixSelector{{Prefix: "1.1.0.0/16", LE: 24, GE: 24}}},
+						}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
 			name: "fails to reconcile a secondary network",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			nads: []*testNAD{
@@ -942,6 +1033,338 @@ func TestController_reconcile(t *testing.T) {
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionFalse,
 		},
+		{
+			name: "fails to reconcile EVPN-enabled network to default VRF",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "evpn-net", Namespace: "test", Network: util.GenerateCUDNNetworkName("evpn-net"),
+					Topology: "layer2", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "reconciles EVPN MAC-VRF l2 network with a specific target VRF without a VRF router",
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000, EVPNMACVRFRouteTarget: "65000:1000"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+  vni 1000
+   route-target import 65000:1000
+   route-target export 65000:1000
+  exit-vni
+ exit-address-family
+exit
+!
+`,
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "reconciles EVPN IP-VRF network with auto target and creates a router",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, SelectsDefault: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfigGlobal",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+				{
+					Name:      "frrConfigVRF",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65100, VRF: "blue"},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\",\"cluster_udn_blue\":\"10.2.1.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigGlobal/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"1.1.0.0/24"}},
+						}},
+					},
+				},
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65100 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "fails to reconcile MACVRF EVPN without global router",
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "red", Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_red\":\"10.1.1.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "fails to reconcile IPVRF EVPN without global router",
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "red", Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNIPVRFVNI: 1000},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_red\":\"10.1.1.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "fails to reconcile EVPN with global router but no neighbors",
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_red\":\"10.1.1.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+		},
+		{
+			name: "reconciles EVPN when global router is in a different FRRConfiguration than VRF router",
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfigGlobal",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						// Global router with neighbors - provides ASN and neighbors for EVPN
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+				{
+					Name:      "frrConfigVRF",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						// VRF-specific router - matches the target VRF
+						{ASN: 65000, VRF: "red", Prefixes: []string{"10.1.0.0/16"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000, EVPNMACVRFRouteTarget: "65000:1000"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigGlobal/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+  vni 1000
+   route-target import 65000:1000
+   route-target export 65000:1000
+  exit-vni
+ exit-address-family
+exit
+!
+`,
+				},
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "red", Prefixes: []string{"10.1.0.0/16"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"10.1.0.0/16"}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -960,9 +1383,11 @@ func TestController_reconcile(t *testing.T) {
 					HostSubnetLength: 64,
 				},
 			}
+			config.Default.Transport = tt.transport
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
+			config.OVNKubernetesFeature.EnableEVPN = true
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 			addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)
@@ -1315,6 +1740,7 @@ func TestUpdates(t *testing.T) {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
+			config.OVNKubernetesFeature.EnableEVPN = true
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 

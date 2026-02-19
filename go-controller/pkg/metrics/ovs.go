@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -351,7 +350,7 @@ func ovsDatapathMasksMetrics(output, datapath string) {
 
 // getOvsDatapaths gives list of datapaths
 // and updates the corresponding datapath metrics
-func getOvsDatapaths(ovsAppctl ovsClient) (datapathsList []string, err error) {
+func getOvsDatapaths() (datapathsList []string, err error) {
 	var stdout, stderr string
 
 	defer func() {
@@ -361,7 +360,7 @@ func getOvsDatapaths(ovsAppctl ovsClient) (datapathsList []string, err error) {
 		}
 	}()
 
-	stdout, stderr, err = ovsAppctl("dpctl/dump-dps")
+	stdout, stderr, err = util.RunOvsVswitchdAppCtl("dpctl/dump-dps")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get output of ovs-appctl dpctl/dump-dps "+
 			"stderr(%s) :(%v)", stderr, err)
@@ -382,7 +381,7 @@ func getOvsDatapaths(ovsAppctl ovsClient) (datapathsList []string, err error) {
 	return datapathsList, nil
 }
 
-func setOvsDatapathMetrics(ovsAppctl ovsClient, datapaths []string) (err error) {
+func setOvsDatapathMetrics(datapaths []string) (err error) {
 	var stdout, stderr, datapath string
 
 	defer func() {
@@ -397,7 +396,7 @@ func setOvsDatapathMetrics(ovsAppctl ovsClient, datapaths []string) (err error) 
 		// the datapath type and 'ovs-system' the datapath name. To uniquely
 		// identify a datapath, both are required when querying OVS. If type is
 		// omitted, OVS will assume 'system'.
-		stdout, stderr, err = ovsAppctl("dpctl/show", datapath)
+		stdout, stderr, err = util.RunOvsVswitchdAppCtl("dpctl/show", datapath)
 		if err != nil {
 			return fmt.Errorf("failed to get datapath stats for %s "+
 				"stderr(%s) :(%v)", datapath, stderr, err)
@@ -430,41 +429,15 @@ func setOvsDatapathMetrics(ovsAppctl ovsClient, datapaths []string) (err error) 
 	return nil
 }
 
-// ovsDatapathMetricsUpdater updates the ovs datapath metrics
-func ovsDatapathMetricsUpdater(ovsAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			datapaths, err := getOvsDatapaths(ovsAppctl)
-			if err != nil {
-				klog.Errorf("Getting ovs datapath list failed: %s", err.Error())
-				continue
-			}
-			if err = setOvsDatapathMetrics(ovsAppctl, datapaths); err != nil {
-				klog.Errorf("Setting ovs datapath metrics failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
+// ovsDatapathMetricsUpdate collects and updates the ovs datapath metrics
+func ovsDatapathMetricsUpdate() {
+	datapaths, err := getOvsDatapaths()
+	if err != nil {
+		klog.Errorf("Getting ovs datapath list failed: %s", err.Error())
+		return
 	}
-}
-
-// ovsBridgeMetricsUpdater updates bridge related metrics
-func ovsBridgeMetricsUpdater(ovsDBClient libovsdbclient.Client, ovsAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-	var err error
-	for {
-		select {
-		case <-ticker.C:
-			if err = updateOvsBridgeMetrics(ovsDBClient, ovsAppctl); err != nil {
-				klog.Errorf("Getting ovs bridge info failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
+	if err = setOvsDatapathMetrics(datapaths); err != nil {
+		klog.Errorf("Setting ovs datapath metrics failed: %s", err.Error())
 	}
 }
 
@@ -511,22 +484,6 @@ func getOvsBridgeOpenFlowsCount(ovsOfctl ovsClient, bridgeName string) (float64,
 	}
 	return 0, fmt.Errorf("ovs-ofctl dump-aggregate %s output didn't contain "+
 		"flow_count field", bridgeName)
-}
-
-func ovsInterfaceMetricsUpdater(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-	var err error
-	for {
-		select {
-		case <-ticker.C:
-			if err = updateOvsInterfaceMetrics(ovsDBClient); err != nil {
-				klog.Errorf("Updating OVS interface metrics failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
-	}
 }
 
 // updateOvsInterfaceMetrics updates the ovs interface metrics obtained from ovsdb
@@ -608,21 +565,6 @@ func setOvsMemoryMetrics(ovsVswitchdAppctl ovsClient) (err error) {
 	return nil
 }
 
-func ovsMemoryMetricsUpdater(ovsVswitchdAppctl ovsClient, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := setOvsMemoryMetrics(ovsVswitchdAppctl); err != nil {
-				klog.Errorf("Setting ovs memory metrics failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
-	}
-}
-
 // setOvsHwOffloadMetrics updates the hw-offload, tc-policy metrics
 // obtained from Open_vSwitch table updates
 func setOvsHwOffloadMetrics(ovsDBClient libovsdbclient.Client) (err error) {
@@ -653,21 +595,6 @@ func setOvsHwOffloadMetrics(ovsDBClient libovsdbclient.Client) (err error) {
 	}
 	metricOvsTcPolicy.Set(tcPolicyMap[tcPolicyValue])
 	return nil
-}
-
-func ovsHwOffloadMetricsUpdater(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	ticker := time.NewTicker(time.Duration(metricsScrapeInterval) * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := setOvsHwOffloadMetrics(ovsDBClient); err != nil {
-				klog.Errorf("Setting ovs hardware offload metrics failed: %s", err.Error())
-			}
-		case <-stopChan:
-			return
-		}
-	}
 }
 
 var ovsVswitchdCoverageShowMetricsMap = map[string]*metricDetails{
@@ -835,15 +762,8 @@ var ovsVswitchdCoverageShowMetricsMap = map[string]*metricDetails{
 }
 var registerOvsMetricsOnce sync.Once
 
-func RegisterStandaloneOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	registerOvsMetrics(ovsDBClient, metricsScrapeInterval, prometheus.DefaultRegisterer, stopChan)
-}
-
-func RegisterOvsMetricsWithOvnMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, stopChan <-chan struct{}) {
-	registerOvsMetrics(ovsDBClient, metricsScrapeInterval, ovnRegistry, stopChan)
-}
-
-func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval int, registry prometheus.Registerer, stopChan <-chan struct{}) {
+// registerOvsMetrics registers the ovs metrics
+func registerOvsMetrics(ovsDBClient libovsdbclient.Client, registry prometheus.Registerer) {
 	registerOvsMetricsOnce.Do(func() {
 		getOvsVersionInfo(ovsDBClient)
 		registry.MustRegister(prometheus.NewGaugeFunc(
@@ -892,7 +812,7 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 		registry.MustRegister(MetricOvsInterfaceUpWait)
 		// Register the OVS coverage/show metrics
 		componentCoverageShowMetricsMap[ovsVswitchd] = ovsVswitchdCoverageShowMetricsMap
-		registerCoverageShowMetrics(ovsVswitchd, types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
+		registerCoverageShowMetrics(registry, ovsVswitchd, types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd)
 
 		// When ovnkube-node is running in privileged mode, the hostPID will be set to true,
 		// and therefore it can monitor OVS running on the host using PID.
@@ -906,18 +826,5 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemDB),
 			}))
 		}
-
-		// OVS datapath metrics updater
-		go ovsDatapathMetricsUpdater(util.RunOvsVswitchdAppCtl, metricsScrapeInterval, stopChan)
-		// OVS bridge metrics updater
-		go ovsBridgeMetricsUpdater(ovsDBClient, util.RunOVSOfctl, metricsScrapeInterval, stopChan)
-		// OVS interface metrics updater
-		go ovsInterfaceMetricsUpdater(ovsDBClient, metricsScrapeInterval, stopChan)
-		// OVS memory metrics updater
-		go ovsMemoryMetricsUpdater(util.RunOvsVswitchdAppCtl, metricsScrapeInterval, stopChan)
-		// OVS hw Offload metrics updater
-		go ovsHwOffloadMetricsUpdater(ovsDBClient, metricsScrapeInterval, stopChan)
-		// OVS coverage/show metrics updater.
-		go coverageShowMetricsUpdater(ovsVswitchd, stopChan)
 	})
 }

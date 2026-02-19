@@ -354,7 +354,7 @@ func (c *Controller) expandRulePeers(rule *gressRule) error {
 				if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !util.PodScheduled(pod) {
 					continue
 				}
-				podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
+				podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{}, nil)
 				if err != nil {
 					if errors.Is(err, util.ErrNoPodIPFound) {
 						// we ignore podIPsNotFound error here because onANPPodUpdate
@@ -472,7 +472,7 @@ func (c *Controller) convertANPSubjectToLSPs(anp *adminNetworkPolicyState) ([]*n
 				continue
 			}
 			// we need to collect podIP:cPort information
-			podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
+			podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{}, nil)
 			if err != nil {
 				if errors.Is(err, util.ErrNoPodIPFound) {
 					// we ignore podIPsNotFound error here because onANPPodUpdate

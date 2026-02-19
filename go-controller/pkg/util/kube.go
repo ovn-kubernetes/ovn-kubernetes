@@ -46,6 +46,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
+	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
 	egressfirewallclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned"
 	egressipclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned"
 	egressqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned"
@@ -53,6 +54,7 @@ import (
 	networkqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
 	routeadvertisementsclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	userdefinednetworkclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	vtepclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
 )
 
 // OVNClientset is a wrapper around all clientsets used by OVN-Kubernetes
@@ -70,9 +72,11 @@ type OVNClientset struct {
 	AdminPolicyRouteClient    adminpolicybasedrouteclientset.Interface
 	IPAMClaimsClient          ipamclaimssclientset.Interface
 	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
+	NetworkConnectClient      networkconnectclientset.Interface
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	FRRClient                 frrclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	VTEPClient                vtepclientset.Interface
 }
 
 // OVNMasterClientset
@@ -93,6 +97,7 @@ type OVNMasterClientset struct {
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	FRRClient                 frrclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	VTEPClient                vtepclientset.Interface
 }
 
 // OVNKubeControllerClientset
@@ -111,6 +116,7 @@ type OVNKubeControllerClientset struct {
 	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	NetworkConnectClient      networkconnectclientset.Interface
 }
 
 type OVNNodeClientset struct {
@@ -136,9 +142,11 @@ type OVNClusterManagerClientset struct {
 	IPAMClaimsClient          ipamclaimssclientset.Interface
 	OCPNetworkClient          ocpnetworkclientset.Interface
 	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
+	NetworkConnectClient      networkconnectclientset.Interface
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	FRRClient                 frrclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	VTEPClient                vtepclientset.Interface
 }
 
 const (
@@ -169,6 +177,7 @@ func (cs *OVNClientset) GetMasterClientset() *OVNMasterClientset {
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		FRRClient:                 cs.FRRClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		VTEPClient:                cs.VTEPClient,
 	}
 }
 
@@ -207,6 +216,7 @@ func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClient
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		NetworkConnectClient:      cs.NetworkConnectClient,
 	}
 }
 
@@ -224,9 +234,11 @@ func (cs *OVNClientset) GetClusterManagerClientset() *OVNClusterManagerClientset
 		IPAMClaimsClient:          cs.IPAMClaimsClient,
 		OCPNetworkClient:          cs.OCPNetworkClient,
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
+		NetworkConnectClient:      cs.NetworkConnectClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		FRRClient:                 cs.FRRClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		VTEPClient:                cs.VTEPClient,
 	}
 }
 
@@ -521,6 +533,11 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 		return nil, err
 	}
 
+	networkConnectClientset, err := networkconnectclientset.NewForConfig(kconfig)
+	if err != nil {
+		return nil, err
+	}
+
 	routeAdvertisementsClientset, err := routeadvertisementsclientset.NewForConfig(kconfig)
 	if err != nil {
 		return nil, err
@@ -532,6 +549,11 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 	}
 
 	networkqosClientset, err := networkqosclientset.NewForConfig(kconfig)
+	if err != nil {
+		return nil, err
+	}
+
+	vtepClientset, err := vtepclientset.NewForConfig(kconfig)
 	if err != nil {
 		return nil, err
 	}
@@ -550,9 +572,11 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 		AdminPolicyRouteClient:    adminPolicyBasedRouteClientset,
 		IPAMClaimsClient:          ipamClaimsClientset,
 		UserDefinedNetworkClient:  userDefinedNetworkClientSet,
+		NetworkConnectClient:      networkConnectClientset,
 		RouteAdvertisementsClient: routeAdvertisementsClientset,
 		FRRClient:                 frrClientset,
 		NetworkQoSClient:          networkqosClientset,
+		VTEPClient:                vtepClientset,
 	}, nil
 }
 

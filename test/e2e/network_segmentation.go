@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/pointer"
@@ -60,13 +62,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		nodeHostnameKey                     = "kubernetes.io/hostname"
 		podClusterNetPort            uint16 = 9000
 		podClusterNetDefaultPort     uint16 = 8080
-		userDefinedNetworkIPv4Subnet        = "172.31.0.0/16" // last subnet in private range 172.16.0.0/12 (rfc1918)
+		userDefinedNetworkIPv4Subnet        = "172.16.0.0/16" // first subnet in private range 172.16.0.0/12 (rfc1918)
 		userDefinedNetworkIPv6Subnet        = "2014:100:200::0/60"
-		customL2IPv4Gateway                 = "172.31.0.3"
+		customL2IPv4Gateway                 = "172.16.0.3"
 		customL2IPv6Gateway                 = "2014:100:200::3"
-		customL2IPv4ReservedCIDR            = "172.31.1.0/24"
+		customL2IPv4ReservedCIDR            = "172.16.1.0/24"
 		customL2IPv6ReservedCIDR            = "2014:100:200::100/120"
-		customL2IPv4InfraCIDR               = "172.31.0.0/30"
+		customL2IPv4InfraCIDR               = "172.16.0.0/30"
 		customL2IPv6InfraCIDR               = "2014:100:200::/122"
 		userDefinedNetworkName              = "hogwarts"
 		nadName                             = "gryffindor"
@@ -719,7 +721,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						"with L2 primary UDN",
 						"layer2",
 						4,
-						"172.31.0.0/29",
+						"172.16.0.0/29",
 						"2014:100:200::0/125",
 					),
 					// limit the number of pods to 10
@@ -1313,6 +1315,40 @@ spec:
 				}, time.Second*3, time.Second*1).Should(BeTrue(),
 					"NADs in target namespaces should be deleted following ClusterUserDefinedNetwork deletion")
 			}
+		})
+
+		It("should delete NAD when target namespace is terminating", func() {
+			testTerminatingNs := f.Namespace.Name + "terminating"
+
+			By("add new target namespace to CR namespace-selector")
+			patch := fmt.Sprintf(`[{"op": "add", "path": "./spec/namespaceSelector/matchExpressions/0/values/-", "value": "%s"}]`, testTerminatingNs)
+			_, err := e2ekubectl.RunKubectl("", "patch", clusterUserDefinedNetworkResource, testClusterUdnName, "--type=json", "-p="+patch)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("create the target namespace")
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   testTerminatingNs,
+					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+				}}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verify NAD is created in the namespace")
+			Eventually(func() error {
+				_, err := nadClient.NetworkAttachmentDefinitions(testTerminatingNs).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
+				return err
+			}, time.Second*15, time.Second*1).Should(Succeed(), "NAD should be created in target namespace")
+
+			By("delete the namespace to trigger termination")
+			err = cs.CoreV1().Namespaces().Delete(context.Background(), testTerminatingNs, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verify NAD is deleted from the terminating namespace")
+			Eventually(func() bool {
+				_, err := nadClient.NetworkAttachmentDefinitions(testTerminatingNs).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
+				return err != nil && kerrors.IsNotFound(err)
+			}, time.Second*30, time.Second*1).Should(BeTrue(),
+				"NAD should be deleted when namespace is terminating")
 		})
 
 		It("should create NAD in new created namespaces that apply to namespace-selector", func() {
@@ -2052,16 +2088,22 @@ func networkReadyFunc(client dynamic.ResourceInterface, name string) func() erro
 }
 
 func createManifest(namespace, manifest string) (func(), error) {
-	path := "test-" + randString(5) + ".yaml"
-	if err := os.WriteFile(path, []byte(manifest), 0644); err != nil {
-		framework.Failf("Unable to write yaml to disk: %v", err)
+	tmpDir, err := os.MkdirTemp("", "udn-test")
+	if err != nil {
+		return nil, err
 	}
 	cleanup := func() {
-		if err := os.Remove(path); err != nil {
-			framework.Logf("Unable to remove yaml from disk: %v", err)
+		if err := os.RemoveAll(tmpDir); err != nil {
+			framework.Logf("Unable to remove udn test yaml files from disk %s: %v", tmpDir, err)
 		}
 	}
-	_, err := e2ekubectl.RunKubectl(namespace, "create", "-f", path)
+
+	path := filepath.Join(tmpDir, "test-ovn-k-udn-"+rand.String(5)+".yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0644); err != nil {
+		return cleanup, fmt.Errorf("unable to write udn yaml to disk: %w", err)
+	}
+
+	_, err = e2ekubectl.RunKubectl(namespace, "create", "-f", path)
 	if err != nil {
 		return cleanup, err
 	}
@@ -2439,14 +2481,12 @@ func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig podConf
 	Expect(serverPod).NotTo(BeNil())
 
 	By(fmt.Sprintf("asserting the UDN pod %s reaches the `Ready` state", serverPodConfig.name))
-	var updatedPod *v1.Pod
-	Eventually(func() v1.PodPhase {
-		updatedPod, err = cs.CoreV1().Pods(namespace).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
-		if err != nil {
-			return v1.PodFailed
-		}
-		return updatedPod.Status.Phase
-	}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+	// Retrieve and use pod start timeout value from deployment config.
+	err = e2epod.WaitTimeoutForPodRunningInNamespace(context.Background(), cs, serverPod.GetName(), namespace,
+		infraprovider.Get().GetDefaultTimeoutContext().PodStart)
+	Expect(err).NotTo(HaveOccurred())
+	updatedPod, err := cs.CoreV1().Pods(namespace).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
 	return updatedPod
 }
 

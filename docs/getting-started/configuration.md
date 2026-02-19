@@ -123,6 +123,22 @@ Chain FORWARD (policy DROP 0 packets, 0 bytes)
     0     0 ACCEPT     0    --  *      ovn-k8s-mp0  ::/0                 ::/0          
 ```
 
+### VLAN Config
+
+OVN-Kubernetes supports using VLAN tagging for underlay connectivity. To enable VLAN tagging, specify the `vlan-id`
+gateway configuration option with the desired VLAN tag. This tag will be used for traffic ingressing and egressing
+OVN as well as the host. When `vlan-id` is configured:
+
+* OVN will be configured to accept the VLAN tag specified by `vlan-id`
+* The external gateway bridge will be configured to add/strip the VLAN tag specified by `vlan-id` for packets destined to
+and coming from the host
+* The physical interface attached to the external gateway bridge will act as a VLAN trunk
+
+Note, it is not required to configure a VLAN sub-interface (802.1q interface) on the host, OVN-Kubernetes will automatically
+handle VLAN tagging in the OVS external bridge. It is also supported to have additional interfaces attached to the external
+gateway bridge that use different VLAN tags than VLANID. These interfaces will operate in their own VLAN, and share the
+physical interface as a trunk.
+
 ## Logging Config
 
 ## Monitoring Config

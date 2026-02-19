@@ -1,12 +1,17 @@
 package testing
 
 import (
+	"encoding/json"
 	"fmt"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	ktesting "k8s.io/client-go/testing"
 
+	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	networkconnectfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -68,4 +73,39 @@ func GenerateNADWithConfig(name, namespace, config string) *nadapi.NetworkAttach
 		},
 		Spec: nadapi.NetworkAttachmentDefinitionSpec{Config: config},
 	}
+}
+
+// AddNetworkConnectApplyReactor adds a reactor to handle Apply (patch) operations on the fake client.
+func AddNetworkConnectApplyReactor(fakeClient *networkconnectfake.Clientset) {
+	fakeClient.PrependReactor("patch", "clusternetworkconnects", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction := action.(ktesting.PatchAction)
+		name := patchAction.GetName()
+
+		existingObj, err := fakeClient.Tracker().Get(
+			networkconnectv1.SchemeGroupVersion.WithResource("clusternetworkconnects"), "", name)
+		if err != nil {
+			return true, nil, err
+		}
+
+		cnc := existingObj.(*networkconnectv1.ClusterNetworkConnect)
+		if cnc.Annotations == nil {
+			cnc.Annotations = map[string]string{}
+		}
+
+		var patchData map[string]interface{}
+		if err := json.Unmarshal(patchAction.GetPatch(), &patchData); err != nil {
+			return true, nil, err
+		}
+		if metadata, ok := patchData["metadata"].(map[string]interface{}); ok {
+			if annotations, ok := metadata["annotations"].(map[string]interface{}); ok {
+				for k, v := range annotations {
+					cnc.Annotations[k] = v.(string)
+				}
+			}
+		}
+
+		_ = fakeClient.Tracker().Update(
+			networkconnectv1.SchemeGroupVersion.WithResource("clusternetworkconnects"), cnc, "")
+		return true, cnc, nil
+	})
 }

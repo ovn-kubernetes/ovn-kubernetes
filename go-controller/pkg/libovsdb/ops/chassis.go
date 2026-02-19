@@ -2,6 +2,9 @@ package ops
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/google/uuid"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 
@@ -169,5 +172,21 @@ func CreateOrUpdateChassis(sbClient libovsdbclient.Client, chassis *sbdb.Chassis
 		return err
 	}
 
+	return nil
+}
+
+// validateRequestedChassisOption is a guard to ensure a caller is using the chassis-id (uuid format)
+// for the requested chassis option.
+func validateRequestedChassisOption(options map[string]string) error {
+	if len(options) == 0 {
+		return nil
+	}
+	chassisID, ok := options[RequestedChassis]
+	if !ok || chassisID == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(chassisID); err != nil {
+		return fmt.Errorf("requested-chassis must be a valid UUID, got %q", chassisID)
+	}
 	return nil
 }

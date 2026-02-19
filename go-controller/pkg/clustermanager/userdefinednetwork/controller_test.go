@@ -2,6 +2,7 @@ package userdefinednetwork
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,10 +23,13 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	udnfakeclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -39,6 +43,7 @@ var _ = Describe("User Defined Network Controller", func() {
 	var (
 		cs *util.OVNClusterManagerClientset
 		f  *factory.WatchFactory
+		nm networkmanager.Controller
 	)
 
 	BeforeEach(func() {
@@ -46,9 +51,16 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		// Enable EVPN for EVPN-related tests
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.OVNKubernetesFeature.EnableEVPN = true
 	})
 
 	AfterEach(func() {
+		if nm != nil {
+			nm.Stop()
+			nm = nil
+		}
 		if f != nil {
 			f.Shutdown()
 		}
@@ -65,7 +77,30 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
-			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), nil,
+			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), f.VTEPInformer(), nil,
+		)
+	}
+
+	// newTestControllerWithNetworkManager creates a controller with a started NetworkManager.
+	newTestControllerWithNetworkManager := func(renderNADStub RenderNetAttachDefManifest, objects ...runtime.Object) *Controller {
+		cs = util.GetOVNClientset(objects...).GetClusterManagerClientset()
+		var err error
+		f, err = factory.NewClusterManagerWatchFactory(cs)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(f.Start()).To(Succeed())
+
+		nm, err = networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, f, cs, nil, id.NewTunnelKeyAllocator("TunnelKeys"))
+		Expect(err).NotTo(HaveOccurred())
+		// Start NetworkManager - it will process existing NADs and cache their VIDs
+		Expect(nm.Start()).To(Succeed())
+
+		var vtepInformer vtepinformer.VTEPInformer
+		if util.IsEVPNEnabled() {
+			vtepInformer = f.VTEPInformer()
+		}
+		return New(cs.NetworkAttchDefClient, f.NADInformer(),
+			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
+			renderNADStub, nm.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), vtepInformer, nil,
 		)
 	}
 
@@ -443,6 +478,827 @@ var _ = Describe("User Defined Network Controller", func() {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(actualNAD).To(Equal(expectedNAD), "NAD should exist in test namespaces")
 				}
+			})
+
+			It("should allocate VID for EVPN network NAD", func() {
+				testNs := testNamespace("evpn-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				Eventually(func() []metav1.Condition {
+					var err error
+					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-test]",
+				}}))
+
+				// Verify VID was allocated in the NAD config
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "VID should be allocated for EVPN MAC-VRF (first available after 0,1 reserved)")
+				}).Should(Succeed())
+			})
+
+			It("should allocate VID for EVPN network NAD with IP-VRF only", func() {
+				testNs := testNamespace("evpn-ipvrf-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNIPVRFClusterUDN("evpn-ipvrf-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				Eventually(func() []metav1.Condition {
+					var err error
+					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-ipvrf-test]",
+				}}))
+
+				// Verify VID was allocated in the NAD config (IP-VRF only, no MAC-VRF)
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, ipVID := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(0), "MAC-VRF should not be present for IP-VRF only config")
+					g.Expect(ipVID).To(Equal(2), "VID should be allocated for EVPN IP-VRF only (first available after 0,1 reserved)")
+				}).Should(Succeed())
+			})
+
+			It("should allocate separate VIDs for EVPN network with both MAC-VRF and IP-VRF (symmetric IRB)", func() {
+				testNs := testNamespace("evpn-irb-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testSymmetricIRBClusterUDN("evpn-irb-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				Eventually(func() []metav1.Condition {
+					var err error
+					cudn, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-irb-test]",
+				}}))
+
+				// Verify both VIDs were allocated with different values
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, ipVID := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "MAC-VRF should get VID 2 (first available)")
+					g.Expect(ipVID).To(Equal(3), "IP-VRF should get VID 3")
+				}).Should(Succeed())
+			})
+
+			It("should allocate different VIDs for multiple EVPN networks", func() {
+				testNs := testNamespace("evpn-multi-test")
+				vtep := testVTEP("vtep-test")
+				cudn1 := testEVPNClusterUDN("evpn-cudn-1", vtep.Name, testNs.Name)
+				cudn2 := testEVPNClusterUDN("evpn-cudn-2", vtep.Name, testNs.Name)
+				cudn2.UID = "2" // Different UID for second CUDN
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn1, cudn2, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Wait for both NADs to be created and have VIDs, and verify they are different
+				Eventually(func(g Gomega) {
+					nad1, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), "evpn-cudn-1", metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					nad2, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), "evpn-cudn-2", metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					vid1, _ := evpnVIDsFromNAD(nad1)
+					vid2, _ := evpnVIDsFromNAD(nad2)
+					g.Expect(vid1).To(BeNumerically(">", 0), "NAD 1 should have VID allocated")
+					g.Expect(vid2).To(BeNumerically(">", 0), "NAD 2 should have VID allocated")
+					// VIDs should be different from each other
+					// Note: Order is non-deterministic due to concurrent CUDN processing
+					g.Expect(vid1).NotTo(Equal(vid2), "VIDs should be different for different networks")
+				}).Should(Succeed())
+			})
+
+			It("should release VID when EVPN CUDN is deleted", func() {
+				testNs := testNamespace("evpn-delete-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-delete-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Wait for CUDN to be processed and NAD created with VID
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "First CUDN should get VID 2 (first available)")
+				}).Should(Succeed())
+
+				// Verify VID is allocated in the controller's allocator
+				Expect(c.vidAllocator.GetID("evpn-delete-cudn/macvrf")).To(BeNumerically(">=", 0), "VID should be allocated")
+
+				// Trigger deletion by setting DeletionTimestamp and processing
+				now := metav1.Now()
+				cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				cudn.DeletionTimestamp = &now
+				_, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Wait for finalizer to be removed (indicating deletion was processed)
+				Eventually(func(g Gomega) {
+					updatedCUDN, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(updatedCUDN.Finalizers).To(BeEmpty(), "Finalizer should be removed after deletion")
+					// Verify VID is released from the allocator
+					g.Expect(c.vidAllocator.GetID("evpn-delete-cudn/macvrf")).To(Equal(-1), "VID should be released after deletion")
+				}).Should(Succeed())
+			})
+
+			It("should release both MAC-VRF and IP-VRF VIDs when symmetric IRB CUDN is deleted", func() {
+				testNs := testNamespace("evpn-irb-delete-test")
+				vtep := testVTEP("vtep-irb-delete")
+				cudn := testSymmetricIRBClusterUDN("evpn-irb-delete", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Wait for CUDN to be processed and NAD created with both VIDs
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, ipVID := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "MAC-VRF VID should be allocated (first available)")
+					g.Expect(ipVID).To(Equal(3), "IP-VRF VID should be allocated")
+				}).Should(Succeed())
+
+				// Verify both VIDs are allocated in the controller's allocator
+				Expect(c.vidAllocator.GetID("evpn-irb-delete/macvrf")).To(Equal(2), "MAC-VRF VID should be allocated (first available)")
+				Expect(c.vidAllocator.GetID("evpn-irb-delete/ipvrf")).To(Equal(3), "IP-VRF VID should be allocated")
+
+				// Trigger deletion
+				now := metav1.Now()
+				cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				cudn.DeletionTimestamp = &now
+				_, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Wait for finalizer to be removed and verify both VIDs are released
+				Eventually(func(g Gomega) {
+					updatedCUDN, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(updatedCUDN.Finalizers).To(BeEmpty(), "Finalizer should be removed after deletion")
+					// Verify both VIDs are released from the allocator
+					g.Expect(c.vidAllocator.GetID("evpn-irb-delete/macvrf")).To(Equal(-1), "MAC-VRF VID should be released after deletion")
+					g.Expect(c.vidAllocator.GetID("evpn-irb-delete/ipvrf")).To(Equal(-1), "IP-VRF VID should be released after deletion")
+				}).Should(Succeed())
+			})
+
+			It("should preserve allocated VID when EVPN CUDN is updated", func() {
+				testNs := testNamespace("evpn-update-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-update-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Wait for initial VID allocation
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "VID should be allocated (first available)")
+				}).Should(Succeed())
+
+				// Update CUDN (trigger reconciliation)
+				cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				cudn.Annotations = map[string]string{"updated": "true"}
+				_, err = cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Ensure VID remains the same after reconciliation
+				Consistently(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "VID should remain consistent after CUDN update")
+				}, 500*time.Millisecond, 50*time.Millisecond).Should(Succeed())
+			})
+
+			It("should continue startup and allocate new VID when all NADs are corrupted", func() {
+				// VID recovery failures no longer block startup to prevent DoS attacks
+				// via malicious NADs. Instead, the CUDN is enqueued for reconciliation
+				// and a new VID is allocated.
+				testNs := testNamespace("evpn-all-corrupted-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-all-corrupted", vtep.Name, testNs.Name)
+
+				// Create a corrupted NAD owned by the CUDN - NetworkManager will fail to parse it
+				corruptedNAD := testEVPNClusterUdnNADOwnedByCUDN(cudn, testNs.Name, vtep.Name, 0, 0)
+				corruptedNAD.Spec.Config = `{"transport":"evpn", invalid json - corrupted`
+
+				// Use started NetworkManager - it will fail to parse the corrupted NAD
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep, corruptedNAD)
+
+				// Controller should start successfully (VID recovery failure logged but not fatal)
+				Expect(c.Run()).To(Succeed())
+
+				// The CUDN is enqueued for reconciliation and gets a new VID
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "Should allocate new VID since recovery failed (first available)")
+				}).Should(Succeed())
+			})
+
+			It("should continue startup and allocate new VID when VID recovery encounters a conflict", func() {
+				// VID conflicts during recovery no longer block startup.
+				// Instead, the CUDN is enqueued for reconciliation and gets a new VID.
+				testNs := testNamespace("evpn-vid-conflict-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-conflict", vtep.Name, testNs.Name)
+
+				// Create a NAD with VID 5 for MAC-VRF
+				existingNAD := testEVPNClusterUdnNADOwnedByCUDN(cudn, testNs.Name, vtep.Name, 5, 0)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep, existingNAD)
+
+				// Pre-reserve VID 5 for a DIFFERENT key to create a conflict during recovery
+				Expect(c.vidAllocator.ReserveID("conflicting-network/macvrf", 5)).To(Succeed())
+
+				// Controller should start successfully despite the conflict
+				Expect(c.Run()).To(Succeed())
+
+				// Recovery fails due to conflict, CUDN is enqueued for reconciliation and gets a new VID
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "Should allocate new VID since 5 is taken by another network (first available)")
+				}).Should(Succeed())
+			})
+
+			It("should continue startup and preserve MAC-VRF VID when only IP-VRF VID recovery encounters a conflict", func() {
+				// When IP-VRF VID conflicts but MAC-VRF VID is available:
+				// - MAC-VRF recovery succeeds (VID reserved in allocator)
+				// - IP-VRF recovery fails (conflict)
+				// - CUDN is enqueued for reconciliation
+				// - MAC-VRF VID is preserved (already in allocator), IP-VRF gets new VID
+				testNs := testNamespace("evpn-ipvrf-conflict-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testSymmetricIRBClusterUDN("evpn-ipvrf-conflict", vtep.Name, testNs.Name)
+
+				// Create a symmetric IRB NAD with both MAC-VRF (VID 3) and IP-VRF (VID 7)
+				existingNAD := testEVPNClusterUdnNADOwnedByCUDN(cudn, testNs.Name, vtep.Name, 3, 7)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep, existingNAD)
+
+				// Pre-reserve VID 7 for IP-VRF of a DIFFERENT network to create a conflict
+				Expect(c.vidAllocator.ReserveID("other-network/ipvrf", 7)).To(Succeed())
+
+				// Controller should start successfully
+				Expect(c.Run()).To(Succeed())
+
+				// MAC-VRF VID 3 was successfully reserved during recovery.
+				// IP-VRF VID 7 conflicted, so during reconciliation it gets new VID 2 (first available).
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, ipVID := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(3), "MAC-VRF VID should be preserved (recovery succeeded)")
+					g.Expect(ipVID).To(Equal(2), "IP-VRF gets new VID (first available, 0,1 reserved, 7 is taken)")
+				}).Should(Succeed())
+			})
+
+			It("should continue startup and preserve IP-VRF VID when only MAC-VRF VID recovery encounters a conflict", func() {
+				// When MAC-VRF VID conflicts but IP-VRF VID is available:
+				// - MAC-VRF recovery fails (conflict)
+				// - IP-VRF recovery succeeds (VID reserved in allocator)
+				// - CUDN is enqueued for reconciliation
+				// - MAC-VRF gets new VID, IP-VRF VID is preserved
+				testNs := testNamespace("evpn-macvrf-conflict-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testSymmetricIRBClusterUDN("evpn-macvrf-conflict", vtep.Name, testNs.Name)
+
+				// Create a symmetric IRB NAD with both MAC-VRF (VID 3) and IP-VRF (VID 7)
+				existingNAD := testEVPNClusterUdnNADOwnedByCUDN(cudn, testNs.Name, vtep.Name, 3, 7)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep, existingNAD)
+
+				// Pre-reserve VID 3 for a DIFFERENT network to create a conflict during recovery
+				Expect(c.vidAllocator.ReserveID("other-network/macvrf", 3)).To(Succeed())
+
+				// Controller should start successfully
+				Expect(c.Run()).To(Succeed())
+
+				// IP-VRF VID 7 was successfully reserved during recovery.
+				// MAC-VRF VID 3 conflicted, so during reconciliation it gets new VID 2 (first available).
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, ipVID := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "MAC-VRF gets new VID (first available, 0,1 reserved, 3 is already taken)")
+					g.Expect(ipVID).To(Equal(7), "IP-VRF VID should be preserved (recovery succeeded)")
+				}).Should(Succeed())
+			})
+
+			It("should not fail startup when CUDN exists but has no NADs yet", func() {
+				vtep := testVTEP("vtep-test")
+				// Create a CUDN without any NADs (namespace doesn't match selector)
+				cudnWithNoNADs := testEVPNClusterUDN("evpn-no-nads", vtep.Name, "nonexistent-ns")
+
+				c = newTestControllerWithNetworkManager(renderNadStub(nil), cudnWithNoNADs, vtep)
+
+				Expect(c.Run()).To(Succeed(), "Controller should start even when CUDN has no NADs")
+
+				// No VID should be allocated since there are no NADs
+				Expect(c.vidAllocator.GetID("evpn-no-nads/macvrf")).To(Equal(-1), "No VID should be allocated for CUDN without NADs")
+			})
+
+			It("should recover VIDs from NetworkManager cache at startup", func() {
+				// This tests the production startup recovery path where:
+				// 1. NetworkManager is started and processes existing NADs
+				// 2. UDN controller starts and recovers VIDs from NetworkManager's cache
+				testNs := testNamespace("evpn-nm-recovery-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-nm-recovery", vtep.Name, testNs.Name)
+
+				// Create an existing NAD with VID 42 (simulating a previous controller run)
+				existingNAD := testEVPNClusterUdnNADOwnedByCUDN(cudn, testNs.Name, vtep.Name, 42, 0)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep, existingNAD)
+				Expect(c.Run()).To(Succeed())
+
+				// VID should be recovered from NetworkManager cache at startup
+				Eventually(func() int {
+					return c.vidAllocator.GetID("evpn-nm-recovery/macvrf")
+				}).Should(Equal(42), "VID 42 should be recovered from NetworkManager cache at startup")
+			})
+
+			It("should recover VIDs in deterministic order based on CUDN creation timestamp", func() {
+				// When two CUDNs have NADs claiming the same VID, the older CUDN wins.
+				// This ensures deterministic behavior across restarts.
+				testNs1 := testNamespace("evpn-order-test-1")
+				testNs2 := testNamespace("evpn-order-test-2")
+				vtep := testVTEP("vtep-test")
+
+				// Create two CUDNs with different creation timestamps and unique UIDs
+				olderCUDN := testEVPNClusterUDN("aaa-older-cudn", vtep.Name, testNs1.Name)
+				olderCUDN.UID = "older-uid-1"
+				olderCUDN.CreationTimestamp = metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+
+				newerCUDN := testEVPNClusterUDN("zzz-newer-cudn", vtep.Name, testNs2.Name)
+				newerCUDN.UID = "newer-uid-2"
+				newerCUDN.CreationTimestamp = metav1.NewTime(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
+
+				// Both NADs claim VID 42 - this simulates a conflict scenario
+				olderNAD := testEVPNClusterUdnNADOwnedByCUDN(olderCUDN, testNs1.Name, vtep.Name, 42, 0)
+				newerNAD := testEVPNClusterUdnNADOwnedByCUDN(newerCUDN, testNs2.Name, vtep.Name, 42, 0)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest,
+					olderCUDN, newerCUDN, testNs1, testNs2, vtep, olderNAD, newerNAD)
+				Expect(c.Run()).To(Succeed())
+
+				// The older CUDN should win the VID 42, regardless of alphabetical name order
+				// (newerCUDN has name "zzz-newer-cudn" which comes after "aaa-older-cudn" alphabetically,
+				// but olderCUDN should still win because it was created first)
+				Eventually(func() int {
+					return c.vidAllocator.GetID("aaa-older-cudn/macvrf")
+				}).Should(Equal(42), "Older CUDN should keep VID 42")
+
+				// The newer CUDN loses the conflict and gets a new VID during reconciliation
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs2.Name).Get(context.Background(), newerCUDN.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "Newer CUDN should get new VID (first available) since older CUDN won VID 42")
+				}).Should(Succeed())
+			})
+
+			It("should return error when VID pool is exhausted", func() {
+				testNs := testNamespace("evpn-exhaustion-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-exhaust-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+
+				// Exhaust all available VIDs (2-4094) before starting the controller (0,1 already reserved)
+				for i := 2; i < MaxEVPNVIDs; i++ {
+					err := c.vidAllocator.ReserveID(fmt.Sprintf("exhaust-key-%d", i), i)
+					Expect(err).NotTo(HaveOccurred(), "should allocate VID %d", i)
+				}
+
+				// Now start the controller - the EVPN CUDN should fail to get a VID
+				Expect(c.Run()).To(Succeed())
+
+				// Verify the pool is exhausted
+				_, err := c.vidAllocator.AllocateID("one-more-key")
+				Expect(err).To(HaveOccurred(), "VID pool should be exhausted")
+
+				// The CUDN should report a sync error because VID allocation failed
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "False",
+					Reason:  "NetworkAttachmentDefinitionSyncError",
+					Message: "failed to allocate EVPN VIDs: failed to allocate VID for MAC-VRF: failed to allocate the id for the resource evpn-exhaust-cudn/macvrf",
+				}}), "should report VID allocation failure in status")
+
+				// Verify NAD was not created
+				_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when VID allocation fails")
+			})
+
+			It("should allocate VID after pool is freed up", func() {
+				testNs := testNamespace("evpn-free-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-free-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+
+				// Exhaust all VIDs except one (starting from 2, since 0,1 already reserved)
+				for i := 2; i < MaxEVPNVIDs-1; i++ {
+					err := c.vidAllocator.ReserveID(fmt.Sprintf("exhaust-key-%d", i), i)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				// Start controller - it should successfully allocate the last available VID
+				Expect(c.Run()).To(Succeed())
+
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-free-test]",
+				}}), "should successfully create network with last available VID")
+
+				// Verify the VID was allocated
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(MaxEVPNVIDs-1), "should get the last available VID")
+				}).Should(Succeed())
+			})
+
+			It("should fail to start if VID 0 is already reserved by another resource", func() {
+				// This tests the defensive check that VID 0 (reserved per IEEE 802.1Q)
+				// must be reservable during controller initialization.
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest)
+
+				// Reserve VID 0 with a DIFFERENT key (simulating corruption/bug)
+				Expect(c.vidAllocator.ReserveID("some-other-key", 0)).To(Succeed())
+
+				// Run should fail because initializeController can't reserve VID 0
+				err := c.Run()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to reserve VID 0"))
+			})
+
+			It("should allocate new VID when namespace and NAD are created at runtime", func() {
+				// Scenario: Allocator has no VID for this key, namespace/NAD created at runtime
+				// This can happen when:
+				// - CUDN exists but had no matching namespaces at startup (no NADs to recover)
+				// - Admin later creates a namespace
+				// - Controller reconciles and allocates a new VID
+				//
+				// 1. Controller starts with CUDN but NO matching namespaces (no NADs created)
+				// 2. Allocator has NO VID for this key after startup
+				// 3. Namespace is created at runtime
+				// 4. Controller reconciles and allocates VID 2 (first available, 0,1 reserved)
+				vtep := testVTEP("vtep-test")
+
+				// Namespace that doesn't exist at startup
+				const runtimeNsName = "runtime-ns-test"
+
+				// CUDN with selector matching a namespace that doesn't exist yet
+				cudn := testEVPNClusterUDN("evpn-runtime-cudn", vtep.Name, runtimeNsName)
+
+				// Start controller - no NADs to recover, allocator empty for this key
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Create namespace at runtime (NAD will be created by controller)
+				testNs := testNamespace(runtimeNsName)
+				_, err := cs.KubeClient.CoreV1().Namespaces().Create(context.Background(), testNs, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Controller reconciles and allocates VID 2 (first available, 0,1 reserved)
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "VID should be allocated (first available, 0,1 reserved)")
+				}).Should(Succeed())
+			})
+
+			It("should allocate new VID when existing NAD has VID taken by another CUDN", func() {
+				// Scenario: Allocator has no VID for this key, but NAD's VID is taken by another CUDN
+				// This can happen when:
+				// - CUDN-A had no matching namespaces at startup
+				// - CUDN-B had a NAD with VID 42 that was recovered
+				// - Someone manually creates NAD for CUDN-A with VID 42 (collision)
+				//
+				// 1. Controller starts with CUDN but NO matching namespaces
+				// 2. VID 42 is already reserved by a different CUDN
+				// 3. Namespace and NAD with VID 42 are created at runtime
+				// 4. Controller reconciles
+				// 5. VID 42 can't be reserved (taken) -> new VID allocated
+				vtep := testVTEP("vtep-test")
+
+				// Namespace that doesn't exist at startup
+				const runtimeNsName = "runtime-conflict-test"
+
+				cudn := testEVPNClusterUDN("evpn-runtime-conflict", vtep.Name, runtimeNsName)
+
+				// Start controller - no NADs to recover, allocator empty for this key
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, vtep)
+
+				// VID 42 is already reserved by another CUDN (simulates collision)
+				Expect(c.vidAllocator.ReserveID("another-cudn/macvrf", 42)).To(Succeed())
+
+				Expect(c.Run()).To(Succeed())
+
+				// Create namespace and NAD with VID 42 at runtime (collision with another CUDN)
+				testNs := testNamespace(runtimeNsName)
+				runtimeNAD := testEVPNClusterUdnNADOwnedByCUDN(cudn, testNs.Name, vtep.Name, 42, 0)
+
+				_, err := cs.KubeClient.CoreV1().Namespaces().Create(context.Background(), testNs, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Create(context.Background(), runtimeNAD, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Controller reconciles - VID 42 is taken, must allocate new VID
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "VID should be newly allocated since 42 is taken by another CUDN (first available)")
+				}).Should(Succeed())
+			})
+
+			It("should revert manual NAD VID change when allocator already has VID for this key", func() {
+				// This tests the case where:
+				// - Allocator has VID 2 for this key (from initial NAD creation, first available)
+				// - Someone manually changes NAD to VID 42
+				// - Allocator's VID 2 should win, NAD reverted to 2
+				// Note: Whether VID 42 is free or taken doesn't matter - the allocator's
+				// existing VID takes precedence because ReserveID fails when key already has a VID.
+				testNs := testNamespace("evpn-vid-manual-change-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-manual-change-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Wait for initial NAD creation (will get VID 2, first available)
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "Initial VID should be 2 (first available)")
+				}).Should(Succeed())
+
+				// Now manually update the NAD with VID 42
+				nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(setNADEVPNVIDs(nad, 42, 0)).To(Succeed())
+				_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Update(context.Background(), nad, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// The NAD update triggers reconciliation. The allocator already has VID 2
+				// for this key, so NAD is reverted to 2.
+				Eventually(func(g Gomega) {
+					nad, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					g.Expect(err).NotTo(HaveOccurred())
+					macVID, _ := evpnVIDsFromNAD(nad)
+					g.Expect(macVID).To(Equal(2), "VID should be reverted to allocator's VID")
+				}).Should(Succeed())
+			})
+
+			It("should report VTEPNotFound when EVPN CUDN references non-existent VTEP", func() {
+				testNs := testNamespace("evpn-vtep-missing-test")
+				cudn := testEVPNClusterUDN("evpn-vtep-missing", "default", testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs)
+				Expect(c.Run()).To(Succeed())
+
+				// CUDN should report VTEPNotFound status
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "False",
+					Reason:  "VTEPNotFound",
+					Message: "Cannot create network: VTEP 'default' does not exist. Create the VTEP CR first or update the CUDN to reference an existing VTEP.",
+				}}), "should report VTEPNotFound in status")
+
+				// NAD should not be created when VTEP is missing
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when VTEP is missing")
+			})
+
+			It("should create NAD when VTEP exists for EVPN CUDN", func() {
+				testNs := testNamespace("evpn-vtep-exists-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-vtep-exists", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// CUDN should succeed when VTEP exists
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-vtep-exists-test]",
+				}}), "should succeed when VTEP exists")
+
+				// NAD should be created
+				Eventually(func() error {
+					_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					return err
+				}).Should(Succeed(), "NAD should be created when VTEP exists")
+			})
+
+			It("should automatically reconcile CUDN when VTEP is created after CUDN", func() {
+				testNs := testNamespace("evpn-vtep-transition-test")
+				vtepName := "default"
+				cudn := testEVPNClusterUDN("evpn-vtep-transition", vtepName, testNs.Name)
+
+				// Start controller WITHOUT the VTEP - CUDN references non-existent VTEP
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs)
+				Expect(c.Run()).To(Succeed())
+
+				// Step 1: CUDN should initially report VTEPNotFound
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "False",
+					Reason:  "VTEPNotFound",
+					Message: "Cannot create network: VTEP '" + vtepName + "' does not exist. Create the VTEP CR first or update the CUDN to reference an existing VTEP.",
+				}}), "should initially report VTEPNotFound")
+
+				// NAD should NOT exist yet
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when VTEP is missing")
+
+				// Step 2: Create the VTEP dynamically - this should trigger VTEPNotifier
+				vtep := testVTEP(vtepName)
+				_, err = cs.VTEPClient.K8sV1().VTEPs().Create(context.Background(), vtep, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Step 3: CUDN should be automatically reconciled and succeed
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-vtep-transition-test]",
+				}}), "should succeed after VTEP is created")
+
+				// NAD should now be created
+				Eventually(func() error {
+					_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					return err
+				}).Should(Succeed(), "NAD should be created after VTEP is created")
+			})
+
+			It("should only re-queue EVPN CUDNs when VTEP changes, not non-EVPN CUDNs", func() {
+				testNs := testNamespace("vtep-filter-test")
+				vtep := testVTEP("vtep-filter")
+
+				// Create a non-EVPN CUDN (Layer2 without EVPN transport)
+				nonEvpnCUDN := testClusterUDN("non-evpn-cudn", testNs.Name)
+				nonEvpnCUDN.UID = "non-evpn-uid"
+
+				// Create an EVPN CUDN that references the VTEP
+				evpnCUDN := testEVPNClusterUDN("evpn-cudn", vtep.Name, testNs.Name)
+				evpnCUDN.UID = "evpn-uid"
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, nonEvpnCUDN, evpnCUDN, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Wait for EVPN NAD to be created
+				Eventually(func() error {
+					_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), evpnCUDN.Name, metav1.GetOptions{})
+					return err
+				}).Should(Succeed())
+
+				// ReconcileVTEP should iterate over all CUDNs but only match the EVPN one
+				// This covers the non-EVPN path in cudnReferencesVTEP
+				err := c.ReconcileVTEP(vtep.Name)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should report VTEPNotFound when VTEP is deleted after CUDN creation", func() {
+				testNs := testNamespace("evpn-vtep-delete-test")
+				vtep := testVTEP("vtep-to-delete")
+				cudn := testEVPNClusterUDN("evpn-vtep-delete", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// Step 1: Verify NAD is created successfully when VTEP exists
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "True",
+					Reason:  "NetworkAttachmentDefinitionCreated",
+					Message: "NetworkAttachmentDefinition has been created in following namespaces: [evpn-vtep-delete-test]",
+				}}), "should initially succeed when VTEP exists")
+
+				Eventually(func() error {
+					_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					return err
+				}).Should(Succeed(), "NAD should be created when VTEP exists")
+
+				// Step 2: Delete the VTEP - this should trigger VTEPNotifier
+				err := cs.VTEPClient.K8sV1().VTEPs().Delete(context.Background(), vtep.Name, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Step 3: CUDN should be re-reconciled and report VTEPNotFound
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "False",
+					Reason:  "VTEPNotFound",
+					Message: "Cannot create network: VTEP '" + vtep.Name + "' does not exist. Create the VTEP CR first or update the CUDN to reference an existing VTEP.",
+				}}), "should report VTEPNotFound after VTEP is deleted")
+			})
+
+			It("should fail when EVPN transport is requested but EVPN feature is disabled", func() {
+				// Disable EVPN feature flag for this test.
+				// No defer needed - BeforeEach resets config via PrepareTestConfig().
+				config.OVNKubernetesFeature.EnableEVPN = false
+
+				testNs := testNamespace("evpn-disabled-test")
+				vtep := testVTEP("vtep-test")
+				cudn := testEVPNClusterUDN("evpn-disabled-cudn", vtep.Name, testNs.Name)
+
+				c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
+				Expect(c.Run()).To(Succeed())
+
+				// CUDN should report error with message about EVPN flag
+				Eventually(func() []metav1.Condition {
+					cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return normalizeConditions(cudn.Status.Conditions)
+				}).Should(Equal([]metav1.Condition{{
+					Type:    "NetworkCreated",
+					Status:  "False",
+					Reason:  "NetworkAttachmentDefinitionSyncError",
+					Message: "EVPN transport requested but EVPN feature is not enabled",
+				}}), "should report error when EVPN flag is disabled")
+
+				// NAD should not be created when EVPN is disabled
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudn.Name, metav1.GetOptions{})
+				Expect(apierrors.IsNotFound(err)).To(BeTrue(), "NAD should not be created when EVPN is disabled")
 			})
 
 			It("should update NAD annotations and preserve internal OVNK annotations on UDN update", func() {
@@ -1202,6 +2058,32 @@ var _ = Describe("User Defined Network Controller", func() {
 			Expect(err).To(MatchError(expectedErr))
 		})
 
+		It("when namespace without pods is being deleted, should delete NAD in that namespace", func() {
+			const cudnName = "test-network"
+			testNs := testNamespace("blue")
+			cudn := testClusterUDN(cudnName, testNs.Name)
+			expectedNAD := testClusterUdnNAD(cudnName, testNs.Name)
+			c := newTestController(renderNadStub(expectedNAD), cudn, testNs)
+			Expect(c.Run()).To(Succeed())
+
+			By("verify NAD is created in namespace")
+			Eventually(func() error {
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudnName, metav1.GetOptions{})
+				return err
+			}).Should(Succeed())
+
+			By("mark namespace as terminating")
+			testNs.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+			_, err := cs.KubeClient.CoreV1().Namespaces().Update(context.Background(), testNs, metav1.UpdateOptions{})
+			Expect(err).ToNot(HaveOccurred())
+
+			By("verify NAD is deleted")
+			Eventually(func() bool {
+				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudnName, metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}).Should(BeTrue(), "NAD should be deleted when namespace is terminating")
+		})
+
 		It("when CR is deleted, CR has no finalizer, should succeed", func() {
 			deletedCUDN := testClusterUDN("test", "blue")
 			deletedCUDN.Finalizers = []string{}
@@ -1604,7 +2486,208 @@ func failRenderNadStub(err error) RenderNetAttachDefManifest {
 }
 
 func newRenderNadStub(nad *netv1.NetworkAttachmentDefinition, err error) RenderNetAttachDefManifest {
-	return func(client.Object, string) (*netv1.NetworkAttachmentDefinition, error) {
+	return func(client.Object, string, ...template.RenderOption) (*netv1.NetworkAttachmentDefinition, error) {
 		return nad, err
 	}
+}
+
+func testEVPNClusterUDN(name string, vtepName string, targetNamespaces ...string) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:     map[string]string{"k8s.ovn.org/user-defined-network": ""},
+			Finalizers: []string{"k8s.ovn.org/user-defined-network-protection"},
+			Name:       name,
+			UID:        "1",
+		},
+		Spec: udnv1.ClusterUserDefinedNetworkSpec{
+			NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      corev1.LabelMetadataName,
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   targetNamespaces,
+				},
+			}},
+			Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRoleSecondary,
+					Subnets: udnv1.DualStackCIDRs{"10.10.10.0/24"},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: vtepName,
+					MACVRF: &udnv1.VRFConfig{
+						VNI: 100,
+					},
+				},
+			},
+		},
+	}
+}
+
+// testEVPNClusterUdnNADWithVIDs creates an EVPN NAD with specific MAC-VRF and IP-VRF VIDs.
+// Pass 0 for ipVID to create a MAC-VRF only NAD.
+func testEVPNClusterUdnNADWithVIDs(name, namespace, vtepName string, macVID, ipVID int) *netv1.NetworkAttachmentDefinition {
+	nad := testClusterUdnNAD(name, namespace)
+	if ipVID > 0 {
+		// Symmetric IRB (both MAC-VRF and IP-VRF)
+		nad.Spec.Config = fmt.Sprintf(`{"cniVersion":"1.0.0","name":"cluster_udn_%s","type":"ovn-k8s-cni-overlay","netAttachDefName":"%s/%s","topology":"layer2","role":"primary","subnets":"10.10.0.0/16","transport":"evpn","evpn":{"vtep":"%s","macVRF":{"vni":100,"vid":%d},"ipVRF":{"vni":200,"vid":%d}}}`, name, namespace, name, vtepName, macVID, ipVID)
+	} else {
+		// MAC-VRF only
+		nad.Spec.Config = fmt.Sprintf(`{"cniVersion":"1.0.0","name":"cluster_udn_%s","type":"ovn-k8s-cni-overlay","netAttachDefName":"%s/%s","topology":"layer2","role":"primary","subnets":"10.10.0.0/16","transport":"evpn","evpn":{"vtep":"%s","macVRF":{"vni":100,"vid":%d}}}`, name, namespace, name, vtepName, macVID)
+	}
+	return nad
+}
+
+// testEVPNClusterUdnNADOwnedByCUDN creates an EVPN NAD with specific VIDs and sets up
+// the OwnerReferences to indicate ownership by the given CUDN.
+func testEVPNClusterUdnNADOwnedByCUDN(cudn *udnv1.ClusterUserDefinedNetwork, namespace, vtepName string, macVID, ipVID int) *netv1.NetworkAttachmentDefinition {
+	nad := testEVPNClusterUdnNADWithVIDs(cudn.Name, namespace, vtepName, macVID, ipVID)
+	nad.OwnerReferences = []metav1.OwnerReference{
+		{
+			APIVersion:         "k8s.ovn.org/v1",
+			Kind:               "ClusterUserDefinedNetwork",
+			Name:               cudn.Name,
+			UID:                cudn.UID,
+			Controller:         ptr.To(true),
+			BlockOwnerDeletion: ptr.To(true),
+		},
+	}
+	return nad
+}
+
+func testSymmetricIRBClusterUDN(name string, vtepName string, targetNamespaces ...string) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:     map[string]string{"k8s.ovn.org/user-defined-network": ""},
+			Finalizers: []string{"k8s.ovn.org/user-defined-network-protection"},
+			Name:       name,
+			UID:        "1",
+		},
+		Spec: udnv1.ClusterUserDefinedNetworkSpec{
+			NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      corev1.LabelMetadataName,
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   targetNamespaces,
+				},
+			}},
+			Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRoleSecondary,
+					Subnets: udnv1.DualStackCIDRs{"10.10.10.0/24"},
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: vtepName,
+					MACVRF: &udnv1.VRFConfig{
+						VNI: 100,
+					},
+					IPVRF: &udnv1.VRFConfig{
+						VNI: 200,
+					},
+				},
+			},
+		},
+	}
+}
+
+func testEVPNIPVRFClusterUDN(name string, vtepName string, targetNamespaces ...string) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:     map[string]string{"k8s.ovn.org/user-defined-network": ""},
+			Finalizers: []string{"k8s.ovn.org/user-defined-network-protection"},
+			Name:       name,
+			UID:        "1",
+		},
+		Spec: udnv1.ClusterUserDefinedNetworkSpec{
+			NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      corev1.LabelMetadataName,
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   targetNamespaces,
+				},
+			}},
+			Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3,
+				Layer3: &udnv1.Layer3Config{
+					Role: udnv1.NetworkRoleSecondary,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: vtepName,
+					IPVRF: &udnv1.VRFConfig{
+						VNI: 200,
+					},
+				},
+			},
+		},
+	}
+}
+
+func testVTEP(name string) *vtepv1.VTEP {
+	return &vtepv1.VTEP{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			UID:  types.UID("vtep-" + name),
+		},
+		Spec: vtepv1.VTEPSpec{
+			CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+			Mode:  vtepv1.VTEPModeManaged,
+		},
+	}
+}
+
+// evpnVIDsFromNAD extracts MAC-VRF and IP-VRF VIDs from a NAD config.
+// Returns (macVID, ipVID) where 0 indicates the VRF is not present or has no VID.
+func evpnVIDsFromNAD(nad *netv1.NetworkAttachmentDefinition) (macVID, ipVID int) {
+	if nad == nil {
+		return 0, 0
+	}
+	var netConf ovncnitypes.NetConf
+	if err := json.Unmarshal([]byte(nad.Spec.Config), &netConf); err != nil {
+		return 0, 0
+	}
+	if netConf.EVPN == nil {
+		return 0, 0
+	}
+	if netConf.EVPN.MACVRF != nil {
+		macVID = netConf.EVPN.MACVRF.VID
+	}
+	if netConf.EVPN.IPVRF != nil {
+		ipVID = netConf.EVPN.IPVRF.VID
+	}
+	return macVID, ipVID
+}
+
+// setNADEVPNVIDs modifies the MAC-VRF and/or IP-VRF VIDs in a NAD config.
+// Pass 0 to leave a VID unchanged. This is used in tests to set specific VIDs
+// without rewriting the entire config.
+func setNADEVPNVIDs(nad *netv1.NetworkAttachmentDefinition, macVID, ipVID int) error {
+	var netConf ovncnitypes.NetConf
+	if err := json.Unmarshal([]byte(nad.Spec.Config), &netConf); err != nil {
+		return err
+	}
+	if netConf.EVPN == nil {
+		return fmt.Errorf("NAD has no EVPN config")
+	}
+	if macVID > 0 {
+		if netConf.EVPN.MACVRF == nil {
+			return fmt.Errorf("NAD has no EVPN MAC-VRF config")
+		}
+		netConf.EVPN.MACVRF.VID = macVID
+	}
+	if ipVID > 0 {
+		if netConf.EVPN.IPVRF == nil {
+			return fmt.Errorf("NAD has no EVPN IP-VRF config")
+		}
+		netConf.EVPN.IPVRF.VID = ipVID
+	}
+	configBytes, err := json.Marshal(netConf)
+	if err != nil {
+		return err
+	}
+	nad.Spec.Config = string(configBytes)
+	return nil
 }

@@ -78,14 +78,21 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
 
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
         env:
+        {% if (enable_coredumps | default("false")) == "true" -%}
+        - name: GOTRACEBACK
+          value: "crash"
+        {% endif -%}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: "{{ ovnkube_master_loglevel }}"
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -96,6 +103,8 @@ spec:
           value: "{{ ovnkube_logfile_maxage }}"
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
           value: "{{ ovnkube_config_duration_enable }}"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         - name: OVN_NET_CIDR
           valueFrom:
             configMapKeyRef:
@@ -139,12 +148,22 @@ spec:
           value: "{{ ovn_multi_network_enable }}"
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: "{{ ovn_network_segmentation_enable }}"
+        - name: OVN_NETWORK_CONNECT_ENABLE
+          value: "{{ ovn_network_connect_enable }}"
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: "{{ ovn_pre_conf_udn_addr_enable }}"
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: "{{ ovn_enable_dynamic_udn_allocation }}"
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: "{{ ovn_dynamic_udn_grace_period }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: "{{ ovn_route_advertisements_enable }}"
+        - name: OVN_EVPN_ENABLE
+          value: "{{ ovn_evpn_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: "{{ ovn_advertised_udn_isolation_mode }}"
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ ovn_no_overlay_enable }}"
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: "{{ ovn_hybrid_overlay_net_cidr }}"
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
@@ -202,5 +221,8 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       tolerations:
       - operator: "Exists"

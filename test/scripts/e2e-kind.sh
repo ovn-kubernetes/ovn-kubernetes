@@ -69,9 +69,6 @@ validates that there is no conflict between pods with same hostPort but differen
 # https://issues.redhat.com/browse/OCPBUGS-61380
 should support named targetPorts that resolve to different ports on different endpoints
 
-# https://issues.redhat.com/browse/OCPBUGS-61378
-should be able to cleanup conntrack entries when UDP service target port changes for a NodePort service
-
 # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5119
 \[sig-network\] Services should implement NodePort and HealthCheckNodePort correctly when ExternalTrafficPolicy changes
 
@@ -128,9 +125,6 @@ should function for service endpoints using hostNetwork
 
 # Skips when default pod network is advertised through BGP
 RA_SKIPPED_TESTS="
-# Pod to ETP local nodeport on a different node is broken
-# https://github.com/ovn-org/ovn-kubernetes/issues/4804
-\[sig-network\] Services should fallback to local terminating endpoints when there are no ready endpoints with externalTrafficPolicy=Local
 "
 
 # Github CI doesn´t offer IPv6 connectivity, so always skip IPv6 only tests.

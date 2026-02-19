@@ -56,10 +56,6 @@ type nodeInfo struct {
 
 	// The node's zone
 	zone string
-	/** HACK BEGIN **/
-	// has the node migrated to remote?
-	migrated bool
-	/** HACK END **/
 
 	// The list of node's management IPs
 	mgmtIPs []net.IP
@@ -127,7 +123,6 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 				oldObj.Name != newObj.Name ||
 				util.NodeHostCIDRsAnnotationChanged(oldObj, newObj) ||
 				util.NodeZoneAnnotationChanged(oldObj, newObj) ||
-				util.NodeMigratedZoneAnnotationChanged(oldObj, newObj) ||
 				util.NoHostSubnet(oldObj) != util.NoHostSubnet(newObj) {
 				nt.updateNode(newObj)
 			}
@@ -154,7 +149,7 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 
 // updateNodeInfo updates the node info cache, and syncs all services
 // if it changed.
-func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisID string, l3gatewayAddresses, hostAddresses []net.IP, podSubnets []*net.IPNet, mgmtIPs []net.IP, zone string, nodePortDisabled, migrated bool) {
+func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisID string, l3gatewayAddresses, hostAddresses []net.IP, podSubnets []*net.IPNet, mgmtIPs []net.IP, zone string, nodePortDisabled bool) {
 	ni := nodeInfo{
 		name:               nodeName,
 		l3gatewayAddresses: l3gatewayAddresses,
@@ -166,7 +161,6 @@ func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisI
 		chassisID:          chassisID,
 		nodePortDisabled:   nodePortDisabled,
 		zone:               zone,
-		migrated:           migrated,
 	}
 	for i := range podSubnets {
 		ni.podSubnets = append(ni.podSubnets, *podSubnets[i]) // de-pointer
@@ -275,7 +269,6 @@ func (nt *nodeTracker) updateNode(node *corev1.Node) {
 		mgmtIPs,
 		util.GetNodeZone(node),
 		!nodePortEnabled,
-		util.HasNodeMigratedZone(node),
 	)
 }
 
@@ -285,24 +278,6 @@ func (nt *nodeTracker) updateNode(node *corev1.Node) {
 func (nt *nodeTracker) getZoneNodes() []nodeInfo {
 	out := make([]nodeInfo, 0, len(nt.nodes))
 	for _, node := range nt.nodes {
-		/** HACK BEGIN **/
-		// TODO(tssurya): Remove this HACK a few months from now. This has been added only to
-		// minimize disruption for upgrades when moving to interconnect=true.
-		// We want the legacy ovnkube-master to wait for remote ovnkube-node to
-		// signal it using "k8s.ovn.org/remote-zone-migrated" annotation before
-		// considering a node as remote when we upgrade from "global" (1 zone IC)
-		// zone to multi-zone. This is so that network disruption for the existing workloads
-		// is negligible and until the point where ovnkube-node flips the switch to connect
-		// to the new SBDB, it would continue talking to the legacy RAFT ovnkube-sbdb to ensure
-		// OVN/OVS flows are intact. Legacy ovnkube-master must not delete the service load
-		// balancers for this node till it has finished migration
-		if nt.zone == types.OvnDefaultZone {
-			if !node.migrated {
-				out = append(out, node)
-			}
-			continue
-		}
-		/** HACK END **/
 		if node.zone == nt.zone {
 			out = append(out, node)
 		}

@@ -39,3 +39,52 @@ the `types.go` has been created according to sig-apimachinery docs, the develope
 `make codegen` to be able to generate all the clientgen, listers and informers for the new
 CRD along with the deep-copy methods and actual yaml files which get created in `_output/crd`
 folder and are copied over to `dist/templates` to then be used when creating a KIND cluster.
+
+## Level-Driven Controllers
+
+### Background
+
+OVN-Kubernetes has scale issues with network controllers today. We spin
+up 1 network controller per UDN, which incurs heavy cost when handling
+resource object events. The cost for example of unmarshaling a node
+annotation can be O(n) where n is the number of UDN controllers that are
+parsing the object.
+
+To fix this scale problem, the project has started to move to single
+controller instances that are aware of all UDNs. Therefore, handling and
+parsing of resource objects are done once. A few controllers have
+already moved in this direction, and the remaining components that are
+within a UDN controller (such as pod, node, namespace) will be migrated
+incrementally.
+    
+Furthermore, as we move to per-resource, multi-network aware
+controllers, each controller type needs to be able to get network
+information. One obvious way to do this is to add a level-driven controller
+for NADs in each main controller.
+However, this too has a performance cost, because upon each NAD event,
+each controller will need to parse the NAD. Since we already have
+networkManager (NAD Controller), it is parsing and updating its cache
+with the NAD. In order to solve this problem, NetworkManager has been
+extended with a "RegisterNADReconciler" function, which is a callback that
+controllers can register with NAD Controller to be informed when a NAD
+event happens. Controllers can then query NAD Controller to access its
+cache as the source of truth.
+    
+For example there is commonly used GetActiveNetworkForNamespace, and a
+new API, GetPrimaryNADForNamespace is added in #5623, as well as
+GetNetInfoForNADKey.
+    
+Controllers should be using the pkg/controller Reconciler framework to
+implement their level-driven controllers, which are fed keys externally
+from NAD Controller.
+
+### Guidelines
+
+We prefer level-driven controllers built with `pkg/controller/controller.go`. When adding a new controller:
+
+- Use the shared controller framework rather than bespoke loops or per-network controllers.
+- Design controllers to be User Defined Network (UDN) aware: a single controller instance should reconcile objects across all networks instead of spinning up one instance per network.
+- If the controller is network-aware, do **not** create a separate NAD Controller, use a Reconciler.
+- The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADReconciler` that will queue keys to the Reconciler.
+- RegisterNADReconciler  **before** starting controller workers to avoid missing events during startup.
+- For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.

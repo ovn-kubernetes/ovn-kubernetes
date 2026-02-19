@@ -75,6 +75,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	ipAllocator subnet.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadKey string,
 	network *nadapi.NetworkSelectionElement,
 	reallocateIP bool,
 	networkRole string) (
@@ -89,6 +90,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		allocator.netInfo,
 		node,
 		pod,
+		nadKey,
 		network,
 		allocator.ipamClaimsReconciler,
 		allocator.macRegistry,
@@ -104,6 +106,7 @@ func allocatePodAnnotation(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadKey string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -124,6 +127,7 @@ func allocatePodAnnotation(
 			netInfo,
 			node,
 			pod,
+			nadKey,
 			network,
 			claimsReconciler,
 			macRegistry,
@@ -161,6 +165,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	idAllocator id.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadKey string,
 	network *nadapi.NetworkSelectionElement,
 	reallocateIP bool,
 	networkRole string) (
@@ -176,6 +181,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		allocator.netInfo,
 		node,
 		pod,
+		nadKey,
 		network,
 		allocator.ipamClaimsReconciler,
 		allocator.macRegistry,
@@ -192,6 +198,7 @@ func allocatePodAnnotationWithTunnelID(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadKey string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -209,6 +216,7 @@ func allocatePodAnnotationWithTunnelID(
 			netInfo,
 			node,
 			pod,
+			nadKey,
 			network,
 			claimsReconciler,
 			macRegistry,
@@ -258,6 +266,51 @@ func validateStaticIPRequest(netInfo util.NetInfo, network *nadapi.NetworkSelect
 			}
 		}
 	}
+
+	if err := validateIPFamilyMatchesNetwork(netInfo, network.IPRequest); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+var (
+	ErrIPFamilyMismatch = errors.New("requested IPs family types must match network's IP family configuration")
+)
+
+func validateIPFamilyMatchesNetwork(netInfo util.NetInfo, ipRequests []string) error {
+	if len(ipRequests) == 0 {
+		return nil
+	}
+
+	if len(ipRequests) > 2 {
+		return fmt.Errorf("layer2 network expects at most 2 IPs, got %d: %w", len(ipRequests), ErrIPFamilyMismatch)
+	}
+
+	if len(ipRequests) != len(netInfo.Subnets()) {
+		return fmt.Errorf("layer2 network expects %d IP(s), got %d: %w", len(netInfo.Subnets()), len(ipRequests), ErrIPFamilyMismatch)
+	}
+
+	requestedIPs, err := util.ParseIPNets(ipRequests)
+	if err != nil {
+		return fmt.Errorf("failed to parse IP requests: %w", err)
+	}
+
+	var requestedIPv4, requestedIPv6 bool
+	for _, ipNet := range requestedIPs {
+		if utilnet.IsIPv6CIDR(ipNet) {
+			requestedIPv6 = true
+		} else {
+			requestedIPv4 = true
+		}
+	}
+
+	ipv4Mode, ipv6Mode := netInfo.IPMode()
+	if ipv4Mode != requestedIPv4 || ipv6Mode != requestedIPv6 {
+		return fmt.Errorf("layer2 network IP family mismatch: network supports IPv4=%t IPv6=%t, but requested types IPv4=%t IPv6=%t: %w",
+			ipv4Mode, ipv6Mode, requestedIPv4, requestedIPv6, ErrIPFamilyMismatch)
+	}
+
 	return nil
 }
 
@@ -284,6 +337,7 @@ func allocatePodAnnotationWithRollback(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadKey string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -294,11 +348,10 @@ func allocatePodAnnotationWithRollback(
 	rollback func(),
 	err error) {
 
-	nadName := types.DefaultNetworkName
-	if netInfo.IsUserDefinedNetwork() {
-		nadName = util.GetNADName(network.Namespace, network.Name)
+	if !netInfo.IsUserDefinedNetwork() {
+		nadKey = types.DefaultNetworkName
 	}
-	podDesc := fmt.Sprintf("%s/%s/%s", nadName, pod.Namespace, pod.Name)
+	podDesc := fmt.Sprintf("%s/%s/%s", nadKey, pod.Namespace, pod.Name)
 	macOwnerID := macOwner(pod)
 	networkName := netInfo.GetNetworkName()
 
@@ -343,7 +396,7 @@ func allocatePodAnnotationWithRollback(
 		}
 	}()
 
-	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	isNetworkAllocated := podAnnotation != nil
 	if podAnnotation == nil {
 		podAnnotation = &util.PodAnnotation{}
@@ -399,6 +452,16 @@ func allocatePodAnnotationWithRollback(
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
+
+	defer func() {
+		if ipamClaim == nil || claimsReconciler == nil {
+			return
+		}
+		updatedClaim := claimsReconciler.UpdateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		if reconcileErr := claimsReconciler.Reconcile(ipamClaim, updatedClaim, ipAllocator); reconcileErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to reconcile IPAM claim %s/%s: %w", ipamClaim.Namespace, ipamClaim.Name, reconcileErr))
+		}
+	}()
 
 	if hasIPAM && hasStaticIPRequest {
 		if err = validateStaticIPRequest(netInfo, network, ipamClaim, podDesc); err != nil {
@@ -477,13 +540,13 @@ func allocatePodAnnotationWithRollback(
 				// repeated requests are no-op because mac already reserved
 				if !errors.Is(rerr, mac.ErrMACReserved) {
 					// avoid leaking the network name because this error may reflect of a pod event, which is visible to non-admins.
-					err = fmt.Errorf("failed to reserve MAC address %q for owner %q on network attachment %q: %w",
-						tentative.MAC, macOwnerID, nadName, rerr)
+					err = fmt.Errorf("failed to reserve MAC address %q for owner %q on NAD key %q: %w",
+						tentative.MAC, macOwnerID, nadKey, rerr)
 					klog.Errorf("%v, network-name: %q", err, networkName)
 					return
 				}
 			} else {
-				klog.V(5).Infof("Reserved MAC %q for owner %q on network %q nad %q", tentative.MAC, macOwnerID, networkName, nadName)
+				klog.V(5).Infof("Reserved MAC %q for owner %q on network %q NAD key %q", tentative.MAC, macOwnerID, networkName, nadKey)
 				releaseMAC = tentative.MAC
 			}
 		}
@@ -499,14 +562,8 @@ func allocatePodAnnotationWithRollback(
 
 	if needsAnnotationUpdate {
 		updatedPod = pod
-		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadName)
+		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadKey)
 		podAnnotation = tentative
-	}
-
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
 	}
 
 	return

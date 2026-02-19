@@ -357,7 +357,11 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 					klog.Errorf("Error closing dbus connection for UDN isolation: %v", err)
 				}
 				return
-			case signal := <-signalChan:
+			case signal, ok := <-signalChan:
+				if !ok || signal == nil {
+					// Channel was closed, connection is shutting down
+					return
+				}
 				klog.V(5).Infof("D-Bus event received: %#v", signal)
 				// Extract unit name from path
 				unitPath := signal.Path

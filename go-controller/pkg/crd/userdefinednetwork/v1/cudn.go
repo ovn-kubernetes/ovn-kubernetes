@@ -33,6 +33,15 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer3' ? has(self.layer3): !has(self.layer3)", message="spec.layer3 is required when topology is Layer3 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer2' ? has(self.layer2): !has(self.layer2)", message="spec.layer2 is required when topology is Layer2 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Localnet' ? has(self.localnet): !has(self.localnet)", message="spec.localnet is required when topology is Localnet and forbidden otherwise"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary')", message="transport 'NoOverlay' is only supported for Layer3 primary networks"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || has(self.noOverlay)", message="spec.noOverlay is required when type transport is 'NoOverlay'"
+	// +kubebuilder:validation:XValidation:rule="self.transport == 'NoOverlay' || !has(self.noOverlay)", message="spec.noOverlay is forbidden when transport type is not 'NoOverlay'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || ((self.topology == 'Layer2' && has(self.layer2) && self.layer2.role == 'Primary') || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary'))", message="transport 'EVPN' is only supported for Layer2 or Layer3 primary networks"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || has(self.evpn)", message="spec.evpn field is required when transport is 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="self.transport == 'EVPN' || !has(self.evpn)", message="spec.evpn field is forbidden when transport is not 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer2' || (has(self.evpn) && has(self.evpn.macVRF))", message="spec.evpn.macVRF field is required for Layer2 topology when transport is 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer3' || (has(self.evpn) && has(self.evpn.ipVRF))", message="spec.evpn.ipVRF field is required for Layer3 topology when transport is 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer3' || !has(self.evpn) || !has(self.evpn.macVRF)", message="spec.evpn.macVRF field is forbidden for Layer3 topology when transport is 'EVPN'"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
@@ -65,6 +74,24 @@ type NetworkSpec struct {
 	// Localnet is the Localnet topology configuration.
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
+
+	// Transport describes the transport technology for pod-to-pod traffic.
+	// Allowed values are "NoOverlay", "Geneve", and "EVPN".
+	// - "NoOverlay": The network operates in no-overlay mode.
+	// - "Geneve": The network uses Geneve overlay.
+	// - "EVPN": The network uses EVPN transport.
+	// When omitted, the default behaviour is Geneve.
+	// +kubebuilder:validation:Enum=NoOverlay;Geneve;EVPN
+	// +optional
+	Transport TransportOption `json:"transport,omitempty"`
+	// NoOverlay contains configuration for no-overlay mode.
+	// This is only allowed when Transport is "NoOverlay".
+	// +optional
+	NoOverlay *NoOverlayConfig `json:"noOverlay,omitempty"`
+	// EVPN contains configuration for EVPN mode.
+	// This is only allowed when Transport is "EVPN".
+	// +optional
+	EVPN *EVPNConfig `json:"evpn,omitempty"`
 }
 
 // ClusterUserDefinedNetworkStatus contains the observed status of the ClusterUserDefinedNetwork.
@@ -217,4 +244,32 @@ type VLANConfig struct {
 	// Access is the access VLAN configuration
 	// +optional
 	Access *AccessVLANConfig `json:"access"`
+}
+
+type TransportOption string
+type SNATOption string
+type RoutingOption string
+
+const (
+	TransportOptionNoOverlay TransportOption = "NoOverlay"
+	TransportOptionGeneve    TransportOption = "Geneve"
+	TransportOptionEVPN      TransportOption = "EVPN"
+
+	SNATEnabled  SNATOption = "Enabled"
+	SNATDisabled SNATOption = "Disabled"
+
+	RoutingManaged   RoutingOption = "Managed"
+	RoutingUnmanaged RoutingOption = "Unmanaged"
+)
+
+// NoOverlayConfig contains configuration options for networks operating in no-overlay mode.
+type NoOverlayConfig struct {
+	// OutboundSNAT defines the SNAT behavior for outbound traffic from pods.
+	// +kubebuilder:validation:Enum=Enabled;Disabled
+	// +required
+	OutboundSNAT SNATOption `json:"outboundSNAT"`
+	// Routing specifies whether the pod network routing is managed by OVN-Kubernetes or users.
+	// +kubebuilder:validation:Enum=Managed;Unmanaged
+	// +required
+	Routing RoutingOption `json:"routing"`
 }

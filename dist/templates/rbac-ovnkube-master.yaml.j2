@@ -86,6 +86,7 @@ rules:
           - userdefinednetworks
           - clusteruserdefinednetworks
           - networkqoses
+          - vteps
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.cni.cncf.io"]
       resources:
@@ -230,3 +231,44 @@ spec:
         operations:  ["UPDATE"]
         resources:   ["pods"]
 {%- endif %}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: egressip-mark-annotation-validation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["k8s.ovn.org"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["egressips"]
+  validations:
+  # Prevent creating EgressIP with the annotation
+  - expression: 'request.operation != "CREATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations)'
+    message: 'EgressIP resources cannot be created with the "k8s.ovn.org/egressip-mark" annotation. This annotation is managed by the system.'
+    reason: Invalid
+  # Prevent modifying or removing the annotation once set
+  - expression: 'request.operation != "UPDATE" || !has(oldObject.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations) ||
+      (has(object.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in object.metadata.annotations) && oldObject.metadata.annotations["k8s.ovn.org/egressip-mark"] == object.metadata.annotations["k8s.ovn.org/egressip-mark"])'
+    message: 'The "k8s.ovn.org/egressip-mark" annotation cannot be modified or removed once set. This annotation is managed by the system.'
+    reason: Invalid
+  # Only OVN controller service account can add the annotation
+  {% if ovn_enable_interconnect == "true" -%}
+  - expression: 'request.operation != "UPDATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations) || (has(oldObject.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations)) || request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager"'
+  {% else %}
+  - expression: 'request.operation != "UPDATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations) || (has(oldObject.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations)) || request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-master"'
+  {%- endif %}
+    message: 'A regular user must not add "k8s.ovn.org/egressip-mark" annotation to an EgressIP custom resource.'
+    reason: Invalid
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: egressip-mark-annotation-validation-binding
+spec:
+  policyName: egressip-mark-annotation-validation
+  validationActions: [Deny]

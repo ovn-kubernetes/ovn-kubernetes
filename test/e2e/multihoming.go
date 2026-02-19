@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
@@ -92,7 +94,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			By("creating the attachment configuration")
 			_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
 				context.Background(),
-				generateNAD(netConfig, f.ClientSet),
+				generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
 				metav1.CreateOptions{},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -2381,6 +2383,329 @@ ip a add %[4]s/24 dev %[2]s
 			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0]))
 			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0]))
 		})
+	})
+
+	Context("A pod with multiple attachments to the same secondary NAD", func() {
+		const (
+			testNadName = "test-multi-secondary-nad"
+			testPodName = "test-pod-multi-secondary-nad"
+		)
+
+		var pod *v1.Pod
+
+		DescribeTable("features multiple different IPs and connectivity redundancy",
+			func(netConfigParams networkAttachmentConfigParams) {
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = f.Namespace.Name
+				netConfig.name = testNadName
+
+				By("creating the secondary network attachment definition")
+				_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
+					context.Background(),
+					generateNAD(netConfig, f.ClientSet),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("waiting for controller to sync the NAD")
+				time.Sleep(5 * time.Second)
+
+				By("creating a pod with multiple attachments to the same secondary NAD")
+				// Specify the same NAD name multiple times to test GetIndexedNADKey functionality
+				// This will create indexed NAD keys like "ns/nad", "ns/nad/1"
+				podConfig := podConfiguration{
+					attachments: []nadapi.NetworkSelectionElement{
+						{Name: testNadName, Namespace: netConfig.namespace}, // First attachment - will be indexed as "ns/nad"
+						{Name: testNadName, Namespace: netConfig.namespace}, // Second attachment - will be indexed as "ns/nad/1"
+					},
+					name:         testPodName,
+					namespace:    f.Namespace.Name,
+					isPrivileged: true, // Required for ip link set commands to manipulate network interfaces
+				}
+				pod, err = cs.CoreV1().Pods(podConfig.namespace).Create(
+					context.Background(),
+					generatePodSpec(podConfig),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("asserting the pod gets to the `Running` phase")
+				Eventually(func() v1.PodPhase {
+					updatedPod, err := cs.CoreV1().Pods(podConfig.namespace).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
+					if err != nil {
+						return v1.PodFailed
+					}
+					pod = updatedPod
+					return updatedPod.Status.Phase
+				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+
+				By("verifying the pod has two network status entries for the same secondary NAD")
+				netStatus, err := podNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
+					return !status.Default && strings.Contains(status.Name, testNadName)
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(netStatus).To(HaveLen(2), "Pod should have two network status entries for the secondary NAD attachments")
+
+				By("verifying both interfaces have IPs")
+				for i := 0; i < 2; i++ {
+					Expect(netStatus[i].IPs).NotTo(BeEmpty(), fmt.Sprintf("Interface %d should have at least one IP", i))
+				}
+
+				By("verifying both IPs are different")
+				ips := make([]string, 2)
+				for i := 0; i < 2; i++ {
+					ips[i] = netStatus[i].IPs[0]
+				}
+				Expect(ips[0]).NotTo(Equal(ips[1]), "First and second interface IPs should be different")
+
+				By("verifying all IPs are from the configured secondary NAD subnet")
+				subnet, err := getNetCIDRSubnet(netConfig.cidr)
+				Expect(err).NotTo(HaveOccurred())
+				for i, ip := range ips {
+					Expect(inRange(subnet, ip)).To(Succeed(), fmt.Sprintf("IP[%d] %s should be in subnet %s", i, ip, subnet))
+					By(fmt.Sprintf("Verified IP[%d] %s is from subnet %s", i, ip, subnet))
+				}
+
+				By("verifying both interfaces have unique interface names")
+				interfaceNames := make([]string, 2)
+				for i := 0; i < 2; i++ {
+					Expect(netStatus[i].Interface).NotTo(BeEmpty(), fmt.Sprintf("Interface %d should have a name", i))
+					interfaceNames[i] = netStatus[i].Interface
+				}
+				Expect(interfaceNames[0]).NotTo(Equal(interfaceNames[1]), "First and second interface names should be different")
+
+				By(fmt.Sprintf("Successfully validated two interfaces with IPs: %s, %s", ips[0], ips[1]))
+
+				// For L3 secondary NADs, verify ECMP routes are added in the pod
+				if netConfigParams.topology == "layer3" {
+					By("verifying ECMP routes are added for L3 secondary NAD with multiple attachments")
+
+					// Calculate the gateway IP from the pod's IP - gateway is the .1 address of the subnet
+					// For example, if pod IP is 172.31.0.3/24, gateway is 172.31.0.1
+					podIP := net.ParseIP(ips[0])
+					Expect(podIP).NotTo(BeNil(), "Pod IP should be valid")
+					podIPv4 := podIP.To4()
+					Expect(podIPv4).NotTo(BeNil(), "Pod IP should be IPv4")
+					expectedGateway := net.IPv4(podIPv4[0], podIPv4[1], podIPv4[2], 1).String()
+
+					// Get routes for the secondary network CIDR
+					routeOutput, err := e2ekubectl.RunKubectl(
+						podConfig.namespace,
+						"exec",
+						pod.Name,
+						"--",
+						"ip",
+						"route",
+						"show",
+						secondaryNetworkCIDR,
+					)
+					Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to get routes from pod for dest %s", secondaryNetworkCIDR))
+
+					// ECMP routes should contain "nexthop" entries for both interfaces
+					// Example format:
+					// 172.31.0.0/16
+					//     nexthop via 172.31.0.1 dev net1 weight 1
+					//     nexthop via 172.31.0.1 dev net2 weight 1
+					By(fmt.Sprintf("ECMP routes to %s", routeOutput))
+					routes := strings.Split(routeOutput, "\n")
+					// output should be at lease 3
+					Expect(len(routes)).To(BeNumerically(">", 2))
+					Expect(routes[1]).To(ContainSubstring(fmt.Sprintf("nexthop via %s dev %s weight 1", expectedGateway, interfaceNames[0])), fmt.Sprintf("ECMP routes should include interface %s", interfaceNames[0]))
+					Expect(routes[2]).To(ContainSubstring(fmt.Sprintf("nexthop via %s dev %s weight 1", expectedGateway, interfaceNames[1])), fmt.Sprintf("ECMP routes should include interface %s", interfaceNames[1]))
+
+					By(fmt.Sprintf("Successfully verified ECMP routes to %s via gateway %s with interfaces %s and %s",
+						secondaryNetworkCIDR, expectedGateway, interfaceNames[0], interfaceNames[1]))
+				}
+
+				By("creating a second pod with a single attachment to the same secondary NAD")
+				serverPodName := "test-pod-multi-secondary-nad-server"
+				serverPodConfig := podConfiguration{
+					attachments: []nadapi.NetworkSelectionElement{
+						{Name: testNadName, Namespace: netConfig.namespace},
+					},
+					name:         serverPodName,
+					namespace:    f.Namespace.Name,
+					containerCmd: httpServerContainerCmd(8080),
+				}
+				serverPod, err := cs.CoreV1().Pods(serverPodConfig.namespace).Create(
+					context.Background(),
+					generatePodSpec(serverPodConfig),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("asserting the server pod gets to the `Running` phase")
+				Eventually(func() v1.PodPhase {
+					updatedPod, err := cs.CoreV1().Pods(serverPodConfig.namespace).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
+					if err != nil {
+						return v1.PodFailed
+					}
+					serverPod = updatedPod
+					return updatedPod.Status.Phase
+				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+
+				By("getting the server pod's IP on the secondary NAD")
+				serverNetStatus, err := podNetworkStatus(serverPod, func(status nadapi.NetworkStatus) bool {
+					return !status.Default && strings.Contains(status.Name, testNadName)
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(serverNetStatus).To(HaveLen(1), "Server pod should have one network status entry for the secondary NAD")
+				Expect(serverNetStatus[0].IPs).NotTo(BeEmpty(), "Server pod should have at least one IP")
+				serverIP := serverNetStatus[0].IPs[0]
+				By(fmt.Sprintf("Server pod IP on secondary NAD: %s", serverIP))
+
+				By("verifying connectivity from client pod to server pod with all interfaces up")
+				Eventually(func() error {
+					_, err := e2ekubectl.RunKubectl(
+						podConfig.namespace,
+						"exec",
+						pod.Name,
+						"--",
+						"curl",
+						"--connect-timeout",
+						"2",
+						fmt.Sprintf("http://%s:8080/hostname", serverIP),
+					)
+					return err
+				}, 30*time.Second, 2*time.Second).Should(Succeed(), "Should be able to reach server pod from client pod")
+
+				// Test connectivity explicitly using the first interface
+				interfaceName := interfaceNames[0]
+				By(fmt.Sprintf("verifying connectivity explicitly through interface %d (%s)", 0, interfaceName))
+
+				Eventually(func() error {
+					_, err := e2ekubectl.RunKubectl(
+						podConfig.namespace,
+						"exec",
+						pod.Name,
+						"--",
+						"curl",
+						"--connect-timeout",
+						"2",
+						"--interface",
+						interfaceName,
+						fmt.Sprintf("http://%s:8080/hostname", serverIP),
+					)
+					return err
+				}, 30*time.Second, 2*time.Second).Should(Succeed(), fmt.Sprintf("Should be able to reach server through interface %s", interfaceName))
+
+				By(fmt.Sprintf("Successfully verified connectivity through interface %d (%s)", 0, interfaceName))
+
+				// Test redundancy: verify that when the first interface is down, we can still reach the server
+				interfaceToDisable := interfaceNames[0]
+				workingInterface := interfaceNames[1]
+
+				By(fmt.Sprintf("bringing down interface 0 (%s) and verifying connectivity through interface 1 (%s)", interfaceToDisable, workingInterface))
+
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"down",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring down interface %s", interfaceToDisable))
+
+				Eventually(func() error {
+					_, err := e2ekubectl.RunKubectl(
+						podConfig.namespace,
+						"exec",
+						pod.Name,
+						"--",
+						"curl",
+						"--connect-timeout",
+						"2",
+						"--interface",
+						workingInterface,
+						fmt.Sprintf("http://%s:8080/hostname", serverIP),
+					)
+					return err
+				}, 30*time.Second, 2*time.Second).Should(Succeed(), fmt.Sprintf("Should be able to reach server through working interface %s when %s is down", workingInterface, interfaceToDisable))
+
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"up",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring interface %s back up", interfaceToDisable))
+
+				// Test the reverse
+				interfaceToDisable = interfaceNames[1]
+				workingInterface = interfaceNames[0]
+
+				By(fmt.Sprintf("bringing down interface 1 (%s) and verifying connectivity through interface 0 (%s)", interfaceToDisable, workingInterface))
+
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"down",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring down interface %s", interfaceToDisable))
+
+				Eventually(func() error {
+					_, err := e2ekubectl.RunKubectl(
+						podConfig.namespace,
+						"exec",
+						pod.Name,
+						"--",
+						"curl",
+						"--connect-timeout",
+						"2",
+						"--interface",
+						workingInterface,
+						fmt.Sprintf("http://%s:8080/hostname", serverIP),
+					)
+					return err
+				}, 30*time.Second, 2*time.Second).Should(Succeed(), fmt.Sprintf("Should be able to reach server through working interface %s when %s is down", workingInterface, interfaceToDisable))
+
+				_, err = e2ekubectl.RunKubectl(
+					podConfig.namespace,
+					"exec",
+					pod.Name,
+					"--",
+					"ip",
+					"link",
+					"set",
+					interfaceToDisable,
+					"up",
+				)
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Should be able to bring interface %s back up", interfaceToDisable))
+
+				By("Successfully verified that both interfaces can reach the same secondary NAD and provide redundancy")
+			},
+			Entry("L2 secondary NAD",
+				networkAttachmentConfigParams{
+					name:     testNadName,
+					topology: "layer2",
+					cidr:     secondaryFlatL2NetworkCIDR,
+					role:     "secondary",
+				},
+			),
+			Entry("L3 secondary NAD",
+				networkAttachmentConfigParams{
+					name:     testNadName,
+					topology: "layer3",
+					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+					role:     "secondary",
+				},
+			),
+		)
 	})
 })
 

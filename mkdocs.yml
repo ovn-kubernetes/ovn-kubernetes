@@ -82,10 +82,11 @@ nav:
     - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
     - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
     - Internal Subnets: design/ovn-kubernetes-subnets.md
-    - Kubevirt VM Live Migration: design/live-migration.md
+    - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
     - Launching OVN-Kubernetes: installation/launching-ovn-kubernetes-on-kind.md
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
+    - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
     - Configuration Guide: getting-started/configuration.md
     - CLI Guide: getting-started/cli-guide.md
     - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md
@@ -134,6 +135,7 @@ nav:
         - Usage Guide: features/network-qos-guide.md
     - LiveMigration: features/live-migration.md
     - HybridOverlay: features/hybrid-overlay.md
+    - OVS Dynamic CPU Affinity: features/ovs-dynamic-cpu-affinity.md
     - Hardware Acceleration:
       - OVS Acceleration with kernel datapath: features/hardware-offload/ovs-kernel.md
       - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
@@ -158,5 +160,8 @@ nav:
     - MCP for Troubleshooting: okeps/okep-5494-ovn-kubernetes-mcp-server.md
     - Dynamic UDN Node Allocation: okeps/okep-5552-dynamic-udn-node-allocation.md
     - Connecting User Defined Networks: okeps/okep-5224-connecting-udns/okep-5224-connecting-udns.md
+    - No-Overlay Mode: okeps/okep-5259-no-overlay.md
+    - EVPN: okeps/okep-5088-evpn.md
+    - DPU Healthcheck: okeps/okep-5674-dpu-healthcheck.md
   - Blog:
     - blog/index.md

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 
 	"github.com/mdlayher/ndp"
+	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv6"
 
 	"k8s.io/klog/v2"
@@ -73,12 +75,15 @@ func SendUnsolicitedNeighborAdvertisement(interfaceName string, na NeighborAdver
 		return fmt.Errorf("failed to convert IP %s to netip.Addr", targetIP.String())
 	}
 
-	// Use unspecified address to handle cases where the advertised IP is not assigned to the interface.
-	c, _, err := ndp.Listen(iface, ndp.Unspecified)
+	// Use icmp.ListenPacket instead of ndp.Listen because ndp.Listen uses the interface name
+	// for the IPv6 zone, which Go's net package caches. If the interface is recreated with the
+	// same name but a different index, the cached zone becomes stale. Using the index directly
+	// avoids this issue. Unspecified address handles cases where the IP isn't assigned to the interface.
+	ic, err := icmp.ListenPacket("ip6:ipv6-icmp", netip.IPv6Unspecified().WithZone(strconv.Itoa(iface.Index)).String())
 	if err != nil {
 		return fmt.Errorf("failed to create NDP connection on %s: %w", interfaceName, err)
 	}
-	defer c.Close()
+	defer ic.Close()
 
 	// Unsolicited neighbor advertisement from a host, should override any existing cache entries
 	una := &ndp.NeighborAdvertisement{
@@ -93,9 +98,17 @@ func SendUnsolicitedNeighborAdvertisement(interfaceName string, na NeighborAdver
 			},
 		},
 	}
+	rawUNA, err := ndp.MarshalMessage(una)
+	if err != nil {
+		return fmt.Errorf("failed to marshal UNA message: %w", err)
+	}
 
 	// rfc4861 - hop Limit 255 for unsolicited neighbor advertisements as per RFC, send to all-nodes multicast address
-	if err := c.WriteTo(una, &ipv6.ControlMessage{HopLimit: ndp.HopLimit}, netip.IPv6LinkLocalAllNodes()); err != nil {
+	_, err = ic.IPv6PacketConn().WriteTo(rawUNA, &ipv6.ControlMessage{HopLimit: ndp.HopLimit}, &net.IPAddr{
+		IP:   netip.IPv6LinkLocalAllNodes().AsSlice(),
+		Zone: strconv.Itoa(iface.Index),
+	})
+	if err != nil {
 		return fmt.Errorf("failed to send an unsolicited neighbor advertisement for IP %s over interface %s: %w", targetIP.String(), interfaceName, err)
 	}
 

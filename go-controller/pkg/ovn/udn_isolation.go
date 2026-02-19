@@ -326,17 +326,33 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 	if err != nil {
 		return fmt.Errorf("failed to get advertised subnets addresset %s for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
 	}
-
+	var ipv4Subnets, ipv6Subnets []*net.IPNet
 	for _, subnet := range bnc.Subnets() {
-		ipPrefix := "ip4"
 		if utilnet.IsIPv6CIDR(subnet.CIDR) {
-			ipPrefix = "ip6"
+			ipv6Subnets = append(ipv6Subnets, subnet.CIDR)
+		} else {
+			ipv4Subnets = append(ipv4Subnets, subnet.CIDR)
 		}
-		passMatches = append(passMatches, fmt.Sprintf("(%s.src == %s && %s.dst == %s)", ipPrefix, subnet.CIDR, ipPrefix, subnet.CIDR))
 		cidrs = append(cidrs, subnet.CIDR.String())
-
 	}
-
+	if len(ipv4Subnets) > 0 {
+		var srcMatches, dstMatches []string
+		for _, subnet := range ipv4Subnets {
+			srcMatches = append(srcMatches, fmt.Sprintf("ip4.src == %s", subnet))
+			dstMatches = append(dstMatches, fmt.Sprintf("ip4.dst == %s", subnet))
+		}
+		// build match ((ip4.src == subnet1 || ip4.src == subnet2 ...) && (ip4.dst == subnet1 || ip4.dst == subnet2 ...))
+		passMatches = append(passMatches, fmt.Sprintf("((%s) && (%s))", strings.Join(srcMatches, " || "), strings.Join(dstMatches, " || ")))
+	}
+	if len(ipv6Subnets) > 0 {
+		var srcMatches, dstMatches []string
+		for _, subnet := range ipv6Subnets {
+			srcMatches = append(srcMatches, fmt.Sprintf("ip6.src == %s", subnet))
+			dstMatches = append(dstMatches, fmt.Sprintf("ip6.dst == %s", subnet))
+		}
+		// build match ((ip6.src == subnet1 || ip6.src == subnet2 ...) && (ip6.dst == subnet1 || ip6.dst == subnet2 ...))
+		passMatches = append(passMatches, fmt.Sprintf("((%s) && (%s))", strings.Join(srcMatches, " || "), strings.Join(dstMatches, " || ")))
+	}
 	addrOps, err := addrSet.AddAddressesReturnOps(cidrs)
 	if err != nil {
 		return fmt.Errorf("failed to add addresses %q to the %s address set for network %s: %w", cidrs, GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)

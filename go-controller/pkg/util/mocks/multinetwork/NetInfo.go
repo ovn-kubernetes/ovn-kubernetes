@@ -34,25 +34,127 @@ func (_m *NetInfo) AllowsPersistentIPs() bool {
 	return r0
 }
 
-// EqualNADs provides a mock function with given fields: nads
-func (_m *NetInfo) EqualNADs(nads ...string) bool {
-	_va := make([]interface{}, len(nads))
-	for _i := range nads {
-		_va[_i] = nads[_i]
-	}
-	var _ca []interface{}
-	_ca = append(_ca, _va...)
-	ret := _m.Called(_ca...)
+// EVPNIPVRFRouteTarget provides a mock function with no fields
+func (_m *NetInfo) EVPNIPVRFRouteTarget() string {
+	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for EqualNADs")
+		panic("no return value specified for EVPNIPVRFRouteTarget")
 	}
 
-	var r0 bool
-	if rf, ok := ret.Get(0).(func(...string) bool); ok {
-		r0 = rf(nads...)
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
 	} else {
-		r0 = ret.Get(0).(bool)
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
+// EVPNIPVRFVID provides a mock function with no fields
+func (_m *NetInfo) EVPNIPVRFVID() int {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNIPVRFVID")
+	}
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func() int); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	return r0
+}
+
+// EVPNIPVRFVNI provides a mock function with no fields
+func (_m *NetInfo) EVPNIPVRFVNI() int32 {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNIPVRFVNI")
+	}
+
+	var r0 int32
+	if rf, ok := ret.Get(0).(func() int32); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int32)
+	}
+
+	return r0
+}
+
+// EVPNMACVRFRouteTarget provides a mock function with no fields
+func (_m *NetInfo) EVPNMACVRFRouteTarget() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNMACVRFRouteTarget")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
+// EVPNMACVRFVID provides a mock function with no fields
+func (_m *NetInfo) EVPNMACVRFVID() int {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNMACVRFVID")
+	}
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func() int); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	return r0
+}
+
+// EVPNMACVRFVNI provides a mock function with no fields
+func (_m *NetInfo) EVPNMACVRFVNI() int32 {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNMACVRFVNI")
+	}
+
+	var r0 int32
+	if rf, ok := ret.Get(0).(func() int32); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int32)
+	}
+
+	return r0
+}
+
+// EVPNVTEPName provides a mock function with no fields
+func (_m *NetInfo) EVPNVTEPName() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNVTEPName")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
 	}
 
 	return r0
@@ -144,26 +246,6 @@ func (_m *NetInfo) GetNADNamespaces() []string {
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetNADNamespaces")
-	}
-
-	var r0 []string
-	if rf, ok := ret.Get(0).(func() []string); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]string)
-		}
-	}
-
-	return r0
-}
-
-// GetNADs provides a mock function with no fields
-func (_m *NetInfo) GetNADs() []string {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetNADs")
 	}
 
 	var r0 []string
@@ -414,6 +496,24 @@ func (_m *NetInfo) GetNetworkScopedPatchPortName(bridgeID string, nodeName strin
 	return r0
 }
 
+// GetNetworkScopedRouterToSwitchPortName provides a mock function with given fields: nodeName
+func (_m *NetInfo) GetNetworkScopedRouterToSwitchPortName(nodeName string) string {
+	ret := _m.Called(nodeName)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNetworkScopedRouterToSwitchPortName")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func(string) string); ok {
+		r0 = rf(nodeName)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // GetNetworkScopedSwitchName provides a mock function with given fields: nodeName
 func (_m *NetInfo) GetNetworkScopedSwitchName(nodeName string) string {
 	ret := _m.Called(nodeName)
@@ -527,24 +627,6 @@ func (_m *NetInfo) GetTunnelKeys() []int {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]int)
 		}
-	}
-
-	return r0
-}
-
-// HasNAD provides a mock function with given fields: nadName
-func (_m *NetInfo) HasNAD(nadName string) bool {
-	ret := _m.Called(nadName)
-
-	if len(ret) == 0 {
-		panic("no return value specified for HasNAD")
-	}
-
-	var r0 bool
-	if rf, ok := ret.Get(0).(func(string) bool); ok {
-		r0 = rf(nadName)
-	} else {
-		r0 = ret.Get(0).(bool)
 	}
 
 	return r0
@@ -839,6 +921,24 @@ func (_m *NetInfo) TransitSubnets() []*net.IPNet {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*net.IPNet)
 		}
+	}
+
+	return r0
+}
+
+// Transport provides a mock function with no fields
+func (_m *NetInfo) Transport() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Transport")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
 	}
 
 	return r0

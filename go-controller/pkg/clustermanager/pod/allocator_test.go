@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	fakeipamclaimclient "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
 	ipamclaimsfactory "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/informers/externalversions"
@@ -146,8 +147,9 @@ func (a *idAllocatorStub) ReserveID(string, int) error {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *idAllocatorStub) ReleaseID(string) {
+func (a *idAllocatorStub) ReleaseID(string) int {
 	a.released = true
+	return 0
 }
 
 func (a *idAllocatorStub) ForName(string) id.NamedAllocator {
@@ -544,13 +546,13 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					},
 				},
 				nads: []*nadapi.NetworkAttachmentDefinition{
-					ovntest.GenerateNAD("surya", "nad", "namespace",
+					ovntest.GenerateNAD("nad", "nad", "namespace",
 						types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary),
 				},
 			},
 			role:         types.NetworkRolePrimary,
-			expectError:  "failed to get NAD to network mapping: unexpected primary network \"\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}",
-			expectEvents: []string{"Warning ErrorAllocatingPod unexpected primary network \"\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
+			expectError:  "failed to get NAD to network mapping: unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}",
+			expectEvents: []string{"Warning ErrorAllocatingPod unexpected primary network \"nad\" specified with a NetworkSelectionElement &{Name:nad Namespace:namespace IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"},
 		},
 		{
 			name: "Pod on network with exhausted ip pool, expect event and error",
@@ -597,7 +599,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
 				},
 			},
-			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": test reserve failure`,
+			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on NAD key "namespace/nad": test reserve failure`,
 		},
 		{
 			name:        "should emit pod event when macRegistry fail to reserve pod's MAC due to MAC conflict",
@@ -609,8 +611,8 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
 				},
 			},
-			expectError:  `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": MAC address already in use`,
-			expectEvents: []string{`Warning ErrorAllocatingPod failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": MAC address already in use`},
+			expectError:  `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on NAD key "namespace/nad": MAC address already in use`,
+			expectEvents: []string{`Warning ErrorAllocatingPod failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on NAD key "namespace/nad": MAC address already in use`},
 		},
 		{
 			name:        "should NOT fail when macRegistry gets repeated reserve requests (same mac and owner)",
@@ -673,7 +675,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
 				},
 			},
-			expectError:     `failed to release pod "namespace/pod" mac "0a:0a:0a:0a:0a:0a": failed to release MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network "": test release failure`,
+			expectError:     `failed to release pod "namespace/pod" mac "0a:0a:0a:0a:0a:0a": failed to release MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network "nad": test release failure`,
 			expectIPRelease: true,
 		},
 		{
@@ -827,6 +829,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			nodeListerMock.On("Get", mock.AnythingOfType("string")).Return(&corev1.Node{}, nil)
 
 			netConf := &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: "nad"},
 				Topology:           types.Layer2Topology,
 				AllowPersistentIPs: tt.ipam && tt.args.ipamClaim != nil,
 			}
@@ -877,9 +880,21 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 
 			testNs := "namespace"
 			nadNetworks := map[string]util.NetInfo{}
+			nadKeyToNetInfo := map[string]util.NetInfo{}
 			for _, nad := range tt.args.nads {
 				if nad.Namespace == testNs {
-					nadNetwork, _ := util.ParseNADInfo(nad)
+					nadNetwork, err := util.ParseNADInfo(nad)
+					if err != nil {
+						t.Fatalf("ParseNADInfo failed for %s: %v", util.GetNADName(nad.Namespace, nad.Name), err)
+					}
+					if nadNetwork == nil {
+						t.Fatalf("ParseNADInfo returned nil for %s", util.GetNADName(nad.Namespace, nad.Name))
+					}
+					mutableNADNetInfo := util.NewMutableNetInfo(nadNetwork)
+					nadKey := util.GetNADName(nad.Namespace, nad.Name)
+					mutableNADNetInfo.AddNADs(nadKey)
+					nadNetwork = mutableNADNetInfo
+					nadKeyToNetInfo[nadKey] = nadNetwork
 					if nadNetwork.IsPrimaryNetwork() {
 						if _, ok := nadNetworks[testNs]; !ok {
 							nadNetworks[testNs] = nadNetwork
@@ -887,8 +902,17 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					}
 				}
 			}
-
-			fakeNetworkManager := &networkmanager.FakeNetworkManager{PrimaryNetworks: nadNetworks}
+			fakeNetworkManager := &networkmanager.FakeNetworkManager{
+				PrimaryNetworks: nadNetworks,
+				NADNetworks:     nadKeyToNetInfo,
+			}
+			// Ensure resolver can map the test NAD key used by pod annotations.
+			if _, ok := fakeNetworkManager.NADNetworks["namespace/nad"]; !ok {
+				fakeNetworkManager.NADNetworks["namespace/nad"] = netInfo
+			}
+			if netInfo.IsPrimaryNetwork() && fakeNetworkManager.PrimaryNetworks["namespace"] == nil {
+				fakeNetworkManager.PrimaryNetworks["namespace"] = netInfo
+			}
 
 			fakeRecorder := record.NewFakeRecorder(10)
 

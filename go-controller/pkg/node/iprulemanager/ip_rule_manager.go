@@ -2,6 +2,7 @@ package iprulemanager
 
 import (
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -190,9 +191,6 @@ func (rm *Controller) reconcile() error {
 			}
 			found = false
 			for _, ruleWanted := range rm.rules {
-				if ruleWanted.rule.Priority != priority {
-					continue
-				}
 				if areNetlinkRulesEqual(ruleWanted.rule, &ruleFound) {
 					found = true
 					break
@@ -213,15 +211,42 @@ func (rm *Controller) reconcile() error {
 }
 
 func areNetlinkRulesEqual(r1, r2 *netlink.Rule) bool {
-	return r1.String() == r2.String()
+	if r1.Priority != r2.Priority {
+		return false
+	}
+	if r1.Table != r2.Table {
+		return false
+	}
+	if r1.Type != r2.Type {
+		return false
+	}
+	if r1.Mark != r2.Mark {
+		return false
+	}
+
+	return areIPNetsEqual(r1.Src, r2.Src) && areIPNetsEqual(r1.Dst, r2.Dst)
+}
+
+func areIPNetsEqual(n1, n2 *net.IPNet) bool {
+	if n1 == nil && n2 == nil {
+		return true
+	}
+	if n1 == nil || n2 == nil {
+		return false
+	}
+
+	if !n1.IP.Equal(n2.IP) {
+		return false
+	}
+
+	n1ones, n1bits := n1.Mask.Size()
+	n2ones, n2bits := n2.Mask.Size()
+	return n1ones == n2ones && n1bits == n2bits
 }
 
 func isNetlinkRuleInSlice(rules []netlink.Rule, candidate *netlink.Rule) (bool, *netlink.Rule) {
 	for _, r := range rules {
 		r := r
-		if r.Priority != candidate.Priority {
-			continue
-		}
 		if areNetlinkRulesEqual(&r, candidate) {
 			return true, &r
 		}

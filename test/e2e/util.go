@@ -657,11 +657,14 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 	})
 }
 
-// waitForRollout waits for the daemon set in a given namespace to be
+// updateAndWaitForRollout waits for the resource in a given namespace to be
 // successfully rolled out following an update.
 //
+// The updateFunc parameter is a callback that performs the update operation
+// (e.g., applying a new configuration).
+//
 // If allowedNotReadyNodes is -1, this method returns immediately without waiting.
-func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedNotReadyNodes int32, timeout time.Duration) error {
+func updateAndWaitForRollout(c kubernetes.Interface, ns string, resource string, allowedNotReadyNodes int32, timeout time.Duration, updateFunc func()) error {
 	if allowedNotReadyNodes == -1 {
 		return nil
 	}
@@ -673,8 +676,25 @@ func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedN
 	resourceType := resourceAtoms[0]
 	resourceName := resourceAtoms[1]
 
+	var oldGeneration int64
+	switch resourceType {
+	case "daemonset", "daemonsets", "ds":
+		ds, err := c.AppsV1().DaemonSets(ns).Get(context.TODO(), resourceName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		oldGeneration = ds.Generation
+	case "deployment", "deployments", "deploy":
+		dp, err := c.AppsV1().Deployments(ns).Get(context.TODO(), resourceName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		oldGeneration = dp.Generation
+	}
+	updateFunc()
+
 	start := time.Now()
-	framework.Logf("Waiting up to %v for daemonset %s in namespace %s to update",
+	framework.Logf("Waiting up to %v for %s in namespace %s to update",
 		timeout, resource, ns)
 
 	return wait.Poll(framework.Poll, timeout, func() (bool, error) {
@@ -710,6 +730,10 @@ func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedN
 		}
 
 		if generation <= observedGeneration {
+			if generation <= oldGeneration {
+				framework.Logf("Waiting for %s generation to increase (currently %d)...", resource, generation)
+				return false, nil
+			}
 			if updated < desired {
 				framework.Logf("Waiting for %s rollout to finish: %d out of %d new pods have been updated (%d seconds elapsed)", resource,
 					updated, desired, int(time.Since(start).Seconds()))
@@ -1138,14 +1162,37 @@ func isDualStackCluster(nodes *v1.NodeList) bool {
 // used to inject OVN specific test actions
 func wrappedTestFramework(basename string) *framework.Framework {
 	f := newPrivelegedTestFramework(basename)
-	// inject dumping dbs on failure
 	ginkgo.JustAfterEach(func() {
-		if !ginkgo.CurrentSpecReport().Failed() {
+		logLocation := "/var/log"
+		coredumpDir := "/tmp/kind/logs/coredumps"
+		dbLocation := "/var/lib/openvswitch"
+		// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5782
+		skippedCoredumps := []string{"zebra", "bgpd", "mgmtd", "bfdd"}
+
+		// Check for coredumps on host
+		var coredumpFiles []string
+		files, err := os.ReadDir(coredumpDir)
+		if err == nil {
+			for _, file := range files {
+				if file.IsDir() {
+					continue
+				}
+				fileName := file.Name()
+				if slices.ContainsFunc(skippedCoredumps, func(s string) bool {
+					return strings.Contains(fileName, s)
+				}) {
+					framework.Logf("Ignoring coredump for skipped process: %s", fileName)
+					continue
+				}
+				coredumpFiles = append(coredumpFiles, fileName)
+			}
+		}
+
+		// If coredumps found OR test already failed, collect dbs
+		if len(coredumpFiles) == 0 && !ginkgo.CurrentSpecReport().Failed() {
 			return
 		}
 
-		logLocation := "/var/log"
-		dbLocation := "/var/lib/openvswitch"
 		// Potential database locations
 		ovsdbLocations := []string{"/etc/origin/openvswitch", "/etc/openvswitch"}
 		dbs := []string{"ovnnb_db.db", "ovnsb_db.db"}
@@ -1183,6 +1230,11 @@ func wrappedTestFramework(basename string) *framework.Framework {
 				}
 			}
 		}
+
+		// Abort testing if any coredump found
+		if len(coredumpFiles) != 0 {
+			ginkgo.AbortSuite(fmt.Sprintf("Coredumps found during test execution: %s", strings.Join(coredumpFiles, ", ")))
+		}
 	})
 
 	return f
@@ -1191,6 +1243,7 @@ func wrappedTestFramework(basename string) *framework.Framework {
 func newPrivelegedTestFramework(basename string) *framework.Framework {
 	f := framework.NewDefaultFramework(basename)
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
+	f.NamespacePodSecurityWarnLevel = admissionapi.LevelPrivileged
 	f.DumpAllNamespaceInfo = func(ctx context.Context, f *framework.Framework, namespace string) {
 		debug.DumpAllNamespaceInfo(context.TODO(), f.ClientSet, namespace)
 	}
@@ -1243,17 +1296,30 @@ func setUnsetTemplateContainerEnv(c kubernetes.Interface, namespace, resource, c
 	args := []string{"set", "env", resource, "-c", container}
 	env := make([]string, 0, len(set)+len(unset))
 	for k, v := range set {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
+		currentValue := getTemplateContainerEnv(namespace, resource, container, k)
+		if currentValue != v {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
 	}
 	for _, k := range unset {
-		env = append(env, fmt.Sprintf("%s-", k))
+		currentValue := getTemplateContainerEnv(namespace, resource, container, k)
+		if currentValue != "" {
+			env = append(env, fmt.Sprintf("%s-", k))
+		}
 	}
+
+	if len(env) == 0 {
+		framework.Logf("No environment changes needed for %s container %s in namespace %s, skipping update", resource, container, namespace)
+		return
+	}
+
 	framework.Logf("Setting environment in %s container %s of namespace %s to %v", resource, container, namespace, env)
-	e2ekubectl.RunKubectlOrDie(namespace, append(args, env...)...)
 
 	// Make sure the change has rolled out
 	// TODO (Change this to use the exported upstream function)
-	err := waitForRollout(c, namespace, resource, 0, rolloutTimeout)
+	err := updateAndWaitForRollout(c, namespace, resource, 0, rolloutTimeout, func() {
+		e2ekubectl.RunKubectlOrDie(namespace, append(args, env...)...)
+	})
 	framework.ExpectNoError(err)
 }
 
@@ -1314,6 +1380,10 @@ func randStr(n int) string {
 func isCIDRIPFamilySupported(cs kubernetes.Interface, cidr string) bool {
 	ginkgo.GinkgoHelper()
 	gomega.Expect(cidr).To(gomega.ContainSubstring("/"))
+	// if cidr in format 2010:100:200::0/60/64, trim to 2010:100:200::0/60
+	if tokens := strings.Split(cidr, "/"); len(tokens) == 3 {
+		cidr = fmt.Sprintf(`%s/%s`, tokens[0], tokens[1])
+	}
 	isIPv6 := utilnet.IsIPv6CIDRString(cidr)
 	return (isIPv4Supported(cs) && !isIPv6) || (isIPv6Supported(cs) && isIPv6)
 }
@@ -1360,6 +1430,11 @@ func isInterconnectEnabled() bool {
 	return present && val == "true"
 }
 
+func isDynamicUDNEnabled() bool {
+	val, present := os.LookupEnv("DYNAMIC_UDN_ALLOCATION")
+	return present && val == "true"
+}
+
 func isNetworkSegmentationEnabled() bool {
 	val, present := os.LookupEnv("ENABLE_NETWORK_SEGMENTATION")
 	return present && val == "true"
@@ -1368,6 +1443,11 @@ func isNetworkSegmentationEnabled() bool {
 func isLocalGWModeEnabled() bool {
 	val, present := os.LookupEnv("OVN_GATEWAY_MODE")
 	return present && val == "local"
+}
+
+func isHelmEnabled() bool {
+	val, present := os.LookupEnv("USE_HELM")
+	return present && val == "true"
 }
 
 func isPreConfiguredUdnAddressesEnabled() bool {
@@ -1861,4 +1941,127 @@ func findOVNDBLeaderPod(f *framework.Framework, cs clientset.Interface, namespac
 	}
 
 	return nil, fmt.Errorf("no nbdb leader pod found among %d ovnkube-db pods", len(dbPods.Items))
+}
+
+// waitOVNKubernetesHealthy waits for the ovn-kubernetes cluster to be healthy
+// This includes checking that all nodes are ready, all ovnkube-node pods are running,
+// and all ovnkube-master/control-plane pods are running
+func waitOVNKubernetesHealthy(f *framework.Framework) error {
+	return wait.PollImmediate(5*time.Second, 300*time.Second, func() (bool, error) {
+		// Check that all nodes are ready and schedulable
+		nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
+		if err != nil {
+			framework.Logf("Error getting ready schedulable nodes: %v", err)
+			return false, nil
+		}
+
+		framework.Logf("Found %d ready schedulable nodes", len(nodes.Items))
+
+		// Check ovnkube-node pods
+		podClient := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace())
+		ovnNodePods, err := podClient.List(context.Background(), metav1.ListOptions{
+			LabelSelector: "app=ovnkube-node",
+		})
+		if err != nil {
+			framework.Logf("Error listing ovnkube-node pods: %v", err)
+			return false, nil
+		}
+
+		expectedNodePods := len(nodes.Items)
+		if len(ovnNodePods.Items) != expectedNodePods {
+			framework.Logf("Expected %d ovnkube-node pods, found %d", expectedNodePods, len(ovnNodePods.Items))
+			return false, nil
+		}
+
+		// Check that all ovnkube-node pods are running and ready
+		for _, pod := range ovnNodePods.Items {
+			isReady, err := testutils.PodRunningReady(&pod)
+			if err != nil {
+				framework.Logf("Error checking if ovnkube-node pod %s is ready: %v", pod.Name, err)
+				return false, nil
+			}
+			if !isReady {
+				framework.Logf("ovnkube-node pod %s is not running and ready (phase: %s)", pod.Name, pod.Status.Phase)
+				return false, nil
+			}
+		}
+
+		// Check ovnkube-master/control-plane pods
+		ovnMasterPods, err := podClient.List(context.Background(), metav1.ListOptions{
+			LabelSelector: "name=ovnkube-master",
+		})
+		if err != nil {
+			framework.Logf("Error listing ovnkube-master pods: %v", err)
+			return false, nil
+		}
+
+		// If no ovnkube-master pods, check for ovnkube-control-plane
+		if len(ovnMasterPods.Items) == 0 {
+			ovnMasterPods, err = podClient.List(context.Background(), metav1.ListOptions{
+				LabelSelector: "name=ovnkube-control-plane",
+			})
+			if err != nil {
+				framework.Logf("Error listing ovnkube-control-plane pods: %v", err)
+				return false, nil
+			}
+		}
+
+		if len(ovnMasterPods.Items) == 0 {
+			framework.Logf("No ovnkube-master or ovnkube-control-plane pods found")
+			return false, nil
+		}
+
+		// Check that at least one master/control-plane pod is running and ready
+		runningMasterPods := 0
+		for _, pod := range ovnMasterPods.Items {
+			isReady, err := testutils.PodRunningReady(&pod)
+			if err != nil {
+				framework.Logf("Error checking if ovnkube-master pod %s is ready: %v", pod.Name, err)
+				continue
+			}
+			if isReady {
+				runningMasterPods++
+			}
+		}
+
+		if runningMasterPods == 0 {
+			framework.Logf("No ovnkube-master/control-plane pods are running")
+			return false, nil
+		}
+
+		framework.Logf("OVN-Kubernetes cluster is healthy: %d nodes, %d ovnkube-node pods, %d running master pods",
+			len(nodes.Items), len(ovnNodePods.Items), runningMasterPods)
+		return true, nil
+	})
+}
+
+// waitForNodeReadyState waits for the specified node to reach the desired Ready state within the given timeout
+func waitForNodeReadyState(f *framework.Framework, nodeName string, timeout time.Duration, desiredReady bool) {
+	var stateDescription, expectationMessage string
+	if desiredReady {
+		stateDescription = "Ready"
+		expectationMessage = "Node should become Ready after startup"
+	} else {
+		stateDescription = "NotReady"
+		expectationMessage = "Node should become NotReady after shutdown"
+	}
+
+	gomega.Eventually(func() bool {
+		node, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		if err != nil {
+			framework.Logf("Error getting node %s: %v", nodeName, err)
+			return false
+		}
+
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == v1.NodeReady {
+				isReady := condition.Status == v1.ConditionTrue
+				if isReady == desiredReady {
+					framework.Logf("Node %s is now %s", nodeName, stateDescription)
+					return true
+				}
+			}
+		}
+		return false
+	}, timeout, 10*time.Second).Should(gomega.BeTrue(), expectationMessage)
 }

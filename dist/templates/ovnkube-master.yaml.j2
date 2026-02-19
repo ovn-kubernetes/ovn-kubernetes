@@ -102,7 +102,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: "{{ ovn_loglevel_northd }}"
         - name: K8S_APISERVER
@@ -170,6 +170,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         {% if ovnkube_compact_mode_enable=="true" %}
         # Common mounts
         # for the iptables wrapper
@@ -198,8 +201,12 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        {% if (enable_coredumps | default("false")) == "true" -%}
+        - name: GOTRACEBACK
+          value: "crash"
+        {% endif -%}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.1.0"
+          value: "1.2.0"
         - name: OVNKUBE_LOGLEVEL
           value: "{{ ovnkube_master_loglevel }}"
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -214,6 +221,8 @@ spec:
           value: "{{ ovnkube_config_duration_enable }}"
         - name: OVNKUBE_METRICS_SCALE_ENABLE
           value: "{{ ovnkube_metrics_scale_enable }}"
+        - name: METRICS_IP
+          value: "{{ metrics_ip }}"
         - name: OVNKUBE_COMPACT_MODE_ENABLE
           value: "{{ ovnkube_compact_mode_enable }}"
         - name: OVN_NET_CIDR
@@ -261,8 +270,16 @@ spec:
           value: "{{ ovn_network_segmentation_enable }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: "{{ ovn_route_advertisements_enable }}"
+        - name: OVN_EVPN_ENABLE
+          value: "{{ ovn_evpn_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: "{{ ovn_advertised_udn_isolation_mode }}"
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: "{{ ovn_enable_dynamic_udn_allocation }}"
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: "{{ ovn_dynamic_udn_grace_period }}"
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ ovn_no_overlay_enable }}"
         - name: OVN_EGRESSSERVICE_ENABLE
           value: "{{ ovn_egress_service_enable }}"
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
@@ -334,6 +351,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       {% if ovnkube_compact_mode_enable=="true" %}
       - name: host-slash
         hostPath:

@@ -26,6 +26,9 @@ packages:
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport:
     interfaces:
       Interface:
+  k8s.io/kubelet/pkg/apis/podresources/v1:
+    interfaces:
+      PodResourcesListerClient:
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set:
     config:
       all: true
@@ -79,4 +82,3 @@ packages:
       PodTemplateNamespaceLister:
       PodTemplateNamespaceListerExpansion:
       NodeLister:
-

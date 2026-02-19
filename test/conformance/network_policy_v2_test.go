@@ -1,7 +1,6 @@
 package conformance
 
 import (
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -20,12 +19,9 @@ import (
 )
 
 const (
-	showDebug               = true
-	shouldCleanup           = true
-	NetworkPolicyAPIRepoURL = "https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5"
+	showDebug     = true
+	shouldCleanup = true
 )
-
-var conformanceTestsBaseManifests = fmt.Sprintf("%s/conformance/base/manifests.yaml", NetworkPolicyAPIRepoURL)
 
 func TestNetworkPolicyV2Conformance(t *testing.T) {
 	t.Log("Configuring environment for network policy V2 API conformance tests")
@@ -70,8 +66,12 @@ func TestNetworkPolicyV2Conformance(t *testing.T) {
 					suite.SupportAdminNetworkPolicyNamedPorts,
 					suite.SupportBaselineAdminNetworkPolicyNamedPorts,
 				),
-				BaseManifests: conformanceTestsBaseManifests,
 				TimeoutConfig: netpolv1config.TimeoutConfig{GetTimeout: 300 * time.Second},
+				// Use fixed port range for host network pods.
+				// Should not intersect with the default ephemeral port range > 32768
+				// and any ports used by the default kind cluster components.
+				HostNetworkPortRangeStart: 11000,
+				HostNetworkPortRangeEnd:   11010,
 			},
 			Implementation: confv1a1.Implementation{
 				Organization:          "ovn-org",

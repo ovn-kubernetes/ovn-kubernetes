@@ -29,6 +29,7 @@ import (
 	apbroutecontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	efcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressfirewall"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	networkconnectcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
 	dnsnameresolver "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
@@ -97,6 +98,9 @@ type DefaultNetworkController struct {
 	egressSvcController *egresssvc.Controller
 	// Controller used for programming OVN for Admin Network Policy
 	anpController *anpcontroller.Controller
+
+	// Controller used for programming OVN for Network Connect
+	networkConnectController *networkconnectcontroller.Controller
 
 	// Controller used to handle the admin policy based external route resources
 	apbExternalRouteController *apbroutecontroller.ExternalGatewayMasterController
@@ -244,6 +248,9 @@ func newDefaultNetworkControllerCommon(
 	oc.ovnClusterLRPToJoinIfAddrs = gwLRPIfAddrs
 
 	oc.initRetryFramework()
+	if oc.eIPC != nil {
+		oc.eIPC.retryEgressIPPods = oc.retryEgressIPPods
+	}
 	return oc, nil
 }
 
@@ -339,8 +346,14 @@ func (oc *DefaultNetworkController) Stop() {
 	if oc.efController != nil {
 		oc.efController.Stop()
 	}
+	if oc.eIPC != nil {
+		oc.eIPC.StopNADReconciler()
+	}
 	if oc.routeImportManager != nil {
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
+	}
+	if oc.networkConnectController != nil {
+		oc.networkConnectController.Stop()
 	}
 
 	close(oc.stopChan)
@@ -452,6 +465,9 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 	}
 
 	if config.OVNKubernetesFeature.EnableEgressIP {
+		if err := oc.eIPC.StartNADReconciler(); err != nil {
+			return err
+		}
 		// This is probably the best starting order for all egress IP handlers.
 		// WatchEgressIPPods and WatchEgressIPNamespaces only use the informer
 		// cache to retrieve the egress IPs when determining if namespace/pods
@@ -562,6 +578,16 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 			// Until we have scale issues in future let's spawn only one thread
 			oc.nqosController.Run(1, oc.stopChan)
 		}()
+	}
+
+	if util.IsNetworkConnectEnabled() {
+		err := oc.newNetworkConnectController()
+		if err != nil {
+			return fmt.Errorf("unable to create network connect controller, err: %w", err)
+		}
+		if err := oc.networkConnectController.Start(); err != nil {
+			return fmt.Errorf("unable to start network connect controller, err: %w", err)
+		}
 	}
 
 	end := time.Since(start)
@@ -747,14 +773,14 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 	case factory.PodType:
 		pod, ok := obj.(*corev1.Pod)
 		if !ok {
-			return fmt.Errorf("could not cast %T object to *knet.Pod", obj)
+			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
 		return h.oc.ensurePod(nil, pod, true)
 
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
 		if !ok {
-			return fmt.Errorf("could not cast %T object to *kapi.Node", obj)
+			return fmt.Errorf("could not cast %T object to *corev1.Node", obj)
 		}
 		if config.HybridOverlay.Enabled {
 			if util.NoHostSubnet(node) {
@@ -878,7 +904,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
 		if !ok {
-			return fmt.Errorf("could not cast %T object to *kapi.Namespace", obj)
+			return fmt.Errorf("could not cast %T object to *corev1.Namespace", obj)
 		}
 		return h.oc.AddNamespace(ns)
 
@@ -902,11 +928,11 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 	case factory.NodeType:
 		newNode, ok := newObj.(*corev1.Node)
 		if !ok {
-			return fmt.Errorf("could not cast newObj of type %T to *kapi.Node", newObj)
+			return fmt.Errorf("could not cast newObj of type %T to *corev1.Node", newObj)
 		}
 		oldNode, ok := oldObj.(*corev1.Node)
 		if !ok {
-			return fmt.Errorf("could not cast oldObj of type %T to *kapi.Node", oldObj)
+			return fmt.Errorf("could not cast oldObj of type %T to *corev1.Node", oldObj)
 		}
 		var switchToOvnNode bool
 		if config.HybridOverlay.Enabled {
@@ -1108,7 +1134,7 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
 		if !ok {
-			return fmt.Errorf("could not cast obj of type %T to *knet.Node", obj)
+			return fmt.Errorf("could not cast obj of type %T to *corev1.Node", obj)
 		}
 		return h.oc.deleteNodeEvent(node)
 

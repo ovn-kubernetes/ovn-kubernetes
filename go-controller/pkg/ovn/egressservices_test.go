@@ -1700,6 +1700,7 @@ func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet, transitIPv4, transitIPv6 stri
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", ipv4, ipv6),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", fmt.Sprintf("%s/24", ipv4), fmt.Sprintf("%s/64", ipv6)),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\",\"%s\"]}", v4subnet, v6subnet),
+				util.OvnNodeChassisID:             chassisIDForNode(name),
 
 				// Used only with IC tests
 				"k8s.ovn.org/zone-name":                       name,

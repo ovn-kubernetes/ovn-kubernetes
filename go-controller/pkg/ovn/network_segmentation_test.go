@@ -85,7 +85,7 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t1.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t1),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},

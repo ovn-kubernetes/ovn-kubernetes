@@ -27,8 +27,13 @@ type BaseLayer2UserDefinedNetworkController struct {
 
 // stop gracefully stops the controller, and delete all logical entities for this network if requested
 func (oc *BaseLayer2UserDefinedNetworkController) stop() {
+	if oc.stopChan == nil {
+		klog.Infof("Secondary %s network controller of network %s is already stopped", oc.TopologyType(), oc.GetNetworkName())
+		return
+	}
 	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
 	close(oc.stopChan)
+	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
 	oc.wg.Wait()
 

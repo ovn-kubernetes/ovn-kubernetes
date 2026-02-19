@@ -1,0 +1,497 @@
+name: performance-test
+on:
+  pull_request:
+    branches: [ master ]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+  workflow_dispatch:
+
+env:
+  K8S_VERSION: v1.34.0
+  KIND_CLUSTER_NAME: ovn
+  KIND_INSTALL_INGRESS: true
+  KIND_ALLOW_SYSTEM_WRITES: true
+  # This skips tests tagged as Serial for most lanes
+  # Serial tests are run in a dedicated lane
+  PARALLEL: true
+
+  # This must be a directory
+  CI_IMAGE_CACHE: tmp/image_cache/
+  CI_IMAGE_BASE_TAR: image-base.tar
+  CI_IMAGE_PR_TAR: image-pr.tar
+  CI_DIST_IMAGES_OUTPUT: dist/images/_output/
+
+  # To run CI over custom OVN
+  # OVN_REPO: https://github.com/ovn-org/ovn
+  # OVN_GITREF: main
+
+jobs:
+  performance-job:
+    name: performance
+    runs-on: [oracle-vm-32cpu-128gb-x86-64]
+    timeout-minutes: 240
+    needs: [build-pr]
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Valid options are:
+        # target: ["shard-conformance", "control-plane", "multi-homing", "multi-node-zones", "node-ip-mac-migration", "compact-mode", "serial"]
+        #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
+        #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
+        # perf-test: ["all","kubelet-density-cni", "udn-density-l2-noPods", "cudn-density-l2-noPods"]
+        # ha: ["HA", "noHA"]
+        # gateway-mode: ["local", "shared"]
+        # ipfamily: ["ipv4", "ipv6", "dualstack"]
+        # disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
+        # second-bridge: ["2br", "1br"]
+        # ic: ["ic-disabled", "ic-single-node-zones", "ic-multi-node-zones"]
+        # num-workers : "<integer value>"
+        # num-nodes-per-zone : "<integer value>"
+        # forwarding : ["", "disable-forwarding"]
+        # dns-name-resolver : ["", "enable-dns-name-resolver"]
+        # network-segmentation : ["", "enable-network-segmentation"]
+        # traffic-flow-tests : "<tests range. i.e. 1-24>"
+        include:
+          - {"target": "control-plane", perf-test: "kubelet-density-cni", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-noPods", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "cudn-density-l2-noPods", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
+          - {"target": "control-plane", perf-test: "udn-density-l2-pods", "ha": "HA", "gateway-mode": "local", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": ""}
+    env:
+      ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
+      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
+      OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
+      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_HA: "${{ matrix.ha == 'HA' }}"
+      OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
+      KIND_INSTALL_METALLB: "false"
+      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
+      OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
+      ENABLE_MULTI_NET: true
+      ENABLE_NETWORK_SEGMENTATION: true
+      PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
+      PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
+      KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
+      OVN_COMPACT_MODE: "${{ matrix.target == 'compact-mode' }}"
+      OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'compact-mode' }}"
+      OVN_ENABLE_INTERCONNECT: "${{ matrix.ic == 'ic-single-node-zones' ||  matrix.ic == 'ic-multi-node-zones'}}"
+      KIND_NUM_WORKER: "${{ matrix.num-workers }}"
+      KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
+      OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
+      USE_HELM: "${{ matrix.target == 'control-plane-helm' || matrix.target == 'multi-homing-helm' }}"
+      OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
+      OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"
+      TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
+      ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
+      ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
+      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation') }}"
+      ENABLE_NETWORK_CONNECT: "${{ matrix.target == 'network-segmentation' }}"
+      ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
+      # Override PARALLEL=true for Serial tests target to run Serial tests
+      PARALLEL: "${{ matrix.target != 'serial' }}"
+      OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
+      MULTI_POD_SUBNET: true
+      # Performance test specific settings
+      KIND_NUM_INFRA: "2"
+      KIND_INSTALL_PROMETHEUS: "true"
+      KIND_PROMETHEUS_INFRA_ONLY: "true"
+      METRICS_IP: "127.0.0.1"
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    steps:
+    - uses: actions/checkout@v4
+
+    # Debug session for the performance test
+    #- name: Setup tmate session
+    #  id: tmate
+    #  uses: mxschmitt/action-tmate@v3
+    #  with:
+    #    detached: true
+  
+    - name: Get PR info for issue comment
+      if: github.event_name == 'issue_comment'
+      id: pr_info
+      run: |
+        PR_NUMBER=${{ github.event.issue.number }}
+        PR_INFO=$(curl -s -H "Authorization: token ${{ github.token }}" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER")
+        PR_SHA=$(echo "$PR_INFO" | jq -r .head.sha)
+        echo "sha=$PR_SHA" >> $GITHUB_OUTPUT
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event_name == 'issue_comment' && steps.pr_info.outputs.sha || github.sha }}
+
+    - name: Runner Diagnostics
+      if: always()
+      uses: ./.github/actions/diagnostics
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Set up environment
+      run: |
+        export GOPATH=$(go env GOPATH)
+        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+        echo "$GOPATH/bin" >> $GITHUB_PATH
+        if [ $OVN_SECOND_BRIDGE == "true" ]; then
+          # must be "greater" lexigraphically than network "kind", therefore external gateway is named xgw
+          echo OVN_TEST_EX_GW_NETWORK=xgw >> $GITHUB_ENV
+          echo OVN_ENABLE_EX_GW_NETWORK_BRIDGE=true >> $GITHUB_ENV
+        fi
+        if [ "$ADVERTISE_DEFAULT_NETWORK" == "true" ]; then
+          echo "ADVERTISE_DEFAULT_NETWORK=true" >> $GITHUB_ENV
+
+          # Use proper variable declaration with default values
+          if [ $MULTI_POD_SUBNET == "true" ]; then
+            NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.243.0.0/23,10.244.0.0/16}
+            NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:243::/63,fd00:10:244::/48}
+          else
+            NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
+            NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
+          fi
+          sudo ip a
+          sudo ip r
+
+          # Add masquerade rules for both IPv4 and IPv6 networks
+          echo "Adding masquerade rule for $NET_CIDR_IPV4"
+          IFS=',' read -r -a ELEMENTS <<< "$NET_CIDR_IPV4"
+          for element in "${ELEMENTS[@]}"; do
+            sudo iptables -t nat -A POSTROUTING -s $element -o eth0 -j MASQUERADE
+          done
+
+          echo "Adding masquerade rule for $NET_CIDR_IPV6"
+          IFS=',' read -r -a ELEMENTS <<< "$NET_CIDR_IPV6"
+          for element in "${ELEMENTS[@]}"; do
+            sudo ip6tables -t nat -A POSTROUTING -s $element -o eth0 -j MASQUERADE
+          done
+
+          # Verify the rules were added
+          echo "IPv4 POSTROUTING rules:"
+          sudo iptables -t nat -L POSTROUTING -v
+
+          echo "IPv6 POSTROUTING rules:"
+          sudo ip6tables -t nat -L POSTROUTING -v
+        fi
+
+    - name: Free up disk space
+      uses: ./.github/actions/free-disk-space
+
+    - name: Setup /mnt/runner directory
+      run: |
+        sudo mkdir -pv /mnt/runner
+        sudo chown $USER:$USER /mnt/runner
+
+    - name: Setup /mnt/docker-data as docker storage
+      run: |
+        sudo mkdir -pv /mnt/docker-data
+        sudo systemctl stop docker.socket docker
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"data-root": "/mnt/docker-data"}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"data-root": "/mnt/docker-data"}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl start docker docker.socket
+        docker system info
+
+    - name: Disable ufw
+      run: |
+        sudo ufw disable
+
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
+    - name: Download test-image-pr
+      uses: actions/download-artifact@v4
+      with:
+        name: test-image-pr
+
+    - name: Load container image
+      run: |
+        echo "Loading image with docker..."
+        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+
+    - name: kind setup with infra nodes
+      timeout-minutes: 45
+      run: |
+        export OVN_IMAGE="ovn-daemonset-fedora:pr"
+        # Set enhanced timeouts for large cluster performance testing
+        export KIND_CLUSTER_LOGLEVEL=2
+        
+        # Use the existing kind infrastructure but with enhanced kubelet health settings
+        make -C test install-kind
+
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+        
+        # Wait for kubelet health on all nodes with retries
+        echo "Verifying kubelet health on all nodes..."
+        for i in {1..10}; do
+          echo "Health check attempt $i/10..."
+          if kubectl get nodes --no-headers | awk '{print $2}' | grep -v Ready; then
+            echo "Some nodes not ready, waiting 30s..."
+            sleep 30
+          else
+            echo "All nodes are ready!"
+            break
+          fi
+          
+          if [ $i -eq 10 ]; then
+            echo "Cluster health check failed after 10 attempts"
+            echo "=== Node Status ==="
+            kubectl get nodes -o wide
+            echo "=== Node Conditions ==="
+            kubectl describe nodes
+            echo "=== Kubelet Logs ==="
+            for node in $(kind get nodes --name ${KIND_CLUSTER_NAME}); do
+              echo "--- Kubelet logs for $node ---"
+              docker exec $node journalctl -u kubelet --no-pager -l --since "10 minutes ago" | tail -50
+            done
+            exit 1
+          fi
+        done
+
+    - name: Label 2 random worker nodes for Prometheus
+      run: |
+
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+
+        workers=$(kubectl get nodes --no-headers | grep -v control-plane | awk '{print $1}' | shuf -n 2)
+        for worker in $workers; do
+          kubectl label node $worker prometheus-node=true
+          echo "Labeled node: $worker"
+        done
+
+    - name: Label remaining worker nodes
+      run: |
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+
+        # Get all worker nodes that don't have the prometheus-node label
+        workers_without_prometheus=$(kubectl get nodes --no-headers -l '!prometheus-node' | grep -v control-plane | awk '{print $1}')
+        for worker in $workers_without_prometheus; do
+          kubectl label node $worker node-role.kubernetes.io/worker=""
+          echo "Labeled worker node: $worker"
+        done
+
+    - name: Install Prometheus on infra nodes
+      run: |
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+        ./contrib/install-prometheus-infra.sh
+    
+    - name: Upload Prometheus installation logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: prometheus-install-logs-${{ matrix.perf-test }}-${{ github.run_id }}
+        path: prometheus-install.log
+        retention-days: 7
+
+    - name: Download and setup kube-burner v2.1.0
+      run: |
+        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.1.0/kube-burner-V2.1.0-linux-x86_64.tar.gz | tar xz
+        chmod +x kube-burner
+        sudo mv kube-burner /usr/local/bin/
+
+    - name: "Run kube-burner ${{ matrix.perf-test }} workload"
+      timeout-minutes: 120 
+      run: |
+        kind get kubeconfig > kconfig
+        export KUBECONFIG=${PWD}/kconfig
+
+        # Port-Forward so we can scrape metrics.
+        kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090 &
+
+        # Make sure the port-forward is up prior to running the workload
+        sleep 30
+
+        cd contrib/perf
+
+        #Generate metadata.
+        envsubst < performance-meta.yml > perf-meta.yml
+
+        if [[ -z "${ES_SERVER}" ]]; then
+          kube-burner init --config workloads/${{ matrix.perf-test }}.yml -e metric-endpoint-local.yml --user-metadata perf-meta.yml
+        else
+          kube-burner init --config workloads/${{ matrix.perf-test }}.yml -e metric-endpoint.yml --user-metadata perf-meta.yml
+        fi
+        
+        mkdir -p /tmp/${{ matrix.perf-test }}/pprof-data
+        mkdir -p /tmp/${{ matrix.perf-test }}/perf
+        cp -r pprof-data/* /tmp/${{ matrix.perf-test }}/pprof-data
+        cp -r * /tmp/${{ matrix.perf-test }}/perf
+
+    - name: Generate performance report
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' }}
+      run: |
+        cd contrib/perf
+        # Generate the performance report
+        python3 generate_perf_report.py \
+          --workload ${{ matrix.perf-test }} \
+          --metrics-dir /tmp/${{ matrix.perf-test }}/perf/metrics/ \
+          --output /tmp/${{ matrix.perf-test }}/performance_report.md \
+          --title "OVN-Kubernetes Performance Test Results - Run ${{ github.run_id }}" \
+          --pr-number ${{ github.event_name == 'issue_comment' && github.event.issue.number || github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'workflow_dispatch' && '' }} \
+          --github-comment
+        
+        echo "Performance report generated successfully"
+        cat /tmp/${{ matrix.perf-test }}/performance_report.md
+
+    - name: Upload performance report
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.perf-test }}-performance-report-${{ github.run_id }}
+        path: /tmp/${{ matrix.perf-test }}/performance_report.md
+
+    - name: Upload pprof data
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.perf-test }}-pprof-${{ github.run_id }}
+        path: /tmp/${{ matrix.perf-test }}/pprof-data
+
+    - name: Upload performance test data
+      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.perf-test }}-performance-test-data-${{ github.run_id }}
+        path: /tmp/${{ matrix.perf-test }} 
+
+    - name: Export kind logs
+      if: always()
+      run: |
+        mkdir -p /tmp/${{ matrix.perf-test }}/logs
+        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/${{ matrix.perf-test }}/logs
+
+    - name: Upload kind logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.perf-test }}-kind-logs-${{ github.run_id }}
+        path: /tmp/${{ matrix.perf-test }}/logs
+
+  build-pr:
+    name: Build-PR
+    runs-on: ubuntu-24.04
+    if: |
+      (github.event_name != 'issue_comment') ||
+      (github.event.issue.pull_request && 
+       contains(github.event.comment.body, '/perf-test kubelet-density-cni')) ||
+      (github.event.issue.pull_request && 
+       contains(github.event.comment.body, '/perf-test udn-density-l2-noPods')) ||
+      (github.event.issue.pull_request && 
+       contains(github.event.comment.body, '/perf-test cudn-density-l2-noPods')) ||
+      (github.event_name == 'workflow_dispatch')
+    steps:
+    - name: Restore PR image cache
+      id: image_cache_pr
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.CI_IMAGE_CACHE }}
+        key: ${{ github.run_id }}-image-cache-pr
+
+    - name: Check if PR image build is needed
+      id: is_pr_image_build_needed
+      continue-on-error: true
+      run: |
+        set -x
+        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ]; then
+            mkdir -p ${CI_DIST_IMAGES_OUTPUT}
+            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz
+            gunzip ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz
+            echo "PR_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Get PR info for issue comment
+      if: github.event_name == 'issue_comment' && steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      id: pr_info
+      run: |
+        PR_NUMBER=${{ github.event.issue.number }}
+        PR_INFO=$(curl -s -H "Authorization: token ${{ github.token }}" \
+          "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER")
+        PR_SHA=$(echo "$PR_INFO" | jq -r .head.sha)
+        echo "sha=$PR_SHA" >> $GITHUB_OUTPUT
+
+    - name: Check out code into the Go module directory
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event_name == 'issue_comment' && steps.pr_info.outputs.sha || github.sha }}
+
+    - name: Set up Go
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Build
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      run: |
+        set -x
+        pushd go-controller
+           make gofmt
+           make verify-go-mod-vendor
+           make
+           make windows
+        popd
+
+    - name: Build docker image
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      run: |
+        pushd dist/images
+          IMAGE=ovn-daemonset-fedora:pr
+          make IMAGE=${IMAGE} \
+            OVN_REPO=${{ env.OVN_REPO }} \
+            OVN_GITREF=${{ env.OVN_GITREF }} \
+            fedora-image
+          mkdir _output
+          docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
+        popd
+
+    - name: Cache PR image
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      continue-on-error: true
+      run: |
+        set -x
+        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR} ]; then
+            rm -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+        fi
+        if [ -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz ]; then
+           rm -f ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz
+        fi
+        mkdir -p ${CI_IMAGE_CACHE}/
+        cp ${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR} ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+        gzip ${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: test-image-pr
+        path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}

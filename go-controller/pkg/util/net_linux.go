@@ -50,6 +50,7 @@ type NetLinkOps interface {
 	RouteReplace(route *netlink.Route) error
 	RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
+	RuleAdd(rule *netlink.Rule) error
 	NeighAdd(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
 	NeighList(linkIndex, family int) ([]netlink.Neigh, error)
@@ -177,6 +178,10 @@ func (defaultNetLinkOps) RouteListFiltered(family int, filter *netlink.Route, fi
 
 func (defaultNetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
 	return netlink.RuleListFiltered(family, filter, filterMask)
+}
+
+func (defaultNetLinkOps) RuleAdd(rule *netlink.Rule) error {
+	return netlink.RuleAdd(rule)
 }
 
 func (defaultNetLinkOps) NeighAdd(neigh *netlink.Neigh) error {
@@ -587,65 +592,64 @@ func LinkNeighIPExists(link netlink.Link, neighIP net.IP) (bool, error) {
 	return false, nil
 }
 
-func DeleteConntrack(ip string, port int32, protocol corev1.Protocol, ipFilterType netlink.ConntrackFilterType, labels [][]byte) error {
+func DeleteConntrack(ip string, port int32, protocol corev1.Protocol, ipFilterType netlink.ConntrackFilterType, labels [][]byte) (uint, error) {
 	ipAddress := net.ParseIP(ip)
 	if ipAddress == nil {
-		return fmt.Errorf("value %q passed to DeleteConntrack is not an IP address", ipAddress)
+		return 0, fmt.Errorf("value %q passed to DeleteConntrack is not an IP address", ip)
 	}
 
 	filter := &netlink.ConntrackFilter{}
 	if protocol == corev1.ProtocolUDP {
 		// 17 = UDP protocol
 		if err := filter.AddProtocol(17); err != nil {
-			return fmt.Errorf("could not add Protocol UDP to conntrack filter %v", err)
+			return 0, fmt.Errorf("could not add Protocol UDP to conntrack filter %v", err)
 		}
 	} else if protocol == corev1.ProtocolSCTP {
 		// 132 = SCTP protocol
 		if err := filter.AddProtocol(132); err != nil {
-			return fmt.Errorf("could not add Protocol SCTP to conntrack filter %v", err)
+			return 0, fmt.Errorf("could not add Protocol SCTP to conntrack filter %v", err)
 		}
 	} else if protocol == corev1.ProtocolTCP {
 		// 6 = TCP protocol
 		if err := filter.AddProtocol(6); err != nil {
-			return fmt.Errorf("could not add Protocol TCP to conntrack filter %v", err)
+			return 0, fmt.Errorf("could not add Protocol TCP to conntrack filter %v", err)
 		}
 	}
 	if port > 0 {
 		if err := filter.AddPort(netlink.ConntrackOrigDstPort, uint16(port)); err != nil {
-			return fmt.Errorf("could not add port %d to conntrack filter: %v", port, err)
+			return 0, fmt.Errorf("could not add port %d to conntrack filter: %v", port, err)
 		}
 	}
 	if err := filter.AddIP(ipFilterType, ipAddress); err != nil {
-		return fmt.Errorf("could not add IP: %s to conntrack filter: %v", ipAddress, err)
+		return 0, fmt.Errorf("could not add IP: %s to conntrack filter: %v", ipAddress, err)
 	}
 
 	if len(labels) > 0 {
 		// for now we only need unmatch label, we can add match label later if needed
 		if err := filter.AddLabels(netlink.ConntrackUnmatchLabels, labels); err != nil {
-			return fmt.Errorf("could not add label %s to conntrack filter: %v", labels, err)
+			return 0, fmt.Errorf("could not add label %s to conntrack filter: %v", labels, err)
 		}
 	}
+	klog.V(5).Infof("Deleting conntrack entry for IP %s, port %d, protocol %s, conntrack filter type %v, labels %x", ip, port, protocol, ipFilterType, labels)
+	var matched uint
+	var err error
 	if ipAddress.To4() != nil {
-		if _, err := netLinkOps.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter); err != nil {
-			return err
-		}
+		matched, err = netLinkOps.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter)
 	} else {
-		if _, err := netLinkOps.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V6, filter); err != nil {
-			return err
-		}
+		matched, err = netLinkOps.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V6, filter)
 	}
-	return nil
+	return matched, err
 }
 
 // DeleteConntrackServicePort is a wrapper around DeleteConntrack for the purpose of deleting conntrack entries that
 // belong to ServicePorts. Before deleting any conntrack entry, it makes sure that the port is valid. If the port is
 // invalid, it will log a level 5 info message and simply return.
 func DeleteConntrackServicePort(ip string, port int32, protocol corev1.Protocol, ipFilterType netlink.ConntrackFilterType,
-	labels [][]byte) error {
+	labels [][]byte) (uint, error) {
 	if err := ValidatePort(protocol, port); err != nil {
 		klog.V(5).Infof("Skipping conntrack deletion for IP %q, protocol %q, port \"%d\", err: %q",
 			ip, protocol, port, err)
-		return nil
+		return 0, nil
 	}
 	return DeleteConntrack(ip, port, protocol, ipFilterType, labels)
 }

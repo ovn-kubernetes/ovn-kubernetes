@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+    name: "{{.JobName}}-{{.Iteration}}"
+    labels:
+      k8s.ovn.org/primary-user-defined-network: ""
+      cudn-scale: "{{.JobName}}-{{.Iteration}}"

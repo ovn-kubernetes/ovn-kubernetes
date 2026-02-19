@@ -21,7 +21,7 @@ func (pr *PodRequest) updatePodDPUConnDetailsWithRetry(kube kube.Interface, podL
 		kube,
 		pod,
 		dpuConnDetails,
-		pr.nadName,
+		pr.nadKey,
 	)
 	if util.IsAnnotationAlreadySetError(err) {
 		return nil

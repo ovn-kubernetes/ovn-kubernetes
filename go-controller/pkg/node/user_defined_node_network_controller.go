@@ -92,8 +92,13 @@ func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 
 // Stop gracefully stops the controller
 func (nc *UserDefinedNodeNetworkController) Stop() {
+	if nc.stopChan == nil {
+		klog.Infof("UDN node network controller for network %s is already stopped", nc.GetNetworkName())
+		return
+	}
 	klog.Infof("Stopping UDN node network controller for network %s", nc.GetNetworkName())
 	close(nc.stopChan)
+	nc.stopChan = nil
 	nc.wg.Wait()
 
 	if nc.podHandler != nil {
@@ -121,6 +126,10 @@ func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 	}
 	return nil
 }
+
+// HandleNetworkRefChange satisfies the NetworkController interface. UDN node controllers only
+// manage local node state, so NAD reference changes for remote nodes are ignored.
+func (nc *UserDefinedNodeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
 
 func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
 	wasUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(old, nc.name)

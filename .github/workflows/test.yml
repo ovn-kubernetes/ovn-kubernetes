@@ -24,8 +24,9 @@ env:
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
-  # This skips tests tagged as Serial
-  # Current Serial tests are not relevant for OVN
+  ENABLE_COREDUMPS: true
+  # This skips tests tagged as Serial for most lanes
+  # Serial tests are run in a dedicated lane
   PARALLEL: true
 
   # This must be a directory
@@ -200,15 +201,7 @@ jobs:
         cache: false
       id: go
 
-    - name: Install VRF kernel module
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      run: |
-        set -x
-        sudo apt update
-        sudo apt-get install linux-modules-extra-$(uname -r) -y
-        sudo modprobe vrf
-
-    - name: Build and Test - from current pr branch
+    - name: Build - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
@@ -218,7 +211,6 @@ jobs:
            make verify-go-mod-vendor
            make
            make windows
-           COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
     - name: Build docker image - from current pr branch
@@ -233,23 +225,6 @@ jobs:
           mkdir _output
           docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
         popd
-
-    - name: Submit code coverage to Coveralls
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      continue-on-error: true
-      env:
-        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -x
-        go install github.com/mattn/goveralls@latest
-        go install github.com/modocache/gover@latest
-        PATH=$PATH:$(go env GOPATH)/bin
-
-        mkdir -p $(go env GOPATH)/src/github.com/ovn-org
-        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-org/ovn-kubernetes
-
-        gover
-        GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
     - name: Cache PR image
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
@@ -271,6 +246,54 @@ jobs:
       with:
         name: test-image-pr
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
+
+  test-pr:
+    name: Test-PR
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go-controller/go.mod'
+        # Disabling cache to avoid warnings until these two issues are fixed
+        # https://github.com/actions/setup-go/issues/424
+        # https://github.com/actions/setup-go/issues/403
+        # cache-dependency-path: "**/*.sum"
+        cache: false
+      id: go
+
+    - name: Install VRF kernel module
+      run: |
+        set -x
+        sudo apt update
+        sudo apt-get install linux-modules-extra-$(uname -r) -y
+        sudo modprobe vrf
+
+    - name: Run unit tests
+      run: |
+        set -x
+        pushd go-controller
+        COVERALLS=1 CONTAINER_RUNNABLE=1 make check
+        popd
+
+    - name: Submit code coverage to Coveralls
+      continue-on-error: true
+      env:
+        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -x
+        go install github.com/mattn/goveralls@latest
+        go install github.com/modocache/gover@latest
+        PATH=$PATH:$(go env GOPATH)/bin
+
+        mkdir -p $(go env GOPATH)/src/github.com/ovn-org
+        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-org/ovn-kubernetes
+
+        gover
+        GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
   ovn-upgrade-e2e:
     name: Upgrade OVN from Base to PR branch based image
@@ -318,9 +341,6 @@ jobs:
         echo "GOPATH=$GOPATH" >> $GITHUB_ENV
         echo "$GOPATH/bin" >> $GITHUB_PATH
 
-    - name: Check out code into the Go module directory - from PR branch
-      uses: actions/checkout@v4
-
     - name: Free up disk space
       uses: ./.github/actions/free-disk-space
 
@@ -335,20 +355,37 @@ jobs:
       run: |
         sudo ufw disable
 
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_BASE_TAR} && rm -rf ${CI_IMAGE_BASE_TAR}
+        docker images || true
 
     - name: kind setup
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:dev"
         make -C test install-kind
 
+    - name: Check out code into the Go module directory - from PR branch
+      uses: actions/checkout@v4
+
     - name: Export kind logs
       if: always()
       run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
+        ./contrib/export-kind-logs.sh
         set -x
         docker ps -a
         docker exec ovn-control-plane crictl images
@@ -394,9 +431,7 @@ jobs:
 
     - name: Export kind logs
       if: always()
-      run: |
-        mkdir -p /tmp/kind/logs-kind-pr-branch
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs-kind-pr-branch
+      run: ./contrib/export-kind-logs.sh /tmp/kind/logs-kind-pr-branch
 
     - name: Upload kind logs
       if: always()
@@ -414,7 +449,7 @@ jobs:
       fail-fast: false
       matrix:
         # Valid options are:
-        # target: ["shard-conformance", "control-plane", "multi-homing", "multi-node-zones", "node-ip-mac-migration", "compact-mode"]
+        # target: ["shard-conformance", "control-plane", "multi-homing", "multi-node-zones", "node-ip-mac-migration", "compact-mode", "serial"]
         #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
         #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
         # ha: ["HA", "noHA"]
@@ -434,6 +469,8 @@ jobs:
           - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default"}
           - {"target": "shard-conformance", "ha": "HA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default"}
+          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared",  "ipfamily": "ipv6",     "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "no-overlay": "true"}
+          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "no-overlay": "true"}
           - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "control-plane",     "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-disabled"}
@@ -460,27 +497,30 @@ jobs:
           - {"target": "control-plane", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
+          - {"target": "network-segmentation-dynamic", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "shared",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "bgp-no-overlay-helm", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
+          - {"target": "bgp-no-overlay",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}          
           - {"target": "bgp-loose-isolation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
           - {"target": "traffic-flow-test-only","ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "serial", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
     needs: [ build-pr ]
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
-      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
-      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
+      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
+      OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'bgp') }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"
-      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' }}"
+      KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') }}"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
-      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || matrix.target == 'network-segmentation' || matrix.target == 'tools' || matrix.target == 'multi-homing-helm' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
-      ENABLE_NETWORK_SEGMENTATION: "${{ matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation' }}"
+      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'multi-homing-helm' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
@@ -490,15 +530,22 @@ jobs:
       KIND_NUM_WORKER: "${{ matrix.num-workers }}"
       KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
       OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
-      USE_HELM: "${{ matrix.target == 'control-plane-helm' || matrix.target == 'multi-homing-helm' }}"
+      USE_HELM: "${{ matrix.target == 'control-plane-helm' || matrix.target == 'multi-homing-helm' || matrix.target == 'bgp-no-overlay-helm' }}"
       OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
+      ENABLE_EVPN: "${{ matrix.routeadvertisements != '' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
-      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (matrix.target == 'network-segmentation' || matrix.network-segmentation == 'enable-network-segmentation') }}"
+      ENABLE_NETWORK_CONNECT: "${{ startsWith(matrix.target, 'network-segmentation') }}"
+      ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation') }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
+      # Override PARALLEL=true for Serial tests target to run Serial tests
+      PARALLEL: "${{ matrix.target != 'serial' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
+      MULTI_POD_SUBNET: true
+      DYNAMIC_UDN_ALLOCATION: "${{ matrix.target == 'network-segmentation-dynamic' }}"
+      ENABLE_NO_OVERLAY: "${{ matrix.no-overlay == 'true' }}"
     steps:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v4
@@ -560,18 +607,28 @@ jobs:
           echo "ADVERTISE_DEFAULT_NETWORK=true" >> $GITHUB_ENV
 
           # Use proper variable declaration with default values
-          NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
-          NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
-
+          if [ $MULTI_POD_SUBNET == "true" ]; then
+            NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.243.0.0/23,10.244.0.0/16}
+            NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:243::/63,fd00:10:244::/48}
+          else
+            NET_CIDR_IPV4=${NET_CIDR_IPV4:-10.244.0.0/16}
+            NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
+          fi
           sudo ip a
           sudo ip r
 
           # Add masquerade rules for both IPv4 and IPv6 networks
           echo "Adding masquerade rule for $NET_CIDR_IPV4"
-          sudo iptables -t nat -A POSTROUTING -s $NET_CIDR_IPV4 -o eth0 -j MASQUERADE
+          IFS=',' read -r -a ELEMENTS <<< "$NET_CIDR_IPV4"
+          for element in "${ELEMENTS[@]}"; do
+            sudo iptables -t nat -A POSTROUTING -s $element -o eth0 -j MASQUERADE
+          done
 
           echo "Adding masquerade rule for $NET_CIDR_IPV6"
-          sudo ip6tables -t nat -A POSTROUTING -s $NET_CIDR_IPV6 -o eth0 -j MASQUERADE
+          IFS=',' read -r -a ELEMENTS <<< "$NET_CIDR_IPV6"
+          for element in "${ELEMENTS[@]}"; do
+            sudo ip6tables -t nat -A POSTROUTING -s $element -o eth0 -j MASQUERADE
+          done
 
           # Verify the rules were added
           echo "IPv4 POSTROUTING rules:"
@@ -592,9 +649,24 @@ jobs:
       with:
         name: test-image-pr
 
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        docker images || true
 
     - name: kind setup
       timeout-minutes: 30
@@ -616,7 +688,7 @@ jobs:
       # set 3 hours for control-plane tests as these might take a while
       # give 10m extra to give ginkgo chance to timeout before github so that we
       # get its output
-      timeout-minutes: ${{ matrix.target == 'bgp-loose-isolation' && 190 || matrix.target == 'bgp' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || 130 }}
+      timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
       run: |
         # used by e2e diagnostics package
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
@@ -638,11 +710,14 @@ jobs:
           if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
             make -C test conformance
           fi
-        elif [ "${{ matrix.target }}" == "network-segmentation" ]; then
+        elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
-        elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
+        elif [[ "${{ matrix.target }}" == bgp* ]]; then
           make -C test control-plane
+        elif [ "${{ matrix.target }}" == "serial" ]; then
+          # Run only Serial tests with ginkgo focus
+          make -C test control-plane WHAT=Serial
         elif [ "${{ matrix.target }}" == "tools" ]; then
           make -C go-controller build
           make -C test tools
@@ -669,8 +744,7 @@ jobs:
     - name: Export kind logs
       if: always()
       run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
+        ./contrib/export-kind-logs.sh
         if [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
             mv -v /tmp/{,kind/logs/}traffic_flow_test_result.json ||:
         fi
@@ -747,9 +821,25 @@ jobs:
       with:
         name: test-image-pr
 
+    - name: Disable containerd image store
+      # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+      run: |
+        sudo mkdir -p /etc/docker
+        docker --version || true
+        containerd --version || true
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Load docker image
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
+        docker images || true
+
 
     - name: kind IPv4 setup
       run: |
@@ -782,9 +872,7 @@ jobs:
 
     - name: Export kind logs
       if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
+      run: ./contrib/export-kind-logs.sh
 
     - name: Upload kind logs
       if: always()

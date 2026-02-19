@@ -22,7 +22,7 @@ else
 CONTAINER_RUNTIME?=docker
 endif
 CONTAINER_RUNNABLE ?= $(shell $(CONTAINER_RUNTIME) -v > /dev/null 2>&1; echo $$?)
-OVN_SCHEMA_VERSION ?= v25.09.0
+OVN_SCHEMA_VERSION ?= v25.09.2
 OVS_VERSION ?= v2.17.0
 ifeq ($(NOROOT),TRUE)
 C_ARGS = -e NOROOT=TRUE

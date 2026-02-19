@@ -31,7 +31,7 @@ func GetNetworkQoSAddrSetDbIDs(nqosNamespace, nqosName, ruleIndex, ipBlockIndex,
 		})
 }
 
-func getPodAddresses(pod *corev1.Pod, networkInfo ovnkutil.NetInfo) ([]string, error) {
+func getPodAddresses(pod *corev1.Pod, networkInfo ovnkutil.NetInfo, resolver func(nadKey string) string) ([]string, error) {
 	// check annotation "k8s.ovn.org/pod-networks" before calling GetPodIPsOfNetwork,
 	// as it's no easy to check if the error is caused by missing annotation, while
 	// we don't want to return error for such case as it will trigger retry
@@ -40,7 +40,7 @@ func getPodAddresses(pod *corev1.Pod, networkInfo ovnkutil.NetInfo) ([]string, e
 		// pod hasn't been annotated yet, return nil to avoid retry
 		return nil, nil
 	}
-	ips, err := ovnkutil.GetPodIPsOfNetwork(pod, networkInfo)
+	ips, err := ovnkutil.GetPodIPsOfNetwork(pod, networkInfo, resolver)
 	if err != nil {
 		return nil, err
 	}

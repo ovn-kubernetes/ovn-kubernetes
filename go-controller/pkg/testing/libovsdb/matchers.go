@@ -224,6 +224,26 @@ func HaveEmptyData() gomegatypes.GomegaMatcher {
 	return gomega.WithTransform(transform, gomega.BeEmpty())
 }
 
+// HaveDataSubset asserts that all expected TestData objects exist in the actual database,
+// but ignores any extra data. UUIDs are ignored when comparing.
+func HaveDataSubset(expected ...TestData) gomegatypes.GomegaMatcher {
+	if len(expected) == 1 {
+		if e, ok := expected[0].([]TestData); ok {
+			expected = e
+		}
+	}
+	matchers := []*testDataMatcher{}
+	for _, e := range expected {
+		matchers = append(matchers, matchTestData(true, e))
+	}
+
+	transform := func(client libovsdbclient.Client) []TestData {
+		return getTestDataFromClientCache(client)
+	}
+
+	return gomega.WithTransform(transform, gomega.ContainElements(matchers))
+}
+
 func haveData(ignoreUUIDs, nameUUIDs bool, expected []TestData) gomegatypes.GomegaMatcher {
 	if len(expected) == 1 {
 		if e, ok := expected[0].([]TestData); ok {

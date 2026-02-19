@@ -366,25 +366,7 @@ func IsClusterIP(svcVIP string) bool {
 	return false
 }
 
-type UnprocessedActiveNetworkError struct {
-	namespace string
-	udnName   string
-}
-
-func (m *UnprocessedActiveNetworkError) Error() string {
-	return fmt.Sprintf("primary UDN %q exists in namespace %s, but NAD has not been processed yet",
-		m.udnName, m.namespace)
-}
-
-func IsUnprocessedActiveNetworkError(err error) bool {
-	var unprocessedActiveNetworkError *UnprocessedActiveNetworkError
-	return errors.As(err, &unprocessedActiveNetworkError)
-}
-
-func NewUnprocessedActiveNetworkError(namespace, udnName string) *UnprocessedActiveNetworkError {
-	return &UnprocessedActiveNetworkError{namespace: namespace, udnName: udnName}
-}
-
+// InvalidPrimaryNetworkError indicates that the namespace requires a primary UDN, but no primary UDN exists yet
 type InvalidPrimaryNetworkError struct {
 	namespace string
 }
@@ -731,6 +713,14 @@ func (le LBEndpoints) GetV6Destinations() []IPPort {
 // e.g. map["TCP/http"] = LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}.
 // Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
 type PortToLBEndpoints map[string]LBEndpoints
+
+// GetLBEndpoints returns the LBEndpoints belonging to key, or an error otherwise.
+func (p PortToLBEndpoints) GetLBEndpoints(key string) (LBEndpoints, error) {
+	if lbe, ok := p[key]; ok {
+		return lbe, nil
+	}
+	return LBEndpoints{}, fmt.Errorf("cannot find key %q in PortToLBEndpoints %+v", key, p)
+}
 
 // GetAddresses returns all unique IP addresses from all ports in the PortToLBEndpoints map.
 // e.g. for PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}, "UDP/dns": {Port: 53, V4IPs: ["192.168.1.11"]}},

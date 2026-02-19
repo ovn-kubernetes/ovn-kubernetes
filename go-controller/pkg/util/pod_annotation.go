@@ -12,7 +12,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/yaml"
 
@@ -54,11 +53,13 @@ const (
 	OvnPodAnnotationName = "k8s.ovn.org/pod-networks"
 	// DefNetworkAnnotation is the pod annotation for the cluster-wide active network
 	DefNetworkAnnotation = "v1.multus-cni.io/default-network"
-	// OvnUDNIPAMClaimName is used for workload owners to instruct OVN-K which
-	// IPAMClaim will hold the allocation for the workload
-	OvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
 	// UDNOpenPortsAnnotationName is the pod annotation to open default network pods on UDN pods.
 	UDNOpenPortsAnnotationName = "k8s.ovn.org/open-default-ports"
+
+	// DeprecatedOvnUDNIPAMClaimName is used for workload owners to instruct OVN-K which
+	// IPAMClaim will hold the allocation for the workload.
+	// Deprecated: Use 'v1.multus-cni.io/default-network' annotation instead, specifying the 'ipam-claim-reference' attribute.
+	DeprecatedOvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
 )
 
 var ErrNoPodIPFound = errors.New("no pod IPs found")
@@ -143,7 +144,7 @@ type OpenPort struct {
 }
 
 // MarshalPodAnnotation adds the pod's network details of the specified network to the corresponding pod annotation.
-func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation, nadName string) (map[string]string, error) {
+func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation, nadKey string) (map[string]string, error) {
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
@@ -169,7 +170,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		pa.IPs = append(pa.IPs, ip.String())
 	}
 
-	existingPa, ok := podNetworks[nadName]
+	existingPa, ok := podNetworks[nadKey]
 	if ok {
 		if len(pa.IPs) != len(existingPa.IPs) {
 			return nil, ErrOverridePodIPs
@@ -203,7 +204,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		pa.GatewayIPv6LLA = podInfo.GatewayIPv6LLA.String()
 	}
 
-	podNetworks[nadName] = pa
+	podNetworks[nadKey] = pa
 	bytes, err := json.Marshal(podNetworks)
 	if err != nil {
 		return nil, fmt.Errorf("failed marshaling podNetworks map %v", podNetworks)
@@ -213,7 +214,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 }
 
 // UnmarshalPodAnnotation returns the Pod's network info of the given network from pod.Annotations
-func UnmarshalPodAnnotation(annotations map[string]string, nadName string) (*PodAnnotation, error) {
+func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodAnnotation, error) {
 	var err error
 	ovnAnnotation, ok := annotations[OvnPodAnnotationName]
 	if !ok {
@@ -225,10 +226,10 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadName string) (*Pod
 		return nil, err
 	}
 
-	tempA, ok := podNetworks[nadName]
+	tempA, ok := podNetworks[nadKey]
 	if !ok {
-		return nil, newAnnotationNotSetError("no ovn pod annotation for NAD %s: %q",
-			nadName, ovnAnnotation)
+		return nil, newAnnotationNotSetError("no ovn pod annotation for NAD key %s: %q",
+			nadKey, ovnAnnotation)
 	}
 
 	a := &tempA
@@ -316,10 +317,10 @@ func UnmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[strin
 	return podNetworks, nil
 }
 
-// GetPodCIDRsWithFullMask returns the pod's IP addresses in a CIDR with FullMask format
-// Internally it calls GetPodIPsOfNetwork
-func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, error) {
-	podIPs, err := GetPodIPsOfNetwork(pod, nInfo)
+// GetPodCIDRsWithFullMask returns the pod's IP addresses in a CIDR with FullMask format.
+// Internally it calls GetPodIPsOfNetwork.
+func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo, getNetworkNameForNADKey func(nadKey string) string) ([]*net.IPNet, error) {
+	podIPs, err := GetPodIPsOfNetwork(pod, nInfo, getNetworkNameForNADKey)
 	if err != nil {
 		return nil, err
 	}
@@ -337,17 +338,21 @@ func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, erro
 // GetPodIPsOfNetwork returns the pod's IP addresses, first from the OVN annotation
 // and then falling back to the Pod Status IPs. This function is intended to
 // also return IPs for HostNetwork and other non-OVN-IPAM-ed pods.
-func GetPodIPsOfNetwork(pod *corev1.Pod, nInfo NetInfo) ([]net.IP, error) {
+// getNetworkNameForNADKey is required for user defined networks.
+func GetPodIPsOfNetwork(pod *corev1.Pod, nInfo NetInfo, getNetworkNameForNADKey func(nadKey string) string) ([]net.IP, error) {
 	if nInfo.IsUserDefinedNetwork() {
-		return SecondaryNetworkPodIPs(pod, nInfo)
+		if getNetworkNameForNADKey == nil {
+			return nil, fmt.Errorf("missing NAD resolver for network %q", nInfo.GetNetworkName())
+		}
+		return SecondaryNetworkPodIPs(pod, nInfo, getNetworkNameForNADKey)
 	}
 	return DefaultNetworkPodIPs(pod)
 }
 
 // GetPodCIDRsWithFullMaskOfNetwork returns the pod's IP addresses in a CIDR with FullMask format
 // from a pod network annotation 'k8s.ovn.org/pod-networks' using key nadName.
-func GetPodCIDRsWithFullMaskOfNetwork(pod *corev1.Pod, nadName string) []*net.IPNet {
-	ips := getAnnotatedPodIPs(pod, nadName)
+func GetPodCIDRsWithFullMaskOfNetwork(pod *corev1.Pod, nadKey string) []*net.IPNet {
+	ips := getAnnotatedPodIPs(pod, nadKey)
 	ipNets := make([]*net.IPNet, 0, len(ips))
 	for _, ip := range ips {
 		ipNet := net.IPNet{
@@ -390,57 +395,62 @@ func DefaultNetworkPodIPs(pod *corev1.Pod) ([]net.IP, error) {
 	return []net.IP{ip}, nil
 }
 
-func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo) ([]net.IP, error) {
+func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo, getNetworkNameForNADKey func(nadKey string) string) ([]net.IP, error) {
 	ips := []net.IP{}
-	podNadNames, err := PodNadNames(pod, networkInfo)
+	if getNetworkNameForNADKey == nil {
+		return nil, fmt.Errorf("missing NAD resolver for network %q", networkInfo.GetNetworkName())
+	}
+	podNADKeys, err := PodNADKeys(pod, networkInfo, getNetworkNameForNADKey)
 	if err != nil {
 		return nil, err
 	}
-	for _, nadName := range podNadNames {
-		ips = append(ips, getAnnotatedPodIPs(pod, nadName)...)
+	for _, nadKey := range podNADKeys {
+		ips = append(ips, getAnnotatedPodIPs(pod, nadKey)...)
 	}
 	return ips, nil
 }
 
-// PodNadNames returns pod's NAD names associated with given network specified by netconf.
-// If netinfo belongs to user defined primary network, then retrieve NAD names from
-// netinfo.GetNADs() which is serving pod's namespace.
-// For all other cases, retrieve NAD names for the pod based on NetworkSelectionElement.
-func PodNadNames(pod *corev1.Pod, netinfo NetInfo) ([]string, error) {
-	if netinfo.IsPrimaryNetwork() {
-		return GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(pod.Namespace, netinfo)
+// PodNADKeys returns pod's NAD keys associated with given network specified by netconf.
+// For primary UDNs, retrieve NAD names for the pod based on its OVN annotations.
+// For secondary UDNs, retrieve NAD names for the pod based on NetworkSelectionElement.
+func PodNADKeys(pod *corev1.Pod, netinfo NetInfo, getNetworkNameForNADKey func(nadKey string) string) ([]string, error) {
+	if netinfo.IsUserDefinedNetwork() && getNetworkNameForNADKey == nil {
+		return nil, fmt.Errorf("missing NAD resolver for network %q", netinfo.GetNetworkName())
 	}
-	on, networkMap, err := GetPodNADToNetworkMapping(pod, netinfo)
+
+	if netinfo.IsPrimaryNetwork() {
+		podNetworks, err := UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		if err != nil {
+			return nil, err
+		}
+		nadKeys := make([]string, 0, len(podNetworks))
+		for nadKey := range podNetworks {
+			networkName := getNetworkNameForNADKey(nadKey)
+			if networkName == "" || networkName != netinfo.GetNetworkName() {
+				continue
+			}
+			nadKeys = append(nadKeys, nadKey)
+		}
+		return nadKeys, nil
+	}
+
+	on, networkMap, err := getPodNADToNetworkMapping(pod, netinfo, getNetworkNameForNADKey)
 	// skip pods that are not on this network
 	if err != nil {
 		return nil, err
 	} else if !on {
 		return []string{}, nil
 	}
-	nadNames := make([]string, 0, len(networkMap))
-	for nadName := range networkMap {
-		nadNames = append(nadNames, nadName)
+	nadKeys := make([]string, 0, len(networkMap))
+	for nadKey := range networkMap {
+		nadKeys = append(nadKeys, nadKey)
 	}
-	return nadNames, nil
+	return nadKeys, nil
 }
 
-func GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(namespace string, netinfo NetInfo) ([]string, error) {
-	for _, nadName := range netinfo.GetNADs() {
-		ns, _, err := cache.SplitMetaNamespaceKey(nadName)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing nad name %s from network %s: %v", nadName, netinfo.GetNetworkName(), err)
-		}
-		if ns != namespace {
-			continue
-		}
-		return []string{nadName}, nil
-	}
-	return []string{}, nil
-}
-
-func getAnnotatedPodIPs(pod *corev1.Pod, nadName string) []net.IP {
+func getAnnotatedPodIPs(pod *corev1.Pod, nadKey string) []net.IP {
 	var ips []net.IP
-	annotation, _ := UnmarshalPodAnnotation(pod.Annotations, nadName)
+	annotation, _ := UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	if annotation != nil {
 		// Use the OVN annotation if valid
 		for _, ip := range annotation.IPs {
@@ -488,10 +498,10 @@ func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionE
 
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
 // on conflict
-func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadName string) error {
+func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
-		pod.Annotations, err = MarshalPodAnnotation(pod.Annotations, podAnnotation, nadName)
+		pod.Annotations, err = MarshalPodAnnotation(pod.Annotations, podAnnotation, nadKey)
 		if err != nil {
 			return nil, nil, err
 		}

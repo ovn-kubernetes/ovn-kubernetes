@@ -28,8 +28,9 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 	f.SkipNamespaceCreation = true
 
 	type testCase struct {
-		ips []string
-		mac string
+		ips       []string
+		mac       string
+		lifecycle udnv1.NetworkIPAMLifecycle
 	}
 	DescribeTable("when added with static IP and MAC to a pod belonging to primary UDN", func(tc testCase) {
 		if !isPreConfiguredUdnAddressesEnabled() {
@@ -58,7 +59,7 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 				Layer2: &udnv1.Layer2Config{
 					Role:    udnv1.NetworkRolePrimary,
 					Subnets: filterDualStackCIDRs(f.ClientSet, []udnv1.CIDR{"103.0.0.0/16", "2014:100:200::0/60"}),
-					IPAM:    &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled, Lifecycle: udnv1.IPAMLifecyclePersistent},
+					IPAM:    &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled, Lifecycle: tc.lifecycle},
 				},
 			},
 		}
@@ -126,9 +127,14 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 			Should(Equal(corev1.PodPending))
 	},
 
-		Entry("should create the pod with the specified static IP and MAC address", testCase{
+		Entry("should create the pod with the specified static IP and MAC address with persistent IPAM", testCase{
 			ips: []string{"103.0.0.3/16", "2014:100:200::3/60"},
 			mac: "02:A1:B2:C3:D4:E5",
+			lifecycle: udnv1.IPAMLifecyclePersistent,
+		}),
+		Entry("should create the pod with the specified static IP and MAC address without persistent IPAM enabled", testCase{
+			ips:       []string{"103.0.0.3/16", "2014:100:200::3/60"},
+			mac:       "02:B1:C2:D3:E4:F5",
 		}),
 	)
 

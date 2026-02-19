@@ -264,7 +264,7 @@ func newNodeWithNad(nad *nadapi.NetworkAttachmentDefinition, networkName, networ
 		n.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":\"192.168.126.202/24\", \"%s\":\"192.168.127.202/24\"}", networkName)
 		n.Annotations["k8s.ovn.org/network-ids"] = fmt.Sprintf("{\"default\":\"0\",\"%s\":\"%s\"}", networkName, networkID)
 		n.Annotations["k8s.ovn.org/node-mgmt-port-mac-addresses"] = fmt.Sprintf("{\"default\":\"96:8f:e8:25:a2:e5\",\"%s\":\"d6:bc:85:32:30:fb\"}", networkName)
-		n.Annotations["k8s.ovn.org/node-chassis-id"] = "abdcef"
+		n.Annotations["k8s.ovn.org/node-chassis-id"] = chassisIDForNode(n.Name)
 		n.Annotations["k8s.ovn.org/l3-gateway-config"] = "{\"default\":{\"mac-address\":\"52:54:00:e2:ed:d0\",\"ip-addresses\":[\"10.1.1.10/24\"],\"ip-address\":\"10.1.1.10/24\",\"next-hops\":[\"10.1.1.1\"],\"next-hop\":\"10.1.1.1\"}}"
 		n.Annotations[util.OvnNodeID] = "4"
 	}
@@ -761,7 +761,11 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					ports = append(ports, tPod.portUUID)
 				}
 				expectedData := getMulticastPolicyExpectedData(netInfo, namespace1.Name, ports)
-				expectedData = append(expectedData, getExpectedPodsAndSwitches(bnc.GetNetInfo(), tPods, []string{nodeName})...)
+				nadKey := ""
+				if nad != nil {
+					nadKey = util.GetNADName(nad.Namespace, nad.Name)
+				}
+				expectedData = append(expectedData, getExpectedPodsAndSwitches(bnc.GetNetInfo(), tPods, []string{nodeName}, nadKey)...)
 				Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData...))
 				asf.ExpectAddressSetWithAddresses(namespace1.Name, tPodIPs)
 				return nil
@@ -840,7 +844,11 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					Expect(acl.Name).To(BeNil())
 					Expect(acl.ExternalIDs[libovsdbops.ObjectNameKey.String()]).To(Equal(longNameSpace2Name))
 				}
-				expectedData = append(expectedData, getExpectedPodsAndSwitches(bnc.GetNetInfo(), []testPod{}, []string{node.Name})...)
+				nadKey := ""
+				if nad != nil {
+					nadKey = util.GetNADName(nad.Namespace, nad.Name)
+				}
+				expectedData = append(expectedData, getExpectedPodsAndSwitches(bnc.GetNetInfo(), []testPod{}, []string{node.Name}, nadKey)...)
 				// Enable multicast in the namespace.
 				updateMulticast(fakeOvn, ns1, true)
 				updateMulticast(fakeOvn, ns2, true)
@@ -929,7 +937,11 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				// Check pods were added
 				asf.EventuallyExpectAddressSetWithAddresses(namespace1.Name, tPodIPs)
 				expectedDataWithPods := getMulticastPolicyExpectedData(netInfo, namespace1.Name, ports)
-				expectedDataWithPods = append(expectedDataWithPods, getExpectedPodsAndSwitches(bnc, tPods, []string{nodeName})...)
+				nadKey := ""
+				if nad != nil {
+					nadKey = util.GetNADName(nad.Namespace, nad.Name)
+				}
+				expectedDataWithPods = append(expectedDataWithPods, getExpectedPodsAndSwitches(bnc.GetNetInfo(), tPods, []string{nodeName}, nadKey)...)
 				Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedDataWithPods...))
 
 				// Delete the pod from the namespace.

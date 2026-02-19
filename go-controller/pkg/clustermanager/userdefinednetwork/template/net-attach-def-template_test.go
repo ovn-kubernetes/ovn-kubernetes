@@ -1,6 +1,7 @@
 package template
 
 import (
+	"encoding/json"
 	"strings"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -21,15 +22,20 @@ import (
 
 var _ = Describe("NetAttachDefTemplate", func() {
 
-	// before each test, set the IPv4Mode and IPv6Mode to true
 	BeforeEach(func() {
+		// Restore global default values before each testcase
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.IPv4Mode = true
 		config.IPv6Mode = true
+		// Enable EVPN for tests that use EVPN transport
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.OVNKubernetesFeature.EnableEVPN = true
 	})
 
 	DescribeTable("should fail to render NAD spec given",
 		func(spec *udnv1.UserDefinedNetworkSpec, expectedError string) {
-			_, err := RenderNADSpec("foo", "bar", spec)
+			_, err := renderNADSpec("foo", "bar", spec, nil)
 			Expect(err).To(MatchError(ContainSubstring(expectedError)))
 		},
 		Entry("invalid layer2 subnets",
@@ -631,7 +637,341 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "allowPersistentIPs": true
 			}`,
 		),
+		Entry("primary network, layer2 with EVPN transport and MAC-VRF",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+					MTU:     1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &udnv1.VRFConfig{
+						VNI:         100,
+						RouteTarget: "65000:100",
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer2",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16",
+			  "subnets": "192.168.100.0/24",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "macVRF": {
+			      "vni": 100,
+			      "routeTarget": "65000:100"
+			    }
+			  }
+			}`,
+		),
+		Entry("primary network, layer3 with EVPN transport and IP-VRF",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3,
+				Layer3: &udnv1.Layer3Config{
+					Role: udnv1.NetworkRolePrimary,
+					Subnets: []udnv1.Layer3Subnet{
+						{CIDR: "192.168.100.0/16"},
+					},
+					MTU: 1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					IPVRF: &udnv1.VRFConfig{
+						VNI:         200,
+						RouteTarget: "65000:200",
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer3",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "subnets": "192.168.100.0/16",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "ipVRF": {
+			      "vni": 200,
+			      "routeTarget": "65000:200"
+			    }
+			  }
+			}`,
+		),
+		Entry("primary network, layer2 with EVPN transport, MAC-VRF and IP-VRF",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+					MTU:     1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &udnv1.VRFConfig{
+						VNI:         100,
+						RouteTarget: "100000:100", // 4-byte ASN format
+					},
+					IPVRF: &udnv1.VRFConfig{
+						VNI:         200,
+						RouteTarget: "192.168.1.1:200", // IPv4 format
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer2",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16",
+			  "subnets": "192.168.100.0/24",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "macVRF": {
+			      "vni": 100,
+			      "routeTarget": "100000:100"
+			    },
+			    "ipVRF": {
+			      "vni": 200,
+			      "routeTarget": "192.168.1.1:200"
+			    }
+			  }
+			}`,
+		),
+		Entry("primary network, layer2 with EVPN transport, MAC-VRF with VNI only (no RouteTarget)",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+					MTU:     1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &udnv1.VRFConfig{
+						VNI: 100,
+						// RouteTarget intentionally omitted
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer2",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16",
+			  "subnets": "192.168.100.0/24",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "macVRF": {
+			      "vni": 100
+			    }
+			  }
+			}`,
+		),
 	)
+
+	Context("EVPN VID injection", func() {
+		It("should inject VIDs into EVPN config when provided via WithEVPNVIDs", func() {
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-evpn", UID: "1"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    udnv1.NetworkRoleSecondary,
+							Subnets: udnv1.DualStackCIDRs{"192.168.0.0/16"},
+						},
+						Transport: udnv1.TransportOptionEVPN,
+						EVPN: &udnv1.EVPNConfig{
+							VTEP: "my-vtep",
+							MACVRF: &udnv1.VRFConfig{
+								VNI:         100,
+								RouteTarget: "65000:100",
+							},
+							IPVRF: &udnv1.VRFConfig{
+								VNI:         200,
+								RouteTarget: "65000:200",
+							},
+						},
+					},
+				},
+			}
+
+			nad, err := RenderNetAttachDefManifest(cudn, "test-ns", WithEVPNVIDs(12, 13))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nad).NotTo(BeNil())
+
+			var netConf ovncnitypes.NetConf
+			err = json.Unmarshal([]byte(nad.Spec.Config), &netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(netConf.EVPN).NotTo(BeNil(), "evpnConfig should be present")
+			Expect(netConf.EVPN.MACVRF).NotTo(BeNil(), "macVRF should be present")
+			Expect(netConf.EVPN.MACVRF.VID).To(Equal(12), "macVRF VID should be 12")
+			Expect(netConf.EVPN.IPVRF).NotTo(BeNil(), "ipVRF should be present")
+			Expect(netConf.EVPN.IPVRF.VID).To(Equal(13), "ipVRF VID should be 13")
+		})
+
+		It("should omit VID when zero (VID=0 not injected)", func() {
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-evpn-no-vid", UID: "1"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    udnv1.NetworkRoleSecondary,
+							Subnets: udnv1.DualStackCIDRs{"192.168.0.0/16"},
+						},
+						Transport: udnv1.TransportOptionEVPN,
+						EVPN: &udnv1.EVPNConfig{
+							VTEP: "my-vtep",
+							MACVRF: &udnv1.VRFConfig{
+								VNI:         100,
+								RouteTarget: "65000:100",
+							},
+						},
+					},
+				},
+			}
+
+			// Pass VID=0 for both (should be omitted from JSON, unmarshals as zero value)
+			nad, err := RenderNetAttachDefManifest(cudn, "test-ns", WithEVPNVIDs(0, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nad).NotTo(BeNil())
+
+			var netConf ovncnitypes.NetConf
+			err = json.Unmarshal([]byte(nad.Spec.Config), &netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(netConf.EVPN).NotTo(BeNil(), "evpnConfig should be present")
+			Expect(netConf.EVPN.MACVRF).NotTo(BeNil(), "macVRF should be present")
+			Expect(netConf.EVPN.MACVRF.VID).To(Equal(0), "VID should be zero when not injected")
+
+			// Also verify the raw JSON doesn't contain "vid" field (omitempty)
+			Expect(nad.Spec.Config).NotTo(ContainSubstring(`"vid"`), "vid field should be omitted from JSON when zero")
+		})
+
+		It("should omit empty RouteTarget in EVPN config", func() {
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-evpn-no-rt", UID: "1"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    udnv1.NetworkRoleSecondary,
+							Subnets: udnv1.DualStackCIDRs{"192.168.0.0/16"},
+						},
+						Transport: udnv1.TransportOptionEVPN,
+						EVPN: &udnv1.EVPNConfig{
+							VTEP: "my-vtep",
+							MACVRF: &udnv1.VRFConfig{
+								VNI: 100,
+								// RouteTarget intentionally omitted (empty)
+							},
+						},
+					},
+				},
+			}
+
+			nad, err := RenderNetAttachDefManifest(cudn, "test-ns", WithEVPNVIDs(5, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nad).NotTo(BeNil())
+
+			var netConf ovncnitypes.NetConf
+			err = json.Unmarshal([]byte(nad.Spec.Config), &netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			// RouteTarget should be empty (omitted in JSON, unmarshals as empty string)
+			Expect(netConf.EVPN.MACVRF.RouteTarget).To(BeEmpty(), "empty routeTarget should unmarshal as empty string")
+
+			// Also verify the raw JSON doesn't contain "routeTarget" field
+			Expect(nad.Spec.Config).NotTo(ContainSubstring(`"routeTarget"`), "routeTarget should be omitted from JSON when empty")
+
+			// VID should be present
+			Expect(netConf.EVPN.MACVRF.VID).To(Equal(5), "macVRF VID should be 5")
+		})
+
+		It("should handle nil RenderOption without panic", func() {
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-nil-option", UID: "1"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    udnv1.NetworkRoleSecondary,
+							Subnets: udnv1.DualStackCIDRs{"192.168.0.0/16"},
+						},
+					},
+				},
+			}
+
+			// Pass nil option - should not panic
+			var nilOpt RenderOption
+			Expect(func() {
+				_, _ = RenderNetAttachDefManifest(cudn, "test-ns", nilOpt, WithEVPNVIDs(1, 2))
+			}).NotTo(Panic())
+		})
+
+		It("should fail when EVPN transport is requested but EVPN feature is disabled", func() {
+			// Disable EVPN feature flag for this test.
+			// No defer needed - BeforeEach resets config via PrepareTestConfig().
+			config.OVNKubernetesFeature.EnableEVPN = false
+
+			cudn := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-evpn-disabled", UID: "1"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    udnv1.NetworkRolePrimary,
+							Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+						},
+						Transport: udnv1.TransportOptionEVPN,
+						EVPN: &udnv1.EVPNConfig{
+							VTEP: "my-vtep",
+							MACVRF: &udnv1.VRFConfig{
+								VNI:         100,
+								RouteTarget: "65000:100",
+							},
+						},
+					},
+				},
+			}
+
+			_, err := RenderNetAttachDefManifest(cudn, "test-ns")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("EVPN transport requested but EVPN feature is not enabled"))
+		})
+	})
 
 	It("should correctly assign transit Subnets", func() {
 		// check no overlap, use default values

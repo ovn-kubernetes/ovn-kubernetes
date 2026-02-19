@@ -75,7 +75,7 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 		}
 	}
 	gatewayIntf := config.Gateway.Interface
-	if gatewayIntf != "" {
+	if gatewayIntf != "" && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		if bridgeName, _, err := util.RunOVSVsctl("port-to-br", gatewayIntf); err == nil {
 			// This is an OVS bridge's internal port
 			gatewayIntf = bridgeName
@@ -475,6 +475,10 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 		return err
 	}
 
+	// In DPU-host mode, bridgeEIPAddrManager is not initialized because:
+	// - There's no OVS on the host (it runs on the DPU)
+	// - Traffic is handled on the DPU which has the EgressIP configuration
+	// - There's no openflow manager to use the mark-to-IP cache
 	nc.Gateway = &gateway{
 		initFunc:     func() error { return nil },
 		readyFunc:    func() (bool, error) { return true, nil },

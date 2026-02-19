@@ -12,7 +12,6 @@ import (
 	mnpfake "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/fake"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	fakenadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
-	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	ocpnetworkfake "github.com/openshift/client-go/network/clientset/versioned/fake"
@@ -40,6 +39,7 @@ import (
 	egressservice "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressservicefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
 	udnclientfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
+	vtepfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -64,6 +64,7 @@ const (
 	fakeUUIDv6                  = "8a86f6d8-7972-4253-b0bd-ddbef66e9304"
 	fakePgUUID                  = "bf02f460-5058-4689-8fcb-d31a1e484ed2"
 	ovnClusterPortGroupUUID     = fakePgUUID
+	testICZone                  = "test"
 )
 
 type userDefinedNetworkControllerInfo struct {
@@ -93,6 +94,7 @@ type FakeOVN struct {
 	// information map of all UDN controllers
 	userDefinedNetworkControllers map[string]userDefinedNetworkControllerInfo
 	fullL2UDNControllers          map[string]*Layer2UserDefinedNetworkController
+	fullL3UDNControllers          map[string]*Layer3UserDefinedNetworkController
 }
 
 // NOTE: the FakeAddressSetFactory is no longer needed and should no longer be used. starting to phase out FakeAddressSetFactory
@@ -110,6 +112,7 @@ func NewFakeOVN(useFakeAddressSet bool) *FakeOVN {
 
 		userDefinedNetworkControllers: map[string]userDefinedNetworkControllerInfo{},
 		fullL2UDNControllers:          map[string]*Layer2UserDefinedNetworkController{},
+		fullL3UDNControllers:          map[string]*Layer3UserDefinedNetworkController{},
 	}
 }
 
@@ -177,6 +180,7 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 		IPAMClaimsClient:         fakeipamclaimclient.NewSimpleClientset(ipamClaimObjects...),
 		NetworkAttchDefClient:    nadClient,
 		UserDefinedNetworkClient: udnclientfake.NewSimpleClientset(),
+		VTEPClient:               vtepfake.NewSimpleClientset(),
 	}
 	o.init(nads)
 }
@@ -194,6 +198,9 @@ func (o *FakeOVN) shutdown() {
 	o.egressQoSWg.Wait()
 	o.egressSVCWg.Wait()
 	o.anpWg.Wait()
+	if o.networkManager != nil {
+		o.networkManager.Stop()
+	}
 	o.nbsbCleanup.Cleanup()
 	for _, ocInfo := range o.userDefinedNetworkControllers {
 		close(ocInfo.bnc.stopChan)
@@ -221,7 +228,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if o.networkManager == nil {
 		o.networkManager = networkmanager.Default()
 		if config.OVNKubernetesFeature.EnableMultiNetwork {
-			o.networkManager, err = networkmanager.NewForZone("test", &networkmanager.FakeControllerManager{}, o.watcher)
+			o.networkManager, err = networkmanager.NewForZone(config.Default.Zone, &networkmanager.FakeControllerManager{}, o.watcher)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 	}
@@ -274,6 +281,9 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	err = o.watcher.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	err = o.networkManager.Start()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 	err = o.eIPController.SyncLocalNodeZonesCache()
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "syncing Nodes OVN zones status must succeed to support EgressIP")
 
@@ -281,9 +291,11 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if err == nil {
 		for _, node := range existingNodes {
 			o.controller.localZoneNodes.Store(node.Name, true)
-			for _, udnController := range o.userDefinedNetworkControllers {
-				if udnController.bnc.localZoneNodes != nil {
-					udnController.bnc.localZoneNodes.Store(node.Name, true)
+			if util.GetNodeZone(node) == types.OvnDefaultZone || util.GetNodeZone(node) == config.Default.Zone {
+				for _, udnController := range o.userDefinedNetworkControllers {
+					if udnController.bnc.localZoneNodes != nil {
+						udnController.bnc.localZoneNodes.Store(node.Name, true)
+					}
 				}
 			}
 		}
@@ -515,7 +527,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 	}
 	netName := nInfo.GetNetworkName()
 	topoType := nInfo.TopologyType()
-	ocInfo, ok = o.userDefinedNetworkControllers[netName]
+	_, ok = o.userDefinedNetworkControllers[netName]
 	if !ok {
 		nbZoneFailed := false
 		// Try to get the NBZone.  If there is an error, create NB_Global record.
@@ -524,7 +536,11 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 		_, err := libovsdbutil.GetNBZone(o.nbClient)
 		if err != nil {
 			nbZoneFailed = true
-			err = createTestNBGlobal(o.nbClient, "global")
+			zone := types.OvnDefaultZone
+			if config.OVNKubernetesFeature.EnableInterconnect && config.Default.Zone != "" {
+				zone = config.Default.Zone
+			}
+			err = createTestNBGlobal(o.nbClient, zone)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
@@ -552,16 +568,20 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 
 		asf := addressset.NewFakeAddressSetFactory(getNetworkControllerName(netName))
 
+		mutableNetInfo := util.NewMutableNetInfo(nInfo)
+		mutableNetInfo.AddNADs(nadName)
+
 		switch topoType {
 		case types.Layer3Topology:
-			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, nInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache)
+			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l3Controller.addressSetFactory = asf
 			}
 			userDefinedNetworkController = &l3Controller.BaseUserDefinedNetworkController
+			o.fullL3UDNControllers[netName] = l3Controller
 		case types.Layer2Topology:
-			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, nInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController)
+			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l2Controller.addressSetFactory = asf
@@ -569,7 +589,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			userDefinedNetworkController = &l2Controller.BaseUserDefinedNetworkController
 			o.fullL2UDNControllers[netName] = l2Controller
 		case types.LocalnetTopology:
-			localnetController := NewLocalnetUserDefinedNetworkController(cnci, nInfo, o.networkManager.Interface())
+			localnetController := NewLocalnetUserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface())
 			if o.asf != nil { // use fake asf only when enabled
 				localnetController.addressSetFactory = asf
 			}
@@ -586,15 +606,8 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			err = deleteTestNBGlobal(o.nbClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
-	} else {
-		userDefinedNetworkController = ocInfo.bnc
 	}
 
-	ginkgo.By(fmt.Sprintf("OVN test init: add NAD %s to user-defined network controller of %s network %s", nadName, topoType, netName))
-	mutableNetInfo := util.NewMutableNetInfo(userDefinedNetworkController.GetNetInfo())
-	mutableNetInfo.AddNADs(nadName)
-	err = util.ReconcileNetInfo(userDefinedNetworkController.ReconcilableNetInfo, mutableNetInfo)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return nil
 }
 

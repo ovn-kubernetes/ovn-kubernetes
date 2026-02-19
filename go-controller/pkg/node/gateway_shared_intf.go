@@ -15,6 +15,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -243,7 +244,8 @@ func (npw *nodePortWatcher) updateGatewayIPs() {
 //
 // `add` parameter indicates if the flows should exist or be removed from the cache
 // `hasLocalHostNetworkEp` indicates if at least one host networked endpoint exists for this service which is local to this node.
-func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netInfo util.NetInfo, add, hasLocalHostNetworkEp bool) error {
+func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netInfo util.NetInfo, add,
+	hasLocalHostNetworkEp bool, localEndpoints util.PortToLBEndpoints) error {
 	if config.Gateway.Mode == config.GatewayModeLocal && config.Gateway.AllowNoUplink && npw.ofportPhys == "" {
 		// if LGW mode and no uplink gateway bridge, ingress traffic enters host from node physical interface instead of the breth0. Skip adding these service flows to br-ex.
 		return nil
@@ -300,28 +302,57 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 				// Flows that will DNAT all traffic coming into nodeport to the nodeIP:Port and
 				// ensure that the return traffic is UnDNATed to correct the nodeIP:Nodeport
 				if isServiceTypeETPLocal && hasLocalHostNetworkEp {
+					// Get the target port (this is important for named ports).
+					svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+					lbe, err := localEndpoints.GetLBEndpoints(svcPortKey)
+					if err != nil {
+						errors = append(errors, err)
+						continue
+					}
+					// The return traffic, matches on the flowProtocol + targetPort. That's different from cookie which
+					// uses svcPort.NodePort.
+					targetPort := lbe.Port
+					targetPortCookie, err := svcToCookie(service.Namespace, service.Name, flowProtocol, targetPort)
+					if err != nil {
+						klog.Warningf("Unable to generate target port cookie for svc: %s, %s, %d, error: %v",
+							service.Namespace, service.Name, targetPort, err)
+						targetPortCookie = "0"
+					}
+
 					// case1 (see function description for details)
 					var nodeportFlows []string
-					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s in Namespace: %s since ExternalTrafficPolicy=local", service.Name, service.Namespace)
+					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s with targetPort %d in "+
+						"Namespace: %s since ExternalTrafficPolicy=local", service.Name, targetPort, service.Namespace)
 					// table 0, This rule matches on all traffic with dst port == NodePort, DNAT's the nodePort to the svc targetPort
-					// If ipv6 make sure to choose the ipv6 node address for rule
+					// If IPv6 make sure to choose the IPv6 node address for rule, otherwise send to the IPv4 node address.
+					gatewayAddress := npw.gatewayIPv4
 					if strings.Contains(flowProtocol, "6") {
-						nodeportFlows = append(nodeportFlows,
-							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=[%s]:%s),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, svcPort.TargetPort.String()))
-					} else {
-						nodeportFlows = append(nodeportFlows,
-							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=%s:%s),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, svcPort.TargetPort.String()))
+						gatewayAddress = fmt.Sprintf("[%s]", npw.gatewayIPv6)
 					}
+					// This is just an additional safety check - we should never get into this situation.
+					// If gatewayAddress is empty, we cannot install the following flow and we will continue with the
+					// next flowProtocol.
+					if gatewayAddress == "" || gatewayAddress == "[]" {
+						err := fmt.Errorf("gateway IP not available for protocol %s", flowProtocol)
+						errors = append(errors, err)
+						continue
+					}
+
+					nodeportFlows = append(nodeportFlows,
+						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
+							"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
+							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort,
+							config.Default.HostNodePortConntrackZone, gatewayAddress, targetPort))
+
 					nodeportFlows = append(nodeportFlows,
 						// table 6, Sends the packet to the host. Note that the constant etp svc cookie is used since this flow would be
 						// same for all such services.
 						fmt.Sprintf("cookie=%s, priority=110, table=6, actions=output:LOCAL",
 							etpSvcOpenFlowCookie),
 						// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs
-						fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%s, actions=ct(zone=%d nat,table=7)",
-							cookie, flowProtocol, svcPort.TargetPort.String(), config.Default.HostNodePortConntrackZone),
+						// Use targetPortCookie, as the flow will be the same if the target port + protocol are the same.
+						fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%d, actions=ct(zone=%d nat,table=7)",
+							targetPortCookie, flowProtocol, targetPort, config.Default.HostNodePortConntrackZone),
 						// table 7, Sends the packet back out eth0 to the external client. Note that the constant etp svc
 						// cookie is used since this would be same for all such services.
 						fmt.Sprintf("cookie=%s, priority=110, table=7, "+
@@ -378,13 +409,13 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					err)
 			}
 		}
-		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp, protocol, actions,
-			ingParsedIPs, "Ingress", ofPorts); err != nil {
+		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp,
+			localEndpoints, protocol, actions, ingParsedIPs, "Ingress", ofPorts); err != nil {
 			errors = append(errors, err)
 		}
 
-		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp, protocol, actions,
-			extParsedIPs, "External", ofPorts); err != nil {
+		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp,
+			localEndpoints, protocol, actions, extParsedIPs, "External", ofPorts); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -464,8 +495,10 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 // `actions`: "send to patchport"
 // `externalIPOrLBIngressIP` is either externalIP.IP or LB.status.ingress.IP
 // `ipType` is either "External" or "Ingress"
-func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNConfiguration, svcPort *corev1.ServicePort, add bool,
-	hasLocalHostNetworkEp bool, protocol string, actions string, externalIPOrLBIngressIPs []string, ipType string, ofPorts []string) error {
+func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNConfiguration,
+	svcPort *corev1.ServicePort, add bool, hasLocalHostNetworkEp bool, localEndpoints util.PortToLBEndpoints,
+	protocol string, actions string, externalIPOrLBIngressIPs []string, ipType string, ofPorts []string) error {
+	var errors []error
 
 	for _, externalIPOrLBIngressIP := range externalIPOrLBIngressIPs {
 		// each path has per IP generates about 4-5 flows. So we preallocate a slice with capacity.
@@ -505,27 +538,56 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 		// to the ingress / external IP
 		isServiceTypeETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 		if isServiceTypeETPLocal && hasLocalHostNetworkEp {
+			// Get the target port (this is important for named ports).
+			svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+			lbe, err := localEndpoints.GetLBEndpoints(svcPortKey)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+			// cookie uses externalIPOrLBIngressIP and thus generates different cookies for each of the IP addresses.
+			// The return traffic, however, matches on the flowProtocol + src port only. Therefore, generate a stable
+			// cookie regardless of IP address and use this for the return flows.
+			targetPort := lbe.Port
+			targetPortCookie, err := svcToCookie(service.Namespace, service.Name, flowProtocol, targetPort)
+			if err != nil {
+				klog.Warningf("Unable to generate target port cookie for %s svc: %s, %s, %d, error: %v",
+					ipType, service.Namespace, service.Name, targetPort, err)
+				targetPortCookie = "0"
+			}
+
 			// case1 (see function description for details)
 			klog.V(5).Infof("Adding flows on breth0 for %s Service %s in Namespace: %s since ExternalTrafficPolicy=local", ipType, service.Name, service.Namespace)
 			// table 0, This rule matches on all traffic with dst ip == LoadbalancerIP / externalIP, DNAT's the nodePort to the svc targetPort
-			// If ipv6 make sure to choose the ipv6 node address for rule
+			// If IPv6 make sure to choose the IPv6 node address for rule, otherwise send to the IPv4 node address.
+			gatewayAddress := npw.gatewayIPv4
 			if strings.Contains(flowProtocol, "6") {
-				externalIPFlows = append(externalIPFlows,
-					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=[%s]:%s),table=6)",
-						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port, config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, svcPort.TargetPort.String()))
-			} else {
-				externalIPFlows = append(externalIPFlows,
-					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=%s:%s),table=6)",
-						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port, config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, svcPort.TargetPort.String()))
+				gatewayAddress = fmt.Sprintf("[%s]", npw.gatewayIPv6)
 			}
+			// This is just an additional safety check - we should never get into this situation.
+			// If gatewayAddress is empty, we cannot install the following flow and we will continue with the
+			// next flowProtocol.
+			if gatewayAddress == "" || gatewayAddress == "[]" {
+				err := fmt.Errorf("gateway IP not available for protocol %s", flowProtocol)
+				errors = append(errors, err)
+				continue
+			}
+
+			externalIPFlows = append(externalIPFlows,
+				fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
+					"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
+					cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port,
+					config.Default.HostNodePortConntrackZone, gatewayAddress, targetPort))
+
 			externalIPFlows = append(externalIPFlows,
 				// table 6, Sends the packet to Host. Note that the constant etp svc cookie is used since this flow would be
 				// same for all such services.
 				fmt.Sprintf("cookie=%s, priority=110, table=6, actions=output:LOCAL",
 					etpSvcOpenFlowCookie),
-				// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs
-				fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%s, actions=ct(commit,zone=%d nat,table=7)",
-					cookie, flowProtocol, svcPort.TargetPort.String(), config.Default.HostNodePortConntrackZone),
+				// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs.
+				// Use targetPortCookie, as the flow will be the same for each ExternalIP / LB status IP.
+				fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%d, actions=ct(zone=%d nat,table=7)",
+					targetPortCookie, flowProtocol, targetPort, config.Default.HostNodePortConntrackZone),
 				// table 7, Sends the reply packet back out eth0 to the external client. Note that the constant etp svc
 				// cookie is used since this would be same for all such services.
 				fmt.Sprintf("cookie=%s, priority=110, table=7, actions=output:%s",
@@ -548,7 +610,7 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 		npw.ofm.updateFlowCacheEntry(key, externalIPFlows)
 	}
 
-	return nil
+	return utilerrors.Join(errors...)
 }
 
 // generate ARP/NS bypass flow which will send the ARP/NS request everywhere *but* to OVN
@@ -678,7 +740,7 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 	var errors []error
 	var activeNetwork *bridgeconfig.BridgeUDNConfiguration
 	if npw != nil {
-		if err = npw.updateServiceFlowCache(service, netInfo, true, svcHasLocalHostNetEndPnt); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, true, svcHasLocalHostNetEndPnt, localEndpoints); err != nil {
 			errors = append(errors, err)
 		}
 		npw.ofm.requestFlowSync()
@@ -721,7 +783,7 @@ func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoi
 	var errors []error
 	// full mode || dpu mode
 	if npw != nil {
-		if err = npw.updateServiceFlowCache(service, nil, false, false); err != nil {
+		if err = npw.updateServiceFlowCache(service, nil, false, false, localEndpoints); err != nil {
 			errors = append(errors, fmt.Errorf("error updating service flow cache: %v", err))
 		}
 		npw.ofm.requestFlowSync()
@@ -827,10 +889,14 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	}
 
 	klog.V(5).Infof("Adding service %s in namespace %s", service.Name, service.Namespace)
-
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
+	}
+
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	name := ktypes.NamespacedName{Namespace: service.Namespace, Name: service.Name}
@@ -860,7 +926,7 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	} else {
 		// Need to update flows here in case an attribute of the gateway has changed, such as MAC address
 		klog.V(5).Infof("Updating already programmed rules for %s in namespace %s", service.Name, service.Namespace)
-		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp, localEndpoints); err != nil {
 			return fmt.Errorf("failed to update flows for service %s/%s: %w", service.Namespace, service.Name, err)
 		}
 		npw.ofm.requestFlowSync()
@@ -895,6 +961,16 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 		if err = delServiceRules(old, svcConfig.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
+
+		// Delete conntrack entries for UDP ports of the service if they have changed.
+		// UDP is connectionless, so stale conntrack entries can cause packets to be routed to
+		// old target ports even after service updates. Unlike TCP (which is stateful and manages
+		// its own connection lifecycle), UDP conntrack entries must be explicitly cleaned up.
+		// This behavior is extending the decision taken regarding endpoint deletion of UDP services.
+		// For more details, see https://github.com/kubernetes/kubernetes/issues/108523#issuecomment-1074044415.
+		if err = npw.deleteConntrackForUpdatedUDPServiceIPPorts(old, new); err != nil {
+			errors = append(errors, fmt.Errorf("failed to delete conntrack entries for UDP ports of service %v: %v", name, err))
+		}
 	}
 
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
@@ -903,6 +979,10 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
 		}
 
 		if err = addServiceRules(new, netInfo, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw); err != nil {
@@ -916,11 +996,144 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 
 }
 
+// deleteConntrackForUpdatedUDPServiceIPPorts deletes the conntrack entries for the updated UDP ports of the service.
+// The conntrack entries are deleted for the old IP:port:targetPort combinations (IP:port:targetPort:nodePort for
+// NodePort type services) if they are not present in the corresponding new combinations for External and LB IP,
+// ClusterIP and Node IP.
+func (npw *nodePortWatcher) deleteConntrackForUpdatedUDPServiceIPPorts(old, new *corev1.Service) error {
+	// Skip if there are no service IPs and ports changed
+	if apiequality.Semantic.DeepEqual(old.Spec.Ports, new.Spec.Ports) &&
+		apiequality.Semantic.DeepEqual(old.Spec.ExternalIPs, new.Spec.ExternalIPs) &&
+		apiequality.Semantic.DeepEqual(old.Spec.ClusterIP, new.Spec.ClusterIP) &&
+		apiequality.Semantic.DeepEqual(old.Spec.ClusterIPs, new.Spec.ClusterIPs) &&
+		apiequality.Semantic.DeepEqual(old.Status.LoadBalancer.Ingress, new.Status.LoadBalancer.Ingress) {
+		return nil
+	}
+
+	klog.V(5).Infof("Service %s/%s IPs/ports changed, evaluating UDP conntrack cleanup", old.Namespace, old.Name)
+
+	// Get the new IP:port:targetPort combinations for External and LB IP and ClusterIP. Get the new
+	// Node IP:port:targetPort:nodePort combinations for Node IP. Delete the conntrack entries
+	// for the old combinations that are not present in the corresponding new combinations.
+	var deletedCount uint
+	var errs []error
+
+	// External and LB IPs
+	newExternalIPs := util.GetExternalAndLBIPs(new)
+	oldExternalIPs := util.GetExternalAndLBIPs(old)
+	extIPsDeletedCount, extIPsErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newExternalIPs, old.Spec.Ports, oldExternalIPs, old.Namespace, old.Name, false)
+
+	// Cluster IPs
+	newClusterIPs := util.GetClusterIPs(new)
+	oldClusterIPs := util.GetClusterIPs(old)
+	clusterIPsDeletedCount, clusterIPsErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newClusterIPs, old.Spec.Ports, oldClusterIPs, old.Namespace, old.Name, false)
+
+	// Node IPs
+	var nodeIPs []net.IP
+	if util.ServiceTypeHasNodePort(new) || util.ServiceTypeHasNodePort(old) {
+		nodeIPs, _ = npw.nodeIPManager.ListAddresses()
+	}
+	var newNodeIPs []net.IP
+	if util.ServiceTypeHasNodePort(new) {
+		newNodeIPs = nodeIPs
+	}
+	var oldNodeIPs []net.IP
+	if util.ServiceTypeHasNodePort(old) {
+		oldNodeIPs = nodeIPs
+	}
+	nodePortDeletedCount, nodePortErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newNodeIPs, old.Spec.Ports, oldNodeIPs, old.Namespace, old.Name, true)
+
+	deletedCount = extIPsDeletedCount + clusterIPsDeletedCount + nodePortDeletedCount
+	errs = append(errs, extIPsErrs...)
+	errs = append(errs, clusterIPsErrs...)
+	errs = append(errs, nodePortErrs...)
+
+	if deletedCount > 0 {
+		klog.Infof("Deleted %d UDP conntrack entries for service %s/%s", deletedCount, old.Namespace, old.Name)
+	}
+
+	return utilerrors.Join(errs...)
+}
+
+// ipStringer is a constraint for types that can be converted to string IP representations
+type ipStringer interface {
+	~string | net.IP
+}
+
+// joinIPServicePort returns the IP:port:targetPort:nodePort combination of a service port for
+// a NodePort type service, otherwise returns IP:port:targetPort combination of the service port.
+func joinIPServicePort(ip string, servicePort corev1.ServicePort, isNodePort bool) string {
+	joinString := fmt.Sprintf("%s:%d:%s", ip, servicePort.Port, servicePort.TargetPort.String())
+	if isNodePort {
+		joinString = fmt.Sprintf("%s:%d", joinString, servicePort.NodePort)
+	}
+	return joinString
+}
+
+// deleteStaleUDPConntrackForUDPPortsAndIPs deletes the conntrack entries for the updated UDP ports of the service.
+// The conntrack entries are deleted for the old IP:port:targetPort combinations (IP:port:targetPort:nodePort for
+// NodePort type service) that are not present in the corresponding new combinations.
+func deleteStaleUDPConntrackForUDPPortsAndIPs[T ipStringer](
+	newServicePorts []corev1.ServicePort,
+	newIPs []T,
+	oldServicePorts []corev1.ServicePort,
+	oldIPs []T,
+	namespace,
+	name string,
+	isNodePort bool,
+) (uint, []error) {
+	var errs []error
+	var deletedCount uint
+
+	// Get the new IP:port:targetPort combinations (IP:port:targetPort:nodePort for NodePort type service)
+	newIPPortTargetPorts := sets.New[string]()
+	for _, newPort := range newServicePorts {
+		if newPort.Protocol != corev1.ProtocolUDP {
+			continue
+		}
+		for _, newIP := range newIPs {
+			newIPStr := fmt.Sprint(newIP)
+			newIPPortTargetPorts.Insert(joinIPServicePort(newIPStr, newPort, isNodePort))
+		}
+	}
+
+	// Delete the conntrack entries for the old IP:port:targetPort combinations (IP:port:targetPort:nodePort for
+	// NodePort type service) that are not present in the corresponding new combinations
+	for _, oldPort := range oldServicePorts {
+		if oldPort.Protocol != corev1.ProtocolUDP {
+			continue
+		}
+		port := oldPort.Port
+		ipType := "svcVIP"
+		portType := "svcPort"
+		if isNodePort {
+			port = oldPort.NodePort
+			ipType = "nodeIP"
+			portType = "nodePort"
+		}
+		for _, oldIP := range oldIPs {
+			oldIPStr := fmt.Sprint(oldIP)
+			if !newIPPortTargetPorts.Has(joinIPServicePort(oldIPStr, oldPort, isNodePort)) {
+				deleted, err := util.DeleteConntrackServicePort(oldIPStr, port, oldPort.Protocol,
+					netlink.ConntrackOrigDstIP, nil)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete conntrack entry for service %s/%s with %s %s, %s %d, protocol %s: %v",
+						namespace, name, ipType, oldIPStr, portType, port, oldPort.Protocol, err))
+				} else {
+					deletedCount += deleted
+				}
+			}
+		}
+	}
+
+	return deletedCount, errs
+}
+
 // deleteConntrackForServiceVIP deletes the conntrack entries for the provided svcVIP:svcPort by comparing them to ConntrackOrigDstIP:ConntrackOrigDstPort
 func deleteConntrackForServiceVIP(svcVIPs []string, svcPorts []corev1.ServicePort, ns, name string) error {
 	for _, svcVIP := range svcVIPs {
 		for _, svcPort := range svcPorts {
-			if err := util.DeleteConntrackServicePort(svcVIP, svcPort.Port, svcPort.Protocol,
+			if _, err := util.DeleteConntrackServicePort(svcVIP, svcPort.Port, svcPort.Protocol,
 				netlink.ConntrackOrigDstIP, nil); err != nil {
 				return fmt.Errorf("failed to delete conntrack entry for service %s/%s with svcVIP %s, svcPort %d, protocol %s: %v",
 					ns, name, svcVIP, svcPort.Port, svcPort.Protocol, err)
@@ -942,10 +1155,10 @@ func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) e
 		nodeIPs, _ := npw.nodeIPManager.ListAddresses()
 		for _, nodeIP := range nodeIPs {
 			for _, svcPort := range service.Spec.Ports {
-				if err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
+				if _, err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
 					netlink.ConntrackOrigDstIP, nil); err != nil {
 					return fmt.Errorf("failed to delete conntrack entry for service %s/%s with nodeIP %s, nodePort %d, protocol %s: %v",
-						service.Namespace, service.Name, nodeIP, svcPort.Port, svcPort.Protocol, err)
+						service.Namespace, service.Name, nodeIP, svcPort.NodePort, svcPort.Protocol, err)
 				}
 			}
 		}
@@ -1008,12 +1221,18 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		}
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
-		// The InvalidPrimaryNetworkError is returned when the UDN is not found because it has already been deleted.
-		if util.IsInvalidPrimaryNetworkError(err) {
+		if err != nil {
+			// During startup sync, avoid failing the entire processExisting loop for namespaces that
+			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
+			// be reconciled later via regular add/update events once the NAD exists.
+			if util.IsInvalidPrimaryNetworkError(err) {
+				continue
+			}
+			errors = append(errors, err)
 			continue
 		}
-		if err != nil {
-			errors = append(errors, err)
+		if netInfo == nil {
+			// network not active on our node
 			continue
 		}
 
@@ -1032,10 +1251,10 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		npw.getAndSetServiceInfo(name, service, hasLocalHostNetworkEp, localEndpoints)
 
 		// Delete OF rules for service if they exist
-		if err = npw.updateServiceFlowCache(service, netInfo, false, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, false, hasLocalHostNetworkEp, localEndpoints); err != nil {
 			errors = append(errors, err)
 		}
-		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp, localEndpoints); err != nil {
 			errors = append(errors, err)
 		}
 		// Add correct netfilter rules only for Full mode
@@ -1095,6 +1314,10 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(epSlice.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for endpointslice %s in namespace %s: %w", epSlice.Name, epSlice.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && !util.IsEndpointSliceForNetwork(epSlice, netInfo) {
@@ -1200,11 +1423,6 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 	}
 	localEndpoints := npw.GetLocalEligibleEndpointAddresses(epSlices, svc)
 	if svcConfig, exists := npw.updateServiceInfo(*namespacedName, nil, &hasLocalHostNetworkEp, localEndpoints); exists {
-		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
-		if err != nil {
-			return fmt.Errorf("error getting active network for service %s/%s: %w", namespacedName.Namespace, namespacedName.Name, err)
-		}
-
 		// Lock the cache mutex here so we don't miss a service delete during an endpoint delete
 		// we have to do this because deleting and adding iptables rules is slow.
 		npw.serviceInfoLock.Lock()
@@ -1213,6 +1431,26 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 		if err = delServiceRules(svcConfig.service, svcConfig.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
+
+		// Get network info after deleting old rules, before adding new ones.
+		// This ensures old rules are cleaned up even if namespace/network is deleted,
+		// and allows graceful handling of deletion race conditions.
+		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
+		if err != nil {
+			// If the UDN was deleted or not processed yet, skip adding new service rules
+			if util.IsInvalidPrimaryNetworkError(err) {
+				klog.V(5).Infof("Skipping addServiceRules for %s/%s during endpoint slice delete: primary network unavailable: %v",
+					namespacedName.Namespace, namespacedName.Name, err)
+				return utilerrors.Join(errors...)
+			}
+			errors = append(errors, fmt.Errorf("error getting active network for service %s/%s: %w", namespacedName.Namespace, namespacedName.Name, err))
+			return utilerrors.Join(errors...)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
+		}
+
 		if err = addServiceRules(svcConfig.service, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
 			errors = append(errors, err)
 		}
@@ -1251,6 +1489,10 @@ func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discover
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(newEpSlice.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for endpointslice %s in namespace %s: %w", newEpSlice.Name, newEpSlice.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && !util.IsEndpointSliceForNetwork(newEpSlice, netInfo) {
@@ -1340,6 +1582,10 @@ func (npwipt *nodePortWatcherIptables) AddService(service *corev1.Service) error
 	if err != nil {
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
 	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
+	}
 
 	if err := addServiceRules(service, netInfo, nil, false, nil); err != nil {
 		return fmt.Errorf("AddService failed for nodePortWatcherIptables: %v", err)
@@ -1367,6 +1613,10 @@ func (npwipt *nodePortWatcherIptables) UpdateService(old, new *corev1.Service) e
 		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
 		}
 
 		if err = addServiceRules(new, netInfo, nil, false, nil); err != nil {
@@ -1406,6 +1656,21 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		}
 		// don't process headless service
 		if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
+			continue
+		}
+		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.GetNamespace())
+		if err != nil {
+			// During startup sync, avoid failing the entire processExisting loop for namespaces that
+			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
+			// be reconciled later via regular add/update events once the NAD exists.
+			if util.IsInvalidPrimaryNetworkError(err) {
+				continue
+			}
+			errors = append(errors, err)
+			continue
+		}
+		if netInfo == nil {
+			// network not on our node
 			continue
 		}
 		// Add correct iptables rules.
@@ -1491,12 +1756,12 @@ func newGateway(
 		// Program cluster.GatewayIntf to let non-pod traffic to go to host
 		// stack
 		klog.Info("Creating Gateway Openflow Manager")
-		err := gwBridge.SetOfPorts()
+		err := gwBridge.ConfigureBridgePorts()
 		if err != nil {
 			return err
 		}
 		if exGwBridge != nil {
-			err = exGwBridge.SetOfPorts()
+			err = exGwBridge.ConfigureBridgePorts()
 			if err != nil {
 				return err
 			}

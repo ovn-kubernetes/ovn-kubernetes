@@ -1,0 +1,31 @@
+prometheusOperator:
+  tls:
+    enabled: false
+  admissionWebhooks:
+    enabled: false
+    patch:
+      enabled: false
+  nodeSelector:
+    prometheus-node: "true"
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      prometheus-node: "true"
+
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      prometheus-node: "true"
+
+grafana:
+  nodeSelector:
+    prometheus-node: "true"
+
+kube-state-metrics:
+  nodeSelector:
+    prometheus-node: "true"
+
+prometheus-node-exporter:
+  nodeSelector:
+    prometheus-node: "true"

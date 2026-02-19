@@ -160,11 +160,17 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 	}
 
 	chassis := sbdb.Chassis{
-		Name:     chassisID,
-		Hostname: node.Name,
+		Name: chassisID,
 		OtherConfig: map[string]string{
 			"is-remote": strconv.FormatBool(isRemote),
 		},
+	}
+	if isRemote {
+		// For debugging purposes we add KAPI node name as the chassis hostname.
+		// It is not used for anything other than a helpful hint for debugging.
+		// There is no need to set it for the local node, as ovn-controller will
+		// set it automatically from the OVS external_id:hostname field.
+		chassis.Hostname = node.Name
 	}
 
 	return libovsdbops.CreateOrUpdateChassis(zch.sbClient, &chassis, encaps...)

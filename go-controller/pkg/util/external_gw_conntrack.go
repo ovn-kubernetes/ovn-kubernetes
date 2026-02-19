@@ -311,14 +311,14 @@ func SyncConntrackForExternalGateways(gwIPsToKeep sets.Set[string], isPodInLocal
 			}
 		}
 
-		podIPs, err := GetPodIPsOfNetwork(pod, &DefaultNetInfo{})
+		podIPs, err := GetPodIPsOfNetwork(pod, &DefaultNetInfo{}, nil)
 		if err != nil && !errors.Is(err, ErrNoPodIPFound) {
 			errs = append(errs, fmt.Errorf("unable to fetch IP for pod %s/%s: %v", pod.Namespace, pod.Name, err))
 		}
 		for _, podIP := range podIPs {
 			// for this pod, we check if the conntrack entry has a label that is not in the provided allowlist of MACs
 			// only caveat here is we assume egressGW served pods shouldn't have conntrack entries with other labels set
-			err := DeleteConntrack(podIP.String(), 0, "", netlink.ConntrackOrigDstIP, validNextHopMACs)
+			_, err := DeleteConntrack(podIP.String(), 0, "", netlink.ConntrackOrigDstIP, validNextHopMACs)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete conntrack entry for pod %s: %v", podIP.String(), err))
 			}

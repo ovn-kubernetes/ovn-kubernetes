@@ -16,8 +16,8 @@ build_binaries() {
 
     # Add a buildid to the executable - needed by rpmbuild
     BUILDID=${BUILDID:-0x$(head -c20 /dev/urandom|od -An -tx1|tr -d ' \n')}
-    GIT_COMMIT=$(git rev-parse HEAD)
-    GIT_BRANCH=$(git rev-parse --symbolic-full-name --abbrev-ref HEAD)
+    GIT_COMMIT=${GIT_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo "unknown")}
+    GIT_BRANCH=${GIT_BRANCH:-$(git rev-parse --symbolic-full-name --abbrev-ref HEAD 2>/dev/null || echo "unknown")}
     BUILD_USER=$(whoami)
     BUILD_DATE=$(date +"%Y-%m-%d")
     K8S_CLIENT_VERSION=$(grep 'k8s.io/client-go' ${OVN_KUBE_ROOT}/go.mod | head -1 |cut -f2 -d' ')

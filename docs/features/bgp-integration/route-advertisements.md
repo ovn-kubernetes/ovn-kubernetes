@@ -141,7 +141,7 @@ in shared gateway mode.
 > previous example must correspond to the remote BGP router's configuration
 > (router ID, AS number, accept routes, etc...), and vice versa.
 
-### Import routes into a CUDN
+### Import routes from the default VRF into a CUDN
 
 Assuming we have a CUDN:
 
@@ -165,48 +165,9 @@ spec:
         hostSubnet: 24
 ```
 
-This example is similar to the previous one with the exception that the BGP
-peering session is configured to happen over VRF `extranet`:
-
-```yaml
-apiVersion: frrk8s.metallb.io/v1beta1
-kind: FRRConfiguration
-metadata:
-  labels:
-    use-for-advertisements: extranet
-  name: receive-filtered-extranet
-  namespace: frr-k8s-system
-spec:
-  nodeSelector: {}
-  bgp:
-    routers:
-    - asn: 64512
-      neighbors:
-      - address: 192.168.221.3
-        asn: 64512
-        disableMP: true
-        toReceive:
-          allowed:
-            mode: filtered
-            prefixes:
-            - prefix: 172.20.0.0/16
-      vrf: extranet
-```
-
-This will result in the routes being installed in the extranet VRF associated to
-the CUDN of the same name. If `route-advertisements` feature is enabled,
-OVN-Kubernetes will synchronize the BGP routes installed on a VRF to the OVN
-gateway router of the associated CUDN and hence will be used for the egress
-traffic of the pods on that network.
-
-> [!NOTE]
-> As long as the name of the CUDN is less than 16 characters, the corresponding
-> VRF name for the network will have the same name. Otherwise the name will be
-> pseudo-randomly generated and not easy to predict. Future enhancements will
-> allow for the VRF name to be configurable.
-
-A typical scenario is to import installed BGP routes from the default VRF to a
-CUDN. This can be achieved with:
+After routes have been imported to the default VRF as in the previous example,
+a typical scenario is to import those routes from the default VRF to a CUDN as
+well. This can be achieved with:
 
 ```yaml
 apiVersion: frrk8s.metallb.io/v1beta1
@@ -225,6 +186,18 @@ spec:
       - vrf: default
       vrf: extranet
 ```
+
+This will result in the routes being installed in the extranet VRF associated to
+the CUDN of the same name. If `route-advertisements` feature is enabled,
+OVN-Kubernetes will synchronize the BGP routes installed on a VRF to the OVN
+gateway router of the associated CUDN and hence will be used for the egress
+traffic of the pods on that network.
+
+> [!NOTE]
+> As long as the name of the CUDN is less than 16 characters, the corresponding
+> VRF name for the network will have the same name. Otherwise the name will be
+> pseudo-randomly generated and not easy to predict. Future enhancements will
+> allow for the VRF name to be configurable.
 
 > [!NOTE]
 > If you export routes for a CUDN over the default VRF as detailed on the next
@@ -342,10 +315,42 @@ spec:
           advertise: true
 ```
 
-### Export routes to a CUDN over the network VRF (VRF-Lite)
+### Import and export routes to a CUDN over the network VRF (VRF-Lite)
 
-It is also possible to export routes to a CUDN over a BGP session established
-over that network's VRF:
+It is also possible to import and export routes to a CUDN over a BGP session
+established over that network's VRF without involving the default VRF at all.
+
+To import, we define the proper `FRRConfiguration` first. This example is
+similar to how routes are imported for the default pod network with the
+exception that the BGP peering session is configured to happen over the CUDN VRF
+`extranet`:
+
+```yaml
+apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  labels:
+    use-for-advertisements: extranet
+  name: receive-filtered-extranet
+  namespace: frr-k8s-system
+spec:
+  nodeSelector: {}
+  bgp:
+    routers:
+    - asn: 64512
+      neighbors:
+      - address: 192.168.221.3
+        asn: 64512
+        disableMP: true
+        toReceive:
+          allowed:
+            mode: filtered
+            prefixes:
+            - prefix: 172.20.0.0/16
+      vrf: extranet
+```
+
+Then we define the `RouteAdvertisements` to export:
 
 ```yaml
 apiVersion: k8s.ovn.org/v1
@@ -379,11 +384,11 @@ BGP router could map this isolated traffic to an EVPN achieving a similar use
 case as if EVPN were to be supported directly.
 
 > [!NOTE]
-> For the BGP session to be actually established over that network's
-> VRF, at least one interface with proper IP configuration needs to be attached
-> to the network's VRF. The resulting network egress traffic will be routed
-> through that interface. OVN-Kubernetes does not manage this interface nor its
-> attachment to the network's VRF.
+> For the BGP session to be actually established over that network's VRF, at
+> least one interface with proper IP configuration needs to be attached to the
+> network's VRF. The CUDN egress traffic matching the learned routes will be
+> routed through that interface. OVN-Kubernetes does not manage this interface
+> nor its attachment to the network's VRF.
 
 > [!NOTE]
 > This configuration is only supported in local gateway mode.
@@ -401,13 +406,13 @@ and will egress the cluster towards the provider network; and if the provider
 network is able to route it back to the cluster by virtue of learned BGP routes,
 the traffic will still be dropped to upkeep the CUDN isolation promise.
 
-In the future, different alternatives will be provided to allow interconnecting
-user defined networks.
+OVN-Kubernetes relaxes the default advertised UDN isolation behavior when the
+configuration flag `advertised-udn-isolation-mode` is set to `loose`. In this
+configuration, traffic addressing the subnet of a different CUDN will egress the
+cluster towards the provider network as before but, if routed back towards the
+cluster, connectivity will be allowed in this case.
 
 ## Implementation Details
-
-> [!NOTE]
-> This section is work in progress.
 
 ### Overview
 
@@ -598,14 +603,79 @@ advertised.
 
 Usually N/S egress traffic from a pod is SNATed to the node IP. This does not
 happen when the network is advertised. In that case the traffic egresses the
-cluster with the pod IP as source. For shared gateway mode this is handled with
-a conditional SNAT on the OVN configuration for the network which ensures that
-E/W egress traffic continues to be SNATed. Egress IP SNAT is unaffected.
+cluster with the pod IP as source. In shared gateway mode this is handled with a
+conditional SNAT on the gateway routers OVN configuration for the network which
+ensures that E/W egress traffic (right now, only pod-to-node traffic) continues
+to be SNATed. 
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovn-nbctl list nat
+...
+_uuid               : 7855a3a5-412c-4083-963c-b11aa80b7784
+allowed_ext_ips     : []
+exempted_ext_ips    : []
+external_ids        : {}
+external_ip         : "172.18.0.2"
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "10.244.1.3"
+logical_port        : []
+match               : "ip4.dst == $a712973235162149816" # added condition matching E/W traffic when advertised
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+
+...
+
+_uuid               : 7be1b70b-88c7-4482-85ff-487663be9eda
+addresses           : ["172.18.0.2", "172.18.0.3", "172.18.0.4", "172.19.0.2", "172.19.0.3", "172.19.0.4"]
+external_ids        : {ip-family=v4, "k8s.ovn.org/id"="default-network-controller:EgressIP:node-ips:v4:default", "k8s.ovn.org/name"=node-ips, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=EgressIP, network=default}
+name                : a712973235162149816
+...
+```
+
+For CUDNs in local gateway mode, this is handled on a similar way with a
+conditional SNAT to the network's masquerade IP which would then finally be
+SNATed to the node IP on the host.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovn-nbctl list nat
+...
+_uuid               : 61b26442-fa08-4aa8-b326-97afb71edab1
+allowed_ext_ips     : []
+exempted_ext_ips    : []
+external_ids        : {"k8s.ovn.org/network"=cluster_udn_udn-l2, "k8s.ovn.org/topology"=layer2}
+external_ip         : "169.254.0.11"
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "22.100.0.0/16"
+logical_port        : []
+match               : "ip4.dst == $a712973235162149816"
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+...
+```
+
+Egress IP SNAT is unaffected.
 
 #### Route import
 
 When BGP routes get installed in a node's routing table, OVN-Kubernetes
-synchronizes them to the gateway router of the corresponding OVN network.
+synchronizes them to the gateway router of the corresponding OVN network making
+them available for egress in shared gateway mode.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovn-nbctl lr-route-list 076a4cba-c680-4fa3-ae2f-1ce7e0a1e153
+IPv4 Routes
+Route Table <main>:
+           169.254.0.0/17               169.254.0.4 dst-ip rtoe-GR_ovn-worker2
+            10.244.0.0/16                100.64.0.1 dst-ip
+            172.26.0.0/16                172.18.0.5 dst-ip rtoe-GR_ovn-worker2  # learned route synced from host VRF
+                0.0.0.0/0                172.18.0.1 dst-ip rtoe-GR_ovn-worker2
+```
 
 ### Host network controllers: impacts on host networking stack
 
@@ -616,13 +686,66 @@ advertised pod networks. This traffic is forwarded to the corresponding patch
 port of the network and is then handled by OVN with no extra changes required in
 shared gateway mode.
 
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-q76br -c ovnkube-controller -- ovs-ofctl dump-flows breth0
+...
+ # flows forwarding pod networks to the corresponding patch ports
+ cookie=0xdeff105, duration=445.802s, table=0, n_packets=0, n_bytes=0, idle_age=445, priority=300,ip,in_port=1,nw_dst=10.244.0.0/24 actions=output:2
+ cookie=0xdeff105, duration=300.323s, table=0, n_packets=0, n_bytes=0, idle_age=300, priority=300,ip,in_port=1,nw_dst=22.100.0.0/16 actions=output:3
+```
+
 In local gateway mode, the traffic is forwarded to the host networking stack
-where it is handled with no further configuration changes required.
+from where it is routed to the network management port.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovs-ofctl dump-flows breth0
+ ...
+ # flows forwarding pod networks to host
+ cookie=0xdeff105, duration=57.620s, table=0, n_packets=0, n_bytes=0, idle_age=57, priority=300,ip,in_port=1,nw_dst=22.100.0.0/16 actions=LOCAL
+ cookie=0xdeff105, duration=9589.541s, table=0, n_packets=0, n_bytes=0, idle_age=9706, priority=300,ip,in_port=1,nw_dst=10.244.1.0/24 actions=LOCAL
+ ...
+
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip route
+...
+# routing to the default pod network management port
+10.244.0.0/16 via 10.244.1.1 dev ovn-k8s-mp0 
+10.244.1.0/24 dev ovn-k8s-mp0 proto kernel scope link src 10.244.1.2
+...
+
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip rule
+...
+# for a CUDN, an ip rule takes care of routing on the correct VRF
+2000: from all to 22.100.0.0/16 lookup 1010
+...
+
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip r show table 1010
+...
+# also routing to the CUDN management port
+22.100.0.0/16 dev ovn-k8s-mp1 proto kernel scope link src 22.100.0.2 
+...
+```
 
 #### Host SNAT behavior with BGP Advertisement
 
 In the same way that was done for the OVN configuration, the host networking
 stack configuration is updated to inhibit the SNAT for N/S traffic.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- nft list ruleset
+...
+  set remote-node-ips-v4 {
+    type ipv4_addr
+    comment "Block egress ICMP needs frag to remote Kubernetes nodes"
+    elements = { 172.18.0.3, 172.18.0.4,
+           172.19.0.2, 172.19.0.4 }
+  }
+...
+  chain ovn-kube-pod-subnet-masq {
+    # ip daddr condition added if default pod network advertised
+    ip saddr 10.244.1.0/24 ip daddr @remote-node-ips-v4 masquerade # ip daddr condition if advertised
+  }
+...
+```
 
 #### VRF-Lite isolation
 
@@ -630,9 +753,246 @@ To ensure isolation in VRF-Lite configurations, the default route pointing to
 the default VRF gateway present on the network's VRF is inhibited. Thus only BGP
 installed routes will be used for N/S traffic.
 
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip r show table 1010
+# default match unreachable
+unreachable default metric 4278198272 
+...
+# installed route going through interface attached to VRF
+172.26.0.0/16 nhid 28 via 172.19.0.5 dev eth1 proto bgp metric 20 
+```
+
+#### CUDN isolation
+
+To ensure CUDN isolation in local gateway mode filtering rules are added to the host configuration
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- nft list ruleset
+...
+  set advertised-udn-subnets-v4 {
+    type ipv4_addr
+    flags interval
+    comment "advertised UDN V4 subnets"
+    elements = { 22.100.0.0/16 comment "cluster_udn_udn-l2" }
+  }
+...
+  chain udn-bgp-drop {
+          comment "Drop traffic generated locally towards advertised UDN subnets"
+          type filter hook output priority filter; policy accept;
+          ct state new ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
+          ct state new ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
+  }
+...
+```
+
+These rules are inhibited if OVN-Kubernetes is configured in "loose advertised
+UDN isolation mode".
+
 ## Troubleshooting
 
-TBD
+### Troubleshooting RouteAdvertisements
+
+Check `RouteAdvertisement` status for configuration errors:
+
+```shell
+❯ kubectl get ra
+NAME       STATUS
+default    Accepted
+extranet   Not Accepted: configuration pending: no networks selected
+```
+
+Check that `FRRConfiguration` have been generated as expected:
+
+```shell
+❯ kubectl get frrconfiguration -n frr-k8s-system
+NAME                   AGE
+ovnk-generated-66plb   14m
+ovnk-generated-fxncs   13m
+ovnk-generated-grdfg   14m
+ovnk-generated-qhz9b   14m
+ovnk-generated-sgphk   13m
+ovnk-generated-vtwpv   13m
+receive-all            14m
+```
+
+Expected `FRRConfiguration` are:
+- Any manual configuration done to import routes
+- MetalLB generated FRRConfiguration if in use
+- One of ovnk-generated-XXXXX configuration per RouteAdvertisement and selected FRRConfiguration/Node combination
+
+### Troubleshooting FRR-K8s
+
+FRR-K8s merges all FRRConfiguration into a single FRR configuration for each
+node. The status of generating that configuration and applying it to FRR daemon
+running on each node is relayed through `FRRNodeStates`:
+
+```shell
+❯ kubectl get -n frr-k8s-system frrnodestates
+NAME                AGE
+ovn-control-plane   16m
+ovn-worker          16m
+ovn-worker2         16m
+
+$ oc describe -n openshift-frr-k8s frrnodestates worker-0.ostest.test.metalkube.org 
+Name:         worker-0.ostest.test.metalkube.org
+Namespace:    
+Labels:       <none>
+Annotations:  <none>
+API Version:  frrk8s.metallb.io/v1beta1
+Kind:         FRRNodeState
+Metadata:
+  Creation Timestamp:  2025-09-10T11:29:44Z
+  Generation:          1
+  Resource Version:    52036
+  UID:                 34f67799-9642-40a3-a378-67ca3ad5dfd2
+Spec:
+Status:
+  Last Conversion Result:  success # whether FRRConfiguration merge and conversion to FRR config was successful 
+  Last Reload Result:      success # whether resulting FRR config was applied correctly
+  Running Config:
+    # the FRR running config is displayed here
+...
+```
+
+FRR-K8s provides metrics:
+
+```text
+  Namespace = "frrk8s"
+  Subsystem = "bgp"
+
+  SessionUp = metric{
+    Name: "session_up",
+    Help: "BGP session state (1 is up, 0 is down)",
+  }
+
+  UpdatesSent = metric{
+    Name: "updates_total",
+    Help: "Number of BGP UPDATE messages sent",
+  }
+
+  Prefixes = metric{
+    Name: "announced_prefixes_total",
+    Help: "Number of prefixes currently being advertised on the BGP session",
+  }
+
+  ReceivedPrefixes = metric{
+    Name: "received_prefixes_total",
+    Help: "Number of prefixes currently being received on the BGP session",
+  }
+```
+
+### Troubleshooting FRR
+
+FRR is deployed by FRR-K8s as a daemonset and runs on every node:
+
+```shell
+❯ kubectl get pods -n frr-k8s-system -o wide
+NAME                                     READY   STATUS    RESTARTS   AGE   IP           NODE                NOMINATED NODE   READINESS GATES
+frr-k8s-daemon-5cqbq                     6/6     Running   0          22m   172.18.0.4   ovn-worker2         <none>           <none>
+frr-k8s-daemon-6hmzb                     6/6     Running   0          22m   172.18.0.3   ovn-worker          <none>           <none>
+frr-k8s-daemon-gsmml                     6/6     Running   0          22m   172.18.0.2   ovn-control-plane   <none>           <none>
+...
+```
+
+Different aspects of the running daemons can be checked through the `vtysh` CLI.
+Some examples are:
+
+- The running configuration:
+
+```shell
+$ kubectl exec -ti -n frr-k8s-system frr-k8s-daemon-5cqbq -c frr -- vtysh -c "show running-conf"
+Building configuration...
+
+Current configuration:
+!
+frr version 8.5.3
+frr defaults traditional
+hostname ovn-worker2
+log file /etc/frr/frr.log informational
+log timestamp precision 3
+no ip forwarding
+service integrated-vtysh-config
+!
+router bgp 64512
+ no bgp ebgp-requires-policy
+ no bgp hard-administrative-reset
+...
+```
+
+- The BGP session states:
+
+```shell
+❯ kubectl exec -ti -n frr-k8s-system frr-k8s-daemon-5cqbq -c frr -- vtysh -c "show bgp neighbor 172.18.0.5"
+BGP neighbor is 172.18.0.5, remote AS 64512, local AS 64512, internal link
+  …
+Hostname: 78d5a0f1d3cd
+  BGP version 4, remote router ID 172.18.0.5, local router ID 172.18.0.4
+  BGP state = Established, up for 00:01:29
+  ...
+    Last reset 00:03:30,  Peer closed the session
+...
+```
+
+- The actual routes exchanged through BGP:
+
+```shell
+❯ kubectl exec -ti -n frr-k8s-system frr-k8s-daemon-5cqbq -c frr -- vtysh -c "show bgp ipv4"
+BGP table version is 2, local router ID is 172.18.0.4, vrf id 0
+Default local pref 100, local AS 64512
+Status codes:  s suppressed, d damped, h history, * valid, > best, = multipath,
+               i internal, r RIB-failure, S Stale, R Removed
+Nexthop codes: @NNN nexthop's vrf id, < announce-nh-self
+Origin codes:  i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+    Network          Next Hop            Metric LocPrf Weight Path
+ *> 10.244.0.0/24    0.0.0.0                  0         32768 i
+ *> 22.100.0.0/16    0.0.0.0                  0         32768 i
+ *>i172.26.0.0/16    172.18.0.5               0    100      0 i
+
+
+Displayed  2 routes and 2 total paths
+```
+
+- Routes installed on the host and their origin:
+
+```shell
+❯ kubectl exec -ti -n frr-k8s-system frr-k8s-daemon-5cqbq -c frr -- vtysh -c "show ip route"
+Codes: K - kernel route, C - connected, S - static, R - RIP,
+       O - OSPF, I - IS-IS, B - BGP, E - EIGRP, N - NHRP,
+       T - Table, v - VNC, V - VNC-Direct, F - PBR,
+       f - OpenFabric,
+       > - selected route, * - FIB route, q - queued, r - rejected, b - backup
+       t - trapped, o - offload failure
+
+...
+B>* 172.26.0.0/16 [200/0] via 172.18.0.5, breth0, weight 1, 00:41:11
+...
+```
+
+Most of these commands have variations to check the same information specific to
+a VRF:
+
+```shell
+❯ kubectl exec -ti -n frr-k8s-system frr-k8s-daemon-gv76r -c frr -- vtysh -c "show ip route vrf udn-l2"
+Codes: K - kernel route, C - connected, S - static, R - RIP,
+       O - OSPF, I - IS-IS, B - BGP, E - EIGRP, N - NHRP,
+       T - Table, v - VNC, V - VNC-Direct, A - Babel, F - PBR,
+       f - OpenFabric,
+       > - selected route, * - FIB route, q - queued, r - rejected, b - backup
+       t - trapped, o - offload failure
+
+VRF udn-l2:
+...
+B>* 172.26.0.0/16 [200/0] via 172.18.0.5, breth0 (vrf default), weight 1, 01:39:55
+...
+```
+
+### Troubleshooting dataplane
+
+FRR applies its configuration to the host networking stack in the form of
+routes. Thus standard tooling can be used for dataplane troubleshooting:
+connectivity checks, tcpdump, ovn-trace, ovs-trace, ...
 
 ## Best Practices
 

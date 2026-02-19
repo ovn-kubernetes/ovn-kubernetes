@@ -31,7 +31,9 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		Entry("ClusterUserDefinedNetwork, localnet, invalid mtu", testscenariocudn.LocalnetInvalidMTU),
 		Entry("ClusterUserDefinedNetwork, localnet, invalid vlan", testscenariocudn.LocalnetInvalidVLAN),
 		Entry("ClusterUserDefinedNetwork, layer2", testscenariocudn.Layer2CUDNInvalid),
+		Entry("ClusterUserDefinedNetwork, evpn", feature.RouteAdvertisements, feature.EVPN, testscenariocudn.EVPNCUDNInvalid),
 		Entry("UserDefinedNetwork, layer2", testscenariocudn.Layer2UDNInvalid),
+		Entry("ClusterUserDefinedNetwork, no-overlay, invalid", testscenariocudn.NoOverlayInvalid),
 	)
 
 	DescribeTable("api-server should accept valid CRs",
@@ -47,7 +49,9 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		},
 		Entry("ClusterUserDefinedNetwork, localnet", testscenariocudn.LocalnetValid),
 		Entry("ClusterUserDefinedNetwork, layer2", testscenariocudn.Layer2CUDNValid),
+		Entry("ClusterUserDefinedNetwork, evpn", feature.RouteAdvertisements, feature.EVPN, testscenariocudn.EVPNCUDNValid),
 		Entry("UserDefinedNetwork, layer2", testscenariocudn.Layer2UDNValid),
+		Entry("ClusterUserDefinedNetwork, no-overlay, valid", testscenariocudn.NoOverlayValid),
 	)
 })
 

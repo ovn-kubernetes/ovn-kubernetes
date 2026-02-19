@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"net"
@@ -13,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/api/config/v1"
+	v1 "github.com/openshift/api/config/v1"
 	"github.com/urfave/cli/v2"
 	gcfg "gopkg.in/gcfg.v1"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
@@ -76,7 +77,7 @@ var (
 	// ovn-kubernetes build date
 	BuildDate = ""
 	// ovn-kubernetes version, to be changed with every release
-	Version = "1.1.0"
+	Version = "1.2.0"
 	// version of the go runtime used to compile ovn-kubernetes
 	GoVersion = runtime.Version()
 	// os and architecture used to build ovn-kubernetes
@@ -101,6 +102,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		Transport:                    types.NetworkTransportGeneve,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -154,10 +156,11 @@ var (
 	// Metrics holds Prometheus metrics-related parameters.
 	Metrics MetricsConfig
 
-	// OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
+	// OVNKubernetesFeature config holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 	OVNKubernetesFeature = OVNKubernetesFeatureConfig{
 		EgressIPReachabiltyTotalTimeout: 1,
 		AdvertisedUDNIsolationMode:      AdvertisedUDNIsolationModeStrict,
+		UDNDeletionGracePeriod:          120 * time.Second,
 	}
 
 	// OvnNorth holds northbound OVN database client and server authentication and location details
@@ -241,6 +244,14 @@ var (
 		V6TransitSubnet: "fd97::/64",
 	}
 
+	// NoOverlay holds no-overlay mode configuration
+	NoOverlay = NoOverlayConfig{}
+
+	// ManagedBGP holds managed BGP configuration
+	ManagedBGP = ManagedBGPConfig{
+		ASNumber: 64512, // Default AS number
+	}
+
 	// Layer2UsesTransitRouter indicated whether the layer2 primary networks will use transit router.
 	// It is a per-node setting and is also reflected in the node annotations.
 	Layer2UsesTransitRouter bool
@@ -250,6 +261,22 @@ const (
 	kubeServiceAccountPath       string = "/var/run/secrets/kubernetes.io/serviceaccount/"
 	kubeServiceAccountFileToken  string = "token"
 	kubeServiceAccountFileCACert string = "ca.crt"
+)
+
+// No-overlay mode configuration option constants
+const (
+	// NoOverlayRoutingManaged indicates OVN-Kubernetes manages the routing
+	NoOverlayRoutingManaged string = "managed"
+	// NoOverlayRoutingUnmanaged indicates users manage the routing themselves
+	NoOverlayRoutingUnmanaged string = "unmanaged"
+
+	// ManagedBGPTopologyFullMesh represents a full-mesh BGP topology
+	ManagedBGPTopologyFullMesh string = "full-mesh"
+
+	// NoOverlaySNATEnabled enables SNAT for outbound traffic
+	NoOverlaySNATEnabled string = "enabled"
+	// NoOverlaySNATDisabled disables SNAT for outbound traffic
+	NoOverlaySNATDisabled string = "disabled"
 )
 
 // DefaultConfig holds parsed config file parameters and command-line overrides
@@ -335,6 +362,11 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// Transport specifies the transport technology used for the default network.
+	// Accepts: "geneve" or "no-overlay".
+	// Defaults to "geneve".
+	Transport string `gcfg:"transport"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -406,6 +438,7 @@ type KubernetesConfig struct {
 	CertDuration            time.Duration `gcfg:"cert-duration"`
 	Kubeconfig              string        `gcfg:"kubeconfig"`
 	CACert                  string        `gcfg:"cacert"`
+	CACertData              string        `gcfg:"cacert-data"`
 	CAData                  []byte
 	APIServer               string `gcfg:"apiserver"`
 	Token                   string `gcfg:"token"`
@@ -461,8 +494,10 @@ type OVNKubernetesFeatureConfig struct {
 	EgressIPNodeHealthCheckPort     int  `gcfg:"egressip-node-healthcheck-port"`
 	EnableMultiNetwork              bool `gcfg:"enable-multi-network"`
 	EnableNetworkSegmentation       bool `gcfg:"enable-network-segmentation"`
+	EnableNetworkConnect            bool `gcfg:"enable-network-connect"`
 	EnablePreconfiguredUDNAddresses bool `gcfg:"enable-preconfigured-udn-addresses"`
 	EnableRouteAdvertisements       bool `gcfg:"enable-route-advertisements"`
+	EnableEVPN                      bool `gcfg:"enable-evpn"`
 	EnableMultiNetworkPolicy        bool `gcfg:"enable-multi-networkpolicy"`
 	EnableStatelessNetPol           bool `gcfg:"enable-stateless-netpol"`
 	EnableInterconnect              bool `gcfg:"enable-interconnect"`
@@ -475,6 +510,10 @@ type OVNKubernetesFeatureConfig struct {
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
+	EnableDynamicUDNAllocation bool   `gcfg:"enable-dynamic-udn-allocation"`
+	// UDNDeletionGracePeriod specified in number of seconds to wait before garbage collecting a UDN. Applies
+	// only when Dynamic UDN Allocation is enabled.
+	UDNDeletionGracePeriod time.Duration `gcfg:"udn-deletion-grace-period"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -613,6 +652,32 @@ type ClusterManagerConfig struct {
 	V6TransitSubnet string `gcfg:"v6-transit-subnet"`
 }
 
+// NoOverlayConfig holds configuration for no-overlay mode
+type NoOverlayConfig struct {
+	// OutboundSNAT configures SNAT behavior for outbound traffic from pods on the default network.
+	// Supported values: "enabled" or "disabled".
+	// Required when transport=no-overlay.
+	OutboundSNAT string `gcfg:"outbound-snat"`
+	// Routing configures whether the pod network routing configuration is managed by
+	// OVN-Kubernetes or users. Supported values: "managed" or "unmanaged".
+	// Required when transport=no-overlay.
+	Routing string `gcfg:"routing"`
+}
+
+// ManagedBGPConfig holds configuration for managed BGP
+type ManagedBGPConfig struct {
+	// ASNumber specifies the AS number to be used by the BGP speakers on each node for its
+	// default VRF when no-overlay networks are configured with managed routing.
+	// It is shared by both the cluster default network and CUDNs.
+	// Supports both 16-bit (1-65535) and 32-bit (1-4294967295) AS numbers.
+	// Optional. Defaults to 64512 if not specified.
+	ASNumber uint32 `gcfg:"as-number"`
+	// Topology configures the BGP peering topology when routing is managed.
+	// Supported values: "full-mesh".
+	// Required when transport=no-overlay and routing=managed.
+	Topology string `gcfg:"topology"`
+}
+
 // OvnDBScheme describes the OVN database connection transport method
 type OvnDBScheme string
 
@@ -644,6 +709,8 @@ type config struct {
 	OvnKubeNode          OvnKubeNodeConfig
 	ClusterManager       ClusterManagerConfig
 	OvsPaths             OvsPathConfig
+	NoOverlay            NoOverlayConfig  `gcfg:"no-overlay"`
+	ManagedBGP           ManagedBGPConfig `gcfg:"bgp-managed"`
 }
 
 var (
@@ -664,6 +731,8 @@ var (
 	savedOvnKubeNode          OvnKubeNodeConfig
 	savedClusterManager       ClusterManagerConfig
 	savedOvsPaths             OvsPathConfig
+	savedNoOverlay            NoOverlayConfig
+	savedManagedBGP           ManagedBGPConfig
 
 	// legacy service-cluster-ip-range CLI option
 	serviceClusterIPRange string
@@ -673,8 +742,6 @@ var (
 	initGateways bool
 	// legacy gateway-local CLI option
 	gatewayLocal bool
-	// legacy disable-ovn-iface-id-ver CLI option
-	disableOVNIfaceIDVer bool
 )
 
 func init() {
@@ -696,6 +763,8 @@ func init() {
 	savedOvnKubeNode = OvnKubeNode
 	savedClusterManager = ClusterManager
 	savedOvsPaths = OvsPaths
+	savedNoOverlay = NoOverlay
+	savedManagedBGP = ManagedBGP
 	cli.VersionPrinter = func(_ *cli.Context) {
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Git commit: %s\n", Commit)
@@ -727,6 +796,8 @@ func PrepareTestConfig() error {
 	OvnKubeNode = savedOvnKubeNode
 	ClusterManager = savedClusterManager
 	OvsPaths = savedOvsPaths
+	NoOverlay = savedNoOverlay
+	ManagedBGP = savedManagedBGP
 	Kubernetes.DisableRequestedChassis = false
 	EnableMulticast = false
 	UnprivilegedMode = false
@@ -749,6 +820,7 @@ func PrepareTestConfig() error {
 	// Don't pick up defaults from the environment
 	os.Unsetenv("KUBECONFIG")
 	os.Unsetenv("K8S_CACERT")
+	os.Unsetenv("K8S_CACERT_DATA")
 	os.Unsetenv("K8S_APISERVER")
 	os.Unsetenv("K8S_TOKEN")
 	os.Unsetenv("K8S_TOKEN_FILE")
@@ -848,7 +920,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "mtu",
-		Usage:       "MTU value used for the overlay networks (default: 1400)",
+		Usage:       "MTU value used for the overlay networks",
 		Destination: &cliConfig.Default.MTU,
 		Value:       Default.MTU,
 	},
@@ -859,13 +931,13 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "conntrack-zone",
-		Usage:       "For gateway nodes, the conntrack zone used for conntrack flow rules (default: 64000)",
+		Usage:       "For gateway nodes, the conntrack zone used for conntrack flow rules",
 		Destination: &cliConfig.Default.ConntrackZone,
 		Value:       Default.ConntrackZone,
 	},
 	&cli.StringFlag{
 		Name:        "encap-type",
-		Usage:       "The encapsulation protocol to use to transmit packets between hypervisors (default: geneve)",
+		Usage:       "The encapsulation protocol to use to transmit packets between hypervisors by OVN in overlay mode (geneve, vxlan, gre)",
 		Destination: &cliConfig.Default.EncapType,
 		Value:       Default.EncapType,
 	},
@@ -876,7 +948,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.UintFlag{
 		Name:        "encap-port",
-		Usage:       "The UDP port used by the encapsulation endpoint (default: 6081)",
+		Usage:       "The UDP port used by the encapsulation endpoint",
 		Destination: &cliConfig.Default.EncapPort,
 		Value:       Default.EncapPort,
 	},
@@ -905,7 +977,7 @@ var CommonFlags = []cli.Flag{
 	&cli.DurationFlag{
 		Name: "db-txn-timeout",
 		Usage: "OVSDBTxnTimeout is the timeout for db transaction in seconds, " +
-			"may be useful to increase for high-scale clusters. default value is 60 seconds.",
+			"may be useful to increase for high-scale clusters.",
 		Destination: &cliConfig.Default.OVSDBTxnTimeout,
 		Value:       Default.OVSDBTxnTimeout,
 	},
@@ -952,6 +1024,12 @@ var CommonFlags = []cli.Flag{
 			"it defaults to 24 if unspecified.",
 		Destination: &cliConfig.Default.RawClusterSubnets,
 	},
+	&cli.StringFlag{
+		Name:        "transport",
+		Value:       Default.Transport,
+		Usage:       "Transport technology used for the default network, default to geneve if unspecified. (geneve, no-overlay)",
+		Destination: &cliConfig.Default.Transport,
+	},
 	&cli.BoolFlag{
 		Name:        "unprivileged-mode",
 		Usage:       "Run ovnkube-node container in unprivileged mode. Valid only with --init-node option.",
@@ -965,7 +1043,7 @@ var CommonFlags = []cli.Flag{
 	// Logging options
 	&cli.IntFlag{
 		Name:        "loglevel",
-		Usage:       "log verbosity and level: info, warn, fatal, error are always printed no matter the log level. Use 5 for debug (default: 4)",
+		Usage:       "log verbosity and level: info, warn, fatal, error are always printed no matter the log level. Use 5 for debug",
 		Destination: &cliConfig.Logging.Level,
 		Value:       Logging.Level,
 	},
@@ -976,7 +1054,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
-		Usage:       "path of a file to direct log from cni shim to output to (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)",
+		Usage:       "path of a file to direct log from cni shim to output to",
 		Destination: &cliConfig.Logging.CNIFile,
 		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
 	},
@@ -1006,7 +1084,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "acl-logging-rate-limit",
-		Usage:       "The largest number of messages per second that gets logged before drop (default 20)",
+		Usage:       "The largest number of messages per second that gets logged before drop",
 		Destination: &cliConfig.Logging.ACLLoggingRateLimit,
 		Value:       20,
 	},
@@ -1056,18 +1134,18 @@ var MonitoringFlags = []cli.Flag{
 var IPFIXFlags = []cli.Flag{
 	&cli.UintFlag{
 		Name:        "ipfix-sampling",
-		Usage:       "Rate at which packets should be sampled and sent to each target collector (default: 400)",
+		Usage:       "Rate at which packets should be sampled and sent to each target collector",
 		Destination: &cliConfig.IPFIX.Sampling,
 		Value:       IPFIX.Sampling,
 	},
 	&cli.UintFlag{
 		Name:        "ipfix-cache-max-flows",
-		Usage:       "Maximum number of IPFIX flow records that can be cached at a time. If 0, caching is disabled (default: 0)",
+		Usage:       "Maximum number of IPFIX flow records that can be cached at a time. If 0, caching is disabled",
 		Destination: &cliConfig.IPFIX.CacheMaxFlows,
 		Value:       IPFIX.CacheMaxFlows,
 	}, &cli.UintFlag{
 		Name:        "ipfix-cache-active-timeout",
-		Usage:       "Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent. If 0, caching is disabled (default: 60)",
+		Usage:       "Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent. If 0, caching is disabled",
 		Destination: &cliConfig.IPFIX.CacheActiveTimeout,
 		Value:       IPFIX.CacheActiveTimeout,
 	},
@@ -1078,13 +1156,13 @@ var CNIFlags = []cli.Flag{
 	// CNI options
 	&cli.StringFlag{
 		Name:        "cni-conf-dir",
-		Usage:       "the CNI config directory in which to write the overlay CNI config file (default: /etc/cni/net.d)",
+		Usage:       "the CNI config directory in which to write the overlay CNI config file",
 		Destination: &cliConfig.CNI.ConfDir,
 		Value:       CNI.ConfDir,
 	},
 	&cli.StringFlag{
 		Name:        "cni-plugin",
-		Usage:       "the name of the CNI plugin (default: ovn-k8s-cni-overlay)",
+		Usage:       "the name of the CNI plugin",
 		Destination: &cliConfig.CNI.Plugin,
 		Value:       CNI.Plugin,
 	},
@@ -1094,31 +1172,31 @@ var CNIFlags = []cli.Flag{
 var OVNK8sFeatureFlags = []cli.Flag{
 	&cli.BoolFlag{
 		Name:        "enable-admin-network-policy",
-		Usage:       "Configure to use Admin Network Policy CRD feature with ovn-kubernetes.",
+		Usage:       "Use Admin Network Policy CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableAdminNetworkPolicy,
 		Value:       OVNKubernetesFeature.EnableAdminNetworkPolicy,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-egress-ip",
-		Usage:       "Configure to use EgressIP CRD feature with ovn-kubernetes.",
+		Usage:       "Use EgressIP CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableEgressIP,
 		Value:       OVNKubernetesFeature.EnableEgressIP,
 	},
 	&cli.IntFlag{
 		Name:        "egressip-reachability-total-timeout",
-		Usage:       "EgressIP node reachability total timeout in seconds (default: 1)",
+		Usage:       "EgressIP node reachability total timeout in seconds",
 		Destination: &cliConfig.OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout,
 		Value:       1,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-egress-firewall",
-		Usage:       "Configure to use EgressFirewall CRD feature with ovn-kubernetes.",
+		Usage:       "Use EgressFirewall CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableEgressFirewall,
 		Value:       OVNKubernetesFeature.EnableEgressFirewall,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-egress-qos",
-		Usage:       "Configure to use EgressQoS CRD feature with ovn-kubernetes.",
+		Usage:       "Use EgressQoS CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableEgressQoS,
 		Value:       OVNKubernetesFeature.EnableEgressQoS,
 	},
@@ -1129,21 +1207,27 @@ var OVNK8sFeatureFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:        "enable-multi-network",
-		Usage:       "Configure to use multiple NetworkAttachmentDefinition CRD feature with ovn-kubernetes.",
+		Usage:       "Use multiple NetworkAttachmentDefinition CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableMultiNetwork,
 		Value:       OVNKubernetesFeature.EnableMultiNetwork,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-multi-networkpolicy",
-		Usage:       "Configure to use MultiNetworkPolicy CRD feature with ovn-kubernetes.",
+		Usage:       "Use MultiNetworkPolicy CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableMultiNetworkPolicy,
 		Value:       OVNKubernetesFeature.EnableMultiNetworkPolicy,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-network-segmentation",
-		Usage:       "Configure to use network segmentation feature with ovn-kubernetes.",
+		Usage:       "Use network segmentation feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkSegmentation,
 		Value:       OVNKubernetesFeature.EnableNetworkSegmentation,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-network-connect",
+		Usage:       "Configure to use network connect feature with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkConnect,
+		Value:       OVNKubernetesFeature.EnableNetworkConnect,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-preconfigured-udn-addresses",
@@ -1153,69 +1237,88 @@ var OVNK8sFeatureFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:        "enable-route-advertisements",
-		Usage:       "Configure to use route advertisements feature with ovn-kubernetes.",
+		Usage:       "Use route advertisements feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableRouteAdvertisements,
 		Value:       OVNKubernetesFeature.EnableRouteAdvertisements,
 	},
+	&cli.BoolFlag{
+		Name:        "enable-evpn",
+		Usage:       "Use EVPN feature with ovn-kubernetes. Requires route advertisements.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableEVPN,
+		Value:       OVNKubernetesFeature.EnableEVPN,
+	},
 	&cli.StringFlag{
 		Name:        "advertised-udn-isolation-mode",
-		Usage:       "Configure to use pod isolation for BGP advertised UDN networks. Valid values are 'strict' or 'loose'.",
+		Usage:       "Use pod isolation for BGP advertised UDN networks. Valid values are 'strict' or 'loose'.",
 		Destination: &cliConfig.OVNKubernetesFeature.AdvertisedUDNIsolationMode,
 		Value:       OVNKubernetesFeature.AdvertisedUDNIsolationMode,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-stateless-netpol",
-		Usage:       "Configure to use stateless network policy feature with ovn-kubernetes.",
+		Usage:       "Use stateless network policy feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableStatelessNetPol,
 		Value:       OVNKubernetesFeature.EnableStatelessNetPol,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-interconnect",
-		Usage:       "Configure to enable interconnecting multiple zones.",
+		Usage:       "Enable interconnecting multiple zones.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableInterconnect,
 		Value:       OVNKubernetesFeature.EnableInterconnect,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-egress-service",
-		Usage:       "Configure to use EgressService CRD feature with ovn-kubernetes.",
+		Usage:       "Use EgressService CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableEgressService,
 		Value:       OVNKubernetesFeature.EnableEgressService,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-multi-external-gateway",
-		Usage:       "Configure to use AdminPolicyBasedExternalRoute CRD feature with ovn-kubernetes.",
+		Usage:       "Use AdminPolicyBasedExternalRoute CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableMultiExternalGateway,
 		Value:       OVNKubernetesFeature.EnableMultiExternalGateway,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-persistent-ips",
-		Usage:       "Configure to use the persistent ips feature for virtualization with ovn-kubernetes.",
+		Usage:       "Use the persistent ips feature for virtualization with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnablePersistentIPs,
 		Value:       OVNKubernetesFeature.EnablePersistentIPs,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-dns-name-resolver",
-		Usage:       "Configure to use DNSNameResolver CRD feature with ovn-kubernetes.",
+		Usage:       "Use DNSNameResolver CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableDNSNameResolver,
 		Value:       OVNKubernetesFeature.EnableDNSNameResolver,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-svc-template-support",
-		Usage:       "Configure to use svc-template with ovn-kubernetes.",
+		Usage:       "Use svc-template with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableServiceTemplateSupport,
 		Value:       OVNKubernetesFeature.EnableServiceTemplateSupport,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-observability",
-		Usage:       "Configure to use OVN sampling with ovn-kubernetes.",
+		Usage:       "Use OVN sampling with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableObservability,
 		Value:       OVNKubernetesFeature.EnableObservability,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-network-qos",
-		Usage:       "Configure to use NetworkQoS CRD feature with ovn-kubernetes.",
+		Usage:       "Use NetworkQoS CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkQoS,
 		Value:       OVNKubernetesFeature.EnableNetworkQoS,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-dynamic-udn-allocation",
+		Usage:       "Configure to use the dynamic UDN allocation feature with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableDynamicUDNAllocation,
+		Value:       OVNKubernetesFeature.EnableDynamicUDNAllocation,
+	},
+	&cli.DurationFlag{
+		Name: "udn-deletion-grace-period",
+		Usage: "Delay time in seconds that a node will wait before removing a UDN when the dynamic UDN allocation " +
+			"feature is used.",
+		Destination: &cliConfig.OVNKubernetesFeature.UDNDeletionGracePeriod,
+		Value:       OVNKubernetesFeature.UDNDeletionGracePeriod,
 	},
 }
 
@@ -1236,7 +1339,7 @@ var K8sFlags = []cli.Flag{
 		Usage: "A comma-separated set of CIDR notation IP ranges from which k8s assigns " +
 			"service cluster IPs. This should be the same as the value " +
 			"provided for kube-apiserver \"--service-cluster-ip-range\" " +
-			"option. (default: 172.16.1.0/24)",
+			"option.",
 		Destination: &cliConfig.Kubernetes.RawServiceCIDRs,
 		Value:       Kubernetes.RawServiceCIDRs,
 	},
@@ -1252,7 +1355,7 @@ var K8sFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "k8s-apiserver",
-		Usage:       "URL of the Kubernetes API server (not required if --k8s-kubeconfig is given) (default: http://localhost:8443)",
+		Usage:       "URL of the Kubernetes API server (not required if --k8s-kubeconfig is given)",
 		Destination: &cliConfig.Kubernetes.APIServer,
 		Value:       Kubernetes.APIServer,
 	},
@@ -1271,6 +1374,11 @@ var K8sFlags = []cli.Flag{
 		Name:        "k8s-cacert",
 		Usage:       "the absolute path to the Kubernetes API CA certificate (not required if --k8s-kubeconfig is given)",
 		Destination: &cliConfig.Kubernetes.CACert,
+	},
+	&cli.StringFlag{
+		Name:        "k8s-cacert-data",
+		Usage:       "the Base64 encoded Kubernetes API CA certificate data (not required if --k8s-kubeconfig is given)",
+		Destination: &cliConfig.Kubernetes.CACertData,
 	},
 	&cli.StringFlag{
 		Name:        "k8s-token",
@@ -1459,7 +1567,7 @@ var OvnSBFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name: "sb-client-cert",
-		Usage: "Client certificate that the client should use for talking to the OVN database(default when ssl address is used: /etc/openvswitch/ovnsb-cert.pem).  " +
+		Usage: "Client certificate that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnsb-cert.pem).  " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnSouth.Cert,
 	},
@@ -1635,19 +1743,19 @@ var OVNGatewayFlags = []cli.Flag{
 var MasterHAFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "ha-election-lease-duration",
-		Usage:       "Leader election lease duration (in secs) (default: 60)",
+		Usage:       "Leader election lease duration (in secs)",
 		Destination: &cliConfig.MasterHA.ElectionLeaseDuration,
 		Value:       MasterHA.ElectionLeaseDuration,
 	},
 	&cli.IntFlag{
 		Name:        "ha-election-renew-deadline",
-		Usage:       "Leader election renew deadline (in secs) (default: 30)",
+		Usage:       "Leader election renew deadline (in secs)",
 		Destination: &cliConfig.MasterHA.ElectionRenewDeadline,
 		Value:       MasterHA.ElectionRenewDeadline,
 	},
 	&cli.IntFlag{
 		Name:        "ha-election-retry-period",
-		Usage:       "Leader election retry period (in secs) (default: 20)",
+		Usage:       "Leader election retry period (in secs)",
 		Destination: &cliConfig.MasterHA.ElectionRetryPeriod,
 		Value:       MasterHA.ElectionRetryPeriod,
 	},
@@ -1657,19 +1765,19 @@ var MasterHAFlags = []cli.Flag{
 var ClusterMgrHAFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "cluster-manager-ha-election-lease-duration",
-		Usage:       "Leader election lease duration (in secs) (default: 60)",
+		Usage:       "Leader election lease duration (in secs)",
 		Destination: &cliConfig.ClusterMgrHA.ElectionLeaseDuration,
 		Value:       ClusterMgrHA.ElectionLeaseDuration,
 	},
 	&cli.IntFlag{
 		Name:        "cluster-manager-ha-election-renew-deadline",
-		Usage:       "Leader election renew deadline (in secs) (default: 30)",
+		Usage:       "Leader election renew deadline (in secs)",
 		Destination: &cliConfig.ClusterMgrHA.ElectionRenewDeadline,
 		Value:       ClusterMgrHA.ElectionRenewDeadline,
 	},
 	&cli.IntFlag{
 		Name:        "cluster-manager-ha-election-retry-period",
-		Usage:       "Leader election retry period (in secs) (default: 20)",
+		Usage:       "Leader election retry period (in secs)",
 		Destination: &cliConfig.ClusterMgrHA.ElectionRetryPeriod,
 		Value:       ClusterMgrHA.ElectionRetryPeriod,
 	},
@@ -1705,7 +1813,7 @@ var HybridOverlayFlags = []cli.Flag{
 var OvnKubeNodeFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "ovnkube-node-mode",
-		Usage:       "ovnkube-node operating mode full(default), dpu, dpu-host",
+		Usage:       "ovnkube-node operating mode full (default), dpu, dpu-host",
 		Value:       OvnKubeNode.Mode,
 		Destination: &cliConfig.OvnKubeNode.Mode,
 	},
@@ -1723,11 +1831,6 @@ var OvnKubeNodeFlags = []cli.Flag{
 			"and used to allow host network services and pods to access k8s pod and service networks. ",
 		Value:       OvnKubeNode.MgmtPortDPResourceName,
 		Destination: &cliConfig.OvnKubeNode.MgmtPortDPResourceName,
-	},
-	&cli.BoolFlag{
-		Name:        "disable-ovn-iface-id-ver",
-		Usage:       "Deprecated; iface-id-ver is always enabled",
-		Destination: &disableOVNIfaceIDVer,
 	},
 }
 
@@ -1851,8 +1954,46 @@ func setOVSExternalID(exec kexec.Interface, key, value string) error {
 	return nil
 }
 
+// reconcileKubernetesAuthFields ensures that if a config stage provides Token/TokenFile
+// or CACert/CACertData, stale value for any of these set by previous stage is cleared.
+// This is required since any combination of these fields could be set by any stage
+// and might get overwritten only partially.
+func reconcileKubernetesAuthFields(k *KubernetesConfig, override *KubernetesConfig) {
+	// If this stage provided either Token or TokenFile, clear the other field
+	// not provided by this stage.
+	overrideHasToken := override.Token != ""
+	overrideHasTokenFile := override.TokenFile != ""
+
+	if overrideHasToken || overrideHasTokenFile {
+		if !overrideHasToken {
+			k.Token = ""
+		}
+		if !overrideHasTokenFile {
+			k.TokenFile = ""
+		}
+	}
+
+	// If this stage provided either CACert or CACertData, clear the other field
+	// not provided by this stage.
+	overrideHasCACert := override.CACert != ""
+	overrideHasCACertData := override.CACertData != ""
+
+	if overrideHasCACert || overrideHasCACertData {
+		if !overrideHasCACert {
+			k.CACert = ""
+		}
+		if !overrideHasCACertData {
+			k.CACertData = ""
+		}
+	}
+}
+
 func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath string, defaults *Defaults) error {
-	// token adn ca.crt may be from files mounted in container.
+	// values for token, cacert, kubeconfig, api-server may be found in several places.
+	// Priority order (highest first): OVS config, command line options, config file,
+	// environment variables, service account files
+
+	// token and ca.crt may be from files mounted in container.
 	saConfig := savedKubernetes
 	if data, err := os.ReadFile(filepath.Join(saPath, kubeServiceAccountFileToken)); err == nil {
 		saConfig.Token = string(data)
@@ -1866,16 +2007,13 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		return err
 	}
 
-	// values for token, cacert, kubeconfig, api-server may be found in several places.
-	// Priority order (highest first): OVS config, command line options, config file,
-	// environment variables, service account files
-
 	envConfig := savedKubernetes
 	envVarsMap := map[string]string{
 		"Kubeconfig":           "KUBECONFIG",
 		"BootstrapKubeconfig":  "BOOTSTRAP_KUBECONFIG",
 		"CertDir":              "CERT_DIR",
 		"CACert":               "K8S_CACERT",
+		"CACertData":           "K8S_CACERT_DATA",
 		"APIServer":            "K8S_APISERVER",
 		"Token":                "K8S_TOKEN",
 		"TokenFile":            "K8S_TOKEN_FILE",
@@ -1890,16 +2028,19 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 	if err := overrideFields(&Kubernetes, &envConfig, &savedKubernetes); err != nil {
 		return err
 	}
+	reconcileKubernetesAuthFields(&Kubernetes, &envConfig)
 
 	// Copy config file values over default values
 	if err := overrideFields(&Kubernetes, &file.Kubernetes, &savedKubernetes); err != nil {
 		return err
 	}
+	reconcileKubernetesAuthFields(&Kubernetes, &file.Kubernetes)
 
 	// And CLI overrides over config file and default values
 	if err := overrideFields(&Kubernetes, &cli.Kubernetes, &savedKubernetes); err != nil {
 		return err
 	}
+	reconcileKubernetesAuthFields(&Kubernetes, &cli.Kubernetes)
 
 	// Grab default values from OVS external IDs
 	if defaults.K8sAPIServer {
@@ -1920,8 +2061,15 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		return fmt.Errorf("kubernetes kubeconfig file %q not found", Kubernetes.Kubeconfig)
 	}
 
-	if Kubernetes.CACert != "" {
-		bytes, err := os.ReadFile(Kubernetes.CACert)
+	if Kubernetes.CACert != "" || Kubernetes.CACertData != "" {
+		var bytes []byte
+		var err error
+		if Kubernetes.CACert != "" {
+			bytes, err = os.ReadFile(Kubernetes.CACert)
+		} else {
+			bytes, err = base64.StdEncoding.DecodeString(Kubernetes.CACertData)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -2122,6 +2270,12 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 		return fmt.Errorf("invalid advertised-udn-isolation-mode %q: expect one of %s or %s",
 			OVNKubernetesFeature.AdvertisedUDNIsolationMode, AdvertisedUDNIsolationModeStrict, AdvertisedUDNIsolationModeLoose)
 	}
+	if OVNKubernetesFeature.EnableEVPN && !OVNKubernetesFeature.EnableRouteAdvertisements {
+		return fmt.Errorf("invalid feature configuration: EVPN requires route advertisements but route advertisements are disabled")
+	}
+	if OVNKubernetesFeature.EnableDynamicUDNAllocation && !OVNKubernetesFeature.EnableNetworkSegmentation {
+		return fmt.Errorf("the Dynamic UDN Allocation feature cannot be enabled without also enabling Network Segmentation")
+	}
 	return nil
 }
 
@@ -2269,6 +2423,115 @@ func buildClusterManagerConfig(cli, file *config) error {
 	return nil
 }
 
+// buildNoOverlayConfig updates NoOverlay config from config file only
+// NoOverlay configuration is only available in config file, not via CLI flags
+func buildNoOverlayConfig(file *config) error {
+	// Copy config file values over default values
+	if err := overrideFields(&NoOverlay, &file.NoOverlay, &savedNoOverlay); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateNoOverlayConfig validates the no-overlay configuration
+func validateNoOverlayConfig() error {
+	// Validate transport option
+	if Default.Transport != types.NetworkTransportGeneve && Default.Transport != types.NetworkTransportNoOverlay {
+		return fmt.Errorf("invalid transport %q: must be %q or %q", Default.Transport, types.NetworkTransportGeneve, types.NetworkTransportNoOverlay)
+	}
+
+	// If transport is no-overlay, validate required no-overlay options
+	if Default.Transport == types.NetworkTransportNoOverlay {
+		if !OVNKubernetesFeature.EnableRouteAdvertisements {
+			return fmt.Errorf("enable-route-advertisements must be true when transport=%q", types.NetworkTransportNoOverlay)
+		}
+		if NoOverlay.OutboundSNAT == "" {
+			return fmt.Errorf("outbound-snat is required when transport=no-overlay")
+		}
+		if NoOverlay.OutboundSNAT != NoOverlaySNATEnabled && NoOverlay.OutboundSNAT != NoOverlaySNATDisabled {
+			return fmt.Errorf("invalid outbound-snat %q: must be %q or %q", NoOverlay.OutboundSNAT, NoOverlaySNATEnabled, NoOverlaySNATDisabled)
+		}
+
+		if NoOverlay.Routing == "" {
+			return fmt.Errorf("routing is required when transport=no-overlay")
+		}
+		if NoOverlay.Routing != NoOverlayRoutingManaged && NoOverlay.Routing != NoOverlayRoutingUnmanaged {
+			return fmt.Errorf("invalid routing %q: must be %q or %q", NoOverlay.Routing, NoOverlayRoutingManaged, NoOverlayRoutingUnmanaged)
+		}
+
+		// If routing is managed, topology is required
+		if NoOverlay.Routing == NoOverlayRoutingManaged {
+			if ManagedBGP.Topology == "" {
+				return fmt.Errorf("topology is required when routing=managed")
+			}
+			if ManagedBGP.Topology != ManagedBGPTopologyFullMesh {
+				return fmt.Errorf("invalid topology %q: must be %q", ManagedBGP.Topology, ManagedBGPTopologyFullMesh)
+			}
+		}
+	} else {
+		// Warn if no-overlay or BGP config is specified but transport is not no-overlay
+		if NoOverlay.OutboundSNAT != "" || NoOverlay.Routing != "" {
+			klog.Warningf("[no-overlay] configuration specified but transport is %q; configuration will be ignored", Default.Transport)
+		}
+	}
+
+	return nil
+}
+
+// validateConfig performs all configuration validations after configs are built and completed.
+// This is the centralized place called after completeConfig() that orchestrates all validations.
+func validateConfig() error {
+	// Validate managed BGP configuration
+	if err := validateManagedBGPConfig(); err != nil {
+		return err
+	}
+
+	// Validate no-overlay/transport configuration
+	if err := validateNoOverlayConfig(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// buildManagedBGPConfig updates managed BGP config from config file only
+// ManagedBGP configuration is only available in config file, not via CLI flags
+func buildManagedBGPConfig(file *config) error {
+	// Copy config file values over default values
+	if err := overrideFields(&ManagedBGP, &file.ManagedBGP, &savedManagedBGP); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateManagedBGPConfig validates the managed BGP configuration
+func validateManagedBGPConfig() error {
+	// Validate AS number is in valid range
+	// Valid AS numbers: 1-4294967295 (32-bit)
+	// Reserved ranges:
+	//   0                    - Reserved (RFC 7607)
+	//   23456                - AS_TRANS (RFC 6793)
+	//   65535                - Reserved (RFC 7300)
+	//   4294967295           - Reserved (RFC 7300)
+
+	if ManagedBGP.ASNumber == 0 {
+		return fmt.Errorf("invalid as-number: 0 is reserved")
+	}
+	if ManagedBGP.ASNumber == 23456 {
+		return fmt.Errorf("invalid as-number: 23456 is reserved (AS_TRANS for 16-bit to 32-bit AS translation)")
+	}
+	if ManagedBGP.ASNumber == 65535 {
+		return fmt.Errorf("invalid as-number: 65535 is reserved")
+	}
+	if ManagedBGP.ASNumber == 4294967295 {
+		return fmt.Errorf("invalid as-number: 4294967295 is reserved")
+	}
+
+	return nil
+}
+
 // completeClusterManagerConfig completes the ClusterManager config by parsing raw values
 // into their final form.
 func completeClusterManagerConfig(allSubnets *ConfigSubnets) error {
@@ -2321,6 +2584,7 @@ func buildDefaultConfig(cli, file *config) error {
 	if Default.Zone == "" {
 		Default.Zone = types.OvnDefaultZone
 	}
+
 	return nil
 }
 
@@ -2401,6 +2665,7 @@ func stripTokenFromK8sConfig() KubernetesConfig {
 	// Token and CAData are sensitive fields so stripping
 	// them while logging.
 	k8sConf.Token = ""
+	k8sConf.CACertData = ""
 	k8sConf.CAData = []byte{}
 	return k8sConf
 }
@@ -2431,6 +2696,8 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		OvnKubeNode:          savedOvnKubeNode,
 		ClusterManager:       savedClusterManager,
 		OvsPaths:             savedOvsPaths,
+		NoOverlay:            savedNoOverlay,
+		ManagedBGP:           savedManagedBGP,
 	}
 
 	configFile, configFileIsDefault = getConfigFilePath(ctx)
@@ -2556,6 +2823,14 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
+	if err = buildNoOverlayConfig(&cfg); err != nil {
+		return "", err
+	}
+
+	if err = buildManagedBGPConfig(&cfg); err != nil {
+		return "", err
+	}
+
 	tmpAuth, err := buildOvnAuth(exec, true, &cliConfig.OvnNorth, &cfg.OvnNorth, defaults.OvnNorthAddress)
 	if err != nil {
 		return "", err
@@ -2572,6 +2847,12 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
+	// Perform cross-configuration validations
+	if err := validateConfig(); err != nil {
+		return "", err
+	}
+
+	klog.V(5).Infof("Features config: %+v", OVNKubernetesFeature)
 	klog.V(5).Infof("Default config: %+v", Default)
 	klog.V(5).Infof("Logging config: %+v", Logging)
 	klog.V(5).Infof("Monitoring config: %+v", Monitoring)
@@ -2585,6 +2866,8 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	klog.V(5).Infof("Ovnkube Node config: %+v", OvnKubeNode)
 	klog.V(5).Infof("Ovnkube Cluster Manager config: %+v", ClusterManager)
 	klog.V(5).Infof("OVS Paths config: %+v", OvsPaths)
+	klog.V(5).Infof("No Overlay config: %+v", NoOverlay)
+	klog.V(5).Infof("Managed BGP config: %+v", ManagedBGP)
 
 	return retConfigFile, nil
 }

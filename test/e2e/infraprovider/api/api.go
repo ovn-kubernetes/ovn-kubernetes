@@ -18,6 +18,8 @@ type Provider interface {
 
 	// PrimaryNetwork returns OVN-Kubernetes primary infrastructure network information
 	PrimaryNetwork() (Network, error)
+	// ListNetworks returns the names of all networks
+	ListNetworks() ([]string, error)
 	// GetNetwork returns a network
 	GetNetwork(name string) (Network, error)
 	// GetExternalContainerNetworkInterface fetches network interface information from the external container attached to a specific network
@@ -37,6 +39,14 @@ type Provider interface {
 	// tests utilizing conflicting ports. It also allows infra provider implementations to set Nodes
 	// allowed port range and therefore comply with cloud provider firewall rules.
 	GetK8HostPort() uint16 // supported K8 host ports
+
+	// ShutdownNode shuts down the specified node
+	ShutdownNode(nodeName string) error
+	// StartNode starts the specified node
+	StartNode(nodeName string) error
+
+	// Get platform specific timeout values
+	GetDefaultTimeoutContext() *framework.TimeoutContext
 }
 
 // Underlay represents the configuration for an underlay network.

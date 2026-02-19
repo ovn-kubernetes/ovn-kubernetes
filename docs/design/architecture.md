@@ -3,15 +3,17 @@
 There are two deployment modes for ovn-kubernetes depending on
 which the architecture is drastically different:
 
-* default mode (centralized control plane architecture)
-* interconnect mode (distributed control plane architecture)
+* central mode (centralized control plane architecture) -- is DEPRECATED starting 1.2 release
+* interconnect mode (distributed control plane architecture) -- is the default mode
 
-End users can pick either of these modes depending on their use
-cases and what suits them well. Let's look at both these modes
-in depth so that you are empowered to make your choice between
-these two modes of deployment.
+End users are recommended to pick interconnect mode to deploy
+new clusters since central mode will be removed in future releases.
+Many of the new features already don't have support on central mode
+and are only available in interconnect mode.
 
-## OVN-Kubernetes Components - Default Mode
+Let's look at these two modes in depth from architecture standpoint:
+
+## OVN-Kubernetes Components - Central Mode (DEPRECATED!!)
 
 ![ovn-kubernetes-centralized-components](../images/ovnkube-centralized-components.png)
 
@@ -63,9 +65,9 @@ namespace which are running on all your nodes in the cluster.
         * OVS daemon and database running as a container
         * virtual switch that pushes the network plumbing to the edge on the node
 
-## Default Mode Architecture
+## Central Mode Architecture (DEPRECATED!!)
 
-Now that we know the pods and components running in the default mode, let's tie up
+Now that we know the pods and components running in the central mode, let's tie up
 loose ends and show how these components run on a standard HA Kubernetes cluster.
 
 ### Control Plane Nodes:
@@ -76,7 +78,7 @@ loose ends and show how these components run on a standard HA Kubernetes cluster
 
 ![ovn-kubernetes-centralized-components-data-plane](../images/ovnkube-centralized-arch-dp.png)
 
-## OVN-Kubernetes Components - Interconnect mode
+## OVN-Kubernetes Components - Interconnect mode (DEFAULT)
 
 ![ovn-kubernetes-distributed-components](../images/ovnkube-distributed-components.png)
 
@@ -137,7 +139,7 @@ and more distributed.
 As we can see, the databases, northd and ovn-kubernetes controller components
 now run per zone rather than only on the control-plane.
 
-## Interconnect Mode Architecture
+## Interconnect Mode Architecture (DEFAULT)
 
 ### What is Interconnect?
 
@@ -190,8 +192,8 @@ stack is now lighter-weight.
 database is now contained within each node, overall cross-node and cross-cluster
 (HostedControlPlane, ManagedSaaS) chatter is decreased and traffic security can be increased.
 
-## Default Mode versus Interconnect Mode
+## Central Mode versus Interconnect Mode
 
-* When you want your databases to stay centralized and don't mind much about linear scaling of number of nodes in your cluster, choose the default mode
-* Note that there is no different to OVS between the two deployment modes.
+* When you want your databases to stay centralized and do not require linear scaling with node count, choose Central Mode
+* Note that there is no difference to OVS between the two deployment modes.
 * FIXME: This section needs to be written well

@@ -28,7 +28,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 	f.SkipNamespaceCreation = true
 	Context("a user defined primary network", func() {
 		const (
-			userDefinedNetworkIPv4Subnet = "172.31.0.0/16" // last subnet in private range 172.16.0.0/12 (rfc1918)
+			userDefinedNetworkIPv4Subnet = "172.16.0.0/16" // first subnet in private range 172.16.0.0/12 (rfc1918)
 			userDefinedNetworkIPv6Subnet = "2014:100:200::0/60"
 			nadName                      = "gryffindor"
 		)

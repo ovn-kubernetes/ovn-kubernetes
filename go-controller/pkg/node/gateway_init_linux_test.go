@@ -256,6 +256,19 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface eth0 ofport",
 			Output: "7",
 		})
+		if gatewayVLANID > 0 {
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --data=bare --no-heading --columns=_uuid find Interface name=breth0",
+				Output: "34b218d3-7a29-43fd-99b8-30a01287af86",
+			})
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --data=bare --no-heading --columns=name find Port interface=34b218d3-7a29-43fd-99b8-30a01287af86",
+				Output: "breth0",
+			})
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovs-vsctl --timeout=15 set Port breth0 tag=3000",
+			})
+		}
 		// syncServices()
 
 		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
@@ -563,7 +576,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 }
 
 func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
-	brphys, hostMAC, hostCIDR, dpuIP string) {
+	brphys, hostMAC, hostCIDR, dpuIP string, gatewayVLANID uint) {
 	const mtu string = "1400"
 	const clusterCIDR string = "10.1.0.0/16"
 	app.Action = func(ctx *cli.Context) error {
@@ -708,6 +721,19 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface " + uplinkPort + " ofport",
 			Output: "7",
 		})
+		if gatewayVLANID > 0 {
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --data=bare --no-heading --columns=_uuid find Interface name=" + hostRep,
+				Output: "34b218d3-7a29-43fd-99b8-30a01287af86",
+			})
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --data=bare --no-heading --columns=name find Port interface=34b218d3-7a29-43fd-99b8-30a01287af86",
+				Output: hostRep,
+			})
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovs-vsctl --timeout=15 set Port " + hostRep + " tag=3000",
+			})
+		}
 		// syncServices()
 
 		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
@@ -854,6 +880,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		"--nodeport",
 		"--mtu=" + mtu,
 		"--ovnkube-node-mode=" + types.NodeModeDPU,
+		"--gateway-vlanid=" + fmt.Sprintf("%d", gatewayVLANID),
 	})
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -1616,7 +1643,10 @@ var _ = Describe("Gateway Operations DPU", func() {
 		})
 
 		ovntest.OnSupportedPlatformsIt("sets up a shared interface gateway DPU", func() {
-			shareGatewayInterfaceDPUTest(app, testNS, brphys, hostMAC, hostCIDR, dpuIP)
+			shareGatewayInterfaceDPUTest(app, testNS, brphys, hostMAC, hostCIDR, dpuIP, 0)
+		})
+		ovntest.OnSupportedPlatformsIt("sets up a shared interface gateway DPU with a tagged VLAN", func() {
+			shareGatewayInterfaceDPUTest(app, testNS, brphys, hostMAC, hostCIDR, dpuIP, 3000)
 		})
 	})
 

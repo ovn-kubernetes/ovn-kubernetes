@@ -25,6 +25,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovnk8stesting "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -305,13 +306,13 @@ func tableEntrySetup(enableInterconnect bool) {
 	fakeNQoSClient = ovnClientset.NetworkQoSClient
 	initEnv(ovnClientset, initialDB)
 	// init controller for default network
-	initNetworkQoSController(&util.DefaultNetInfo{}, defaultAddrsetFactory, defaultControllerName, enableInterconnect)
+	initNetworkQoSController(&util.DefaultNetInfo{}, nil, defaultAddrsetFactory, defaultControllerName, enableInterconnect)
 	// init controller for stream nad
 	streamImmutableNadInfo, err := util.ParseNADInfo(nad)
 	Expect(err).NotTo(HaveOccurred())
 	streamNadInfo := util.NewMutableNetInfo(streamImmutableNadInfo)
 	streamNadInfo.AddNADs("default/stream")
-	initNetworkQoSController(streamNadInfo, streamAddrsetFactory, streamControllerName, enableInterconnect)
+	initNetworkQoSController(streamNadInfo, []string{"default/stream"}, streamAddrsetFactory, streamControllerName, enableInterconnect)
 }
 
 var _ = AfterEach(func() {
@@ -803,7 +804,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 					Expect(err).NotTo(HaveOccurred())
 					localnetNadInfo := util.NewMutableNetInfo(localnetImmutableNadInfo)
 					localnetNadInfo.AddNADs("default/netwk1")
-					ctrl := initNetworkQoSController(localnetNadInfo, addressset.NewFakeAddressSetFactory("netwk1-controller"), "netwk1-controller", enableInterconnect)
+					ctrl := initNetworkQoSController(localnetNadInfo, []string{"default/netwk1"}, addressset.NewFakeAddressSetFactory("netwk1-controller"), "netwk1-controller", enableInterconnect)
 					lsName := ctrl.getLogicalSwitchName("dummy")
 					Expect(lsName).To(Equal("netwk1_ovn_localnet_switch"))
 				}
@@ -815,7 +816,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 					Expect(err).NotTo(HaveOccurred())
 					layer2NadInfo := util.NewMutableNetInfo(layer2ImmutableNadInfo)
 					layer2NadInfo.AddNADs("default/netwk2")
-					ctrl := initNetworkQoSController(layer2NadInfo, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller", enableInterconnect)
+					ctrl := initNetworkQoSController(layer2NadInfo, []string{"default/netwk2"}, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller", enableInterconnect)
 					lsName := ctrl.getLogicalSwitchName("dummy")
 					Expect(lsName).To(Equal("netwk2_ovn_layer2_switch"))
 				}
@@ -890,7 +891,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 
 					// Wrap the NetInfo with our custom implementation that returns true for IsPrimaryNetwork()
 					primNetWrapper := &primaryNetInfoWrapper{NetInfo: primaryNadInfo}
-					initNetworkQoSController(primNetWrapper, addressset.NewFakeAddressSetFactory("primary-controller"), "primary-controller", enableInterconnect)
+					initNetworkQoSController(primNetWrapper, nil, addressset.NewFakeAddressSetFactory("primary-controller"), "primary-controller", enableInterconnect)
 
 					// Ensure app1 namespace exists before testing primary networks
 					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
@@ -1013,7 +1014,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 
 					// Wrap the NetInfo with our custom implementation that returns true for IsUserDefinedNetwork()
 					secNetWrapper := &secondaryNetInfoWrapper{NetInfo: secondaryNadInfo}
-					initNetworkQoSController(secNetWrapper, addressset.NewFakeAddressSetFactory("secondary-controller"), "secondary-controller", enableInterconnect)
+					initNetworkQoSController(secNetWrapper, []string{"default/secondary"}, addressset.NewFakeAddressSetFactory("secondary-controller"), "secondary-controller", enableInterconnect)
 
 					// Ensure app3 namespace exists before testing secondary networks
 					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app3Namespace, metav1.GetOptions{})
@@ -1205,7 +1206,20 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	streamAddrsetFactory = addressset.NewFakeAddressSetFactory("stream-network-controller")
 }
 
-func initNetworkQoSController(netInfo util.NetInfo, addrsetFactory addressset.AddressSetFactory, controllerName string, enableInterconnect bool) *Controller {
+func initNetworkQoSController(netInfo util.NetInfo, nadKeys []string, addrsetFactory addressset.AddressSetFactory, controllerName string, enableInterconnect bool) *Controller {
+	var networkMgr networkmanager.Interface
+	if netInfo.IsUserDefinedNetwork() {
+		if len(nadKeys) == 0 {
+			panic(fmt.Sprintf("missing NAD keys for user-defined network %q", netInfo.GetNetworkName()))
+		}
+		fakeNetworkMgr := &networkmanager.FakeNetworkManager{
+			NADNetworks: map[string]util.NetInfo{},
+		}
+		for _, nadKey := range nadKeys {
+			fakeNetworkMgr.NADNetworks[nadKey] = netInfo
+		}
+		networkMgr = fakeNetworkMgr
+	}
 	nqosController, err := NewController(
 		controllerName,
 		netInfo,
@@ -1217,6 +1231,7 @@ func initNetworkQoSController(netInfo util.NetInfo, addrsetFactory addressset.Ad
 		watchFactory.PodCoreInformer(),
 		watchFactory.NodeCoreInformer(),
 		watchFactory.NADInformer(),
+		networkMgr,
 		addrsetFactory,
 		func(pod *corev1.Pod) bool {
 			return pod.Spec.NodeName == "node1" || !enableInterconnect

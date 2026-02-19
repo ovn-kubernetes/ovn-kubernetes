@@ -8,10 +8,10 @@
 # The registry is configured in /etc/containers/registries.conf
 # on each node in both "registries:" and "insecure_registries:" sections.
 
-all: ubuntu fedora
+all: ubuntu-image fedora-image
 
 SLASH = -
-ARCH = $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
+ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
 IMAGE_ARCH = $(SLASH)$(ARCH)
 DOCKERFILE_ARCH =
 ifeq ($(ARCH),arm64)
@@ -27,7 +27,8 @@ else
 OVN_FROM := source
 OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V  |tail -1 | awk '{ print $$1 }')
 endif
-
+GO_VERSION ?= 1.24
+GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 
 OCI_BIN ?= docker
 
@@ -45,13 +46,16 @@ ubuntu-shared-gw-deployment: ubuntu-image
 	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 
-fedora-image: bld
+fedora-image:
 	${OCI_BIN} build \
 		--build-arg OVN_FROM=${OVN_FROM} \
 		--build-arg OVN_REPO=${OVN_REPO} \
 		--build-arg OVN_GITREF=${OVN_GITSHA} \
+		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
+		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		--platform=linux/${ARCH} \
 		-t ${IMAGE} \
-		-f Dockerfile.fedora .
+		-f Dockerfile.fedora ./../..
 
 fedora-shared-gw-deployment: fedora-image
 	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube

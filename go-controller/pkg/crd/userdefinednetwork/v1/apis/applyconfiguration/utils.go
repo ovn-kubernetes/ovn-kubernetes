@@ -39,6 +39,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &userdefinednetworkv1.ClusterUserDefinedNetworkSpecApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetworkStatus"):
 		return &userdefinednetworkv1.ClusterUserDefinedNetworkStatusApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("EVPNConfig"):
+		return &userdefinednetworkv1.EVPNConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("IPAMConfig"):
 		return &userdefinednetworkv1.IPAMConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("Layer2Config"):
@@ -51,6 +53,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &userdefinednetworkv1.LocalnetConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("NetworkSpec"):
 		return &userdefinednetworkv1.NetworkSpecApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("NoOverlayConfig"):
+		return &userdefinednetworkv1.NoOverlayConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UserDefinedNetwork"):
 		return &userdefinednetworkv1.UserDefinedNetworkApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UserDefinedNetworkSpec"):
@@ -59,6 +63,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &userdefinednetworkv1.UserDefinedNetworkStatusApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("VLANConfig"):
 		return &userdefinednetworkv1.VLANConfigApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("VRFConfig"):
+		return &userdefinednetworkv1.VRFConfigApplyConfiguration{}
 
 	}
 	return nil

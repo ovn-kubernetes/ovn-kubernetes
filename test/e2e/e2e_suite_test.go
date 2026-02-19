@@ -15,6 +15,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
 
+	deploymentkind "github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig/configs/kind"
+	infrakind "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
@@ -42,10 +44,6 @@ var _ = ginkgo.BeforeSuite(func() {
 	framework.ExpectNoError(err)
 	config, err := framework.LoadConfig()
 	framework.ExpectNoError(err)
-	err = infraprovider.Set(config)
-	framework.ExpectNoError(err, "must configure infrastructure provider")
-	err = deploymentconfig.Set(config)
-	framework.ExpectNoError(err, "must detect deployment configuration")
 	client, err := clientset.NewForConfig(config)
 	framework.ExpectNoError(err, "k8 clientset is required to list nodes")
 	err = ipalloc.InitPrimaryIPAllocator(client.CoreV1().Nodes())
@@ -57,6 +55,27 @@ func TestMain(m *testing.M) {
 	// Register test flags, then parse flags.
 	handleFlags()
 	ProcessTestContextAndSetupLogging()
+
+	// Set up infrastructure provider and deployment config
+	// Upstream currently uses KinD as its preferred platform infra, So TestMain
+	// is expected to run only there.
+	if !infrakind.IsProvider() {
+		klog.Fatal("Cluster provider must be KinD type")
+	}
+	infrastructure := infrakind.New()
+	if infrastructure == nil {
+		klog.Fatal("Failed to determine the infrastructure provider")
+	}
+	infraprovider.Set(infrastructure)
+	if !deploymentkind.IsKind() {
+		klog.Fatal("Deployment Config must be KinD type")
+	}
+	deployment := deploymentkind.New()
+	if deployment == nil {
+		klog.Fatal("Failed to determine the deployment config")
+	}
+	deploymentconfig.Set(deployment)
+
 	os.Exit(m.Run())
 }
 

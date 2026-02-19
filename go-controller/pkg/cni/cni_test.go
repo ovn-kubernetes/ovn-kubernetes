@@ -93,6 +93,7 @@ var _ = Describe("Network Segmentation", func() {
 			IsVFIO:    false,
 			netName:   ovntypes.DefaultNetworkName,
 			nadName:   ovntypes.DefaultNetworkName,
+			nadKey:    ovntypes.DefaultNetworkName,
 		}
 		pr.ctx, pr.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 
@@ -364,7 +365,7 @@ var _ = Describe("Network Segmentation", func() {
 							PodAnnotation: *podNADAnnotation,
 							MTU:           1400,
 							NetName:       "tenantred",
-							NADName:       "foo-ns/meganet",
+							NADKey:        "foo-ns/meganet",
 						}))
 					Expect(response.PrimaryUDNPodReq.IfName).To(Equal("ovn-udn1"))
 					Expect(response.PodIFInfo.NetName).To(Equal("default"))

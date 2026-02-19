@@ -15,6 +15,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	udnv1fake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
+	vtepv1fake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -40,6 +41,7 @@ var _ = Describe("NamespaceNotifier", func() {
 			KubeClient:               kubeClient,
 			NetworkAttchDefClient:    netv1fake.NewSimpleClientset(),
 			UserDefinedNetworkClient: udnv1fake.NewSimpleClientset(),
+			VTEPClient:               vtepv1fake.NewSimpleClientset(),
 		}
 		var err error
 		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)

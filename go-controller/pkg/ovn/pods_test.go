@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
@@ -142,6 +143,7 @@ func newNode(nodeName, nodeIPv4CIDR string) *corev1.Node {
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4CIDR, ""),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
+				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
 				"k8s.ovn.org/zone-name":           "global",
 			},
 			Labels: map[string]string{
@@ -167,6 +169,7 @@ func newNodeGlobalZoneNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Nod
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4, ""),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
+				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
 				"k8s.ovn.org/zone-name":           "global",
 			},
 		},
@@ -189,6 +192,7 @@ func newNodeGlobalZoneNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Nod
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", "", nodeIPv6),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v6Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv6),
+				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
 				"k8s.ovn.org/zone-name":           "global",
 			},
 		},
@@ -210,19 +214,20 @@ func newNodeGlobalZoneNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Nod
 }
 
 type testPod struct {
-	portUUID     string
-	nodeName     string
-	nodeSubnet   string
-	nodeMgtIP    string
-	nodeGWIP     string
-	podName      string
-	podIP        string
-	podMAC       string
-	namespace    string
-	portName     string
-	routes       []util.PodRoute
-	noIfaceIdVer bool
-	networkRole  string
+	portUUID      string
+	nodeName      string
+	nodeChassisID string
+	nodeSubnet    string
+	nodeMgtIP     string
+	nodeGWIP      string
+	podName       string
+	podIP         string
+	podMAC        string
+	namespace     string
+	portName      string
+	routes        []util.PodRoute
+	noIfaceIdVer  bool
+	networkRole   string
 
 	udnPodInfos map[string]*udnPodInfo
 }
@@ -245,21 +250,40 @@ type portInfo struct {
 	prefixLen int
 }
 
+func chassisIDForNode(nodeName string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(nodeName)).String()
+}
+
+func requestedChassisForPod(pod testPod) string {
+	if pod.nodeChassisID != "" {
+		return pod.nodeChassisID
+	}
+	if pod.nodeName == "" {
+		return ""
+	}
+	return chassisIDForNode(pod.nodeName)
+}
+
 func newTPod(nodeName, nodeSubnet, nodeMgtIP, nodeGWIP, podName, podIPs, podMAC, namespace string) testPod {
 	portName := util.GetLogicalPortName(namespace, podName)
+	nodeChassisID := ""
+	if nodeName != "" {
+		nodeChassisID = chassisIDForNode(nodeName)
+	}
 	to := testPod{
-		portUUID:    portName + "-UUID",
-		nodeSubnet:  nodeSubnet,
-		nodeMgtIP:   nodeMgtIP,
-		nodeGWIP:    nodeGWIP,
-		podIP:       podIPs,
-		podMAC:      podMAC,
-		portName:    portName,
-		nodeName:    nodeName,
-		podName:     podName,
-		namespace:   namespace,
-		udnPodInfos: map[string]*udnPodInfo{},
-		networkRole: ovntypes.NetworkRolePrimary, // all tests here run with network-segmentation disabled by default by default
+		portUUID:      portName + "-UUID",
+		nodeSubnet:    nodeSubnet,
+		nodeMgtIP:     nodeMgtIP,
+		nodeGWIP:      nodeGWIP,
+		podIP:         podIPs,
+		podMAC:        podMAC,
+		portName:      portName,
+		nodeName:      nodeName,
+		nodeChassisID: nodeChassisID,
+		podName:       podName,
+		namespace:     namespace,
+		udnPodInfos:   map[string]*udnPodInfo{},
+		networkRole:   ovntypes.NetworkRolePrimary, // all tests here run with network-segmentation disabled by default by default
 	}
 
 	var routeSources []*net.IPNet
@@ -442,15 +466,18 @@ func getDefaultNetExpectedPodsAndSwitches(pods []testPod, nodes []string) []libo
 	return getDefaultNetExpectedDataPodsSwitchesPortGroup(pods, nodes, "")
 }
 
-func getExpectedPodsAndSwitches(netInfo util.NetInfo, pods []testPod, nodes []string) []libovsdbtest.TestData {
-	return getExpectedDataPodsSwitchesPortGroup(netInfo, pods, nodes, "")
+func getExpectedPodsAndSwitches(netInfo util.NetInfo, pods []testPod, nodes []string, nadKey string) []libovsdbtest.TestData {
+	return getExpectedDataPodsSwitchesPortGroup(netInfo, pods, nodes, "", nadKey)
 }
 
 func getDefaultNetExpectedDataPodsSwitchesPortGroup(pods []testPod, nodes []string, namespacedPortGroup string) []libovsdbtest.TestData {
-	return getExpectedDataPodsSwitchesPortGroup(&util.DefaultNetInfo{}, pods, nodes, namespacedPortGroup)
+	return getExpectedDataPodsSwitchesPortGroup(&util.DefaultNetInfo{}, pods, nodes, namespacedPortGroup, "")
 }
 
-func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, nodes []string, namespacedPortGroup string) []libovsdbtest.TestData {
+func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, nodes []string, namespacedPortGroup string, nadKey string) []libovsdbtest.TestData {
+	if !netInfo.IsDefault() && nadKey == "" {
+		panic("missing NAD key for non-default network")
+	}
 	nodeslsps := make(map[string][]string)
 	var logicalSwitchPorts []*nbdb.LogicalSwitchPort
 	for _, pod := range pods {
@@ -458,7 +485,7 @@ func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, 
 		if netInfo.IsDefault() {
 			portName = util.GetLogicalPortName(pod.namespace, pod.podName)
 		} else {
-			portName = util.GetUserDefinedNetworkLogicalPortName(pod.namespace, pod.podName, netInfo.GetNADs()[0])
+			portName = util.GetUserDefinedNetworkLogicalPortName(pod.namespace, pod.podName, nadKey)
 		}
 		var lspUUID string
 		if len(pod.portUUID) == 0 {
@@ -476,7 +503,7 @@ func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, 
 				"namespace": pod.namespace,
 			},
 			Options: map[string]string{
-				libovsdbops.RequestedChassis: pod.nodeName,
+				libovsdbops.RequestedChassis: requestedChassisForPod(pod),
 				"iface-id-ver":               pod.podName,
 			},
 			PortSecurity: []string{podAddr},
@@ -486,7 +513,7 @@ func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, 
 		}
 		if !netInfo.IsDefault() {
 			lsp.ExternalIDs["k8s.ovn.org/network"] = netInfo.GetNetworkName()
-			lsp.ExternalIDs["k8s.ovn.org/nad"] = netInfo.GetNADs()[0]
+			lsp.ExternalIDs["k8s.ovn.org/nad"] = nadKey
 			lsp.ExternalIDs["k8s.ovn.org/topology"] = netInfo.TopologyType()
 		}
 		logicalSwitchPorts = append(logicalSwitchPorts, lsp)
@@ -1251,7 +1278,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("correctly stops retrying adding a pod after failing n times", func() {
+		ginkgo.It("doesn't stop retrying adding a pod after failing n times", func() {
 			app.Action = func(*cli.Context) error {
 				namespace1 := *newNamespace("namespace1")
 				podTest := newTPod(
@@ -1336,12 +1363,13 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					gomega.BeNumerically("==", retry.MaxFailedAttempts), // failedAttempts should reach the max
 				)
 
-				// restore nbdb, trigger a retry and verify that the retry entry gets deleted
-				// because it reached retry.MaxFailedAttempts and the corresponding pod has NOT been added to OVN
+				// restore nbdb, trigger a retry and verify that the pod is added
 				connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
 
+				// reset backoff for immediate retry
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs()
 				// check that pod is in API server
 				pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podTest.namespace).Get(
@@ -1352,9 +1380,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// check that the retry cache no longer has the entry
 				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 
-				// check that pod doesn't appear in OVN
+				// check that pod is configured in OVN
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(
-					getDefaultNetExpectedPodsAndSwitches([]testPod{}, []string{"node1"})...))
+					getDefaultNetExpectedPodsAndSwitches([]testPod{podTest}, []string{"node1"})...))
 
 				return nil
 			}
@@ -1363,7 +1391,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("correctly stops retrying deleting a pod after failing n times", func() {
+		ginkgo.It("doesn't stop retrying deleting a pod after failing n times", func() {
 			app.Action = func(*cli.Context) error {
 				namespace1 := *newNamespace("namespace1")
 				podTest := newTPod(
@@ -1449,12 +1477,13 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					gomega.BeNumerically("==", retry.MaxFailedAttempts), // failedAttempts should be the max
 				)
 
-				// restore nbdb and verify that the retry entry gets deleted because it reached
-				// retry.MaxFailedAttempts and the corresponding pod has NOT been deleted from OVN
+				// restore nbdb and verify that the pod is deleted
 				connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
 
+				// reset backoff for immediate retry
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
 				fakeOvn.controller.retryPods.RequestRetryObjs()
 
 				// check that the pod is not in API server
@@ -1465,8 +1494,9 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// check that the retry cache no longer has the entry
 				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryPods)
 
-				// check that the pod is still in OVN
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+				// check that the pod is deleted in OVN
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(
+					getDefaultNetExpectedPodsAndSwitches([]testPod{}, []string{"node1"})...))
 
 				return nil
 			}
@@ -2024,7 +2054,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t2.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t2),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},
@@ -2039,7 +2069,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 								"namespace": t2.namespace,
 							},
 							Options: map[string]string{
-								libovsdbops.RequestedChassis: t2.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t2),
 								//"iface-id-ver": is empty to check that it won't be set on update
 							},
 							PortSecurity: []string{fmt.Sprintf("%s %s", t2.podMAC, t2.podIP)},
@@ -2054,7 +2084,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t3.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t3),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},
@@ -2224,7 +2254,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t1.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t1),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},

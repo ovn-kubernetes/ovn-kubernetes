@@ -10,9 +10,12 @@ import (
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	ipamclaimslister "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
 	ipam "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	ovnktypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -35,6 +38,8 @@ type PersistentAllocations interface {
 	FindIPAMClaim(claimName string, namespace string) (*ipamclaimsapi.IPAMClaim, error)
 
 	Reconcile(oldIPAMClaim *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, ipReleaser IPReleaser) error
+
+	UpdateIPAMClaimStatus(ipamClaim *ipamclaimsapi.IPAMClaim, podAnnotation *util.PodAnnotation, podName string, allocationErr error) *ipamclaimsapi.IPAMClaim
 }
 
 // IPAMClaimReconciler acts on IPAMClaim events handed off by the cluster network
@@ -196,4 +201,64 @@ func (icr *IPAMClaimReconciler) releaseIPs(ipamClaim *ipamclaimsapi.IPAMClaim, i
 	}
 	klog.V(5).Infof("Released IPs: %+v", ips)
 	return nil
+}
+
+// UpdateIPAMClaimStatus updates the IPAM claim status.
+// This method handles status updates and error logging internally.
+func (icr *IPAMClaimReconciler) UpdateIPAMClaimStatus(
+	ipamClaim *ipamclaimsapi.IPAMClaim,
+	podAnnotation *util.PodAnnotation,
+	podName string,
+	allocationErr error,
+) *ipamclaimsapi.IPAMClaim {
+	updatedClaim := ipamClaim.DeepCopy()
+	updatedClaim.Status.OwnerPod = &ipamclaimsapi.OwnerPod{Name: podName}
+	if allocationErr != nil {
+		updateIPAMClaimAllocationErrorStatus(updatedClaim, allocationErr)
+	} else {
+		updateIPAMClaimAllocationSuccessStatus(updatedClaim, podAnnotation)
+	}
+	return updatedClaim
+}
+
+func updateIPAMClaimAllocationSuccessStatus(
+	updatedClaim *ipamclaimsapi.IPAMClaim,
+	podAnnotation *util.PodAnnotation,
+) {
+	if podAnnotation != nil && len(podAnnotation.IPs) > 0 {
+		updatedClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
+	}
+
+	setIPClaimIPsAllocatedStatusCondition(updatedClaim, metav1.ConditionTrue, "SuccessfulAllocation", "IP addresses successfully allocated")
+}
+
+func updateIPAMClaimAllocationErrorStatus(
+	updatedClaim *ipamclaimsapi.IPAMClaim,
+	allocationErr error,
+) {
+	updatedClaim.Status.IPs = []string{}
+	var reason string
+
+	if ipam.IsErrFull(allocationErr) {
+		reason = "SubnetExhausted"
+	} else if ipam.IsErrAllocated(allocationErr) {
+		reason = "IPAddressConflict"
+	} else if errors.Is(allocationErr, mac.ErrReserveMACConflict) {
+		reason = "MACAddressConflict"
+	} else {
+		reason = "InternalError"
+	}
+
+	setIPClaimIPsAllocatedStatusCondition(updatedClaim, metav1.ConditionFalse, reason, allocationErr.Error())
+}
+
+func setIPClaimIPsAllocatedStatusCondition(updatedClaim *ipamclaimsapi.IPAMClaim, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(&updatedClaim.Status.Conditions, metav1.Condition{
+		Type:               "IPsAllocated",
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: updatedClaim.Generation,
+		LastTransitionTime: metav1.Now(),
+	})
 }

@@ -3,13 +3,13 @@
 Like we saw earlier in the architecture section there are
 two modes of deployment in OVN-Kubernetes:
 
-* default mode (centralized control plane architecture)
-* interconnect mode (distributed control plane architecture)
+* central mode (centralized control plane architecture) -- deprecated starting 1.2 release
+* interconnect mode (distributed control plane architecture) -- default mode
 
 Based on the mode, there are subtle differences in network
 topology running on each node in the cluster
 
-## OVN-Kubernetes Network Topology - Default Mode
+## OVN-Kubernetes Network Topology - Central Mode (DEPRECATED!!!)
 
 The centralized architecture in OVN-K looks like this today:
 
@@ -32,7 +32,7 @@ the service traffic
 * node-local-external-switch: connects the gateway router to the
 external bridge
 
-## OVN-Kubernetes Network Topology - Distributed (Interconnect)
+## OVN-Kubernetes Network Topology - Distributed (Interconnect) (DEFAULT)
 
 The interconnect architecture in OVN-K looks like this today
 (we assume each node is in a zone of their own):

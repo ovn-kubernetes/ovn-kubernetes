@@ -100,6 +100,12 @@ which version is this feature planned to be introduced in?
 check repo milestones/releases to get this information for
 when the next release is planned for
 
+## Backwards Compatibility
+
+(Describe any backwards compatibility considerations for this feature.
+This should include any changes to the API, datapath, or other components
+that may be backwards incompatible.)
+
 ## Alternatives
 
 (List other design alternatives and why we did not go in that

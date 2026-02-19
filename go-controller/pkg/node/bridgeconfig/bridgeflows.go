@@ -558,13 +558,17 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 
 	var dftFlows []string
 
-	strip_vlan := ""
-	match_vlan := ""
-	mod_vlan_id := ""
+	stripVLAN := ""
+	matchVLAN := ""
+	modVLANID := ""
 	if config.Gateway.VLANID != 0 {
-		strip_vlan = "strip_vlan,"
-		match_vlan = fmt.Sprintf("dl_vlan=%d,", config.Gateway.VLANID)
-		mod_vlan_id = fmt.Sprintf("mod_vlan_vid:%d,", config.Gateway.VLANID)
+		// When VLANID is specified, the gateway interface (i.e. LOCAL port) is considered an untagged
+		// access port in the VLAN. The physical port on the bridge is a trunk, carrying tagged VLAN packets,
+		// and the patch port to OVN is a tagged access port, where OVN expects to receive packets with the VLANID
+		// tag.
+		stripVLAN = "strip_vlan,"
+		matchVLAN = fmt.Sprintf("dl_vlan=%d,", config.Gateway.VLANID)
+		modVLANID = fmt.Sprintf("mod_vlan_vid:%d,", config.Gateway.VLANID)
 	}
 
 	if ofPortPhys != "" {
@@ -574,10 +578,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			actions += "output:" + netConfig.OfPortPatch + ","
 		}
 
-		actions += strip_vlan + "NORMAL"
+		actions += "NORMAL"
 		dftFlows = append(dftFlows,
 			fmt.Sprintf("cookie=%s, priority=10, table=0, %s dl_dst=%s, actions=%s",
-				nodetypes.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, actions))
+				nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeMacAddress, actions))
 	}
 
 	// table 0, check packets coming from OVN have the correct mac address. Low priority flows that are a catch all
@@ -655,7 +659,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				fmt.Sprintf("cookie=%s, priority=100, in_port=%s, %s, "+
 					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), %soutput:%s",
 					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV4, config.Default.ConntrackZone,
-					nodetypes.CtMarkHost, mod_vlan_id, ofPortPhys))
+					nodetypes.CtMarkHost, modVLANID, ofPortPhys))
 		}
 		if config.Gateway.Mode == config.GatewayModeLocal {
 			for _, netConfig := range b.patchedNetConfigs() {
@@ -756,7 +760,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				fmt.Sprintf("cookie=%s, priority=100, in_port=%s, %s, "+
 					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), %soutput:%s",
 					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV6,
-					config.Default.ConntrackZone, nodetypes.CtMarkHost, mod_vlan_id, ofPortPhys))
+					config.Default.ConntrackZone, nodetypes.CtMarkHost, modVLANID, ofPortPhys))
 
 		}
 		if config.Gateway.Mode == config.GatewayModeLocal {
@@ -889,7 +893,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		// table 1, we check to see if this dest mac is the shared mac, if so send to host
 		dftFlows = append(dftFlows,
 			fmt.Sprintf("cookie=%s, priority=10, table=1, %s dl_dst=%s, actions=%soutput:%s",
-				nodetypes.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, strip_vlan, ofPortHost))
+				nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeMacAddress, stripVLAN, ofPortHost))
 
 		if config.IPv6Mode {
 			// REMOVEME(trozet) when https://bugzilla.kernel.org/show_bug.cgi?id=11797 is resolved

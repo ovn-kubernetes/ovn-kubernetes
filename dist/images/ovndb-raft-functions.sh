@@ -2,14 +2,14 @@
 #set -euo pipefail
 
 verify-ovsdb-raft() {
-  check_ovn_daemonset_version "1.1.0"
+  check_ovn_daemonset_version "1.2.0"
 
   if [[ ${ovn_db_host} == "" ]]; then
     echo "failed to retrieve the IP address of the host $(hostname). Exiting..."
     exit 1
   fi
 
-  replicas=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+  replicas=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
     get statefulset -n ${ovn_kubernetes_namespace} ovnkube-db -o=jsonpath='{.spec.replicas}')
   if [[ ${replicas} -lt 3 || $((${replicas} % 2)) -eq 0 ]]; then
     echo "at least 3 nodes need to be configured, and it must be odd number of nodes"
@@ -25,7 +25,7 @@ db_part_of_cluster() {
   local db=${2}
   local port=${3}
   echo "Checking if ${pod} is part of cluster"
-  init_ip=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+  init_ip=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
     get pod -n ${ovn_kubernetes_namespace} ${pod} -o=jsonpath='{.status.podIP}')
   if [[ $? != 0 ]]; then
     echo "Unable to get ${pod} ip "
@@ -51,7 +51,7 @@ cluster_exists() {
   local db=${1}
   local port=${2}
 
-  db_pods=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+  db_pods=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
     get pod -n ${ovn_kubernetes_namespace} -o=jsonpath='{.items[*].metadata.name}' | egrep -o 'ovnkube-db[^ ]+')
 
   for db_pod in $db_pods; do
@@ -62,7 +62,7 @@ cluster_exists() {
   done
 
   # if we get here  there is no cluster, set init_ip and get out
-  init_ip="$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+  init_ip="$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
     get pod -n ${ovn_kubernetes_namespace} ovnkube-db-0 -o=jsonpath='{.status.podIP}')"
   if [[ $? != 0 ]]; then
     return 1
@@ -89,7 +89,7 @@ check_and_apply_ovnkube_db_ep() {
   local port=${1}
 
   # return if ovn db service endpoint already exists
-  result=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+  result=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
       get ep -n ${ovn_kubernetes_namespace} ovnkube-db 2>&1)
   test $? -eq 0 && return
   if ! echo ${result} | grep -q "NotFound"; then
@@ -99,7 +99,7 @@ check_and_apply_ovnkube_db_ep() {
   # Get IPs of all ovnkube-db PODs
   ips=()
   for ((i = 0; i < ${replicas}; i++)); do
-    ip=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${K8S_CACERT} \
+    ip=$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
       get pod -n ${ovn_kubernetes_namespace} ovnkube-db-${i} -o=jsonpath='{.status.podIP}')
     if [[ ${ip} == "" ]]; then
       break
