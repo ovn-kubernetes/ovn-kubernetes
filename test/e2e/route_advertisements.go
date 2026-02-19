@@ -1925,6 +1925,19 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 		// isolation doesn't cut it. macvlan driver might be a better option.
 		bgpServerSubnetIPv4 = "172.38.0.0/16"
 		bgpServerSubnetIPv6 = "fc00:f853:ccd:38::/64"
+		// Additional subnets used in nested "When there is other network" tests
+		otherBGPPeerSubnetIPv4   = "172.136.0.0/16"
+		otherBGPPeerSubnetIPv6   = "fc00:f853:ccd:136::/64"
+		otherBGPServerSubnetIPv4 = "172.138.0.0/16"
+		otherBGPServerSubnetIPv6 = "fc00:f853:ccd:138::/64"
+	)
+
+	// staleSubnets lists all subnets that may be left behind if a test times out during cleanup.
+	staleSubnets := sets.New(
+		bgpPeerSubnetIPv4, bgpPeerSubnetIPv6,
+		bgpServerSubnetIPv4, bgpServerSubnetIPv6,
+		otherBGPPeerSubnetIPv4, otherBGPPeerSubnetIPv6,
+		otherBGPServerSubnetIPv4, otherBGPServerSubnetIPv6,
 	)
 
 	f := wrappedTestFramework(baseName)
@@ -1943,6 +1956,21 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 		testBaseName = baseName + testSuffix
 		testNetworkName = testBaseName
 		bgpServerName = testNetworkName + "-bgpserver"
+
+		// Clean up any stale networks from previous test attempts that may have failed during cleanup.
+		networkNames, err := infraprovider.Get().ListNetworks()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		for _, name := range networkNames {
+			network, err := infraprovider.Get().GetNetwork(name)
+			if err != nil {
+				continue
+			}
+			v4, v6, _ := network.IPv4IPv6Subnets()
+			if staleSubnets.Has(v4) || staleSubnets.Has(v6) {
+				framework.Logf("Cleaning up stale network %q with subnets %s/%s", name, v4, v6)
+				gomega.Expect(ictx.DeleteNetwork(network)).To(gomega.Succeed())
+			}
+		}
 
 		// we will create a agnhost server on an extra network peered with BGP
 		ginkgo.By("Running a BGP network with an agnhost server")
@@ -2279,12 +2307,8 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 
 				ginkgo.Describe("When there is other network", func() {
 					const (
-						otherBGPPeerSubnetIPv4   = "172.136.0.0/16"
-						otherBGPPeerSubnetIPv6   = "fc00:f853:ccd:136::/64"
-						otherBGPServerSubnetIPv4 = "172.138.0.0/16"
-						otherBGPServerSubnetIPv6 = "fc00:f853:ccd:138::/64"
-						otherUDNCIDRv4           = "103.203.0.0/16"
-						otherUDNCIDRv6           = "2014:200:200::0/60"
+						otherUDNCIDRv4 = "103.203.0.0/16"
+						otherUDNCIDRv6 = "2014:200:200::0/60"
 					)
 
 					var (
