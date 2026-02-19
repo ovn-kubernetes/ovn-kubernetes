@@ -87,6 +87,8 @@ global:
   advertisedUDNIsolationMode: "strict"
   # -- Configure to enable no-overlay mode for the default network
   enableNoOverlay: false
+  # -- Configure to enable SNAT for outbound traffic in no-overlay mode
+  enableNoOverlaySnat: false
   # -- Configure to enable workloads with preconfigured network connect to user defined networks (UDN) with ovn-kubernetes
   enablePreconfiguredUDNAddresses: false
   # -- Configure to enable IPsec

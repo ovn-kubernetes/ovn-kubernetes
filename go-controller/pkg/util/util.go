@@ -1076,3 +1076,11 @@ func getPortName(name *string) string {
 	}
 	return *name
 }
+
+// IsNoOverlaySNATExemptionNeeded returns true when:
+// no-overlay transport mode, outbound SNAT enabled, and shared gateway mode.
+func IsNoOverlaySNATExemptionNeeded(netInfo NetInfo) bool {
+	return netInfo.Transport() == types.NetworkTransportNoOverlay &&
+		netInfo.OutboundSNAT() == types.NoOverlaySNATEnabled &&
+		config.Gateway.Mode == config.GatewayModeShared
+}

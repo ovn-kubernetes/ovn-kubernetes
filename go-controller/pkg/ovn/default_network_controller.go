@@ -411,6 +411,15 @@ func (oc *DefaultNetworkController) init() error {
 		}
 	}
 
+	// Cleanup no-overlay SNAT exemption address set if not in no-overlay mode with SNAT enabled.
+	if !util.IsNoOverlaySNATExemptionNeeded(oc) {
+		if err := cleanupNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			// Cleanup may fail if the address set is still referenced by NAT rules.
+			// But this is harmless and can be retried on next run.
+			klog.Warningf("Failed to cleanup no-overlay SNAT exemption address set: %v", err)
+		}
+	}
+
 	return nil
 }
 

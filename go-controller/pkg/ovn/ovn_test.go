@@ -72,6 +72,32 @@ type userDefinedNetworkControllerInfo struct {
 	asf *addressset.FakeAddressSetFactory
 }
 
+// testNetInfo is a test helper that wraps util.NetInfo to allow overriding
+// specific methods for testing purposes.
+type testNetInfo struct {
+	util.NetInfo
+	topology     string
+	outboundSNAT string
+	subnets      []config.CIDRNetworkEntry
+	transport    string
+}
+
+func (ni *testNetInfo) TopologyType() string {
+	return ni.topology
+}
+
+func (ni *testNetInfo) Subnets() []config.CIDRNetworkEntry {
+	return ni.subnets
+}
+
+func (ni *testNetInfo) Transport() string {
+	return ni.transport
+}
+
+func (ni *testNetInfo) OutboundSNAT() string {
+	return ni.outboundSNAT
+}
+
 type FakeOVN struct {
 	fakeClient     *util.OVNMasterClientset
 	watcher        *factory.WatchFactory
