@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"path/filepath"
 	"regexp"
@@ -669,11 +670,69 @@ func AddOFFlowWithSpecificAction(bridgeName, action string) (string, string, err
 	return strings.Trim(stdout.String(), "\" \n"), stderr.String(), err
 }
 
+// openFlowStdinReader incrementally renders a flow slice as a newline-delimited
+// stream for ovs-ofctl stdin without constructing one large joined string.
+type openFlowStdinReader struct {
+	flows      []string
+	flowIndex  int
+	flowOffset int
+	needEOL    bool
+}
+
+// Read implements io.Reader over r.flows, producing output equivalent to
+// strings.Join(flows, "\n"), but in small chunks to reduce peak allocations.
+func (r *openFlowStdinReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	// Fast path: no flows left and no pending delimiter.
+	if r.flowIndex >= len(r.flows) && !r.needEOL {
+		return 0, io.EOF
+	}
+
+	total := 0
+	for total < len(p) {
+		if r.needEOL {
+			// Emit exactly one '\n' between flows.
+			p[total] = '\n'
+			total++
+			r.needEOL = false
+			if total == len(p) {
+				return total, nil
+			}
+			continue
+		}
+
+		if r.flowIndex >= len(r.flows) {
+			break
+		}
+
+		flow := r.flows[r.flowIndex]
+		if r.flowOffset >= len(flow) {
+			// Current flow was fully consumed; advance and schedule delimiter if
+			// there is another flow.
+			r.flowIndex++
+			r.flowOffset = 0
+			r.needEOL = r.flowIndex < len(r.flows)
+			continue
+		}
+
+		// Copy as much of the current flow as fits in caller's buffer.
+		copied := copy(p[total:], flow[r.flowOffset:])
+		total += copied
+		r.flowOffset += copied
+	}
+
+	if total == 0 {
+		return 0, io.EOF
+	}
+	return total, nil
+}
+
 // ReplaceOFFlows replaces flows in the bridge with a slice of flows
 func ReplaceOFFlows(bridgeName string, flows []string) (string, string, error) {
 	args := []string{"-O", "OpenFlow13", "--bundle", "replace-flows", bridgeName, "-"}
-	stdin := &bytes.Buffer{}
-	stdin.Write([]byte(strings.Join(flows, "\n")))
+	stdin := &openFlowStdinReader{flows: flows}
 
 	cmd := runner.exec.Command(runner.ofctlPath, args...)
 	cmd.SetStdin(stdin)

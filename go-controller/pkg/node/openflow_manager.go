@@ -119,32 +119,38 @@ func (c *openflowManager) requestFlowSync() {
 
 func (c *openflowManager) syncFlows() {
 	c.flowMutex.Lock()
-	defer c.flowMutex.Unlock()
-
-	flows := []string{}
-	for _, entry := range c.flowCache {
-		flows = append(flows, entry...)
-	}
+	flows := flattenFlowCacheEntries(c.flowCache)
+	c.flowMutex.Unlock()
 
 	_, stderr, err := util.ReplaceOFFlows(c.defaultBridge.GetBridgeName(), flows)
 	if err != nil {
-		klog.Errorf("Failed to add flows, error: %v, stderr, %s, flows: %s", err, stderr, c.flowCache)
+		klog.Errorf("Failed to add flows for bridge %s, error: %v, stderr, %s, flow count: %d",
+			c.defaultBridge.GetBridgeName(), err, stderr, len(flows))
 	}
 
 	if c.externalGatewayBridge != nil {
 		c.exGWFlowMutex.Lock()
-		defer c.exGWFlowMutex.Unlock()
+		exGWFlows := flattenFlowCacheEntries(c.exGWFlowCache)
+		c.exGWFlowMutex.Unlock()
 
-		flows := []string{}
-		for _, entry := range c.exGWFlowCache {
-			flows = append(flows, entry...)
-		}
-
-		_, stderr, err := util.ReplaceOFFlows(c.externalGatewayBridge.GetBridgeName(), flows)
+		_, stderr, err := util.ReplaceOFFlows(c.externalGatewayBridge.GetBridgeName(), exGWFlows)
 		if err != nil {
-			klog.Errorf("Failed to add flows, error: %v, stderr, %s, flows: %s", err, stderr, c.exGWFlowCache)
+			klog.Errorf("Failed to add flows for bridge %s, error: %v, stderr, %s, flow count: %d",
+				c.externalGatewayBridge.GetBridgeName(), err, stderr, len(exGWFlows))
 		}
 	}
+}
+
+func flattenFlowCacheEntries(flowCache map[string][]string) []string {
+	flowCount := 0
+	for _, entry := range flowCache {
+		flowCount += len(entry)
+	}
+	flows := make([]string, 0, flowCount)
+	for _, entry := range flowCache {
+		flows = append(flows, entry...)
+	}
+	return flows
 }
 
 // since we share the host's k8s node IP, add OpenFlow flows

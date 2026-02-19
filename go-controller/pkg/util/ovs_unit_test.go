@@ -3,7 +3,9 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1695,14 +1697,14 @@ func TestReplaceOFFlows(t *testing.T) {
 			expectedErr:             fmt.Errorf("failed to execute ovs-ofctl command"),
 			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{nil, nil, fmt.Errorf("failed to execute ovs-ofctl command")}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*bytes.Buffer"}},
+			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*util.openFlowStdinReader"}},
 		},
 		{
 			desc:                    "positive: run `ovs-ofctl` command",
 			expectedErr:             nil,
 			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("testblah")), bytes.NewBuffer([]byte("")), nil}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*bytes.Buffer"}},
+			onRetArgsCmdList:        &ovntest.TestifyMockHelper{OnCallMethodName: "SetStdin", OnCallMethodArgType: []string{"*util.openFlowStdinReader"}},
 		},
 	}
 	for i, tc := range tests {
@@ -1718,6 +1720,44 @@ func TestReplaceOFFlows(t *testing.T) {
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOpenFlowStdinReader(t *testing.T) {
+	tests := []struct {
+		desc  string
+		flows []string
+	}{
+		{
+			desc:  "empty flow list",
+			flows: []string{},
+		},
+		{
+			desc:  "single flow",
+			flows: []string{"table=0,priority=0,actions=NORMAL"},
+		},
+		{
+			desc:  "multiple flows",
+			flows: []string{"a", "b", "c"},
+		},
+		{
+			desc:  "includes empty flow",
+			flows: []string{"a", "", "c"},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			r := &openFlowStdinReader{flows: tc.flows}
+			out, err := io.ReadAll(r)
+			require.NoError(t, err)
+			assert.Equal(t, strings.Join(tc.flows, "\n"), string(out))
+
+			buf := make([]byte, 1)
+			n, eof := r.Read(buf)
+			assert.Equal(t, 0, n)
+			assert.Equal(t, io.EOF, eof)
 		})
 	}
 }
