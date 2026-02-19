@@ -267,6 +267,11 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					data = append(data, macvrfPort)
 					nodeslsps[switchName] = append(nodeslsps[switchName], macvrfPortUUID)
 					alreadyAddedManagementElements[macvrfPortName] = struct{}{}
+					gatewayIPNet := testing.MustParseIPNet("100.200.0.1/24")
+					acl := getDenyARPAndNSOnMACVRF(ocInfo.bnc.controllerName, macvrfPortName, util.IPAddrToHWAddr(gatewayIPNet.IP), gatewayIPNet, nil)[0]
+					acl.UUID = "DenyARPAndNSOnMACVRF-UUID"
+					data = append(data, acl)
+					acls[switchName] = append(acls[switchName], acl.UUID)
 				}
 			}
 
