@@ -253,7 +253,7 @@ const (
 	NetworkRoleNone           = "none"
 
 	// Network transport types - canonical format (lowercase)
-	NetworkTransportGeneve    = "geneve"
+	NetworkTransportDefault   = "default"
 	NetworkTransportNoOverlay = "no-overlay"
 	NetworkTransportEVPN      = "evpn"
 

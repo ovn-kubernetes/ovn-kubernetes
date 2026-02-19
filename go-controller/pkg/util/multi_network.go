@@ -868,7 +868,7 @@ func (nInfo *userDefinedNetInfo) PhysicalNetworkName() string {
 // Transport returns the transport protocol for east-west traffic
 func (nInfo *userDefinedNetInfo) Transport() string {
 	if nInfo.transport == "" {
-		return types.NetworkTransportGeneve
+		return types.NetworkTransportDefault
 	}
 	return nInfo.transport
 }
@@ -1538,11 +1538,11 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 
 	// Validate transport if specified
 	if netconf.Transport != "" &&
-		netconf.Transport != types.NetworkTransportGeneve &&
+		netconf.Transport != types.NetworkTransportDefault &&
 		netconf.Transport != types.NetworkTransportNoOverlay &&
 		netconf.Transport != types.NetworkTransportEVPN {
 		return fmt.Errorf("invalid transport %q: must be one of %q", netconf.Transport, []string{
-			types.NetworkTransportGeneve,
+			types.NetworkTransportDefault,
 			types.NetworkTransportNoOverlay,
 			types.NetworkTransportEVPN,
 		})

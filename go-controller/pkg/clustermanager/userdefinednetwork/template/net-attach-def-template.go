@@ -145,7 +145,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 		},
 		NADName:   nadName,
 		Topology:  strings.ToLower(string(spec.GetTopology())),
-		Transport: transportFromCRD(string(spec.GetTransport())),
+		Transport: transportFromCRD(spec.GetTransport()),
 	}
 
 	switch spec.GetTopology() {
@@ -279,18 +279,18 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 }
 
 // transportFromCRD converts CRD PascalCase format to canonical format.
-// CRD format uses PascalCase: "Geneve", "NoOverlay", "EVPN"
-// Returns canonical lowercase format: "geneve", "no-overlay", "evpn"
-func transportFromCRD(crdTransport string) string {
+// CRD format uses PascalCase: "Default", "NoOverlay", "EVPN"
+// Returns canonical lowercase format: "default", "no-overlay", "evpn"
+func transportFromCRD(crdTransport userdefinednetworkv1.TransportOption) string {
 	switch crdTransport {
-	case "Geneve":
-		return types.NetworkTransportGeneve
-	case "NoOverlay":
+	case userdefinednetworkv1.TransportOptionDefault:
+		return types.NetworkTransportDefault
+	case userdefinednetworkv1.TransportOptionNoOverlay:
 		return types.NetworkTransportNoOverlay
-	case "EVPN":
+	case userdefinednetworkv1.TransportOptionEVPN:
 		return types.NetworkTransportEVPN
 	default:
-		return crdTransport // Return as-is for validation to catch
+		return string(crdTransport) // Return as-is for validation to catch
 	}
 }
 

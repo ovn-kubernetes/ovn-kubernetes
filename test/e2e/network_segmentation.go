@@ -2198,7 +2198,8 @@ func assertClusterNADManifest(nadClient nadclient.K8sCniCncfIoV1Interface, names
 		"netAttachDefName": "` + expectedNadName + `",
 		"topology": "layer2",
 		"role": "secondary",
-		"subnets": "10.100.0.0/16"
+		"subnets": "10.100.0.0/16",
+		"transport": "default"
 	}`))
 }
 
