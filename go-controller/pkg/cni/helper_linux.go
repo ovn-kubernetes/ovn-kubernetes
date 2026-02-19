@@ -768,6 +768,14 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 		}
 	}
 
+	err = netns.Do(func(_ ns.NetNS) error {
+		err := setSysctl("/proc/sys/net/core/txrehash", 0)
+		return err
+	})
+	if err != nil {
+		klog.Warningf("Failed to disable", err)
+	}
+
 	return []*current.Interface{hostIface, contIface}, nil
 }
 
