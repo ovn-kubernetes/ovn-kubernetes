@@ -598,7 +598,20 @@ func (as *ovnAddressSet) hasAddresses(addresses ...string) bool {
 		return false
 	}
 
-	return sets.NewString(existingAddresses...).HasAll(addresses...)
+	for _, address := range addresses {
+		found := false
+		for _, existingAddress := range existingAddresses {
+			if existingAddress == address {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
 }
 
 // deleteAddresses removes selected addresses from the existing address_set
