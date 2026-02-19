@@ -327,9 +327,19 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}
 
 			By(fmt.Sprintf("check iperf3 connectivity for %s: %s", address, stage))
-			output, err = execFn(fmt.Sprintf("iperf3 -c %s -p %d -t 1", address, port))
-			if err != nil {
-				return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
+			connectivityBackoff := wait.Backoff{
+				Steps:    4,
+				Duration: 5 * time.Second,
+				Factor:   2.0,
+			}
+			if err := retry.OnError(connectivityBackoff, func(error) bool { return true }, func() error {
+				output, err = execFn(fmt.Sprintf("iperf3 -c %s -p %d -t 1", address, port))
+				if err != nil {
+					return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
+				}
+				return nil
+			}); err != nil {
+				return err
 			}
 
 			By(fmt.Sprintf("start iperf3 client to %s: %s", address, stage))
