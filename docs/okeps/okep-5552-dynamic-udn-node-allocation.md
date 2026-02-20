@@ -1,6 +1,6 @@
 # OKEP-5552: Dynamic UDN Node Allocation
 
-* Issue: [#5552](https://github.com/ovn-org/ovn-kubernetes/issues/5552)
+* Issue: [#5552](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5552)
 
 ## Problem Statement
 

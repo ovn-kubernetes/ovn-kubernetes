@@ -427,10 +427,10 @@ go version
 
 Now, clone the OVN-Kubernetes repository:
 ~~~
-mkdir -p $HOME/work/src/github.com/ovn-org
-cd $HOME/work/src/github.com/ovn-org
-git clone https://github.com/ovn-org/ovn-kubernetes
-cd $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/images
+mkdir -p $HOME/work/src/github.com/ovn-kubernetes
+cd $HOME/work/src/github.com/ovn-kubernetes
+git clone https://github.com/ovn-kubernetes/ovn-kubernetes
+cd $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/images
 ~~~
 
 Build the latest ovn-daemonset image and push it to the registry. Prepare the binaries:
@@ -473,13 +473,13 @@ ovs-vsctl add-br br-int
 Now, set up ovnkube:
 ~~~
 # set up the namespace
-kubectl apply -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovn-setup.yaml
+kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovn-setup.yaml
 # set up the database pods - wait until the pods are up and running before progressing to the next command:
-kubectl apply -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovnkube-db.yaml
+kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-db.yaml
 # set up the master pods - wait until the pods are up and running before progressing to the next command:
-kubectl apply -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovnkube-master.yaml
+kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-master.yaml
 # set up the ovnkube-node pods - wait until the pods are up and running before progressing to the next command:
-kubectl apply -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovnkube-node.yaml
+kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-node.yaml
 ~~~
 
 Once all OVN related pods are up, you should see that the CoreDNS pods have started as well and they should be in the correct network.
@@ -603,10 +603,10 @@ Complete!
 
 In order to uninstall OVN kubernetes:
 ~~~
-kubectl delete -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovnkube-node.yaml
-kubectl delete -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovnkube-master.yaml
-kubectl delete -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovnkube-db.yaml
-kubectl delete -f $HOME/work/src/github.com/ovn-org/ovn-kubernetes/dist/yaml/ovn-setup.yaml
+kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-node.yaml
+kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-master.yaml
+kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-db.yaml
+kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovn-setup.yaml
 ~~~
 
 ### Issues / workarounds:

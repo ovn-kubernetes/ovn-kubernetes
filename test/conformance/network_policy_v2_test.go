@@ -74,12 +74,12 @@ func TestNetworkPolicyV2Conformance(t *testing.T) {
 				HostNetworkPortRangeEnd:   11010,
 			},
 			Implementation: confv1a1.Implementation{
-				Organization:          "ovn-org",
+				Organization:          "ovn-kubernetes",
 				Project:               "ovn-kubernetes",
-				URL:                   "https://github.com/ovn-org/ovn-kubernetes",
+				URL:                   "https://github.com/ovn-kubernetes/ovn-kubernetes",
 				Version:               "v1.0.0",
 				Contact:               []string{"@tssurya"},
-				AdditionalInformation: "https://github.com/ovn-org/ovn-kubernetes/blob/master/test/conformance/network_policy_v2_test.go",
+				AdditionalInformation: "https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/test/conformance/network_policy_v2_test.go",
 			},
 			ConformanceProfiles: profiles,
 		})

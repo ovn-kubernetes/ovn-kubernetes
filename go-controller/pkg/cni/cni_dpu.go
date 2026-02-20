@@ -5,8 +5,8 @@ import (
 
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // updatePodDPUConnDetailsWithRetry update the pod annotation with the given connection details for the NAD in

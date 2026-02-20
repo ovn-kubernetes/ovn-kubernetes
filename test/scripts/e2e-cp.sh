@@ -6,18 +6,18 @@ set -ex
 export KUBERNETES_CONFORMANCE_TEST=y
 export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
 
-# Skip tests which are not IPv6 ready yet (see description of https://github.com/ovn-org/ovn-kubernetes/pull/2276)
+# Skip tests which are not IPv6 ready yet (see description of https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2276)
 # (Note that netflow v5 is IPv4 only)
 # NOTE: Some of these tests that check connectivity to internet cannot be run.
 #       See https://github.com/actions/runner-images/issues/668#issuecomment-1480921915 for details
 # There were some past efforts to re-enable some of these skipped tests, but that never happened and they are
-# still failing v6 lane: https://github.com/ovn-org/ovn-kubernetes/pull/2505,
-# https://github.com/ovn-org/ovn-kubernetes/pull/2524, https://github.com/ovn-org/ovn-kubernetes/pull/2287; so
+# still failing v6 lane: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2505,
+# https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2524, https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2287; so
 # going to skip them again.
 # TODO: Fix metalLB integration with KIND on IPV6 in LGW mode and enable those service tests.See
-# https://github.com/ovn-org/ovn-kubernetes/issues/4131 for details.
-# TODO: Fix EIP tests. See https://github.com/ovn-org/ovn-kubernetes/issues/4130 for details.
-# TODO: Fix MTU tests. See https://github.com/ovn-org/ovn-kubernetes/issues/4160 for details.
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4131 for details.
+# TODO: Fix EIP tests. See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4130 for details.
+# TODO: Fix MTU tests. See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4160 for details.
 IPV6_SKIPPED_TESTS="Should be allowed by externalip services|\
 should provide connection to external host by DNS name from a pod|\
 should provide Internet connection continuously when ovnkube-node pod is killed|\
@@ -90,12 +90,12 @@ if [ "$OVN_DISABLE_SNAT_MULTIPLE_GWS" == false ]; then
 fi
 
 if [ "$OVN_GATEWAY_MODE" == "shared" ]; then
-  # See https://github.com/ovn-org/ovn-kubernetes/issues/4138 for details
+  # See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4138 for details
   skip "Should ensure load balancer service|LGW"
 fi
 
 if [ "$OVN_GATEWAY_MODE" == "local" ]; then
-  # See https://github.com/ovn-org/ovn-kubernetes/labels/ci-ipv6 for details
+  # See https://github.com/ovn-kubernetes/ovn-kubernetes/labels/ci-ipv6 for details
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     skip "Should be allowed by nodeport services"
     skip "Should successfully create then remove a static pod"

@@ -1,6 +1,6 @@
 # OKEP-5193: User Defined Network Segmentation
 
-* Issue: [#5193](https://github.com/ovn-org/ovn-kubernetes/issues/5193)
+* Issue: [#5193](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5193)
 
 ## Problem Statement
 
@@ -128,7 +128,7 @@ show the IP assigned in the cluster default network.
 In OVN-Kubernetes secondary networks are defined using Network Attachment Definitions (NADs). For more information on
 how these are configured, refer to:
 
-[https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/features/multi-homing.md](https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/features/multi-homing.md)
+[https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/multi-homing.md](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/multi-homing.md)
 
 The proposal here is to leverage this existing mechanism to create the network. A new field, “role” is
 introduced to the NAD spec which indicates that this network should be used for the pod's primary network. Additionally,

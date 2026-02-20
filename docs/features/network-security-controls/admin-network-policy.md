@@ -333,7 +333,7 @@ spec:
 ### OVN-Kubernetes Implementation Details
 
 We have a new level driven controller in OVN-Kubernetes
-called [admin_network_policy](https://github.com/ovn-org/ovn-kubernetes/tree/master/go-controller/pkg/ovn/controller/admin_network_policy)
+called [admin_network_policy](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/go-controller/pkg/ovn/controller/admin_network_policy)
 which watches for the following objects:
 
 * AdminNetworkPolicy

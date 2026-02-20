@@ -6,7 +6,7 @@ import (
 
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 )
 
 type NetAttachDefReconciler interface {

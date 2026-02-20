@@ -16,12 +16,12 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 
 	v1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -2725,7 +2725,7 @@ func getServiceLoadBalancerIP(c clientset.Interface, namespace, serviceName stri
 
 func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
 	// The external client configuration done in install_metallb can not be used because routes for external client
-	// installed in K8s node https://github.com/ovn-org/ovn-kubernetes/blob/master/contrib/kind.sh#L1045-L1047
+	// installed in K8s node https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.sh#L1045-L1047
 	// are ignored in shared gateway mode and traffic coming back from pod is put on the docker bridge directly by
 	// br-ex flows which needs to be handled in host(or vm) network.
 	// Hence the following set of ip commands set up two networks called bridge (192.168.222.0/24) and
@@ -2793,7 +2793,7 @@ func cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalanc
 
 func setupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
 	// The external client configuration done in install_metallb can not be used because routes for external client
-	// installed in K8s node https://github.com/ovn-org/ovn-kubernetes/blob/master/contrib/kind.sh#L1045-L1047
+	// installed in K8s node https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.sh#L1045-L1047
 	// are ignored in shared gateway mode and traffic coming back from pod is put on the docker bridge directly by
 	// br-ex flows which needs to be handled in host(or vm) network.
 	// Hence the following set of ip -6 commands set up two IPv6 networks called bridge (fc00:f853:ccd:e222::0/64) and

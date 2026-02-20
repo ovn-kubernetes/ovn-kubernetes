@@ -289,8 +289,8 @@ jobs:
         go install github.com/modocache/gover@latest
         PATH=$PATH:$(go env GOPATH)/bin
 
-        mkdir -p $(go env GOPATH)/src/github.com/ovn-org
-        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-org/ovn-kubernetes
+        mkdir -p $(go env GOPATH)/src/github.com/ovn-kubernetes
+        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-kubernetes/ovn-kubernetes
 
         gover
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github

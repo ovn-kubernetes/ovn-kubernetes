@@ -8,7 +8,7 @@ import (
 	corev1informer "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 )
 
 type NamespaceReconciler interface {

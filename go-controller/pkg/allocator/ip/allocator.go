@@ -24,7 +24,7 @@ import (
 
 	utilnet "k8s.io/utils/net"
 
-	allocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
+	allocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
 )
 
 // StaticAllocator provides IP allocation functionality for explicit/static allocations only.

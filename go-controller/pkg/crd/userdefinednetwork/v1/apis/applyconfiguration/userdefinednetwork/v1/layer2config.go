@@ -18,7 +18,7 @@ limitations under the License.
 package v1
 
 import (
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
 // Layer2ConfigApplyConfiguration represents a declarative configuration of the Layer2Config type for use

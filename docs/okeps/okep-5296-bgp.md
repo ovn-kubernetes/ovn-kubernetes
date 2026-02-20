@@ -1,6 +1,6 @@
 # OKEP-5296: OVN-Kubernetes BGP Integration
 
-* Issue: [#5296](https://github.com/ovn-org/ovn-kubernetes/issues/5296)
+* Issue: [#5296](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5296)
 
 ## Networking Glossary
 

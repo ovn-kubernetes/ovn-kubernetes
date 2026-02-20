@@ -8,7 +8,7 @@ const (
 	// Constants are duplicated to minimize dependencies
 	// When adding constants here, add them in network_event_test.go too
 
-	// libovsdb constants: see also github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops
+	// libovsdb constants: see also github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops
 	egressFirewallOwnerType             = "EgressFirewall"
 	adminNetworkPolicyOwnerType         = "AdminNetworkPolicy"
 	baselineAdminNetworkPolicyOwnerType = "BaselineAdminNetworkPolicy"
@@ -19,7 +19,7 @@ const (
 	netpolNamespaceOwnerType            = "NetpolNamespace"
 	udnIsolationOwnerType               = "UDNIsolation"
 
-	// nbdb constants: see also github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb
+	// nbdb constants: see also github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb
 	aclActionAllow          = "allow"
 	aclActionAllowRelated   = "allow-related"
 	aclActionAllowStateless = "allow-stateless"

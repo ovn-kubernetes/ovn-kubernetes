@@ -33,9 +33,9 @@ linters:
           alias: ctrl
         - pkg: github.com/ovn-kubernetes/libovsdb/ovsdb
           alias: ""
-        - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util
+        - pkg: github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util
           alias: nodeutil
-        - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types
+        - pkg: github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types
           alias: nodetypes
       no-unaliased: true
     revive:

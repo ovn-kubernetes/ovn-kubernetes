@@ -18,8 +18,8 @@ limitations under the License.
 package v1
 
 import (
-	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	routeadvertisementsv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	types "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 

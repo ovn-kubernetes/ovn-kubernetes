@@ -13,7 +13,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
 
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 )
 
 // FIXME(mk) - Within GH VM, if I need to create a new NetNs. I see the following error:

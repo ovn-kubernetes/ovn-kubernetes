@@ -27,7 +27,7 @@ $ PATH=/home/$USER/src/golang/go1-12-1/go/bin:$GOPATH/src/k8s.io/kubernetes/_out
 ### Download and Build Kubernetes Components (E2E Tests, ginkgo, kubectl):
 
 Determine which version of Kubernetes is currently used in CI (See
-[ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-org/ovn-kubernetes/blob/master/.github/workflows/test.yml))
+[ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml))
 and set the environmental variable `K8S_VERSION` to the same value. Also make sure to export a GOPATH which points to
 your go directory with `export GOPATH=(...)`.
 
@@ -59,7 +59,7 @@ Before setting up KIND and before running the actual tests, export essential env
 
 The environment variables and their values depend on the actual test scenario that you want to run.
 
-Look at the `e2e` action (search for `name: e2e`) in [ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-org/ovn-kubernetes/blob/master/.github/workflows/test.yml). Prior to installing kind, set the following environment variables according to your needs:
+Look at the `e2e` action (search for `name: e2e`) in [ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml). Prior to installing kind, set the following environment variables according to your needs:
 ```
 export KIND_CLUSTER_NAME=ovn
 export KIND_INSTALL_INGRESS=[true|false]
@@ -78,7 +78,7 @@ export PLATFORM_IPV6_SUPPORT=[true|false]
 export OVN_SECOND_BRIDGE=[true|false]
 ```
 
-You can refer to a recent CI run from any pull request in [https://github.com/ovn-org/ovn-kubernetes/actions](https://github.com/ovn-org/ovn-kubernetes/actions) to get a valid set of settings.
+You can refer to a recent CI run from any pull request in [https://github.com/ovn-kubernetes/ovn-kubernetes/actions](https://github.com/ovn-kubernetes/ovn-kubernetes/actions) to get a valid set of settings.
 
 As an example for the `control-plane-noHA-local-ipv4-snatGW-1br` job, the settings are at time of this writing:
 ```
@@ -127,7 +127,7 @@ cp ~/ovn.conf ~/.kube/kind-config-kind
 To run the desired shard, first make sure that the necessary environment variables are exported (see section above).
 Then, go to the location of your local copy of the `ovn-kubernetes` repository:
 ```
-$ REPO=$GOPATH/src/github.com/ovn-org/ovn-kubernetes
+$ REPO=$GOPATH/src/github.com/ovn-kubernetes/ovn-kubernetes
 $ cd $REPO
 ```
 
@@ -226,7 +226,7 @@ $ popd
 ```
 
 The value of `WHAT=` will be used to modify the `-ginkgo.focus` parameter. Individual tests can be retrieved from this
-repository under [test/e2e](https://github.com/ovn-org/ovn-kubernetes/tree/master/test/e2e). To see a list of individual
+repository under [test/e2e](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e). To see a list of individual
 tests, one could run:
 ~~~
 grep -R ginkgo.It test/
@@ -257,7 +257,7 @@ Ran 1 of 60 Specs in 12.333 seconds
 SUCCESS! -- 1 Passed | 0 Failed | 0 Flaked | 0 Pending | 59 Skipped
 --- PASS: TestE2e (12.34s)
 PASS
-ok  	github.com/ovn-org/ovn-kubernetes/test/e2e	12.371s
+ok  	github.com/ovn-kubernetes/ovn-kubernetes/test/e2e	12.371s
 + popd
 ~/ovn-kubernetes/test
 ~~~

@@ -7,7 +7,7 @@ import (
 
 	knet "k8s.io/api/networking/v1"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestGetMatchFromIPBlock(t *testing.T) {

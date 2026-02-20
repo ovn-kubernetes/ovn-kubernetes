@@ -27,7 +27,7 @@ should have ipv4 and ipv6 internal node ip
 kube-proxy
 KubeProxy
 
-# NOT IMPLEMENTED; SEE DISCUSSION IN https://github.com/ovn-org/ovn-kubernetes/pull/1225
+# NOT IMPLEMENTED; SEE DISCUSSION IN https://github.com/ovn-kubernetes/ovn-kubernetes/pull/1225
 named port.+\[Feature:NetworkPolicy\]
 
 # NOT IMPLEMENTED: Service CIDR is a GA feature in K8s v1.33 which is not yet
@@ -38,7 +38,7 @@ named port.+\[Feature:NetworkPolicy\]
 # Clean up SCTP tests https://github.com/kubernetes/kubernetes/issues/96717
 should create a Pod with SCTP HostPort
 
-# https://github.com/ovn-org/ovn-kubernetes/issues/1907
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1907
 service.kubernetes.io/headless
 
 # TO BE FIXED BY https://github.com/kubernetes/kubernetes/pull/95351
@@ -47,17 +47,17 @@ should resolve connection reset issue #74839
 # api flakes
 sig-api-machinery
 
-# TODO: Figure out why NoSNAT is failing (https://github.com/ovn-org/ovn-kubernetes/issues/1316)
+# TODO: Figure out why NoSNAT is failing (https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1316)
 \[Feature:NoSNAT\]
 
 # KIND doesn't support svcType=LB, the externalIP stays in pending state
 LoadBalancers should
 
-# TODO: Figure out why DNS configMap nameserver is failing (https://github.com/ovn-org/ovn-kubernetes/issues/1316)
+# TODO: Figure out why DNS configMap nameserver is failing (https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1316)
 configMap nameserver
 ClusterDns \[Feature:Example\]
 
-# TODO: Figure out why default value on new IngressClass is failing (https://github.com/ovn-org/ovn-kubernetes/pull/1349#issuecomment-631218507)
+# TODO: Figure out why default value on new IngressClass is failing (https://github.com/ovn-kubernetes/ovn-kubernetes/pull/1349#issuecomment-631218507)
 should set default value on new IngressClass
 
 # RACE CONDITION IN TEST, SEE https://github.com/kubernetes/kubernetes/pull/90254
@@ -92,7 +92,7 @@ IPV4_ONLY_TESTS="
 # The following tests currently fail for IPv6 only, but should be passing.
 # They will be removed as they are resolved.
 
-# See: https://github.com/ovn-org/ovn-kubernetes/issues/1683
+# See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1683
 IPBlock.CIDR and IPBlock.Except
 
 # shard-n Tests
@@ -100,12 +100,12 @@ IPBlock.CIDR and IPBlock.Except
 Network.+should resolve connection reset issue
 
 # shard-np Tests
-#  See: https://github.com/ovn-org/ovn-kubernetes/issues/1517
+#  See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1517
 NetworkPolicy.+should allow egress access to server in CIDR block
 "
 
 SINGLESTACK_IPV4_ONLY_TESTS="
-# See: https://github.com/ovn-org/ovn-kubernetes/issues/2798
+# See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/2798
 should provider Internet connection for containers using DNS
 "
 
@@ -128,7 +128,7 @@ RA_SKIPPED_TESTS="
 "
 
 # Github CI doesn´t offer IPv6 connectivity, so always skip IPv6 only tests.
-#  See: https://github.com/ovn-org/ovn-kubernetes/issues/1522
+#  See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/1522
 SKIPPED_TESTS=$SKIPPED_TESTS$IPV6_ONLY_TESTS
 
 # Either single stack IPV6 or dualstack

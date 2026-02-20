@@ -7,8 +7,8 @@ import (
 
 	listers "k8s.io/client-go/listers/core/v1"
 
-	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 )
 
 // NodeController is the node hybrid overlay controller.

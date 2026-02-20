@@ -16,18 +16,18 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/kubevirt"
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
@@ -565,7 +565,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			Eventually(func() error {
 				if vmimCreationRetries > 0 {
 					// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
-					// https://github.com/ovn-org/ovn-kubernetes/issues/3902#issuecomment-1750257559
+					// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
 					By(fmt.Sprintf("Retrying vmim %s creation", vmName))
 				}
 				vmim := &kubevirtv1.VirtualMachineInstanceMigration{
@@ -772,7 +772,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			Eventually(func() error {
 				if vmCreationRetries > 0 {
 					// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
-					// https://github.com/ovn-org/ovn-kubernetes/issues/3902#issuecomment-1750257559
+					// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
 					By(fmt.Sprintf("Retrying vm %s creation", vm.Name))
 				}
 				err := crClient.Create(context.Background(), vm)
@@ -788,7 +788,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			Eventually(func() error {
 				if vmiCreationRetries > 0 {
 					// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
-					// https://github.com/ovn-org/ovn-kubernetes/issues/3902#issuecomment-1750257559
+					// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
 					By(fmt.Sprintf("Retrying vmi %s creation", vmi.Name))
 				}
 				err := crClient.Create(context.Background(), vmi)
@@ -1528,7 +1528,7 @@ fi
 				Eventually(func() error {
 					if vmCreationRetries > 0 {
 						// retry due to unknown issue where kubevirt webhook gets stuck reading the request body
-						// https://github.com/ovn-org/ovn-kubernetes/issues/3902#issuecomment-1750257559
+						// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3902#issuecomment-1750257559
 						By(fmt.Sprintf("Retrying vm %s creation", vm.Name))
 					}
 					err = crClient.Create(context.Background(), vm)
@@ -1792,7 +1792,7 @@ write_files:
 				td.role = udnv1.NetworkRoleSecondary
 			}
 			if td.role == udnv1.NetworkRolePrimary && !isInterconnectEnabled() {
-				const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4528"
+				const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4528"
 				e2eskipper.Skipf(
 					"The egress check of tests are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
 				)

@@ -6,9 +6,9 @@ import (
 
 	net2 "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
-	pkgutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	pkgutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // GetNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.

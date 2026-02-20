@@ -6,7 +6,7 @@ package util
 import (
 	ocpconfigapi "github.com/openshift/api/config/v1"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 )
 
 func PlatformTypeIsEgressIPCloudProvider() bool {
