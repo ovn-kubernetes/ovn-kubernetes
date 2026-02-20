@@ -42,6 +42,9 @@ type gressPolicy struct {
 	peerV4AddressSets *sync.Map
 	// peerV6AddressSets has Address sets for all namespaces and pod selectors for IPv6
 	peerV6AddressSets *sync.Map
+	// namespaceAddressSets tracks namespaces currently referenced through
+	// namespace address sets (namespaceSelector with nil podSelector).
+	namespaceAddressSets *sync.Map
 	// if gressPolicy has at least 1 rule with selector, set this field to true.
 	// This is required to distinguish gress that doesn't have any peerAddressSets added yet
 	// (e.g. because there are no namespaces matching label selector) and should allow nothing,
@@ -65,18 +68,19 @@ type gressPolicy struct {
 func newGressPolicy(policyType knet.PolicyType, idx int, namespace, name, controllerName string, isNetPolStateless bool, netInfo util.NetInfo) *gressPolicy {
 	ipv4Mode, ipv6Mode := netInfo.IPMode()
 	return &gressPolicy{
-		controllerName:    controllerName,
-		policyNamespace:   namespace,
-		policyName:        name,
-		policyType:        policyType,
-		aclPipeline:       libovsdbutil.PolicyTypeToAclPipeline(policyType),
-		idx:               idx,
-		peerV4AddressSets: &sync.Map{},
-		peerV6AddressSets: &sync.Map{},
-		portPolicies:      make([]*libovsdbutil.NetworkPolicyPort, 0),
-		isNetPolStateless: isNetPolStateless,
-		ipv4Mode:          ipv4Mode,
-		ipv6Mode:          ipv6Mode,
+		controllerName:       controllerName,
+		policyNamespace:      namespace,
+		policyName:           name,
+		policyType:           policyType,
+		aclPipeline:          libovsdbutil.PolicyTypeToAclPipeline(policyType),
+		idx:                  idx,
+		peerV4AddressSets:    &sync.Map{},
+		peerV6AddressSets:    &sync.Map{},
+		namespaceAddressSets: &sync.Map{},
+		portPolicies:         make([]*libovsdbutil.NetworkPolicyPort, 0),
+		isNetPolStateless:    isNetPolStateless,
+		ipv4Mode:             ipv4Mode,
+		ipv6Mode:             ipv6Mode,
 	}
 }
 
@@ -239,6 +243,7 @@ func (gp *gressPolicy) addNamespaceAddressSet(name string, asf addressset.Addres
 		// no changes were applied, return false
 		return false, nil
 	}
+	gp.namespaceAddressSets.Store(name, true)
 	return true, nil
 }
 
@@ -264,10 +269,15 @@ func (gp *gressPolicy) delNamespaceAddressSet(name string) bool {
 		_, v6Update = gp.peerV6AddressSets.LoadAndDelete(v6HashName)
 	}
 	if v4Update || v6Update {
+		gp.namespaceAddressSets.Delete(name)
 		// at least 1 address set was updated, return true
 		return true
 	}
 	return false
+}
+
+func (gp *gressPolicy) getNamespaceAddressSetNames() []string {
+	return syncMapToSortedList(gp.namespaceAddressSets)
 }
 
 func (gp *gressPolicy) isEmpty() bool {

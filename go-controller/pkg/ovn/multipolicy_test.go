@@ -481,7 +481,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
 					Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				fakeOvn.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{nPodTest.podIP})
+				fakeOvn.asf.EventuallyExpectEmptyAddressSetExist(namespaceName1)
 
 				dataParams := newNetpolDataParams(networkPolicy).
 					withLocalPortUUIDs(nPodTest.portUUID).
@@ -508,7 +508,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				ocInfo := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 				portInfo := nPodTest.getNetworkPortInfo(userDefinedNetworkName, nadNamespacedName)
 				gomega.Expect(portInfo).NotTo(gomega.BeNil())
-				ocInfo.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{portInfo.podIP})
+				ocInfo.asf.EventuallyExpectEmptyAddressSetExist(namespaceName1)
 
 				dataParams2 := newNetpolDataParams(networkPolicy).
 					withLocalPortUUIDs(portInfo.portUUID).
@@ -616,7 +616,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					}
 
-					ocInfo.asf.EventuallyExpectAddressSetWithAddresses(namespaceName1, []string{"10.1.1.1"})
+					ocInfo.asf.EventuallyExpectEmptyAddressSetExist(namespaceName1)
 
 					// Delete the pod
 					ginkgo.By("Deleting the pod")
@@ -674,7 +674,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				ocInfo := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 				portInfo := nPodTest.getNetworkPortInfo(userDefinedNetworkName, nadNamespacedName)
 				gomega.Expect(portInfo).NotTo(gomega.BeNil())
-				ocInfo.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{portInfo.podIP})
+				ocInfo.asf.EventuallyExpectEmptyAddressSetExist(namespaceName1)
 
 				dataParams2 := newNetpolDataParams(networkPolicy).
 					withLocalPortUUIDs(portInfo.portUUID).

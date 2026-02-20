@@ -50,18 +50,10 @@ func (nqosState *networkQoSState) getDbObjectIDs(controller string, ruleIndex in
 	})
 }
 
-func (nqosState *networkQoSState) emptyPodSelector() bool {
-	return nqosState.PodSelector == nil || nqosState.PodSelector.Empty()
-}
-
 func (nqosState *networkQoSState) initAddressSets(addressSetFactory addressset.AddressSetFactory, controllerName string) error {
 	var err error
 	// init source address set
-	if nqosState.emptyPodSelector() {
-		nqosState.SrcAddrSet, err = getNamespaceAddressSet(addressSetFactory, controllerName, nqosState.namespace)
-	} else {
-		nqosState.SrcAddrSet, err = addressSetFactory.EnsureAddressSet(GetNetworkQoSAddrSetDbIDs(nqosState.namespace, nqosState.name, "src", "0", controllerName))
-	}
+	nqosState.SrcAddrSet, err = addressSetFactory.EnsureAddressSet(GetNetworkQoSAddrSetDbIDs(nqosState.namespace, nqosState.name, "src", "0", controllerName))
 	if err != nil {
 		return fmt.Errorf("failed to init source address set for %s/%s: %w", nqosState.namespace, nqosState.name, err)
 	}
@@ -92,14 +84,11 @@ func (nqosState *networkQoSState) matchSourceSelector(pod *corev1.Pod) bool {
 
 func (nqosState *networkQoSState) configureSourcePod(ctrl *Controller, pod *corev1.Pod, addresses []string) error {
 	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
-	if nqosState.PodSelector != nil {
-		// if PodSelector is nil, use namespace's address set, so unnecessary to add ip here
-		if err := nqosState.SrcAddrSet.AddAddresses(addresses); err != nil {
-			return fmt.Errorf("failed to add addresses {%s} to address set %s for NetworkQoS %s/%s: %v", strings.Join(addresses, ","), nqosState.SrcAddrSet.GetName(), nqosState.namespace, nqosState.name, err)
-		}
-		nqosState.Pods.Store(fullPodName, addresses)
-		klog.V(4).Infof("Successfully added address (%s) of pod %s to address set %s", strings.Join(addresses, ","), fullPodName, nqosState.SrcAddrSet.GetName())
+	if err := nqosState.SrcAddrSet.AddAddresses(addresses); err != nil {
+		return fmt.Errorf("failed to add addresses {%s} to address set %s for NetworkQoS %s/%s: %v", strings.Join(addresses, ","), nqosState.SrcAddrSet.GetName(), nqosState.namespace, nqosState.name, err)
 	}
+	nqosState.Pods.Store(fullPodName, addresses)
+	klog.V(4).Infof("Successfully added address (%s) of pod %s to address set %s", strings.Join(addresses, ","), fullPodName, nqosState.SrcAddrSet.GetName())
 	// get switch name
 	switchName := ctrl.getLogicalSwitchName(pod.Spec.NodeName)
 	if switchName == "" {
@@ -133,8 +122,7 @@ func (nqosState *networkQoSState) removePodFromSource(ctrl *Controller, fullPodN
 			addresses = val.([]string)
 		}
 	}
-	if len(addresses) > 0 && nqosState.PodSelector != nil {
-		// remove pod from non-namespace-scope source address set
+	if len(addresses) > 0 {
 		if err := nqosState.SrcAddrSet.DeleteAddresses(addresses); err != nil {
 			return fmt.Errorf("failed to delete addresses (%s) from address set %s: %v", strings.Join(addresses, ","), nqosState.SrcAddrSet.GetName(), err)
 		}

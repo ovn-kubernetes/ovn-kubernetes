@@ -408,7 +408,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				anpSubjectPod.Labels["rv"] = "resourceVersionUTHack"
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpSubjectPod.Namespace).Update(context.TODO(), &anpSubjectPod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(anpSubjectNamespaceName, []string{t.podIP})
+				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(anpSubjectNamespaceName, []string{})
 				pg = getDefaultPGForANPSubject(anp.Name, []string{t.portUUID}, nil, false)
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				expectedDatabaseState = append(expectedDatabaseState, getDefaultNetExpectedPodsAndSwitches([]testPod{t}, []string{node1Name})...)
@@ -471,7 +471,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				anpPeerPod.Labels["rv"] = "resourceVersionUTHack"
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpPeerPod.Namespace).Update(context.TODO(), &anpPeerPod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(anpPeerNamespaceName, []string{t2.podIP})
+				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(anpPeerNamespaceName, []string{})
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				for _, acl := range acls {
 					acl := acl
@@ -846,7 +846,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				t.podIP = "10.128.1.5"
 				t.podMAC = "0a:58:0a:80:01:05"
 				pg = getDefaultPGForANPSubject(anp.Name, []string{t.portUUID}, newACLs, false)
-				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(anpSubjectNamespaceName, []string{t.podIP})
+				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(anpSubjectNamespaceName, []string{})
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				for _, acl := range newACLs {
 					acl := acl
@@ -872,7 +872,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				t2.podIP = "10.128.1.6"
 				t2.podMAC = "0a:58:0a:80:01:06"
-				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(anpPeerNamespaceName, []string{t2.podIP})
+				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(anpPeerNamespaceName, []string{})
 				expectedDatabaseState = []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				for _, acl := range newACLs {
 					acl := acl
@@ -1295,7 +1295,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				acls := getACLsForANPRulesWithNamedPorts(anp, namedIPorts, namedEPorts)
 				pg := getDefaultPGForANPSubject(anp.Name, []string{}, acls, false)
 				subjectNSASIPv4, subjectNSASIPv6 := buildNamespaceAddressSets(anpSubjectNamespaceName, []string{})
-				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(anpPeerNamespaceName, []string{anpPodV4IP2, anpPodV6IP2})
+				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(anpPeerNamespaceName, []string{})
 				peerNS2ASIPv4, peerNS2ASIPv6 := buildNamespaceAddressSets(anpPeerNamespaceName+"2", []string{})
 				baseExpectedDatabaseState := []libovsdbtest.TestData{subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6, peerNS2ASIPv4, peerNS2ASIPv6}
 				peerASIngressRule0v4, peerASIngressRule0v6 := buildANPAddressSets(anp, 0, []string{}, libovsdbutil.ACLIngress)
@@ -1338,7 +1338,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					{L4Protocol: "udp", L3PodIP: anpPodV6IP, L3PodIPFamily: "ip6", L4PodPort: "5353"},
 				}
 
-				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(anpSubjectNamespaceName, []string{anpPodV4IP, anpPodV6IP})
+				subjectNSASIPv4, subjectNSASIPv6 = buildNamespaceAddressSets(anpSubjectNamespaceName, []string{})
 				baseExpectedDatabaseState[0] = subjectNSASIPv4
 				baseExpectedDatabaseState[1] = subjectNSASIPv6
 				acls = getACLsForANPRulesWithNamedPorts(anp, namedIPorts, namedEPorts)
@@ -1417,7 +1417,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				}
 				acls = getACLsForANPRulesWithNamedPorts(anp, namedIPorts, namedEPorts)
 				pg = getDefaultPGForANPSubject(anp.Name, []string{t2.portUUID}, acls, false)
-				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(anpPeerNamespaceName, []string{"fe00:10:128:1::4", "10.128.1.4"}) // pod is re-added to peer namespace address-set
+				peerNSASIPv4, peerNSASIPv6 = buildNamespaceAddressSets(anpPeerNamespaceName, []string{})
 				baseExpectedDatabaseState[2] = peerNSASIPv4
 				baseExpectedDatabaseState[3] = peerNSASIPv6
 				peerASEgressRule0v4, peerASEgressRule0v6 = buildANPAddressSets(anp, 0, []string{"fe00:10:128:1::4", "10.128.1.4"}, libovsdbutil.ACLEgress)
@@ -1828,8 +1828,8 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 
 				acls := getACLsForANPRules(anp)
 				pg := getDefaultPGForANPSubject(anp.Name, []string{t.portUUID}, acls, false)
-				subjectNSASIPv4, subjectNSASIPv6 := buildNamespaceAddressSets(anpSubjectNamespaceName, []string{anpPodV4IP, anpPodV6IP})
-				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(anpPeerNamespaceName, []string{anpPodV4IP2, anpPodV6IP2})
+				subjectNSASIPv4, subjectNSASIPv6 := buildNamespaceAddressSets(anpSubjectNamespaceName, []string{})
+				peerNSASIPv4, peerNSASIPv6 := buildNamespaceAddressSets(anpPeerNamespaceName, []string{})
 				expectedDatabaseState := []libovsdbtest.TestData{pg, subjectNSASIPv4, subjectNSASIPv6, peerNSASIPv4, peerNSASIPv6}
 				expectedDatabaseState = append(expectedDatabaseState, getDefaultNetExpectedPodsAndSwitches([]testPod{t, t2}, []string{node1Name})...)
 				for _, acl := range acls {

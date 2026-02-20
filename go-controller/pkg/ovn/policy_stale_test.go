@@ -137,13 +137,7 @@ func getStalePolicyACLs(gressIdx int, namespace, policyName string, peerNamespac
 			hashedASNames = append(hashedASNames, asv4)
 		}
 	}
-	gp := gressPolicy{
-		policyNamespace: namespace,
-		policyName:      policyName,
-		policyType:      policyType,
-		idx:             gressIdx,
-		controllerName:  controllerName,
-	}
+	gp := newGressPolicy(policyType, gressIdx, namespace, policyName, controllerName, false, netInfo)
 	if len(hashedASNames) > 0 {
 		gressAsMatch := asMatch(hashedASNames)
 		match := fmt.Sprintf("ip4.%s == {%s} && %s == @%s", ipDir, gressAsMatch, portDir, pgName)
