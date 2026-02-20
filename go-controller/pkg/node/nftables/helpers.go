@@ -28,7 +28,7 @@ func SetFakeNFTablesHelper() *knftables.Fake {
 // called, it will create a "real" knftables.Interface
 func GetNFTablesHelper() (knftables.Interface, error) {
 	if nftHelper == nil {
-		nft, err := knftables.New(knftables.InetFamily, OVNKubernetesNFTablesName)
+		nft, err := knftables.New(knftables.InetFamily, OVNKubernetesNFTablesName, knftables.RequireDestroy)
 		if err != nil {
 			return nil, err
 		}
