@@ -1259,11 +1259,11 @@ func TestNADNeedsUpdate(t *testing.T) {
 	udnOwner := makeUDNOwnerRef("test-udn")
 
 	makePrimaryNADConfig := func(name string) string {
-		return fmt.Sprintf(`{"cniVersion": "0.4.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "role": "primary", "netAttachDefName": "test/%s"}`, name, name)
+		return fmt.Sprintf(`{"cniVersion": "1.1.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "role": "primary", "netAttachDefName": "test/%s"}`, name, name)
 	}
 
 	makeSecondaryNADConfig := func(name string) string {
-		return fmt.Sprintf(`{"cniVersion": "0.4.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "netAttachDefName": "test/%s"}`, name, name)
+		return fmt.Sprintf(`{"cniVersion": "1.1.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "netAttachDefName": "test/%s"}`, name, name)
 	}
 
 	tests := []struct {

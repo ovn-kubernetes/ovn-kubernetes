@@ -38,6 +38,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/dpulease"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
@@ -125,6 +126,8 @@ type DefaultNodeNetworkController struct {
 
 	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
 	retryNodes *retry.RetryFramework
+
+	dpuNodeLeaseManager *dpulease.Manager
 
 	apbExternalRouteNodeController *apbroute.ExternalGatewayNodeController
 
@@ -740,6 +743,22 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to parse kubernetes node IP address. %v", nodeAddrStr)
 	}
 
+	if (config.OvnKubeNode.Mode == types.NodeModeDPUHost || config.OvnKubeNode.Mode == types.NodeModeDPU) &&
+		config.OvnKubeNode.DPUNodeLeaseRenewInterval > 0 {
+		nc.dpuNodeLeaseManager = dpulease.NewManager(
+			nc.client,
+			config.Kubernetes.OVNConfigNamespace,
+			node,
+			time.Duration(config.OvnKubeNode.DPUNodeLeaseRenewInterval)*time.Second,
+			time.Duration(config.OvnKubeNode.DPUNodeLeaseDuration)*time.Second,
+		)
+		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if _, err := nc.dpuNodeLeaseManager.EnsureLease(ctx); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Make sure that the node zone matches with the Southbound db zone.
 	// Wait for 300s before giving up
 	var sbZone string
@@ -814,7 +833,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		if !ok {
 			return fmt.Errorf("cannot get kubeclient for starting CNI server")
 		}
-		cniServer, err = cni.NewCNIServer(nc.watchFactory, kclient.KClient, nc.networkManager, nc.ovsClient)
+		cniServer, err = cni.NewCNIServer(nc.watchFactory, kclient.KClient, nc.networkManager, nc.ovsClient, nc.dpuNodeLeaseManager)
 		if err != nil {
 			return err
 		}
@@ -1025,6 +1044,25 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	if nc.healthzServer != nil {
 		nc.healthzServer.Start(nc.stopChan, nc.wg)
+	}
+
+	if nc.dpuNodeLeaseManager != nil {
+		if config.OvnKubeNode.Mode == types.NodeModeDPU {
+			nc.wg.Add(1)
+			go func() {
+				defer nc.wg.Done()
+				nc.dpuNodeLeaseManager.RunUpdater(ctx)
+			}()
+		} else if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if err := nc.dpuNodeLeaseManager.CheckStatus(ctx); err != nil {
+				klog.Warningf("Initial DPU node lease check failed: %v", err)
+			}
+			nc.wg.Add(1)
+			go func() {
+				defer nc.wg.Done()
+				nc.dpuNodeLeaseManager.RunMonitor(ctx)
+			}()
+		}
 	}
 
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {

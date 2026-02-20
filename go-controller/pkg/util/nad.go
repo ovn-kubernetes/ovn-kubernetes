@@ -35,7 +35,7 @@ func EnsureDefaultNetworkNAD(nadLister nadlisters.NetworkAttachmentDefinitionLis
 				Namespace: config.Kubernetes.OVNConfigNamespace,
 			},
 			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
-				Config: fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
+				Config: fmt.Sprintf("{\"cniVersion\": \"%s\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNISpecVersion, config.CNI.Plugin),
 			},
 		},
 		// note we don't set ourselves as field manager for this create as we
