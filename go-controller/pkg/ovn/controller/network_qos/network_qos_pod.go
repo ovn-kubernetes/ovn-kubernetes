@@ -2,46 +2,51 @@ package networkqos
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	nqosv1alpha1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextNQOSPodWorkItem(wg *sync.WaitGroup) bool {
 	wg.Add(1)
 	defer wg.Done()
-	eventData, shutdown := c.nqosPodQueue.Get()
+	podKey, shutdown := c.nqosPodQueue.Get()
 	if shutdown {
 		return false
 	}
-	defer c.nqosPodQueue.Done(eventData)
+	defer c.nqosPodQueue.Done(podKey)
 
-	if err := c.syncNetworkQoSPod(eventData); err != nil {
-		if c.nqosPodQueue.NumRequeues(eventData) < maxRetries {
-			c.nqosPodQueue.AddRateLimited(eventData)
+	if err := c.syncNetworkQoSPod(podKey); err != nil {
+		klog.Warningf("%s: Failed to reconcile pod %s: %v", c.controllerName, podKey, err)
+		if c.nqosPodQueue.NumRequeues(podKey) < maxRetries {
+			c.nqosPodQueue.AddRateLimited(podKey)
 			return true
 		}
-		klog.Errorf("%s: Failed to reconcile pod %s/%s: %v", c.controllerName, eventData.namespace(), eventData.name(), err)
-		utilruntime.HandleError(fmt.Errorf("failed to reconcile pod %s/%s: %v", eventData.namespace(), eventData.name(), err))
+		klog.Errorf("%s: Stop reconciling pod %s after %d retries", c.controllerName, podKey, maxRetries)
+		utilruntime.HandleError(err)
 	}
-	c.nqosPodQueue.Forget(eventData)
+	c.nqosPodQueue.Forget(podKey)
 	return true
 }
 
 // syncNetworkQoSPod decides the main logic everytime
 // we dequeue a key from the nqosPodQueue cache
-func (c *Controller) syncNetworkQoSPod(eventData *eventData[*corev1.Pod]) error {
+func (c *Controller) syncNetworkQoSPod(podKey string) error {
 	startTime := time.Now()
-	nqosNames, err := c.getNetworkQosForPodChange(eventData)
+	nqosNames, err := c.getNetworkQosForPodChange(podKey)
 	if err != nil {
 		return err
 	}
@@ -113,14 +118,36 @@ func reconcilePodForDestinations(nqosState *networkQoSState, podNs *corev1.Names
 	return nil
 }
 
-func (c *Controller) getNetworkQosForPodChange(eventData *eventData[*corev1.Pod]) (sets.Set[string], error) {
-	var pod *corev1.Pod
-	if eventData.new != nil {
-		pod = eventData.new
-	} else {
-		pod = eventData.old
+func (c *Controller) getNetworkQosForPodChange(podKey string) (sets.Set[string], error) {
+	podNsStr, podName, err := cache.SplitMetaNamespaceKey(podKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to split pod key %s: %v", podKey, err)
 	}
-	podNs, err := c.nqosNamespaceLister.Get(pod.Namespace)
+	var podIPs []net.IP
+	pod, err := c.nqosPodLister.Pods(podNsStr).Get(podName)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get pod %s: %v", podKey, err)
+		}
+		// fake dead pod with meta only
+		pod = &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace:         podNsStr,
+				Name:              podName,
+				Labels:            getCachedPodLabels(c.podLabelsCache, podKey),
+				DeletionTimestamp: &metav1.Time{Time: time.Now()},
+			},
+		}
+	} else if pod.DeletionTimestamp == nil {
+		// skip reconcile if pod labels and IPs don't change
+		if podIPs, err = util.GetPodIPsOfNetwork(pod, c.NetInfo, c.podNetworkResolver()); err != nil {
+			klog.Errorf("Failed to get IPs from pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+		if labels.Equals(getCachedPodLabels(c.podLabelsCache, podKey), pod.Labels) && util.IPsAreEqual(podIPs, getCachedPodIPs(c.podIPCache, podKey)) {
+			return nil, nil
+		}
+	}
+	podNs, err := c.nqosNamespaceLister.Get(podNsStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get namespace %s: %v", pod.Namespace, err)
 	}
@@ -141,9 +168,16 @@ func (c *Controller) getNetworkQosForPodChange(eventData *eventData[*corev1.Pod]
 				continue
 			}
 		}
-		if podSelectionChanged(nqos, eventData.new, eventData.old) {
+		if pod.DeletionTimestamp == nil && podSelectionChanged(nqos, pod.Labels, getCachedPodLabels(c.podLabelsCache, podKey)) {
 			affectedNetworkQoSes.Insert(joinMetaNamespaceAndName(nqos.Namespace, nqos.Name))
 		}
+	}
+	if pod.DeletionTimestamp == nil {
+		c.podLabelsCache.Store(podKey, pod.Labels)
+		c.podIPCache.Store(podKey, podIPs)
+	} else {
+		c.podLabelsCache.Delete(podKey)
+		c.podIPCache.Delete(podKey)
 	}
 	return affectedNetworkQoSes, nil
 }
@@ -198,14 +232,11 @@ func podMatchesEgressSelector(podNs *corev1.Namespace, pod *corev1.Pod, nqos *nq
 	return false
 }
 
-func podSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, new *corev1.Pod, old *corev1.Pod) bool {
-	if new == nil || old == nil {
-		return false
-	}
+func podSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, newLabels, oldLabels map[string]string) bool {
 	if nqos.Spec.PodSelector.Size() > 0 {
 		if podSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.PodSelector); err != nil {
 			klog.Errorf("Failed to convert pod selector in %s/%s: %v", nqos.Namespace, nqos.Name, err)
-		} else if podSelector.Matches(labels.Set(new.Labels)) != podSelector.Matches(labels.Set(old.Labels)) {
+		} else if podSelector.Matches(labels.Set(newLabels)) != podSelector.Matches(labels.Set(oldLabels)) {
 			return true
 		}
 	}
@@ -216,7 +247,7 @@ func podSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, new *corev1.Pod, old *co
 			}
 			if podSelector, err := metav1.LabelSelectorAsSelector(dest.PodSelector); err != nil {
 				klog.Errorf("Failed to convert pod selector in %s/%s: %v", nqos.Namespace, nqos.Name, err)
-			} else if podSelector.Matches(labels.Set(new.Labels)) != podSelector.Matches(labels.Set(old.Labels)) {
+			} else if podSelector.Matches(labels.Set(newLabels)) != podSelector.Matches(labels.Set(oldLabels)) {
 				return true
 			}
 		}
@@ -234,4 +265,18 @@ func populateAddresses(addressSetMap map[string]sets.Set[string], name string, a
 	}
 	addressSet.Insert(addresses...)
 	addressSetMap[name] = addressSet
+}
+
+func getCachedPodLabels(labelCache *sync.Map, podKey string) map[string]string {
+	if podLabels, _ := labelCache.Load(podKey); podLabels != nil {
+		return podLabels.(map[string]string)
+	}
+	return nil
+}
+
+func getCachedPodIPs(cachedPodIPs *sync.Map, podKey string) []net.IP {
+	if ips, _ := cachedPodIPs.Load(podKey); ips != nil {
+		return ips.([]net.IP)
+	}
+	return nil
 }
