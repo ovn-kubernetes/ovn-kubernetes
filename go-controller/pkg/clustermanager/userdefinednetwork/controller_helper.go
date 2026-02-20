@@ -118,8 +118,21 @@ func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 	}
 	nadCopy := nad.DeepCopy()
 
-	if nadCopy == nil ||
-		!metav1.IsControlledBy(nadCopy, obj) ||
+	if nadCopy == nil {
+		// NAD not found in lister cache; verify it's truly gone from the API
+		// before treating as success. The lister cache may lag behind the API,
+		// especially right after the NAD was created.
+		_, apiErr := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Get(context.Background(), obj.GetName(), metav1.GetOptions{})
+		if apiErr == nil {
+			return fmt.Errorf("NetworkAttachmentDefinition %s/%s not found in cache but still exists in the API, retrying", namespace, obj.GetName())
+		}
+		if !apierrors.IsNotFound(apiErr) {
+			return fmt.Errorf("failed to get NetworkAttachmentDefinition %s/%s from API: %v", namespace, obj.GetName(), apiErr)
+		}
+		return nil
+	}
+
+	if !metav1.IsControlledBy(nadCopy, obj) ||
 		!controllerutil.ContainsFinalizer(nadCopy, template.FinalizerUserDefinedNetwork) {
 		return nil
 	}

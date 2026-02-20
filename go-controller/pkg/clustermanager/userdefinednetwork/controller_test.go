@@ -2084,6 +2084,52 @@ var _ = Describe("User Defined Network Controller", func() {
 			}).Should(BeTrue(), "NAD should be deleted when namespace is terminating")
 		})
 
+		It("when namespace is being deleted and NAD is not yet in lister cache, should not lose track of NAD", func() {
+			const cudnName = "test-network"
+			testNs := testNamespace("blue")
+			cudn := testClusterUDN(cudnName, testNs.Name)
+			expectedNAD := testClusterUdnNAD(cudnName, testNs.Name)
+			c := newTestController(renderNadStub(expectedNAD), cudn, testNs)
+
+			By("initial sync creates NAD and populates namespace tracker")
+			nads, err := c.syncClusterUDN(cudn)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(nads).To(HaveLen(1))
+			Expect(c.namespaceTracker).To(HaveKeyWithValue(cudnName, HaveKey("blue")))
+
+			By("wait for informer to process NAD creation event")
+			Eventually(func() error {
+				_, err := c.nadLister.NetworkAttachmentDefinitions(testNs.Name).Get(cudnName)
+				return err
+			}).Should(Succeed())
+
+			By("simulate lister cache lag by removing NAD from informer store")
+			nadStore := f.NADInformer().Informer().GetStore()
+			storedNADs := nadStore.List()
+			for _, obj := range storedNADs {
+				Expect(nadStore.Delete(obj)).To(Succeed())
+			}
+
+			By("verify NAD is absent from lister cache but still exists in the API")
+			_, err = c.nadLister.NetworkAttachmentDefinitions(testNs.Name).Get(cudnName)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudnName, metav1.GetOptions{})
+			Expect(err).ToNot(HaveOccurred())
+
+			By("mark namespace as terminating directly in the namespace informer store")
+			testNs.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+			nsStore := f.NamespaceInformer().Informer().GetStore()
+			Expect(nsStore.Update(testNs)).To(Succeed())
+
+			By("sync should return error because NAD is not in cache but exists in API")
+			_, err = c.syncClusterUDN(cudn)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("not found in cache but still exists in the API"))
+
+			By("namespace should still be tracked so it can be retried")
+			Expect(c.namespaceTracker).To(HaveKeyWithValue(cudnName, HaveKey("blue")))
+		})
+
 		It("when CR is deleted, CR has no finalizer, should succeed", func() {
 			deletedCUDN := testClusterUDN("test", "blue")
 			deletedCUDN.Finalizers = []string{}
