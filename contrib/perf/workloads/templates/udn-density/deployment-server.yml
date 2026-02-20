@@ -1,25 +1,26 @@
+---
 kind: Deployment
 apiVersion: apps/v1
 metadata:
-  name: client-{{.Replica}}
+  name: server-{{.Replica}}
 spec:
   replicas: {{.podReplicas}}
   selector:
     matchLabels:
-      name: client-{{.Replica}}
+      name: udn-density-{{.Replica}}
   template:
     metadata:
       labels:
-        name: client-{{.Replica}}
-        app: client
+        name: udn-density-{{.Replica}}
+        app: nginx
     spec:
       topologySpreadConstraints:
-      - maxSkew: 1
+      - maxSkew: 1 
         topologyKey: kubernetes.io/hostname
-        whenUnsatisfiable: ScheduleAnyway
-        labelSelector:
+        whenUnsatisfiable: ScheduleAnyway 
+        labelSelector: 
           matchLabels:
-            app: client
+            app: nginx
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -32,19 +33,21 @@ spec:
               - key: node-role.kubernetes.io/workload
                 operator: DoesNotExist
       containers:
-      - name: client-app
-        image: quay.io/cloud-bulldozer/curl:latest
-        command: ["sleep", "inf"]
+      - image: quay.io/cloud-bulldozer/nginx:latest
         resources:
           requests:
-            memory: "10Mi"
-            cpu: "10m"
-        imagePullPolicy: IfNotPresent
-        securityContext:
-          privileged: false
+            memory: "25Mi"
+            cpu: "25m"
         volumeMounts:
         - name: podinfo
           mountPath: /etc/podlabels
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        - containerPort: 8443
+          protocol: TCP
+        name: udn-density
       volumes:
       - name: podinfo
         downwardAPI:
@@ -52,6 +55,3 @@ spec:
             - path: "labels"
               fieldRef:
                 fieldPath: metadata.labels
-      restartPolicy: Always
-  strategy:
-    type: RollingUpdate
