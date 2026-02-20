@@ -160,7 +160,7 @@ require (
 require (
 	github.com/containernetworking/plugins v1.2.0
 	github.com/coreos/butane v0.18.0
-	github.com/docker/docker v26.1.5+incompatible
+	github.com/docker/docker v28.0.0+incompatible
 	github.com/google/goexpect v0.0.0-20210430020637-ab937bf7fd6f
 	github.com/onsi/ginkgo v1.16.5
 	github.com/openshift-kni/k8sreporter v1.0.6
