@@ -91,6 +91,7 @@ rules:
           - clusteruserdefinednetworks/finalizers
           - routeadvertisements/status
           - clusternetworkconnects # Unlike core kubernetes objects, for CRDs there is strict enforcement of status subresource permissions. Since CM has to annotate CNC we need to provide full object patch permissions.
+          - clusternetworkconnects/status
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:
