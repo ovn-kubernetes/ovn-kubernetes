@@ -3,6 +3,7 @@ package node
 import (
 	"fmt"
 	"net"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -251,6 +252,8 @@ func (na *NodeAllocator) HandleAddUpdateNodeEvent(node *corev1.Node) error {
 func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 	networkName := na.netInfo.GetNetworkName()
 
+	// Parse existing annotations
+	parseStart := time.Now()
 	networkID, err := util.ParseNetworkIDAnnotation(node, networkName)
 	if err != nil {
 		if !util.IsAnnotationNotSetError(err) {
@@ -271,14 +274,27 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 			klog.Warningf("Failed to get node %s host subnets annotations for network %s : %v", node.Name, networkName, err)
 		}
 
+		// Record annotation parsing time
+		if na.netInfo.IsUserDefinedNetwork() {
+			parseDuration := time.Since(parseStart)
+			metrics.RecordUDNNodeAllocOperationDuration(networkName, "parse_annotations", parseDuration.Seconds())
+		}
+
 		// On return validExistingSubnets will contain any valid subnets that
 		// were already assigned to the node. allocatedSubnets will contain
 		// any newly allocated subnets required to ensure that the node has one subnet
 		// from each enabled IP family.
 		ipv4Mode, ipv6Mode := na.netInfo.IPMode()
+		allocateStart := time.Now()
 		validExistingSubnets, allocatedSubnets, err = na.allocateNodeSubnets(na.clusterSubnetAllocator, node.Name, existingSubnets, ipv4Mode, ipv6Mode)
 		if err != nil {
 			return err
+		}
+
+		// Record subnet allocation time
+		if na.netInfo.IsUserDefinedNetwork() {
+			allocateDuration := time.Since(allocateStart)
+			metrics.RecordUDNNodeAllocOperationDuration(networkName, "allocate_subnets", allocateDuration.Seconds())
 		}
 
 		// If the existing subnets weren't OK, or new ones were allocated, update the node annotation.
@@ -292,6 +308,7 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 	}
 	newTunnelID := types.NoTunnelID
 	if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
+		tunnelIDStart := time.Now()
 		existingTunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, networkName)
 		if err != nil && !util.IsAnnotationNotSetError(err) {
 			return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %v",
@@ -309,6 +326,12 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 				return fmt.Errorf("failed to reserve node %s tunnel id for network %s: %w", node.Name, networkName, err)
 			}
 		}
+
+		// Record tunnel ID allocation time
+		if na.netInfo.IsUserDefinedNetwork() {
+			tunnelIDDuration := time.Since(tunnelIDStart)
+			metrics.RecordUDNNodeAllocOperationDuration(networkName, "allocate_tunnel_id", tunnelIDDuration.Seconds())
+		}
 	}
 
 	// only update node annotation with ID if it had it before (networkID is not NoNetworkID)
@@ -323,7 +346,15 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 
 	// Also update the node annotation if the networkID doesn't match
 	if len(updatedSubnetsMap) > 0 || networkID != types.NoNetworkID || newTunnelID != types.NoTunnelID {
+		updateStart := time.Now()
 		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, updatedSubnetsMap, networkID, newTunnelID)
+
+		// Record annotation update time
+		if na.netInfo.IsUserDefinedNetwork() {
+			updateDuration := time.Since(updateStart)
+			metrics.RecordUDNNodeAllocOperationDuration(networkName, "update_node_annotations", updateDuration.Seconds())
+		}
+
 		if err != nil {
 			if errR := na.clusterSubnetAllocator.ReleaseNetworks(node.Name, allocatedSubnets...); errR != nil {
 				klog.Warningf("Error releasing node %s subnets: %v", node.Name, errR)

@@ -133,6 +133,12 @@ type Controller struct {
 
 	networkInUseRequeueInterval time.Duration
 	eventRecorder               record.EventRecorder
+
+	// firstReconcileMetricsRecorded tracks UDNs that have already recorded their first-reconcile metrics
+	// (queue_wait and reconciliation_duration) to prevent duplicate observations on retries.
+	// Key is namespace/name of the UDN.
+	firstReconcileMetricsRecorded     map[string]struct{}
+	firstReconcileMetricsRecordedLock sync.Mutex
 }
 
 func New(
@@ -155,18 +161,19 @@ func New(
 	vidAllocator := id.NewIDAllocator("EVPN-VIDs", MaxEVPNVIDs)
 
 	c := &Controller{
-		nadClient:         nadClient,
-		nadLister:         nadInfomer.Lister(),
-		udnClient:         udnClient,
-		udnLister:         udnLister,
-		cudnLister:        cudnLister,
-		renderNadFn:       renderNadFn,
-		podInformer:       podInformer,
-		namespaceInformer: namespaceInformer,
-		networkManager:    networkManager,
-		namespaceTracker:  map[string]sets.Set[string]{},
-		vidAllocator:      vidAllocator,
-		eventRecorder:     eventRecorder,
+		nadClient:                     nadClient,
+		nadLister:                     nadInfomer.Lister(),
+		udnClient:                     udnClient,
+		udnLister:                     udnLister,
+		cudnLister:                    cudnLister,
+		renderNadFn:                   renderNadFn,
+		podInformer:                   podInformer,
+		namespaceInformer:             namespaceInformer,
+		networkManager:                networkManager,
+		namespaceTracker:              map[string]sets.Set[string]{},
+		vidAllocator:                  vidAllocator,
+		eventRecorder:                 eventRecorder,
+		firstReconcileMetricsRecorded: map[string]struct{}{},
 	}
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
@@ -580,6 +587,48 @@ func (c *Controller) UpdateSubsystemCondition(
 		c.eventRecorder.Event(udnRef, event.EventType, event.Reason, event.Note)
 	}
 
+	// Record network allocation duration when NetworkAllocationSucceeded becomes True for the first time
+	if condition != nil && condition.Type == "NetworkAllocationSucceeded" && condition.Status == metav1.ConditionTrue {
+		wasAlreadyTrue := meta.IsStatusConditionTrue(udn.Status.Conditions, "NetworkAllocationSucceeded")
+		if !wasAlreadyTrue {
+			allocationDuration := condition.LastTransitionTime.Time.Sub(udn.CreationTimestamp.Time)
+			metricName := util.GenerateUDNNetworkName(udnNamespace, udnName)
+
+			// Record workflow phase metric for network ready
+			// This is creation → NetworkAllocationSucceeded time (total time until network is ready)
+			// Guard against negative durations from clock skew
+			if allocationDuration > 0 {
+				metrics.RecordUDNWorkflowPhaseDuration(metricName, "network_ready", allocationDuration.Seconds())
+				klog.Infof("Recorded allocation duration for UDN %s: %v", metricName, allocationDuration)
+			} else {
+				klog.Warningf("Skipping network_ready metric for UDN %s: non-positive duration %v (likely clock skew)", metricName, allocationDuration)
+			}
+
+			// Calculate async node allocation time (excluding UDN controller synchronous work)
+			// async_node_allocation = NetworkCreated.LastTransitionTime → NetworkAllocationSucceeded.LastTransitionTime
+			// This represents the wall-clock time for network cluster controller async operations
+			// including controller init, per-node processing, and waiting for all nodes to complete
+			wasNetworkCreatedBefore := meta.IsStatusConditionTrue(udn.Status.Conditions, conditionTypeNetworkCreated)
+			if wasNetworkCreatedBefore {
+				// NetworkCreated was set during reconciliation, so we can calculate async work
+				// by finding when reconciliation completed (when NetworkCreated was set)
+				networkCreatedCondition := meta.FindStatusCondition(udn.Status.Conditions, conditionTypeNetworkCreated)
+				if networkCreatedCondition != nil {
+					// Async node allocation time = NetworkAllocationSucceeded - NetworkCreated
+					// This is the wall-clock time for network cluster controller to allocate network on all nodes
+					asyncNodeAllocationDuration := condition.LastTransitionTime.Time.Sub(networkCreatedCondition.LastTransitionTime.Time)
+					// Guard against negative durations from clock skew
+					if asyncNodeAllocationDuration > 0 {
+						metrics.RecordUDNWorkflowPhaseDuration(metricName, "async_node_allocation", asyncNodeAllocationDuration.Seconds())
+						klog.V(5).Infof("Recorded async node allocation duration for UDN %s: %v (NetworkCreated→NetworkAllocationSucceeded)", metricName, asyncNodeAllocationDuration)
+					} else {
+						klog.Warningf("Skipping async_node_allocation metric for UDN %s: non-positive duration %v (likely clock skew)", metricName, asyncNodeAllocationDuration)
+					}
+				}
+			}
+		}
+	}
+
 	if condition == nil {
 		return nil
 	}
@@ -630,7 +679,80 @@ func (c *Controller) reconcileUDN(key string) error {
 
 	udnCopy := udn.DeepCopy()
 
-	nadCopy, syncErr := c.syncUserDefinedNetwork(udnCopy)
+	// Declare syncErr before defer so defer closure can check reconciliation outcome
+	var syncErr error
+
+	// Guard against nil UDN (deleted before reconcile)
+	if udnCopy != nil {
+		// Check if NetworkCreated was already True before this reconcile
+		wasNetworkCreatedBefore := meta.IsStatusConditionTrue(udnCopy.Status.Conditions, conditionTypeNetworkCreated)
+
+		// Check if this is the first reconcile attempt (not a retry) by checking our tracking map
+		// This ensures queue_wait and reconciliation_duration metrics are recorded exactly once
+		c.firstReconcileMetricsRecordedLock.Lock()
+		_, alreadyRecorded := c.firstReconcileMetricsRecorded[key]
+		isFirstReconcile := !alreadyRecorded && !wasNetworkCreatedBefore
+		// Don't mark as recorded yet — defer will mark on successful reconciliation
+		c.firstReconcileMetricsRecordedLock.Unlock()
+
+		// Capture queue wait time for first reconciliation only (not retries)
+		// Recording is deferred until sync succeeds to avoid counting failed attempts
+		var queueWaitDuration time.Duration
+		if isFirstReconcile {
+			reconcileStartTime := time.Now()
+			queueWaitDuration = reconcileStartTime.Sub(udnCopy.CreationTimestamp.Time)
+		}
+		// Defer metric recording to measure total reconciliation time
+		// Only record on successful first reconciliation to avoid counting failed attempts
+		defer func() {
+			if isFirstReconcile && syncErr == nil {
+				// Mark as recorded now that reconciliation succeeded
+				c.firstReconcileMetricsRecordedLock.Lock()
+				c.firstReconcileMetricsRecorded[key] = struct{}{}
+				c.firstReconcileMetricsRecordedLock.Unlock()
+
+				metricName := util.GenerateUDNNetworkName(namespace, name)
+
+				// Record queue_wait only on successful reconciliation
+				// Skip queue_wait observation if duration exceeds reasonable bounds or is negative.
+				// After controller restarts, the in-memory tracking map is empty, causing
+				// inflated queue_wait times (creation → now instead of creation → first reconcile).
+				// Cap at 180s (3min) to prevent skewing statistics while still capturing genuine delays.
+				// Guard against negative durations from clock skew.
+				const maxReasonableQueueWait = 180 * time.Second
+				if queueWaitDuration > 0 && queueWaitDuration <= maxReasonableQueueWait {
+					metrics.RecordUDNWorkflowPhaseDuration(metricName, "queue_wait", queueWaitDuration.Seconds())
+					klog.Infof("UDN %s/%s spent %v in queue before reconciliation", namespace, name, queueWaitDuration)
+				} else if queueWaitDuration <= 0 {
+					klog.Warningf("Skipping queue_wait metric for UDN %s/%s: non-positive duration %v (likely clock skew)", namespace, name, queueWaitDuration)
+				} else {
+					klog.Warningf("UDN %s/%s queue wait duration %v exceeds reasonable bounds (%v), likely due to controller restart; skipping metric observation",
+						namespace, name, queueWaitDuration, maxReasonableQueueWait)
+				}
+
+				reconciliationDuration := time.Since(udnCopy.CreationTimestamp.Time)
+				// Cap reconciliation duration to prevent restart-inflation.
+				// After controller restarts, the in-memory tracking map is empty, causing
+				// inflated reconciliation times (creation → now instead of creation → first successful reconcile).
+				// Cap at 180s (3min) to prevent skewing statistics while still capturing genuine durations.
+				// Guard against negative durations from clock skew.
+				const maxReasonableReconciliationDuration = 180 * time.Second
+				if reconciliationDuration > 0 && reconciliationDuration <= maxReasonableReconciliationDuration {
+					metrics.RecordUDNReconciliationDuration(metricName, reconciliationDuration.Seconds())
+					klog.Infof("Recorded reconciliation duration for UDN %s: %v (includes queue wait + processing)",
+						metricName, reconciliationDuration)
+				} else if reconciliationDuration <= 0 {
+					klog.Warningf("Skipping reconciliation_duration metric for UDN %s: non-positive duration %v (likely clock skew)", metricName, reconciliationDuration)
+				} else {
+					klog.Warningf("UDN %s reconciliation duration %v exceeds reasonable bounds (%v), likely due to controller restart; skipping metric observation",
+						metricName, reconciliationDuration, maxReasonableReconciliationDuration)
+				}
+			}
+		}()
+	}
+
+	var nadCopy *netv1.NetworkAttachmentDefinition
+	nadCopy, syncErr = c.syncUserDefinedNetwork(udnCopy)
 
 	updateStatusErr := c.updateUserDefinedNetworkStatus(udnCopy, nadCopy, syncErr)
 
@@ -677,6 +799,15 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 			klog.Infof("Finalizer removed from UserDefinedNetworks [%s/%s]", udn.Namespace, udn.Name)
 			metrics.DecrementUDNCount(role, topology)
 			metrics.DeleteDynamicUDNNodeCount(util.GenerateUDNNetworkName(udn.Namespace, udn.Name))
+
+			// Clean up first-reconcile metrics tracking to prevent memory leak
+			c.firstReconcileMetricsRecordedLock.Lock()
+			delete(c.firstReconcileMetricsRecorded, udn.Namespace+"/"+udn.Name)
+			c.firstReconcileMetricsRecordedLock.Unlock()
+
+			// Clean up UDN metric time series to prevent cardinality explosion
+			networkName := util.GenerateUDNNetworkName(udn.Namespace, udn.Name)
+			metrics.CleanupUDNMetrics(networkName)
 		}
 
 		return nil, nil
@@ -854,6 +985,10 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			metrics.DecrementCUDNCount(role, topology)
 			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
 			c.releaseVIDForNetwork(cudnName)
+
+			// Clean up CUDN metric time series to prevent cardinality explosion
+			networkName := util.GenerateCUDNNetworkName(cudn.Name)
+			metrics.CleanupUDNMetrics(networkName)
 		}
 
 		return nil, nil

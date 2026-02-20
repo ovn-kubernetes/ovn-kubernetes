@@ -127,6 +127,30 @@ var metricUDNNodesRendered = prometheus.NewGaugeVec(
 	},
 )
 
+var metricUDNReconciliationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "udn_reconciliation_duration_seconds",
+	Help:      "Time to reconcile a UDN (includes NAD creation, allocation, status update)",
+	Buckets:   prometheus.ExponentialBuckets(.01, 2, 16), // 10ms to 327.68s, covers 180s cap with resolution
+}, []string{"name"})
+
+var metricUDNNodeAllocOperationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "udn_node_alloc_operation_duration_seconds",
+	Help:      "Time spent in per-node operations during UDN network allocation. Operations vary by topology: L3 networks record parse_annotations and allocate_subnets; L2 primary networks record allocate_tunnel_id; all networks record update_node_annotations.",
+	Buckets:   prometheus.ExponentialBuckets(.001, 2, 14), // 1ms to 8.192s
+}, []string{"name", "operation"})
+
+var metricUDNWorkflowPhaseDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "udn_workflow_phase_duration_seconds",
+	Help:      "Wall-clock duration of each UDN workflow phase (elapsed time, not cumulative work). Phases: network_ready (total time until ready), async_node_allocation, nad_sync, queue_wait.",
+	Buckets:   prometheus.ExponentialBuckets(.01, 2, 18),
+}, []string{"name", "phase"})
+
 // RegisterClusterManagerBase registers ovnkube cluster manager base metrics with the Prometheus registry.
 // This function should only be called once.
 func RegisterClusterManagerBase() {
@@ -169,6 +193,9 @@ func RegisterClusterManagerFunctional() {
 		}
 		prometheus.MustRegister(metricUDNCount)
 		prometheus.MustRegister(metricCUDNCount)
+		prometheus.MustRegister(metricUDNReconciliationDuration)
+		prometheus.MustRegister(metricUDNNodeAllocOperationDuration)
+		prometheus.MustRegister(metricUDNWorkflowPhaseDuration)
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			prometheus.MustRegister(metricUDNNodesRendered)
 		}
@@ -238,4 +265,31 @@ func SetDynamicUDNNodeCount(networkName string, nodeCount float64) {
 // DeleteDynamicUDNNodeCount when CUDN/UDN is deleted.
 func DeleteDynamicUDNNodeCount(networkName string) {
 	metricUDNNodesRendered.DeleteLabelValues(networkName)
+}
+
+// RecordUDNReconciliationDuration records the duration to reconcile a UDN
+func RecordUDNReconciliationDuration(name string, duration float64) {
+	metricUDNReconciliationDuration.WithLabelValues(name).Observe(duration)
+}
+
+// RecordUDNNodeAllocOperationDuration records duration of specific operations during node allocation
+func RecordUDNNodeAllocOperationDuration(name string, operation string, duration float64) {
+	metricUDNNodeAllocOperationDuration.WithLabelValues(name, operation).Observe(duration)
+}
+
+// RecordUDNWorkflowPhaseDuration records wall-clock duration of each UDN workflow phase
+func RecordUDNWorkflowPhaseDuration(name, phase string, duration float64) {
+	metricUDNWorkflowPhaseDuration.WithLabelValues(name, phase).Observe(duration)
+}
+
+// CleanupUDNMetrics removes all metric time series associated with a deleted UDN to prevent
+// unbounded cardinality growth. Should be called when a UDN or CUDN is fully deleted.
+func CleanupUDNMetrics(networkName string) {
+	// Single-label metric: delete by exact label value
+	metricUDNReconciliationDuration.DeleteLabelValues(networkName)
+
+	// Multi-label metrics: delete all series matching the network name
+	// DeletePartialMatch removes all time series where the "name" label matches
+	metricUDNNodeAllocOperationDuration.DeletePartialMatch(prometheus.Labels{"name": networkName})
+	metricUDNWorkflowPhaseDuration.DeletePartialMatch(prometheus.Labels{"name": networkName})
 }
