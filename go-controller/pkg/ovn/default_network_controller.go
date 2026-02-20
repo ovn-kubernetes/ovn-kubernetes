@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	anpcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	apbroutecontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	efcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressfirewall"
@@ -220,7 +221,6 @@ func newDefaultNetworkControllerCommon(
 			addressSetFactory:           addressSetFactory,
 			networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 			sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-			podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 			stopChan:                    defaultStopChan,
 			wg:                          defaultWg,
 			localZoneNodes:              &sync.Map{},
@@ -238,6 +238,9 @@ func newDefaultNetworkControllerCommon(
 		svcController:              svcController,
 		gatewayTopologyFactory:     topology.NewGatewayTopologyFactory(cnci.nbClient),
 	}
+	oc.addressSetManager = addresssetmanager.NewAddressSetManager(oc.watchFactory.PodCoreInformer(),
+		oc.watchFactory.NamespaceInformer(), oc.nbClient, oc.addressSetFactory,
+		oc.controllerName, oc.GetNetInfo(), oc.getNetworkNameForNADKeyFunc())
 	// Allocate IPs for logical router port "GwRouterToJoinSwitchPrefix + OVNClusterRouter". This should always
 	// allocate the first IPs in the join switch subnets.
 	gwLRPIfAddrs, err := oc.getOVNClusterRouterPortToJoinSwitchIfAddrs()
@@ -299,11 +302,6 @@ func (oc *DefaultNetworkController) newRetryFramework(
 func (oc *DefaultNetworkController) syncDb() error {
 	var err error
 	// sync shared resources
-	// pod selector address sets
-	err = oc.cleanupPodSelectorAddressSets()
-	if err != nil {
-		return fmt.Errorf("cleaning up stale pod selector address sets for network %v failed : %w", oc.GetNetworkName(), err)
-	}
 	// LRP syncer must only be run once and because default controller always runs, it can perform LRP updates.
 	lrpSyncer := logical_router_policy.NewLRPSyncer(oc.nbClient, oc.controllerName)
 	if err = lrpSyncer.Sync(); err != nil {
@@ -354,6 +352,9 @@ func (oc *DefaultNetworkController) Stop() {
 	}
 	if oc.networkConnectController != nil {
 		oc.networkConnectController.Stop()
+	}
+	if oc.addressSetManager != nil {
+		oc.addressSetManager.Stop()
 	}
 
 	close(oc.stopChan)
@@ -443,6 +444,10 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 	}
 
 	if err := WithSyncDurationMetric("pod", oc.WatchPods); err != nil {
+		return err
+	}
+
+	if err := WithSyncDurationMetric("pod IP address sets", oc.addressSetManager.Start); err != nil {
 		return err
 	}
 

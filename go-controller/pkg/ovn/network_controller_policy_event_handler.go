@@ -22,8 +22,7 @@ import (
 // and resource-specific extra parameters (used now for network-policy-dependant types).
 // newNetpolRetryFramework is also called directly by the watchers that are
 // dynamically created when a network policy is added:
-// AddressSetNamespaceAndPodSelectorType, AddressSetPodSelectorType, PeerNamespaceSelectorType,
-// LocalPodSelectorType,
+// PeerNamespaceSelectorType, LocalPodSelectorType
 func (bnc *BaseNetworkController) newNetpolRetryFramework(
 	objectType reflect.Type,
 	syncFunc func([]interface{}) error,
@@ -71,14 +70,12 @@ func (h *networkControllerPolicyEventHandler) FilterOutResource(_ interface{}) b
 func (h *networkControllerPolicyEventHandler) AreResourcesEqual(_, _ interface{}) (bool, error) {
 	// switch based on type
 	switch h.objType {
-	case factory.AddressSetPodSelectorType, //
-		factory.LocalPodSelectorType: //
+	case factory.LocalPodSelectorType: //
 		// For these types, there was no old vs new obj comparison in the original update code,
 		// so pretend they're always different so that the update code gets executed
 		return false, nil
 
-	case factory.PeerNamespaceSelectorType, //
-		factory.AddressSetNamespaceAndPodSelectorType: //
+	case factory.PeerNamespaceSelectorType: //
 		// For these types there is no update code, so pretend old and new
 		// objs are always equivalent and stop processing the update event.
 		return true, nil
@@ -106,12 +103,10 @@ func (h *networkControllerPolicyEventHandler) GetResourceFromInformerCache(key s
 	}
 
 	switch h.objType {
-	case factory.AddressSetPodSelectorType,
-		factory.LocalPodSelectorType:
+	case factory.LocalPodSelectorType:
 		obj, err = h.watchFactory.GetPod(namespace, name)
 
-	case factory.AddressSetNamespaceAndPodSelectorType,
-		factory.PeerNamespaceSelectorType:
+	case factory.PeerNamespaceSelectorType:
 		obj, err = h.watchFactory.GetNamespace(name)
 
 	default:
@@ -126,14 +121,6 @@ func (h *networkControllerPolicyEventHandler) GetResourceFromInformerCache(key s
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *networkControllerPolicyEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
-	case factory.AddressSetPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handlePodAddUpdate(peerAS, obj)
-
-	case factory.AddressSetNamespaceAndPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handleNamespaceAddUpdate(peerAS, obj)
-
 	case factory.PeerNamespaceSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
 		return h.bnc.handlePeerNamespaceSelectorAdd(extraParameters.np, extraParameters.gp, obj)
@@ -151,8 +138,7 @@ func (h *networkControllerPolicyEventHandler) AddResource(obj interface{}, _ boo
 
 func hasPolicyResourceAnUpdateFunc(objType reflect.Type) bool {
 	switch objType {
-	case factory.AddressSetPodSelectorType,
-		factory.LocalPodSelectorType:
+	case factory.LocalPodSelectorType:
 		return true
 	}
 	return false
@@ -164,10 +150,6 @@ func hasPolicyResourceAnUpdateFunc(objType reflect.Type) bool {
 // is in the retryCache or not.
 func (h *networkControllerPolicyEventHandler) UpdateResource(_, newObj interface{}, _ bool) error {
 	switch h.objType {
-	case factory.AddressSetPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handlePodAddUpdate(peerAS, newObj)
-
 	case factory.LocalPodSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
 		return h.bnc.handleLocalPodSelectorAddFunc(
@@ -182,14 +164,6 @@ func (h *networkControllerPolicyEventHandler) UpdateResource(_, newObj interface
 // used for now for pods and network policies.
 func (h *networkControllerPolicyEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
-	case factory.AddressSetPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handlePodDelete(peerAS, obj)
-
-	case factory.AddressSetNamespaceAndPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handleNamespaceDel(peerAS, obj)
-
 	case factory.PeerNamespaceSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
 		return h.bnc.handlePeerNamespaceSelectorDel(extraParameters.np, extraParameters.gp, obj)
@@ -214,8 +188,6 @@ func (h *networkControllerPolicyEventHandler) SyncFunc(objs []interface{}) error
 	} else {
 		switch h.objType {
 		case factory.LocalPodSelectorType,
-			factory.AddressSetNamespaceAndPodSelectorType,
-			factory.AddressSetPodSelectorType,
 			factory.PeerNamespaceSelectorType:
 			syncFunc = nil
 
@@ -233,8 +205,7 @@ func (h *networkControllerPolicyEventHandler) SyncFunc(objs []interface{}) error
 // This is used now for pods that are either in a PodSucceeded or in a PodFailed state.
 func (h *networkControllerPolicyEventHandler) IsObjectInTerminalState(obj interface{}) bool {
 	switch h.objType {
-	case factory.AddressSetPodSelectorType,
-		factory.LocalPodSelectorType:
+	case factory.LocalPodSelectorType:
 		pod := obj.(*corev1.Pod)
 		return util.PodCompleted(pod)
 

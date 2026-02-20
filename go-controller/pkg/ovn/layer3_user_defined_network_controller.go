@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
@@ -367,7 +368,6 @@ func NewLayer3UserDefinedNetworkController(
 				addressSetFactory:           addressSetFactory,
 				networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 				sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-				podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 				stopChan:                    stopChan,
 				wg:                          &sync.WaitGroup{},
 				localZoneNodes:              &sync.Map{},
@@ -385,6 +385,9 @@ func NewLayer3UserDefinedNetworkController(
 		gatewayManagers:             sync.Map{},
 		eIPController:               eIPController,
 	}
+	oc.addressSetManager = addresssetmanager.NewAddressSetManager(oc.watchFactory.PodCoreInformer(),
+		oc.watchFactory.NamespaceInformer(), oc.nbClient, oc.addressSetFactory,
+		oc.controllerName, oc.GetNetInfo(), oc.getNetworkNameForNADKeyFunc())
 	if oc.IsPrimaryNetwork() && oc.eIPController != nil {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
 			oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
@@ -511,6 +514,9 @@ func (oc *Layer3UserDefinedNetworkController) Stop() {
 	if oc.routeImportManager != nil {
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
 	}
+	if oc.addressSetManager != nil {
+		oc.addressSetManager.Stop()
+	}
 }
 
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
@@ -630,6 +636,10 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 	}
 
 	if err := oc.WatchPods(); err != nil {
+		return err
+	}
+
+	if err := oc.addressSetManager.Start(); err != nil {
 		return err
 	}
 

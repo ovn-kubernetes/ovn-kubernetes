@@ -461,7 +461,7 @@ func newMultiHomedKubevirtPod(vmName string, liveMigrationInfo liveMigrationPodI
 }
 
 func newMultiHomedPod(testPod testPod, multiHomingConfigs ...userDefinedNetInfo) *corev1.Pod {
-	pod := newPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
+	pod := testing.NewPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
 	var secondaryNetworks []nadapi.NetworkSelectionElement
 	if len(pod.Annotations) == 0 {
 		pod.Annotations = map[string]string{}

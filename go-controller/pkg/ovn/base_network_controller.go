@@ -38,6 +38,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	nqoscontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
@@ -152,7 +153,7 @@ type BaseNetworkController struct {
 	// make sure to keep this order to avoid deadlocks
 	sharedNetpolPortGroups *syncmap.SyncMap[*defaultDenyPortGroups]
 
-	podSelectorAddressSets *syncmap.SyncMap[*PodSelectorAddressSet]
+	addressSetManager *addresssetmanager.AddressSetManager
 
 	// stopChan per controller
 	stopChan chan struct{}

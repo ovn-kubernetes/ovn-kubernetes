@@ -301,7 +301,7 @@ func createTestPods(nodeName, namespace string, useIPv4, useIPv6 bool) (pods []c
 		tPodIPs = append(tPodIPs, nPodTestV6.podIP)
 	}
 	for _, tPod := range tPods {
-		pods = append(pods, *newPod(tPod.namespace, tPod.podName, tPod.nodeName, tPod.podIP))
+		pods = append(pods, *ovntest.NewPod(tPod.namespace, tPod.podName, tPod.nodeName, tPod.podIP))
 	}
 	return
 }
@@ -467,7 +467,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				nsData := getMulticastPolicyExpectedData(netInfo, namespaceName1, nil)
 				initialData = append(initialData, nsData...)
 				// namespace is still present, but multicast support is disabled
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: initialData},
 					&corev1.NamespaceList{
 						Items: []corev1.Namespace{
@@ -511,7 +511,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				clusterRtrPortGroup := newNetworkRouterPortGroup(netInfo)
 				expectedData := getMulticastExpectedData(netInfo, clusterPortGroup, clusterRtrPortGroup)
 				// namespace exists, but multicast acls do not
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1.Annotations[util.NsMulticastAnnotation] = "true"
 
 				objs := []runtime.Object{&corev1.NamespaceList{
@@ -557,7 +557,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				clusterRtrPortGroup := newNetworkRouterPortGroup(netInfo)
 				expectedData := getMulticastExpectedData(netInfo, clusterPortGroup, clusterRtrPortGroup)
 				expectedData = append(expectedData, getMulticastPolicyStaleData(netInfo, namespaceName1, nil)...)
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1.Annotations[util.NsMulticastAnnotation] = "true"
 
 				objs := []runtime.Object{&corev1.NamespaceList{
@@ -604,7 +604,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				clusterRtrPortGroup := newNetworkRouterPortGroup(netInfo)
 				defaultMulticastData := getMulticastExpectedData(netInfo, clusterPortGroup, clusterRtrPortGroup)
 				namespaceMulticastData := getMulticastPolicyExpectedData(netInfo, namespaceName1, nil)
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 
 				objs := []runtime.Object{&corev1.NamespaceList{
 					Items: []corev1.Namespace{
@@ -648,7 +648,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				config.IPv6Mode = useIPv6
 
 				netInfo := getNetInfoFromNAD(nad)
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 
 				objs := []runtime.Object{&corev1.NamespaceList{
 					Items: []corev1.Namespace{
@@ -709,7 +709,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 
 				netInfo := getNetInfoFromNAD(nad)
 				node := newNodeWithNad(nad, networkName, networkID)
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				if nad != nil {
 					namespace1 = *newUDNNamespace(namespaceName1)
 				}
@@ -786,9 +786,9 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				config.IPv6Mode = useIPv6
 
 				netInfo := getNetInfoFromNAD(nad)
-				namespace1 := *newNamespace(longnamespaceName1Name)
+				namespace1 := *ovntest.NewNamespace(longnamespaceName1Name)
 				longNameSpace2Name := "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijl" // create with 63 characters
-				namespace2 := *newNamespace(longNameSpace2Name)
+				namespace2 := *ovntest.NewNamespace(longNameSpace2Name)
 				node := newNodeWithNad(nad, networkName, networkID)
 
 				objs := []runtime.Object{
@@ -872,7 +872,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				config.IPv6Mode = useIPv6
 
 				netInfo := getNetInfoFromNAD(nad)
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				if nad != nil {
 					namespace1 = *newUDNNamespace(namespaceName1)
 				}
@@ -929,7 +929,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				// Create pods
 				for _, tPod := range tPods {
 					tPod.populateControllerLogicalSwitchCache(bnc)
-					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(tPod.namespace).Create(context.TODO(), newPod(
+					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(tPod.namespace).Create(context.TODO(), ovntest.NewPod(
 						tPod.namespace, tPod.podName, tPod.nodeName, tPod.podIP), metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
 				}
