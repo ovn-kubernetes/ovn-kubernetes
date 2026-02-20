@@ -93,11 +93,8 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
 				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				nad := generateNAD(netConfig, f.ClientSet)
+				_, err := createNADAndWaitForNetworkReady(nadClient, nad)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("creating client/server pods")
@@ -239,11 +236,8 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					netConfig.namespace = namespace
 					netConfig.name = netConfName
 
-					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
-						context.Background(),
-						generateNAD(netConfig, f.ClientSet),
-						metav1.CreateOptions{},
-					)
+					generatedNAD := generateNAD(netConfig, f.ClientSet)
+					_, err := createNADAndWaitForNetworkReady(nadClient, generatedNAD)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				}
 
@@ -341,11 +335,8 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					netConfig.namespace = namespace
 					netConfig.name = netConfName
 
-					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
-						context.Background(),
-						generateNAD(netConfig, f.ClientSet),
-						metav1.CreateOptions{},
-					)
+					generatedNAD := generateNAD(netConfig, f.ClientSet)
+					_, err := createNADAndWaitForNetworkReady(nadClient, generatedNAD)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				}
 				gomega.Eventually(func() v1.PodPhase {
