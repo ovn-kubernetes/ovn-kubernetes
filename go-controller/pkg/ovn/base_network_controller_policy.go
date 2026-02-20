@@ -35,7 +35,10 @@ const (
 	// netpolDefaultDenyACLType is used to distinguish default deny and arp allow acls create for the same port group
 	defaultDenyACL netpolDefaultDenyACLType = "defaultDeny"
 	arpAllowACL    netpolDefaultDenyACLType = "arpAllow"
+	icmpAllowACL   netpolDefaultDenyACLType = "icmpAllow"
 
+	// icmpAllowPolicyMatch is the match used when creating default allow ICMP and ICMPv6 ACLs for a namespace
+	icmpAllowPolicyMatch = "(icmp || icmp6)"
 	// arpAllowPolicyMatch is the match used when creating default allow ARP ACLs for a namespace
 	arpAllowPolicyMatch   = "(arp || nd)"
 	allowHairpinningACLID = "allow-hairpinning"
@@ -383,16 +386,22 @@ func (bnc *BaseNetworkController) defaultDenyPortGroupName(namespace string, acl
 }
 
 func (bnc *BaseNetworkController) buildDenyACLs(namespace, pgName string, aclLogging *libovsdbutil.ACLLoggingLevels,
-	aclDir libovsdbutil.ACLDirection) (denyACL, allowACL *nbdb.ACL) {
+	aclDir libovsdbutil.ACLDirection) []*nbdb.ACL {
 	denyMatch := libovsdbutil.GetACLMatch(pgName, "", aclDir)
-	allowMatch := libovsdbutil.GetACLMatch(pgName, arpAllowPolicyMatch, aclDir)
+	allowARPMatch := libovsdbutil.GetACLMatch(pgName, arpAllowPolicyMatch, aclDir)
 	aclPipeline := libovsdbutil.ACLDirectionToACLPipeline(aclDir)
 
-	denyACL = libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, defaultDenyACL),
-		types.DefaultDenyPriority, denyMatch, nbdb.ACLActionDrop, aclLogging, aclPipeline)
-	allowACL = libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, arpAllowACL),
-		types.DefaultAllowPriority, allowMatch, nbdb.ACLActionAllow, nil, aclPipeline)
-	return
+	acls := make([]*nbdb.ACL, 0, 3)
+	acls = append(acls, libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, defaultDenyACL),
+		types.DefaultDenyPriority, denyMatch, nbdb.ACLActionDrop, aclLogging, aclPipeline))
+	acls = append(acls, libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, arpAllowACL),
+		types.DefaultAllowPriority, allowARPMatch, nbdb.ACLActionAllow, nil, aclPipeline))
+	if config.OVNKubernetesFeature.AllowICMPNetworkPolicy {
+		allowICMPMatch := libovsdbutil.GetACLMatch(pgName, icmpAllowPolicyMatch, aclDir)
+		acls = append(acls, libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, icmpAllowACL),
+			types.DefaultAllowPriority, allowICMPMatch, nbdb.ACLActionAllow, nil, aclPipeline))
+	}
+	return acls
 }
 
 func (bnc *BaseNetworkController) addPolicyToDefaultPortGroups(np *networkPolicy, aclLogging *libovsdbutil.ACLLoggingLevels) error {
@@ -439,17 +448,18 @@ func (bnc *BaseNetworkController) delPolicyFromDefaultPortGroups(np *networkPoli
 func (bnc *BaseNetworkController) createDefaultDenyPGAndACLs(namespace, policy string, aclLogging *libovsdbutil.ACLLoggingLevels) error {
 	ingressPGIDs := bnc.getDefaultDenyPolicyPortGroupIDs(namespace, libovsdbutil.ACLIngress)
 	ingressPGName := libovsdbutil.GetPortGroupName(ingressPGIDs)
-	ingressDenyACL, ingressAllowACL := bnc.buildDenyACLs(namespace, ingressPGName, aclLogging, libovsdbutil.ACLIngress)
+	ingressACLs := bnc.buildDenyACLs(namespace, ingressPGName, aclLogging, libovsdbutil.ACLIngress)
 	egressPGIDs := bnc.getDefaultDenyPolicyPortGroupIDs(namespace, libovsdbutil.ACLEgress)
 	egressPGName := libovsdbutil.GetPortGroupName(egressPGIDs)
-	egressDenyACL, egressAllowACL := bnc.buildDenyACLs(namespace, egressPGName, aclLogging, libovsdbutil.ACLEgress)
-	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, bnc.GetSamplingConfig(), ingressDenyACL, ingressAllowACL, egressDenyACL, egressAllowACL)
+	egressACLs := bnc.buildDenyACLs(namespace, egressPGName, aclLogging, libovsdbutil.ACLEgress)
+	allACLs := append(ingressACLs, egressACLs...)
+	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, bnc.GetSamplingConfig(), allACLs...)
 	if err != nil {
 		return err
 	}
 
-	ingressPG := libovsdbutil.BuildPortGroup(ingressPGIDs, nil, []*nbdb.ACL{ingressDenyACL, ingressAllowACL})
-	egressPG := libovsdbutil.BuildPortGroup(egressPGIDs, nil, []*nbdb.ACL{egressDenyACL, egressAllowACL})
+	ingressPG := libovsdbutil.BuildPortGroup(ingressPGIDs, nil, ingressACLs)
+	egressPG := libovsdbutil.BuildPortGroup(egressPGIDs, nil, egressACLs)
 	ops, err = libovsdbops.CreateOrUpdatePortGroupsOps(bnc.nbClient, ops, ingressPG, egressPG)
 	if err != nil {
 		return err

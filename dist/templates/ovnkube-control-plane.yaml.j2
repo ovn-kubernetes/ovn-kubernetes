@@ -201,6 +201,8 @@ spec:
           value: "{{ ovn_network_qos_enable }}"
         - name: OVN_ENABLE_DNSNAMERESOLVER
           value: "{{ ovn_enable_dnsnameresolver }}"
+        - name: OVN_ALLOW_ICMP_NETPOL
+          value: "{{ ovn_allow_icmp_netpol }}"
       # end of container
 
       volumes:

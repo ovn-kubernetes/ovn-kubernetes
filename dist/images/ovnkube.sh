@@ -98,6 +98,7 @@ fi
 # OVN_NORTHD_BACKOFF_INTERVAL - ovn northd backoff interval in ms (default 300)
 # OVN_ENABLE_SVC_TEMPLATE_SUPPORT - enable svc template support
 # OVN_ENABLE_DNSNAMERESOLVER - enable dns name resolver support
+# OVN_ALLOW_ICMP_NETPOL - allow ICMP and ICMPv6 regardless of network policy
 # OVN_OBSERV_ENABLE - enable observability for ovnkube
 
 # The argument to the command is the operation to be performed
@@ -328,6 +329,8 @@ ovn_enable_svc_template_support=${OVN_ENABLE_SVC_TEMPLATE_SUPPORT:-true}
 ovn_network_qos_enable=${OVN_NETWORK_QOS_ENABLE:-false}
 # OVN_ENABLE_DNSNAMERESOLVER - enable dns name resolver support
 ovn_enable_dnsnameresolver=${OVN_ENABLE_DNSNAMERESOLVER:-false}
+# OVN_ALLOW_ICMP_NETPOL - allow ICMP/ICMPv6 with network policy
+ovn_allow_icmp_netpol=${OVN_ALLOW_ICMP_NETPOL:-false}
 # OVN_OBSERV_ENABLE - enable observability for ovnkube
 ovn_observ_enable=${OVN_OBSERV_ENABLE:-false}
 # OVN_NOHOSTSUBNET_LABEL - node label indicating nodes managing their own network
@@ -1501,6 +1504,12 @@ ovn-master() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  ovn_allow_icmp_netpol_flag=
+  if [[ ${ovn_allow_icmp_netpol} == "true" ]]; then
+	  ovn_allow_icmp_netpol_flag="--allow-icmp-network-policy"
+  fi
+  echo "ovn_allow_icmp_netpol_flag=${ovn_allow_icmp_netpol_flag}"
+
   /usr/bin/ovnkube --init-master ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
@@ -1537,6 +1546,7 @@ ovn-master() {
     ${persistent_ips_enabled_flag} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
+    ${ovn_allow_icmp_netpol_flag} \
     ${nohostsubnet_label_option} \
     ${ovn_stateless_netpol_enable_flag} \
     ${ovn_disable_requestedchassis_flag} \
@@ -1844,6 +1854,12 @@ ovnkube-controller() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  ovn_allow_icmp_netpol_flag=
+  if [[ ${ovn_allow_icmp_netpol} == "true" ]]; then
+	  ovn_allow_icmp_netpol_flag="--allow-icmp-network-policy"
+  fi
+  echo "ovn_allow_icmp_netpol_flag=${ovn_allow_icmp_netpol_flag}"
+
   ovn_observ_enable_flag=
   if [[ ${ovn_observ_enable} == "true" ]]; then
     ovn_observ_enable_flag="--enable-observability"
@@ -1898,6 +1914,7 @@ ovnkube-controller() {
     ${ovn_enable_dnsnameresolver_flag} \
     ${dynamic_udn_allocation_flag} \
     ${dynamic_udn_grace_period} \
+    ${ovn_allow_icmp_netpol_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
     --host-network-namespace ${ovn_host_network_namespace} \
@@ -2334,6 +2351,12 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  ovn_allow_icmp_netpol_flag=
+  if [[ ${ovn_allow_icmp_netpol} == "true" ]]; then
+	  ovn_allow_icmp_netpol_flag="--allow-icmp-network-policy"
+  fi
+  echo "ovn_allow_icmp_netpol_flag=${ovn_allow_icmp_netpol_flag}"
+
   ovn_observ_enable_flag=
   if [[ ${ovn_observ_enable} == "true" ]]; then
     ovn_observ_enable_flag="--enable-observability"
@@ -2432,7 +2455,7 @@ ovnkube-controller-with-node() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
-    ${cluster_access_opts} \
+    ${ovn_allow_icmp_netpol_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
@@ -2664,6 +2687,12 @@ ovn-cluster-manager() {
   fi
   echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
 
+  ovn_allow_icmp_netpol_flag=
+  if [[ ${ovn_allow_icmp_netpol} == "true" ]]; then
+	  ovn_allow_icmp_netpol_flag="--allow-icmp-network-policy"
+  fi
+  echo "ovn_allow_icmp_netpol_flag=${ovn_allow_icmp_netpol_flag}"
+
   echo "=============== ovn-cluster-manager ========== MASTER ONLY"
   /usr/bin/ovnkube --init-cluster-manager ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2698,6 +2727,7 @@ ovn-cluster-manager() {
     ${dynamic_udn_allocation_flag} \
     ${dynamic_udn_grace_period} \
     ${ovn_enable_dnsnameresolver_flag} \
+    ${ovn_allow_icmp_netpol_flag} \
     --gateway-mode=${ovn_gateway_mode} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --host-network-namespace ${ovn_host_network_namespace} \

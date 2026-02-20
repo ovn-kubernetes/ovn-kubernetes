@@ -419,6 +419,8 @@ spec:
           value: "local"
         - name: OVN_ENABLE_DNSNAMERESOLVER
           value: "{{ ovn_enable_dnsnameresolver }}"
+        - name: OVN_ALLOW_ICMP_NETPOL
+          value: "{{ ovn_allow_icmp_netpol }}"
         - name: OVN_OBSERV_ENABLE
           value: "{{ ovn_observ_enable }}"
       # end of container
