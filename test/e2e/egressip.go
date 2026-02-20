@@ -807,14 +807,6 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		// configure and add additional network to worker containers for EIP multi NIC feature
 		secondaryProviderNetwork, err := providerCtx.CreateNetwork(secondaryNetworkName, secondarySubnet)
 		framework.ExpectNoError(err, "creation of network %q with subnet %s must succeed", secondaryNetworkName, secondarySubnet)
-		// this is only required for KinD infra provider
-		if isIPv6TestRun && infraprovider.Get().Name() == "kind" {
-			// HACK: ensure bridges don't talk to each other. For IPv6, docker support for isolated networks is experimental.
-			// Remove when it is no longer experimental. See func description for full details.
-			if err := isolateKinDIPv6Networks(primaryProviderNetwork.Name(), secondaryProviderNetwork.Name()); err != nil {
-				framework.Failf("failed to isolate IPv6 networks: %v", err)
-			}
-		}
 		nodes, err = f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 		framework.ExpectNoError(err, "must list all Nodes")
 		for _, node := range nodes.Items {
