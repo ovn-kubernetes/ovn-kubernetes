@@ -2399,6 +2399,14 @@ ip a add %[4]s/24 dev %[2]s
 				netConfig.namespace = f.Namespace.Name
 				netConfig.name = testNadName
 
+				if netConfig.topology == "localnet" {
+					By("setting up the localnet underlay")
+					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						LogicalNetworkName: netConfig.networkName,
+						VlanID:             netConfig.vlanID,
+					})).To(Succeed())
+				}
+
 				By("creating the secondary network attachment definition")
 				_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
 					context.Background(),
@@ -2702,6 +2710,15 @@ ip a add %[4]s/24 dev %[2]s
 					name:     testNadName,
 					topology: "layer3",
 					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+					role:     "secondary",
+				},
+			),
+			Entry("Localnet secondary NAD",
+				networkAttachmentConfigParams{
+					name:     testNadName,
+					topology: "localnet",
+					cidr:     secondaryLocalnetNetworkCIDR,
+					vlanID:   localnetVLANID,
 					role:     "secondary",
 				},
 			),
