@@ -184,6 +184,13 @@ jobs:
           sudo ip6tables -t nat -L POSTROUTING -v
         fi
 
+    - name: Install VRF kernel module
+      run: |
+        set -x
+        sudo apt update
+        sudo apt-get install linux-modules-extra-$(uname -r) -y
+        sudo modprobe vrf
+
     - name: Free up disk space
       uses: ./.github/actions/free-disk-space
 
