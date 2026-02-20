@@ -1744,10 +1744,6 @@ func getPodNADToNetworkMappingWithPredicate(
 
 		// for multiple NetworkSelectionElements of the same NAD, set its nadName to indexed nadName
 		cnt := nNADs[nadName]
-		if cnt > 0 && nInfo.TopologyType() == types.LocalnetTopology {
-			return false, nil, fmt.Errorf("pod %s/%s cannot have same networkSelectionElement %s of type %s multiple times",
-				pod.Namespace, pod.Name, nadName, types.LocalnetTopology)
-		}
 		nNADs[nadName] = cnt + 1
 		networkSelections[GetIndexedNADKey(nadName, cnt)] = network
 	}
