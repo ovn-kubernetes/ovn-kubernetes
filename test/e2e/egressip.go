@@ -2160,35 +2160,24 @@ spec:
 		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "failed to get providers primary network")
 		externalContainerPrimary := infraapi.ExternalContainer{Name: "external-container-for-egressip-mtu-test", Image: images.AgnHost(),
-			Network: providerPrimaryNetwork, CmdArgs: []string{"pause"}, ExtPort: externalContainerPrimaryPort}
+			Network: providerPrimaryNetwork, RuntimeArgs: []string{"--sysctl", "net.ipv4.ip_no_pmtu_disc=2"},
+			CmdArgs: []string{"netexec", httpPort, udpPort}, ExtPort: externalContainerPrimaryPort}
 		externalContainerPrimary, err = providerCtx.CreateExternalContainer(externalContainerPrimary)
 		framework.ExpectNoError(err, "failed to create external container: %s", externalContainerPrimary.String())
 
-		// First disable PMTUD
-		_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainerPrimary, []string{"sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=2"})
-		framework.ExpectNoError(err, "disabling PMTUD in the external kind container failed: %v", err)
-		providerCtx.AddCleanUpFn(func() error {
-			_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainerPrimary, []string{"sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=0"})
-			return err
-		})
-
-		go func() {
-			_, _ = infraprovider.Get().ExecExternalContainerCommand(externalContainerPrimary, []string{"/agnhost", "netexec", httpPort, udpPort})
-		}()
-
 		ginkgo.By("Checking connectivity to the external kind container and verify that the source IP is the egress IP")
 		var curlErr error
-		_ = wait.PollUntilContextTimeout(
+		err = wait.PollUntilContextTimeout(
 			context.Background(),
 			retryInterval,
 			retryTimeout,
 			true,
 			func(ctx context.Context) (bool, error) {
-				curlErr := curlAgnHostClientIPFromPod(podNamespace.Name, pod1Name, egressIP1.String(), externalContainerPrimary.GetIPv4(), externalContainerPrimary.GetPortStr())
+				curlErr = curlAgnHostClientIPFromPod(podNamespace.Name, pod1Name, egressIP1.String(), externalContainerPrimary.GetIPv4(), externalContainerPrimary.GetPortStr())
 				return curlErr == nil, nil
 			},
 		)
-		framework.ExpectNoError(curlErr, "connectivity check to the external kind container failed: %v", curlErr)
+		framework.ExpectNoError(err, "connectivity check to the external kind container failed: %v", curlErr)
 
 		// We will ask the server to reply with a UDP packet bigger than the pod
 		// network MTU. Since PMTUD has been disabled on the server, the reply
