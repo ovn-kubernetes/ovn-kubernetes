@@ -7,3 +7,17 @@ logFileMaxSize: 100
 logFileMaxBackups: 5
 logFileMaxAge: 5
 libovsdbClientLogFile: ""
+
+# The netdevice or deviceplugin resourcename that specifies pool of devices
+# that can be used for management ports has to be specified.
+# mgmtPortVFResourceName will override nodeMgmtPortNetdev if both are specified
+
+# The net device to be used for management port
+nodeMgmtPortNetdev: ""
+
+# The device plugin resource name that has allocated interfaces to be used for management ports
+mgmtPortVFResourceName: ""
+
+# If using UDNs, the number of VFs required to handle management ports, which depends on
+# the number of primary UDNs required should be specified.
+mgmtPortVFsCount: 1

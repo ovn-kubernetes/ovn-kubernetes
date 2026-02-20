@@ -300,6 +300,13 @@ spec:
           requests:
             cpu: 100m
             memory: 300Mi
+            {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
+            {{ .Values.mgmtPortVFResourceName }}: {{ .Values.mgmtPortVFsCount }}
+            {{- end }}
+          {{- if and (.Values.global.enableNetworkSegmentation) (.Values.mgmtPortVFResourceName) (.Values.mgmtPortVFsCount) }}
+          limits:
+            {{ .Values.mgmtPortVFResourceName }}: {{ .Values.mgmtPortVFsCount }}
+          {{- end }}
         env:
         {{ if .Values.global.enableCoredumps -}}
         - name: GOTRACEBACK
@@ -448,7 +455,9 @@ spec:
         - name: OVN_NO_OVERLAY_ENABLE
           value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
-          value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
+          value: {{ default "" .Values.nodeMgmtPortNetdev | quote }}
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: {{ default "" .Values.mgmtPortVFResourceName | quote }}
         - name: OVN_EMPTY_LB_EVENTS
           value: {{ default "" .Values.global.emptyLbEvents | quote }}
         - name: OVN_ACL_LOGGING_RATE_LIMIT
