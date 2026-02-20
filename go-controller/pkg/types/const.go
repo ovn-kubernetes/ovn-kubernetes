@@ -97,6 +97,14 @@ const (
 	PrimaryUDNAllowPriority = 1001
 	// Default deny acl rule priority
 	PrimaryUDNDenyPriority = 1000
+	// Priority for allowing service traffic to pass through before the drop ACL
+	// for network connect partial service connectivity
+	NetworkConnectAllowServiceTrafficPriority = 500
+	// Priority for allowing same-network traffic to pass through before the drop ACL
+	// This prevents the drop ACL from blocking intra-network communication
+	NetworkConnectAllowSameNetworkPriority = 475
+	// Priority for dropping pod-to-pod traffic between connected networks
+	NetworkConnectDropPodTrafficPriority = 450
 
 	// ACL Tiers
 	// Tier 0 is called Primary as it is evaluated before any other feature-related Tiers.
@@ -211,6 +219,11 @@ const (
 	ClusterLBGroupName       = "clusterLBGroup"
 	ClusterSwitchLBGroupName = "clusterSwitchLBGroup"
 	ClusterRouterLBGroupName = "clusterRouterLBGroup"
+
+	// NetworkConnectServiceLBGroupPrefix is the prefix for per-CNC LoadBalancerGroups
+	// used for cross-network service connectivity. Each CNC gets its own LBG
+	// so that overlapping CNCs don't interfere with each other's cleanup.
+	NetworkConnectServiceLBGroupPrefix = "cnc_svc_"
 
 	// key for network name external-id
 	NetworkExternalID = OvnK8sPrefix + "/" + "network"
