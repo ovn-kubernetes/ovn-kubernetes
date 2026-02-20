@@ -7,6 +7,7 @@ specific OVS flows are matched. To see the generated samples, a binary called `o
 This binary allows printing the samples to stdout or writing them to a file.
 
 Currently, supports observability for:
+
 - Network Policy
 - (Baseline) Admin Network Policy
 - Egress firewall
@@ -37,27 +38,43 @@ insights of what ovn-kubernetes is doing with a packet and why.
 
 To enable this feature, use `--observability` flag with `kind.sh` script or `--enable-observability` flag with `ovnkube` binary.
 
-To see the samples, use `ovnkube-observ` binary, use `-h` to see allowed flags.
+To see the samples, use `ovnkube-observ` binary, with `-h` to see allowed flags. `ovnkube-observ` is installed on the ovnkube pods. For example:
+
+```
+kubectl -n ovn-kubernetes exec -it <ovnkube pod> -c ovnkube-controller -- ovnkube-observ -h
+Usage of ovnkube-observ:
+  -add-ovs-collector
+    	Add ovs collector to enable sampling. Use with caution. Make sure no one else is using observability.
+  -enable-enrichment
+    	Enrich samples with nbdb data. (default true)
+  -filter-dst-ip string
+    	Filter in only packets to a given destination ip.
+  -filter-src-ip string
+    	Filter in only packets from a given source ip.
+  -log-cookie
+    	Print raw sample cookie with psample group_id.
+  -output-file string
+    	Output file to write the samples to.
+  -print-full-packet
+    	Print full received packet. When false, only src and dst ips are printed with every sample.
+```
 
 This feature requires OVS 3.4 and linux kernel 6.11.
-
-As of Aug 2024, the kernel need to be built from the source, therefore to try this feature you need to:
-- rebuild the kernel with the current master branch from [Linus' tree](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git)
-  - to rebuild on fedora: https://docs.fedoraproject.org/en-US/quick-docs/kernel-build-custom/#_building_a_vanilla_upstream_kernel
-- Build an ovn-kubernetes image that uses the latest OVS/OVN code:
-`OVS_BRANCH=main make -C dist/images fedora-dev-local-gw-deployment`
-- Start kind with that image, use `-ov localhost/ovn-daemonset-fedora:latest` flag with `kind.sh` script.
 
 ## Workflow Description
 
 - Observability is enabled by setting the `--enable-observability` flag in the `ovnkube` binary.
 - For now all mentioned features are enabled by this flag at the same time.
-- `ovnkube-observ` binary is used to see the samples. Samples are only generated when the real traffic matching the ACLs
-is sent through the OVS. An example output is:
+- To start observing and display the samples, run `ovnkube-observ -add-ovs-collector`. Samples are only generated when the real traffic matching the ACLs is sent through the OVS. An example output is:
+
 ```
 OVN-K message: Allowed by default allow from local node policy, direction ingress
 src=10.129.2.2, dst=10.129.2.5
 ```
+
+## Support in observability tools
+
+- [NetObserv](https://github.com/netobserv/network-observability-operator): through the `NetworkEvents` agent feature.
 
 ## Implementation Details
 
