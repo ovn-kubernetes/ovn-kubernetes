@@ -944,6 +944,13 @@ clone_frr() {
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
     git apply ../patches/*
+    # The upstream frr-k8s demo.sh hardcodes quay.io/frrouting/frr:9.1.0,
+    # which crashes on musl libc (Alpine) due to a race condition in
+    # pthread_setname_np during BGP keepalive thread startup
+    # (https://github.com/FRRouting/frr/issues/15699, fixed in FRR 10.1 by
+    # https://github.com/FRRouting/frr/pull/15714).
+    # This sed may be removed if frr-k8s bumps their FRR image to >= 10.1.
+    sed -i 's|quay.io/frrouting/frr:9.1.0|quay.io/frrouting/frr:10.1|g' hack/demo/demo.sh
     popd
 
     popd || exit 1
