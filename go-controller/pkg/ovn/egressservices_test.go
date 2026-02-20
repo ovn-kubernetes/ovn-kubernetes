@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -73,7 +74,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 	ginkgo.XContext("on startup repair", func() {
 		ginkgo.It("should delete stale logical router policies and EgressService address set IPs", func() {
 			app.Action = func(*cli.Context) error {
-				namespaceT := *newNamespace("testns")
+				namespaceT := *testing.NewNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, "", "")
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, "", "")
 				config.IPv6Mode = true
@@ -358,7 +359,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 		ginkgo.It("OVN-IC: should delete stale logical router policies", func() {
 			app.Action = func(*cli.Context) error {
-				namespaceT := *newNamespace("testns")
+				namespaceT := *testing.NewNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
 				config.IPv6Mode = true
@@ -568,7 +569,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 		ginkgo.DescribeTable("should create/update/delete OVN configuration", func(interconnectEnabled bool) {
 			app.Action = func(*cli.Context) error {
-				namespaceT := *newNamespace("testns")
+				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
@@ -784,7 +785,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 		ginkgo.DescribeTable("should delete resources when host changes to ALL", func(interconnectEnabled bool) {
 			app.Action = func(*cli.Context) error {
-				namespaceT := *newNamespace("testns")
+				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
@@ -952,7 +953,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 	ginkgo.Context("on endpointslices changes", func() {
 		ginkgo.DescribeTable("should create/update/delete OVN configuration", func(interconnectEnabled bool) {
 			app.Action = func(*cli.Context) error {
-				namespaceT := *newNamespace("testns")
+				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
@@ -1270,7 +1271,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 	ginkgo.Context("on nodes changes", func() {
 		ginkgo.DescribeTable("should create/update/delete logical router policies and address sets", func(interconnectEnabled bool) {
 			app.Action = func(*cli.Context) error {
-				namespaceT := *newNamespace("testns")
+				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)

@@ -175,11 +175,11 @@ func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector *met
 		err = fmt.Errorf("can't parse pod selector %v: %w", podSelector, err)
 		return
 	}
-	addrSetKey = getPodSelectorKey(podSelector, namespaceSelector, namespace)
+	addrSetKey = GetPodSelectorKey(podSelector, namespaceSelector, namespace)
 	err = m.addressSets.DoWithLock(addrSetKey, func(key string) error {
 		psAddrSet, found := m.addressSets.Load(key)
 		if !found {
-			addrSetDbIDs := getPodSelectorAddrSetDbIDs(addrSetKey, m.controllerName)
+			addrSetDbIDs := GetPodSelectorAddrSetDbIDs(addrSetKey, m.controllerName)
 			addrSet, err := m.addressSetFactory.NewAddressSet(addrSetDbIDs, nil)
 			// if the first step of creating address set fails, return error since there is nothing to cleanup
 			if err != nil {
@@ -440,7 +440,7 @@ func (m *AddressSetManager) getPodIPs(pods []*corev1.Pod) ([]string, error) {
 	return ips, nil
 }
 
-func getPodSelectorAddrSetDbIDs(psasKey, controller string) *libovsdbops.DbObjectIDs {
+func GetPodSelectorAddrSetDbIDs(psasKey, controller string) *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetPodSelector, controller, map[libovsdbops.ExternalIDKey]string{
 		// pod selector address sets are cluster-scoped, only need name
 		libovsdbops.ObjectNameKey: psasKey,
@@ -511,7 +511,7 @@ func shortLabelSelectorString(sel *metav1.LabelSelector) string {
 	return s
 }
 
-func getPodSelectorKey(podSelector, namespaceSelector *metav1.LabelSelector, namespace string) string {
+func GetPodSelectorKey(podSelector, namespaceSelector *metav1.LabelSelector, namespace string) string {
 	var namespaceKey string
 	if namespaceSelector == nil {
 		// namespace is static

@@ -1274,8 +1274,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// create a pod on this node
-				ns := newNamespace("namespace-1")
-				pod := *newPodWithLabels(ns.Name, podName, node1.Name, "10.0.0.3", egressPodLabel)
+				ns := ovntest.NewNamespace("namespace-1")
+				pod := *ovntest.NewPodWithLabels(ns.Name, podName, node1.Name, "10.0.0.3", egressPodLabel)
 				_, err = fakeClient.KubeClient.CoreV1().Pods(ns.Name).Create(context.TODO(), &pod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1885,7 +1885,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			// after the namespace is created successfully
 			fakeOvn.startWithDBSetup(dbSetup,
 				&corev1.NamespaceList{
-					Items: []corev1.Namespace{*newNamespace(config.Kubernetes.HostNetworkNamespace)},
+					Items: []corev1.Namespace{*ovntest.NewNamespace(config.Kubernetes.HostNetworkNamespace)},
 				},
 				&corev1.NodeList{
 					Items: []corev1.Node{},

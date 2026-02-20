@@ -3,7 +3,6 @@ package ovn
 import (
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -1624,17 +1623,6 @@ func PortGroupHasPorts(nbClient libovsdbclient.Client, pgName string, portUUIDs 
 	}
 
 	return sets.NewString(pg.Ports...).HasAll(portUUIDs...)
-}
-
-// getStaleNetpolAddrSetDbIDs returns the ids for address sets that were owned by network policy before we
-// switched to shared address sets with PodSelectorAddressSet. Should only be used for sync and testing.
-func getStaleNetpolAddrSetDbIDs(policyNamespace, policyName, policyType, idx, controller string) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNetworkPolicy, controller, map[libovsdbops.ExternalIDKey]string{
-		libovsdbops.ObjectNameKey: policyNamespace + "_" + policyName,
-		// direction and idx uniquely identify address set (= gress policy rule)
-		libovsdbops.PolicyDirectionKey: strings.ToLower(policyType),
-		libovsdbops.GressIdxKey:        idx,
-	})
 }
 
 func (bnc *BaseNetworkController) getNetpolDefaultACLDbIDs(direction string) *libovsdbops.DbObjectIDs {

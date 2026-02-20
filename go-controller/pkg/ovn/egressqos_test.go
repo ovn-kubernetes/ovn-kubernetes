@@ -22,6 +22,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
@@ -45,7 +46,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 		controllerName = DefaultNetworkControllerName
 	)
 
-	namespaceT := *newNamespace("namespace1")
+	namespaceT := *testing.NewNamespace("namespace1")
 	// namespace address set hash name
 	asv4, asv6 := addressset.GetHashNamesForAS(getNamespaceAddrSetDbIDs(namespaceT.Name, controllerName))
 	qosAS := getEgressQosAddrSetDbIDs(namespaceT.Name, fmt.Sprintf("%d", EgressQoSFlowStartPriority), controllerName)
@@ -262,7 +263,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 					getEgressQosAddrSetDbIDs("staleNS", "1000", controllerName),
 					[]string{"1.2.3.4"})
 
-				podT := newPodWithLabels(
+				podT := testing.NewPodWithLabels(
 					namespaceT.Name,
 					"myPod",
 					node1Name,
@@ -445,7 +446,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("Validate status with invalid QoS Object", func() {
 		app.Action = func(*cli.Context) error {
-			namespaceT := *newNamespace("namespace1")
+			namespaceT := *testing.NewNamespace("namespace1")
 			maxEgressQoSRetries = 0
 			defer func() {
 				maxEgressQoSRetries = 10
@@ -514,7 +515,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			namespaceT := *newNamespace("namespace1")
+			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
 				UUID: "node1-UUID",
@@ -640,7 +641,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to node zone update events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			namespaceT := *newNamespace("namespace1")
+			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
 				UUID: "node1-UUID",
@@ -773,21 +774,21 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.It("should respond to pod events correctly", func() {
 		app.Action = func(*cli.Context) error {
-			namespaceT := *newNamespace("namespace1")
+			namespaceT := *testing.NewNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
 				UUID: "node1-UUID",
 				Name: node1Name,
 			}
 
-			podLocalT := newPodWithLabels(
+			podLocalT := testing.NewPodWithLabels(
 				namespaceT.Name,
 				"myPod",
 				node1Name,
 				"10.128.1.3",
 				map[string]string{"rule1": "1"},
 			)
-			podRemoteT := newPodWithLabels(
+			podRemoteT := testing.NewPodWithLabels(
 				namespaceT.Name,
 				"myPod2",
 				node2Name,
@@ -941,14 +942,14 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.DescribeTable("Ensure QoS AddressSet is updated properly for pod events",
 		func(podZone string) {
-			namespaceT := *newNamespace("namespace1")
+			namespaceT := *testing.NewNamespace("namespace1")
 
 			nodeSwitch := &nbdb.LogicalSwitch{
 				UUID: "node1-UUID",
 				Name: node1Name,
 			}
 
-			podT := newPodWithLabels(
+			podT := testing.NewPodWithLabels(
 				namespaceT.Name,
 				"myPod",
 				node1Name,

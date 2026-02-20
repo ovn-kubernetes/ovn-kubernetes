@@ -117,7 +117,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
-				n := newNamespace(ns)
+				n := testing.NewNamespace(ns)
 				if netInfo.isPrimary {
 					n = newUDNNamespace(ns)
 					networkConfig, err := util.NewNetInfo(netInfo.netconf())
@@ -143,7 +143,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				const nodeIPv4CIDR = "192.168.126.202/24"
 				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 				Expect(err).NotTo(HaveOccurred())
-				networkPolicy := getMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
+				networkPolicy := testing.NewMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
 				nodes := []corev1.Node{*testNode}
 				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)

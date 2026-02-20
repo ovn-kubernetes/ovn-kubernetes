@@ -26,6 +26,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -132,14 +133,14 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				_, node1CDNSubnet, _ := net.ParseCIDR(v4Node1Subnet)
 				_, node1UDNSubnet, _ := net.ParseCIDR(v4Node1Net1)
 				nadName := util.GetNADName(eipNamespace2, nadName1)
-				egressCDNNamespace := newNamespaceWithLabels(eipNamespace, egressPodLabel)
+				egressCDNNamespace := testing.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
 				egressUDNNamespace := newUDNNamespaceWithLabels(eipNamespace2, egressPodLabel)
-				egressPodCDNLocal := *newPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
-				egressPodUDNLocal := *newPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, egressPodLabel)
+				egressPodCDNLocal := *testing.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+				egressPodUDNLocal := *testing.NewPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNLocal, nadName, fmt.Sprintf("%s%s", v4Pod1IPNode1Net1, util.GetIPFullMaskString(v4Pod1IPNode1Net1)))
-				egressPodCDNRemote := *newPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
+				egressPodCDNRemote := *testing.NewPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodCDNRemote, ovntypes.DefaultNetworkName, fmt.Sprintf("%s%s", podV4IP2, util.GetIPFullMaskString(podV4IP2)))
-				egressPodUDNRemote := *newPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
+				egressPodUDNRemote := *testing.NewPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNRemote, nadName, fmt.Sprintf("%s%s", v4Pod2IPNode2Net1, util.GetIPFullMaskString(v4Pod2IPNode2Net1)))
 				netconf := ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{
@@ -510,14 +511,14 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				_, node1CDNSubnet, _ := net.ParseCIDR(v4Node1Subnet)
 				_, node1UDNSubnet, _ := net.ParseCIDR(v4Node1Net1)
 				nadName := util.GetNADName(eipNamespace2, nadName1)
-				egressCDNNamespace := newNamespaceWithLabels(eipNamespace, egressPodLabel)
+				egressCDNNamespace := testing.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
 				egressUDNNamespace := newUDNNamespaceWithLabels(eipNamespace2, egressPodLabel)
-				egressPodCDNLocal := *newPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
-				egressPodUDNLocal := *newPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, egressPodLabel)
+				egressPodCDNLocal := *testing.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+				egressPodUDNLocal := *testing.NewPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNLocal, nadName, fmt.Sprintf("%s%s", v4Pod1IPNode1Net1, util.GetIPFullMaskString(v4Pod1IPNode1Net1)))
-				egressPodCDNRemote := *newPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
+				egressPodCDNRemote := *testing.NewPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodCDNRemote, ovntypes.DefaultNetworkName, fmt.Sprintf("%s%s", podV4IP2, util.GetIPFullMaskString(podV4IP2)))
-				egressPodUDNRemote := *newPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
+				egressPodUDNRemote := *testing.NewPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNRemote, nadName, fmt.Sprintf("%s%s", v4Pod2IPNode2Net1, util.GetIPFullMaskString(v4Pod2IPNode2Net1)))
 
 				netconf := ovncnitypes.NetConf{
@@ -1032,14 +1033,14 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				_, node1CDNSubnet, _ := net.ParseCIDR(v4Node1Subnet)
 				_, node1UDNSubnet, _ := net.ParseCIDR(v4Node1Net1)
 				nadName := util.GetNADName(eipNamespace2, nadName1)
-				egressCDNNamespace := newNamespaceWithLabels(eipNamespace, egressPodLabel)
+				egressCDNNamespace := testing.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
 				egressUDNNamespace := newUDNNamespaceWithLabels(eipNamespace2, egressPodLabel)
-				egressPodCDNLocal := *newPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
-				egressPodUDNLocal := *newPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, egressPodLabel)
+				egressPodCDNLocal := *testing.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+				egressPodUDNLocal := *testing.NewPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNLocal, nadName, fmt.Sprintf("%s%s", v4Pod1IPNode1Net1, util.GetIPFullMaskString(v4Pod1IPNode1Net1)))
-				egressPodCDNRemote := *newPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
+				egressPodCDNRemote := *testing.NewPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodCDNRemote, ovntypes.DefaultNetworkName, fmt.Sprintf("%s%s", podV4IP2, util.GetIPFullMaskString(podV4IP2)))
-				egressPodUDNRemote := *newPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
+				egressPodUDNRemote := *testing.NewPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNRemote, nadName, fmt.Sprintf("%s%s", v4Pod2IPNode2Net1, util.GetIPFullMaskString(v4Pod2IPNode2Net1)))
 				netconf := ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{
@@ -1798,10 +1799,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node2IPv4CIDR := node2IPv4 + "/24"
 				_, node1CDNSubnet, _ := net.ParseCIDR(v4Node1Subnet)
 				_, node1UDNSubnet, _ := net.ParseCIDR(v4Node1Net1)
-				egressCDNNamespace := newNamespaceWithLabels(eipNamespace, nil)
+				egressCDNNamespace := testing.NewNamespaceWithLabels(eipNamespace, nil)
 				egressUDNNamespace := newUDNNamespaceWithLabels(eipNamespace2, nil)
-				egressPodCDN := *newPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
-				egressPodUDN := *newPodWithLabels(eipNamespace2, podName2, node1Name, podV4IP2, egressPodLabel)
+				egressPodCDN := *testing.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+				egressPodUDN := *testing.NewPodWithLabels(eipNamespace2, podName2, node1Name, podV4IP2, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDN, util.GetNADName(eipNamespace2, nadName1), fmt.Sprintf("%s%s", podV4IP2, util.GetIPFullMaskString(podV4IP2)))
 
 				nadNsName := util.GetNADName(eipNamespace2, nadName1)
@@ -2168,10 +2169,10 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				node2IPv4CIDR := node2IPv4 + "/24"
 				_, node1CDNSubnet, _ := net.ParseCIDR(v4Node1Subnet)
 				_, node1UDNSubnet, _ := net.ParseCIDR(v4Node1Net1)
-				egressCDNNamespace := newNamespaceWithLabels(eipNamespace, egressPodLabel)
+				egressCDNNamespace := testing.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
 				egressUDNNamespace := newUDNNamespaceWithLabels(eipNamespace2, egressPodLabel)
-				egressPodCDN := *newPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
-				egressPodUDN := *newPodWithLabels(eipNamespace2, podName2, node1Name, podV4IP2, egressPodLabel)
+				egressPodCDN := *testing.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+				egressPodUDN := *testing.NewPodWithLabels(eipNamespace2, podName2, node1Name, podV4IP2, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDN, util.GetNADName(eipNamespace2, nadName1), fmt.Sprintf("%s%s", podV4IP2, util.GetIPFullMaskString(podV4IP2)))
 
 				nadNsName := util.GetNADName(eipNamespace2, nadName1)
@@ -2527,14 +2528,14 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				_, node1CDNSubnet, _ := net.ParseCIDR(v4Node1Subnet)
 				_, node1UDNSubnet, _ := net.ParseCIDR(v4Node1Net1)
 				nadName := util.GetNADName(eipNamespace2, nadName1)
-				egressCDNNamespace := newNamespaceWithLabels(eipNamespace, egressPodLabel)
+				egressCDNNamespace := testing.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
 				egressUDNNamespace := newUDNNamespaceWithLabels(eipNamespace2, egressPodLabel)
-				egressPodCDNLocal := *newPodWithLabels(eipNamespace, podName, node1Name, podV4IP, nil)
-				egressPodUDNLocal := *newPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, nil)
+				egressPodCDNLocal := *testing.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, nil)
+				egressPodUDNLocal := *testing.NewPodWithLabels(eipNamespace2, podName2, node1Name, v4Pod1IPNode1Net1, nil)
 				setPrimaryNetworkAnnot(&egressPodUDNLocal, nadName, fmt.Sprintf("%s%s", v4Pod1IPNode1Net1, util.GetIPFullMaskString(v4Pod1IPNode1Net1)))
-				egressPodCDNRemote := *newPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
+				egressPodCDNRemote := *testing.NewPodWithLabels(eipNamespace, podName3, node2Name, podV4IP2, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodCDNRemote, ovntypes.DefaultNetworkName, fmt.Sprintf("%s%s", podV4IP2, util.GetIPFullMaskString(podV4IP2)))
-				egressPodUDNRemote := *newPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
+				egressPodUDNRemote := *testing.NewPodWithLabels(eipNamespace2, podName4, node2Name, v4Pod2IPNode2Net1, egressPodLabel)
 				setPrimaryNetworkAnnot(&egressPodUDNRemote, nadName, fmt.Sprintf("%s%s", v4Pod2IPNode2Net1, util.GetIPFullMaskString(v4Pod2IPNode2Net1)))
 				netconf := ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{

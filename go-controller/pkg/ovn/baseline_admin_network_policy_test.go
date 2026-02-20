@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	anpovn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -135,8 +136,8 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 	ginkgo.Context("on baseline admin network policy changes", func() {
 		ginkgo.It("should create/update/delete address-sets, acls, port-groups correctly", func() {
 			app.Action = func(*cli.Context) error {
-				banpNamespaceSubject := *newNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
-				banpNamespacePeer := *newNamespaceWithLabels(banpPeerNamespaceName, peerDenyLabel)
+				banpNamespaceSubject := *testing.NewNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
+				banpNamespacePeer := *testing.NewNamespaceWithLabels(banpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, "100.100.100.0", "fc00:f853:ccd:e793::1", "10.128.1.0/24", "fe00:10:128:1::/64", "", "")
@@ -219,7 +220,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				)
 				t.portName = util.GetLogicalPortName(t.namespace, t.podName)
 				t.populateLogicalSwitchCache(fakeOVN)
-				banpSubjectPod := *newPod(banpSubjectNamespaceName, banpSubjectPodName, node1Name, banpPodV4IP)
+				banpSubjectPod := *testing.NewPod(banpSubjectNamespaceName, banpSubjectPodName, node1Name, banpPodV4IP)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpSubjectPod.Namespace).Create(context.TODO(), &banpSubjectPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -282,7 +283,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
 				t2.populateLogicalSwitchCache(fakeOVN)
-				banpPeerPod := *newPod(banpPeerNamespaceName, banpPeerPodName, node1Name, banpPodV4IP2)
+				banpPeerPod := *testing.NewPod(banpPeerNamespaceName, banpPeerPodName, node1Name, banpPodV4IP2)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpPeerPod.Namespace).Create(context.TODO(), &banpPeerPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -642,7 +643,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 
 				ginkgo.By("16. delete the subject and peer selected namespaces; check if port group and address-set's are updated")
 				// create a new pod in subject and peer namespaces so that we can check namespace deletion properly
-				banpSubjectPod = *newPodWithLabels(banpSubjectNamespaceName, banpSubjectPodName, node1Name, "10.128.1.5", peerDenyLabel)
+				banpSubjectPod = *testing.NewPodWithLabels(banpSubjectNamespaceName, banpSubjectPodName, node1Name, "10.128.1.5", peerDenyLabel)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpSubjectPod.Namespace).Create(context.TODO(), &banpSubjectPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -669,7 +670,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				expectedDatabaseState = append(expectedDatabaseState, []libovsdbtest.TestData{peerASIngressRule0v4, peerASIngressRule0v6, peerASIngressRule1v4,
 					peerASIngressRule1v6, peerASEgressRule0v4, peerASEgressRule0v6, peerASEgressRule1v4, peerASEgressRule1v6}...)
 				gomega.Eventually(fakeOVN.nbClient, "3s").Should(libovsdbtest.HaveData(expectedDatabaseState))
-				banpPeerPod = *newPodWithLabels(banpPeerNamespaceName, banpPeerPodName, node1Name, "10.128.1.6", peerAllowLabel)
+				banpPeerPod = *testing.NewPodWithLabels(banpPeerNamespaceName, banpPeerPodName, node1Name, "10.128.1.6", peerAllowLabel)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpPeerPod.Namespace).Create(context.TODO(), &banpPeerPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -875,8 +876,8 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 		})
 		ginkgo.It("egress node+network peers: should create/update/delete address-sets, acls, port-groups correctly", func() {
 			app.Action = func(*cli.Context) error {
-				banpNamespaceSubject := *newNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
-				banpNamespacePeer := *newNamespaceWithLabels(banpPeerNamespaceName, peerDenyLabel)
+				banpNamespaceSubject := *testing.NewNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
+				banpNamespacePeer := *testing.NewNamespaceWithLabels(banpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
@@ -894,7 +895,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					banpPodMAC,
 					banpSubjectNamespaceName,
 				)
-				anpSubjectPod := *newPod(banpSubjectNamespaceName, banpSubjectPodName, node1Name, t.podIP)
+				anpSubjectPod := *testing.NewPod(banpSubjectNamespaceName, banpSubjectPodName, node1Name, t.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				anpSubjectPod.Annotations = map[string]string{}
 				anpSubjectPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24","fe00:10:128:1::3/64"],` +
@@ -910,7 +911,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					banpPodMAC2,
 					banpPeerNamespaceName,
 				)
-				anpPeerPod := *newPod(banpPeerNamespaceName, banpPeerPodName, node1Name, t2.podIP)
+				anpPeerPod := *testing.NewPod(banpPeerNamespaceName, banpPeerPodName, node1Name, t2.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				anpPeerPod.Annotations = map[string]string{}
 				anpPeerPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.4/24","fe00:10:128:1::4/64"],` +
@@ -1173,9 +1174,9 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
-				banpSubjectNamespace := *newNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
-				banpNamespacePeer := *newNamespaceWithLabels(banpPeerNamespaceName, peerAllowLabel)
-				banpNamespacePeer2 := *newNamespaceWithLabels(banpPeerNamespaceName+"2", peerDenyLabel)
+				banpSubjectNamespace := *testing.NewNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
+				banpNamespacePeer := *testing.NewNamespaceWithLabels(banpPeerNamespaceName, peerAllowLabel)
+				banpNamespacePeer2 := *testing.NewNamespaceWithLabels(banpPeerNamespaceName+"2", peerDenyLabel)
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node1Switch := &nbdb.LogicalSwitch{
 					Name: node1Name,
@@ -1191,7 +1192,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					banpPodMAC2,
 					banpPeerNamespaceName,
 				)
-				banpPeerPod := *newPod(banpPeerNamespaceName, banpPeerPodName, node1Name, t1.podIP)
+				banpPeerPod := *testing.NewPod(banpPeerNamespaceName, banpPeerPodName, node1Name, t1.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				banpPeerPod.Annotations = map[string]string{}
 				banpPeerPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.4/24","fe00:10:128:1::4/64"],` +
@@ -1225,7 +1226,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					banpPodMAC,
 					banpSubjectNamespaceName,
 				)
-				banpSubjectPod := *newPod(banpSubjectNamespaceName, banpSubjectPodName, node1Name, t2.podIP)
+				banpSubjectPod := *testing.NewPod(banpSubjectNamespaceName, banpSubjectPodName, node1Name, t2.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				banpSubjectPod.Annotations = map[string]string{}
 				banpSubjectPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24","fe00:10:128:1::3/64"],` +

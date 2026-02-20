@@ -207,6 +207,9 @@ func (o *FakeOVN) shutdown() {
 		ocInfo.bnc.cancelableCtx.Cancel()
 		ocInfo.bnc.wg.Wait()
 	}
+	if o.controller.addressSetManager != nil {
+		o.controller.addressSetManager.Stop()
+	}
 }
 
 func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {

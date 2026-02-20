@@ -392,7 +392,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				Expect(gwConfig.NextHops).NotTo(BeEmpty())
 				nbZone := &nbdb.NBGlobal{Name: config.Default.Zone, UUID: config.Default.Zone}
 
-				n := newNamespace(ns)
+				n := testing.NewNamespace(ns)
 				if netInfo.isPrimary {
 					n = newUDNNamespace(ns)
 					gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
@@ -1096,7 +1096,7 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	By("setting up the OVN DB without any entities in it")
 	Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
 
-	n := newNamespace(ns)
+	n := testing.NewNamespace(ns)
 	if netInfo.isPrimary {
 		n = newUDNNamespace(ns)
 		networkConfig, err := util.NewNetInfo(netInfo.netconf())
