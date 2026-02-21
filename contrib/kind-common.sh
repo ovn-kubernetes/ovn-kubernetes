@@ -1084,14 +1084,23 @@ destroy_bgp() {
 }
 
 install_frr_k8s() {
+  local bgp_port=${1:-0}
   echo "Installing frr-k8s ..."
   clone_frr
 
   # apply frr-k8s
+  if [ "${bgp_port}" -ne 0 ]; then
+    sed -i "s/bgpd_options=\"\(.*\)-p 0\(.*\)\"/bgpd_options=\"\1-p ${bgp_port}\2\"/g" "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+  fi
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
-  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
 
+wait_for_frr_k8s() {
+  kubectl wait -n frr-k8s-system deployment frr-k8s-webhook-server --for condition=Available --timeout 2m
+  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+}
+
+configure_frr_k8s() {
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1

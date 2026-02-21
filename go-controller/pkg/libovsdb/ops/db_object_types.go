@@ -166,6 +166,13 @@ var AddressSetAdvertisedNetwork = newObjectIDsType(addressSet, AdvertisedNetwork
 	IPFamilyKey,
 })
 
+var AddressSetClusterCIDR = newObjectIDsType(addressSet, ClusterOwnerType, []ExternalIDKey{
+	// cluster-wide address set name containing all node pod subnets
+	ObjectNameKey,
+	IPFamilyKey,
+	NetworkKey,
+})
+
 var ACLAdvertisedNetwork = newObjectIDsType(acl, AdvertisedNetworkOwnerType, []ExternalIDKey{
 	// ACL name
 	ObjectNameKey,
