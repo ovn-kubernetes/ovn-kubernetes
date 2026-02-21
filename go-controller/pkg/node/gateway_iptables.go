@@ -263,6 +263,39 @@ func getExternalIPTRules(svcPort corev1.ServicePort, externalIP, dstIP string, s
 	}
 }
 
+func getEgressDropRules(srcCIDRs []*net.IPNet, egressInterface string) []nodeipt.Rule {
+	var returnRules []nodeipt.Rule
+	// Add rules for all CIDRs.
+	for _, cidr := range srcCIDRs {
+		protocol := getIPTablesProtocol(cidr.IP.String())
+		returnRules = append(returnRules, []nodeipt.Rule{
+			{
+				Table: "filter",
+				Chain: "FORWARD",
+				Args: []string{
+					"-s", cidr.String(),
+					"-o", egressInterface,
+					"-m", "comment", "--comment", "Drop un-SNATed pod egress traffic",
+					"-j", "DROP",
+				},
+				Protocol: protocol,
+			},
+			{
+				Table: "filter",
+				Chain: "OUTPUT",
+				Args: []string{
+					"-s", cidr.String(),
+					"-o", egressInterface,
+					"-m", "comment", "--comment", "Drop un-SNATed pod egress traffic",
+					"-j", "DROP",
+				},
+				Protocol: protocol,
+			},
+		}...)
+	}
+	return returnRules
+}
+
 func getGatewayForwardRules(cidrs []*net.IPNet) []nodeipt.Rule {
 	var returnRules []nodeipt.Rule
 	protocols := make(map[iptables.Protocol]struct{})
