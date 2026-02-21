@@ -29,6 +29,17 @@ type Provider interface {
 	// ExecK8NodeCommand executes a command on a K8 Node host network namespace and filesystem
 	ExecK8NodeCommand(nodeName string, cmd []string) (string, error)
 	ExecExternalContainerCommand(container ExternalContainer, cmd []string) (string, error)
+	// RunOneShotContainer runs a container that executes a command and exits (docker run --rm).
+	// This is useful for one-shot operations like creating veth pairs with host namespace access.
+	// Parameters:
+	//   - image: Container image to run
+	//   - cmd: Command and arguments to execute
+	//   - runtimeArgs: Additional runtime arguments (e.g., "--privileged", "--pid=host", "--network=host")
+	// Returns the command output.
+	RunOneShotContainer(image string, cmd []string, runtimeArgs []string) (string, error)
+	// GetExternalContainerPID returns the PID of an external container. This is useful for namespace
+	// manipulation operations like moving network interfaces between namespaces.
+	GetExternalContainerPID(containerName string) (int, error)
 	GetExternalContainerLogs(container ExternalContainer) (string, error)
 	// GetExternalContainerPort returns a port. Requesting a port that maybe exposed in tests to avoid multiple parallel
 	// tests utilizing conflicting ports. It also allows infra provider implementations to set the external containers
@@ -256,8 +267,9 @@ func (ec ExternalContainer) IsValidPreCreateContainer() (bool, error) {
 	if ec.Image == "" {
 		errs = append(errs, errors.New("image is not set"))
 	}
-	if ec.Network.String() == "" {
-		errs = append(errs, errors.New("network is not set"))
+	// Network can be nil for --network none containers
+	if ec.Network != nil && ec.Network.String() == "" {
+		errs = append(errs, errors.New("network name is empty"))
 	}
 	if len(errs) == 0 {
 		return true, nil
@@ -267,7 +279,8 @@ func (ec ExternalContainer) IsValidPreCreateContainer() (bool, error) {
 
 func (ec ExternalContainer) IsValidPostCreate() (bool, error) {
 	var errs []error
-	if ec.IPv4 == "" && ec.IPv6 == "" {
+	// Skip IP validation for --network none containers (Network is nil)
+	if ec.Network != nil && ec.IPv4 == "" && ec.IPv6 == "" {
 		errs = append(errs, errors.New("provider did not populate an IPv4 or an IPv6 address"))
 	}
 	if len(errs) == 0 {
@@ -277,7 +290,8 @@ func (ec ExternalContainer) IsValidPostCreate() (bool, error) {
 }
 
 func (ec ExternalContainer) IsValidPreDelete() (bool, error) {
-	if ec.IPv4 == "" && ec.IPv6 == "" {
+	// Skip IP validation for --network none containers (Network is nil)
+	if ec.Network != nil && ec.IPv4 == "" && ec.IPv6 == "" {
 		return false, fmt.Errorf("IPv4 or IPv6 must be set")
 	}
 	return true, nil

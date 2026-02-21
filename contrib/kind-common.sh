@@ -178,6 +178,11 @@ set_common_default_params() {
     echo "EVPN requires Route advertisements to be enabled (-rae)"
     exit 1
   fi
+  if [ "$ENABLE_EVPN" == true ] && [ "$OVN_GATEWAY_MODE" != "local" ]; then
+    echo "EVPN requires local gateway mode (-gm local)"
+    exit 1
+  fi
+  
 
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
   if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
@@ -990,6 +995,12 @@ deploy_frr_external_container() {
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
+    # Enable keep_addr_on_down to preserve IPv6 addresses during VRF enslavement.
+    # Without this, IPv6 global addresses are removed when interfaces are moved to a VRF,
+    # causing FRR/zebra to fail creating FIB nexthop groups ("no fib nhg" bug).
+    # See: https://docs.kernel.org/networking/vrf.html (section 4: Enslave L3 interfaces)
+    #      https://github.com/FRRouting/frr/issues/1666
+    $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.keep_addr_on_down=1
   fi
 }
 

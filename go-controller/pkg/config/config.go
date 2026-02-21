@@ -2492,6 +2492,10 @@ func validateConfig() error {
 		return err
 	}
 
+	if err := validateEVPNConfig(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2529,6 +2533,13 @@ func validateManagedBGPConfig() error {
 		return fmt.Errorf("invalid as-number: 4294967295 is reserved")
 	}
 
+	return nil
+}
+
+func validateEVPNConfig() error {
+	if OVNKubernetesFeature.EnableEVPN && Gateway.Mode != GatewayModeLocal {
+		return fmt.Errorf("invalid configuration: EVPN is only supported in local gateway mode")
+	}
 	return nil
 }
 

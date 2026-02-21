@@ -848,7 +848,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		}
 	}
 
-	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
+	if oc.hasInterconnectTransport() && nSyncs.syncZoneIC {
 		if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
 			errs = append(errs, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
@@ -891,7 +891,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 	}
 
 	var err error
-	if syncZoneIc && config.OVNKubernetesFeature.EnableInterconnect {
+	if oc.hasInterconnectTransport() && syncZoneIc {
 		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
 			err = fmt.Errorf("failed to add the remote zone node [%s] to the zone interconnect handler, err : %w", node.Name, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
@@ -1070,7 +1070,7 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 		}
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
+	if oc.hasInterconnectTransport() {
 		if err := oc.zoneICHandler.CleanupStaleNodes(activeNodes); err != nil {
 			return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
 		}

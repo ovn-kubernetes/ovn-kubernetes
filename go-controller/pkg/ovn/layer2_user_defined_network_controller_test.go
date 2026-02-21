@@ -85,24 +85,34 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		"reconciles a new",
 		func(netInfo userDefinedNetInfo, testConfig testConfiguration, gatewayMode config.GatewayMode) {
 			const podIdx = 0
-			podInfo := dummyL2TestPod(ns, netInfo, podIdx, podIdx)
 			setupConfig(netInfo, testConfig, gatewayMode)
 			app.Action = func(*cli.Context) error {
+				podInfo := dummyL2TestPod(ns, netInfo, podIdx, podIdx)
 				pod := newMultiHomedPod(podInfo, netInfo)
 
 				const nodeIPv4CIDR = "192.168.126.202/24"
 				By(fmt.Sprintf("Creating a node named %q, with IP: %s", nodeName, nodeIPv4CIDR))
 				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR)
 				Expect(err).NotTo(HaveOccurred())
+
+				var extraObjects []runtime.Object
 				nodes := []corev1.Node{*testNode}
-				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				if testConfig.withRemoteNode || testConfig.withRemotePod {
+					By("adding a remote node")
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
 					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
-					By("adding an extra node that should be ignored by Dynamic UDN Allocation")
 					nodes = append(nodes, *testNode2)
 				}
-				Expect(setupFakeOvnForLayer2Topology(fakeOvn, initialDB, netInfo, nodes, podInfo, pod)).To(Succeed())
+				if testConfig.withRemotePod {
+					By("adding a remote pod on the remote node")
+					remotePodInfo := dummyL2TestPod(ns, netInfo, podIdx+1, podIdx+1)
+					remotePod := newMultiHomedPod(remotePodInfo, netInfo)
+					remotePod.Spec.NodeName = "test-node2"
+					extraObjects = append(extraObjects, remotePod)
+				}
+
+				Expect(setupFakeOvnForLayer2Topology(fakeOvn, initialDB, netInfo, nodes, podInfo, pod, extraObjects...)).To(Succeed())
 				defer fakeOvn.networkManager.Stop()
 
 				// for layer2 on interconnect, it is the cluster manager that
@@ -135,7 +145,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 							fakeOvn,
 							[]testPod{podInfo},
 							expectationOptions...,
-						).expectedLogicalSwitchesAndPorts()...))
+						).expectedLogicalSwitchesAndPorts(nodeName)...))
 
 				return nil
 			}
@@ -184,6 +194,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			icClusterTestConfiguration(func(config *testConfiguration) {
 				config.configToOverride.EnableDynamicUDNAllocation = true
 				config.configToOverride.EnableNetworkSegmentation = true
+				config.withRemoteNode = true
 			}),
 			config.GatewayModeShared,
 		),
@@ -194,6 +205,13 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.GatewayModeShared,
 		),
 		*/
+		Entry("local and remote pods on a CUDN configured with EVPN",
+			dummyPrimaryLayer2EVPNCUDN("100.200.0.0/16"),
+			icClusterTestConfiguration(func(config *testConfiguration) {
+				config.withRemotePod = true
+			}),
+			config.GatewayModeLocal,
+		),
 	)
 
 	DescribeTable(
@@ -266,7 +284,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 							fakeOvn,
 							[]testPod{sourcePodInfo},
 							expectationOptions...,
-						).expectedLogicalSwitchesAndPorts()...))
+						).expectedLogicalSwitchesAndPorts(nodeName)...))
 
 				targetPodInfo := dummyL2TestPod(ns, netInfo, targetPodInfoIdx, userDefinedNetworkIdx)
 				targetKvPod := newMultiHomedKubevirtPod(
@@ -293,7 +311,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 							fakeOvn,
 							testPods,
 							expectationOptions...,
-						).expectedLogicalSwitchesAndPortsWithLspEnabled(expectedPodLspEnabled)...))
+						).expectedLogicalSwitchesAndPortsWithLspEnabled(nodeName, expectedPodLspEnabled)...))
 				return nil
 			}
 
@@ -403,6 +421,9 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					initialDB.NBData = append(
 						initialDB.NBData,
 						expectedLayer2EgressEntities(networkConfig, *gwConfig, networkConfig.Subnets()[0].CIDR, false)...)
+					initialDB.NBData = append(initialDB.NBData, newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterLBGroupName)))
+					initialDB.NBData = append(initialDB.NBData, newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterSwitchLBGroupName)))
+					initialDB.NBData = append(initialDB.NBData, newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterRouterLBGroupName)))
 				}
 				initialDB.NBData = append(initialDB.NBData, nbZone)
 
@@ -425,8 +446,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 						Items: []nadapi.NetworkAttachmentDefinition{*nad},
 					},
 				)
-
-				Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
 
 				podInfo.populateLogicalSwitchCache(fakeOvn)
 
@@ -596,9 +615,13 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			nbZone := &nbdb.NBGlobal{Name: ovntypes.OvnDefaultZone, UUID: ovntypes.OvnDefaultZone}
 
 			n := newUDNNamespace(ns)
+			initialDB.NBData = generateUDNPostInitDB([]libovsdbtest.TestData{})
 			initialDB.NBData = append(
 				initialDB.NBData,
 				expectedGWEntitiesLayer2(nodeName, networkConfig, *gwConfig)...)
+			initialDB.NBData = append(initialDB.NBData, newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterLBGroupName)))
+			initialDB.NBData = append(initialDB.NBData, newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterRouterLBGroupName)))
+			initialDB.NBData = append(initialDB.NBData, newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(ovntypes.ClusterSwitchLBGroupName)))
 			initialDB.NBData = append(initialDB.NBData, nbZone)
 			// save current state of DB, it will be preserved through the test
 			finalDB := append([]libovsdbtest.TestData{}, initialDB.NBData...)
@@ -628,6 +651,13 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			udnNetController, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
+
+			udnNetController.defaultCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
+			Expect(err).ToNot(HaveOccurred())
+
+			udnNetController.clusterLoadBalancerGroupUUID, udnNetController.switchLoadBalancerGroupUUID, udnNetController.routerLoadBalancerGroupUUID, err = initLoadBalancerGroups(fakeOvn.nbClient, networkConfig)
+			Expect(err).ToNot(HaveOccurred())
+
 			// start watching nodes to trigger initial node cleanup
 			Expect(udnNetController.WatchNodes()).To(Succeed())
 			Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(finalDB))
@@ -948,6 +978,12 @@ func dummyPrimaryLayer2UserDefinedNetwork(subnets string) userDefinedNetInfo {
 	return udnNetInfo
 }
 
+func dummyPrimaryLayer2EVPNCUDN(subnets string) userDefinedNetInfo {
+	udnNetInfo := dummyPrimaryLayer2UserDefinedNetwork(subnets)
+	udnNetInfo.hasEVPN = true
+	return udnNetInfo
+}
+
 func dummyL2TestPod(nsName string, info userDefinedNetInfo, podIdx, udnNetIdx int) testPod {
 	const nodeSubnet = "10.128.1.0/24"
 
@@ -1086,16 +1122,28 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	if config.Gateway.Mode == config.GatewayModeLocal {
 		lrsrNextHop = managementPortIP(nodeSubnet).String()
 	}
+
+	clusterRouterExternalIDs := standardNonDefaultNetworkExtIDs(netInfo)
+	clusterRouterExternalIDs["k8s-cluster-router"] = "yes"
+	clusterRouter := &nbdb.LogicalRouter{
+		Name:         transitRouterName,
+		UUID:         transitRouterName + "-UUID",
+		Ports:        []string{rtosLRPUUID, rtorLRPUUID},
+		StaticRoutes: []string{staticRouteUUID1, staticRouteUUID2},
+		Policies:     []string{routerPolicyUUID1},
+		ExternalIDs:  clusterRouterExternalIDs,
+		Nat:          []string{masqSNATUUID1},
+		Copp:         ptr.To(string(coppUUID)),
+	}
+	hasEVPN := netInfo.Transport() == ovntypes.NetworkTransportEVPN
+	if config.OVNKubernetesFeature.EnableInterconnect && !hasEVPN {
+		clusterRouter.Options = map[string]string{libovsdbops.RequestedTnlKey: "16715780"}
+	} else {
+		clusterRouter.Options = map[string]string{"always_learn_from_arp_request": "false"}
+	}
+
 	expectedEntities := []libovsdbtest.TestData{
-		&nbdb.LogicalRouter{
-			Name:         transitRouterName,
-			UUID:         transitRouterName + "-UUID",
-			Ports:        []string{rtosLRPUUID, rtorLRPUUID},
-			StaticRoutes: []string{staticRouteUUID1, staticRouteUUID2},
-			Policies:     []string{routerPolicyUUID1},
-			ExternalIDs:  standardNonDefaultNetworkExtIDs(netInfo),
-			Nat:          []string{masqSNATUUID1},
-		},
+		clusterRouter,
 		&nbdb.LogicalRouterPort{
 			UUID:           rtosLRPUUID,
 			Name:           rtosLRPName,
@@ -1182,27 +1230,10 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 		*netInfo.netconf(),
 	)
 	Expect(err).NotTo(HaveOccurred())
-	By("setting up the OVN DB without any entities in it")
-	Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
 
 	n := newNamespace(ns)
 	if netInfo.isPrimary {
 		n = newUDNNamespace(ns)
-		networkConfig, err := util.NewNetInfo(netInfo.netconf())
-		Expect(err).NotTo(HaveOccurred())
-
-		initialDB.NBData = append(
-			initialDB.NBData,
-			&nbdb.LogicalRouter{
-				Name:        fmt.Sprintf("GR_%s_%s", networkConfig.GetNetworkName(), nodeName),
-				ExternalIDs: standardNonDefaultNetworkExtIDs(networkConfig),
-			},
-			&nbdb.LogicalRouter{
-				Name:        fmt.Sprintf("%s_transit_router", netInfo.netName),
-				ExternalIDs: standardNonDefaultNetworkExtIDs(networkConfig),
-			},
-			newNetworkClusterPortGroup(networkConfig),
-		)
 	}
 
 	objects := []runtime.Object{
@@ -1244,6 +1275,15 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	}
 	if err = fakeOvn.networkManager.Start(); err != nil {
 		return err
+	}
+
+	fullL2UDNController := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
+	if fullL2UDNController == nil {
+		return fmt.Errorf("expected L2 network controller to exist")
+	}
+	err = fullL2UDNController.init()
+	if err != nil {
+		return fmt.Errorf("failed to initialize %s controller: %w", userDefinedNetworkName, err)
 	}
 
 	if err = fakeOvn.controller.WatchNamespaces(); err != nil {

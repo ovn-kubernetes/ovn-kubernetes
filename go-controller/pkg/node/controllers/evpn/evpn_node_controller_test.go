@@ -1,0 +1,439 @@
+package evpn
+
+import (
+	"context"
+	"net"
+
+	cnitypes "github.com/containernetworking/cni/pkg/types"
+	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/stretchr/testify/mock"
+	"github.com/vishvananda/netlink"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	utilnet "k8s.io/utils/net"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	adminpolicybasedroutefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
+	egressipfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
+	egressservicefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	routeadvertisementsfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
+	udnfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
+	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	netlinkMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	utilMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+)
+
+var _ = Describe("EVPN node controller", func() {
+	const (
+		nodeName = "node1"
+		vtepName = "vtep1"
+	)
+
+	var (
+		wf     *factory.WatchFactory
+		stopCh chan struct{}
+		ctrl   *Controller
+
+		kubeClient   *fake.Clientset
+		vtepClient   *vtepfake.Clientset
+		netMgr       *networkmanager.FakeNetworkManager
+		ovsClient    libovsdbclient.Client
+		ovsdbCleanup *libovsdbtest.Context
+		netlinkMock  *utilMocks.NetLinkOps
+	)
+
+	origNetlinkOps := util.GetNetLinkOps()
+
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.OVNKubernetesFeature.EnableEVPN = true
+
+		// Set up netlink mock
+		netlinkMock = &utilMocks.NetLinkOps{}
+		util.SetNetLinkOpMockInst(netlinkMock)
+
+		// Mock for OVS port operations - return a mock link for any LinkByName call
+		mockLink := &netlinkMocks.Link{}
+		mockLink.On("Attrs").Return(&netlink.LinkAttrs{Name: "mock-link"})
+		netlinkMock.On("LinkByName", mock.Anything).Return(mockLink, nil)
+		netlinkMock.On("LinkSetMaster", mock.Anything, mock.Anything).Return(nil)
+		netlinkMock.On("LinkSetUp", mock.Anything).Return(nil)
+
+		// Create fake OVS client with br-int bridge
+		// UUIDs must be valid RFC 4122 UUIDs for the test harness
+		brIntUUID := "550e8400-e29b-41d4-a716-446655440000"
+		var err error
+		ovsClient, ovsdbCleanup, err = libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.Bridge{UUID: brIntUUID, Name: "br-int"},
+				&vswitchd.OpenvSwitch{UUID: "550e8400-e29b-41d4-a716-446655440001", Bridges: []string{brIntUUID}},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+			},
+		}
+
+		kubeClient = fake.NewClientset(node)
+		vtepClient = vtepfake.NewSimpleClientset()
+		ovnNodeClient := &util.OVNNodeClientset{
+			KubeClient:                kubeClient,
+			EgressServiceClient:       egressservicefake.NewClientset(),
+			EgressIPClient:            egressipfake.NewClientset(),
+			AdminPolicyRouteClient:    adminpolicybasedroutefake.NewClientset(),
+			NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+			UserDefinedNetworkClient:  udnfake.NewClientset(),
+			RouteAdvertisementsClient: routeadvertisementsfake.NewClientset(),
+			VTEPClient:                vtepClient,
+		}
+
+		wf, err = factory.NewNodeWatchFactory(ovnNodeClient, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(wf.Start()).To(Succeed())
+
+		stopCh = make(chan struct{})
+		Expect(util.WaitForInformerCacheSyncWithTimeout(
+			"evpn-controller",
+			stopCh,
+			wf.NodeCoreInformer().Informer().HasSynced,
+			wf.VTEPInformer().Informer().HasSynced,
+		)).To(BeTrue())
+
+		netConf := &ovncnitypes.NetConf{
+			NetConf:   cnitypes.NetConf{Name: "evpn-net"},
+			Topology:  ovntypes.Layer2Topology,
+			Role:      "primary",
+			Transport: "evpn",
+			EVPN: &ovncnitypes.EVPNConfig{
+				VTEP: vtepName,
+				MACVRF: &ovncnitypes.VRFConfig{
+					VNI: 100,
+					VID: 10,
+				},
+				IPVRF: &ovncnitypes.VRFConfig{
+					VNI: 200,
+					VID: 20,
+				},
+			},
+		}
+		netInfo, err := util.NewNetInfo(netConf)
+		Expect(err).NotTo(HaveOccurred())
+		netMgr = &networkmanager.FakeNetworkManager{
+			PrimaryNetworks: map[string]util.NetInfo{
+				"default": netInfo,
+			},
+			NADNetworks: map[string]util.NetInfo{},
+		}
+
+		ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, netMgr, ovsClient)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		if stopCh != nil {
+			close(stopCh)
+		}
+		if wf != nil {
+			wf.Shutdown()
+		}
+		if ovsdbCleanup != nil {
+			ovsdbCleanup.Cleanup()
+		}
+		util.SetNetLinkOpMockInst(origNetlinkOps)
+	})
+
+	It("applies and cleans up device configs for a managed VTEP", func() {
+		By("creating a managed VTEP with dual-stack CIDRs")
+		_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: vtepName,
+			},
+			Spec: vtepv1.VTEPSpec{
+				CIDRs: vtepv1.DualStackCIDRs{
+					"100.64.0.0/24",
+					"fd00::/64",
+				},
+				Mode: vtepv1.VTEPModeManaged,
+			},
+		}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("annotating the node with VTEP IPs")
+		node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		node.Annotations = map[string]string{
+			util.OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1","fd00::1"]}`,
+		}
+		_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() error {
+			_, err := wf.VTEPInformer().Lister().Get(vtepName)
+			return err
+		}).Should(Succeed())
+		Eventually(func() bool {
+			node, err := wf.GetNode(nodeName)
+			if err != nil {
+				return false
+			}
+			return node.Annotations[util.OVNNodeVTEPIPs] == `{"vtep1":["100.64.0.1","fd00::1"]}`
+		}).Should(BeTrue())
+
+		err = ctrl.reconcile(vtepName)
+		Expect(err).NotTo(HaveOccurred())
+
+		bridgeName := GetEVPNBridgeName(vtepName)
+		vxlan4Name := GetEVPNVXLANName(vtepName, utilnet.IPv4)
+		vxlan6Name := GetEVPNVXLANName(vtepName, utilnet.IPv6)
+		dummyName := GetEVPNDummyName(vtepName)
+
+		By("verifying bridge, VXLANs, and dummy device configs are stored")
+		bridgeCfg := ctrl.ndm.GetConfig(bridgeName)
+		Expect(bridgeCfg).NotTo(BeNil())
+		_, ok := bridgeCfg.Link.(*netlink.Bridge)
+		Expect(ok).To(BeTrue())
+
+		vxlan4Cfg := ctrl.ndm.GetConfig(vxlan4Name)
+		Expect(vxlan4Cfg).NotTo(BeNil())
+		Expect(vxlan4Cfg.Master).To(Equal(bridgeName))
+		vxlan4Link, ok := vxlan4Cfg.Link.(*netlink.Vxlan)
+		Expect(ok).To(BeTrue())
+		Expect(vxlan4Link.SrcAddr.Equal(net.ParseIP("100.64.0.1"))).To(BeTrue())
+
+		vxlan6Cfg := ctrl.ndm.GetConfig(vxlan6Name)
+		Expect(vxlan6Cfg).NotTo(BeNil())
+		Expect(vxlan6Cfg.Master).To(Equal(bridgeName))
+		vxlan6Link, ok := vxlan6Cfg.Link.(*netlink.Vxlan)
+		Expect(ok).To(BeTrue())
+		Expect(vxlan6Link.SrcAddr.Equal(net.ParseIP("fd00::1"))).To(BeTrue())
+
+		By("verifying L3 SVI device config is stored")
+		netInfo := netMgr.PrimaryNetworks["default"]
+		l3SVIName := GetEVPNL3SVIName(netInfo)
+		l3SVICfg := ctrl.ndm.GetConfig(l3SVIName)
+		Expect(l3SVICfg).NotTo(BeNil())
+		Expect(l3SVICfg.Master).To(Equal(util.GetNetworkVRFName(netInfo)))
+		Expect(l3SVICfg.VLANParent).To(Equal(bridgeName))
+		l3SVILink, ok := l3SVICfg.Link.(*netlink.Vlan)
+		Expect(ok).To(BeTrue())
+		Expect(l3SVILink.VlanId).To(Equal(netInfo.EVPNIPVRFVID()))
+
+		By("verifying L2 SVI device config is stored")
+		l2SVIName := GetEVPNL2SVIName(netInfo)
+		l2SVICfg := ctrl.ndm.GetConfig(l2SVIName)
+		Expect(l2SVICfg).NotTo(BeNil())
+		Expect(l2SVICfg.Master).To(Equal(util.GetNetworkVRFName(netInfo)))
+		Expect(l2SVICfg.VLANParent).To(Equal(bridgeName))
+		l2SVILink, ok := l2SVICfg.Link.(*netlink.Vlan)
+		Expect(ok).To(BeTrue())
+		Expect(l2SVILink.VlanId).To(Equal(netInfo.EVPNMACVRFVID()))
+
+		By("verifying SVIs are listed by VLANParent")
+		svisOnBridge := ctrl.ndm.ListDevicesByVLANParent(bridgeName)
+		Expect(svisOnBridge).To(HaveLen(2))
+
+		dummyCfg := ctrl.ndm.GetConfig(dummyName)
+		Expect(dummyCfg).NotTo(BeNil())
+		_, ok = dummyCfg.Link.(*netlink.Dummy)
+		Expect(ok).To(BeTrue())
+		Expect(dummyCfg.Addresses).To(HaveLen(2))
+		addresses := make([]string, 0, len(dummyCfg.Addresses))
+		for _, addr := range dummyCfg.Addresses {
+			Expect(addr.IPNet).NotTo(BeNil())
+			addresses = append(addresses, addr.IPNet.String())
+		}
+		Expect(addresses).To(ConsistOf("100.64.0.1/32", "fd00::1/128"))
+
+		By("removing VTEP IPs from the node annotation")
+		node, err = kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		delete(node.Annotations, util.OVNNodeVTEPIPs)
+		_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			node, err := wf.GetNode(nodeName)
+			if err != nil {
+				return false
+			}
+			_, ok := node.Annotations[util.OVNNodeVTEPIPs]
+			return !ok
+		}).Should(BeTrue())
+
+		err = ctrl.reconcile(vtepName)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying device configs are cleaned up")
+		Expect(ctrl.ndm.GetConfig(bridgeName)).To(BeNil())
+		Expect(ctrl.ndm.GetConfig(vxlan4Name)).To(BeNil())
+		Expect(ctrl.ndm.GetConfig(vxlan6Name)).To(BeNil())
+		Expect(ctrl.ndm.GetConfig(dummyName)).To(BeNil())
+		Expect(ctrl.ndm.GetConfig(l3SVIName)).To(BeNil())
+		Expect(ctrl.ndm.GetConfig(l2SVIName)).To(BeNil())
+		Expect(ctrl.ndm.ListDevicesByVLANParent(bridgeName)).To(BeEmpty())
+	})
+
+	It("cleans up SVI when NAD is deleted", func() {
+		nadKey := "default/evpn-nad"
+
+		Expect(netMgr).NotTo(BeNil())
+		Expect(netMgr.NADNetworks).NotTo(BeNil())
+
+		_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: vtepName,
+			},
+			Spec: vtepv1.VTEPSpec{
+				CIDRs: vtepv1.DualStackCIDRs{
+					"100.64.0.0/24",
+					"fd00::/64",
+				},
+				Mode: vtepv1.VTEPModeManaged,
+			},
+		}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		node.Annotations = map[string]string{
+			util.OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1","fd00::1"]}`,
+		}
+		_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() error {
+			_, err := wf.VTEPInformer().Lister().Get(vtepName)
+			return err
+		}).Should(Succeed())
+		Eventually(func() bool {
+			node, err := wf.GetNode(nodeName)
+			if err != nil {
+				return false
+			}
+			return node.Annotations[util.OVNNodeVTEPIPs] == `{"vtep1":["100.64.0.1","fd00::1"]}`
+		}).Should(BeTrue())
+
+		id, err := netMgr.RegisterNADReconciler(ctrl.nadReconciler)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() {
+			Expect(netMgr.DeRegisterNADReconciler(id)).To(Succeed())
+		}()
+
+		Expect(controller.Start(ctrl.nadReconciler, ctrl.vtepController)).To(Succeed())
+		defer controller.Stop(ctrl.nadReconciler, ctrl.vtepController)
+
+		netInfo := netMgr.PrimaryNetworks["default"]
+		Expect(netInfo).NotTo(BeNil())
+		bridgeName := GetEVPNBridgeName(vtepName)
+		l3SVIName := GetEVPNL3SVIName(netInfo)
+		l2SVIName := GetEVPNL2SVIName(netInfo)
+
+		By("adding a NAD and verifying SVIs are created")
+		netMgr.NADNetworks[nadKey] = netInfo
+		netMgr.TriggerHandlers(nadKey, netInfo, false)
+
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(bridgeName)
+		}).ShouldNot(BeNil())
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(l3SVIName)
+		}).ShouldNot(BeNil())
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(l2SVIName)
+		}).ShouldNot(BeNil())
+
+		By("deleting the NAD and verifying SVIs are cleaned up")
+		delete(netMgr.NADNetworks, nadKey)
+		// Also remove from PrimaryNetworks since DoWithLock iterates over it
+		delete(netMgr.PrimaryNetworks, "default")
+		netMgr.TriggerHandlers(nadKey, nil, true)
+
+		// NAD cache should be cleared
+		Eventually(func() bool {
+			_, ok := ctrl.nadVTEPInfo[nadKey]
+			return !ok
+		}).Should(BeTrue())
+
+		// SVIs should be cleaned up (no networks reference this VTEP now)
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(l3SVIName)
+		}).Should(BeNil())
+		Eventually(func() *netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.GetConfig(l2SVIName)
+		}).Should(BeNil())
+		Eventually(func() []netlinkdevicemanager.DeviceConfig {
+			return ctrl.ndm.ListDevicesByVLANParent(bridgeName)
+		}).Should(BeEmpty())
+	})
+
+	It("reconciles and creates OVS ports for VTEP with MAC-VRF networks", func() {
+		By("creating a managed VTEP")
+		_, err := vtepClient.K8sV1().VTEPs().Create(context.Background(), &vtepv1.VTEP{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: vtepName,
+			},
+			Spec: vtepv1.VTEPSpec{
+				CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+				Mode:  vtepv1.VTEPModeManaged,
+			},
+		}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("annotating the node with VTEP IP")
+		node, err := kubeClient.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		node.Annotations = map[string]string{
+			util.OVNNodeVTEPIPs: `{"vtep1":["100.64.0.1"]}`,
+		}
+		_, err = kubeClient.CoreV1().Nodes().Update(context.Background(), node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() error {
+			_, err := wf.VTEPInformer().Lister().Get(vtepName)
+			return err
+		}).Should(Succeed())
+		Eventually(func() bool {
+			node, err := wf.GetNode(nodeName)
+			if err != nil {
+				return false
+			}
+			return node.Annotations[util.OVNNodeVTEPIPs] != ""
+		}).Should(BeTrue())
+
+		By("reconciling the VTEP")
+		err = ctrl.reconcile(vtepName)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("verifying OVS ports are created for MAC-VRF networks")
+		ports, err := libovsdbops.FindOVSPortsWithPredicate(ovsClient, func(port *vswitchd.Port) bool {
+			return port.ExternalIDs[externalIDEVPNVTEP] == vtepName
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ports).To(HaveLen(1))
+	})
+})

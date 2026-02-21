@@ -42,6 +42,7 @@ type userDefinedNetInfo struct {
 	isPrimary          bool
 	allowPersistentIPs bool
 	ipamClaimReference string
+	hasEVPN            bool
 }
 
 const (
@@ -56,6 +57,8 @@ const (
 type testConfiguration struct {
 	configToOverride   *config.OVNKubernetesFeatureConfig
 	gatewayConfig      *config.GatewayConfig
+	withRemoteNode     bool
+	withRemotePod      bool
 	expectationOptions []option
 }
 
@@ -116,42 +119,26 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					*netInfo.netconf(),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
+
 				n := newNamespace(ns)
 				if netInfo.isPrimary {
 					n = newUDNNamespace(ns)
-					networkConfig, err := util.NewNetInfo(netInfo.netconf())
-					Expect(err).NotTo(HaveOccurred())
-					initialDB.NBData = append(
-						initialDB.NBData,
-						&nbdb.LogicalSwitch{
-							Name:        fmt.Sprintf("%s_join", netInfo.netName),
-							ExternalIDs: standardNonDefaultNetworkExtIDs(networkConfig),
-						},
-						&nbdb.LogicalRouter{
-							Name:        fmt.Sprintf("%s_ovn_cluster_router", netInfo.netName),
-							ExternalIDs: standardNonDefaultNetworkExtIDs(networkConfig),
-						},
-						&nbdb.LogicalRouterPort{
-							Name: fmt.Sprintf("rtos-%s_%s", netInfo.netName, nodeName),
-						},
-					)
-					initialDB.NBData = append(initialDB.NBData, getHairpinningACLsV4AndPortGroup()...)
-					initialDB.NBData = append(initialDB.NBData, getHairpinningACLsV4AndPortGroupForNetwork(networkConfig, nil)...)
 				}
 
 				const nodeIPv4CIDR = "192.168.126.202/24"
 				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 				Expect(err).NotTo(HaveOccurred())
 				networkPolicy := getMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
+
 				nodes := []corev1.Node{*testNode}
-				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				if testConfig.withRemoteNode {
+					By("adding a remote node")
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
 					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
-					By("adding an extra node that should be ignored by Dynamic UDN Allocation")
 					nodes = append(nodes, *testNode2)
 				}
+
 				fakeOvn.startWithDBSetup(
 					initialDB,
 					&corev1.NamespaceList{
@@ -185,11 +172,18 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
 
+				// succeed the check for Load_Balancer_Group support
+				fexec := testing.NewFakeExec()
+				fexec.AddFakeCmdsNoOutputNoError([]string{"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group"})
+				Expect(util.SetExec(fexec)).To(Succeed())
+
+				fullL3UDNController := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+				Expect(fullL3UDNController).ToNot(BeNil())
+				Expect(fullL3UDNController.init()).To(Succeed())
+
 				Expect(fakeOvn.controller.WatchNamespaces()).NotTo(HaveOccurred())
 				Expect(fakeOvn.controller.WatchPods()).NotTo(HaveOccurred())
-				if netInfo.isPrimary {
-					Expect(fakeOvn.controller.WatchNetworkPolicy()).NotTo(HaveOccurred())
-				}
+
 				userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 				Expect(ok).To(BeTrue())
 
@@ -212,12 +206,12 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				defaultNetExpectations := getDefaultNetExpectedPodsAndSwitches([]testPod{podInfo}, []string{nodeName})
 				expectationOptions := testConfig.expectationOptions
+				gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
+				expectationOptions = append(expectationOptions, withGatewayConfig(gwConfig))
 				if netInfo.isPrimary {
 					defaultNetExpectations = emptyDefaultClusterNetworkNodeSwitch(podInfo.nodeName)
-					gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(gwConfig.NextHops).NotTo(BeEmpty())
-					expectationOptions = append(expectationOptions, withGatewayConfig(gwConfig))
 					if testConfig.configToOverride != nil && testConfig.configToOverride.EnableEgressFirewall {
 						defaultNetExpectations = append(defaultNetExpectations,
 							buildNamespacedPortGroup(podInfo.namespace, DefaultNetworkControllerName))
@@ -231,7 +225,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					// Add NetPol hairpin ACLs and PGs for the validation.
 					mgmtPortName := managementPortName(userDefinedNetController.bnc.GetNetworkScopedName(nodeName))
 					mgmtPortUUID := mgmtPortName + "-UUID"
-					defaultNetExpectations = append(defaultNetExpectations, getHairpinningACLsV4AndPortGroup()...)
 					defaultNetExpectations = append(defaultNetExpectations, getHairpinningACLsV4AndPortGroupForNetwork(networkConfig,
 						[]string{mgmtPortUUID})...)
 					// Add Netpol deny policy ACLs and PGs for the validation.
@@ -253,7 +246,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 								fakeOvn,
 								[]testPod{podInfo},
 								expectationOptions...,
-							).expectedLogicalSwitchesAndPorts()...)))
+							).expectedLogicalSwitchesAndPorts(nodeName)...)))
 
 				return nil
 			}
@@ -304,8 +297,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			icClusterTestConfiguration(func(config *testConfiguration) {
 				config.configToOverride.EnableDynamicUDNAllocation = true
 				config.configToOverride.EnableNetworkSegmentation = true
+				config.withRemoteNode = true
 			}),
 			config.GatewayModeShared,
+		),
+		Entry("pod on a CUDN configured with EVPN",
+			dummyPrimaryLayer3EVPNCUDN("192.168.0.0/16", "192.168.1.0/24"),
+			icClusterTestConfiguration(func(config *testConfiguration) {
+				config.withRemoteNode = true
+			}),
+			config.GatewayModeLocal,
 		),
 	)
 
@@ -321,7 +322,10 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					config.Gateway.DisableSNATMultipleGWs = testConfig.gatewayConfig.DisableSNATMultipleGWs
 				}
 			}
-			app.Action = func(ctx *cli.Context) error {
+			if config.OVNKubernetesFeature.EnableInterconnect {
+				config.Default.Zone = testICZone
+			}
+			app.Action = func(_ *cli.Context) error {
 				netConf := netInfo.netconf()
 				networkConfig, err := util.NewNetInfo(netConf)
 				Expect(err).NotTo(HaveOccurred())
@@ -346,9 +350,8 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 				Expect(err).NotTo(HaveOccurred())
 
-				nbZone := &nbdb.NBGlobal{Name: types.OvnDefaultZone, UUID: types.OvnDefaultZone}
 				defaultNetExpectations := emptyDefaultClusterNetworkNodeSwitch(podInfo.nodeName)
-				defaultNetExpectations = append(defaultNetExpectations, nbZone)
+				defaultNetExpectations = append(defaultNetExpectations, generateUDNPostInitDB([]libovsdbtest.TestData{})...)
 				gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(gwConfig.NextHops).NotTo(BeEmpty())
@@ -364,13 +367,15 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 						expectedLayer3EgressEntities(networkConfig, *gwConfig, testing.MustParseIPNet(netInfo.hostsubnets))...)
 					initialDB.NBData = append(initialDB.NBData,
 						newNetworkClusterPortGroup(networkConfig),
+						newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(types.ClusterLBGroupName)),
+						newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(types.ClusterSwitchLBGroupName)),
+						newLoadBalancerGroup(networkConfig.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName)),
 					)
 					if testConfig.configToOverride != nil && testConfig.configToOverride.EnableEgressFirewall {
 						defaultNetExpectations = append(defaultNetExpectations,
 							buildNamespacedPortGroup(podInfo.namespace, DefaultNetworkControllerName))
 					}
 				}
-				initialDB.NBData = append(initialDB.NBData, nbZone)
 
 				fakeOvn.startWithDBSetup(
 					initialDB,
@@ -392,8 +397,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					},
 				)
 
-				Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
-
 				podInfo.populateLogicalSwitchCache(fakeOvn)
 
 				// pod exists, networks annotations don't
@@ -404,6 +407,15 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
+
+				// succeed the check for Load_Balancer_Group support
+				fexec := testing.NewFakeExec()
+				fexec.AddFakeCmdsNoOutputNoError([]string{"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group"})
+				Expect(util.SetExec(fexec)).To(Succeed())
+
+				fullL3UDNController := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+				Expect(fullL3UDNController).ToNot(BeNil())
+				Expect(fullL3UDNController.init()).To(Succeed())
 
 				Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
 				Expect(fakeOvn.controller.WatchPods()).To(Succeed())
@@ -423,15 +435,11 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(fakeOvn.fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Delete(context.Background(), nad.Name, metav1.DeleteOptions{})).To(Succeed())
 
 				// we must access the layer3 controller to be able to issue its cleanup function (to remove the GW related stuff).
-				Expect(
-					newLayer3UserDefinedNetworkController(
-						&userDefinedNetController.bnc.CommonNetworkControllerInfo,
-						networkConfig,
-						nodeName,
-						fakeNetworkManager,
-						nil,
-						NewPortCache(ctx.Done()),
-					).Cleanup()).To(Succeed())
+				Eventually(func() bool {
+					_, exists := fullL3UDNController.gatewayManagers.Load(nodeName)
+					return exists
+				}).Should(BeTrue())
+				Expect(fullL3UDNController.Cleanup()).To(Succeed())
 				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(defaultNetExpectations))
 
 				return nil
@@ -951,38 +959,6 @@ func getNetworkRole(netInfo util.NetInfo) string {
 	return util.GetUserDefinedNetworkRole(netInfo.IsPrimaryNetwork())
 }
 
-func (sni *userDefinedNetInfo) setupOVNDependencies(dbData *libovsdbtest.TestSetup) error {
-	netInfo, err := util.NewNetInfo(sni.netconf())
-	if err != nil {
-		return err
-	}
-
-	externalIDs := util.GenerateExternalIDsForSwitchOrRouter(netInfo)
-	switch sni.topology {
-	case types.Layer2Topology:
-		dbData.NBData = append(dbData.NBData, &nbdb.LogicalSwitch{
-			Name:        netInfo.GetNetworkScopedName(types.OVNLayer2Switch),
-			UUID:        netInfo.GetNetworkScopedName(types.OVNLayer2Switch) + "_UUID",
-			ExternalIDs: externalIDs,
-		})
-	case types.Layer3Topology:
-		dbData.NBData = append(dbData.NBData, &nbdb.LogicalSwitch{
-			Name:        netInfo.GetNetworkScopedName(nodeName),
-			UUID:        netInfo.GetNetworkScopedName(nodeName) + "_UUID",
-			ExternalIDs: externalIDs,
-		})
-	case types.LocalnetTopology:
-		dbData.NBData = append(dbData.NBData, &nbdb.LogicalSwitch{
-			Name:        netInfo.GetNetworkScopedName(types.OVNLocalnetSwitch),
-			UUID:        netInfo.GetNetworkScopedName(types.OVNLocalnetSwitch) + "_UUID",
-			ExternalIDs: externalIDs,
-		})
-	default:
-		return fmt.Errorf("missing topology in the network configuration: %v", sni)
-	}
-	return nil
-}
-
 func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 	const plugin = "ovn-k8s-cni-overlay"
 
@@ -1005,7 +981,7 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		}
 	}
 
-	return &ovncnitypes.NetConf{
+	netconf := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
 			Name: sni.netName,
 			Type: plugin,
@@ -1016,7 +992,14 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		Role:               role,
 		AllowPersistentIPs: sni.allowPersistentIPs,
 		TransitSubnet:      transitSubnet,
+		Transport:          types.NetworkTransportGeneve,
 	}
+
+	if sni.hasEVPN {
+		netconf.Transport = types.NetworkTransportEVPN
+	}
+
+	return netconf
 }
 
 func dummyTestPod(nsName string, info userDefinedNetInfo) testPod {
@@ -1071,6 +1054,12 @@ func dummyPrimaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) us
 	return secondaryNet
 }
 
+func dummyPrimaryLayer3EVPNCUDN(clustersubnets, hostsubnets string) userDefinedNetInfo {
+	udnNetInfo := dummyPrimaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets)
+	udnNetInfo.hasEVPN = true
+	return udnNetInfo
+}
+
 // This util is returning a network-name/hostSubnet for the node's node-subnets annotation
 func (sni *userDefinedNetInfo) String() string {
 	return fmt.Sprintf("%q: %q", sni.netName, sni.hostsubnets)
@@ -1113,6 +1102,7 @@ func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInf
 				"k8s.ovn.org/network-ids":                                   fmt.Sprintf("{\"default\":\"0\",\"isolatednet\":\"%s\"}", userDefinedNetworkID),
 				util.OvnNodeID:                                              "4",
 				"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{\"isolatednet\":\"25\"}",
+				"k8s.ovn.org/node-transit-switch-port-ifaddr":               "{\"ipv4\":\"100.88.0.3/16\"}",
 			},
 			Labels: map[string]string{
 				"k8s.ovn.org/egress-assignable": "",
@@ -1158,7 +1148,6 @@ func expectedGWEntities(nodeName string, netInfo util.NetInfo, gwConfig util.L3G
 		expectedGWRouterPlusNATAndStaticRoutes(nodeName, gwRouterName, netInfo, gwConfig),
 		expectedGRToJoinSwitchLRP(gwRouterName, gwRouterJoinIPAddress(), netInfo),
 		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
-		expectedGatewayChassis(nodeName, netInfo, gwConfig),
 	)
 	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
 	expectedEntities = append(expectedEntities, expectedExternalSwitchAndLSPs(netInfo, gwConfig, nodeName)...)
@@ -1207,6 +1196,11 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 			Ports:        []string{gwRouterLRPUUID, gwRouterToExtLRPUUID},
 			Nat:          nat,
 			StaticRoutes: []string{staticRoute1, staticRoute2, staticRoute3},
+			Copp:         ptr.To(string(coppUUID)),
+			LoadBalancerGroup: []string{
+				netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterLBGroupName) + "-UUID",
+				netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName) + "-UUID",
+			},
 		},
 		sr1,
 		expectedGRStaticRoute(staticRoute2, ipv4DefaultRoute, nextHopIP, nil, &staticRouteOutputPort, netInfo),
@@ -1283,29 +1277,28 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	clusterRouterName := fmt.Sprintf("%s_ovn_cluster_router", netInfo.GetNetworkName())
 	rtosLRPName := fmt.Sprintf("%s%s", types.RouterToSwitchPrefix, netInfo.GetNetworkScopedName(nodeName))
 	rtosLRPUUID := rtosLRPName + "-UUID"
-	nodeIP := gwConfig.IPAddresses[0].IP.String()
-	masqSNAT := newNATEntry(masqSNATUUID1, "169.254.169.14", nodeSubnet.String(), standardNonDefaultNetworkExtIDs(netInfo), "")
-	masqSNAT.Match = getMasqueradeManagementIPSNATMatch(util.IPAddrToHWAddr(managementPortIP(nodeSubnet)).String())
-	masqSNAT.LogicalPort = ptr.To(fmt.Sprintf("rtos-%s_%s", netInfo.GetNetworkName(), nodeName))
-	if !config.OVNKubernetesFeature.EnableInterconnect {
-		masqSNAT.GatewayPort = ptr.To(fmt.Sprintf("rtos-%s_%s", netInfo.GetNetworkName(), nodeName) + "-UUID")
-	}
 
 	gatewayChassisUUID := fmt.Sprintf("%s-%s-UUID", rtosLRPName, gwConfig.ChassisID)
 	lrsrNextHop := gwRouterJoinIPAddress().IP.String()
 	if config.Gateway.Mode == config.GatewayModeLocal {
 		lrsrNextHop = managementPortIP(nodeSubnet).String()
 	}
+
+	clusterRouterExternalIDs := standardNonDefaultNetworkExtIDs(netInfo)
+	clusterRouterExternalIDs["k8s-cluster-router"] = "yes"
+
+	clusterRouter := &nbdb.LogicalRouter{
+		Name:        clusterRouterName,
+		UUID:        clusterRouterName + "-UUID",
+		Ports:       []string{rtosLRPUUID},
+		ExternalIDs: clusterRouterExternalIDs,
+		Copp:        ptr.To(string(coppUUID)),
+		Options:     map[string]string{"always_learn_from_arp_request": "false"},
+	}
+
 	expectedEntities := []libovsdbtest.TestData{
-		&nbdb.LogicalRouter{
-			Name:         clusterRouterName,
-			UUID:         clusterRouterName + "-UUID",
-			Ports:        []string{rtosLRPUUID},
-			StaticRoutes: []string{staticRouteUUID1, staticRouteUUID2},
-			Policies:     []string{routerPolicyUUID1, routerPolicyUUID2},
-			ExternalIDs:  standardNonDefaultNetworkExtIDs(netInfo),
-			Nat:          []string{masqSNATUUID1},
-		},
+		expectedGatewayChassis(nodeName, netInfo, gwConfig),
+		clusterRouter,
 		&nbdb.LogicalRouterPort{
 			UUID:           rtosLRPUUID,
 			Name:           rtosLRPName,
@@ -1314,11 +1307,52 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 			GatewayChassis: []string{gatewayChassisUUID},
 			Options:        map[string]string{libovsdbops.GatewayMTU: "1400"},
 		},
-		expectedGRStaticRoute(staticRouteUUID1, nodeSubnet.String(), lrsrNextHop, &nbdb.LogicalRouterStaticRoutePolicySrcIP, nil, netInfo),
-		expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), gwRouterJoinIPAddress().IP.String(), nil, nil, netInfo),
-		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
-		expectedLogicalRouterPolicy(routerPolicyUUID2, netInfo, nodeName, masqIPAddr, managementPortIP(nodeSubnet).String()),
-		masqSNAT,
+	}
+
+	hasEVPN := netInfo.Transport() == types.NetworkTransportEVPN
+	if config.OVNKubernetesFeature.EnableInterconnect && !hasEVPN {
+		rtotsLRPName := netInfo.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + nodeName)
+		rtotsLRPUUID := rtotsLRPName + "-UUID"
+		expectedEntities = append(expectedEntities,
+			&nbdb.LogicalRouterPort{
+				UUID:     rtotsLRPUUID,
+				Name:     rtotsLRPName,
+				Networks: []string{"100.88.0.3/16"},
+				MAC:      "0a:58:64:58:00:03",
+				Options:  map[string]string{"mcast_flood": "true"},
+			},
+		)
+		clusterRouter.Ports = append(clusterRouter.Ports, rtotsLRPUUID)
+	}
+
+	if netInfo.IsPrimaryNetwork() {
+		rtojLRPName := types.GWRouterToJoinSwitchPrefix + clusterRouterName
+		rtojLRPUUID := rtojLRPName + "-UUID"
+		nodeIP := gwConfig.IPAddresses[0].IP.String()
+		masqSNAT := newNATEntry(masqSNATUUID1, "169.254.169.14", nodeSubnet.String(), standardNonDefaultNetworkExtIDs(netInfo), "")
+		masqSNAT.Match = getMasqueradeManagementIPSNATMatch(util.IPAddrToHWAddr(managementPortIP(nodeSubnet)).String())
+		masqSNAT.LogicalPort = ptr.To(fmt.Sprintf("rtos-%s_%s", netInfo.GetNetworkName(), nodeName))
+		if !config.OVNKubernetesFeature.EnableInterconnect {
+			masqSNAT.GatewayPort = ptr.To(fmt.Sprintf("rtos-%s_%s", netInfo.GetNetworkName(), nodeName) + "-UUID")
+		}
+		expectedEntities = append(expectedEntities,
+			&nbdb.LogicalRouterPort{
+				UUID:        rtojLRPUUID,
+				Name:        rtojLRPName,
+				Networks:    []string{"100.65.0.1/16"},
+				MAC:         "0a:58:64:41:00:01",
+				ExternalIDs: standardNonDefaultNetworkExtIDs(netInfo),
+			},
+			expectedGRStaticRoute(staticRouteUUID1, nodeSubnet.String(), lrsrNextHop, &nbdb.LogicalRouterStaticRoutePolicySrcIP, nil, netInfo),
+			expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), gwRouterJoinIPAddress().IP.String(), nil, nil, netInfo),
+			expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
+			expectedLogicalRouterPolicy(routerPolicyUUID2, netInfo, nodeName, masqIPAddr, managementPortIP(nodeSubnet).String()),
+			masqSNAT,
+		)
+		clusterRouter.Ports = append(clusterRouter.Ports, rtojLRPUUID)
+		clusterRouter.Nat = []string{masqSNATUUID1}
+		clusterRouter.Policies = []string{routerPolicyUUID1, routerPolicyUUID2}
+		clusterRouter.StaticRoutes = []string{staticRouteUUID1, staticRouteUUID2}
 	}
 	return expectedEntities
 }
@@ -1442,22 +1476,33 @@ func externalSwitchRouterPortOptions(gatewayRouterName string) map[string]string
 }
 
 func expectedJoinSwitchAndLSPs(netInfo util.NetInfo, nodeName string) []libovsdbtest.TestData {
-	const joinToGRLSPUUID = "port3-UUID"
 	gwRouterName := netInfo.GetNetworkScopedGWRouterName(nodeName)
+	clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
+	joinToGRLSPName := types.JoinSwitchToGWRouterPrefix + gwRouterName
+	joinToCRLSPName := types.JoinSwitchToGWRouterPrefix + clusterRouterName
+	joinToGRLSPUUID := joinToGRLSPName + "-UUID"
+	joinToCRLSPUUID := joinToCRLSPName + "-UUID"
 	expectedData := []libovsdbtest.TestData{
 		&nbdb.LogicalSwitch{
 			UUID:        "join-UUID",
 			Name:        netInfo.GetNetworkScopedJoinSwitchName(),
-			Ports:       []string{joinToGRLSPUUID},
+			Ports:       []string{joinToGRLSPUUID, joinToCRLSPUUID},
 			ExternalIDs: standardNonDefaultNetworkExtIDs(netInfo),
 		},
 		&nbdb.LogicalSwitchPort{
 			UUID:        joinToGRLSPUUID,
-			Name:        types.JoinSwitchToGWRouterPrefix + gwRouterName,
+			Name:        joinToGRLSPName,
 			Addresses:   []string{"router"},
 			ExternalIDs: standardNonDefaultNetworkExtIDs(netInfo),
 			Options:     map[string]string{libovsdbops.RouterPort: types.GWRouterToJoinSwitchPrefix + gwRouterName},
 			Type:        "router",
+		},
+		&nbdb.LogicalSwitchPort{
+			UUID:      joinToCRLSPUUID,
+			Name:      joinToCRLSPName,
+			Addresses: []string{"router"},
+			Options:   map[string]string{libovsdbops.RouterPort: types.GWRouterToJoinSwitchPrefix + clusterRouterName},
+			Type:      "router",
 		},
 	}
 	return expectedData
@@ -1505,23 +1550,6 @@ func standardNonDefaultNetworkExtIDsForLogicalSwitch(netInfo util.NetInfo) map[s
 	externalIDs := standardNonDefaultNetworkExtIDs(netInfo)
 	externalIDs[types.NetworkRoleExternalID] = getNetworkRole(netInfo)
 	return externalIDs
-}
-
-func newLayer3UserDefinedNetworkController(
-	cnci *CommonNetworkControllerInfo,
-	netInfo util.NetInfo,
-	nodeName string,
-	networkManager networkmanager.Interface,
-	eIPController *EgressIPController,
-	portCache *PortCache,
-) *Layer3UserDefinedNetworkController {
-	layer3NetworkController, err := NewLayer3UserDefinedNetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache)
-	Expect(err).NotTo(HaveOccurred())
-	layer3NetworkController.gatewayManagers.Store(
-		nodeName,
-		newDummyGatewayManager(cnci.kube, cnci.nbClient, netInfo, cnci.watchFactory, nodeName),
-	)
-	return layer3NetworkController
 }
 
 func buildNamespacedPortGroup(namespace, controller string) *nbdb.PortGroup {
