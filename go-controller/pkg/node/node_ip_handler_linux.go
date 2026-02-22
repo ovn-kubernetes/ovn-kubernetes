@@ -41,7 +41,8 @@ type addressManager struct {
 	nodePrimaryAddr net.IP
 	gatewayBridge   *bridgeconfig.BridgeConfiguration
 
-	OnChanged func()
+	OnChanged             func()
+	OnMasqueradeIPChanged func()
 	sync.Mutex
 }
 
@@ -55,14 +56,15 @@ func newAddressManager(nodeName string, k kube.Interface, mgmtPort managementpor
 // reproducibility of unit tests.
 func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtPort managementport.Interface, watchFactory factory.NodeWatchFactory, gwBridge *bridgeconfig.BridgeConfiguration, useNetlink bool) *addressManager {
 	mgr := &addressManager{
-		nodeName:      nodeName,
-		watchFactory:  watchFactory,
-		cidrs:         sets.New[string](),
-		mgmtPort:      mgmtPort,
-		gatewayBridge: gwBridge,
-		OnChanged:     func() {},
-		useNetlink:    useNetlink,
-		syncPeriod:    30 * time.Second,
+		nodeName:              nodeName,
+		watchFactory:          watchFactory,
+		cidrs:                 sets.New[string](),
+		mgmtPort:              mgmtPort,
+		gatewayBridge:         gwBridge,
+		OnChanged:             func() {},
+		OnMasqueradeIPChanged: func() {},
+		useNetlink:            useNetlink,
+		syncPeriod:            30 * time.Second,
 	}
 	mgr.nodeAnnotator = kube.NewNodeAnnotator(k, nodeName)
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
@@ -167,6 +169,10 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				if subscribed, addrChan, err = subscribe(); err != nil {
 					klog.Errorf("Error during netlink re-subscribe due to channel closing for IP Manager: %v", err)
 				}
+				continue
+			}
+			if util.IsAddressReservedForInternalUse(a.LinkAddress.IP) {
+				c.OnMasqueradeIPChanged()
 				continue
 			}
 			addrChanged := false

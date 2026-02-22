@@ -1794,6 +1794,14 @@ func newGateway(
 				}
 			}
 			gw.openflowManager.requestFlowSync()
+			if err := ensureMasqueradeResources(routeManager, config.Gateway.Interface, nodeName, watchFactory); err != nil {
+				klog.V(5).Infof("Masquerade reconciler on addr change: %v", err)
+			}
+		}
+		gw.nodeIPManager.OnMasqueradeIPChanged = func() {
+			if err := ensureMasqueradeResources(routeManager, config.Gateway.Interface, nodeName, watchFactory); err != nil {
+				klog.V(5).Infof("Masquerade reconciler on masquerade IP change: %v", err)
+			}
 		}
 
 		if config.Gateway.NodeportEnable {
@@ -2099,6 +2107,44 @@ func setNodeMasqueradeIPOnExtBridge(extBridgeName string) error {
 		}
 	}
 
+	return nil
+}
+
+// ensureMasqueradeResources ensures that all masquerade-related resources
+// (IP addresses, routes, and MAC bindings) are configured on the gateway interface.
+// This function is idempotent and safe to call concurrently from multiple event sources
+// (linkManager, addressManager). A mutex serializes concurrent calls.
+// The masquerade IP must be set first because routes use a gateway IP (e.g., 169.254.0.4)
+// that is only reachable once the masquerade IP (e.g., 169.254.0.2/29) creates the
+// connected route for the masquerade subnet.
+var ensureMasqueradeResourcesMu sync.Mutex
+
+func ensureMasqueradeResources(routeManager *routemanager.Controller, gwIface, nodeName string, watchFactory factory.NodeWatchFactory) error {
+	ensureMasqueradeResourcesMu.Lock()
+	defer ensureMasqueradeResourcesMu.Unlock()
+	// 0. Verify interface has a primary (non-link-local, non-masquerade) IP before
+	// adding any resources. Without this check, we'd add the masquerade IP to an
+	// interface that hasn't acquired its primary IP yet (e.g., DHCP pending after
+	// DPU reboot), which can block DHCP from completing.
+	ifAddrs, err := nodeutil.GetNetworkInterfaceIPAddresses(gwIface)
+	if err != nil {
+		return fmt.Errorf("interface %s not ready (no primary IP): %w", gwIface, err)
+	}
+	// 1. Masquerade IP must be first — routes depend on it for gateway reachability
+	if err := setNodeMasqueradeIPOnExtBridge(gwIface); err != nil {
+		return fmt.Errorf("failed to set masquerade IP: %w", err)
+	}
+	// 2. Re-add routes with the current LinkIndex (interface may have been recreated)
+	if err := addMasqueradeRoute(routeManager, gwIface, nodeName, ifAddrs, watchFactory); err != nil {
+		return fmt.Errorf("failed to add masquerade route: %w", err)
+	}
+	if err := configureSvcRouteViaInterface(routeManager, gwIface, DummyNextHopIPs()); err != nil {
+		return fmt.Errorf("failed to configure service route: %w", err)
+	}
+	// 3. Restore ARP/ND entries for masquerade IPs
+	if err := addHostMACBindings(gwIface); err != nil {
+		return fmt.Errorf("failed to add MAC bindings: %w", err)
+	}
 	return nil
 }
 
