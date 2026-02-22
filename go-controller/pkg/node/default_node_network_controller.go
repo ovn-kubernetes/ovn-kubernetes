@@ -156,7 +156,17 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
 			cnnci.watchFactory.PodCoreInformer(), cnnci.name, cnnci.recorder)
 	}
-	c.linkManager = linkmanager.NewController(cnnci.name, config.IPv4Mode, config.IPv6Mode, c.updateGatewayMAC)
+	c.linkManager = linkmanager.NewController(cnnci.name, config.IPv4Mode, config.IPv6Mode, func(link netlink.Link) error {
+		if err := c.updateGatewayMAC(link); err != nil {
+			return err
+		}
+		if c.Gateway != nil && link.Attrs().Name == config.Gateway.Interface {
+			if err := ensureMasqueradeResources(c.routeManager, config.Gateway.Interface, c.name, c.watchFactory); err != nil {
+				klog.V(5).Infof("Masquerade reconciler on link event: %v", err)
+			}
+		}
+		return nil
+	})
 	return c
 }
 
