@@ -364,7 +364,7 @@ func updateSBDBConnectionMetric(ovsAppctl ovsClient) {
 }
 
 // RegisterOvnControllerMetrics registers the ovn-controller metrics
-func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client, ovnRegistry *prometheus.Registry) {
+func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client, ovnRegistry prometheus.Registerer) {
 	getOvnControllerVersionInfo()
 	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ func TestNewMetricServerRunAndShutdown(t *testing.T) {
 	server := NewMetricServer(opts, ovsDBClient, kubeClient)
 	require.NotNil(t, server, "Server should not be nil")
 	require.NotNil(t, server.mux, "Server mux should not be nil")
-	require.NotNil(t, server.ovnRegistry, "Server OVN registry should not be nil")
+	require.NotNil(t, server.registerer, "Server registerer should not be nil")
 
 	// Start server in background
 	serverDone := make(chan struct{})
@@ -109,7 +110,7 @@ func TestNewMetricServerRunAndFailOnFatalError(t *testing.T) {
 	server := NewMetricServer(opts, ovsDBClient, kubeClient)
 	require.NotNil(t, server, "Server should not be nil")
 	require.NotNil(t, server.mux, "Server mux should not be nil")
-	require.NotNil(t, server.ovnRegistry, "Server OVN registry should not be nil")
+	require.NotNil(t, server.registerer, "Server registerer should not be nil")
 
 	// Start server in background
 	serverDone := make(chan struct{})
@@ -316,6 +317,7 @@ type metricsTestCase struct {
 	enableOVNDB         bool
 	enableOVNController bool
 	enableOVNNorthd     bool
+	registerer          prometheus.Registerer
 	mockRunCommands     []ovntest.TestifyMockHelper
 	expectedMetrics     []string
 }
@@ -378,6 +380,11 @@ func TestHandleMetrics(t *testing.T) {
 		t.Fatalf("Failed to create OVS test harness: %v", err)
 	}
 	defer libovsdbCleanup.Cleanup()
+
+	// Register OVN-Kube controller base metrics into the default registry, so the
+	// metrics in default registry can be tested.
+	RegisterOVNKubeControllerBase()
+	MetricOVNKubeControllerSyncDuration.WithLabelValues("pods").Set(0)
 
 	testCases := []metricsTestCase{
 		{
@@ -778,6 +785,56 @@ func TestHandleMetrics(t *testing.T) {
 				"promhttp_metric_handler_requests_total",
 			},
 		},
+		{
+			name:       "default registry metrics",
+			registerer: prometheus.DefaultRegisterer,
+			expectedMetrics: []string{
+				"ovnkube_controller_leader",
+				"ovnkube_controller_ready_duration_seconds",
+				"ovnkube_controller_sync_duration_seconds",
+				"ovnkube_controller_build_info",
+				"go_gc_duration_seconds",
+				"go_gc_gogc_percent",
+				"go_gc_gomemlimit_bytes",
+				"go_goroutines",
+				"go_info",
+				"go_memstats_alloc_bytes",
+				"go_memstats_alloc_bytes_total",
+				"go_memstats_buck_hash_sys_bytes",
+				"go_memstats_frees_total",
+				"go_memstats_gc_sys_bytes",
+				"go_memstats_heap_alloc_bytes",
+				"go_memstats_heap_idle_bytes",
+				"go_memstats_heap_inuse_bytes",
+				"go_memstats_heap_objects",
+				"go_memstats_heap_released_bytes",
+				"go_memstats_heap_sys_bytes",
+				"go_memstats_last_gc_time_seconds",
+				"go_memstats_mallocs_total",
+				"go_memstats_mcache_inuse_bytes",
+				"go_memstats_mcache_sys_bytes",
+				"go_memstats_mspan_inuse_bytes",
+				"go_memstats_mspan_sys_bytes",
+				"go_memstats_next_gc_bytes",
+				"go_memstats_other_sys_bytes",
+				"go_memstats_stack_inuse_bytes",
+				"go_memstats_stack_sys_bytes",
+				"go_memstats_sys_bytes",
+				"go_sched_gomaxprocs_threads",
+				"go_threads",
+				"process_cpu_seconds_total",
+				"process_max_fds",
+				"process_network_receive_bytes_total",
+				"process_network_transmit_bytes_total",
+				"process_open_fds",
+				"process_resident_memory_bytes",
+				"process_start_time_seconds",
+				"process_virtual_memory_bytes",
+				"process_virtual_memory_max_bytes",
+				"promhttp_metric_handler_requests_in_flight",
+				"promhttp_metric_handler_requests_total",
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -789,6 +846,7 @@ func TestHandleMetrics(t *testing.T) {
 				EnableOVNDBMetrics:         tc.enableOVNDB,
 				EnableOVNControllerMetrics: tc.enableOVNController,
 				EnableOVNNorthdMetrics:     tc.enableOVNNorthd,
+				Registerer:                 tc.registerer,
 			}
 			// Mock the exec runner for RunOvsVswitchdAppCtl calls
 			mockCmd := new(mock_k8s_io_utils_exec.Cmd)
@@ -813,8 +871,8 @@ func TestHandleMetrics(t *testing.T) {
 			server := NewMetricServer(opts, ovsDBClient, kubeClient)
 			server.registerMetrics()
 
-			// iterate s.ovnRegistry to list all registered metrics' names
-			regMetrics, err := server.ovnRegistry.Gather()
+			// Iterate server registry to list all registered metric names.
+			regMetrics, err := server.registerer.(prometheus.Gatherer).Gather()
 			if err != nil {
 				t.Fatalf("Failed to gather metrics: %v", err)
 			}
