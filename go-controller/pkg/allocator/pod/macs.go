@@ -117,6 +117,12 @@ func calculateSubnetsInfraMACAddresses(netInfo util.NetInfo) map[string]net.Hard
 		gwKey := fmt.Sprintf("gw-v%s", k8snet.IPFamilyOf(gwIP.IP))
 		reservedMACs[gwKey] = gwMAC
 
+		// For EVPN networks, management port MACs use the 02:00 prefix (per-node
+		// hash-based) so skip reserving.
+		if netInfo.Transport() == types.NetworkTransportEVPN {
+			continue
+		}
+
 		mgmtIP := netInfo.GetNodeManagementIP(subnet.CIDR)
 		mgmtMAC := util.IPAddrToHWAddr(mgmtIP.IP)
 		mgmtKey := fmt.Sprintf("mgmt-v%s", k8snet.IPFamilyOf(mgmtIP.IP))

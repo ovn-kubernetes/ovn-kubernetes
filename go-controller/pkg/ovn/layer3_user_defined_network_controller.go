@@ -934,7 +934,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 // "eth.dst == 0a:58:5d:5d:00:02 && (ip4.dst == $a712973235162149816)" "169.254.0.36" "93.93.0.0/24"
 func (oc *Layer3UserDefinedNetworkController) addOrUpdateUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node, isUDNAdvertised bool) error {
 	outputPort := types.RouterToSwitchPrefix + oc.GetNetworkScopedName(node.Name)
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, isUDNAdvertised)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, node.Name, isUDNAdvertised)
 	if err != nil {
 		return fmt.Errorf("failed to build UDN masquerade SNATs for network %q on node %q, err: %w",
 			oc.GetNetworkName(), node.Name, err)

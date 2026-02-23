@@ -572,6 +572,26 @@ func (_m *NetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet {
 	return r0
 }
 
+// GetNodeManagementPortMAC provides a mock function with given fields: nodeName, hostSubnet
+func (_m *NetInfo) GetNodeManagementPortMAC(nodeName string, hostSubnet *net.IPNet) net.HardwareAddr {
+	ret := _m.Called(nodeName, hostSubnet)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNodeManagementPortMAC")
+	}
+
+	var r0 net.HardwareAddr
+	if rf, ok := ret.Get(0).(func(string, *net.IPNet) net.HardwareAddr); ok {
+		r0 = rf(nodeName, hostSubnet)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(net.HardwareAddr)
+		}
+	}
+
+	return r0
+}
+
 // GetPodNetworkAdvertisedOnNodeVRFs provides a mock function with given fields: node
 func (_m *NetInfo) GetPodNetworkAdvertisedOnNodeVRFs(node string) []string {
 	ret := _m.Called(node)

@@ -40,7 +40,7 @@ func newUDNManagementPortConfig(nodeName string, networkLocalSubnets []*net.IPNe
 		NetInfo:  netInfo,
 		subnets:  networkLocalSubnets,
 		nodeName: nodeName,
-		mpMAC:    util.IPAddrToHWAddr(netInfo.GetNodeManagementIP(networkLocalSubnets[0]).IP),
+		mpMAC:    netInfo.GetNodeManagementPortMAC(nodeName, networkLocalSubnets[0]),
 	}, nil
 }
 

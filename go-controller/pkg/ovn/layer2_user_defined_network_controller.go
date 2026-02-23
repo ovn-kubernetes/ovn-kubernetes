@@ -1101,7 +1101,7 @@ func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressS
 		routerName = oc.GetNetworkScopedGWRouterName(nodeName)
 		outputPort = types.GWRouterToJoinSwitchPrefix + routerName
 	}
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, isUDNAdvertised)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, nodeName, isUDNAdvertised)
 	if err != nil {
 		return err
 	}

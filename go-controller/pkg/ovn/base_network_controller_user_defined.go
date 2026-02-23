@@ -930,7 +930,7 @@ func (oc *BaseUserDefinedNetworkController) allowPersistentIPs() bool {
 
 // buildUDNEgressSNAT is used to build the conditional SNAT required on L3 and L2 UDNs to
 // steer traffic correctly via mp0 when leaving OVN to the host
-func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string, isUDNAdvertised bool) ([]*nbdb.NAT, error) {
+func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string, nodeName string, isUDNAdvertised bool) ([]*nbdb.NAT, error) {
 	if len(localPodSubnets) == 0 {
 		return nil, nil // nothing to do
 	}
@@ -939,7 +939,7 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 	var err error
 	networkID := bsnc.GetNetworkID()
 	// calculate MAC
-	dstMac := util.IPAddrToHWAddr(bsnc.GetNodeManagementIP(localPodSubnets[0]).IP)
+	dstMac := bsnc.GetNodeManagementPortMAC(nodeName, localPodSubnets[0])
 	dstMacMatch := getMasqueradeManagementIPSNATMatch(dstMac.String())
 
 	extIDs := map[string]string{

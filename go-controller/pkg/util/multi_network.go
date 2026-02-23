@@ -67,6 +67,7 @@ type NetInfo interface {
 	EVPNIPVRFVID() int
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
+	GetNodeManagementPortMAC(nodeName string, hostSubnet *net.IPNet) net.HardwareAddr
 
 	// dynamic information, can change over time
 
@@ -714,6 +715,10 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+func (nInfo *DefaultNetInfo) GetNodeManagementPortMAC(_ string, hostSubnet *net.IPNet) net.HardwareAddr {
+	return IPAddrToHWAddr(nInfo.GetNodeManagementIP(hostSubnet).IP)
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -960,6 +965,13 @@ func (nInfo *userDefinedNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net
 		}
 	}
 	return GetNodeManagementIfAddr(hostSubnet)
+}
+
+func (nInfo *userDefinedNetInfo) GetNodeManagementPortMAC(nodeName string, hostSubnet *net.IPNet) net.HardwareAddr {
+	if nInfo.Transport() == types.NetworkTransportEVPN {
+		return evpnNodeMgmtPortMAC(nodeName, nInfo.GetNetworkID())
+	}
+	return IPAddrToHWAddr(nInfo.GetNodeManagementIP(hostSubnet).IP)
 }
 
 // IPMode returns the ipv4/ipv6 mode
