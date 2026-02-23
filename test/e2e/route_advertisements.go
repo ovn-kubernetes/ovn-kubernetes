@@ -1940,9 +1940,16 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			ipVRFAgnhostIPv4, ipVRFAgnhostIPv6 := randomIPVRFAgnhostSubnets()
 			ipVRFAgnhostSubnets := []string{ipVRFAgnhostIPv4, ipVRFAgnhostIPv6}
 			framework.Logf("Networks allocated for EVPN Agnhost servers: %v", ipVRFAgnhostSubnets)
-			vtepIPv4, vtepIPv6 := randomVTEPSubnets()
-			vtepSubnets := []string{vtepIPv4, vtepIPv6}
-			framework.Logf("Networks allocated for EVPN VTEPs: %v", vtepSubnets)
+			// TODO: Only unmanaged mode is supported currently
+			// TODO: Enable ipv6 once FRR supports it
+			// Derive VTEP subnet from the kind network CIDRs(unmanaged mode)
+			// NOTE: FRR does not support anything else than IPv4 vteps today
+			kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			kindV4Subnet, _, err := kindNetwork.IPv4IPv6Subnets()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			vtepSubnets := []string{kindV4Subnet}
+			framework.Logf("Networks used for EVPN VTEPs: %v", vtepSubnets)
 			macVRFAgnhostName := networkName + "-macvrf-agnhost"
 			macVRFNetworkName := macVRFAgnhostName
 			ipVRFAgnhostName := networkName + "-ipvrf-agnhost"

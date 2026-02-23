@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -1162,7 +1161,7 @@ func runEVPNNetworkAndServers(
 
 	testVTEPName := testName + "-vtep"
 	framework.Logf("Creating VTEP CR")
-	err = createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeManaged)
+	err = createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeUnmanaged)
 	if err != nil {
 		return err
 	}
