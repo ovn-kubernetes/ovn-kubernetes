@@ -480,6 +480,24 @@ func (c *Controller) ReconcileNetAttachDef(key string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get ClusterUserDefinedNetwork %q from cache: %v", ownerRef.Name, err)
 		}
+
+		// Check if this NAD's namespace is still tracked by the owning CUDN.
+		// If not, the NAD is stale: the CUDN sync already removed the namespace
+		// from the tracker (e.g., because the namespace is terminating) but the
+		// NAD was not yet in the lister cache at that time and could not be
+		// deleted. Now that the NAD has appeared in the cache, clean it up.
+		c.namespaceTrackerLock.RLock()
+		tracked := c.namespaceTracker[owner.Name].Has(namespace)
+		c.namespaceTrackerLock.RUnlock()
+
+		if !tracked {
+			klog.Infof("Detected stale NetworkAttachmentDefinition [%s/%s] owned by ClusterUserDefinedNetwork %q, cleaning up", namespace, name, owner.Name)
+			if err := c.deleteNAD(owner, namespace); err != nil {
+				return fmt.Errorf("failed to delete stale NetworkAttachmentDefinition [%s/%s]: %w", namespace, name, err)
+			}
+			return nil
+		}
+
 		ownerKey, err := cache.MetaNamespaceKeyFunc(owner)
 		if err != nil {
 			return fmt.Errorf("failed to generate meta namespace key for CUDN: %v", err)
