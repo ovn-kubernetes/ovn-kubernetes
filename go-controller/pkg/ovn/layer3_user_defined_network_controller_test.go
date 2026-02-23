@@ -57,6 +57,7 @@ type testConfiguration struct {
 	configToOverride   *config.OVNKubernetesFeatureConfig
 	gatewayConfig      *config.GatewayConfig
 	expectationOptions []option
+	hybridOverlay      bool
 }
 
 var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
@@ -100,6 +101,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					config.Gateway.DisableSNATMultipleGWs = testConfig.gatewayConfig.DisableSNATMultipleGWs
 				}
 			}
+			config.HybridOverlay.Enabled = testConfig.hybridOverlay
 			config.Gateway.Mode = gwMode
 			if config.OVNKubernetesFeature.EnableInterconnect {
 				config.Default.Zone = testICZone
@@ -255,6 +257,18 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 								expectationOptions...,
 							).expectedLogicalSwitchesAndPorts()...)))
 
+				if testConfig.hybridOverlay {
+					_, hostSubnet, err := net.ParseCIDR(netInfo.hostsubnets)
+					Expect(err).NotTo(HaveOccurred())
+					udnSwitchName := userDefinedNetController.bnc.GetNetworkScopedSwitchName(nodeName)
+					udnSwitch, err := libovsdbops.GetLogicalSwitch(fakeOvn.nbClient, &nbdb.LogicalSwitch{Name: udnSwitchName})
+					Expect(err).NotTo(HaveOccurred())
+					hybridOverlayIP := util.GetNodeHybridOverlayIfAddr(hostSubnet).IP.String()
+					if excludeIPs, found := udnSwitch.OtherConfig["exclude_ips"]; found {
+						Expect(excludeIPs).NotTo(ContainSubstring(hybridOverlayIP))
+					}
+				}
+
 				return nil
 			}
 
@@ -268,6 +282,13 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		Entry("pod on a user defined primary network",
 			dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
 			nonICClusterTestConfiguration(),
+			config.GatewayModeShared,
+		),
+		Entry("pod on a user defined primary network with hybrid overlay enabled",
+			dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
+			nonICClusterTestConfiguration(func(config *testConfiguration) {
+				config.hybridOverlay = true
+			}),
 			config.GatewayModeShared,
 		),
 		Entry("pod on a user defined secondary network on an IC cluster",
