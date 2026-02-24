@@ -2573,6 +2573,40 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("falls back to node zone lookup when localZoneNodes misses", func() {
+			app.Action = func(*cli.Context) error {
+				localNode := newNode(node1Name, "192.168.126.202/24")
+				localNode.Annotations[util.OvnNodeZoneName] = ovntypes.OvnDefaultZone
+				remoteNode := newNode(node2Name, "192.168.126.203/24")
+				remoteNode.Annotations[util.OvnNodeZoneName] = "remote-zone"
+
+				fakeOvn.startWithDBSetup(initialDB,
+					&corev1.NodeList{
+						Items: []corev1.Node{
+							*localNode,
+							*remoteNode,
+						},
+					},
+				)
+
+				// Simulate a startup window where node cache entries are not yet populated.
+				fakeOvn.controller.localZoneNodes = &sync.Map{}
+
+				localPod := newPod("ns1", "local-pod", node1Name, "10.128.1.3")
+				remotePod := newPod("ns1", "remote-pod", node2Name, "10.128.1.4")
+				unscheduledPod := newPod("ns1", "unscheduled-pod", "", "")
+
+				gomega.Expect(fakeOvn.controller.isPodScheduledinLocalZone(localPod)).To(gomega.BeTrue())
+				gomega.Expect(fakeOvn.controller.isPodScheduledinLocalZone(remotePod)).To(gomega.BeFalse())
+				gomega.Expect(fakeOvn.controller.isPodScheduledinLocalZone(unscheduledPod)).To(gomega.BeFalse())
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
 		ginkgo.It("should correctly handle a pod running on no node", func() {
 			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("namespace1")
