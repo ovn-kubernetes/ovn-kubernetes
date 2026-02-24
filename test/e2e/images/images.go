@@ -15,7 +15,8 @@ var (
 	// pre-approve new images.
 	agnHost = image.GetE2EImage(image.Agnhost)
 	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
-	iperf3 = "quay.io/sronanrh/iperf:latest"
+	iperf3   = "quay.io/sronanrh/iperf:latest"
+	netshoot = "ghcr.io/nicolaka/netshoot:v0.13"
 )
 
 func init() {
@@ -25,6 +26,9 @@ func init() {
 	if iperf3Override := os.Getenv("IPERF3_IMAGE"); iperf3Override != "" {
 		iperf3 = iperf3Override
 	}
+	if netshootOverride := os.Getenv("NETSHOOT_IMAGE"); netshootOverride != "" {
+		netshoot = netshootOverride
+	}
 }
 
 func AgnHost() string {
@@ -33,4 +37,8 @@ func AgnHost() string {
 
 func IPerf3() string {
 	return iperf3
+}
+
+func Netshoot() string {
+	return netshoot
 }
