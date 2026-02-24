@@ -360,11 +360,25 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					npw.ofm.updateFlowCacheEntry(key, nodeportFlows)
 				} else if config.Gateway.Mode == config.GatewayModeShared {
 					// case2 (see function description for details)
+					var ipProtocol, gwIP string
+					if strings.Contains(flowProtocol, "6") {
+						ipProtocol = protoPrefixV6
+						gwIP = npw.gatewayIPv6
+					} else {
+						ipProtocol = protoPrefixV4
+						gwIP = npw.gatewayIPv4
+					}
+
 					npw.ofm.updateFlowCacheEntry(key, []string{
 						// table=0, matches on service traffic towards nodePort and sends it to OVN pipeline
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
 							"actions=%s",
 							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, actions),
+						// table=0, matches on service traffic towards nodePort from OVN and drops it, to prevent the ingress traffic goes to the host.
+						// This is to prevent ingress traffic to nodePort from being forwarded to the host accidentally during GR OVN LB resyncs.
+						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, tp_dst=%d, %s_dst=%s, "+
+							"actions=drop",
+							cookie, netConfig.OfPortPatch, npw.ofm.getDefaultBridgeMAC(), flowProtocol, svcPort.NodePort, ipProtocol, gwIP),
 						// table=0, matches on return traffic from service nodePort and sends it out to primary node interface (br-ex)
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, tp_src=%d, "+
 							"actions=output:%s",
