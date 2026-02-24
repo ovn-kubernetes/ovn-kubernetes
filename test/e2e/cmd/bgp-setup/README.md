@@ -226,7 +226,7 @@ and passes the appropriate configuration flags.
 5. **Configure routing** - Sets up routing between bgpserver, FRR router, and cluster nodes
 6. **Install frr-k8s** - Deploys the frr-k8s operator directly from GitHub
 7. **Apply FRRConfiguration** - Creates BGP peering configuration for the cluster when route advertisements are enabled
-8. **Add pod network routes** through func addPodNetworkRoutes() - Optionally adds routes for pod networks when `--advertise-default-network=true` (requires sudo)
+8. **Add pod network routes** - Optionally adds routes for pod networks when `--advertise-default-network=true` (requires sudo)
 
 ## Dependencies
 

@@ -450,7 +450,7 @@ if [ "$KIND_INSTALL_METALLB" == true ]; then
   install_metallb
 fi
 if [ "$KIND_INSTALL_PLUGINS" == true ]; then
-..  install_plugins
+  install_plugins
 fi
 if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   install_kubevirt

@@ -423,13 +423,24 @@ func setupKubectlServer() error {
 	// Get control plane container IP on the kind network specifically
 	output, err := runCmdOutput(runtime, "inspect", "-f", "{{.NetworkSettings.Networks.kind.IPAddress}}", controlPlaneNodeName)
 	if err != nil {
-		return fmt.Errorf("failed to get control plane IP for %s: %w", controlPlaneNodeName, err)
+		return fmt.Errorf("failed to get control plane IPv4 for %s: %w", controlPlaneNodeName, err)
 	}
 	ip := strings.TrimSpace(output)
 	if ip == "" {
-		return fmt.Errorf("control plane IP is empty for %s", controlPlaneNodeName)
+		output, err = runCmdOutput(runtime, "inspect", "-f", "{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}", controlPlaneNodeName)
+		if err != nil {
+			return fmt.Errorf("failed to get control plane IPv6 for %s: %w", controlPlaneNodeName, err)
+		}
+		ip = strings.TrimSpace(output)
+		if ip == "" {
+			return fmt.Errorf("control plane IP is empty for %s", controlPlaneNodeName)
+		}
 	}
-	kubectlServer = fmt.Sprintf("https://%s:6443", ip)
+	if strings.Contains(ip, ":") {
+		kubectlServer = fmt.Sprintf("https://[%s]:6443", ip)
+	} else {
+		kubectlServer = fmt.Sprintf("https://%s:6443", ip)
+	}
 	fmt.Printf("Using direct API server address: %s\n", kubectlServer)
 	return nil
 }

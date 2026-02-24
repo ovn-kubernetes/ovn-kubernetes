@@ -983,7 +983,7 @@ run_bgp_setup() {
     --frr-k8s-version="${FRR_K8S_VERSION:-v0.0.21}" \
     --network-name="${NETWORK_NAME:-default}" \
     --isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE:-strict}" \
-    --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK:-true}" \
+    --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK:-false}" \
     --kubeconfig="${KUBECONFIG}"
 }
 
@@ -1228,7 +1228,7 @@ delete() {
     echo "Cleaning up stale endpoints from kind network..."
     for endpoint in $stale_endpoints; do
       # Only disconnect endpoints belonging to this cluster or frr
-      if [[ "$endpoint" == "${cluster_name}-"* ]] || [[ "$endpoint" == "frr" ]]; then
+      if [[ "$endpoint" == "${cluster_name}-"* ]] || [[ "$endpoint" == "frr" ]] || [[ "$endpoint" == "bgpserver" ]]; then
         $OCI_BIN network disconnect -f kind "$endpoint" 2>/dev/null || true
       fi
     done
