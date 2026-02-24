@@ -145,6 +145,34 @@ var _ = Describe("Node IP Handler event tests", func() {
 				}
 			})
 		})
+
+		Context("by adding and removing a masquerade IP", func() {
+			It("should trigger OnMasqueradeIPChanged callback", func() {
+				var masqueradeCallCount atomic.Int32
+				tc.ipManager.OnMasqueradeIPChanged = func() {
+					masqueradeCallCount.Add(1)
+				}
+
+				masqAddr := config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String() + "/29"
+				ipEvent(masqAddr, true, tc.addrChan)
+				Eventually(func() int32 {
+					return masqueradeCallCount.Load()
+				}, 5).Should(Equal(int32(1)))
+
+				ipEvent(masqAddr, false, tc.addrChan)
+				Eventually(func() int32 {
+					return masqueradeCallCount.Load()
+				}, 5).Should(Equal(int32(2)))
+			})
+
+			It("should not update node annotations for masquerade IPs", func() {
+				masqAddr := config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String() + "/29"
+				ipNet := ipEvent(masqAddr, true, tc.addrChan)
+				Consistently(func() bool {
+					return nodeHasAddress(tc.fakeClient, nodeName, ipNet)
+				}, 3).Should(BeFalse())
+			})
+		})
 	})
 
 	Describe("Subscription errors", func() {

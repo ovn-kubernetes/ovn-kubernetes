@@ -1794,8 +1794,10 @@ func newGateway(
 				}
 			}
 			gw.openflowManager.requestFlowSync()
+			if err := ensureMasqueradeResources(routeManager, config.Gateway.Interface, nodeName, watchFactory); err != nil {
+				klog.Errorf("Masquerade reconciler on addr change: %v", err)
+			}
 		}
-
 		if config.Gateway.NodeportEnable {
 			klog.Info("Creating Gateway Node Port Watcher")
 			gw.nodePortWatcher, err = newNodePortWatcher(gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, networkManager)
@@ -2099,6 +2101,86 @@ func setNodeMasqueradeIPOnExtBridge(extBridgeName string) error {
 		}
 	}
 
+	return nil
+}
+
+// masqueradeIPConfigured checks if the masquerade IPv4/IPv6 addresses are
+// present on the given link.
+func masqueradeIPConfigured(link netlink.Link) bool {
+	if config.IPv4Mode {
+		_, masqIPNet, _ := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+		masqIPNet.IP = config.Gateway.MasqueradeIPs.V4HostMasqueradeIP
+		if exists, err := util.LinkAddrExist(link, masqIPNet); err != nil || !exists {
+			return false
+		}
+	}
+	if config.IPv6Mode {
+		_, masqIPNet, _ := net.ParseCIDR(config.Gateway.V6MasqueradeSubnet)
+		masqIPNet.IP = config.Gateway.MasqueradeIPs.V6HostMasqueradeIP
+		if exists, err := util.LinkAddrExist(link, masqIPNet); err != nil || !exists {
+			return false
+		}
+	}
+	return true
+}
+
+// ensureMasqueradeResources ensures that all masquerade-related resources
+// (IP addresses, routes, and MAC bindings) are configured on the gateway interface.
+// This function is idempotent and safe to call concurrently from multiple event sources
+// (linkManager, addressManager). A mutex serializes concurrent calls.
+//
+// A fast path checks if the masquerade IP is present and the interface has not changed
+// (same LinkIndex as last successful run). This makes frequent calls cheap (~2 netlink reads).
+// The slow path restores all resources in dependency order: masquerade IP first (routes
+// depend on it for gateway reachability), then routes, then MAC bindings.
+var (
+	ensureMasqueradeResourcesMu sync.Mutex
+	lastMasqueradeLinkIndex     int // updated only on full success; 0 means never succeeded
+)
+
+func ensureMasqueradeResources(routeManager *routemanager.Controller, gwIface, nodeName string, watchFactory factory.NodeWatchFactory) error {
+	if !ensureMasqueradeResourcesMu.TryLock() {
+		return nil
+	}
+	defer ensureMasqueradeResourcesMu.Unlock()
+
+	link, err := util.GetNetLinkOps().LinkByName(gwIface)
+	if err != nil {
+		return fmt.Errorf("interface %s not found: %w", gwIface, err)
+	}
+
+	// Fast path: same interface (LinkIndex) and masquerade IP present — resources are healthy
+	if link.Attrs().Index == lastMasqueradeLinkIndex && masqueradeIPConfigured(link) {
+		return nil
+	}
+
+	klog.Infof("Ensuring masquerade resources on %s (ifindex=%d, lastSuccessful=%d)",
+		gwIface, link.Attrs().Index, lastMasqueradeLinkIndex)
+
+	// Verify interface has a primary (non-link-local, non-masquerade) IP before adding
+	// any resources. Prevents adding masquerade IP before DHCP completes.
+	ifAddrs, err := nodeutil.GetNetworkInterfaceIPAddresses(gwIface)
+	if err != nil {
+		return fmt.Errorf("interface %s not ready (no primary IP): %w", gwIface, err)
+	}
+	// 1. Masquerade IP first — routes depend on it for gateway reachability
+	if err := setNodeMasqueradeIPOnExtBridge(gwIface); err != nil {
+		return fmt.Errorf("failed to set masquerade IP: %w", err)
+	}
+	// 2. Routes with the current LinkIndex (interface may have been recreated)
+	if err := addMasqueradeRoute(routeManager, gwIface, nodeName, ifAddrs, watchFactory); err != nil {
+		return fmt.Errorf("failed to add masquerade route: %w", err)
+	}
+	if err := configureSvcRouteViaInterface(routeManager, gwIface, DummyNextHopIPs()); err != nil {
+		return fmt.Errorf("failed to configure service route: %w", err)
+	}
+	// 3. ARP/ND entries for masquerade IPs
+	if err := addHostMACBindings(gwIface); err != nil {
+		return fmt.Errorf("failed to add MAC bindings: %w", err)
+	}
+
+	lastMasqueradeLinkIndex = link.Attrs().Index
+	klog.Infof("Masquerade resources ensured on %s (ifindex=%d)", gwIface, lastMasqueradeLinkIndex)
 	return nil
 }
 
