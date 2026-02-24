@@ -905,6 +905,7 @@ func (oc *DefaultNetworkController) addIPToHostNetworkNamespaceAddrSet(node *cor
 				return fmt.Errorf("failed to ensure namespace locked: %v", err)
 			}
 			defer nsUnlock()
+			oc.addressSetManager.AddHostNetworkNamespaceIPs(util.StringSlice(hostNetworkPolicyIPs))
 			if err = nsInfo.addressSet.AddAddresses(util.StringSlice(hostNetworkPolicyIPs)); err != nil {
 				return err
 			}
@@ -942,6 +943,7 @@ func (oc *DefaultNetworkController) delIPFromHostNetworkNamespaceAddrSet(node *c
 				return fmt.Errorf("failed to ensure namespace locked: %v", err)
 			}
 			defer nsUnlock()
+			oc.addressSetManager.DeleteHostNetworkNamespaceIPs(util.StringSlice(hostNetworkPolicyIPs))
 			if err = nsInfo.addressSet.DeleteAddresses(util.StringSlice(hostNetworkPolicyIPs)); err != nil {
 				return err
 			}

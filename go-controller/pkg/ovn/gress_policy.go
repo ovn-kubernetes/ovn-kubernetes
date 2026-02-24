@@ -17,7 +17,6 @@ import (
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -46,9 +45,7 @@ type gressPolicy struct {
 	// peerV6AddressSets has Address sets for all namespaces and pod selectors for IPv6
 	peerV6AddressSets *sync.Map
 	// if gressPolicy has at least 1 rule with selector, set this field to true.
-	// This is required to distinguish gress that doesn't have any peerAddressSets added yet
-	// (e.g. because there are no namespaces matching label selector) and should allow nothing,
-	// from empty gress, which should allow all.
+	// This field is a quick check on whether at least 1 peerAddressSets has been added (and they are never deleted)
 	hasPeerSelector bool
 
 	// portPolicies represents all the ports to which traffic is allowed for
@@ -102,9 +99,11 @@ func syncMapToSortedList(m *sync.Map) []string {
 func (gp *gressPolicy) addPeerAddressSets(asHashNameV4, asHashNameV6 string) {
 	if gp.ipv4Mode && asHashNameV4 != "" {
 		gp.peerV4AddressSets.Store("$"+asHashNameV4, true)
+		gp.hasPeerSelector = true
 	}
 	if gp.ipv6Mode && asHashNameV6 != "" {
 		gp.peerV6AddressSets.Store("$"+asHashNameV6, true)
+		gp.hasPeerSelector = true
 	}
 }
 
@@ -209,68 +208,6 @@ func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) string {
 		return fmt.Sprintf("%s && %s", l3Match, lportMatch)
 	}
 	return fmt.Sprintf("%s && %s && %s", l3Match, l4Match, lportMatch)
-}
-
-// addNamespaceAddressSet adds a namespace address set to the gress policy.
-// If the address set is not found in the db, return error.
-// If the address set is already added for this policy, return false, otherwise returns true.
-// This function is safe for concurrent use, doesn't require additional synchronization
-func (gp *gressPolicy) addNamespaceAddressSet(name string, asf addressset.AddressSetFactory) (bool, error) {
-	dbIDs := getNamespaceAddrSetDbIDs(name, gp.controllerName)
-	as, err := asf.GetAddressSet(dbIDs)
-	if err != nil {
-		return false, fmt.Errorf("cannot add peer namespace %s: failed to get address set: %v", name, err)
-	}
-	v4HashName, v6HashName := as.GetASHashNames()
-	if v4HashName == "" && v6HashName == "" {
-		// This would happen when a namespace is not yet reconciled with UDN network.
-		return false, fmt.Errorf("cannot add peer namespace %s: address set has empty hashed name", name)
-	}
-	v4HashName = "$" + v4HashName
-	v6HashName = "$" + v6HashName
-
-	v4NoUpdate := true
-	v6NoUpdate := true
-	// only update vXNoUpdate if value was stored and not loaded
-	if gp.ipv4Mode {
-		_, v4NoUpdate = gp.peerV4AddressSets.LoadOrStore(v4HashName, true)
-	}
-	if gp.ipv6Mode {
-		_, v6NoUpdate = gp.peerV6AddressSets.LoadOrStore(v6HashName, true)
-	}
-	if v4NoUpdate && v6NoUpdate {
-		// no changes were applied, return false
-		return false, nil
-	}
-	return true, nil
-}
-
-// delNamespaceAddressSet removes a namespace address set from the gress policy.
-// If the address set is already deleted for this policy, return false, otherwise returns true.
-// This function is safe for concurrent use, doesn't require additional synchronization
-func (gp *gressPolicy) delNamespaceAddressSet(name string) bool {
-	dbIDs := getNamespaceAddrSetDbIDs(name, gp.controllerName)
-	v4HashName, v6HashName := addressset.GetHashNamesForAS(dbIDs)
-	if v4HashName == "" && v6HashName == "" {
-		return false
-	}
-	v4HashName = "$" + v4HashName
-	v6HashName = "$" + v6HashName
-
-	v4Update := false
-	v6Update := false
-	// only update vXUpdate if value was loaded
-	if gp.ipv4Mode {
-		_, v4Update = gp.peerV4AddressSets.LoadAndDelete(v4HashName)
-	}
-	if gp.ipv6Mode {
-		_, v6Update = gp.peerV6AddressSets.LoadAndDelete(v6HashName)
-	}
-	if v4Update || v6Update {
-		// at least 1 address set was updated, return true
-		return true
-	}
-	return false
 }
 
 func (gp *gressPolicy) isEmpty() bool {

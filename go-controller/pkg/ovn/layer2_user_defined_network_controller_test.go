@@ -679,7 +679,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			// Wait for netpols to appear
 			controllerName := l2Controller.controllerName
 			peer := netpol.Spec.Ingress[0].From[0]
-			dbIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(peer.PodSelector, nil, nil, ns, controllerName)
+			dbIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(peer.PodSelector, nil, nil, ns, controllerName, false)
 			v4Hash, _ := addressset.GetHashNamesForAS(dbIDs)
 			Eventually(func(g Gomega) {
 				acls, err := libovsdbops.FindACLsWithPredicate(fakeOvn.nbClient, func(acl *nbdb.ACL) bool {

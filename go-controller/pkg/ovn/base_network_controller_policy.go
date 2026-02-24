@@ -171,8 +171,6 @@ type networkPolicy struct {
 	localPodSelector labels.Selector
 	// retry framework for this policy's local pod selector watcher
 	localPodRetry *retry.RetryFramework
-	// peer namespace reconcilers
-	reconcilePeerNamespaces []*peerNamespacesRetry
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
 	peerAddressSets []string
@@ -197,22 +195,16 @@ type networkPolicy struct {
 	cancelableContext *util.CancelableContext
 }
 
-type peerNamespacesRetry struct {
-	retryFramework *retry.RetryFramework
-	handler        *factory.Handler
-}
-
 func NewNetworkPolicy(policy *knet.NetworkPolicy) *networkPolicy {
 	policyTypeIngress, policyTypeEgress := getPolicyType(policy)
 	np := &networkPolicy{
-		name:                    policy.Name,
-		namespace:               policy.Namespace,
-		ingressPolicies:         make([]*gressPolicy, 0),
-		egressPolicies:          make([]*gressPolicy, 0),
-		isIngress:               policyTypeIngress,
-		isEgress:                policyTypeEgress,
-		reconcilePeerNamespaces: make([]*peerNamespacesRetry, 0),
-		localPods:               sync.Map{},
+		name:            policy.Name,
+		namespace:       policy.Namespace,
+		ingressPolicies: make([]*gressPolicy, 0),
+		egressPolicies:  make([]*gressPolicy, 0),
+		isIngress:       policyTypeIngress,
+		isEgress:        policyTypeEgress,
+		localPods:       sync.Map{},
 	}
 	return np
 }
@@ -969,11 +961,6 @@ func (bnc *BaseNetworkController) getNetworkPolicyPGName(namespace, name string)
 	return libovsdbutil.GetPortGroupName(bnc.getNetworkPolicyPortGroupDbIDs(namespace, name))
 }
 
-type policyHandler struct {
-	gress             *gressPolicy
-	namespaceSelector *metav1.LabelSelector
-}
-
 // createNetworkPolicy creates a network policy, should be retriable.
 // If network policy with given key exists, it will try to clean it up first, and return an error if it fails.
 // No need to log network policy key here, because caller of createNetworkPolicy should prepend error message with
@@ -994,7 +981,6 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 
 	npKey := getPolicyKey(policy)
 	var np *networkPolicy
-	var policyHandlers []*policyHandler
 
 	// network policy will be annotated with this
 	// annotation -- [ "k8s.ovn.org/acl-stateless": "true"] for the ingress/egress
@@ -1067,12 +1053,9 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 			}
 
 			for _, fromJSON := range ingressJSON.From {
-				handler, err := bnc.setupGressPolicy(np, ingress, fromJSON)
+				err := bnc.setupGressPolicy(np, ingress, fromJSON)
 				if err != nil {
 					return err
-				}
-				if handler != nil {
-					policyHandlers = append(policyHandlers, handler)
 				}
 			}
 		}
@@ -1093,12 +1076,9 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 			}
 
 			for _, toJSON := range egressJSON.To {
-				handler, err := bnc.setupGressPolicy(np, egress, toJSON)
+				err := bnc.setupGressPolicy(np, egress, toJSON)
 				if err != nil {
 					return err
-				}
-				if handler != nil {
-					policyHandlers = append(policyHandlers, handler)
 				}
 			}
 		}
@@ -1154,16 +1134,6 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 			np.cancelableContext = &cancelableContext
 		}
 
-		// 6. Start peer handlers to update all allow rules first
-		for _, handler := range policyHandlers {
-			// For each peer namespace selector, we create a watcher that
-			// populates ingress.peerAddressSets
-			err = bnc.addPeerNamespaceHandler(handler.namespaceSelector, handler.gress, np)
-			if err != nil {
-				return fmt.Errorf("failed to start peer handler: %v", err)
-			}
-		}
-
 		// 7. Start local pod handlers, that will update networkPolicy and default deny port groups with selected pods.
 		err = bnc.addLocalPodHandler(policy, np)
 		if err != nil {
@@ -1183,26 +1153,16 @@ func useNamespaceAddrSet(peer knet.NetworkPolicyPeer) bool {
 }
 
 func (bnc *BaseNetworkController) setupGressPolicy(np *networkPolicy, gp *gressPolicy,
-	peer knet.NetworkPolicyPeer) (*policyHandler, error) {
+	peer knet.NetworkPolicyPeer) error {
 	// Add IPBlock to ingress network policy
 	if peer.IPBlock != nil {
 		gp.addIPBlock(peer.IPBlock)
-		return nil, nil
+		return nil
 	}
 	if peer.PodSelector == nil && peer.NamespaceSelector == nil {
 		// undefined behaviour
 		klog.Errorf("setupGressPolicy failed: all fields unset")
-		return nil, nil
-	}
-	gp.hasPeerSelector = true
-
-	if useNamespaceAddrSet(peer) {
-		// namespace selector, use namespace address sets
-		handler := &policyHandler{
-			gress:             gp,
-			namespaceSelector: peer.NamespaceSelector,
-		}
-		return handler, nil
+		return nil
 	}
 	// use podSelector address set
 	podSelector := peer.PodSelector
@@ -1212,15 +1172,15 @@ func (bnc *BaseNetworkController) setupGressPolicy(np *networkPolicy, gp *gressP
 	}
 	// np.namespace will be used when fromJSON.NamespaceSelector = nil
 	asKey, ipv4as, ipv6as, err := bnc.addressSetManager.EnsureAddressSet(
-		podSelector, peer.NamespaceSelector, nil, np.namespace, np.getKeyWithKind(), bnc.controllerName, bnc.GetNetInfo())
+		podSelector, peer.NamespaceSelector, nil, np.namespace, np.getKeyWithKind(), bnc.controllerName, bnc.GetNetInfo(), useNamespaceAddrSet(peer))
 	// even if GetPodSelectorAddressSet failed, add key for future cleanup or retry.
 	np.peerAddressSets = append(np.peerAddressSets, asKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to ensure pod selector address set %s: %v", asKey, err)
+		return fmt.Errorf("failed to ensure pod selector address set %s: %v", asKey, err)
 	}
 	gp.addPeerAddressSets(ipv4as, ipv6as)
 
-	return nil, nil
+	return nil
 }
 
 // addNetworkPolicy creates and applies OVN ACLs to pod logical switch
@@ -1430,209 +1390,6 @@ func (bnc *BaseNetworkController) cleanupNetworkPolicy(np *networkPolicy) error 
 
 type NetworkPolicyExtraParameters struct {
 	np *networkPolicy
-	gp *gressPolicy
-}
-
-func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolPeerNamespaceEvent("add", duration)
-		}()
-	}
-	np.RLock()
-	if np.deleted {
-		np.RUnlock()
-		return nil
-	}
-	updated := false
-	var errors []error
-	for _, obj := range objs {
-		namespace := obj.(*corev1.Namespace)
-		// addNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
-		nsUpdated, err := gp.addNamespaceAddressSet(namespace.Name, bnc.addressSetFactory)
-		if err != nil {
-			errors = append(errors, err)
-		} else if nsUpdated {
-			updated = true
-		}
-	}
-	np.RUnlock()
-	// unlock networkPolicy, before calling peerNamespaceUpdate
-	if updated {
-		err := bnc.peerNamespaceUpdate(np, gp)
-		if err != nil {
-			errors = append(errors, err)
-		}
-	}
-	return utilerrors.Join(errors...)
-
-}
-
-func (bnc *BaseNetworkController) handlePeerNamespaceSelectorDel(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolPeerNamespaceEvent("delete", duration)
-		}()
-	}
-	np.RLock()
-	if np.deleted {
-		np.RUnlock()
-		return nil
-	}
-	updated := false
-	for _, obj := range objs {
-		namespace := obj.(*corev1.Namespace)
-		// delNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
-		if gp.delNamespaceAddressSet(namespace.Name) {
-			updated = true
-		}
-	}
-	np.RUnlock()
-	// unlock networkPolicy, before calling peerNamespaceUpdate
-	if updated {
-		return bnc.peerNamespaceUpdate(np, gp)
-	}
-	return nil
-}
-
-// peerNamespaceUpdate updates gress ACLs, for this purpose it need to take nsInfo lock and np.RLock
-// make sure to pass unlocked networkPolicy
-func (bnc *BaseNetworkController) peerNamespaceUpdate(np *networkPolicy, gp *gressPolicy) error {
-	// Lock namespace before locking np
-	// this is to make sure we don't miss update acl loglevel event for namespace.
-	// The order of locking is strict: namespace first, then network policy, otherwise deadlock may happen
-	nsInfo, nsUnlock := bnc.getNamespaceLocked(np.namespace, true)
-	var aclLogging *libovsdbutil.ACLLoggingLevels
-	if nsInfo == nil {
-		aclLogging = &libovsdbutil.ACLLoggingLevels{
-			Allow: "",
-			Deny:  "",
-		}
-	} else {
-		defer nsUnlock()
-		aclLogging = &nsInfo.aclLogging
-	}
-	np.RLock()
-	defer np.RUnlock()
-	if np.deleted {
-		return nil
-	}
-	// buildLocalPodACLs is safe for concurrent use, see function comment for details
-	acls, deletedACLs := gp.buildLocalPodACLs(np.portGroupName, aclLogging)
-	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, bnc.GetSamplingConfig(), acls...)
-	if err != nil {
-		return err
-	}
-	ops, err = libovsdbops.AddACLsToPortGroupOps(bnc.nbClient, ops, np.portGroupName, acls...)
-	if err != nil {
-		return err
-	}
-	if len(deletedACLs) > 0 {
-		deletedACLsWithUUID, err := libovsdbops.FindACLs(bnc.nbClient, deletedACLs)
-		if err != nil {
-			return fmt.Errorf("failed to find deleted acls: %w", err)
-		}
-
-		ops, err = libovsdbops.DeleteACLsFromPortGroupOps(bnc.nbClient, ops, np.portGroupName, deletedACLsWithUUID...)
-		if err != nil {
-			return err
-		}
-	}
-	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
-	return err
-}
-
-// requeuePeerNamespace enqueues the namespace into network policy peer namespace
-// retry framework object(s) which need to be retried immediately with add event.
-func (bnc *BaseNetworkController) requeuePeerNamespace(namespace *corev1.Namespace) error {
-	var errors []error
-	npKeys := bnc.networkPolicies.GetKeys()
-	for _, npKey := range npKeys {
-		err := bnc.networkPolicies.DoWithLock(npKey, func(npKey string) error {
-			np, ok := bnc.networkPolicies.Load(npKey)
-			if !ok {
-				return nil
-			}
-			np.RLock()
-			defer np.RUnlock()
-			if np.deleted {
-				return nil
-			}
-			var errors []error
-			for _, reconcilePeerNamespace := range np.reconcilePeerNamespaces {
-				// Filter out namespace when it's labels not matching with network policy peer namespace
-				// selector.
-				if !reconcilePeerNamespace.handler.FilterFunc(namespace) {
-					continue
-				}
-				err := reconcilePeerNamespace.retryFramework.AddRetryObjWithAddNoBackoff(namespace)
-				if err != nil {
-					errors = append(errors, fmt.Errorf("failed to retry peer namespace %s for network policy %s on network %s: %w",
-						namespace.Name, npKey, bnc.GetNetworkName(), err))
-					continue
-				}
-				reconcilePeerNamespace.retryFramework.RequestRetryObjs()
-			}
-			return utilerrors.Join(errors...)
-		})
-		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to retry peer namespaces for network policy %s on network %s: %w",
-				npKey, bnc.GetNetworkName(), err))
-		}
-	}
-	return utilerrors.Join(errors...)
-}
-
-// addPeerNamespaceHandler starts a watcher for PeerNamespaceSelectorType.
-// Sync function and Add event for every existing namespace will be executed sequentially first, and an error will be
-// returned if something fails.
-// PeerNamespaceSelectorType uses handlePeerNamespaceSelectorAdd on Add,
-// and handlePeerNamespaceSelectorDel on Delete.
-func (bnc *BaseNetworkController) addPeerNamespaceHandler(
-	namespaceSelector *metav1.LabelSelector,
-	gress *gressPolicy, np *networkPolicy) error {
-
-	// NetworkPolicy is validated by the apiserver; this can't fail.
-	sel, err := metav1.LabelSelectorAsSelector(namespaceSelector)
-	if err != nil {
-		return err
-	}
-	// start watching namespaces selected by the namespace selector
-	syncFunc := func(objs []interface{}) error {
-		// ignore returned error, since any namespace that wasn't properly handled will be retried individually.
-		_ = bnc.handlePeerNamespaceSelectorAdd(np, gress, objs...)
-		return nil
-	}
-	retryPeerNamespaces := bnc.newNetpolRetryFramework(
-		factory.PeerNamespaceSelectorType,
-		syncFunc,
-		&NetworkPolicyExtraParameters{gp: gress, np: np},
-		np.cancelableContext.Done(),
-	)
-
-	namespaceHandler, err := retryPeerNamespaces.WatchResourceFiltered("", sel)
-	if err != nil {
-		klog.Errorf("WatchResource failed for addPeerNamespaceHandler: %v", err)
-		return err
-	}
-
-	// Add peer namespace retry framework object into np.reconcilePeerNamespaces so that when
-	// a new peer namespace is newly created later under UDN network, it gets reconciled and
-	// address set is created for the namespace. so we must reconcile it for network policy
-	// as well to update gress policy ACL with matching peer namespace address set.
-	if bnc.IsPrimaryNetwork() {
-		np.Lock()
-		np.reconcilePeerNamespaces = append(np.reconcilePeerNamespaces,
-			&peerNamespacesRetry{retryFramework: retryPeerNamespaces,
-				handler: namespaceHandler})
-		np.Unlock()
-	}
-
-	return nil
 }
 
 func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
@@ -1647,10 +1404,6 @@ func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
 		np.localPodSelector = nil
 		np.localPodRetry = nil
 	}
-	for _, retry := range np.reconcilePeerNamespaces {
-		bnc.watchFactory.RemoveNamespaceHandler(retry.handler)
-	}
-	np.reconcilePeerNamespaces = make([]*peerNamespacesRetry, 0)
 }
 
 // The following 2 functions should return the same key for network policy based on k8s on internal networkPolicy object

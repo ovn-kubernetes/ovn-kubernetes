@@ -330,6 +330,10 @@ func (oc *DefaultNetworkController) ensureNamespaceLocked(ns string, readOnly bo
 		}
 		return oc.getAllNamespacePodAddresses(ns)
 	}
+	// special handling of host network namespace. issues/3381
+	if config.Kubernetes.HostNetworkNamespace != "" && ns == config.Kubernetes.HostNetworkNamespace {
+		oc.addressSetManager.SetHostNetworkNamespaceIPs(util.StringSlice(oc.getAllHostNamespaceAddresses()))
+	}
 	return oc.ensureNamespaceLockedCommon(ns, readOnly, namespace, ipsGetter, oc.configureNamespace)
 }
 

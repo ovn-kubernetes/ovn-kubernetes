@@ -443,7 +443,6 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 				expectedData := getNamespaceWithSinglePolicyExpectedData(
 					newNetpolDataParams(policy).
-						withPeerNamespaces(namespace2.Name).
 						withNetInfo(netInfo),
 					initialDB.NBData)
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData))
