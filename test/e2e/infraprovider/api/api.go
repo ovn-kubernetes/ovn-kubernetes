@@ -47,6 +47,11 @@ type Provider interface {
 
 	// Get platform specific timeout values
 	GetDefaultTimeoutContext() *framework.TimeoutContext
+
+	// PreloadImages pulls the given images and loads them into the cluster
+	// so that they are available to pods without a runtime pull. Providers
+	// that do not support preloading may implement this as a no-op.
+	PreloadImages(images []string)
 }
 
 // Underlay represents the configuration for an underlay network.

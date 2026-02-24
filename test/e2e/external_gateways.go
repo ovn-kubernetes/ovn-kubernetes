@@ -85,6 +85,15 @@ type gatewayTestIPs struct {
 	targetIPs  []string
 }
 
+func init() {
+	// OVN_ENABLE_EX_GW_NETWORK_BRIDGE is an infrastructure setup variable,
+	// not a direct test enablement flag. There is no dedicated env var for
+	// external gateway tests; this is the closest approximation available.
+	if os.Getenv("OVN_ENABLE_EX_GW_NETWORK_BRIDGE") == "true" {
+		images.Add(images.IPerf3())
+	}
+}
+
 var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 
 	const (
