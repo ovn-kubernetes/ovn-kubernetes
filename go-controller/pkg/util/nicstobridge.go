@@ -251,7 +251,7 @@ func NicToBridge(iface string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	routes, err := netLinkOps.RouteList(ifaceLink, family)
+	routes, err := RouteList(ifaceLink, family)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +289,7 @@ func BridgeToNic(bridge string) error {
 	if err != nil {
 		return err
 	}
-	routes, err := netLinkOps.RouteList(bridgeLink, family)
+	routes, err := RouteList(bridgeLink, family)
 	if err != nil {
 		return err
 	}

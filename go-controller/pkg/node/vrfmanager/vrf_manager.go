@@ -356,7 +356,7 @@ func (vrfm *Controller) Repair(validVRFs sets.Set[string]) error {
 }
 
 func (vrfm *Controller) repair(validVRFs sets.Set[string]) error {
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return fmt.Errorf("failed to list links on the node, err: %v", err)
 	}
@@ -426,7 +426,7 @@ func (vrfm *Controller) deleteVRF(link netlink.Link) error {
 }
 
 func getSlaveInterfaceNamesForVRF(vrfLink netlink.Link) (sets.Set[string], error) {
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list links on the node, err: %v", err)
 	}

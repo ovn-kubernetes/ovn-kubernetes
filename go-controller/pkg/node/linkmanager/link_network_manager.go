@@ -230,7 +230,7 @@ func (c *Controller) sync() {
 	// 1. get all the links on the node
 	// 2. iterate over the links and get the addresses associated with it
 	// 3. add addresses that are missing from a link that we manage
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		klog.Errorf("Link manager: failed to list links: %v", err)
 		return

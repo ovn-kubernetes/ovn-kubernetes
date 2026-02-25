@@ -174,7 +174,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 
 	// cleanup stale management port netdev
 	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
-		links, err := util.GetNetLinkOps().LinkList()
+		links, err := util.LinkList()
 		if err == nil {
 			for _, link := range links {
 				linkName := link.Attrs().Name

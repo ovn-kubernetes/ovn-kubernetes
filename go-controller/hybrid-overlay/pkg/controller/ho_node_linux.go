@@ -110,12 +110,12 @@ func (n *HONodeController) EnsureHybridOverlayBridge(_ *corev1.Node) error {
 }
 
 func getHostInterfaceMAC(ip net.IP) (string, error) {
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return "", err
 	}
 	for _, link := range links {
-		addrs, err := util.GetNetLinkOps().AddrList(link, netlink.FAMILY_ALL)
+		addrs, err := util.AddrList(link, netlink.FAMILY_ALL)
 		if err != nil {
 			return "", fmt.Errorf("failed to get IP address for link %s: %v", link.Attrs().Name, err)
 		}
