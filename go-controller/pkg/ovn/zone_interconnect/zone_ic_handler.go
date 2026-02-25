@@ -223,6 +223,14 @@ func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
 func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	start := time.Now()
 
+	if zic.GetNetworkTransport() == config.TransportNoOverlay {
+		klog.Infof("Removing interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
+		if err := zic.cleanupNode(node.Name); err != nil {
+			return fmt.Errorf("failed to cleanup interconnect resources for remote zone node %s for the network %s: %w", node.Name, zic.GetNetworkName(), err)
+		}
+		return nil
+	}
+
 	nodeID, _ := util.GetNodeID(node)
 	if nodeID == -1 {
 		// Don't consider this node as cluster-manager has not allocated node id yet.

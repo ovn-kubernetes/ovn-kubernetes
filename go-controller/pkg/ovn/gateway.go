@@ -17,6 +17,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -1039,13 +1040,15 @@ func (gw *GatewayManager) gatewayInit(
 }
 
 // GetNetworkScopedClusterSubnetSNATMatch returns the match for the SNAT rule for the cluster default network
-// and the match for the SNAT rule for the L3/L2 user defined network.
+// and the match for the SNAT rule for L3/L2 user defined networks.
+// Short-circuit(no-overlay mode):
+// - If the network is advertised and outbound SNAT is enabled, the match is empty for all topologies.
 // If the network is not advertised:
-// - For Layer2 topology, the match is the output port of the GR to the join switch since in L2 there is only 1 router but two cSNATs.
-// - For Layer3 topology, the match is empty.
-// If the network is advertised:
-// - For Layer2 topology, the match is the output port of the GR to the join switch and the destination must be a nodeIP in the cluster.
-// - For Layer3 topology, the match is the destination must be a nodeIP in the cluster.
+// - For Layer2 old topology (no transit router), the match is the output port of the GR to the join switch since in L2 there is only 1 router but two cSNATs.
+// - For Layer3 topology and Layer2 with transit router, the match is empty.
+// If the network is advertised and outbound SNAT is disabled:
+// - For Layer2 old topology (no transit router), the match is the output port of the GR to the join switch and the destination must be a node IP in the cluster.
+// - For Layer3 topology and Layer2 with transit router, the match is that the destination must be a node IP in the cluster.
 func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netInfo util.NetInfo, nodeName string,
 	isNetworkAdvertised bool, ipFamily utilnet.IPFamily) (string, error) {
 	layer2OldTopo := netInfo.TopologyType() == types.Layer2Topology && !config.Layer2UsesTransitRouter
@@ -1054,6 +1057,8 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 			return "", nil
 		}
 		return fmt.Sprintf("outport == %q", types.GWRouterToExtSwitchPrefix+netInfo.GetNetworkScopedGWRouterName(nodeName)), nil
+	} else if netInfo.GetOutboundSNAT() == config.NoOverlaySNATEnabled {
+		return "", nil
 	}
 
 	// if the network is advertised, we need to ensure that the SNAT exists with the correct conditional destination match
@@ -1635,4 +1640,72 @@ func (gw *GatewayManager) oldLayer2TopoCleanup() error {
 		return fmt.Errorf("failed to delete GR port %s: %v", gwRouterPort.Name, err)
 	}
 	return nil
+}
+
+// AddPodSNATOps adds operations to create or update SNAT rules for a pod's IP addresses.
+// This function handles the different SNAT behaviors based on transport mode (overlay vs no-overlay)
+// and network advertisement status.
+//
+// In no-overlay mode with outboundSNAT=enable, SNAT rules are created with exempted external IPs
+// to prevent SNATing pod-to-pod traffic while still SNATing pod-to-external traffic.
+//
+// Parameters:
+//   - nbClient: OVN NB database client
+//   - addressSetFactory: Address set factory for querying node subnets address set
+//   - netInfo: Network information interface
+//   - nodeName: Name of the node where the pod is located
+//   - isNetworkAdvertised: Whether the pod network is advertised via BGP
+//   - gwRouterName: Name of the gateway router
+//   - extIPs: External IPs to SNAT to (typically node IPs)
+//   - podIPs: Pod IP addresses to create SNAT rules for
+//   - controllerName: Controller name for address set lookup
+//   - ops: Existing operations to append to
+//
+// Returns:
+//   - []ovsdb.Operation: Updated operations list
+//   - error: Any error encountered during operation creation
+func AddPodSNATOps(
+	nbClient libovsdbclient.Client,
+	addressSetFactory addressset.AddressSetFactory,
+	netInfo util.NetInfo,
+	nodeName string,
+	isNetworkAdvertised bool,
+	gwRouterName string,
+	extIPs []*net.IPNet,
+	podIPs []*net.IPNet,
+	controllerName string,
+	ops []ovsdb.Operation,
+) ([]ovsdb.Operation, error) {
+	// Get the cluster subnets address set UUIDs for no-overlay mode SNAT exemption
+	v4UUID, v6UUID, err := getClusterCIDRAsUUID(addressSetFactory, netInfo, controllerName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster subnets address set UUID: %w", err)
+	}
+
+	// Handle each pod IP individually since each IP family needs its own SNAT match
+	for _, podIP := range podIPs {
+		ipFamily := utilnet.IPv4
+		if utilnet.IsIPv6CIDR(podIP) {
+			ipFamily = utilnet.IPv6
+		}
+
+		// Determine the appropriate exempted address set based on pod IP family
+		var exemptedExtIPs string
+		if utilnet.IsIPv6CIDR(podIP) {
+			exemptedExtIPs = v6UUID
+		} else {
+			exemptedExtIPs = v4UUID
+		}
+
+		snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(nbClient, netInfo, nodeName, isNetworkAdvertised, ipFamily)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get SNAT match for node %s for network %s: %w", nodeName, netInfo.GetNetworkName(), err)
+		}
+		ops, err = addOrUpdatePodSNATOps(nbClient, gwRouterName, extIPs, []*net.IPNet{podIP}, snatMatch, exemptedExtIPs, ops)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ops, nil
 }

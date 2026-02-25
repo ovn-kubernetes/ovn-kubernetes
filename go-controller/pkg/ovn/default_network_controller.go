@@ -411,6 +411,22 @@ func (oc *DefaultNetworkController) init() error {
 		}
 	}
 
+	if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeShared {
+		// Initialize cluster CIDR address set for no-overlay mode with outbound SNAT enabled in SGW mode.
+		// Cluster CIDRs and node IPs will be synced when nodes are added.
+		// In LGW mode, nftables sets are used instead.
+		err = initClusterCIDRAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName)
+		if err != nil {
+			return fmt.Errorf("failed to initialize cluster CIDR address set: %w", err)
+		}
+	} else {
+		if err := cleanupClusterCIDRAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			// Cleanup may fail if the address set is still referenced by NAT rules.
+			// But this is harmless and can be retried on next run.
+			klog.Warningf("Failed to cleanup cluster CIDR address set: %v", err)
+		}
+	}
+
 	return nil
 }
 

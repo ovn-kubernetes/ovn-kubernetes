@@ -181,6 +181,7 @@ const (
 	OvnK8sTopoAnno            = OvnK8sPrefix + "/" + "topology-version"
 	OvnK8sSmallMTUTaintKey    = OvnK8sPrefix + "/" + "mtu-too-small"
 	OvnRouteAdvertisementsKey = OvnK8sPrefix + "/route-advertisements"
+	OvnEncapsulationModeKey   = OvnK8sPrefix + "/network-encapsulation"
 
 	// name of the configmap used to synchronize status (e.g. watch for topology changes)
 	OvnK8sStatusCMName         = "control-plane-status"
@@ -333,6 +334,14 @@ const (
 	// NFTRemoteNodeIPsv6 is a set used to track remote node v6IPs that do not belong to
 	// the local node's subnet.
 	NFTRemoteNodeIPsv6 = "remote-node-ips-v6"
+
+	// NFTNoOverlaySNATExemptV4 is a set used for no-overlay mode with outbound SNAT enabled.
+	// Contains cluster CIDRs + local node IPv4 addresses that should be exempted from SNAT.
+	NFTNoOverlaySNATExemptV4 = "no-overlay-snat-exempt-v4"
+
+	// NFTNoOverlaySNATExemptV6 is a set used for no-overlay mode with outbound SNAT enabled.
+	// Contains cluster CIDRs + local node IPv6 addresses that should be exempted from SNAT.
+	NFTNoOverlaySNATExemptV6 = "no-overlay-snat-exempt-v6"
 
 	// Metrics
 	MetricOvnkubeNamespace               = "ovnkube"

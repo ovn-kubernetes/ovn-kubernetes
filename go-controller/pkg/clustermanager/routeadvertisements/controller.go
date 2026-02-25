@@ -733,8 +733,20 @@ func (c *Controller) generateFRRConfiguration(
 		// prefixes as appropriate
 		targetRouter := router
 		targetRouter.Prefixes = advertisePrefixes
+
+		node, err := c.nodeLister.Get(nodeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+		}
+		nodeV4, nodeV6 := util.GetNodeInternalAddrs(node)
+
 		targetRouter.Neighbors = make([]frrtypes.Neighbor, 0, len(source.Spec.BGP.Routers[i].Neighbors))
 		for _, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
+			// Skip neighbors that are the node itself
+			if (nodeV4 != nil && neighbor.Address == nodeV4.String()) || (nodeV6 != nil && neighbor.Address == nodeV6.String()) {
+				continue
+			}
+
 			// If MultiProtocol is enabled (default) then a BGP session carries
 			// prefixes of both IPv4 and IPv6 families. Our problem is that with
 			// an IPv4 session, FRR can incorrectly pick the masquerade IPv6
