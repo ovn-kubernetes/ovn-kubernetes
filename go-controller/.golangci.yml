@@ -43,18 +43,6 @@ linters:
         - name: duplicated-imports
         - name: error-naming
         - name: unused-parameter
-    staticcheck:
-        checks:
-          # Default
-          - all
-          - -ST1000
-          - -ST1003
-          - -ST1016
-          - -ST1020
-          - -ST1021
-          - -ST1022
-          # Disable quickfix checks
-          - -QF*
   exclusions:
     generated: lax
     presets:

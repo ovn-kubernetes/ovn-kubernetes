@@ -213,7 +213,7 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 // required by this UDN on the gateway side
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && udng.openflowManager == nil {
-		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
+		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.GetNetworkName())
 	}
 
 	nodeSubnets, err := udng.getLocalSubnets()
@@ -442,7 +442,7 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 // computeRoutesForUDN returns a list of routes programmed into a given UDN's VRF
 // when adding new routes please leave a sample comment on how that route looks like
 func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) ([]netlink.Route, error) {
-	networkMTU := udng.NetInfo.MTU()
+	networkMTU := udng.MTU()
 	if networkMTU == 0 {
 		networkMTU = config.Default.MTU
 	}
@@ -527,7 +527,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 			Gw:    gwIP.IP,
 			Table: udng.vrfTableId,
 		})
-		if udng.NetInfo.TopologyType() == types.Layer3Topology {
+		if udng.TopologyType() == types.Layer3Topology {
 			for _, clusterSubnet := range udng.Subnets() {
 				if clusterSubnet.CIDR.Contains(gwIP.IP) {
 					retVal = append(retVal, netlink.Route{
@@ -569,14 +569,14 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 }
 
 func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error) {
-	networkMTU := udng.NetInfo.MTU()
+	networkMTU := udng.MTU()
 	if networkMTU == 0 {
 		networkMTU = config.Default.MTU
 	}
 
 	var retVal []netlink.Route
 	var defaultAnyCIDR *net.IPNet
-	for _, nextHop := range udng.gateway.nextHops {
+	for _, nextHop := range udng.nextHops {
 		isV6 := utilnet.IsIPv6(nextHop)
 		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
 		if isV6 {

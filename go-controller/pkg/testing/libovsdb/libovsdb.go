@@ -467,7 +467,7 @@ func (t *TestOvsdbServer) CreateTestData(data []TestData) error {
 	}
 
 	var rawReply []*ovsdb.OperationResult
-	if err := t.OvsdbServer.Transact(nil, rawArgs.Params, &rawReply); err != nil {
+	if err := t.Transact(nil, rawArgs.Params, &rawReply); err != nil {
 		return fmt.Errorf("failed to transact test data: %v", err)
 	}
 
