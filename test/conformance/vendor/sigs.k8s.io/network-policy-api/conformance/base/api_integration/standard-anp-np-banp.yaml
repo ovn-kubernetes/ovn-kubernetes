@@ -1,0 +1,69 @@
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: AdminNetworkPolicy
+metadata:
+  name: pass-example
+spec:
+  priority: 10
+  subject:
+    namespaces:
+      matchLabels:
+          conformance-house: gryffindor
+  ingress:
+  - name: "deny-all-ingress-from-slytherin" # test will update to pass
+    action: "Deny" # test will update to pass
+    from:
+    - namespaces:
+        matchLabels:
+          conformance-house: slytherin
+  egress:
+  - name: "deny-all-egress-to-slytherin" # test will update to pass
+    action: "Deny" # test will update to pass
+    to:
+    - namespaces:
+        matchLabels:
+          conformance-house: slytherin
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gress-from-to-slytherin-to-gryffindor
+  namespace: network-policy-conformance-gryffindor
+spec:
+  podSelector:
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          conformance-house: slytherin
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          conformance-house: slytherin
+---
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: BaselineAdminNetworkPolicy
+metadata:
+  name: default
+spec:
+  subject:
+    namespaces:
+      matchLabels:
+          conformance-house: gryffindor
+  ingress:
+  - name: "deny-all-ingress-from-slytherin"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          conformance-house: slytherin
+  egress:
+  - name: "deny-all-egress-to-slytherin"
+    action: "Deny"
+    to:
+    - namespaces:
+        matchLabels:
+          conformance-house: slytherin

@@ -1,0 +1,51 @@
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: AdminNetworkPolicy
+metadata:
+  name: node-and-cidr-as-peers-example
+spec:
+  priority: 75
+  subject:
+    pods:
+      namespaceSelector:
+        matchLabels:
+          conformance-house: gryffindor
+      podSelector:
+        matchLabels:
+          conformance-house: gryffindor
+  egress:
+  - name: "allow-egress-to-{{ index .HostNetworkPorts 0 }}-on-nodes"
+    action: "Allow"
+    to:
+    - nodes:
+        matchLabels:
+          kubernetes.io/os: linux
+    ports:
+      - portNumber:
+          protocol: TCP
+          port: {{ index .HostNetworkPorts 0 }}
+  - name: "pass-egress-to-{{ index .HostNetworkPorts 2 }}-on-nodes"
+    action: "Pass"
+    to:
+    - nodes:
+        matchLabels:
+          kubernetes.io/os: linux
+    ports:
+      - portNumber:
+          protocol: UDP
+          port: {{ index .HostNetworkPorts 2 }}
+  - name: "deny-egress-to-slytherin-and-nodes-and-internet"
+    action: "Deny"
+    to:
+    - pods:
+        namespaceSelector:
+          matchLabels:
+            conformance-house: slytherin
+        podSelector:
+          matchLabels:
+            conformance-house: slytherin
+    - nodes:
+        matchLabels:
+          kubernetes.io/os: linux
+    - networks:
+        - 0.0.0.0/0
+        - ::/0

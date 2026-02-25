@@ -1,0 +1,111 @@
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: BaselineAdminNetworkPolicy
+metadata:
+  name: default
+spec:
+  subject:
+    namespaces:
+      matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-gryffindor
+  egress:
+  - name: "allow-to-ravenclaw-everything"
+    action: "Allow"
+    to:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-ravenclaw
+  - name: "deny-to-ravenclaw-everything"
+    action: "Deny"
+    to:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-ravenclaw
+  - name: "deny-to-slytherin-at-ports-80-53-9003"
+    action: "Deny"
+    to:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-slytherin
+    ports:
+      - portNumber:
+          protocol: TCP
+          port: 80
+      - portNumber:
+          protocol: UDP
+          port: 53
+      - portNumber:
+          protocol: SCTP
+          port: 9003
+  - name: "allow-to-hufflepuff-at-ports-8080-5353"
+    action: "Allow"
+    to:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-hufflepuff
+    ports:
+      - portNumber:
+          protocol: TCP
+          port: 8080
+      - portNumber:
+          protocol: UDP
+          port: 5353
+      - portNumber:
+          protocol: SCTP
+          port: 9003
+  - name: "deny-to-hufflepuff-everything-else"
+    action: "Deny"
+    to:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-hufflepuff
+  ingress:
+  - name: "allow-from-ravenclaw-everything"
+    action: "Allow"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-ravenclaw
+  - name: "deny-from-ravenclaw-everything"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-ravenclaw
+  - name: "deny-from-slytherin-at-port-80-53-9003"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-slytherin
+    ports:
+      - portNumber:
+          protocol: TCP
+          port: 80
+      - portNumber:
+          protocol: UDP
+          port: 53
+      - portNumber:
+          protocol: SCTP
+          port: 9003
+  - name: "allow-from-hufflepuff-at-port-80-5353-9003"
+    action: "Allow"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-hufflepuff
+    ports:
+      - portNumber:
+          protocol: TCP
+          port: 80
+      - portNumber:
+          protocol: UDP
+          port: 5353
+      - portNumber:
+          protocol: SCTP
+          port: 9003
+  - name: "deny-from-hufflepuff-everything-else"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-hufflepuff
