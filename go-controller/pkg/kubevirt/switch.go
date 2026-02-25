@@ -1,9 +1,23 @@
 package kubevirt
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
 const (
@@ -19,6 +33,17 @@ const (
 	// the mechanism at `util.IPAddrToHWAddr`
 	ARPProxyMAC = "0a:58:a9:fe:01:01"
 )
+
+// arpProxyHardwareAddr is the parsed net.HardwareAddr of ARPProxyMAC.
+var arpProxyHardwareAddr = mustParseMAC(ARPProxyMAC)
+
+func mustParseMAC(s string) net.HardwareAddr {
+	mac, err := net.ParseMAC(s)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse constant MAC %q: %v", s, err))
+	}
+	return mac
+}
 
 // ComposeARPProxyLSPOption returns the "arp_proxy" field needed at router type
 // LSP to implement stable default gw for pod ip migration, it consists of
@@ -52,4 +77,67 @@ func ComposeARPProxyLSPOption() string {
 		arpProxy = append(arpProxy, clusterSubnet.CIDR.String())
 	}
 	return strings.Join(arpProxy, " ")
+}
+
+func notifyMAC(ips []*net.IPNet, mac net.HardwareAddr) error {
+	var errs []error
+	for _, ip := range ips {
+		if ip.IP.To4() != nil {
+			garp, err := util.NewGARP(ip.IP, &mac)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed creating GARP for IP %s with MAC %s: %w", ip.IP, mac, err))
+				continue
+			}
+			if err := util.BroadcastGARP(types.K8sMgmtIntfName, garp); err != nil {
+				errs = append(errs, fmt.Errorf("failed sending GARP for IP %s: %w", ip.IP, err))
+			}
+		} else {
+			na, err := ndp.NewNeighborAdvertisement(ip.IP, &mac)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed creating NA for IP %s with MAC %s: %w", ip.IP, mac, err))
+				continue
+			}
+			if err := ndp.SendUnsolicitedNeighborAdvertisement(types.K8sMgmtIntfName, na); err != nil {
+				errs = append(errs, fmt.Errorf("failed sending Unsolicited NA for IP %s: %w", ip.IP, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func deleteStaleLogicalSwitchPorts(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
+	vmPods, err := findVMRelatedPods(watchFactory, pod)
+	if err != nil {
+		return err
+	}
+	for _, vmPod := range vmPods {
+		if util.PodCompleted(vmPod) {
+			continue
+		}
+		// Only delete LSP for pods that are stale (not the current active VM pod)
+		isStale, err := IsMigratedSourcePodStale(watchFactory, vmPod)
+		if err != nil {
+			klog.Errorf("kubevirt: failed checking if pod %s/%s is stale: %v", vmPod.Namespace, vmPod.Name, err)
+			continue
+		}
+		if !isStale {
+			continue
+		}
+		lspName := util.GetLogicalPortName(vmPod.Namespace, vmPod.Name)
+		lsp := &nbdb.LogicalSwitchPort{
+			Name: lspName,
+		}
+		lsp, err = libovsdbops.GetLogicalSwitchPort(nbClient, lsp)
+		if err != nil {
+			klog.Errorf("kubevirt: failed retrieving LSP %q: %v", lspName, err)
+			continue
+		}
+		logicalSwitch := &nbdb.LogicalSwitch{
+			Name: vmPod.Spec.NodeName,
+		}
+		if err := libovsdbops.DeleteLogicalSwitchPorts(nbClient, logicalSwitch, lsp); err != nil {
+			return err
+		}
+	}
+	return nil
 }

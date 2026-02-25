@@ -266,6 +266,19 @@ var (
 	ServiceForFakeNodePortWatcherType         reflect.Type = reflect.TypeOf(&serviceForFakeNodePortWatcher{}) // only for unit tests
 )
 
+const PodNodeNameIndex = "nodeName"
+
+func podNodeNameIndexFunc(obj interface{}) ([]string, error) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil, nil
+	}
+	if pod.Spec.NodeName == "" {
+		return nil, nil
+	}
+	return []string{pod.Spec.NodeName}, nil
+}
+
 // NewMasterWatchFactory initializes a new watch factory for:
 // a) ovnkube controller + cluster manager or
 // b) ovnkube controller + node
@@ -410,6 +423,11 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	wf.informers[PodType], err = newQueuedInformer(eventQueueSize, PodType, wf.iFactory.Core().V1().Pods().Informer(), wf.stopChan,
 		defaultNumEventQueues)
 	if err != nil {
+		return nil, err
+	}
+	if err := wf.informers[PodType].inf.AddIndexers(cache.Indexers{
+		PodNodeNameIndex: podNodeNameIndexFunc,
+	}); err != nil {
 		return nil, err
 	}
 	wf.informers[ServiceType], err = newQueuedInformer(eventQueueSize, ServiceType, wf.iFactory.Core().V1().Services().Informer(),
@@ -1586,6 +1604,23 @@ func (wf *WatchFactory) GetPod(namespace, name string) (*corev1.Pod, error) {
 func (wf *WatchFactory) GetAllPods() ([]*corev1.Pod, error) {
 	podLister := wf.informers[PodType].lister.(listers.PodLister)
 	return podLister.List(labels.Everything())
+}
+
+// GetPodsByNode returns all the pods scheduled on a given node
+func (wf *WatchFactory) GetPodsByNode(nodeName string) ([]*corev1.Pod, error) {
+	objs, err := wf.informers[PodType].inf.GetIndexer().ByIndex(PodNodeNameIndex, nodeName)
+	if err != nil {
+		return nil, err
+	}
+	pods := make([]*corev1.Pod, 0, len(objs))
+	for _, obj := range objs {
+		pod, ok := obj.(*corev1.Pod)
+		if !ok {
+			continue
+		}
+		pods = append(pods, pod)
+	}
+	return pods, nil
 }
 
 // GetPods returns all the pods in a given namespace
