@@ -1562,7 +1562,7 @@ func isEgressIPOnLink(linkIndex, ipFamily int, assignedEIPs sets.Set[string]) (b
 		}
 		return false, err
 	}
-	addresses, err := netlink.AddrList(link, ipFamily)
+	addresses, err := util.AddrList(link, ipFamily)
 	if err != nil {
 		return false, err
 	}
