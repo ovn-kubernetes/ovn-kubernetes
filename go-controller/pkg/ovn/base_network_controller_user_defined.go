@@ -381,6 +381,8 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 
 	if shouldHandleLiveMigration &&
 		kubevirtLiveMigrationStatus.IsTargetDomainReady() &&
+		// Source pod may be nil when migration completed and source was already removed.
+		kubevirtLiveMigrationStatus.SourcePod != nil &&
 		// At localnet there is no source pod remote LSP so it should be skipped
 		(bsnc.TopologyType() != types.LocalnetTopology || bsnc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod)) {
 		ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)

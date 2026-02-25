@@ -477,6 +477,14 @@ func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) 
 
 	// no migration
 	if len(vmPods) < 2 {
+		// If the only remaining pod has the migration target ready
+		// annotation, the migration completed and the source pod is gone.
+		if len(vmPods) == 1 && isTargetPodReady(vmPods[0]) {
+			return &LiveMigrationStatus{
+				TargetPod: vmPods[0],
+				State:     LiveMigrationTargetDomainReady,
+			}, nil
+		}
 		return nil, nil
 	}
 
@@ -503,8 +511,15 @@ func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) 
 		}, nil
 	}
 
-	// no active migration
+	// Source pod completed but target is still living. If the target has the
+	// migration ready annotation, the migration completed successfully.
 	if len(livingPods) < 2 {
+		if isTargetPodReady(targetPod) {
+			return &LiveMigrationStatus{
+				TargetPod: targetPod,
+				State:     LiveMigrationTargetDomainReady,
+			}, nil
+		}
 		return nil, nil
 	}
 
