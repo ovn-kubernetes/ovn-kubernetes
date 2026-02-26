@@ -15,8 +15,11 @@ var (
 	// pre-approve new images.
 	agnHost = image.GetE2EImage(image.Agnhost)
 	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
-	iperf3   = "quay.io/sronanrh/iperf:latest"
-	netshoot = "ghcr.io/nicolaka/netshoot:v0.13"
+	iperf3                = "quay.io/sronanrh/iperf:latest"
+	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
+	nginx                 = "nginx:1"
+	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
+	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
 
 	extraImages []string
 )
@@ -31,6 +34,15 @@ func init() {
 	if netshootOverride := os.Getenv("NETSHOOT_IMAGE"); netshootOverride != "" {
 		netshoot = netshootOverride
 	}
+	if nginxOverride := os.Getenv("NGINX_IMAGE"); nginxOverride != "" {
+		nginx = nginxOverride
+	}
+	if metallbLBServiceOverride := os.Getenv("METALLB_LB_SERVICE_IMAGE"); metallbLBServiceOverride != "" {
+		metallbLBService = metallbLBServiceOverride
+	}
+	if udpServerOverride := os.Getenv("UDP_SERVER_SRCIP_PRINTER_IMAGE"); udpServerOverride != "" {
+		udpServerSrcIPPrinter = udpServerOverride
+	}
 }
 
 func AgnHost() string {
@@ -43,6 +55,18 @@ func IPerf3() string {
 
 func Netshoot() string {
 	return netshoot
+}
+
+func Nginx() string {
+	return nginx
+}
+
+func MetalLBLBService() string {
+	return metallbLBService
+}
+
+func UDPServerSrcIPPrinter() string {
+	return udpServerSrcIPPrinter
 }
 
 // Add registers images that are needed by a test suite. Call from init()
