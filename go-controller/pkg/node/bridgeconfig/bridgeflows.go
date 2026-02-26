@@ -584,6 +584,14 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeMacAddress, actions))
 	}
 
+	// Workaround for FDP-1537: Drop GARP packets from patch ports to prevent duplicate
+	// GARPs during EgressIP failover. Remove when OVN v26.03+ with disable_garp_rarp is available.
+	for _, netConfig := range b.patchedNetConfigs() {
+		dftFlows = append(dftFlows,
+			fmt.Sprintf("cookie=0x0305,table=0,priority=499,in_port=%s,arp,arp_op=1,actions=drop",
+				netConfig.OfPortPatch))
+	}
+
 	// table 0, check packets coming from OVN have the correct mac address. Low priority flows that are a catch all
 	// for non-IP packets that would normally be forwarded with NORMAL action (table 0, priority 0 flow).
 	for _, netConfig := range b.patchedNetConfigs() {

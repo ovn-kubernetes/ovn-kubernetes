@@ -53,6 +53,14 @@ func (netConfig *BridgeUDNConfiguration) IsDefaultNetwork() bool {
 	return netConfig.MasqCTMark == nodetypes.CtMarkOVN
 }
 
+func (netConfig *BridgeUDNConfiguration) GetPatchPort() string {
+	return netConfig.PatchPort
+}
+
+func (netConfig *BridgeUDNConfiguration) GetOfPortPatch() string {
+	return netConfig.OfPortPatch
+}
+
 func (netConfig *BridgeUDNConfiguration) setOfPatchPort() error {
 	ofportPatch, stderr, err := util.GetOVSOfPort("get", "Interface", netConfig.PatchPort, "ofport")
 	if err != nil {
@@ -520,6 +528,17 @@ func (b *BridgeConfiguration) SetEIPMarkIPs(eipMarkIPs *egressip.MarkIPsCache) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.eipMarkIPs = eipMarkIPs
+}
+
+// GetNetConfigs returns the network configurations for this bridge
+func (b *BridgeConfiguration) GetNetConfigs() []*BridgeUDNConfiguration {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	var netConfigs []*BridgeUDNConfiguration
+	for _, netConfig := range b.netConfig {
+		netConfigs = append(netConfigs, netConfig)
+	}
+	return netConfigs
 }
 
 func (b *BridgeConfiguration) SetDropGARP(drop bool) {
