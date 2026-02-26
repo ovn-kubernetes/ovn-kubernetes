@@ -506,3 +506,19 @@ func GetLastIPOfSubnet(subnet *net.IPNet, indexFromLast int) *net.IPNet {
 	lastIP := net.IP(r[len(r)-16:])
 	return &net.IPNet{IP: lastIP, Mask: subnet.Mask}
 }
+
+func IPsAreEqual(ips1, ips2 []net.IP) bool {
+	if len(ips1) != len(ips2) {
+		return false
+	}
+	ipMap := make(map[string]bool)
+	for _, ip := range ips1 {
+		ipMap[ip.String()] = true
+	}
+	for _, ip := range ips2 {
+		if !ipMap[ip.String()] {
+			return false
+		}
+	}
+	return true
+}
