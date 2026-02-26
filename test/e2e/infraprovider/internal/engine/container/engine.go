@@ -1,4 +1,4 @@
-package containerengine
+package container
 
 import (
 	"fmt"
@@ -10,16 +10,6 @@ type ContainerEngine string
 
 func (ce ContainerEngine) String() string {
 	return string(ce)
-}
-
-func (ce ContainerEngine) NetworkCIDRsFmt() string {
-	if ce == Podman {
-		return "{{json .Subnets }}"
-	}
-	if ce == Docker {
-		return "{{json .IPAM.Config }}"
-	}
-	return ""
 }
 
 const (
