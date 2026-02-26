@@ -23,7 +23,10 @@ import (
 
 // ExternalNetworkSourceApplyConfiguration represents a declarative configuration of the ExternalNetworkSource type for use
 // with apply.
+//
+// ExternalNetworkSource contains the selectors used to determine the namespaces where the policy will be applied to
 type ExternalNetworkSourceApplyConfiguration struct {
+	// NamespaceSelector defines a selector to be used to determine which namespaces will be targeted by this CR
 	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
 }
 

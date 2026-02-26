@@ -25,7 +25,7 @@ BINS=(
     informer-gen
     lister-gen
 )
-GO111MODULE=on go install $(printf "k8s.io/code-generator/cmd/%s@v0.34.1 " "${BINS[@]}")
+GO111MODULE=on go install $(printf "k8s.io/code-generator/cmd/%s@v0.35.0 " "${BINS[@]}")
 cd "${olddir}"
 if [[ "${builddir}" == /tmp/* ]]; then #paranoia
     rm -rf "${builddir}"

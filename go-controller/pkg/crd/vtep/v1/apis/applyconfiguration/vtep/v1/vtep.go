@@ -25,11 +25,15 @@ import (
 
 // VTEPApplyConfiguration represents a declarative configuration of the VTEP type for use
 // with apply.
+//
+// VTEP defines VTEP (VXLAN Tunnel Endpoint) IP configuration for EVPN.
 type VTEPApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
-	Spec                                 *VTEPSpecApplyConfiguration   `json:"spec,omitempty"`
-	Status                               *VTEPStatusApplyConfiguration `json:"status,omitempty"`
+	// Spec defines the desired VTEP configuration.
+	Spec *VTEPSpecApplyConfiguration `json:"spec,omitempty"`
+	// Status contains the observed state of the VTEP.
+	Status *VTEPStatusApplyConfiguration `json:"status,omitempty"`
 }
 
 // VTEP constructs a declarative configuration of the VTEP type for use with
@@ -41,6 +45,7 @@ func VTEP(name string) *VTEPApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b VTEPApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

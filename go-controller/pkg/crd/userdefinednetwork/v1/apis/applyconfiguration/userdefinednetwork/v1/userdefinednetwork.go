@@ -25,6 +25,8 @@ import (
 
 // UserDefinedNetworkApplyConfiguration represents a declarative configuration of the UserDefinedNetwork type for use
 // with apply.
+//
+// UserDefinedNetwork describe network request for a Namespace.
 type UserDefinedNetworkApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -42,6 +44,7 @@ func UserDefinedNetwork(name, namespace string) *UserDefinedNetworkApplyConfigur
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b UserDefinedNetworkApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

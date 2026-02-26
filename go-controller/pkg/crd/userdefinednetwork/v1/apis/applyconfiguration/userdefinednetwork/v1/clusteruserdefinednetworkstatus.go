@@ -23,7 +23,10 @@ import (
 
 // ClusterUserDefinedNetworkStatusApplyConfiguration represents a declarative configuration of the ClusterUserDefinedNetworkStatus type for use
 // with apply.
+//
+// ClusterUserDefinedNetworkStatus contains the observed status of the ClusterUserDefinedNetwork.
 type ClusterUserDefinedNetworkStatusApplyConfiguration struct {
+	// Conditions slice of condition objects indicating details about ClusterUserDefineNetwork status.
 	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 

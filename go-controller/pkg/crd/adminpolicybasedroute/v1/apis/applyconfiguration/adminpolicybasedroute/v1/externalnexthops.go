@@ -23,8 +23,12 @@ import (
 
 // ExternalNextHopsApplyConfiguration represents a declarative configuration of the ExternalNextHops type for use
 // with apply.
+//
+// ExternalNextHops contains slices of StaticHops and DynamicHops structures. Minimum is one StaticHop or one DynamicHop.
 type ExternalNextHopsApplyConfiguration struct {
-	StaticHops  []*adminpolicybasedroutev1.StaticHop  `json:"static,omitempty"`
+	// StaticHops defines a slice of StaticHop. This field is optional.
+	StaticHops []*adminpolicybasedroutev1.StaticHop `json:"static,omitempty"`
+	// DynamicHops defines a slices of DynamicHop. This field is optional.
 	DynamicHops []*adminpolicybasedroutev1.DynamicHop `json:"dynamic,omitempty"`
 }
 

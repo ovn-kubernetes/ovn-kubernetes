@@ -19,9 +19,13 @@ package v1
 
 // AdminPolicyBasedExternalRouteSpecApplyConfiguration represents a declarative configuration of the AdminPolicyBasedExternalRouteSpec type for use
 // with apply.
+//
+// AdminPolicyBasedExternalRouteSpec defines the desired state of AdminPolicyBasedExternalRoute
 type AdminPolicyBasedExternalRouteSpecApplyConfiguration struct {
-	From     *ExternalNetworkSourceApplyConfiguration `json:"from,omitempty"`
-	NextHops *ExternalNextHopsApplyConfiguration      `json:"nextHops,omitempty"`
+	// From defines the selectors that will determine the target namespaces to this CR.
+	From *ExternalNetworkSourceApplyConfiguration `json:"from,omitempty"`
+	// NextHops defines two types of hops: Static and Dynamic. Each hop defines at least one external gateway IP.
+	NextHops *ExternalNextHopsApplyConfiguration `json:"nextHops,omitempty"`
 }
 
 // AdminPolicyBasedExternalRouteSpecApplyConfiguration constructs a declarative configuration of the AdminPolicyBasedExternalRouteSpec type for use with

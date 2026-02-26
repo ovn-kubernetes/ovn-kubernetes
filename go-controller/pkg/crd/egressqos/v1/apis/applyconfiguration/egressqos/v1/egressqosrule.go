@@ -24,8 +24,16 @@ import (
 // EgressQoSRuleApplyConfiguration represents a declarative configuration of the EgressQoSRule type for use
 // with apply.
 type EgressQoSRuleApplyConfiguration struct {
-	DSCP        *int                                    `json:"dscp,omitempty"`
-	DstCIDR     *string                                 `json:"dstCIDR,omitempty"`
+	// DSCP marking value for matching pods' traffic.
+	DSCP *int `json:"dscp,omitempty"`
+	// DstCIDR specifies the destination's CIDR. Only traffic heading
+	// to this CIDR will be marked with the DSCP value.
+	// This field is optional, and in case it is not set the rule is applied
+	// to all egress traffic regardless of the destination.
+	DstCIDR *string `json:"dstCIDR,omitempty"`
+	// PodSelector applies the QoS rule only to the pods in the namespace whose label
+	// matches this definition. This field is optional, and in case it is not set
+	// results in the rule being applied to all pods in the namespace.
 	PodSelector *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
 }
 

@@ -25,11 +25,19 @@ import (
 
 // EgressFirewallApplyConfiguration represents a declarative configuration of the EgressFirewall type for use
 // with apply.
+//
+// EgressFirewall describes the current egress firewall for a Namespace.
+// Traffic from a pod to an IP address outside the cluster will be checked against
+// each EgressFirewallRule in the pod's namespace's EgressFirewall, in
+// order. If no rule matches (or no EgressFirewall is present) then the traffic
+// will be allowed by default.
 type EgressFirewallApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
-	Spec                                 *EgressFirewallSpecApplyConfiguration   `json:"spec,omitempty"`
-	Status                               *EgressFirewallStatusApplyConfiguration `json:"status,omitempty"`
+	// Specification of the desired behavior of EgressFirewall.
+	Spec *EgressFirewallSpecApplyConfiguration `json:"spec,omitempty"`
+	// Observed status of EgressFirewall
+	Status *EgressFirewallStatusApplyConfiguration `json:"status,omitempty"`
 }
 
 // EgressFirewall constructs a declarative configuration of the EgressFirewall type for use with
@@ -42,6 +50,7 @@ func EgressFirewall(name, namespace string) *EgressFirewallApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b EgressFirewallApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

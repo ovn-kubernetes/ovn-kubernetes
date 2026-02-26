@@ -17,15 +17,8 @@ limitations under the License.
 package tests
 
 import (
-	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	v1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	"sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	"sigs.k8s.io/network-policy-api/conformance/utils/kubernetes"
 	"sigs.k8s.io/network-policy-api/conformance/utils/suite"
 )
@@ -46,176 +39,110 @@ var AdminNetworkPolicyEgressTCP = suite.ConformanceTest{
 	Test: func(t *testing.T, s *suite.ConformanceTestSuite) {
 
 		t.Run("Should support an 'allow-egress' policy for TCP protocol; ensure rule ordering is respected", func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), s.TimeoutConfig.GetTimeout)
-			defer cancel()
 			// This test uses `egress-tcp` ANP
 			// luna-lovegood-0 is our server pod in ravenclaw namespace
-			serverPod := &v1.Pod{}
-			err := s.Client.Get(ctx, client.ObjectKey{
-				Namespace: "network-policy-conformance-ravenclaw",
-				Name:      "luna-lovegood-0",
-			}, serverPod)
-			require.NoErrorf(t, err, "unable to fetch the server pod")
+			serverPod := kubernetes.GetPod(t, s.Client, "network-policy-conformance-ravenclaw", "luna-lovegood-0", s.TimeoutConfig.GetTimeout)
 			// harry-potter-0 is our client pod in gryffindor namespace
 			// ensure egress is ALLOWED to ravenclaw from gryffindor
 			// egressRule at index0 will take precedence over egressRule at index1; thus ALLOW takes precedence over DENY since rules are ordered
-			success := kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
-				serverPod.Status.PodIP, int32(80), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
-			success = kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
-				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
+				serverPod.Status.PodIP, int32(80), s.TimeoutConfig, true)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
+				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig, true)
 		})
 
 		t.Run("Should support an 'allow-egress' policy for TCP protocol at the specified port", func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), s.TimeoutConfig.GetTimeout)
-			defer cancel()
 			// This test uses `egress-tcp` ANP
 			// cedric-diggory-1 is our server pod in hufflepuff namespace
-			serverPod := &v1.Pod{}
-			err := s.Client.Get(ctx, client.ObjectKey{
-				Namespace: "network-policy-conformance-hufflepuff",
-				Name:      "cedric-diggory-1",
-			}, serverPod)
-			require.NoErrorf(t, err, "unable to fetch the server pod")
+			serverPod := kubernetes.GetPod(t, s.Client, "network-policy-conformance-hufflepuff", "cedric-diggory-1", s.TimeoutConfig.GetTimeout)
 			// harry-potter-0 is our client pod in gryffindor namespace
 			// ensure egress is ALLOWED to hufflepuff from gryffindor at port 8080; egressRule at index5 should take effect
-			success := kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
-				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
+				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig, true)
 			// harry-potter-1 is our client pod in gryffindor namespace
 			// ensure egress is DENIED to hufflepuff from gryffindor for rest of the traffic; egressRule at index6 should take effect
-			success = kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
-				serverPod.Status.PodIP, int32(80), s.TimeoutConfig.RequestTimeout, false)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
+				serverPod.Status.PodIP, int32(80), s.TimeoutConfig, false)
 		})
 
 		t.Run("Should support an 'deny-egress' policy for TCP protocol; ensure rule ordering is respected", func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), s.TimeoutConfig.GetTimeout)
-			defer cancel()
 			// This test uses `egress-tcp` ANP
 			// luna-lovegood-1 is our server pod in ravenclaw namespace
-			serverPod := &v1.Pod{}
-			err := s.Client.Get(ctx, client.ObjectKey{
-				Namespace: "network-policy-conformance-ravenclaw",
-				Name:      "luna-lovegood-1",
-			}, serverPod)
-			require.NoErrorf(t, err, "unable to fetch the server pod")
-			anp := &v1alpha1.AdminNetworkPolicy{}
-			err = s.Client.Get(ctx, client.ObjectKey{
-				Name: "egress-tcp",
-			}, anp)
-			require.NoErrorf(t, err, "unable to fetch the admin network policy")
+			serverPod := kubernetes.GetPod(t, s.Client, "network-policy-conformance-ravenclaw", "luna-lovegood-1", s.TimeoutConfig.GetTimeout)
+
+			anp := kubernetes.GetAdminNetworkPolicy(t, s.Client, "egress-tcp", s.TimeoutConfig.GetTimeout)
 			mutate := anp.DeepCopy()
 			// swap rules at index0 and index1
 			allowRule := mutate.Spec.Egress[0]
 			mutate.Spec.Egress[0] = mutate.Spec.Egress[1]
 			mutate.Spec.Egress[1] = allowRule
-			err = s.Client.Patch(ctx, mutate, client.MergeFrom(anp))
-			require.NoErrorf(t, err, "unable to patch the admin network policy")
+			kubernetes.PatchAdminNetworkPolicy(t, s.Client, anp, mutate, s.TimeoutConfig.GetTimeout)
 			// harry-potter-0 is our client pod in gryffindor namespace
 			// ensure egress is DENIED to ravenclaw from gryffindor
 			// egressRule at index0 will take precedence over egressRule at index1; thus DENY takes precedence over ALLOW since rules are ordered
-			success := kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
-				serverPod.Status.PodIP, int32(80), s.TimeoutConfig.RequestTimeout, false)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
+				serverPod.Status.PodIP, int32(80), s.TimeoutConfig, false)
 			// harry-potter-1 is our client pod in gryffindor namespace
-			success = kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
-				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig.RequestTimeout, false)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
+				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig, false)
 		})
 
 		t.Run("Should support a 'deny-egress' policy for TCP protocol at the specified port", func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), s.TimeoutConfig.GetTimeout)
-			defer cancel()
 			// This test uses `egress-tcp` ANP
 			// draco-malfoy-0 is our server pod in slytherin namespace
-			serverPod := &v1.Pod{}
-			err := s.Client.Get(ctx, client.ObjectKey{
-				Namespace: "network-policy-conformance-slytherin",
-				Name:      "draco-malfoy-0",
-			}, serverPod)
-			require.NoErrorf(t, err, "unable to fetch the server pod")
+			serverPod := kubernetes.GetPod(t, s.Client, "network-policy-conformance-slytherin", "draco-malfoy-0", s.TimeoutConfig.GetTimeout)
 			// harry-potter-0 is our client pod in gryffindor namespace
 			// ensure egress to slytherin is DENIED from gryffindor at port 80; egressRule at index3 should take effect
-			success := kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
-				serverPod.Status.PodIP, int32(80), s.TimeoutConfig.RequestTimeout, false)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
+				serverPod.Status.PodIP, int32(80), s.TimeoutConfig, false)
 			// harry-potter-1 is our client pod in gryffindor namespace
 			// ensure egress to slytherin is ALLOWED from gryffindor for rest of the traffic; matches no rules hence allowed
-			success = kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
-				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
+				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig, true)
 		})
 
 		t.Run("Should support an 'pass-egress' policy for TCP protocol; ensure rule ordering is respected", func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), s.TimeoutConfig.GetTimeout)
-			defer cancel()
 			// This test uses `egress-tcp` ANP
 			// luna-lovegood-0 is our server pod in ravenclaw namespace
-			serverPod := &v1.Pod{}
-			err := s.Client.Get(ctx, client.ObjectKey{
-				Namespace: "network-policy-conformance-ravenclaw",
-				Name:      "luna-lovegood-0",
-			}, serverPod)
-			require.NoErrorf(t, err, "unable to fetch the server pod")
-			anp := &v1alpha1.AdminNetworkPolicy{}
-			err = s.Client.Get(ctx, client.ObjectKey{
-				Name: "egress-tcp",
-			}, anp)
-			require.NoErrorf(t, err, "unable to fetch the admin network policy")
+			serverPod := kubernetes.GetPod(t, s.Client, "network-policy-conformance-ravenclaw", "luna-lovegood-0", s.TimeoutConfig.GetTimeout)
+
+			anp := kubernetes.GetAdminNetworkPolicy(t, s.Client, "egress-tcp", s.TimeoutConfig.GetTimeout)
 			mutate := anp.DeepCopy()
 			// swap rules at index0 and index2
 			denyRule := mutate.Spec.Egress[0]
 			mutate.Spec.Egress[0] = mutate.Spec.Egress[2]
 			mutate.Spec.Egress[2] = denyRule
-			err = s.Client.Patch(ctx, mutate, client.MergeFrom(anp))
-			require.NoErrorf(t, err, "unable to patch the admin network policy")
+			kubernetes.PatchAdminNetworkPolicy(t, s.Client, anp, mutate, s.TimeoutConfig.GetTimeout)
 			// harry-potter-0 is our server pod in gryffindor namespace
 			// ensure egress is PASSED from gryffindor to ravenclaw
 			// egressRule at index0 will take precedence over egressRule at index1&index2; thus PASS takes precedence over ALLOW/DENY since rules are ordered
-			success := kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
-				serverPod.Status.PodIP, int32(80), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
+				serverPod.Status.PodIP, int32(80), s.TimeoutConfig, true)
 			// harry-potter-1 is our server pod in gryffindor namespace
-			success = kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
-				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
+				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig, true)
 		})
 
 		t.Run("Should support a 'pass-egress' policy for TCP protocol at the specified port", func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), s.TimeoutConfig.GetTimeout)
-			defer cancel()
 			// This test uses `egress-tcp` ANP
 			// draco-malfoy-0 is our server pod in slytherin namespace
-			serverPod := &v1.Pod{}
-			err := s.Client.Get(ctx, client.ObjectKey{
-				Namespace: "network-policy-conformance-slytherin",
-				Name:      "draco-malfoy-0",
-			}, serverPod)
-			require.NoErrorf(t, err, "unable to fetch the server pod")
-			anp := &v1alpha1.AdminNetworkPolicy{}
-			err = s.Client.Get(ctx, client.ObjectKey{
-				Name: "egress-tcp",
-			}, anp)
-			require.NoErrorf(t, err, "unable to fetch the admin network policy")
+			serverPod := kubernetes.GetPod(t, s.Client, "network-policy-conformance-slytherin", "draco-malfoy-0", s.TimeoutConfig.GetTimeout)
+
+			anp := kubernetes.GetAdminNetworkPolicy(t, s.Client, "egress-tcp", s.TimeoutConfig.GetTimeout)
 			mutate := anp.DeepCopy()
 			// swap rules at index3 and index4
 			denyRule := mutate.Spec.Egress[3]
 			mutate.Spec.Egress[3] = mutate.Spec.Egress[4]
 			mutate.Spec.Egress[4] = denyRule
-			err = s.Client.Patch(ctx, mutate, client.MergeFrom(anp))
-			require.NoErrorf(t, err, "unable to patch the admin network policy")
+			kubernetes.PatchAdminNetworkPolicy(t, s.Client, anp, mutate, s.TimeoutConfig.GetTimeout)
 			// harry-potter-0 is our client pod in gryffindor namespace
 			// ensure egress from gryffindor is PASSED to slytherin at port 80; egressRule at index3 should take effect
-			success := kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
-				serverPod.Status.PodIP, int32(80), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-0", "tcp",
+				serverPod.Status.PodIP, int32(80), s.TimeoutConfig, true)
 			// harry-potter-1 is our client pod in gryffindor namespace
 			// ensure egress from gryffindor is ALLOWED to slytherin for rest of the traffic; matches no rules hence allowed
-			success = kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
-				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig.RequestTimeout, true)
-			assert.True(t, success)
+			kubernetes.PokeServer(t, s.ClientSet, &s.KubeConfig, "network-policy-conformance-gryffindor", "harry-potter-1", "tcp",
+				serverPod.Status.PodIP, int32(8080), s.TimeoutConfig, true)
 		})
 	},
 }

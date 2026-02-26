@@ -23,14 +23,35 @@ import (
 
 // NetworkSpecApplyConfiguration represents a declarative configuration of the NetworkSpec type for use
 // with apply.
+//
+// NetworkSpec defines the desired state of UserDefinedNetworkSpec.
 type NetworkSpecApplyConfiguration struct {
-	Topology  *userdefinednetworkv1.NetworkTopology `json:"topology,omitempty"`
-	Layer3    *Layer3ConfigApplyConfiguration       `json:"layer3,omitempty"`
-	Layer2    *Layer2ConfigApplyConfiguration       `json:"layer2,omitempty"`
-	Localnet  *LocalnetConfigApplyConfiguration     `json:"localnet,omitempty"`
+	// Topology describes network configuration.
+	//
+	// Allowed values are "Layer3", "Layer2" and "Localnet".
+	// Layer3 topology creates a layer 2 segment per node, each with a different subnet. Layer 3 routing is used to interconnect node subnets.
+	// Layer2 topology creates one logical switch shared by all nodes.
+	// Localnet topology is based on layer 2 topology, but also allows connecting to an existent (configured) physical network to provide north-south traffic to the workloads.
+	Topology *userdefinednetworkv1.NetworkTopology `json:"topology,omitempty"`
+	// Layer3 is the Layer3 topology configuration.
+	Layer3 *Layer3ConfigApplyConfiguration `json:"layer3,omitempty"`
+	// Layer2 is the Layer2 topology configuration.
+	Layer2 *Layer2ConfigApplyConfiguration `json:"layer2,omitempty"`
+	// Localnet is the Localnet topology configuration.
+	Localnet *LocalnetConfigApplyConfiguration `json:"localnet,omitempty"`
+	// Transport describes the transport technology for pod-to-pod traffic.
+	// Allowed values are "NoOverlay", "Geneve", and "EVPN".
+	// - "NoOverlay": The network operates in no-overlay mode.
+	// - "Geneve": The network uses Geneve overlay.
+	// - "EVPN": The network uses EVPN transport.
+	// When omitted, the default behaviour is Geneve.
 	Transport *userdefinednetworkv1.TransportOption `json:"transport,omitempty"`
-	NoOverlay *NoOverlayConfigApplyConfiguration    `json:"noOverlay,omitempty"`
-	EVPN      *EVPNConfigApplyConfiguration         `json:"evpn,omitempty"`
+	// NoOverlay contains configuration for no-overlay mode.
+	// This is only allowed when Transport is "NoOverlay".
+	NoOverlay *NoOverlayConfigApplyConfiguration `json:"noOverlay,omitempty"`
+	// EVPN contains configuration for EVPN mode.
+	// This is only allowed when Transport is "EVPN".
+	EVPN *EVPNConfigApplyConfiguration `json:"evpn,omitempty"`
 }
 
 // NetworkSpecApplyConfiguration constructs a declarative configuration of the NetworkSpec type for use with

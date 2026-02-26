@@ -24,8 +24,40 @@ import (
 // ConnectSubnetApplyConfiguration represents a declarative configuration of the ConnectSubnet type for use
 // with apply.
 type ConnectSubnetApplyConfiguration struct {
-	CIDR          *clusternetworkconnectv1.CIDR `json:"cidr,omitempty"`
-	NetworkPrefix *int32                        `json:"networkPrefix,omitempty"`
+	// CIDR specifies ConnectSubnet, which is split into smaller subnets for every connected network.
+	// This CIDR should be containing 2*((Number of L3 networks*Max Number of Nodes)+Number of L2 networks) IPs.
+	// Example: cidr= "192.168.0.0/16", networkPrefix=24 and if the cluster has 128 nodes that means that you can
+	// connect 256 layer3 networks and 0 layer2 networks OR 255 layer3 networks and 128 layer2 networks.
+	//
+	// CIDR also restricts the maximum number of networks that can be connected together
+	// based on what CIDR range is picked. So choosing a large enough CIDR for future use cases
+	// is important.
+	//
+	// The largest CIDR that can be used for this field is /16 (65536 IPs) because OVN
+	// has a limit of 32K(2^15) tunnel keys per router. So we will only ever have 32K /31 or /127 slices
+	// which is 2^16 IPs.
+	// Having a CIDR greater than /16 will not be utilized fully for the same reason.
+	CIDR *clusternetworkconnectv1.CIDR `json:"cidr,omitempty"`
+	// NetworkPrefix specifies the prefix length for every connected network.
+	// This prefix length should be equal to or longer than the length of the CIDR prefix.
+	//
+	// For example, if the CIDR is 10.0.0.0/16 and the networkPrefix is 24,
+	// then the connect subnet for each connected layer3 network will be 10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24 etc.
+	//
+	// For layer2 networks we will allocate the next available /networkPrefix range
+	// that is then split into /31 or /127 slices for each layer2 network
+	// A good practice is to set this to a value that ensures it contains more
+	// than twice the number of maximum nodes planned to be deployed in the cluster.
+	// Each node gets a /31 subnet for the layer3 networks, hence networkPrefix should
+	// contain enough IPs for 4 times the maximum nodes planned
+	// Example - recommended values:
+	// if you plan to deploy 10 nodes, set the networkPrefix to /26 (40+ IPs)
+	// if you plan to deploy 100 nodes, set the networkPrefix to /23 (400+ IPs)
+	// if you plan to deploy 1000 nodes, set the networkPrefix to /20 (4000+ IPs)
+	// if you plan to deploy 5000 nodes, set the networkPrefix to /17 (20000+ IPs)
+	// This field restricts the maximum number of nodes that can be deployed in the cluster
+	// and hence its good to plan this value carefully along with the CIDR.
+	NetworkPrefix *int32 `json:"networkPrefix,omitempty"`
 }
 
 // ConnectSubnetApplyConfiguration constructs a declarative configuration of the ConnectSubnet type for use with

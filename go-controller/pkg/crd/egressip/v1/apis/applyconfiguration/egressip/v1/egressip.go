@@ -25,11 +25,19 @@ import (
 
 // EgressIPApplyConfiguration represents a declarative configuration of the EgressIP type for use
 // with apply.
+//
+// When we bump to Kubernetes 1.19 we should get this fix: https://github.com/kubernetes/kubernetes/pull/89660
+// Until then Assigned Nodes/EgressIPs can only print the first item in the status.
+// EgressIP is a CRD allowing the user to define a fixed
+// source IP for all egress traffic originating from any pods which
+// match the EgressIP resource according to its spec definition.
 type EgressIPApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
-	Spec                                 *EgressIPSpecApplyConfiguration   `json:"spec,omitempty"`
-	Status                               *EgressIPStatusApplyConfiguration `json:"status,omitempty"`
+	// Specification of the desired behavior of EgressIP.
+	Spec *EgressIPSpecApplyConfiguration `json:"spec,omitempty"`
+	// Observed status of EgressIP. Read-only.
+	Status *EgressIPStatusApplyConfiguration `json:"status,omitempty"`
 }
 
 // EgressIP constructs a declarative configuration of the EgressIP type for use with
@@ -41,6 +49,7 @@ func EgressIP(name string) *EgressIPApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b EgressIPApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

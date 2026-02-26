@@ -25,6 +25,13 @@ import (
 
 // EgressServiceApplyConfiguration represents a declarative configuration of the EgressService type for use
 // with apply.
+//
+// EgressService is a CRD that allows the user to request that the source
+// IP of egress packets originating from all of the pods that are endpoints
+// of the corresponding LoadBalancer Service would be its ingress IP.
+// In addition, it allows the user to request that egress packets originating from
+// all of the pods that are endpoints of the LoadBalancer service would use a different
+// network than the main one.
 type EgressServiceApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -42,6 +49,7 @@ func EgressService(name, namespace string) *EgressServiceApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b EgressServiceApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

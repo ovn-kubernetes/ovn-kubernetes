@@ -24,10 +24,30 @@ import (
 
 // ClusterNetworkConnectSpecApplyConfiguration represents a declarative configuration of the ClusterNetworkConnectSpec type for use
 // with apply.
+//
+// ClusterNetworkConnectSpec defines the desired state of ClusterNetworkConnect.
 type ClusterNetworkConnectSpecApplyConfiguration struct {
-	NetworkSelectors *types.NetworkSelectors                    `json:"networkSelectors,omitempty"`
-	ConnectSubnets   []ConnectSubnetApplyConfiguration          `json:"connectSubnets,omitempty"`
-	Connectivity     []clusternetworkconnectv1.ConnectivityType `json:"connectivity,omitempty"`
+	// networkSelectors selects the networks to be connected together.
+	// This can match User Defined Networks (UDNs) and/or Cluster User Defined Networks (CUDNs).
+	// Only ClusterUserDefinedNetworkSelector and PrimaryUserDefinedNetworkSelector can be selected.
+	NetworkSelectors *types.NetworkSelectors `json:"networkSelectors,omitempty"`
+	// connectSubnets specifies the subnets used for interconnecting the selected networks.
+	// This creates a shared subnet space that connected networks can use to communicate.
+	// Can have at most 1 CIDR for each IP family (IPv4 and IPv6).
+	// Must not overlap with:
+	// any of the pod subnets used by the selected networks.
+	// any of the transit subnets used by the selected networks.
+	// any of the service CIDR range used in the cluster.
+	// any of the join subnet of the selected networks to be connected.
+	// any of the masquerade subnet range used in the cluster.
+	// any of the node subnets chosen by the platform.
+	// any of other connect subnets for other ClusterNetworkConnects that might be selecting same networks.
+	//
+	// Does not have a default value for the above reason so
+	// that user takes care in setting non-overlapping subnets.
+	ConnectSubnets []ConnectSubnetApplyConfiguration `json:"connectSubnets,omitempty"`
+	// connectivity specifies which connectivity types should be enabled for the connected networks.
+	Connectivity []clusternetworkconnectv1.ConnectivityType `json:"connectivity,omitempty"`
 }
 
 // ClusterNetworkConnectSpecApplyConfiguration constructs a declarative configuration of the ClusterNetworkConnectSpec type for use with
