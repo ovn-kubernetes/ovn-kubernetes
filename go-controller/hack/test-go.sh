@@ -13,6 +13,12 @@ function gocmd {
     $cmd "$@"
 }
 
+# Disable WatchListClient feature gate for tests.
+# Fake clientsets from third-party libraries don't yet support WatchList semantics
+# introduced in K8s 1.35, causing informers to hang waiting for bookmark events.
+# See: https://github.com/kubernetes/kubernetes/issues/135895
+export KUBE_FEATURE_WatchListClient=false
+
 cd "${OVN_KUBE_ROOT}"
 
 PKGS=$(gocmd list -mod vendor -f '{{if len .TestGoFiles}} {{.ImportPath}} {{end}}' ${PKGS:-./cmd/... ./pkg/... ./hybrid-overlay/...} | xargs)
@@ -46,7 +52,7 @@ function testrun {
         if [ "$NOROOT" = "TRUE" ]; then
             go_test="${testfile}"
         else
-            go_test="sudo ${testfile}"
+            go_test="sudo -E ${testfile}"
         fi
     fi
     if [[ -n "$ginkgo_focus" ]]; then
