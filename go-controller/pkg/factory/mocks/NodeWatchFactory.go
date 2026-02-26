@@ -10,6 +10,7 @@ import (
 
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
 
+	clusternetworkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/informers/externalversions/clusternetworkconnect/v1"
 	factory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 
 	informerscorev1 "k8s.io/client-go/informers/core/v1"
@@ -216,6 +217,26 @@ func (_m *NodeWatchFactory) ClusterUserDefinedNetworkInformer() userdefinednetwo
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(userdefinednetworkv1.ClusterUserDefinedNetworkInformer)
+		}
+	}
+
+	return r0
+}
+
+// ClusterNetworkConnectInformer provides a mock function with no fields
+func (_m *NodeWatchFactory) ClusterNetworkConnectInformer() clusternetworkconnectv1.ClusterNetworkConnectInformer {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ClusterNetworkConnectInformer")
+	}
+
+	var r0 clusternetworkconnectv1.ClusterNetworkConnectInformer
+	if rf, ok := ret.Get(0).(func() clusternetworkconnectv1.ClusterNetworkConnectInformer); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(clusternetworkconnectv1.ClusterNetworkConnectInformer)
 		}
 	}
 
