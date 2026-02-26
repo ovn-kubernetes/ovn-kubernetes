@@ -46,6 +46,9 @@ type nadController struct {
 	// reconcilers keyed by registration ID.
 	reconcilers      map[uint64]reconcilerRegistration
 	nextReconcilerID uint64
+	// networkRefReconcilers keyed by registration ID.
+	networkRefReconcilers      map[uint64]networkRefReconcilerRegistration
+	nextNetworkRefReconcilerID uint64
 
 	name            string
 	stopChan        chan struct{}
@@ -101,6 +104,11 @@ type reconcilerRegistration struct {
 	r  NADReconciler
 }
 
+type networkRefReconcilerRegistration struct {
+	id uint64
+	r  NetworkRefReconciler
+}
+
 func newController(
 	name string,
 	zone string,
@@ -114,18 +122,19 @@ func newController(
 ) (*nadController, error) {
 	networkController := newNetworkController(name, zone, node, cm, wf)
 	c := &nadController{
-		name:                 fmt.Sprintf("[%s NAD controller]", name),
-		stopChan:             make(chan struct{}),
-		recorder:             recorder,
-		nadLister:            wf.NADInformer().Lister(),
-		nodeLister:           wf.NodeCoreInformer().Lister(),
-		networkController:    networkController,
-		reconcilers:          map[uint64]reconcilerRegistration{},
-		nads:                 map[string]string{},
-		nadsByNetwork:        map[string]sets.Set[string]{},
-		cncConnectedNetworks: map[string]sets.Set[string]{},
-		primaryNADs:          map[string]string{},
-		markedForRemoval:     map[string]time.Time{},
+		name:                  fmt.Sprintf("[%s NAD controller]", name),
+		stopChan:              make(chan struct{}),
+		recorder:              recorder,
+		nadLister:             wf.NADInformer().Lister(),
+		nodeLister:            wf.NodeCoreInformer().Lister(),
+		networkController:     networkController,
+		reconcilers:           map[uint64]reconcilerRegistration{},
+		networkRefReconcilers: map[uint64]networkRefReconcilerRegistration{},
+		nads:                  map[string]string{},
+		nadsByNetwork:         map[string]sets.Set[string]{},
+		cncConnectedNetworks:  map[string]sets.Set[string]{},
+		primaryNADs:           map[string]string{},
+		markedForRemoval:      map[string]time.Time{},
 	}
 	networkController.getNADKeysForNetwork = c.GetNADKeysForNetwork
 
@@ -366,6 +375,7 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 
 	isLocal := node == c.filterNADsOnNode
 	networkName := nadNetwork.GetNetworkName()
+	c.notifyNetworkRefReconcilers(node, networkName)
 	// Enqueue a network reconcile for remote nodes (non-blocking).
 	if !isLocal {
 		c.networkController.NotifyNetworkRefChange(networkName, node)
@@ -684,11 +694,46 @@ func (c *nadController) DeRegisterNADReconciler(id uint64) error {
 	return nil
 }
 
+// RegisterNetworkRefReconciler registers a reconciler to receive node+network activity changes.
+func (c *nadController) RegisterNetworkRefReconciler(r NetworkRefReconciler) (uint64, error) {
+	c.Lock()
+	defer c.Unlock()
+	if c.networkRefReconcilers == nil {
+		c.networkRefReconcilers = map[uint64]networkRefReconcilerRegistration{}
+	}
+	c.nextNetworkRefReconcilerID++
+	id := c.nextNetworkRefReconcilerID
+	c.networkRefReconcilers[id] = networkRefReconcilerRegistration{id: id, r: r}
+	return id, nil
+}
+
+// DeRegisterNetworkRefReconciler removes a previously registered network-ref reconciler by ID.
+func (c *nadController) DeRegisterNetworkRefReconciler(id uint64) error {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.networkRefReconcilers[id]; !ok {
+		return fmt.Errorf("network-ref reconciler id %d not found", id)
+	}
+	delete(c.networkRefReconcilers, id)
+	return nil
+}
+
 // notifyReconcilers enqueues the NAD key to all registered reconcilers
 // Must be called with nadController Mutex locked
 func (c *nadController) notifyReconcilers(key string) {
 	for _, entry := range c.reconcilers {
 		entry.r.Reconcile(key)
+	}
+}
+
+func (c *nadController) notifyNetworkRefReconcilers(node, networkName string) {
+	if node == "" || networkName == "" {
+		return
+	}
+	c.RLock()
+	defer c.RUnlock()
+	for _, entry := range c.networkRefReconcilers {
+		entry.r.Reconcile(node, networkName)
 	}
 }
 

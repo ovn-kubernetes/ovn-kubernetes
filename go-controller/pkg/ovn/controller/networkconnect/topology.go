@@ -524,6 +524,7 @@ func (c *Controller) ensureConnectPortsOps(ops []ovsdb.Operation, cnc *networkco
 			networkPortName := getNetworkRouterToConnectRouterPortName(networkName, node.Name, cncName)
 
 			isLocalNode := util.GetNodeZone(node) == c.zone
+			nodeActive := c.networkManager.NodeHasNetwork(node.Name, networkName)
 
 			if isLocalNode {
 				if !localActive {
@@ -555,6 +556,23 @@ func (c *Controller) ensureConnectPortsOps(ops []ovsdb.Operation, cnc *networkco
 					return nil, fmt.Errorf("failed to create network router port ops %s: %v", networkPortName, err)
 				}
 			} else {
+				if !nodeActive {
+					ops, err = libovsdbops.DeleteLogicalRouterPortWithPredicateOps(c.nbClient, ops, connectRouterName,
+						func(item *nbdb.LogicalRouterPort) bool {
+							return item.Name == connectPortName
+						})
+					if err != nil {
+						return nil, fmt.Errorf("failed to delete remote connect router port ops %s: %v", connectPortName, err)
+					}
+					ops, err = libovsdbops.DeleteLogicalRouterPortWithPredicateOps(c.nbClient, ops, networkRouterName,
+						func(item *nbdb.LogicalRouterPort) bool {
+							return item.Name == networkPortName
+						})
+					if err != nil {
+						return nil, fmt.Errorf("failed to delete network router port ops %s: %v", networkPortName, err)
+					}
+					continue
+				}
 				// Remote node: create only the connect-router side port with requested-chassis set
 				// This makes the port type: remote in SB, enabling cross-zone tunneling
 				chassisID, err := util.ParseNodeChassisIDAnnotation(node)
@@ -854,6 +872,19 @@ func (c *Controller) ensureStaticRoutesOps(ops []ovsdb.Operation, cnc *networkco
 		for _, node := range nodes {
 			nodeID, err := util.GetNodeID(node)
 			if err != nil {
+				continue
+			}
+			nodeActive := c.networkManager.NodeHasNetwork(node.Name, networkName)
+			if !nodeActive {
+				ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, connectRouterName,
+					func(item *nbdb.LogicalRouterStaticRoute) bool {
+						return item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == cncName &&
+							item.ExternalIDs[libovsdbops.NetworkIDKey.String()] == strconv.Itoa(networkID) &&
+							item.ExternalIDs[libovsdbops.NodeIDKey.String()] == strconv.Itoa(nodeID)
+					})
+				if err != nil {
+					return nil, fmt.Errorf("failed to delete static route ops for inactive node %s: %v", node.Name, err)
+				}
 				continue
 			}
 

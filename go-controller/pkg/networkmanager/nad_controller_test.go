@@ -168,6 +168,26 @@ type testNetworkController struct {
 	handleRefChange func(node string, active bool)
 }
 
+type testNetworkRefReconciler struct {
+	updates chan struct {
+		node        string
+		networkName string
+	}
+}
+
+func (tr *testNetworkRefReconciler) Reconcile(node, networkName string) {
+	if tr == nil || tr.updates == nil {
+		return
+	}
+	tr.updates <- struct {
+		node        string
+		networkName string
+	}{
+		node:        node,
+		networkName: networkName,
+	}
+}
+
 func (tnc *testNetworkController) Start(context.Context) error {
 	tnc.tcm.Lock()
 	defer tnc.tcm.Unlock()
@@ -1919,9 +1939,14 @@ func TestOnNetworkRefChangeReconcilesCNCConnectedNetworks(t *testing.T) {
 	g.Expect(controller.Start(nadSyncController)).To(gomega.Succeed())
 	defer controller.Stop(nadSyncController)
 
+	networkIDAllocator := id.NewIDAllocator("NetworkIDs", MaxNetworks)
+	g.Expect(networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+	g.Expect(networkIDAllocator.ReserveID("net-a", 7)).To(gomega.Succeed())
+
 	nc := &nadController{
-		controller:       nadSyncController,
-		filterNADsOnNode: "node1",
+		controller:         nadSyncController,
+		filterNADsOnNode:   "node1",
+		networkIDAllocator: networkIDAllocator,
 		nadLister: &fakeNADLister{
 			nads: map[string]*nettypes.NetworkAttachmentDefinition{
 				nadA.Name: nadA,
@@ -1997,10 +2022,10 @@ func TestSyncNADNotFilteredWhenCNCConnectedNetworkActive(t *testing.T) {
 			Type: "ovn-k8s-cni-overlay",
 		},
 		Topology: types.Layer3Topology,
-		Role:     types.NetworkRolePrimary,
-		NADName:  "ns2/nad-b",
+		Role:     types.NetworkRoleSecondary,
+		NADName:  "ns1/nad-b",
 	}
-	nadB, err := buildNADWithAnnotations("nad-b", "ns2", netConfB, map[string]string{
+	nadB, err := buildNADWithAnnotations("nad-b", "ns1", netConfB, map[string]string{
 		types.OvnNetworkIDAnnotation: "2",
 	})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -2016,6 +2041,72 @@ func TestSyncNADNotFilteredWhenCNCConnectedNetworkActive(t *testing.T) {
 	// net-b must be rendered (not filtered) because net-a is active on this
 	// node and net-b is CNC-connected to net-a.
 	g.Expect(nc.networkController.getNetwork("net-b")).ToNot(gomega.BeNil())
+}
+
+func TestOnNetworkRefChangeNotifiesNetworkRefReconcilers(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+	}
+	nad, err := buildNAD("primary", "ns1", netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	nad.OwnerReferences = []metav1.OwnerReference{{
+		Kind:       "UserDefinedNetwork",
+		Name:       "udn",
+		Controller: ptrTo(true),
+	}}
+
+	nadSyncController := controller.NewController(
+		"test-nad-sync-controller-for-network-ref",
+		&controller.ControllerConfig[string]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile: func(string) error {
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	g.Expect(controller.Start(nadSyncController)).To(gomega.Succeed())
+	defer controller.Stop(nadSyncController)
+
+	nc := &nadController{
+		controller:            nadSyncController,
+		filterNADsOnNode:      "node1",
+		networkIDAllocator:    id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		nadLister:             &fakeNADLister{nads: map[string]*nettypes.NetworkAttachmentDefinition{nad.Name: nad}},
+		networkRefReconcilers: map[uint64]networkRefReconcilerRegistration{},
+	}
+	g.Expect(nc.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+
+	refReconciler := &testNetworkRefReconciler{
+		updates: make(chan struct {
+			node        string
+			networkName string
+		}, 1),
+	}
+	_, err = nc.RegisterNetworkRefReconciler(refReconciler)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	nc.OnNetworkRefChange("node1", util.GetNADName(nad.Namespace, nad.Name), true)
+
+	g.Eventually(refReconciler.updates, time.Second).Should(gomega.Receive(gomega.Equal(struct {
+		node        string
+		networkName string
+	}{
+		node:        "node1",
+		networkName: "udn-net",
+	})))
 }
 
 func TestOnNetworkRefChangeRendersCNCConnectedNetworksWhenNodeBecomesActive(t *testing.T) {
@@ -2134,7 +2225,6 @@ func TestOnNetworkRefChangeRendersCNCConnectedNetworksWhenNodeBecomesActive(t *t
 	g.Eventually(func() bool { return nc.networkController.getNetwork("net-a") != nil }, time.Second).Should(gomega.BeTrue())
 	g.Eventually(func() bool { return nc.networkController.getNetwork("net-b") != nil }, time.Second).Should(gomega.BeTrue())
 }
-
 func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 	tests := []struct {
 		name                 string
