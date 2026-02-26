@@ -315,6 +315,14 @@ func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetw
 func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) {
 	var rules []*knftables.Rule
 
+	// Skip masquerade for traffic destined to no-snat subnets
+	if config.IPv4Mode {
+		rules = append(rules, &knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV4, "return")})
+	}
+	if config.IPv6Mode {
+		rules = append(rules, &knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip6", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV6, "return")})
+	}
+
 	// Process each CIDR to support dual-stack
 	for _, cidr := range cidrs {
 		// Determine IP version and masquerade IP
@@ -528,6 +536,14 @@ func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ..
 	// Flush the chain to remove all existing rules
 	// if network toggles between advertised and non-advertised, we need to flush the chain and re-add correct rules
 	tx.Flush(podSubnetChain)
+
+	// Skip masquerade for traffic destined to no-snat subnets
+	if config.IPv4Mode {
+		tx.Add(&knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV4, "return")})
+	}
+	if config.IPv6Mode {
+		tx.Add(&knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip6", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV6, "return")})
+	}
 
 	// Add the new rules for each CIDR
 	for _, cidr := range cidrs {
