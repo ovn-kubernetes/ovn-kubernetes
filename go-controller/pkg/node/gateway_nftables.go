@@ -744,6 +744,26 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNCo
 	return rules
 }
 
+// getNoSNATSubnetsReturnRules returns nftables return rules for the pod subnet
+// masquerade chain that skip SNAT for traffic matching the no-snat subnet sets.
+// This allows preserving the original pod source IP for specific destinations.
+func getNoSNATSubnetsReturnRules() []*knftables.Rule {
+	var rules []*knftables.Rule
+	if config.IPv4Mode {
+		rules = append(rules, &knftables.Rule{
+			Chain: nftablesPodSubnetMasqChain,
+			Rule:  knftables.Concat("ip", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV4, "return"),
+		})
+	}
+	if config.IPv6Mode {
+		rules = append(rules, &knftables.Rule{
+			Chain: nftablesPodSubnetMasqChain,
+			Rule:  knftables.Concat("ip6", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV6, "return"),
+		})
+	}
+	return rules
+}
+
 func shouldAddUDNServiceMarkRules(netInfo util.NetInfo, nodeName string) bool {
 	if !netInfo.IsPrimaryNetwork() {
 		return false
@@ -886,12 +906,7 @@ func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) 
 	var rules []*knftables.Rule
 
 	// Skip masquerade for traffic destined to no-snat subnets
-	if config.IPv4Mode {
-		rules = append(rules, &knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV4, "return")})
-	}
-	if config.IPv6Mode {
-		rules = append(rules, &knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip6", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV6, "return")})
-	}
+	rules = append(rules, getNoSNATSubnetsReturnRules()...)
 
 	// Process each CIDR to support dual-stack
 	for _, cidr := range cidrs {
@@ -1111,11 +1126,8 @@ func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ..
 	tx.Flush(podSubnetChain)
 
 	// Skip masquerade for traffic destined to no-snat subnets
-	if config.IPv4Mode {
-		tx.Add(&knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV4, "return")})
-	}
-	if config.IPv6Mode {
-		tx.Add(&knftables.Rule{Chain: nftablesPodSubnetMasqChain, Rule: knftables.Concat("ip6", "daddr", "@", types.NFTMgmtPortNoSNATSubnetsV6, "return")})
+	for _, rule := range getNoSNATSubnetsReturnRules() {
+		tx.Add(rule)
 	}
 
 	// Add the new rules for each CIDR
