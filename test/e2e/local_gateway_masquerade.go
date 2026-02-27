@@ -9,13 +9,15 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -26,10 +28,6 @@ import (
 
 const (
 	ovnKubePodSubnetMasqChain = "ovn-kube-pod-subnet-masq"
-	mgmtportNoSNATSubnetsV4   = "mgmtport-no-snat-subnets-v4"
-	mgmtportNoSNATSubnetsV6   = "mgmtport-no-snat-subnets-v6"
-
-	ovnNodeDontSNATSubnetsAnnotation = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
 )
 
 func setNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName string, subnets []string) error {
@@ -43,7 +41,7 @@ func setNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName string
 	}{
 		Metadata: map[string]interface{}{
 			"annotations": map[string]string{
-				ovnNodeDontSNATSubnetsAnnotation: string(subnetsJSON),
+				util.OvnNodeDontSNATSubnets: string(subnetsJSON),
 			},
 		},
 	}
@@ -53,7 +51,7 @@ func setNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName string
 		return fmt.Errorf("failed to marshal patch: %w", err)
 	}
 
-	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), nodeName, types.MergePatchType, patchData, metav1.PatchOptions{})
+	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), nodeName, k8stypes.MergePatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to patch node %s: %w", nodeName, err)
 	}
@@ -67,7 +65,7 @@ func removeNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName str
 	}{
 		Metadata: map[string]interface{}{
 			"annotations": map[string]*string{
-				ovnNodeDontSNATSubnetsAnnotation: nil,
+				util.OvnNodeDontSNATSubnets: nil,
 			},
 		},
 	}
@@ -77,7 +75,7 @@ func removeNodeSNATExcludeSubnetsAnnotation(cs clientset.Interface, nodeName str
 		return fmt.Errorf("failed to marshal patch: %w", err)
 	}
 
-	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), nodeName, types.MergePatchType, patchData, metav1.PatchOptions{})
+	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), nodeName, k8stypes.MergePatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to patch node %s: %w", nodeName, err)
 	}
@@ -184,9 +182,9 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 			framework.Logf("Note: failed to remove existing SNAT exclude subnets annotation (may not exist): %v", err)
 		}
 		_ = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_1))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_1))
 		_ = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_2))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_2))
 	})
 
 	ginkgo.AfterEach(func() {
@@ -223,7 +221,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 		var setElements string
 		err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 			var err error
-			setElements, err = getNFTablesSetElements(nodeName, mgmtportNoSNATSubnetsV4)
+			setElements, err = getNFTablesSetElements(nodeName, types.NFTMgmtPortNoSNATSubnetsV4)
 			return err == nil, nil
 		})
 		framework.ExpectNoError(err, "mgmtport-no-snat-subnets-v4 set should exist")
@@ -239,7 +237,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 		ginkgo.By("Verifying annotation was set on the node")
 		err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-			value, ok, err := getNodeAnnotation(cs, nodeName, ovnNodeDontSNATSubnetsAnnotation)
+			value, ok, err := getNodeAnnotation(cs, nodeName, util.OvnNodeDontSNATSubnets)
 			if err != nil {
 				return false, nil
 			}
@@ -254,7 +252,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 		ginkgo.By("Verifying the excluded subnet is in mgmtport-no-snat-subnets-v4 set")
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetContainsElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_1))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_1))
 		framework.ExpectNoError(err, "excluded subnet should be in mgmtport-no-snat-subnets-v4 set after annotation is added")
 
 		// Test multiple IPv4 subnets
@@ -264,18 +262,18 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 		ginkgo.By("Verifying both subnets are in the set")
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetContainsElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_1))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_1))
 		framework.ExpectNoError(err, "first subnet should be in set")
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetContainsElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_2))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_2))
 		framework.ExpectNoError(err, "second subnet should be in set")
 
 		// Test IPv6 subnet (if dual-stack)
 		ginkgo.By("Checking if IPv6 set exists (indicates dual-stack)")
-		_, ipv6Err := getNFTablesSetElements(nodeName, mgmtportNoSNATSubnetsV6)
+		_, ipv6Err := getNFTablesSetElements(nodeName, types.NFTMgmtPortNoSNATSubnetsV6)
 		if ipv6Err == nil {
 			ginkgo.By("Verifying test IPv6 subnet is NOT in the set initially")
-			setElementsV6, err := getNFTablesSetElements(nodeName, mgmtportNoSNATSubnetsV6)
+			setElementsV6, err := getNFTablesSetElements(nodeName, types.NFTMgmtPortNoSNATSubnetsV6)
 			framework.ExpectNoError(err, "should be able to list IPv6 set elements")
 			gomega.Expect(setElementsV6).NotTo(gomega.ContainSubstring(testSubnetV6),
 				"test IPv6 subnet should NOT be in set initially")
@@ -286,11 +284,11 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 			ginkgo.By("Verifying IPv6 subnet is in the v6 set")
 			err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetContainsElement(
-				nodeName, mgmtportNoSNATSubnetsV6, testSubnetV6))
+				nodeName, types.NFTMgmtPortNoSNATSubnetsV6, testSubnetV6))
 			framework.ExpectNoError(err, "IPv6 subnet should be in mgmtport-no-snat-subnets-v6 set")
 
 			ginkgo.By("Verifying IPv6 subnet is NOT in the v4 set")
-			setElementsV4, err := getNFTablesSetElements(nodeName, mgmtportNoSNATSubnetsV4)
+			setElementsV4, err := getNFTablesSetElements(nodeName, types.NFTMgmtPortNoSNATSubnetsV4)
 			framework.ExpectNoError(err, "should be able to list v4 set elements")
 			gomega.Expect(setElementsV4).NotTo(gomega.ContainSubstring(testSubnetV6),
 				"IPv6 subnet should NOT be in v4 set")
@@ -311,7 +309,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 		ginkgo.By("Verifying annotation was removed from the node")
 		err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-			_, ok, err := getNodeAnnotation(cs, nodeName, ovnNodeDontSNATSubnetsAnnotation)
+			_, ok, err := getNodeAnnotation(cs, nodeName, util.OvnNodeDontSNATSubnets)
 			if err != nil {
 				return false, nil
 			}
@@ -321,16 +319,16 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 		ginkgo.By("Verifying all IPv4 subnets are removed from mgmtport-no-snat-subnets-v4 set")
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_1))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_1))
 		framework.ExpectNoError(err, "first subnet should be removed from the set after annotation is removed")
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
-			nodeName, mgmtportNoSNATSubnetsV4, testSubnetV4_2))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, testSubnetV4_2))
 		framework.ExpectNoError(err, "second subnet should be removed from the set after annotation is removed")
 
 		if ipv6Err == nil {
 			ginkgo.By("Verifying IPv6 subnet is removed from mgmtport-no-snat-subnets-v6 set")
 			err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetDoesNotContainElement(
-				nodeName, mgmtportNoSNATSubnetsV6, testSubnetV6))
+				nodeName, types.NFTMgmtPortNoSNATSubnetsV6, testSubnetV6))
 			framework.ExpectNoError(err, "IPv6 subnet should be removed after cleanup")
 		}
 	})
@@ -371,7 +369,7 @@ var _ = ginkgo.Describe("Local Gateway Pod Subnet SNAT", feature.Service, func()
 
 		ginkgo.By("Waiting for nftables set to be updated")
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNFTablesSetContainsElement(
-			nodeName, mgmtportNoSNATSubnetsV4, externalIP))
+			nodeName, types.NFTMgmtPortNoSNATSubnetsV4, externalIP))
 		framework.ExpectNoError(err, "external container IP should be in mgmtport-no-snat-subnets-v4 set")
 
 		ginkgo.By("Creating test pod on the same node")
