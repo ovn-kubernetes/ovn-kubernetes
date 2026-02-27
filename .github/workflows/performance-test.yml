@@ -65,7 +65,7 @@ jobs:
     env:
       ES_SERVER: "${{ secrets.PERF_DATASTORE }}"
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
-      OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
+      OVN_HYBRID_OVERLAY_ENABLE: "false"
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'network-segmentation' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || matrix.target == 'bgp' || matrix.target == 'bgp-loose-isolation' }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
@@ -183,6 +183,13 @@ jobs:
           echo "IPv6 POSTROUTING rules:"
           sudo ip6tables -t nat -L POSTROUTING -v
         fi
+
+    - name: Install VRF kernel module
+      run: |
+        set -x
+        sudo apt update
+        sudo apt-get install linux-modules-extra-$(uname -r) -y
+        sudo modprobe vrf
 
     - name: Free up disk space
       uses: ./.github/actions/free-disk-space

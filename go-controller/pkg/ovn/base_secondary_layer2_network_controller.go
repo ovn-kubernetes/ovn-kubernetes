@@ -105,12 +105,8 @@ func (oc *BaseLayer2UserDefinedNetworkController) cleanup() error {
 
 func (oc *BaseLayer2UserDefinedNetworkController) run() error {
 	// WatchNamespaces() should be started first because it has no other
-	// dependencies, and WatchNodes() depends on it
+	// dependencies.
 	if err := oc.WatchNamespaces(); err != nil {
-		return err
-	}
-
-	if err := oc.WatchNodes(); err != nil {
 		return err
 	}
 
