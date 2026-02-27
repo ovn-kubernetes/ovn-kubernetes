@@ -185,12 +185,6 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 
-SERIAL_LABEL="Serial"
-if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
-  require_label "$SERIAL_LABEL"
-  shift # don't "focus" on Serial since we filter by label
-fi
-
 if [ "$ENABLE_UPLINK" != true ]; then
   skip_label "Feature:Uplink"
 fi
@@ -286,7 +280,7 @@ fi
 if [ "${PARALLEL:-false}" = "true" ]; then
   export GINKGO_PARALLEL=y
   export GINKGO_PARALLEL_NODES=10
-  skip_label "$SERIAL_LABEL"
+  skip "[Serial]"
 fi
 
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
