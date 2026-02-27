@@ -29,18 +29,18 @@ jobs:
     burst: 10
     namespacedIterations: true 
     namespace: cudn-density-l2-pods-netpol
+    namespaceLabels:
+      k8s.ovn.org/primary-user-defined-network: ""
     waitWhenFinished: true
     podWait: false 
     preLoadImages: false 
     preLoadPeriod: 2m
-    churnConfig:
-      percent: 10
-      cycles: 10
-      mode: objects
+    # Disabling churn until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5883 is resolved
+    #churnConfig:
+    #  percent: 10
+    #  cycles: 10
+    #  mode: objects
     objects:
-      - objectTemplate: workloads/templates/udn-density/cudn_ns.yml
-        replicas: 1
-
       - objectTemplate: workloads/templates/udn-density/cudn_l2.yml
         replicas: 1
       
