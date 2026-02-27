@@ -72,7 +72,6 @@ Look at the `e2e` action (search for `name: e2e`) in [ovn-kubernetes/.github/wor
 export KIND_CLUSTER_NAME=ovn
 export KIND_INSTALL_INGRESS=[true|false]
 export KIND_ALLOW_SYSTEM_WRITES=[true|false]
-export PARALLEL=[true|false]
 export JOB_NAME=(... job name ...)
 export OVN_HYBRID_OVERLAY_ENABLE=[true|false]
 export OVN_MULTICAST_ENABLE=[true|false]
@@ -92,7 +91,6 @@ As an example for the `control-plane-local-ipv4-snatGW-1br` job, the settings ar
 export KIND_CLUSTER_NAME=ovn
 export KIND_INSTALL_INGRESS=true
 export KIND_ALLOW_SYSTEM_WRITES=true
-export PARALLEL=true
 export JOB_NAME=control-plane-local-ipv4-snatGW-1br
 export OVN_HYBRID_OVERLAY_ENABLE=true
 export OVN_MULTICAST_ENABLE=true

@@ -23,9 +23,6 @@ env:
   ENABLE_COREDUMPS: true
   # Keep cluster deployment and persistent-IP test selection in sync.
   OVN_ENABLE_PERSISTENT_IPS: true
-  # This skips tests tagged as Serial
-  # Current Serial tests are not relevant for OVN
-  PARALLEL: true
 
   # This must be a directory
   CI_IMAGE_CACHE: tmp/image_cache/
