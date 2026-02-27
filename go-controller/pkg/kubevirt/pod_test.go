@@ -74,8 +74,12 @@ var _ = Describe("Kubevirt Pod", func() {
 			Expect(migrationStatus).To(BeNil())
 		} else {
 			Expect(migrationStatus.State).To(Equal(params.expectedMigrationStatus.State))
-			Expect(migrationStatus.SourcePod.Name).To(Equal(params.expectedMigrationStatus.SourcePod.Name))
 			Expect(migrationStatus.TargetPod.Name).To(Equal(params.expectedMigrationStatus.TargetPod.Name))
+			if params.expectedMigrationStatus.SourcePod == nil {
+				Expect(migrationStatus.SourcePod).To(BeNil())
+			} else {
+				Expect(migrationStatus.SourcePod.Name).To(Equal(params.expectedMigrationStatus.SourcePod.Name))
+			}
 		}
 	},
 		Entry("returns nil when pod is not kubevirt related",
@@ -151,6 +155,29 @@ var _ = Describe("Kubevirt Pod", func() {
 					TargetPod: &readyMigrationKvTargetPod,
 					State:     LiveMigrationTargetDomainReady,
 				},
+			},
+		),
+		Entry("returns Migration Ready status when source pod is gone and target has ready annotation",
+			testParams{
+				pods: []corev1.Pod{readyMigrationKvTargetPod},
+				expectedMigrationStatus: &LiveMigrationStatus{
+					TargetPod: &readyMigrationKvTargetPod,
+					State:     LiveMigrationTargetDomainReady,
+				},
+			},
+		),
+		Entry("returns Migration Ready status when source pod is completed and target has ready annotation",
+			testParams{
+				pods: []corev1.Pod{readyMigrationKvTargetPod, successfullyMigratedKvSourcePod},
+				expectedMigrationStatus: &LiveMigrationStatus{
+					TargetPod: &readyMigrationKvTargetPod,
+					State:     LiveMigrationTargetDomainReady,
+				},
+			},
+		),
+		Entry("returns nil when source pod is gone and target has no ready annotation",
+			testParams{
+				pods: []corev1.Pod{duringMigrationKvTargetPod},
 			},
 		),
 		Entry("returns err when kubevirt VM has several living pods",
