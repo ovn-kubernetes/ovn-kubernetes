@@ -276,7 +276,7 @@ reviews:
         - Verify CI reachability for every new spec or changed selection
           requirement. Identify a concrete lane in .github/workflows/
           and trace test/Makefile and test/scripts/ selection, focus/skip
-          expressions, feature labels, Serial/PARALLEL handling, cluster
+          expressions, feature labels, Serial handling, cluster
           flags, and runtime skip prerequisites. Flag specs excluded by
           every suitable lane. Kubernetes conformance jobs do not execute
           OVN-Kubernetes specs in test/e2e/. Compilation or a focused
@@ -446,7 +446,7 @@ reviews:
           changed selection requirements, identify a concrete CI lane
           whose test command selects them with the required cluster
           features enabled. Trace workflow and runner-script focus/skip
-          expressions, feature labels, Serial/PARALLEL handling, and
+          expressions, feature labels, Serial handling, and
           runtime skip prerequisites. Fail if no suitable lane executes
           the specs, and request CI wiring in the same PR. Kubernetes
           conformance jobs do not cover OVN-Kubernetes E2E specs.

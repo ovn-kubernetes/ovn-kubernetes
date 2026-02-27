@@ -62,8 +62,8 @@ See `docs/developer-guide/local_testing_guide.md` for more details.
 When adding E2E tests or changing their selection requirements, verify that at
 least one CI lane actually executes each new or affected spec. Trace the lane
 in `.github/workflows/` through `test/Makefile` and `test/scripts/` to the test:
-check suite selection, focus/skip expressions, feature labels, `Serial` and
-`PARALLEL` handling, cluster feature flags, and runtime skip prerequisites.
+check suite selection, focus/skip expressions, feature labels, `Serial`
+handling, cluster feature flags, and runtime skip prerequisites.
 A lane that only runs Kubernetes conformance tests does not cover specs in
 `test/e2e/`. If no suitable lane selects the spec with its prerequisites enabled,
 update CI wiring as part of the change or explicitly report the coverage gap.

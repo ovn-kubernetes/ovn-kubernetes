@@ -276,13 +276,6 @@ else
   fi
 fi
 
-# if we set PARALLEL=true, skip serial test
-if [ "${PARALLEL:-false}" = "true" ]; then
-  export GINKGO_PARALLEL=y
-  export GINKGO_PARALLEL_NODES=10
-  skip "[Serial]"
-fi
-
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # No-overlay mode uses underlying network infrastructure directly.
   # Overlay-dependent features are not supported.
@@ -295,6 +288,9 @@ if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # This test validates MTU reduction due to Geneve encapsulation overhead (1400->1342).
   # In no-overlay mode, there is no encapsulation and thus no MTU overhead.
   skip "Pod to pod TCP with low MTU"
+  # Pod egress depends on the default network being advertised in no-overlay
+  # mode, so withdrawing the advertisement breaks connectivity by design.
+  skip "toggling default network advertisement off and back on"
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
@@ -312,6 +308,8 @@ GO_TEST_TIMEOUT=$((TEST_TIMEOUT + 5))
 
 pushd e2e
 
+# Note: tests run in a single ginkgo process (serially), except for the EVPN
+# path below which uses ginkgo -procs; ginkgo runs Serial specs in isolation there.
 go mod download
 
 if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
