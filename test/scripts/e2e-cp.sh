@@ -40,19 +40,12 @@ skip() {
   SKIPPED_TESTS+=$*
 }
 
-LABELED_TESTS=""
+SKIPPED_LABELED_TESTS=""
 skip_label() {
-  if [ "$LABELED_TESTS" != "" ]; then
-  	LABELED_TESTS+=" && "
+  if [ "$SKIPPED_LABELED_TESTS" != "" ]; then
+  	SKIPPED_LABELED_TESTS+=" && "
   fi
-  LABELED_TESTS+="!($*)"
-}
-
-require_label() {
-  if [ "$LABELED_TESTS" != "" ]; then
-  	LABELED_TESTS+=" && "
-  fi
-  LABELED_TESTS+="$*"
+  SKIPPED_LABELED_TESTS+="!($*)"
 }
 
 if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
@@ -155,12 +148,6 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 
-SERIAL_LABEL="Serial"
-if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
-  require_label "$SERIAL_LABEL"
-  shift # don't "focus" on Serial since we filter by label
-fi
-
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip_label "Feature:RouteAdvertisements"
 else
@@ -227,7 +214,7 @@ fi
 if [ "${PARALLEL:-false}" = "true" ]; then
   export GINKGO_PARALLEL=y
   export GINKGO_PARALLEL_NODES=10
-  skip_label "$SERIAL_LABEL"
+  skip "[Serial]"
 fi
 
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
@@ -266,7 +253,7 @@ go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
         -ginkgo.timeout ${TEST_TIMEOUT}m \
         -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
         -ginkgo.skip="${SKIPPED_TESTS}" \
-        ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
+        ${SKIPPED_LABELED_TESTS:+-ginkgo.label-filter="${SKIPPED_LABELED_TESTS}"} \
         -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
         -provider skeleton \
         -kubeconfig ${KUBECONFIG} \
