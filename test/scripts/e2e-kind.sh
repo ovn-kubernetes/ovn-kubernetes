@@ -159,13 +159,6 @@ fi
 
 SKIPPED_TESTS="$(groomTestList "${SKIPPED_TESTS}")"
 
-# if we set PARALLEL=true, skip serial test
-if [ "${PARALLEL:-false}" = "true" ]; then
-  export GINKGO_PARALLEL=y
-  export GINKGO_PARALLEL_NODES=10
-  SKIPPED_TESTS="${SKIPPED_TESTS}|\\[Serial\\]"
-fi
-
 case "$SHARD" in
 	shard-network)
 		FOCUS="\\[sig-network\\]"

@@ -13,10 +13,6 @@ env:
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
-  # This skips tests tagged as Serial
-  # Current Serial tests are not relevant for OVN
-  PARALLEL: true
-
   # This must be a directory
   CI_IMAGE_CACHE: tmp/image_cache/
   CI_IMAGE_BASE_TAR: image-base.tar

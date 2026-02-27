@@ -210,13 +210,6 @@ else
   fi
 fi
 
-# if we set PARALLEL=true, skip serial test
-if [ "${PARALLEL:-false}" = "true" ]; then
-  export GINKGO_PARALLEL=y
-  export GINKGO_PARALLEL_NODES=10
-  skip "[Serial]"
-fi
-
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # No-overlay mode uses underlying network infrastructure directly.
   # Overlay-dependent features are not supported.
@@ -246,6 +239,7 @@ GO_TEST_TIMEOUT=$((TEST_TIMEOUT + 5))
 
 pushd e2e
 
+# Note: currently all tests are run serially.
 go mod download
 go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
         -ginkgo.v \
