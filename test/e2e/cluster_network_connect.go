@@ -2046,6 +2046,18 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		return err != nil || stdout != "200"
 	}
 
+	// checkPingConnectivity checks ICMP reachability from one pod to an IP.
+	// It uses ping6 for IPv6 destinations.
+	checkPingConnectivity := func(fromNamespace, fromPodName, toIP string) error {
+		pingCmd := "ping"
+		if ip := net.ParseIP(toIP); ip != nil && ip.To4() == nil {
+			pingCmd = "ping6"
+		}
+		_, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
+			pingCmd, "-c", "3", "-W", "2", toIP)
+		return err
+	}
+
 	// verifyCrossNetworkConnectivity verifies connectivity from a set of pods to another set
 	// Supports dual-stack by testing all IPs for each pod
 	// Uses Eventually for expected success
@@ -2532,6 +2544,91 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			verifyFullMeshConnectivity(srcPods, podIPs, true)
 
 			By("Test completed successfully - CNC lifecycle validated")
+		})
+	})
+
+	Context("Dynamic UDN allocation", func() {
+		const nodeHostnameKey = "kubernetes.io/hostname"
+
+		It("should connect cross-node L3 and L2 UDN pods through CNC when dynamic UDN allocation is enabled", func() {
+			if !isDynamicUDNEnabled() {
+				Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
+			}
+
+			testID := rand.String(5)
+			cncName := generateCNCName()
+			l3UDNName := "blue-udn"
+			l2UDNName := "green-udn"
+			l3Namespace := fmt.Sprintf("blue-ns-%s", testID)
+			l2Namespace := fmt.Sprintf("green-ns-%s", testID)
+			udnLabel := map[string]string{"cnc-test": testID}
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(nodes.Items)).To(BeNumerically(">=", 2), "test requires at least 2 schedulable nodes")
+			node1Name, node2Name := nodes.Items[0].Name, nodes.Items[1].Name
+
+			var l3Pod, l2Pod *corev1.Pod
+
+			DeferCleanup(func() {
+				deleteCNC(cncName)
+				if l3Pod != nil {
+					_ = cs.CoreV1().Pods(l3Pod.Namespace).Delete(context.Background(), l3Pod.Name, metav1.DeleteOptions{})
+				}
+				if l2Pod != nil {
+					_ = cs.CoreV1().Pods(l2Pod.Namespace).Delete(context.Background(), l2Pod.Name, metav1.DeleteOptions{})
+				}
+				deleteUDN(l3Namespace, l3UDNName)
+				deleteUDN(l2Namespace, l2UDNName)
+				deleteNamespace(cs, l3Namespace)
+				deleteNamespace(cs, l2Namespace)
+			})
+
+			By("Creating two UDN namespaces selected by the same CNC")
+			createUDNNamespaceWithName(cs, l3Namespace, udnLabel)
+			createUDNNamespaceWithName(cs, l2Namespace, udnLabel)
+
+			By("Creating the L3 and L2 UDNs")
+			createLayer3PrimaryUDNWithSubnets(cs, l3Namespace, l3UDNName, "10.140.0.0/16", "2014:100:600::0/60")
+			createLayer2PrimaryUDNWithSubnets(cs, l2Namespace, l2UDNName, "10.141.0.0/16", "2014:100:700::0/60")
+
+			By("Waiting for both UDNs to be ready")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, l3Namespace, l3UDNName), 60*time.Second, time.Second).Should(Succeed())
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, l2Namespace, l2UDNName), 60*time.Second, time.Second).Should(Succeed())
+
+			By("Creating the CNC before either node becomes active for the selected UDNs")
+			createOrUpdateCNC(cs, cncName, nil, udnLabel)
+
+			By("Verifying the CNC selected both UDNs")
+			verifyCNCHasBothAnnotations(cncName)
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			By(fmt.Sprintf("Creating an L3 pod on %s", node1Name))
+			l3PodConfig := httpServerPodConfig("blue-pod", l3Namespace)
+			l3PodConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			l3Pod = runUDNPod(cs, l3Namespace, l3PodConfig, nil)
+
+			By(fmt.Sprintf("Creating an L2 pod on %s", node2Name))
+			l2PodConfig := httpServerPodConfig("green-pod", l2Namespace)
+			l2PodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			l2Pod = runUDNPod(cs, l2Namespace, l2PodConfig, nil)
+
+			l3PodIPs := getPrimaryNetworkPodIPs(l3Namespace, l3Pod.Name, l3UDNName)
+			l2PodIPs := getPrimaryNetworkPodIPs(l2Namespace, l2Pod.Name, l2UDNName)
+
+			By("Verifying the cross-node L3 and L2 pods can ping each other through the CNC")
+			for _, l2PodIP := range l2PodIPs {
+				Eventually(func() error {
+					return checkPingConnectivity(l3Pod.Namespace, l3Pod.Name, l2PodIP)
+				}, 30*time.Second, 2*time.Second).Should(Succeed(),
+					fmt.Sprintf("expected %s/%s to ping %s", l3Pod.Namespace, l3Pod.Name, l2PodIP))
+			}
+			for _, l3PodIP := range l3PodIPs {
+				Eventually(func() error {
+					return checkPingConnectivity(l2Pod.Namespace, l2Pod.Name, l3PodIP)
+				}, 30*time.Second, 2*time.Second).Should(Succeed(),
+					fmt.Sprintf("expected %s/%s to ping %s", l2Pod.Namespace, l2Pod.Name, l3PodIP))
+			}
 		})
 	})
 
