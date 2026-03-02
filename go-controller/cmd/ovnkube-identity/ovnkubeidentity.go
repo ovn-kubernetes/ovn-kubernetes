@@ -462,6 +462,7 @@ func runCSRApproverManager(ctx context.Context, leaderID string, restCfg *rest.C
 			cliCfg.csrAcceptanceConditions,
 			csrapprover.Usages,
 			csrapprover.MaxDuration,
+			//nolint:staticcheck // SA1019: GetEventRecorderFor is required for the legacy interface in csrapprover
 			mgr.GetEventRecorderFor(csrapprover.ControllerName),
 		))
 	if err != nil {

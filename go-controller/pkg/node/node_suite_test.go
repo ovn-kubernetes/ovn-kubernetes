@@ -3,10 +3,10 @@ package node
 import (
 	"testing"
 
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 )
 
 func TestNodeSuite(t *testing.T) {
