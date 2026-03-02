@@ -103,6 +103,7 @@ var (
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
 		Transport:                    "",
+		KubeletCRIOperationTimeout:   types.DefaultKubeletCRIOperationTimeout,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -369,6 +370,10 @@ type DefaultConfig struct {
 	// Accepts: "" (empty, uses OVN default overlay) or "no-overlay".
 	// Defaults to "" (empty).
 	Transport string `gcfg:"transport"`
+
+	// KubeletCRIOperationTimeout is the timeout for kubelet CRI operation, may be useful
+	// to increase for high-scale clusters. Default value is 2 minutes.
+	KubeletCRIOperationTimeout uint `gcfg:"kubelet-cri-operation-timeout"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -1052,6 +1057,12 @@ var CommonFlags = []cli.Flag{
 		Name:        "enable-multicast",
 		Usage:       "Adds multicast support. Valid only with --init-master option.",
 		Destination: &EnableMulticast,
+	},
+	&cli.UintFlag{
+		Name:        "kubelet-cri-operation-timeout",
+		Usage:       "KubeletCRIOperationTimeout is the timeout for kubelet CRI operation, may be useful to increase for high-scale clusters. Default value is 2 minutes.",
+		Destination: &cliConfig.Default.KubeletCRIOperationTimeout,
+		Value:       Default.KubeletCRIOperationTimeout,
 	},
 	// Logging options
 	&cli.IntFlag{
@@ -2606,6 +2617,10 @@ func buildDefaultConfig(cli, file *config) error {
 
 	if Default.Zone == "" {
 		Default.Zone = types.OvnDefaultZone
+	}
+
+	if Default.KubeletCRIOperationTimeout == 0 {
+		Default.KubeletCRIOperationTimeout = types.DefaultKubeletCRIOperationTimeout
 	}
 
 	return nil
