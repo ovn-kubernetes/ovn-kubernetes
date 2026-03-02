@@ -1,8 +1,359 @@
-img[alt=ovn-kubernetes-logo] { width: 350px; }
-
-img {
-     display:block;
-     float:none;
-     margin-left:auto;
-     margin-right:auto;
+/* MkDocs Material UI showcase theme (docs site only). */
+:root {
+  --ok-radius: 16px;
+  --ok-radius-sm: 12px;
+  --ok-ease: cubic-bezier(.2,.8,.2,1);
+  --ok-fast: 140ms var(--ok-ease);
+  --ok-med: 220ms var(--ok-ease);
+  --ok-slow: 520ms var(--ok-ease);
+  --md-sidebar-width: 12.5rem;
 }
+
+/* Theme-aware surfaces */
+[data-md-color-scheme="default"] {
+  --ok-bg: radial-gradient(1200px 800px at 15% 10%, rgba(82, 108, 254, 0.16), transparent 60%),
+           radial-gradient(900px 700px at 90% 0%, rgba(64, 81, 181, 0.14), transparent 55%),
+           linear-gradient(180deg, #ffffff 0%, #f6f7fb 100%);
+  --ok-surface: rgba(255, 255, 255, 0.78);
+  --ok-surface-2: rgba(255, 255, 255, 0.92);
+  --ok-border: rgba(0, 0, 0, 0.08);
+  --ok-sidebar-border: #a855f7;
+  /* Sidebar: solid content area for readability; tight gradient on left edge only */
+  --ok-sidebar-bg: rgba(255, 255, 255, 0.96);
+  --ok-sidebar-edge: rgba(168, 85, 247, 0.14);
+  --ok-sidebar-gradient: linear-gradient(
+    to right,
+    var(--ok-sidebar-edge) 0%,
+    var(--ok-sidebar-bg) 12%,
+    var(--ok-sidebar-bg) 100%
+  );
+  --ok-shadow: rgba(0, 0, 0, 0.16) 0 10px 30px;
+  --ok-shadow-sm: rgba(0, 0, 0, 0.12) 0 6px 18px;
+}
+
+[data-md-color-scheme="slate"] {
+  --ok-bg: radial-gradient(1100px 800px at 15% 10%, rgba(82, 108, 254, 0.22), transparent 60%),
+           radial-gradient(900px 700px at 90% 0%, rgba(64, 81, 181, 0.16), transparent 56%),
+           radial-gradient(900px 650px at 60% 95%, rgba(0, 212, 255, 0.08), transparent 62%),
+           linear-gradient(180deg, #0d0f14 0%, #141824 100%);
+  --ok-surface: rgba(22, 24, 34, 0.72);
+  --ok-surface-2: rgba(22, 24, 34, 0.92);
+  --ok-border: rgba(255, 255, 255, 0.12);
+  --ok-sidebar-border: #05bed7;
+  /* Sidebar: solid content area for readability; tight gradient on left edge only */
+  --ok-sidebar-bg: rgba(18, 20, 28, 0.96);
+  --ok-sidebar-edge: rgba(82, 108, 254, 0.18);
+  --ok-sidebar-gradient: linear-gradient(
+    to right,
+    var(--ok-sidebar-edge) 0%,
+    var(--ok-sidebar-bg) 12%,
+    var(--ok-sidebar-bg) 100%
+  );
+  --ok-shadow: 0 26px 90px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  --ok-shadow-sm: 0 16px 58px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.045) inset, 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+
+/* Background + typography tweaks */
+.md-container {
+  background: var(--ok-bg);
+}
+
+.md-typeset {
+  line-height: 1.65;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  letter-spacing: -0.01em;
+}
+
+/* Make anchor jumps land nicely below sticky header/tabs */
+.md-typeset :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: calc(var(--md-header-height, 3rem) + var(--md-tabs-height, 3rem) + 1rem);
+}
+
+/* Scroll progress bar (inserted by docs/javascripts/extra.js) */
+#ok-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
+  z-index: 9999;
+  background: linear-gradient(90deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+  transition: transform var(--ok-fast);
+}
+
+/* Search: rounded, but no focus effect */
+.md-search__input {
+  border-radius: 999px;
+  transition: none;
+}
+
+.md-search__input:focus,
+.md-search__input:focus-within {
+  outline: none;
+  box-shadow: none;
+  transform: none;
+}
+
+/* Header: subtle gradient overlay (keeps theme base color) */
+.md-header {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.18) 0%,
+    rgba(255, 255, 255, 0) 55%,
+    rgba(0, 0, 0, 0.12) 100%
+  );
+}
+
+[data-md-color-scheme="slate"] .md-header {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(82, 108, 254, 0.10) 100%
+  );
+}
+
+/* Tabs nav below header: same subtle gradient overlay */
+.md-tabs {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(0, 0, 0, 0.10) 100%
+  );
+}
+
+[data-md-color-scheme="slate"] .md-tabs {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.07) 0%,
+    rgba(255, 255, 255, 0) 65%,
+    rgba(82, 108, 254, 0.08) 100%
+  );
+}
+
+/* Sidebar: width 12.5rem, shift slightly left, floating card */
+.md-sidebar--primary {
+  width: 12.5rem;
+  min-width: 12.5rem;
+  max-width: 12.5rem;
+  transform: translateX(-12px);
+}
+
+/* Sidebar scrollwrap: base styles (all devices) — DRY, mobile-first */
+/* Tight gradient (0–12% width) then solid for readability; clipped to border-radius */
+.md-sidebar--primary .md-sidebar__scrollwrap {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--ok-sidebar-gradient);
+  background-clip: padding-box;
+  border: 1px solid var(--ok-sidebar-border);
+  border-radius: var(--ok-radius);
+  box-shadow: var(--ok-shadow);
+  height: 864px;
+  max-height: calc(
+    100vh - var(--md-header-height, 3rem) - var(--md-tabs-height, 3rem) - 1rem
+  );
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: transform var(--ok-med), box-shadow var(--ok-med);
+}
+
+/* Nav content area: solid background behind links for high-contrast readability */
+.md-sidebar--primary .md-sidebar__inner {
+  background: var(--ok-sidebar-bg);
+  border-radius: var(--ok-radius-sm);
+  margin: 0 2px;
+  min-height: 100%;
+}
+
+/* Mobile (max-width: 30em) */
+@media screen and (max-width: 30em) {
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    width: 95%;
+    left: 2.5%;
+    border-color: var(--ok-sidebar-border);
+  }
+}
+
+/* Tablet (30.0625em – 76.24em) */
+@media screen and (min-width: 30.0625em) and (max-width: 76.24em) {
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    width: 400px;
+    left: 0;
+    border-color: var(--ok-sidebar-border);
+  }
+}
+
+/* Laptop (76.25em – 99.9em) */
+@media screen and (min-width: 76.25em) and (max-width: 99.9em) {
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    width: 300px;
+    left: -120px;
+    border-color: var(--ok-sidebar-border);
+  }
+}
+
+/* Ultra-wide (100em+) */
+@media screen and (min-width: 100em) {
+  .md-sidebar--primary .md-sidebar__scrollwrap {
+    width: 320px;
+    left: -160px;
+    border-color: var(--ok-sidebar-border);
+  }
+}
+.md-sidebar--primary .md-sidebar__scrollwrap .md-nav {
+  overflow: visible;
+}
+.md-sidebar--primary .md-nav__list {
+  overflow: visible;
+}
+
+.md-sidebar--primary .md-sidebar__scrollwrap:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ok-shadow), rgba(24, 23, 23, 0.1) 0 2px 0;
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-sidebar__scrollwrap {
+  box-shadow: var(--ok-shadow), 0 0 0 1px rgba(82, 108, 254, 0.08);
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link:active {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* Main content grid: reserve 12.5rem for sidebar so content does not overlap */
+.md-main__inner {
+  grid-template-columns: 12.5rem 1fr;
+}
+
+.md-sidebar--primary .md-sidebar__inner {
+  padding: 0.85rem 0.7rem;
+}
+
+/* Left sidebar: word-wrap and word-break on all headings and subheadings */
+.md-sidebar--primary .md-nav__link,
+.md-sidebar--primary .md-nav__title,
+.md-sidebar--primary .md-nav__link .md-ellipsis,
+.md-sidebar--primary .md-nav__title .md-ellipsis {
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.md-sidebar--primary .md-nav__item {
+  min-width: 0;
+}
+
+/* Sidebar titles: static, no fade-up/pop-in animation */
+.md-sidebar--primary .md-nav__title {
+  animation: none !important;
+}
+
+/* Typography: main sidebar title stands out (bigger, bold, primary color) */
+.md-sidebar--primary .md-nav__title {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--md-accent-fg-color, var(--md-primary-fg-color));
+  border-radius: var(--ok-radius-sm);
+  padding: 0.42rem 0.6rem;
+  transition: transform var(--ok-fast), box-shadow var(--ok-fast), background-color var(--ok-fast);
+}
+
+/* Sidebar links: word-wrap enabled; card-like with pop only on nested (page) links */
+.md-sidebar--primary .md-nav__link {
+  font-size: 0.75rem;
+  overflow: visible;
+  text-overflow: unset;
+  border-radius: var(--ok-radius-sm);
+  padding: 0.42rem 0.6rem;
+  transition: transform var(--ok-fast), background-color var(--ok-fast), box-shadow var(--ok-fast);
+}
+/* Card + shadow only for nested links (not top-level Overview, Getting Started, etc.) */
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link {
+  background-color: color-mix(in srgb, currentColor 4%, transparent);
+  box-shadow: var(--ok-shadow-sm);
+}
+.md-sidebar--primary .md-nav__link .md-ellipsis {
+  overflow: visible;
+  text-overflow: unset;
+}
+/* Sideways hover only on subheadings (nested links) */
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link:hover {
+  transform: translateX(6px);
+}
+
+/* Pop effect only on nested (page) links */
+.md-sidebar--primary .md-nav__list .md-nav__list .md-nav__link:active {
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+/* Brief highlight on TOC scroll target */
+@keyframes ok-toc-flash {
+  from {
+    background: color-mix(in srgb, var(--md-accent-fg-color) 14%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--md-accent-fg-color) 16%, transparent);
+  }
+  to {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
+.ok-toc-flash {
+  animation: ok-toc-flash 900ms var(--ok-ease) both;
+  border-radius: var(--ok-radius-sm);
+}
+
+/* Content: cards */
+.md-content__inner > * {
+  animation: ok-fade-up var(--ok-slow) var(--ok-ease) both;
+}
+
+@keyframes ok-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Make common blocks feel premium */
+.md-typeset pre,
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: var(--ok-radius);
+  box-shadow: var(--ok-shadow-sm);
+  transition: transform var(--ok-med), box-shadow var(--ok-med);
+}
+
+.md-typeset pre:hover,
+.md-typeset .admonition:hover,
+.md-typeset details:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ok-shadow);
+}
+
+/* Reduce motion if user asks */
+@media (prefers-reduced-motion: reduce) {
+  #ok-progress,
+  .md-content__inner > * {
+    transition: none !important;
+    animation: none !important;
+  }
+  .md-sidebar--primary .md-sidebar__scrollwrap,
+  .md-sidebar--primary .md-nav__link,
+  .md-sidebar--primary .md-nav__title,
+  .md-typeset pre,
+  .md-typeset .admonition,
+  .md-typeset details {
+    transition: none !important;
+  }
+}
+
+/* Keep logo sizing (existing site behavior) */
+img[alt=ovn-kubernetes-logo] { width: 350px; }

@@ -30,7 +30,7 @@ theme:
   features:
     - navigation.instant
     - navigation.tracking
-    - navigation.indexes
+   # - navigation.indexes
     - navigation.tabs
     - navigation.tabs.sticky
     - content.code.annotate
