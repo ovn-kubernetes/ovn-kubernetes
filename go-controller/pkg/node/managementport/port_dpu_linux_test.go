@@ -4,6 +4,7 @@
 package managementport
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -13,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -23,6 +25,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
+	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -223,29 +226,53 @@ var _ = Describe("Mananagement port DPU tests", func() {
 	})
 
 	Context("Create Management port DPU host", func() {
-		It("Fails if netdev link lookup failed", func() {
-			mgmtPortDpuHost := managementPortNetdev{
-				netdevDevName: "non-existent-netdev",
-			}
-			netlinkOpsMock.On("LinkByName", "non-existent-netdev").Return(nil, fmt.Errorf("netlink mock error"))
-			netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(false)
+		const deviceID = "0000:03:00.2"
+		var sriovnetOpsMock *utilMocks.SriovnetOps
+		var vdpaOpsMock *utilMocks.VdpaOps
+		var origSriovnetOps util.SriovnetOps
+		var origVdpaOps util.VdpaOps
 
-			err := mgmtPortDpuHost.create()
-			Expect(err).To(HaveOccurred())
+		BeforeEach(func() {
+			origSriovnetOps = util.GetSriovnetOps()
+			origVdpaOps = util.GetVdpaOps()
+			sriovnetOpsMock = &utilMocks.SriovnetOps{}
+			vdpaOpsMock = &utilMocks.VdpaOps{}
+			util.SetSriovnetOpsInst(sriovnetOpsMock)
+			util.SetVdpaOpsInst(vdpaOpsMock)
 		})
 
-		It("Fails if netdev does not exist", func() {
-			mgmtPortDpuHost := managementPortNetdev{
-				netdevDevName: "non-existent-netdev",
+		AfterEach(func() {
+			util.SetSriovnetOpsInst(origSriovnetOps)
+			util.SetVdpaOpsInst(origVdpaOps)
+		})
+
+		// mockDeviceIDToNetdev sets up mock expectations for findNetdevByDeviceID
+		mockDeviceIDToNetdev := func(pciAddr, netdevName string) {
+			vdpaOpsMock.On("GetVdpaDeviceByPci", pciAddr).Return(nil, fmt.Errorf("no vdpa device"))
+			sriovnetOpsMock.On("GetNetDevicesFromPci", pciAddr).Return([]string{netdevName}, nil)
+		}
+
+		It("Fails with errMgmtPortDeviceNotFound when PCI device is gone", func() {
+			mgmtPortDpuHost := &managementPortNetdev{
+				deviceID: deviceID,
 			}
-			netlinkOpsMock.On("LinkByName", "non-existent-netdev").Return(
-				nil, fmt.Errorf("failed to get interface"))
-			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(
-				nil, fmt.Errorf("failed to get interface"))
-			netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
+			vdpaOpsMock.On("GetVdpaDeviceByPci", deviceID).Return(nil, fmt.Errorf("no vdpa device"))
+			sriovnetOpsMock.On("GetNetDevicesFromPci", deviceID).Return(nil, fmt.Errorf("no device"))
 
 			err := mgmtPortDpuHost.create()
 			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, errMgmtPortDeviceNotFound)).To(BeTrue())
+		})
+
+		It("Fails when deviceID is empty", func() {
+			mgmtPortDpuHost := &managementPortNetdev{
+				deviceID: "",
+			}
+
+			err := mgmtPortDpuHost.create()
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, errMgmtPortDeviceNotFound)).To(BeFalse(),
+				"empty deviceID should not be confused with PCI device gone")
 		})
 
 		It("Configures VF and calls createPlatformManagementPort", func() {
@@ -258,23 +285,23 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			cfg := &managementPortConfig{
 				hostSubnets: []*net.IPNet{ipnet},
 			}
-			mgmtPortDpuHost := newManagementPortNetdev("enp3s0f0v0", cfg, nil)
+			mgmtPortDpuHost := newManagementPortNetdev(deviceID, cfg, nil)
 			linkMock := &mocks.Link{}
 			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
 				Name: "enp3s0f0v0", MTU: 1500, HardwareAddr: currentMgmtPortMac})
 
-			netlinkOpsMock.On("LinkByName", "enp3s0f0v0").Return(
-				linkMock, nil)
-			netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
+			mockDeviceIDToNetdev(deviceID, "enp3s0f0v0")
+			netlinkOpsMock.On("LinkByName", "enp3s0f0v0").Return(linkMock, nil)
 			netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 			netlinkOpsMock.On("LinkSetHardwareAddr", linkMock, expectedMgmtPortMac).Return(nil)
 			netlinkOpsMock.On("LinkSetName", linkMock, types.K8sMgmtIntfName).Return(nil)
 			netlinkOpsMock.On("LinkSetAlias", linkMock, "enp3s0f0v0").Return(nil)
 			netlinkOpsMock.On("LinkSetMTU", linkMock, config.Default.MTU).Return(nil)
 			netlinkOpsMock.On("LinkSetUp", linkMock).Return(nil, nil)
+			netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
 			mockOVSListInterfaceMgmtPortNotExistCmd(execMock, types.K8sMgmtIntfName)
 			execMock.AddFakeCmdsNoOutputNoError([]string{
-				"ovs-vsctl --timeout=15 set Open_vSwitch . external-ids:ovn-orig-mgmt-port-netdev-name=" + mgmtPortDpuHost.netdevDevName,
+				"ovs-vsctl --timeout=15 set Open_vSwitch . external-ids:ovn-orig-mgmt-port-netdev-name=enp3s0f0v0",
 			})
 
 			// mock createPlatformManagementPort, we fail it as it covers what we want to test without the
@@ -287,34 +314,173 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			Expect(err.Error()).To(ContainSubstring("createPlatformManagementPort error"))
 		})
 
-		It("Does not configure VF if already configured", func() {
+		It("Does not configure VF if already configured as ovn-k8s-mp0", func() {
 			_, ipnet, err := net.ParseCIDR("192.168.0.1/24")
-			Expect(err).ToNot(HaveOccurred())
-			_, clusterCidr, err := net.ParseCIDR("192.168.0.0/16")
 			Expect(err).ToNot(HaveOccurred())
 			expectedMgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipnet).IP)
 			config.Default.MTU = 1400
-			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: clusterCidr, HostSubnetLength: 8}}
 			cfg := &managementPortConfig{
 				hostSubnets: []*net.IPNet{ipnet},
 			}
-			mgmtPortDpuHost := managementPortNetdev{
-				cfg:           cfg,
-				netdevDevName: "enp3s0f0v0",
-			}
+			mgmtPortDpuHost := newManagementPortNetdev(deviceID, cfg, nil)
 			linkMock := &mocks.Link{}
 			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
-				Name: "ovn-k8s-mp0", MTU: 1400, HardwareAddr: expectedMgmtPortMac})
+				Name: types.K8sMgmtIntfName, MTU: 1400, HardwareAddr: expectedMgmtPortMac})
+
+			mockDeviceIDToNetdev(deviceID, types.K8sMgmtIntfName)
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(linkMock, nil).Once()
+			netlinkOpsMock.On("LinkSetUp", linkMock).Return(nil)
 
 			// mock createPlatformManagementPort, we fail it as it covers what we want to test without the
 			// need to mock the entire flow down to routes and iptable rules.
 			netlinkOpsMock.On("LinkByName", mock.Anything).Return(nil, fmt.Errorf(
-				"createPlatformManagementPort error")).Once()
+				"createPlatformManagementPort error"))
 
 			err = mgmtPortDpuHost.create()
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(
-				"createPlatformManagementPort error"))
+			Expect(err.Error()).To(ContainSubstring("createPlatformManagementPort error"))
+		})
+	})
+
+	Context("doReconcile Management port DPU host", func() {
+		const deviceID = "0000:03:00.2"
+		var sriovnetOpsMock *utilMocks.SriovnetOps
+		var vdpaOpsMock *utilMocks.VdpaOps
+		var origSriovnetOps util.SriovnetOps
+		var origVdpaOps util.VdpaOps
+
+		BeforeEach(func() {
+			origSriovnetOps = util.GetSriovnetOps()
+			origVdpaOps = util.GetVdpaOps()
+			sriovnetOpsMock = &utilMocks.SriovnetOps{}
+			vdpaOpsMock = &utilMocks.VdpaOps{}
+			util.SetSriovnetOpsInst(sriovnetOpsMock)
+			util.SetVdpaOpsInst(vdpaOpsMock)
+		})
+
+		AfterEach(func() {
+			util.SetSriovnetOpsInst(origSriovnetOps)
+			util.SetVdpaOpsInst(origVdpaOps)
+		})
+
+		mockDeviceIDToNetdev := func(pciAddr, netdevName string) {
+			vdpaOpsMock.On("GetVdpaDeviceByPci", pciAddr).Return(nil, fmt.Errorf("no vdpa device"))
+			sriovnetOpsMock.On("GetNetDevicesFromPci", pciAddr).Return([]string{netdevName}, nil)
+		}
+
+		It("Succeeds when createPlatformManagementPort succeeds (no recreation needed)", func() {
+			_, ipnet, err := net.ParseCIDR("192.168.0.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			expectedMgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipnet).IP)
+			config.Default.MTU = 1400
+			netInfoMock := &multinetworkmocks.NetInfo{}
+			netInfoMock.On("IsPrimaryNetwork").Return(false)
+			netInfoMock.On("GetPodNetworkAdvertisedOnNodeVRFs", mock.Anything).Return(nil)
+			cfg := &managementPortConfig{
+				hostSubnets: []*net.IPNet{ipnet},
+				netInfo:     netInfoMock,
+			}
+			Expect(SetupManagementPortNFTSets()).To(Succeed())
+			mgmtPort := newManagementPortNetdev(deviceID, cfg, nil)
+			linkMock := &mocks.Link{}
+			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
+				Name: types.K8sMgmtIntfName, MTU: 1400, HardwareAddr: expectedMgmtPortMac,
+				Index: 10})
+
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(linkMock, nil)
+			netlinkOpsMock.On("LinkSetUp", linkMock).Return(nil)
+
+			err = mgmtPort.doReconcile()
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Recreates management port successfully when reconciliation fails but VF exists", func() {
+			_, ipnet, err := net.ParseCIDR("192.168.0.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			expectedMgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipnet).IP)
+			config.Default.MTU = 1400
+			config.OvnKubeNode.Mode = types.NodeModeDPUHost
+			netInfoMock := &multinetworkmocks.NetInfo{}
+			netInfoMock.On("IsPrimaryNetwork").Return(false)
+			netInfoMock.On("GetPodNetworkAdvertisedOnNodeVRFs", mock.Anything).Return(nil)
+			cfg := &managementPortConfig{
+				hostSubnets: []*net.IPNet{ipnet},
+				netInfo:     netInfoMock,
+			}
+			Expect(SetupManagementPortNFTSets()).To(Succeed())
+			mgmtPort := newManagementPortNetdev(deviceID, cfg, nil)
+			linkMock := &mocks.Link{}
+			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
+				Name: types.K8sMgmtIntfName, MTU: 1400, HardwareAddr: expectedMgmtPortMac,
+				Index: 10})
+
+			// createPlatformManagementPort fails on first attempt
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(nil, fmt.Errorf("link gone")).Once()
+
+			// create() succeeds: device ID resolves, VF already named ovn-k8s-mp0
+			mockDeviceIDToNetdev(deviceID, types.K8sMgmtIntfName)
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(linkMock, nil)
+			netlinkOpsMock.On("LinkSetUp", linkMock).Return(nil)
+
+			err = mgmtPort.doReconcile()
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Returns error on transient create() failure (VF exists but config fails)", func() {
+			_, ipnet, err := net.ParseCIDR("192.168.0.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			config.Default.MTU = 1400
+			cfg := &managementPortConfig{
+				hostSubnets: []*net.IPNet{ipnet},
+			}
+			mgmtPort := newManagementPortNetdev(deviceID, cfg, nil)
+
+			// createPlatformManagementPort fails
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(nil, fmt.Errorf("link gone")).Once()
+
+			// create() finds the VF via device ID; VF has a different name so syncMgmtPortInterface runs
+			mockDeviceIDToNetdev(deviceID, "enp3s0f0v0")
+			linkMock2 := &mocks.Link{}
+			linkMock2.On("Attrs").Return(&netlink.LinkAttrs{
+				Name: "enp3s0f0v0", MTU: 1500})
+			netlinkOpsMock.On("LinkByName", "enp3s0f0v0").Return(linkMock2, nil)
+			// syncMgmtPortInterface calls LinkByName("ovn-k8s-mp0") → not found (already consumed .Once())
+			// then unconfigureMgmtNetdevicePort calls LinkByName("ovn-k8s-mp0") and IsLinkNotFoundError
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(nil, fmt.Errorf("not found"))
+			netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
+			mockOVSListInterfaceMgmtPortNotExistCmd(execMock, types.K8sMgmtIntfName)
+			// bringupManagementPortLink fails with transient error
+			netlinkOpsMock.On("LinkSetDown", linkMock2).Return(fmt.Errorf("transient error"))
+
+			err = mgmtPort.doReconcile()
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to recreate management port"))
+			Expect(errors.Is(err, errMgmtPortDeviceNotFound)).To(BeFalse())
+		})
+
+		It("Fatals when PCI device is gone during doReconcile", func() {
+			_, ipnet, err := net.ParseCIDR("192.168.0.1/24")
+			Expect(err).ToNot(HaveOccurred())
+			config.Default.MTU = 1400
+			cfg := &managementPortConfig{
+				hostSubnets: []*net.IPNet{ipnet},
+			}
+			mgmtPort := newManagementPortNetdev(deviceID, cfg, nil)
+
+			// createPlatformManagementPort fails
+			netlinkOpsMock.On("LinkByName", types.K8sMgmtIntfName).Return(nil, fmt.Errorf("link gone")).Once()
+
+			// create() fails: PCI device not found
+			vdpaOpsMock.On("GetVdpaDeviceByPci", deviceID).Return(nil, fmt.Errorf("no vdpa device"))
+			sriovnetOpsMock.On("GetNetDevicesFromPci", deviceID).Return(nil, fmt.Errorf("no such device"))
+
+			origOsExit := klog.OsExit
+			defer func() { klog.OsExit = origOsExit }()
+			klog.OsExit = func(_ int) {
+				panic("klog.Fatal called")
+			}
+
+			Expect(func() { _ = mgmtPort.doReconcile() }).To(PanicWith("klog.Fatal called"))
 		})
 	})
 })

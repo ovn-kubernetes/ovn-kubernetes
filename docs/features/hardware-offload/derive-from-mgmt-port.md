@@ -138,6 +138,42 @@ The feature integrates with existing:
 - SR-IOV operations
 - Network configuration
 
+## Management Port VF Identification and Recovery
+
+### VF Identification
+
+The management port VF is identified by its PCI device ID, not by interface name.
+At startup, the PCI device ID is preferred from the node annotation
+(`k8s.ovn.org/node-mgmt-port`) when available. If the annotation is missing
+(e.g., first start), the device ID is resolved from the netdev name via sysfs.
+All subsequent operations (reconciliation, recreation) locate the VF by its PCI
+device ID, which is stable across interface renames.
+
+### Reconciliation and Recovery
+
+A periodic reconciliation loop monitors the management port and re-applies its
+configuration (routes, addresses, nftables rules). If reconciliation fails, the
+code attempts to recreate the management port by looking up the VF via its PCI
+device ID.
+
+If the PCI device itself is no longer present — for example due to a DPU reboot,
+an administrator destroying VFs (`sriov_numvfs`), or a firmware settings change
+that causes PCI re-enumeration — the ovn-kube-node process terminates. This is
+intentional: there is no reliable way to determine which VF to use at runtime
+when the PCI topology has changed. The container restart allows the device plugin
+to re-allocate the correct VF.
+
+### Startup Prerequisites
+
+When using a netdev-backed management port, the following must be in place:
+
+| Requirement | Description |
+|---|---|
+| VF netdevice | Provided via `--ovnkube-node-mgmt-port-netdev` or `--ovnkube-node-mgmt-port-dp-resource-name` |
+| PCI device present | The VF's PCI device must exist and have a netdev interface |
+| NetworkManager exclusion | `ovn-k8s-*` interfaces must be set to `managed=0` in NM config |
+| OVS bridge `br-int` | Must be running (provided by the DPU in DPU host mode) |
+
 ## Future Enhancements
 
 Potential improvements include:
