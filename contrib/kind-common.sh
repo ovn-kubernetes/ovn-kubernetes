@@ -369,12 +369,7 @@ install_ingress() {
 
 METALLB_DIR="/tmp/metallb"
 install_metallb() {
-  # Using latest v0.14.9 as the commit we were using would not build and this
-  # version is the one having least issues for dual stack. However tests might
-  # have to workaround these two outstanding issue until fixed
-  # https://github.com/metallb/metallb/issues/2723
-  # https://github.com/metallb/metallb/issues/2724
-  local metallb_version=v0.14.9
+  local metallb_version=v0.15.3
   mkdir -p /tmp/metallb
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
@@ -388,18 +383,7 @@ install_metallb() {
   # when using 'kind load' command however metallb builds and uses older
   # incompatible kind version patch it so that it uses our own kind install
   # instead of their build
-  patch tasks.py << 'EOF'
-@@ -29,7 +29,7 @@ extra_network = "network2"
--controller_gen_version = "v0.16.3"
-+controller_gen_version = "v0.19.0"
- build_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build")
- kubectl_path = os.path.join(build_path, "kubectl")
--kind_path = os.path.join(build_path, "kind")
-+kind_path = "kind"
- ginkgo_path = os.path.join(build_path, "bin", "ginkgo")
- controller_gen_path = os.path.join(build_path, "bin", "controller-gen")
- kubectl_version = "v1.31.0"
-EOF
+  sed -i 's|kind_path = os.path.join(build_path, "kind")|kind_path = "kind"|' tasks.py
 
   pip install -r dev-env/requirements.txt
 
