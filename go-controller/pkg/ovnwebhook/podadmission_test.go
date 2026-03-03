@@ -435,7 +435,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				additionalPodAdmissions,
 			})
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
+			if (err == nil) != (tt.expectedErr == nil) || (err != nil && tt.expectedErr != nil && err.Error() != tt.expectedErr.Error()) {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
@@ -482,6 +482,198 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 			},
 		},
 		{
+			name: "extra-user can set OvnPodAnnotationName annotation with only UDN network key",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"test-ns/udn-network":{"ip_addresses":["172.16.0.5/24"],"mac_address":"0a:58:ac:10:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
+			name: "extra-user can set OvnPodAnnotationName annotation with both default and UDN network keys",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:0a:80:00:05"},"test-ns/udn-network":{"ip_addresses":["172.16.0.5/24"],"mac_address":"0a:58:ac:10:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
+			name: "extra-user can set OvnPodAnnotationName annotation with L3 UDN key when IP is in node subnet",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24","test-ns/udn-network":"172.16.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"test-ns/udn-network":{"ip_addresses":["172.16.0.5/24"],"mac_address":"0a:58:ac:10:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
+			name: "extra-user cannot set OvnPodAnnotationName annotation with L3 UDN key when IP is out of node subnet",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24","test-ns/udn-network":"172.16.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"test-ns/udn-network":{"ip_addresses":["10.10.10.10/24"],"mac_address":"0a:58:ac:10:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on pod %q: 10.10.10.10/24 does not belong to %s node", extraUser, util.OvnPodAnnotationName, podName, nodeName),
+		},
+		{
+			name: "extra-user can set OvnPodAnnotationName annotation with UDN key when node has no subnet annotation",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"test-ns/udn-network":{"ip_addresses":["172.16.0.5/24"],"mac_address":"0a:58:ac:10:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
+			name: "extra-user is rejected when node has malformed subnet annotation",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `not-valid-json`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:0a:80:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on pod %q: failed to unmarshal %q annotation on node %s: invalid character 'o' in literal null (expecting 'u')",
+				extraUser, util.OvnPodAnnotationName, podName, "k8s.ovn.org/node-subnets", nodeName),
+		},
+		{
+			name: "extra-user cannot set an out-of-range IP for a network with known node subnets",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"ip_addresses":["10.10.10.10/24"],"mac_address":"0a:58:0a:80:00:05"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			expectedErr: fmt.Errorf("user: %q is not allowed to set %s on pod %q: 10.10.10.10/24 does not belong to %s node", extraUser, util.OvnPodAnnotationName, podName, nodeName),
+		},
+		{
 			name: "extra-user cannot set an IP in the OvnPodAnnotationName annotation on host-networked pods",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -525,7 +717,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 				additionalPodAdmissions,
 			}, extraUser)
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
+			if (err == nil) != (tt.expectedErr == nil) || (err != nil && tt.expectedErr != nil && err.Error() != tt.expectedErr.Error()) {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
