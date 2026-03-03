@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
@@ -18,12 +19,14 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -141,15 +144,15 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			name: "network selectors changed - CUDN selector added",
 			oldObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					NetworkSelectors: []types.NetworkSelector{},
+					NetworkSelectors: []crdtypes.NetworkSelector{},
 				},
 			},
 			newObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					NetworkSelectors: []types.NetworkSelector{
+					NetworkSelectors: []crdtypes.NetworkSelector{
 						{
-							NetworkSelectionType: types.ClusterUserDefinedNetworks,
-							ClusterUserDefinedNetworkSelector: &types.ClusterUserDefinedNetworkSelector{
+							NetworkSelectionType: crdtypes.ClusterUserDefinedNetworks,
+							ClusterUserDefinedNetworkSelector: &crdtypes.ClusterUserDefinedNetworkSelector{
 								NetworkSelector: metav1.LabelSelector{
 									MatchLabels: map[string]string{"app": "test"},
 								},
@@ -164,10 +167,10 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			name: "network selectors changed - PUDN selector label changed",
 			oldObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					NetworkSelectors: []types.NetworkSelector{
+					NetworkSelectors: []crdtypes.NetworkSelector{
 						{
-							NetworkSelectionType: types.PrimaryUserDefinedNetworks,
-							PrimaryUserDefinedNetworkSelector: &types.PrimaryUserDefinedNetworkSelector{
+							NetworkSelectionType: crdtypes.PrimaryUserDefinedNetworks,
+							PrimaryUserDefinedNetworkSelector: &crdtypes.PrimaryUserDefinedNetworkSelector{
 								NamespaceSelector: metav1.LabelSelector{
 									MatchLabels: map[string]string{"env": "dev"},
 								},
@@ -178,10 +181,10 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			},
 			newObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					NetworkSelectors: []types.NetworkSelector{
+					NetworkSelectors: []crdtypes.NetworkSelector{
 						{
-							NetworkSelectionType: types.PrimaryUserDefinedNetworks,
-							PrimaryUserDefinedNetworkSelector: &types.PrimaryUserDefinedNetworkSelector{
+							NetworkSelectionType: crdtypes.PrimaryUserDefinedNetworks,
+							PrimaryUserDefinedNetworkSelector: &crdtypes.PrimaryUserDefinedNetworkSelector{
 								NamespaceSelector: metav1.LabelSelector{
 									MatchLabels: map[string]string{"env": "prod"},
 								},
@@ -196,10 +199,10 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			name: "network selectors unchanged",
 			oldObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					NetworkSelectors: []types.NetworkSelector{
+					NetworkSelectors: []crdtypes.NetworkSelector{
 						{
-							NetworkSelectionType: types.ClusterUserDefinedNetworks,
-							ClusterUserDefinedNetworkSelector: &types.ClusterUserDefinedNetworkSelector{
+							NetworkSelectionType: crdtypes.ClusterUserDefinedNetworks,
+							ClusterUserDefinedNetworkSelector: &crdtypes.ClusterUserDefinedNetworkSelector{
 								NetworkSelector: metav1.LabelSelector{
 									MatchLabels: map[string]string{"app": "test"},
 								},
@@ -210,10 +213,10 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			},
 			newObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					NetworkSelectors: []types.NetworkSelector{
+					NetworkSelectors: []crdtypes.NetworkSelector{
 						{
-							NetworkSelectionType: types.ClusterUserDefinedNetworks,
-							ClusterUserDefinedNetworkSelector: &types.ClusterUserDefinedNetworkSelector{
+							NetworkSelectionType: crdtypes.ClusterUserDefinedNetworks,
+							ClusterUserDefinedNetworkSelector: &crdtypes.ClusterUserDefinedNetworkSelector{
 								NetworkSelector: metav1.LabelSelector{
 									MatchLabels: map[string]string{"app": "test"},
 								},
@@ -609,6 +612,107 @@ func TestController_syncNAD(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Verify CNC was requeued
+	g.Eventually(func() []string {
+		reconciledMutex.Lock()
+		defer reconciledMutex.Unlock()
+		return reconciledCNCs.UnsortedList()
+	}).Should(gomega.ConsistOf("cnc1"))
+}
+
+// TestController_syncNetworkRef tests that syncNetworkRef requeues CNCs matching the network ID.
+func TestController_syncNetworkRef(t *testing.T) {
+	g := gomega.NewWithT(t)
+	err := config.PrepareTestConfig()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableNetworkConnect = true
+
+	fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
+
+	networkID := 11
+	networkName := "blue-net"
+	ownerKey := fmt.Sprintf("layer3_%d", networkID)
+	cnc := &networkconnectv1.ClusterNetworkConnect{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cnc1",
+			Annotations: map[string]string{
+				"k8s.ovn.org/network-connect-subnet": fmt.Sprintf("{\"%s\":{\"ipv4\":\"192.168.0.0/24\"}}", ownerKey),
+			},
+		},
+		Spec: networkconnectv1.ClusterNetworkConnectSpec{
+			Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+		},
+	}
+	_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+		context.Background(), cnc, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	err = wf.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer wf.Shutdown()
+
+	syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer syncCancel()
+	synced := cache.WaitForCacheSync(
+		syncCtx.Done(),
+		wf.ClusterNetworkConnectInformer().Informer().HasSynced,
+	)
+	g.Expect(synced).To(gomega.BeTrue(), "informer caches should sync")
+
+	reconciledCNCs := sets.New[string]()
+	reconciledMutex := sync.Mutex{}
+
+	netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: networkName,
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: ovntypes.Layer3Topology,
+		Role:     ovntypes.NetworkRoleSecondary,
+	})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	nadNetwork := util.NewMutableNetInfo(netInfo)
+	nadNetwork.SetNetworkID(networkID)
+	c := &Controller{
+		cncLister:      wf.ClusterNetworkConnectInformer().Lister(),
+		networkManager: &networkmanager.FakeNetworkManager{NADNetworks: map[string]util.NetInfo{"ns1/nad1": nadNetwork}},
+	}
+
+	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Informer:    wf.ClusterNetworkConnectInformer().Informer(),
+		Lister:      wf.ClusterNetworkConnectInformer().Lister().List,
+		Reconcile: func(key string) error {
+			reconciledMutex.Lock()
+			defer reconciledMutex.Unlock()
+			reconciledCNCs.Insert(key)
+			return nil
+		},
+		ObjNeedsUpdate: cncNeedsUpdate,
+		Threadiness:    1,
+	}
+	c.cncController = controllerutil.NewController("test-cnc-controller", cncCfg)
+
+	err = controllerutil.Start(c.cncController)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer controllerutil.Stop(c.cncController)
+
+	g.Eventually(func() int {
+		reconciledMutex.Lock()
+		defer reconciledMutex.Unlock()
+		return reconciledCNCs.Len()
+	}).Should(gomega.BeNumerically(">=", 1))
+	reconciledMutex.Lock()
+	reconciledCNCs = sets.New[string]()
+	reconciledMutex.Unlock()
+
+	err = c.syncNetworkRef(networkRefKey("node1", networkName))
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
 	g.Eventually(func() []string {
 		reconciledMutex.Lock()
 		defer reconciledMutex.Unlock()

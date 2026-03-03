@@ -58,9 +58,11 @@ type FakeNetworkManager struct {
 	// if netInfo is nil, it represents a namespace which contains the required UDN label but with no valid network. It will return invalid network error.
 	PrimaryNetworks map[string]util.NetInfo
 	// nad key -> netInfo for non-primary lookups
-	NADNetworks map[string]util.NetInfo
-	Reconcilers []reconcilerRegistration
-	nextID      uint64
+	NADNetworks           map[string]util.NetInfo
+	Reconcilers           []reconcilerRegistration
+	NetworkRefReconcilers []networkRefReconcilerRegistration
+	nextID                uint64
+	nextNetworkRefID      uint64
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
 }
@@ -84,6 +86,27 @@ func (fnm *FakeNetworkManager) DeRegisterNADReconciler(id uint64) error {
 		}
 	}
 	return fmt.Errorf("reconciler not found")
+}
+
+func (fnm *FakeNetworkManager) RegisterNetworkRefReconciler(r NetworkRefReconciler) (uint64, error) {
+	fnm.Lock()
+	defer fnm.Unlock()
+	fnm.nextNetworkRefID++
+	id := fnm.nextNetworkRefID
+	fnm.NetworkRefReconcilers = append(fnm.NetworkRefReconcilers, networkRefReconcilerRegistration{id: id, r: r})
+	return id, nil
+}
+
+func (fnm *FakeNetworkManager) DeRegisterNetworkRefReconciler(id uint64) error {
+	fnm.Lock()
+	defer fnm.Unlock()
+	for i, rec := range fnm.NetworkRefReconcilers {
+		if rec.id == id {
+			fnm.NetworkRefReconcilers = append(fnm.NetworkRefReconcilers[:i], fnm.NetworkRefReconcilers[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("network ref reconciler not found")
 }
 
 func (fnm *FakeNetworkManager) TriggerHandlers(nadName string, info util.NetInfo, removed bool) {
@@ -224,6 +247,11 @@ func (fnm *FakeNetworkManager) GetNetworkByID(id int) util.NetInfo {
 	defer fnm.Unlock()
 	for _, ni := range fnm.PrimaryNetworks {
 		if ni.GetNetworkID() == id {
+			return ni
+		}
+	}
+	for _, ni := range fnm.NADNetworks {
+		if ni != nil && ni.GetNetworkID() == id {
 			return ni
 		}
 	}

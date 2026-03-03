@@ -2577,6 +2577,117 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 				})
 
+				It("should create remote ports and routes when a remote node becomes active via network ref event", func() {
+					zoneName = "node1"
+					network := testNetwork{
+						name:         "remote-activate-net",
+						id:           1,
+						topologyType: ovntypes.Layer3Topology,
+						subnets:      []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"},
+					}
+					nodes := []testNode{
+						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+							"remote-activate-net": {"10.128.1.0/24", "fd00:10:128:1::/64"},
+						}},
+						{name: "node2", id: 2, zone: "node2", nodeSubnets: map[string]subnetPair{
+							"remote-activate-net": {"10.128.2.0/24", "fd00:10:128:2::/64"},
+						}},
+					}
+
+					initialDB := createInitialDBWithRouters([]testNetwork{network})
+					initialDB = append(initialDB, &nbdb.Copp{
+						UUID: "copp-uuid",
+						Name: ovntypes.DefaultCOPPName,
+					})
+
+					var err error
+					nbClient, testCtx, err = libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+						NBData: initialDB,
+					}, nil)
+					Expect(err).NotTo(HaveOccurred())
+
+					var nodeObjs []runtime.Object
+					for _, n := range nodes {
+						nodeObjs = append(nodeObjs, createTestNode(n))
+					}
+					fakeClientset = util.GetOVNClientset(nodeObjs...).GetOVNKubeControllerClientset()
+
+					wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+					Expect(err).NotTo(HaveOccurred())
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+
+					netInfo, err := createNetInfo(network)
+					Expect(err).NotTo(HaveOccurred())
+					nm := &testNetworkManager{
+						FakeNetworkManager: networkmanager.FakeNetworkManager{
+							PrimaryNetworks: map[string]util.NetInfo{
+								network.name: netInfo,
+							},
+						},
+						nodeHas: map[string]map[string]bool{
+							"node1": {network.name: true},
+							"node2": {network.name: false},
+						},
+					}
+
+					controller = NewController(zoneName, nbClient, wf, nm)
+					err = controller.Start()
+					Expect(err).NotTo(HaveOccurred())
+
+					subnetAnnotation := buildConnectSubnetAnnotation(map[string]subnetPair{
+						"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+					})
+					cnc := createTestCNC("remote-activate-cnc", 1600, defaultConnectSubnets(), subnetAnnotation)
+
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, "remote-activate-cnc", 1600)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					// Remote node2 starts inactive, so its port/routes should not exist yet.
+					Consistently(func() error {
+						return verifyRouterStaticRoutesCount(nbClient, getConnectRouterName("remote-activate-cnc"),
+							"remote-activate-cnc", network.id, 2, 0)
+					}).WithTimeout(2 * time.Second).Should(Succeed())
+
+					remoteConnectPort := getConnectRouterToNetworkRouterPortName("remote-activate-cnc", network.name, "node2")
+					Consistently(func() error {
+						_, err := libovsdbops.GetLogicalRouterPort(nbClient, &nbdb.LogicalRouterPort{Name: remoteConnectPort})
+						if err == nil {
+							return fmt.Errorf("remote port %s unexpectedly exists", remoteConnectPort)
+						}
+						return nil
+					}).WithTimeout(2 * time.Second).Should(Succeed())
+
+					// Mark node2 active and drive the registered network-ref callback.
+					nm.nodeHas["node2"][network.name] = true
+					Expect(nm.NetworkRefReconcilers).To(HaveLen(1))
+					controller.networkRefReconciler.Reconcile("node2", network.name)
+
+					// The queued network-ref reconcile should requeue the CNC and program
+					// the previously missing remote node topology.
+					Eventually(func() error {
+						return verifyRouterPortIsRemote(nbClient, remoteConnectPort,
+							getExpectedPortTunnelKey("192.168.0.0/24", "fd00:192:168::/64", ovntypes.Layer3Topology, 2))
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					expectedPerIPFamily := 0
+					if config.IPv4Mode {
+						expectedPerIPFamily++
+					}
+					if config.IPv6Mode {
+						expectedPerIPFamily++
+					}
+					Eventually(func() error {
+						return verifyRouterStaticRoutesCount(nbClient, getConnectRouterName("remote-activate-cnc"),
+							"remote-activate-cnc", network.id, 2, expectedPerIPFamily)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+
 				It("should create ports for all nodes when multiple networks are connected", func() {
 					// Setup with 1 Layer3 and 1 Layer2 network and 2 nodes (1 local, 1 remote)
 					zoneName = "node1"

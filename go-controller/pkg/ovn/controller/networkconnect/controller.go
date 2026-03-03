@@ -3,6 +3,7 @@ package networkconnect
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +30,8 @@ import (
 )
 
 const (
-	controllerName = "ovnkube-network-connect-controller"
+	controllerName         = "ovnkube-network-connect-controller"
+	networkRefKeySeparator = "/"
 )
 
 // Controller manages network connectivity between (C)UDNs based on ClusterNetworkConnect CRs.
@@ -65,6 +67,11 @@ type Controller struct {
 	// nadReconciler handles NAD-triggered CNC requeues
 	nadReconciler   networkmanager.NADReconciler
 	nadReconcilerID uint64
+	// networkRefQueue handles node+network activity-triggered CNC requeues
+	networkRefQueue controllerutil.Reconciler
+	// networkRefReconciler receives node+network activity notifications from networkmanager
+	networkRefReconciler   networkmanager.NetworkRefReconciler
+	networkRefReconcilerID uint64
 
 	// Single global lock protecting all controller state
 	sync.RWMutex
@@ -82,6 +89,13 @@ type networkConnectState struct {
 	// connectedNetworks is the set of owner keys (e.g., "layer3_1", "layer2_2") for networks
 	// connected by this CNC. Used to track OVN resources created and detect NAD matching changes.
 	connectedNetworks sets.Set[string]
+}
+
+type networkRefReconcilerFunc func(node, networkName string)
+
+// Reconcile adapts a plain function to the NetworkRefReconciler interface.
+func (f networkRefReconcilerFunc) Reconcile(node, networkName string) {
+	f(node, networkName)
 }
 
 // NewController creates a new network connect controller for ovnkube-controller.
@@ -144,6 +158,22 @@ func NewController(
 		"ovnkube-network-connect-nad",
 		nadReconcilerConfig,
 	)
+	networkRefReconcilerConfig := &controllerutil.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   c.syncNetworkRef,
+		Threadiness: 1,
+		MaxAttempts: controllerutil.InfiniteAttempts,
+	}
+	c.networkRefQueue = controllerutil.NewReconciler(
+		"ovnkube-network-connect-network-ref",
+		networkRefReconcilerConfig,
+	)
+	c.networkRefReconciler = networkRefReconcilerFunc(func(node, networkName string) {
+		if node == "" || networkName == "" || c.networkRefQueue == nil {
+			return
+		}
+		c.networkRefQueue.Reconcile(networkRefKey(node, networkName))
+	})
 
 	return c
 }
@@ -151,22 +181,35 @@ func NewController(
 // Start starts the controller.
 func (c *Controller) Start() error {
 	klog.Infof("Starting ovnkube network connect controller for zone %s", c.zone)
-	if c.nadReconciler == nil {
-		return controllerutil.Start(
-			c.cncController,
-			c.nodeController,
-		)
-	}
-	id, err := c.networkManager.RegisterNADReconciler(c.nadReconciler)
-	if err != nil {
-		return err
-	}
-	c.nadReconcilerID = id
-	return controllerutil.Start(
+	controllers := []controllerutil.Reconciler{
 		c.cncController,
 		c.nodeController,
-		c.nadReconciler,
-	)
+	}
+	if c.nadReconciler != nil {
+		id, err := c.networkManager.RegisterNADReconciler(c.nadReconciler)
+		if err != nil {
+			return err
+		}
+		c.nadReconcilerID = id
+		controllers = append(controllers, c.nadReconciler)
+	}
+	if c.networkRefReconciler != nil {
+		id, err := c.networkManager.RegisterNetworkRefReconciler(c.networkRefReconciler)
+		if err != nil {
+			if c.nadReconcilerID != 0 {
+				if deregErr := c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID); deregErr != nil {
+					klog.Warningf("Failed to rollback CNC NAD reconciler registration: %v", deregErr)
+				}
+				c.nadReconcilerID = 0
+			}
+			return err
+		}
+		c.networkRefReconcilerID = id
+		if c.networkRefQueue != nil {
+			controllers = append(controllers, c.networkRefQueue)
+		}
+	}
+	return controllerutil.Start(controllers...)
 }
 
 // Stop stops the controller.
@@ -176,21 +219,81 @@ func (c *Controller) Stop() {
 			klog.Warningf("Failed to deregister CNC NAD reconciler: %v", err)
 		}
 	}
-	if c.nadReconciler != nil {
-		controllerutil.Stop(
-			c.cncController,
-			c.nodeController,
-			c.nadReconciler,
-		)
-	} else {
-		controllerutil.Stop(
-			c.cncController,
-			c.nodeController,
-		)
+	if c.networkRefReconcilerID != 0 {
+		if err := c.networkManager.DeRegisterNetworkRefReconciler(c.networkRefReconcilerID); err != nil {
+			klog.Warningf("Failed to deregister CNC network-ref reconciler: %v", err)
+		}
 	}
+	controllers := []controllerutil.Reconciler{
+		c.cncController,
+		c.nodeController,
+	}
+	if c.nadReconciler != nil {
+		controllers = append(controllers, c.nadReconciler)
+	}
+	if c.networkRefQueue != nil {
+		controllers = append(controllers, c.networkRefQueue)
+	}
+	controllerutil.Stop(controllers...)
 	c.nadReconciler = nil
 	c.nadReconcilerID = 0
+	c.networkRefQueue = nil
+	c.networkRefReconciler = nil
+	c.networkRefReconcilerID = 0
 	klog.Infof("Stopped ovnkube network connect controller for zone %s", c.zone)
+}
+
+// networkRefKey builds the queue key used for deferred node+network activity
+// processing. The network name is used instead of ID because activity can be
+// observed before NAD reconciliation has resolved the ID locally.
+func networkRefKey(node, networkName string) string {
+	return node + networkRefKeySeparator + networkName
+}
+
+// parseNetworkRefKey decodes a queue key back into node and network name.
+func parseNetworkRefKey(key string) (string, string, error) {
+	idx := strings.LastIndex(key, networkRefKeySeparator)
+	if idx <= 0 || idx == len(key)-1 {
+		return "", "", fmt.Errorf("invalid network-ref key %q", key)
+	}
+	node := key[:idx]
+	return node, key[idx+1:], nil
+}
+
+func (c *Controller) syncNetworkRef(key string) error {
+	if c.networkManager == nil {
+		return nil
+	}
+	_, networkName, err := parseNetworkRefKey(key)
+	if err != nil {
+		klog.Warningf("Skipping invalid network-ref key %q: %v", key, err)
+		return nil
+	}
+	cncs, err := c.cncLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	for _, cnc := range cncs {
+		subnets, err := util.ParseNetworkConnectSubnetAnnotation(cnc)
+		if err != nil {
+			continue
+		}
+		for owner := range subnets {
+			_, ownerNetworkID, err := util.ParseNetworkOwner(owner)
+			if err != nil {
+				continue
+			}
+			// CNC owner keys are stored by network ID, so resolve each owner ID
+			// back to the current network name before checking whether this
+			// activity update affects the CNC.
+			ownerNetInfo := c.networkManager.GetNetworkByID(ownerNetworkID)
+			if ownerNetInfo != nil && ownerNetInfo.GetNetworkName() == networkName {
+				c.cncController.Reconcile(cnc.Name)
+				break
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Controller) syncNAD(key string) error {

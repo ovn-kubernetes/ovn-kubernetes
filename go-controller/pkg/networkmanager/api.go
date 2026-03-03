@@ -11,6 +11,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	networkconnectinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/informers/externalversions/clusternetworkconnect/v1"
 	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
 	rainformers "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
 	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
@@ -28,8 +29,20 @@ const (
 // NADReconciler is a level-driven controller notified of NAD key changes.
 type NADReconciler controller.Reconciler
 
+// NetworkRefReconciler is notified when node network activity changes.
+// The network is identified by name because activity can be observed before
+// the NAD controller has fully resolved the network into a local netInfo/ID.
+//
+// These are edge-style notifications. Controllers that need eventual
+// correctness after NAD/ID changes should also register an NADReconciler and
+// treat NAD callbacks as a catch-up signal.
+type NetworkRefReconciler interface {
+	Reconcile(node string, networkName string)
+}
+
 type watchFactory interface {
 	NADInformer() nadinformers.NetworkAttachmentDefinitionInformer
+	ClusterNetworkConnectInformer() networkconnectinformer.ClusterNetworkConnectInformer
 	UserDefinedNetworkInformer() userdefinednetworkinformer.UserDefinedNetworkInformer
 	ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer
 	NamespaceInformer() coreinformers.NamespaceInformer
@@ -91,6 +104,13 @@ type Interface interface {
 	RegisterNADReconciler(r NADReconciler) (uint64, error)
 	// DeRegisterNADReconciler removes a previously registered reconciler.
 	DeRegisterNADReconciler(id uint64) error
+	// RegisterNetworkRefReconciler registers a reconciler to be notified when
+	// node network activity changes.
+	// Pair this with RegisterNADReconciler when the controller needs both
+	// immediate activity signals and eventual catch-up after NAD/ID changes.
+	RegisterNetworkRefReconciler(r NetworkRefReconciler) (uint64, error)
+	// DeRegisterNetworkRefReconciler removes a previously registered reconciler.
+	DeRegisterNetworkRefReconciler(id uint64) error
 
 	// GetNetworkByID returns the network with the given ID or nil if not found.
 	// This is an O(1) lookup using an internal index.
@@ -300,6 +320,12 @@ func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) (uint64, 
 }
 
 func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) error { return nil }
+
+func (nm defaultNetworkManager) RegisterNetworkRefReconciler(_ NetworkRefReconciler) (uint64, error) {
+	return 0, nil
+}
+
+func (nm defaultNetworkManager) DeRegisterNetworkRefReconciler(_ uint64) error { return nil }
 
 func (nm defaultNetworkManager) GetNetworkByID(id int) util.NetInfo {
 	if id != types.DefaultNetworkID {
