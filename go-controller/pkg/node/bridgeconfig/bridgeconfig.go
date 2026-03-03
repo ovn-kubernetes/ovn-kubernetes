@@ -198,11 +198,40 @@ func NewBridgeConfiguration(intfName, nodeName,
 	if len(gwIPs) > 0 {
 		// use gwIPs if provided
 		res.ips = gwIPs
+		// After a node restart (e.g. docker stop/start), the bridge interface
+		// may exist in OVS but have lost its kernel IP addresses. The gwIPs
+		// came from reading the uplink interface, but weren't moved to the bridge.
+		// Check if the bridge actually has IPs; if not, re-migrate from uplink.
+		if res.uplinkName != "" {
+			if _, checkErr := nodeutil.GetNetworkInterfaceIPAddresses(gwIntf); checkErr != nil {
+				klog.Warningf("Bridge %s has gwIPs but no kernel IP addresses, migrating from uplink %s: %v",
+					gwIntf, res.uplinkName, checkErr)
+				if _, migrateErr := util.NicToBridge(res.uplinkName); migrateErr != nil {
+					klog.Warningf("Failed to migrate IPs from %s to %s: %v", res.uplinkName, gwIntf, migrateErr)
+				} else {
+					klog.Infof("Successfully migrated IP addresses from %s to bridge %s after restart", res.uplinkName, gwIntf)
+				}
+			}
+		}
 	} else {
 		// get IP addresses from OVS bridge. If IP does not exist,
 		// error out.
 		res.ips, err = nodeutil.GetNetworkInterfaceIPAddresses(gwIntf)
-		if err != nil {
+		if err != nil && res.uplinkName != "" {
+			// The bridge may have lost its IP addresses after a node restart
+			// (IPs are kernel state, not persisted across container restarts).
+			// Re-migrate IPs and routes from the uplink NIC to the bridge.
+			klog.Warningf("Bridge %s has no IP addresses, attempting to migrate from uplink %s: %v", gwIntf, res.uplinkName, err)
+			if _, migrateErr := util.NicToBridge(res.uplinkName); migrateErr != nil {
+				return nil, fmt.Errorf("failed to get interface details for %s (%v) and failed to migrate IPs from %s: %v",
+					gwIntf, err, res.uplinkName, migrateErr)
+			}
+			res.ips, err = nodeutil.GetNetworkInterfaceIPAddresses(gwIntf)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get interface details for %s after IP migration from %s: %w", gwIntf, res.uplinkName, err)
+			}
+			klog.Infof("Successfully migrated IP addresses from %s to %s", res.uplinkName, gwIntf)
+		} else if err != nil {
 			return nil, fmt.Errorf("failed to get interface details for %s: %w", gwIntf, err)
 		}
 	}
@@ -549,8 +578,14 @@ func getIntfName(gatewayIntf string) (string, error) {
 	}
 	_, stderr, err := util.RunOVSVsctl("get", "interface", intfName, "ofport")
 	if err != nil {
-		return "", fmt.Errorf("failed to get ofport of %s, stderr: %q, error: %v",
-			intfName, stderr, err)
+		klog.Warningf("Uplink port %s not found on bridge %s (stderr: %q), attempting to re-add it", intfName, gatewayIntf, stderr)
+		_, stderr, addErr := util.RunOVSVsctl(
+			"--", "--may-exist", "add-port", gatewayIntf, intfName,
+			"--", "set", "port", intfName, "other-config:transient=true")
+		if addErr != nil {
+			return "", fmt.Errorf("failed to re-add uplink port %s to bridge %s: stderr: %q, error: %v (original error: %v)",
+				intfName, gatewayIntf, stderr, addErr, err)
+		}
 	}
 	return intfName, nil
 }
