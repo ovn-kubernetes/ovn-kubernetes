@@ -598,7 +598,7 @@ func LinkNeighDel(link netlink.Link, neighIP net.IP) error {
 	}
 	err := netLinkOps.NeighDel(neigh)
 	if err != nil {
-		return fmt.Errorf("failed to delete neighbour entry %+v: %v", neigh, err)
+		return fmt.Errorf("failed to delete neighbour entry %+v: %w", neigh, err)
 	}
 	return nil
 }
@@ -614,7 +614,7 @@ func LinkNeighAdd(link netlink.Link, neighIP net.IP, neighMAC net.HardwareAddr) 
 	}
 	err := netLinkOps.NeighAdd(neigh)
 	if err != nil {
-		return fmt.Errorf("failed to add neighbour entry %+v: %v", neigh, err)
+		return fmt.Errorf("failed to add neighbour entry %+v: %w", neigh, err)
 	}
 	return nil
 }
