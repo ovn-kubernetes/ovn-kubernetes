@@ -589,6 +589,37 @@ func LinkRouteGetByDstAndGw(link netlink.Link, gwIP net.IP, subnet *net.IPNet) (
 	return route, err
 }
 
+// LinkFDBAdd adds a static FDB entry on the bridge that owns the given port.
+func LinkFDBAdd(port netlink.Link, mac net.HardwareAddr, vlan int) error {
+	neigh := &netlink.Neigh{
+		LinkIndex:    port.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		State:        netlink.NUD_NOARP,
+		Flags:        netlink.NTF_MASTER,
+		Vlan:         vlan,
+		HardwareAddr: mac,
+	}
+	if err := netLinkOps.NeighAdd(neigh); err != nil {
+		return fmt.Errorf("failed to add FDB entry %s vlan %d on %s: %w", mac, vlan, port.Attrs().Name, err)
+	}
+	return nil
+}
+
+// LinkFDBDel deletes a static FDB entry from the bridge that owns the given port.
+func LinkFDBDel(port netlink.Link, mac net.HardwareAddr, vlan int) error {
+	neigh := &netlink.Neigh{
+		LinkIndex:    port.Attrs().Index,
+		Family:       syscall.AF_BRIDGE,
+		Flags:        netlink.NTF_MASTER,
+		Vlan:         vlan,
+		HardwareAddr: mac,
+	}
+	if err := netLinkOps.NeighDel(neigh); err != nil {
+		return fmt.Errorf("failed to delete FDB entry %s vlan %d from %s: %w", mac, vlan, port.Attrs().Name, err)
+	}
+	return nil
+}
+
 // LinkNeighDel deletes an ip binding for a given link
 func LinkNeighDel(link netlink.Link, neighIP net.IP) error {
 	neigh := &netlink.Neigh{

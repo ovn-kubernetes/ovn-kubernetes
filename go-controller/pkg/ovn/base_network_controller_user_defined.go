@@ -240,7 +240,7 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 	var err error
 
 	if kubevirt.IsPodAllowedForMigration(pod, bsnc.GetNetInfo()) {
-		kubevirtLiveMigrationStatus, err = kubevirt.DiscoverLiveMigrationStatus(bsnc.watchFactory, pod)
+		kubevirtLiveMigrationStatus, err = kubevirt.DiscoverLiveMigrationStatus(bsnc.watchFactory.PodCoreInformer().Lister(), pod)
 		if err != nil {
 			return fmt.Errorf("failed to discover Live-migration status: %w", err)
 		}
@@ -1090,7 +1090,7 @@ func (bsnc *BaseUserDefinedNetworkController) disableLiveMigrationSourceLSPOps(
 }
 
 func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration(pod *corev1.Pod, nadKey string, mac string, ips []string) error {
-	kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(bsnc.watchFactory, pod)
+	kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(bsnc.watchFactory.PodCoreInformer().Lister(), pod)
 	if err != nil {
 		return fmt.Errorf("failed to discover Live-migration status after pod termination: %w", err)
 	}
