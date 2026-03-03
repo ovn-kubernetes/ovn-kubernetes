@@ -1987,10 +1987,14 @@ metadata:
 		numberOfETPRules := pokeNodeIPTableRules(backendNodeName, "OVN-KUBE-EXTERNALIP")
 		gomega.Expect(numberOfETPRules).To(gomega.Equal(5))
 
-		// curl the LB service from the client container to trigger BGP route advertisement
-		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "must fetch primary provider network")
+
+		ginkgo.By("waiting for BGP route to be installed on the FRR router")
+		waitForFRRBGPRoute(svcLoadBalancerIP, externalRouterContainerName, primaryProviderNetwork)
+
+		// curl the LB service from the client container to trigger BGP route advertisement
+		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: "lbclient", Network: primaryProviderNetwork} // pre-created
 		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 		framework.ExpectNoError(err, "failed to curl load balancer service")
@@ -2134,6 +2138,12 @@ spec:
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(backendNodeName, 0, "mgmtport-no-snat-nodeports"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
+
+		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "must get primary provider network")
+
+		ginkgo.By("waiting for BGP route to be installed on the FRR router")
+		waitForFRRBGPRoute(svcLoadBalancerIP, externalRouterContainerName, primaryProviderNetwork)
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: externalClientContainerName}
@@ -2693,6 +2703,26 @@ spec:
 		}
 	})
 })
+
+// waitForFRRBGPRoute waits for a BGP route for the given service VIP to be
+// installed in the external FRR router's kernel routing table.
+func waitForFRRBGPRoute(svcLoadBalancerIP string, frrContainerName string, providerNetwork infraapi.Network) {
+	ipVer := ""
+	if utilnet.IsIPv6String(svcLoadBalancerIP) {
+		ipVer = " -6"
+	}
+	cmd := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, svcLoadBalancerIP), " ")
+	frrContainer := infraapi.ExternalContainer{Name: frrContainerName, Network: providerNetwork}
+	gomega.Eventually(func() bool {
+		routes, err := infraprovider.Get().ExecExternalContainerCommand(frrContainer, cmd)
+		if err != nil {
+			framework.Logf("Failed to get routes from FRR: %v", err)
+			return false
+		}
+		framework.Logf("FRR routes for %s: %s", svcLoadBalancerIP, routes)
+		return strings.Contains(routes, "proto bgp")
+	}, 30*time.Second, 1*time.Second).Should(gomega.BeTrue(), "BGP route for %s was not installed on the FRR router", svcLoadBalancerIP)
+}
 
 func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 	node, err := c.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
