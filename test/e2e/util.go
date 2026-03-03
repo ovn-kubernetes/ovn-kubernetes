@@ -1169,9 +1169,6 @@ func wrappedTestFramework(basename string) *framework.Framework {
 		logLocation := "/var/log"
 		coredumpDir := "/tmp/kind/logs/coredumps"
 		dbLocation := "/var/lib/openvswitch"
-		// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5782
-		skippedCoredumps := []string{"zebra", "bgpd", "mgmtd", "bfdd"}
-
 		// Check for coredumps on host
 		var coredumpFiles []string
 		files, err := os.ReadDir(coredumpDir)
@@ -1180,14 +1177,7 @@ func wrappedTestFramework(basename string) *framework.Framework {
 				if file.IsDir() {
 					continue
 				}
-				fileName := file.Name()
-				if slices.ContainsFunc(skippedCoredumps, func(s string) bool {
-					return strings.Contains(fileName, s)
-				}) {
-					framework.Logf("Ignoring coredump for skipped process: %s", fileName)
-					continue
-				}
-				coredumpFiles = append(coredumpFiles, fileName)
+				coredumpFiles = append(coredumpFiles, file.Name())
 			}
 		}
 
