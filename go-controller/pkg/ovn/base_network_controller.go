@@ -596,7 +596,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 		} else {
 			v4Gateway = gwIfAddr.IP
 			excludeIPs := mgmtIfAddr.IP.String()
-			if config.HybridOverlay.Enabled {
+			if config.HybridOverlay.Enabled && bnc.IsDefault() {
 				hybridOverlayIfAddr := util.GetNodeHybridOverlayIfAddr(hostSubnet)
 				excludeIPs += ".." + hybridOverlayIfAddr.IP.String()
 			}
@@ -917,7 +917,15 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 	}
 
 	if v4Subnet != nil {
-		if err := libovsdbutil.UpdateNodeSwitchExcludeIPs(bnc.nbClient, bnc.GetNetworkScopedK8sMgmtIntfName(node.Name), bnc.GetNetworkScopedSwitchName(node.Name), node.Name, v4Subnet, bnc.GetNodeManagementIP(v4Subnet)); err != nil {
+		if err := libovsdbutil.UpdateNodeSwitchExcludeIPs(
+			bnc.nbClient,
+			bnc.GetNetworkScopedK8sMgmtIntfName(node.Name),
+			bnc.GetNetworkScopedSwitchName(node.Name),
+			node.Name,
+			v4Subnet,
+			bnc.GetNodeManagementIP(v4Subnet),
+			bnc.IsDefault(),
+		); err != nil {
 			return nil, err
 		}
 	}

@@ -29,6 +29,7 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 		desc                    string
 		inpSubnetStr            string
 		setCfgHybridOvlyEnabled bool
+		includeHybridOverlay    bool
 		initialNbdb             libovsdbtest.TestSetup
 		expectedNbdb            libovsdbtest.TestSetup
 	}{
@@ -58,12 +59,14 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 					fakeHoPort,
 				},
 			},
-			inpSubnetStr: "fd04:3e42:4a4e:3381::/64",
+			inpSubnetStr:         "fd04:3e42:4a4e:3381::/64",
+			includeHybridOverlay: true,
 		},
 		{
 			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=true, haveHybridOverlayPort=true and haveManagementPort=true, excludes ips empty",
 			inpSubnetStr:            "192.168.1.0/24",
 			setCfgHybridOvlyEnabled: true,
+			includeHybridOverlay:    true,
 			initialNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					&nbdb.LogicalSwitch{
@@ -98,6 +101,7 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=true, haveHybridOverlayPort=false and haveManagementPort=false, excludes HO and MP ips",
 			inpSubnetStr:            "192.168.1.0/24",
 			setCfgHybridOvlyEnabled: true,
+			includeHybridOverlay:    true,
 			initialNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					&nbdb.LogicalSwitch{
@@ -129,6 +133,7 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=true, sets haveHybridOverlayPort=false and haveManagementPort=true, excludes HO ip",
 			inpSubnetStr:            "192.168.1.0/24",
 			setCfgHybridOvlyEnabled: true,
+			includeHybridOverlay:    true,
 			initialNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					&nbdb.LogicalSwitch{
@@ -162,6 +167,7 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=true, sets haveHybridOverlayPort=true and haveManagementPort=false, excludes MP ip",
 			inpSubnetStr:            "192.168.1.0/24",
 			setCfgHybridOvlyEnabled: true,
+			includeHybridOverlay:    true,
 			initialNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					&nbdb.LogicalSwitch{
@@ -195,6 +201,7 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=false, haveManagementPort=true, excludes ips empty",
 			inpSubnetStr:            "192.168.1.0/24",
 			setCfgHybridOvlyEnabled: false,
+			includeHybridOverlay:    true,
 			initialNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					&nbdb.LogicalSwitch{
@@ -227,6 +234,7 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=false, haveManagementPort=false, excludes MP ip",
 			inpSubnetStr:            "192.168.1.0/24",
 			setCfgHybridOvlyEnabled: false,
+			includeHybridOverlay:    true,
 			initialNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					&nbdb.LogicalSwitch{
@@ -252,6 +260,38 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc:                    "IPv4 CIDR, config.HybridOverlayEnable=true, includeHybridOverlay=false, excludes only MP ip",
+			inpSubnetStr:            "192.168.1.0/24",
+			setCfgHybridOvlyEnabled: true,
+			includeHybridOverlay:    false,
+			initialNbdb: libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					&nbdb.LogicalSwitch{
+						UUID:  nodeName + "-uuid",
+						Name:  nodeName,
+						Ports: []string{},
+						OtherConfig: map[string]string{
+							"subnet":      "subnet",
+							"exclude_ips": "192.168.1.2..192.168.1.3",
+						},
+					},
+				},
+			},
+			expectedNbdb: libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					&nbdb.LogicalSwitch{
+						UUID:  nodeName + "-uuid",
+						Name:  nodeName,
+						Ports: []string{},
+						OtherConfig: map[string]string{
+							"subnet":      "subnet",
+							"exclude_ips": "192.168.1.2",
+						},
+					},
+				},
+			},
+		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
@@ -268,12 +308,12 @@ func TestUpdateNodeSwitchExcludeIPs(t *testing.T) {
 			var e error
 			if tc.setCfgHybridOvlyEnabled {
 				config.HybridOverlay.Enabled = true
-				if e = UpdateNodeSwitchExcludeIPs(nbClient, ovnutil.GetK8sMgmtIntfName(nodeName), nodeName, nodeName, ipnet, ovnutil.GetNodeManagementIfAddr(ipnet)); e != nil {
+				if e = UpdateNodeSwitchExcludeIPs(nbClient, ovnutil.GetK8sMgmtIntfName(nodeName), nodeName, nodeName, ipnet, ovnutil.GetNodeManagementIfAddr(ipnet), tc.includeHybridOverlay); e != nil {
 					t.Fatal(fmt.Errorf("failed to update NodeSwitchExcludeIPs with Hybrid Overlay enabled err: %v", e))
 				}
 				config.HybridOverlay.Enabled = false
 			} else {
-				if e = UpdateNodeSwitchExcludeIPs(nbClient, ovnutil.GetK8sMgmtIntfName(nodeName), nodeName, nodeName, ipnet, ovnutil.GetNodeManagementIfAddr(ipnet)); e != nil {
+				if e = UpdateNodeSwitchExcludeIPs(nbClient, ovnutil.GetK8sMgmtIntfName(nodeName), nodeName, nodeName, ipnet, ovnutil.GetNodeManagementIfAddr(ipnet), tc.includeHybridOverlay); e != nil {
 					t.Fatal(fmt.Errorf("failed to update NodeSwitchExcludeIPs with Hybrid Overlay disabled err: %v", e))
 				}
 
