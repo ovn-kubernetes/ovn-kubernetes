@@ -860,11 +860,8 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		netConfig := newNetworkAttachmentConfig(netConfigParams)
 		netConfig.namespace = f.Namespace.Name
-		_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-			context.Background(),
-			generateNAD(netConfig, f.ClientSet),
-			metav1.CreateOptions{},
-		)
+		nad := generateNAD(netConfig, f.ClientSet)
+		_, err = createNADAndWaitForNetworkReady(nadClient, nad)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
@@ -3109,12 +3106,10 @@ spec:
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		netConfig := newNetworkAttachmentConfig(netConfigParams)
 		netConfig.namespace = otherNetworkNamespace.Name
-		_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
-			context.Background(),
-			generateNAD(netConfig, f.ClientSet),
-			metav1.CreateOptions{},
-		)
+		nad := generateNAD(netConfig, f.ClientSet)
+		_, err = createNADAndWaitForNetworkReady(nadClient, nad)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 		egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
 		ginkgo.By("1. Set one node as available for egress")
 		egressNodeAvailabilityHandler.Enable(egress1Node.name)
@@ -3582,11 +3577,8 @@ spec:
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			netConfig := newNetworkAttachmentConfig(otherNetworkAttachParms)
 			netConfig.namespace = otherNetworkNamespace.Name
-			_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
-				context.Background(),
-				generateNAD(netConfig, f.ClientSet),
-				metav1.CreateOptions{},
-			)
+			nad := generateNAD(netConfig, f.ClientSet)
+			_, err = createNADAndWaitForNetworkReady(nadClient, nad)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		} else {
 			ginkgo.By(fmt.Sprintf("Building other namespace api object for CDN, basename %s", f.BaseName))
