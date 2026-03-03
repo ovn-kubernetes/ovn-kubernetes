@@ -10,15 +10,12 @@ DUALSTACK_CONVERSION?=false
 # Coredump detection settings
 # Directory where kind clusters store coredumps
 COREDUMP_DIR?=/tmp/kind/logs/coredumps
-# Processes to skip when checking for coredumps (pipe-separated for grep)
-# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5782
-SKIPPED_COREDUMPS?=zebra|bgpd|mgmtd|bfdd
 
-# Check for coredumps and fail if any are found (excluding skipped processes)
+# Check for coredumps and fail if any are found
 # Usage: $(call check-coredumps)
 define check-coredumps
 	@if [ -d "$(COREDUMP_DIR)" ]; then \
-		coredumps=$$(find "$(COREDUMP_DIR)" -maxdepth 1 -type f 2>/dev/null | grep -v -E '$(SKIPPED_COREDUMPS)' || true); \
+		coredumps=$$(find "$(COREDUMP_DIR)" -maxdepth 1 -type f 2>/dev/null); \
 		if [ -n "$$coredumps" ]; then \
 			echo "ERROR: Coredumps found:"; \
 			echo "$$coredumps"; \
