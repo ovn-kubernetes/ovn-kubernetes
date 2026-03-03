@@ -63,7 +63,7 @@ var _ = Describe("Kubevirt Pod", func() {
 		defer wf.Shutdown()
 
 		currentPod := params.pods[0]
-		migrationStatus, err := DiscoverLiveMigrationStatus(wf, &currentPod)
+		migrationStatus, err := DiscoverLiveMigrationStatus(wf.PodCoreInformer().Lister(), &currentPod)
 		if params.expectedError == nil {
 			Expect(err).ToNot(HaveOccurred())
 		} else {

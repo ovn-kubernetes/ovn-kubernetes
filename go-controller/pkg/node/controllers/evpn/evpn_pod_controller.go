@@ -7,28 +7,41 @@ import (
 	"syscall"
 
 	"github.com/vishvananda/netlink"
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// neighEntries represents static neighbor entries for a pod on EVPN devices.
+// neighEntries represents static neighbor and FDB entries for a pod on EVPN devices.
 type neighEntries struct {
-	sviName   string
-	macvrfVID int
-	ips       []net.IP
-	mac       net.HardwareAddr
+	uid         k8stypes.UID
+	sviName     string
+	ovsPortName string
+	macvrfVID   int
+	ips         []net.IP
+	mac         net.HardwareAddr
 }
 
 // podNeedsUpdate returns true for local pods when the annotation changed, the pod completed, or was deleted.
+// For non-local pods, it returns true when the kubevirt migration target ready timestamp changes,
+// so that reconcilePod can remove the local source pod's entries.
 func (c *Controller) podNeedsUpdate(oldObj, newObj *corev1.Pod) bool {
+	if oldObj != nil && newObj != nil &&
+		oldObj.Spec.NodeName != c.nodeName && newObj.Spec.NodeName != c.nodeName {
+		return oldObj.Annotations[kubevirtv1.MigrationTargetReadyTimestamp] !=
+			newObj.Annotations[kubevirtv1.MigrationTargetReadyTimestamp]
+	}
+
 	var oldAnnot, newAnnot string
 	if oldObj != nil {
 		if oldObj.Spec.NodeName != c.nodeName {
@@ -48,6 +61,30 @@ func (c *Controller) podNeedsUpdate(oldObj, newObj *corev1.Pod) bool {
 	return oldAnnot != newAnnot
 }
 
+// handleLiveMigrationTargetReady is called when a non-local kubevirt migration target pod
+// becomes ready. It finds the local source pod and removes its neighbor/FDB entries so
+// FRR withdraws the Type-2 routes from this node.
+func (c *Controller) handleLiveMigrationTargetReady(targetPod *corev1.Pod) error {
+	migrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(c.podLister, targetPod)
+	if err != nil {
+		return fmt.Errorf("failed to discover live migration status: %w", err)
+	}
+	if migrationStatus == nil || !migrationStatus.IsTargetDomainReady() {
+		return nil
+	}
+	if migrationStatus.SourcePod.Spec.NodeName != c.nodeName {
+		return nil
+	}
+
+	key, err := cache.MetaNamespaceKeyFunc(migrationStatus.SourcePod)
+	if err != nil {
+		return err
+	}
+	klog.Infof("Live migration target %s/%s ready, removing entries for local source pod %s",
+		targetPod.Namespace, targetPod.Name, key)
+	return c.deletePodNeighbors(key)
+}
+
 func (c *Controller) reconcilePod(key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -63,18 +100,23 @@ func (c *Controller) reconcilePod(key string) error {
 	}
 
 	if pod.Spec.NodeName != c.nodeName {
-		return nil
+		// Non-local pod: this is a kubevirt migration target whose ready timestamp changed.
+		// Find the local source pod and remove its entries so FRR withdraws the Type-2 routes.
+		return c.handleLiveMigrationTargetReady(pod)
 	}
 
 	if util.PodCompleted(pod) {
 		return c.deletePodNeighbors(key)
 	}
 
-	// If we already have cached entries, ensure the neighbors are present without re-parsing the annotation.
+	// If we already have cached entries for this exact pod (same UID), ensure the
+	// neighbors are present without re-parsing the annotation. On rapid pod
+	// delete/recreate with the same name, the UID changes and we fall through to
+	// re-parse the annotation and replace the stale cache entry.
 	c.podNeighLock.Lock()
 	existing, hasExisting := c.podNeighbors[key]
 	c.podNeighLock.Unlock()
-	if hasExisting {
+	if hasExisting && existing.uid == pod.UID {
 		return c.ensurePodNeighbors(existing)
 	}
 
@@ -97,9 +139,11 @@ func (c *Controller) reconcilePod(key string) error {
 	}
 
 	entries := &neighEntries{
-		sviName:   GetEVPNL2SVIName(netInfo),
-		macvrfVID: netInfo.EVPNMACVRFVID(),
-		mac:       podAnnotation.MAC,
+		uid:         pod.UID,
+		sviName:     GetEVPNL2SVIName(netInfo),
+		ovsPortName: GetEVPNOVSPortName(netInfo),
+		macvrfVID:   netInfo.EVPNMACVRFVID(),
+		mac:         podAnnotation.MAC,
 	}
 	for _, ipNet := range podAnnotation.IPs {
 		entries.ips = append(entries.ips, ipNet.IP)
@@ -115,13 +159,24 @@ func (c *Controller) reconcilePod(key string) error {
 	return nil
 }
 
-// ensurePodNeighbors programs static neighbor entries for a pod's MAC/IPs.
+// ensurePodNeighbors programs static FDB and neighbor entries for a pod's MAC/IPs.
+// The static FDB entry on the OVS port prevents the bridge from aging out the MAC,
+// which would cause FRR to withdraw the Type-2 route.
 func (c *Controller) ensurePodNeighbors(entries *neighEntries) error {
 	svi, err := util.GetNetLinkOps().LinkByName(entries.sviName)
 	if err != nil {
 		return fmt.Errorf("failed to get L2 SVI %s: %w", entries.sviName, err)
 	}
-
+	ovsPort, err := util.GetNetLinkOps().LinkByName(entries.ovsPortName)
+	if err != nil {
+		return fmt.Errorf("failed to get OVS port %s: %w", entries.ovsPortName, err)
+	}
+	if err := util.LinkFDBAdd(ovsPort, entries.mac, entries.macvrfVID); err != nil {
+		if !errors.Is(err, syscall.EEXIST) {
+			return fmt.Errorf("failed to add FDB entry for %s on %s: %w", entries.mac, entries.ovsPortName, err)
+		}
+	}
+	klog.V(5).Infof("Configured FDB %s vlan %d on %s", entries.mac, entries.macvrfVID, entries.ovsPortName)
 	for _, ip := range entries.ips {
 		if err := util.LinkNeighAdd(svi, ip, entries.mac); err != nil {
 			if !errors.Is(err, syscall.EEXIST) {
@@ -141,9 +196,38 @@ func (c *Controller) deletePodNeighbors(key string) error {
 		return nil
 	}
 
+	ovsPort, err := util.GetNetLinkOps().LinkByName(entries.ovsPortName)
+	if err != nil {
+		var linkNotFound netlink.LinkNotFoundError
+		if errors.As(err, &linkNotFound) {
+			// OVS port is already gone (e.g. VTEP was deleted first).
+			// FDB entries are implicitly removed with the interface.
+			klog.V(5).Infof("OVS port %s already removed, cleaning up cache for pod %s", entries.ovsPortName, key)
+			c.podNeighLock.Lock()
+			delete(c.podNeighbors, key)
+			c.podNeighLock.Unlock()
+			return nil
+		}
+		return fmt.Errorf("ovs port %s not found for pod %s: %w", entries.ovsPortName, key, err)
+	}
+
+	if err := util.LinkFDBDel(ovsPort, entries.mac, entries.macvrfVID); err != nil {
+		return fmt.Errorf("failed to delete FDB entry %s from %s: %w", entries.mac, entries.ovsPortName, err)
+	}
+	klog.V(5).Infof("Deleted FDB %s from %s for pod %s", entries.mac, entries.ovsPortName, key)
+
 	link, err := util.GetNetLinkOps().LinkByName(entries.sviName)
 	if err != nil {
-		return fmt.Errorf("svi %s not found, skipping neighbor deletion for pod %s", entries.sviName, key)
+		var linkNotFound netlink.LinkNotFoundError
+		if errors.As(err, &linkNotFound) {
+			// SVI is already gone, neighbor entries are implicitly removed.
+			klog.V(5).Infof("SVI %s already removed, cleaning up cache for pod %s", entries.sviName, key)
+			c.podNeighLock.Lock()
+			delete(c.podNeighbors, key)
+			c.podNeighLock.Unlock()
+			return nil
+		}
+		return fmt.Errorf("svi %s not found for pod %s: %w", entries.sviName, key, err)
 	}
 	for _, ip := range entries.ips {
 		if err := util.LinkNeighDel(link, ip); err != nil {
@@ -165,8 +249,9 @@ func (c *Controller) podInitialSync() error {
 	}
 
 	type evpnDevices struct {
-		sviName   string
-		macvrfVID int
+		sviName     string
+		ovsPortName string
+		macvrfVID   int
 	}
 	evpnNetworks := make(map[string]evpnDevices)
 	err := c.networkMgr.DoWithLock(func(netInfo util.NetInfo) error {
@@ -174,8 +259,9 @@ func (c *Controller) podInitialSync() error {
 			return nil
 		}
 		evpnNetworks[netInfo.GetNetworkName()] = evpnDevices{
-			sviName:   GetEVPNL2SVIName(netInfo),
-			macvrfVID: netInfo.EVPNMACVRFVID(),
+			sviName:     GetEVPNL2SVIName(netInfo),
+			ovsPortName: GetEVPNOVSPortName(netInfo),
+			macvrfVID:   netInfo.EVPNMACVRFVID(),
 		}
 		return nil
 	})
@@ -201,6 +287,7 @@ func (c *Controller) podInitialSync() error {
 	}
 
 	desiredBySVI := make(map[string]sets.Set[string])
+	desiredMACsByOVSPort := make(map[string]sets.Set[string])
 	for _, pod := range pods {
 		if pod.Spec.NodeName != c.nodeName || util.PodCompleted(pod) {
 			continue
@@ -223,8 +310,11 @@ func (c *Controller) podInitialSync() error {
 			continue
 		}
 
-		entries := &neighEntries{sviName: nsInfo.sviName, macvrfVID: nsInfo.macvrfVID, mac: podAnnotation.MAC}
-
+		entries := &neighEntries{sviName: nsInfo.sviName, ovsPortName: nsInfo.ovsPortName, macvrfVID: nsInfo.macvrfVID, mac: podAnnotation.MAC}
+		if desiredMACsByOVSPort[nsInfo.ovsPortName] == nil {
+			desiredMACsByOVSPort[nsInfo.ovsPortName] = sets.New[string]()
+		}
+		desiredMACsByOVSPort[nsInfo.ovsPortName].Insert(podAnnotation.MAC.String())
 		for _, ipNet := range podAnnotation.IPs {
 			if desiredBySVI[nsInfo.sviName] == nil {
 				desiredBySVI[nsInfo.sviName] = sets.New[string]()
@@ -267,6 +357,31 @@ func (c *Controller) podInitialSync() error {
 					} else {
 						klog.V(5).Infof("Deleted stale neighbor %s lladdr %s from %s", n.IP, n.HardwareAddr, dev.sviName)
 					}
+				}
+			}
+		}
+
+		// Clean up stale FDB entries on OVS port
+		ovsPort, err := util.GetNetLinkOps().LinkByName(dev.ovsPortName)
+		if err != nil {
+			klog.V(5).Infof("OVS port %s not found, skipping", dev.ovsPortName)
+			continue
+		}
+		fdbs, err := util.GetNetLinkOps().NeighList(ovsPort.Attrs().Index, syscall.AF_BRIDGE)
+		if err != nil {
+			klog.Errorf("Failed to get FDB entries from %s: %v", dev.ovsPortName, err)
+			continue
+		}
+		desiredMACs := desiredMACsByOVSPort[dev.ovsPortName]
+		for _, f := range fdbs {
+			if f.State&netlink.NUD_NOARP == 0 || f.Flags&netlink.NTF_MASTER == 0 {
+				continue
+			}
+			if desiredMACs == nil || !desiredMACs.Has(f.HardwareAddr.String()) {
+				if err := util.LinkFDBDel(ovsPort, f.HardwareAddr, f.Vlan); err != nil {
+					klog.Errorf("Failed to delete stale FDB %s from %s: %v", f.HardwareAddr, dev.ovsPortName, err)
+				} else {
+					klog.V(5).Infof("Deleted stale FDB %s from %s", f.HardwareAddr, dev.ovsPortName)
 				}
 			}
 		}
