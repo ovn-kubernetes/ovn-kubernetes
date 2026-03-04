@@ -395,8 +395,13 @@ func (c *Controller) reconcileDeviceKey(name string) error {
 	previousState := device.state
 	unlock()
 
+	klog.Infof("NetlinkDeviceManager: reconcileDeviceKey %s gen=%d state=%v mappings=%v", name, gen, previousState, cfg.VIDVNIMappings)
+
 	// All netlink I/O OUTSIDE lock
 	modified, err := applyDeviceConfig(&cfg)
+	if err != nil {
+		klog.Infof("NetlinkDeviceManager: applyDeviceConfig %s failed: %v", name, err)
+	}
 
 	// Update state under Lock
 	c.mu.Lock()
@@ -579,6 +584,7 @@ func (c *Controller) EnsureLink(cfg DeviceConfig) error {
 	state := DeviceStatePending // default for new devices; existing devices preserve their state
 	if existing := c.store[name]; existing != nil {
 		if configsEqual(&existing.cfg, &cfg) {
+			klog.Infof("NetlinkDeviceManager: EnsureLink %s config unchanged (state=%v, mappings=%v)", name, existing.state, existing.cfg.VIDVNIMappings)
 			// Config unchanged. Re-enqueue only for Blocked devices — the caller
 			// may know the external conflict was resolved and wants to force retry.
 			// Don't re-enqueue Failed — the workqueue already has it in rate-limited
@@ -596,6 +602,7 @@ func (c *Controller) EnsureLink(cfg DeviceConfig) error {
 		state = existing.state
 	}
 
+	klog.Infof("NetlinkDeviceManager: EnsureLink %s config changed, gen %d->%d (mappings=%v)", name, gen, gen+1, cfg.VIDVNIMappings)
 	// Store desired config, increment generation, and enqueue.
 	c.store[name] = &managedDevice{cfg: cfg, state: state, generation: gen + 1}
 	unlock()
@@ -905,6 +912,7 @@ func applyDeviceConfig(cfg *DeviceConfig) (bool, error) {
 			// Fall through to create
 		} else {
 			// Device exists with correct critical attrs, update mutable attrs
+			klog.Infof("NetlinkDeviceManager: applyDeviceConfig %s -> updateDevice (alias=%q, mappings=%v)", name, link.Attrs().Alias, cfg.VIDVNIMappings)
 			return updateDevice(link, cfg)
 		}
 	} else if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
@@ -1054,6 +1062,15 @@ func createDevice(cfg *DeviceConfig) error {
 		return err
 	}
 
+	// LinkAdd may not apply IFLA_IFALIAS for all device types (e.g. bridges, VXLANs).
+	// Use LinkSetAlias which sends a minimal RTM_SETLINK without IFLA_LINKINFO,
+	// avoiding EOPNOTSUPP from device drivers that reject changelink with info_kind.
+	if link.Attrs().Alias != cfg.alias() {
+		if err := util.GetNetLinkOps().LinkSetAlias(link, cfg.alias()); err != nil {
+			return fmt.Errorf("failed to set alias on %s: %w", name, err)
+		}
+	}
+
 	// Set master if specified (Master existence already validated by resolveDependencies,
 	// but it could be deleted between validation and now - treat as DependencyError for retry)
 	if cfg.Master != "" {
@@ -1114,8 +1131,20 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 	name := cfg.deviceName()
 	currentAttrs := link.Attrs()
 	modified := false
+	klog.V(4).Infof("NetlinkDeviceManager: updateDevice %s (mappings=%d)", name, len(cfg.VIDVNIMappings))
 
-	// Only call LinkModify if there are actual differences to apply.
+	// Handle alias separately via LinkSetAlias (works for all device types).
+	// LinkModify sends IFLA_INFO_KIND which can trigger EOPNOTSUPP from
+	// device drivers (e.g. VXLAN) that don't support alias changes via changelink.
+	if currentAttrs.Alias != cfg.alias() {
+		if err := util.GetNetLinkOps().LinkSetAlias(link, cfg.alias()); err != nil {
+			return modified, fmt.Errorf("failed to set alias on %s: %w", name, err)
+		}
+		modified = true
+		klog.V(5).Infof("NetlinkDeviceManager: set alias on device %s", name)
+	}
+
+	// Only call LinkModify if there are actual type-specific differences to apply.
 	// This prevents unnecessary netlink events.
 	if needsLinkModify(link, cfg) {
 		modifiedLink := prepareLinkForModify(link, cfg)
@@ -1178,18 +1207,17 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 	return modified, nil
 }
 
-// needsLinkModify checks if any mutable attributes differ between current link and desired config.
+// needsLinkModify checks if any type-specific mutable attributes differ between current link and desired config.
 // Returns true if LinkModify should be called to reconcile differences.
-// This prevents unnecessary LinkModify calls that would trigger netlink events.
+// Alias is handled separately via LinkSetAlias, not through LinkModify.
 func needsLinkModify(current netlink.Link, cfg *DeviceConfig) bool {
-	if current.Attrs().Alias != cfg.alias() {
-		return true
-	}
 	return !linkMutableFieldsMatch(current, cfg.Link)
 }
 
 // prepareLinkForModify creates a Link object suitable for LinkModify.
-// It includes all mutable fields that linkMutableFieldsMatch checks.
+// It includes all type-specific mutable fields that linkMutableFieldsMatch checks.
+// Alias is NOT included here — it is handled separately via LinkSetAlias to avoid
+// EOPNOTSUPP from device drivers that don't support alias changes via changelink.
 func prepareLinkForModify(existing netlink.Link, cfg *DeviceConfig) netlink.Link {
 	desiredAttrs := cfg.Link.Attrs()
 	baseAttrs := netlink.LinkAttrs{
@@ -1198,7 +1226,6 @@ func prepareLinkForModify(existing netlink.Link, cfg *DeviceConfig) netlink.Link
 		MTU:          desiredAttrs.MTU,
 		TxQLen:       desiredAttrs.TxQLen,
 		HardwareAddr: desiredAttrs.HardwareAddr,
-		Alias:        cfg.alias(),
 	}
 
 	// Handle type-specific mutable fields.
@@ -1406,6 +1433,8 @@ func syncVIDVNIMappings(link netlink.Link, cfg *DeviceConfig) error {
 	if cfg.Master == "" {
 		return nil
 	}
+	klog.Infof("NetlinkDeviceManager: syncVIDVNIMappings for %s: %d desired mappings, master=%s",
+		link.Attrs().Name, len(cfg.VIDVNIMappings), cfg.Master)
 
 	nlOps := util.GetNetLinkOps()
 	name := link.Attrs().Name
@@ -1428,7 +1457,7 @@ func syncVIDVNIMappings(link netlink.Link, cfg *DeviceConfig) error {
 	var errs []error
 
 	for _, mapping := range toRemove {
-		if err := removeVIDVNIMapping(link, mapping); err != nil {
+		if err := removeVIDVNIMapping(bridgeLink, link, mapping); err != nil {
 			klog.Warningf("NetlinkDeviceManager: failed to remove mapping VID=%d VNI=%d from %s: %v",
 				mapping.VID, mapping.VNI, name, err)
 			errs = append(errs, err)
@@ -1519,6 +1548,8 @@ func staleMappings(current, desired []VIDVNIMapping) []VIDVNIMapping {
 // This function does NOT hold any locks - caller must ensure thread safety.
 func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error {
 	nlOps := util.GetNetLinkOps()
+	klog.Infof("NetlinkDeviceManager: addVIDVNIMapping VID=%d VNI=%d on %s (bridge=%s)",
+		m.VID, m.VNI, vxlanLink.Attrs().Name, bridgeLink.Attrs().Name)
 
 	// 1. Add VID to bridge with 'self' flag
 	// This is required for the bridge to recognize the VLAN
@@ -1553,12 +1584,10 @@ func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error
 	return nil
 }
 
-// removeVIDVNIMapping removes a VID/VNI mapping from a VXLAN device.
-// This function does NOT hold any locks - caller must ensure thread safety.
-// Note: Unlike addVIDVNIMapping, this does NOT remove the bridge self VID because:
-// 1. Other VXLAN mappings or ports might still use that VID
-// 2. Bridge self VIDs are automatically cleaned up by the kernel when the bridge is deleted
-func removeVIDVNIMapping(vxlanLink netlink.Link, m VIDVNIMapping) error {
+// removeVIDVNIMapping removes a VID/VNI mapping from a VXLAN device and its bridge.
+// Symmetric with addVIDVNIMapping: removes bridge self VID, VXLAN VID, VNI filter,
+// and tunnel_info in reverse order of add.
+func removeVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error {
 	nlOps := util.GetNetLinkOps()
 
 	// Remove in reverse order of add for symmetry.
@@ -1581,7 +1610,14 @@ func removeVIDVNIMapping(vxlanLink netlink.Link, m VIDVNIMapping) error {
 	// 3. Remove VID from VXLAN
 	if err := nlOps.BridgeVlanDel(vxlanLink, m.VID, false, false, false, true); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
-			errs = append(errs, fmt.Errorf("VID %d: %w", m.VID, err))
+			errs = append(errs, fmt.Errorf("VXLAN VID %d: %w", m.VID, err))
+		}
+	}
+
+	// 4. Remove VID from bridge self
+	if err := nlOps.BridgeVlanDel(bridgeLink, m.VID, false, false, true, false); err != nil {
+		if !nlOps.IsEntryNotFoundError(err) {
+			errs = append(errs, fmt.Errorf("bridge self VID %d: %w", m.VID, err))
 		}
 	}
 
