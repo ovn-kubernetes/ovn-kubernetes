@@ -2,8 +2,9 @@ package e2e
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -863,15 +864,23 @@ func createVTEP(f *framework.Framework, ictx infraapi.Context, name string, cidr
 // EVPN VID Utilities
 // =============================================================================
 
+func randomN(n int) int {
+	r, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		panic(fmt.Sprintf("crypto/rand.Int failed: %v", err))
+	}
+	return int(r.Int64())
+}
+
 // randomVID generates a random VLAN ID in the valid range (2-4094).
 // VIDs 0, 1, and 4095 are reserved and should not be used.
 func randomVID() int {
-	return rand.Intn(4093) + 2 // 2-4094
+	return randomN(4093) + 2 // 2-4094
 }
 
 // randomVNI generates a random VXLAN Network Identifier in the valid 24-bit range (1-16777215).
 func randomVNI() int32 {
-	return int32(rand.Intn(16777215) + 1)
+	return int32(randomN(16777215)) + 1
 }
 
 // randomCUDNSubnets generates random non-overlapping CUDN subnets for parallel test isolation.
@@ -890,9 +899,9 @@ func randomCUDNSubnets() (ipv4, ipv6 string) {
 	// Exclude blocks overlapping known /16 reservations (16 /20 blocks each):
 	//   10.96, 10.132, 10.243, 10.244 = 64 excluded → ~4032 usable
 	for {
-		second := rand.Intn(256)
+		second := randomN(256)
 		// 16 /20-aligned slots per second octet (256/16)
-		third := rand.Intn(16) * 16 // 0, 16, 32, ..., 240
+		third := randomN(16) * 16 // 0, 16, 32, ..., 240
 		switch second {
 		case 96, 132, 243, 244:
 			continue
@@ -924,7 +933,7 @@ func randomL2CUDNSubnets() udnv1.DualStackCIDRs {
 // Returns IPv4 (/29) and IPv6 (/112) subnets.
 func randomIPVRFAgnhostSubnets() (ipv4, ipv6 string) {
 	// 8192 possible /29 subnets in 172.27.0.0/16
-	n := rand.Intn(8192)
+	n := randomN(8192)
 	// 32 /29-aligned slots per third octet (256/8), so divide to get octet pair
 	third := n / 32
 	fourth := (n % 32) * 8
@@ -943,8 +952,8 @@ func randomIPVRFAgnhostSubnets() (ipv4, ipv6 string) {
 // Safe second octets: 66-127 (62 values).
 // Returns IPv4 (/24) and IPv6 (/112) subnets.
 func randomVTEPSubnets() (ipv4, ipv6 string) {
-	second := rand.Intn(62) + 66 // 66-127
-	third := rand.Intn(256)      // 0-255
+	second := randomN(62) + 66 // 66-127
+	third := randomN(256)      // 0-255
 	return fmt.Sprintf("100.%d.%d.0/24", second, third), fmt.Sprintf("fd02:%x%02x::/112", second, third)
 }
 
