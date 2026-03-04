@@ -468,7 +468,7 @@ sigs.k8s.io/controller-runtime/pkg/log
 ## explicit; go 1.23
 sigs.k8s.io/json
 sigs.k8s.io/json/internal/golang/encoding/json
-# sigs.k8s.io/network-policy-api v0.1.9-0.20260225114943-e80807c44a00
+# sigs.k8s.io/network-policy-api v0.1.8
 ## explicit; go 1.24.0
 sigs.k8s.io/network-policy-api/apis/v1alpha1
 sigs.k8s.io/network-policy-api/conformance
