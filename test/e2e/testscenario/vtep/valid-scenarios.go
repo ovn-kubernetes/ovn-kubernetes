@@ -45,43 +45,16 @@ spec:
 `,
 	},
 	{
-		Description: "Valid VTEP with single IPv6 CIDR",
-		Name:        "vtep-ipv6",
+		Description: "Valid VTEP with two IPv4 CIDRs",
+		Name:        "vtep-two-ipv4",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
 metadata:
-  name: vtep-ipv6
-spec:
-  cidrs:
-  - "fd00:100:64::/64"
-`,
-	},
-	{
-		Description: "Valid VTEP with dual-stack CIDRs",
-		Name:        "vtep-dualstack",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: VTEP
-metadata:
-  name: vtep-dualstack
+  name: vtep-two-ipv4
 spec:
   cidrs:
   - "100.67.0.0/24"
-  - "fd00:100:67::/64"
-`,
-	},
-	{
-		Description: "Valid VTEP with dual-stack CIDRs (IPv6 first)",
-		Name:        "vtep-dualstack-ipv6-first",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: VTEP
-metadata:
-  name: vtep-dualstack-ipv6-first
-spec:
-  cidrs:
-  - "fd00:100:68::/64"
   - "100.68.0.0/24"
 `,
 	},

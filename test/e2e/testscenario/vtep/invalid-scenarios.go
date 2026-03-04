@@ -29,7 +29,7 @@ spec:
 `,
 	},
 	{
-		Description: "CIDRs cannot have more than 2 items",
+		Description: "CIDRs cannot have more than 10 items",
 		ExpectedErr: `spec.cidrs: Too many`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
@@ -38,37 +38,44 @@ metadata:
   name: vtep-too-many-cidrs
 spec:
   cidrs:
-  - "10.20.100.0/24"
-  - "10.30.100.0/24"
-  - "10.40.100.0/24"
+  - "10.20.0.0/24"
+  - "10.21.0.0/24"
+  - "10.22.0.0/24"
+  - "10.23.0.0/24"
+  - "10.24.0.0/24"
+  - "10.25.0.0/24"
+  - "10.26.0.0/24"
+  - "10.27.0.0/24"
+  - "10.28.0.0/24"
+  - "10.29.0.0/24"
+  - "10.30.0.0/24"
 `,
 	},
 	{
-		Description: "Dual-stack CIDRs must be from different IP families",
-		ExpectedErr: `When 2 CIDRs are set, they must be from different IP families`,
+		Description: "IPv6 CIDRs are not supported (FRR limitation)",
+		ExpectedErr: `Only IPv4 CIDRs are currently supported`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
 metadata:
-  name: vtep-same-family-cidrs
+  name: vtep-ipv6-not-supported
 spec:
   cidrs:
-  - "10.20.100.0/24"
-  - "10.30.100.0/24"
+  - "fd00:100:64::/64"
 `,
 	},
 	{
-		Description: "Dual-stack CIDRs must be from different IP families (IPv6)",
-		ExpectedErr: `When 2 CIDRs are set, they must be from different IP families`,
+		Description: "Dual-stack CIDRs are not supported (IPv6 not supported by FRR)",
+		ExpectedErr: `Only IPv4 CIDRs are currently supported`,
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
 metadata:
-  name: vtep-same-family-cidrs-ipv6
+  name: vtep-dualstack-not-supported
 spec:
   cidrs:
-  - "fd00:10:20::/64"
-  - "fd00:10:30::/64"
+  - "100.64.0.0/24"
+  - "fd00:100:64::/64"
 `,
 	},
 	{

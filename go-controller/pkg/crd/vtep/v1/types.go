@@ -45,9 +45,10 @@ type VTEP struct {
 
 // VTEPSpec defines the desired state of VTEP.
 type VTEPSpec struct {
-	// CIDRs is the list of IP ranges from which VTEP IPs are allocated.
-	// Dual-stack clusters may set 2 CIDRs (one for each IP family), otherwise only 1 CIDR is allowed.
-	// The format should match standard CIDR notation (for example, "100.64.0.0/24" or "fd00::/64").
+	// CIDRs is the list of IP ranges from which VTEP IPs are discovered or allocated.
+	// Multiple CIDRs may be specified to expand capacity. Only IPv4 CIDRs are currently supported.
+	// IPv6 VTEP endpoints are not yet supported by FRR for EVPN transport.
+	// The format should match standard CIDR notation (for example, "100.64.0.0/24").
 	// +kubebuilder:validation:Required
 	// +required
 	CIDRs DualStackCIDRs `json:"cidrs"`
@@ -69,8 +70,8 @@ type CIDR string
 
 // DualStackCIDRs is a list of CIDRs that supports dual-stack (IPv4 and IPv6).
 // +kubebuilder:validation:MinItems=1
-// +kubebuilder:validation:MaxItems=2
-// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isCIDR(self[0]) || !isCIDR(self[1]) || cidr(self[0]).ip().family() != cidr(self[1]).ip().family()", message="When 2 CIDRs are set, they must be from different IP families"
+// +kubebuilder:validation:MaxItems=10
+// +kubebuilder:validation:XValidation:rule="self.all(c, isCIDR(c) && cidr(c).ip().family() == 4)", message="Only IPv4 CIDRs are currently supported; IPv6 VTEP endpoints are not yet supported by FRR for EVPN transport"
 type DualStackCIDRs []CIDR
 
 // VTEPMode defines the mode of VTEP IP allocation.
