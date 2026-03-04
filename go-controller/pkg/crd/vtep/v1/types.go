@@ -88,6 +88,17 @@ const (
 	VTEPModeUnmanaged VTEPMode = "Unmanaged"
 )
 
+// IP represents an IP address.
+// +kubebuilder:validation:MaxLength=45
+// +kubebuilder:validation:XValidation:rule="isIP(self)", message="IP is invalid"
+type IP string
+
+// DualStackIPs is a list of IP addresses supporting dual-stack (at most one IPv4 and one IPv6).
+// +kubebuilder:validation:MinItems=1
+// +kubebuilder:validation:MaxItems=2
+// +kubebuilder:validation:XValidation:rule="size(self) != 2 || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
+type DualStackIPs []IP
+
 // VTEPStatus contains the observed state of the VTEP.
 type VTEPStatus struct {
 	// Conditions slice of condition objects indicating details about VTEP status.
@@ -95,6 +106,29 @@ type VTEPStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// NodeAllocations is the list of per-node VTEP IP allocations.
+	// Each entry maps a node to its discovered or allocated VTEP IP(s).
+	// +kubebuilder:validation:MaxItems=5000
+	// +listType=map
+	// +listMapKey=nodeName
+	// +optional
+	NodeAllocations []NodeVTEPAllocation `json:"nodeAllocations,omitempty"`
+}
+
+// NodeVTEPAllocation represents the VTEP IP allocation for a specific node.
+type NodeVTEPAllocation struct {
+	// NodeName is the name of the node.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Required
+	// +required
+	NodeName string `json:"nodeName"`
+
+	// VTEPIPs are the VTEP IP addresses assigned to or discovered on this node.
+	// For dual-stack configurations, at most one IPv4 and one IPv6 address may be present.
+	// +kubebuilder:validation:Required
+	// +required
+	VTEPIPs DualStackIPs `json:"vtepIPs"`
 }
 
 // VTEPList contains a list of VTEP.

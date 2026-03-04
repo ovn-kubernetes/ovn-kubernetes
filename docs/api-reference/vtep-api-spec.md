@@ -44,6 +44,53 @@ _Appears in:_
 
 
 
+#### DualStackIPs
+
+_Underlying type:_ _[IP](#ip)_
+
+DualStackIPs is a list of IP addresses supporting dual-stack (at most one IPv4 and one IPv6).
+
+_Validation:_
+- MaxItems: 2
+- MaxLength: 45
+- MinItems: 1
+
+_Appears in:_
+- [NodeVTEPAllocation](#nodevtepallocation)
+
+
+
+#### IP
+
+_Underlying type:_ _string_
+
+IP represents an IP address.
+
+_Validation:_
+- MaxLength: 45
+
+_Appears in:_
+- [DualStackIPs](#dualstackips)
+
+
+
+#### NodeVTEPAllocation
+
+
+
+NodeVTEPAllocation represents the VTEP IP allocation for a specific node.
+
+
+
+_Appears in:_
+- [VTEPStatus](#vtepstatus)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `nodeName` _string_ | NodeName is the name of the node. |  | MaxLength: 253 <br />Required: \{\} <br /> |
+| `vtepIPs` _[DualStackIPs](#dualstackips)_ | VTEPIPs are the VTEP IP addresses assigned to or discovered on this node.<br />For dual-stack configurations, at most one IPv4 and one IPv6 address may be present. |  | MaxItems: 2 <br />MaxLength: 45 <br />MinItems: 1 <br />Required: \{\} <br /> |
+
+
 #### VTEP
 
 
@@ -131,5 +178,6 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#condition-v1-meta) array_ | Conditions slice of condition objects indicating details about VTEP status. |  |  |
+| `nodeAllocations` _[NodeVTEPAllocation](#nodevtepallocation) array_ | NodeAllocations is the list of per-node VTEP IP allocations.<br />Each entry maps a node to its discovered or allocated VTEP IP(s). |  | MaxItems: 5000 <br /> |
 
 

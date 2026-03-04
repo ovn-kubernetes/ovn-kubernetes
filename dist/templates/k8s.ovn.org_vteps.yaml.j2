@@ -149,6 +149,45 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              nodeAllocations:
+                description: |-
+                  NodeAllocations is the list of per-node VTEP IP allocations.
+                  Each entry maps a node to its discovered or allocated VTEP IP(s).
+                items:
+                  description: NodeVTEPAllocation represents the VTEP IP allocation
+                    for a specific node.
+                  properties:
+                    nodeName:
+                      description: NodeName is the name of the node.
+                      maxLength: 253
+                      type: string
+                    vtepIPs:
+                      description: |-
+                        VTEPIPs are the VTEP IP addresses assigned to or discovered on this node.
+                        For dual-stack configurations, at most one IPv4 and one IPv6 address may be present.
+                      items:
+                        description: IP represents an IP address.
+                        maxLength: 45
+                        type: string
+                        x-kubernetes-validations:
+                        - message: IP is invalid
+                          rule: isIP(self)
+                      maxItems: 2
+                      minItems: 1
+                      type: array
+                      x-kubernetes-validations:
+                      - message: When 2 IPs are set, they must be from different IP
+                          families
+                        rule: size(self) != 2 || ip(self[0]).family() != ip(self[1]).family()
+                  required:
+                  - nodeName
+                  - vtepIPs
+                  type: object
+                maxItems: 5000
+                type: array
+                x-kubernetes-list-map-keys:
+                - nodeName
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec
