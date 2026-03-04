@@ -20,6 +20,7 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
@@ -940,6 +941,7 @@ fi
 	})
 
 	Context("with cluster default network and migratable virtual machines", Ordered, func() {
+		d := diagnostics.New(fr)
 		AfterAll(func() {
 			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
 		})
@@ -1177,6 +1179,9 @@ write_files:
 				WithTimeout(5*time.Second).
 				WithPolling(time.Second).
 				Should(ConsistOf(expectedAddreses), step)
+
+			d.ConntrackDumpingDaemonSet()
+			d.TCPDumpDaemonSet([]string{"ovn-k8s-mp0"}, "arp or icmp6")
 
 			step = by(vmi.Name, fmt.Sprintf("Check east/west traffic before virtual machine %s", td.test.description))
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)

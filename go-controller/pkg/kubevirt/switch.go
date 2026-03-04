@@ -1,7 +1,6 @@
 package kubevirt
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -79,30 +78,28 @@ func ComposeARPProxyLSPOption() string {
 	return strings.Join(arpProxy, " ")
 }
 
-func notifyMAC(ips []*net.IPNet, mac net.HardwareAddr) error {
-	var errs []error
+func notifyMAC(ips []*net.IPNet, mac net.HardwareAddr) {
 	for _, ip := range ips {
 		if ip.IP.To4() != nil {
 			garp, err := util.NewGARP(ip.IP, &mac)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed creating GARP for IP %s with MAC %s: %w", ip.IP, mac, err))
+				klog.Errorf("Failed to create GARP for IP %s with MAC %s: %v", ip.IP, mac, err)
 				continue
 			}
 			if err := util.BroadcastGARP(types.K8sMgmtIntfName, garp); err != nil {
-				errs = append(errs, fmt.Errorf("failed sending GARP for IP %s: %w", ip.IP, err))
+				klog.Errorf("Failed to send GARP for IP %s over interface %s: %v", ip.IP, types.K8sMgmtIntfName, err)
 			}
 		} else {
 			na, err := ndp.NewNeighborAdvertisement(ip.IP, &mac)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed creating NA for IP %s with MAC %s: %w", ip.IP, mac, err))
+				klog.Errorf("Failed to create NA for IP %s with MAC %s: %v", ip.IP, mac, err)
 				continue
 			}
 			if err := ndp.SendUnsolicitedNeighborAdvertisement(types.K8sMgmtIntfName, na); err != nil {
-				errs = append(errs, fmt.Errorf("failed sending Unsolicited NA for IP %s: %w", ip.IP, err))
+				klog.Errorf("Failed to send unsolicited NA for IP %s over interface %s: %v", ip.IP, types.K8sMgmtIntfName, err)
 			}
 		}
 	}
-	return errors.Join(errs...)
 }
 
 func deleteStaleLogicalSwitchPorts(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {

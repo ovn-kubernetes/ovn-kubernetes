@@ -72,6 +72,7 @@ func ReconcileClusterDefaultNetworkLocalZone(watchFactory *factory.WatchFactory,
 	if err := reconcileClusterDefaultNetworkLocalZoneNeighbours(watchFactory, nbClient, lsManager, pod, podAnnotation, nodeName); err != nil {
 		return fmt.Errorf("failed to reconcile neighbours at kubevirt cluster default network local zone: %w", err)
 	}
+
 	return nil
 }
 
@@ -224,11 +225,10 @@ func reconcileClusterDefaultNetworkLocalZoneNeighbours(watchFactory *factory.Wat
 		// will not work since it's a different switch so overwrite those neighbors with
 		// proxy mac from gateway
 		if !currentNodeOwnsSubnet {
-			if err := execOnNodePodsAnnotation(watchFactory, pod, nodeOwningSubnet, types.DefaultNetworkName, func(currentPodAnnotation *util.PodAnnotation) error {
-				return notifyMAC(currentPodAnnotation.IPs, arpProxyHardwareAddr)
-			}); err != nil {
-				return fmt.Errorf("failed notifying proxy on pod IPs within VM's subnet to update neighbors VM: %w", err)
-			}
+			execOnNodePodsAnnotation(watchFactory, pod, nodeOwningSubnet, types.DefaultNetworkName, func(currentPodAnnotation *util.PodAnnotation) error {
+				notifyMAC(currentPodAnnotation.IPs, arpProxyHardwareAddr)
+				return nil
+			})
 			// Include the gateway IPs in the notification list. After PR#5773 [1]
 			// DHCP advertises the actual subnet gateway IP instead of the link-local
 			// 169.254.1.1 address. Before migration, the VM resolves its gateway
@@ -241,36 +241,32 @@ func reconcileClusterDefaultNetworkLocalZoneNeighbours(watchFactory *factory.Wat
 			// checks.
 			// [1] https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5773
 			// [2] https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4755
-			if err := notifyMAC(gwIPs, arpProxyHardwareAddr); err != nil {
-				return err
-			}
+			notifyMAC(gwIPs, arpProxyHardwareAddr)
 		} else {
 			// When vm is migrated back to node owning the subnet we need
 			// to update the VM's neighbor cache: replace arp_proxy MACs
 			// with the real MACs of same-subnet pods and the gateway,
 			// since they are now on the same switch and can communicate
 			// directly at L2.
-			if err := execOnNodePodsAnnotation(watchFactory, pod, nodeOwningSubnet, types.DefaultNetworkName, func(currentPodAnnotation *util.PodAnnotation) error {
-				return notifyMAC(currentPodAnnotation.IPs, currentPodAnnotation.MAC)
-			}); err != nil {
-				return fmt.Errorf("failed notifying LSP mac on pod IPs within VM's subnet to update neighbors VM: %w", err)
-			}
+			execOnNodePodsAnnotation(watchFactory, pod, nodeOwningSubnet, types.DefaultNetworkName, func(currentPodAnnotation *util.PodAnnotation) error {
+				notifyMAC(currentPodAnnotation.IPs, currentPodAnnotation.MAC)
+				return nil
+			})
 
 			// Send GARPs for gateway IPs with the LRP MAC so the VM's
 			// gateway neighbor entry is updated from arp_proxy MAC to
 			// the real LRP MAC on the subnet-owning switch.
-			lrp := &nbdb.LogicalRouterPort{Name: types.RouterToSwitchPrefix + nodeOwningSubnet.Name}
+			lrpName := types.RouterToSwitchPrefix + nodeOwningSubnet.Name
+			lrp := &nbdb.LogicalRouterPort{Name: lrpName}
 			lrp, err = libovsdbops.GetLogicalRouterPort(nbClient, lrp)
 			if err != nil {
-				return fmt.Errorf("failed to get router port %s: %w", lrp.Name, err)
+				return fmt.Errorf("failed to get router port %s: %w", lrpName, err)
 			}
 			gwMAC, err := net.ParseMAC(lrp.MAC)
 			if err != nil {
-				return fmt.Errorf("failed to parse MAC %s from router port %s: %w", lrp.MAC, lrp.Name, err)
+				return fmt.Errorf("failed to parse MAC %s from router port %s: %w", lrp.MAC, lrpName, err)
 			}
-			if err := notifyMAC(gwIPs, gwMAC); err != nil {
-				return err
-			}
+			notifyMAC(gwIPs, gwMAC)
 		}
 	}
 	return nil
@@ -395,9 +391,7 @@ func reconcileClusterDefaultNetworkRemoteZoneNeighbours(watchFactory *factory.Wa
 		// the gateway to access it so we need to invalidate their neighbor entries to point now to the
 		// gateway proxy mac.
 
-		if err := notifyMAC(podAnnotation.IPs, arpProxyHardwareAddr); err != nil {
-			return fmt.Errorf("failed notifying arp proxy MAC on migrated VM IPs to update neighbours: %w", err)
-		}
+		notifyMAC(podAnnotation.IPs, arpProxyHardwareAddr)
 	}
 	return nil
 }
