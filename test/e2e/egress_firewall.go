@@ -393,7 +393,7 @@ spec:
 				framework.ExpectNoError(err, fmt.Sprintf("unable to create nodePort service, err: %v", err))
 
 				ginkgo.By("Waiting for the endpoints to pop up")
-				err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 1, time.Second, wait.ForeverTestTimeout)
+				err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 1)
 				framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 				// 2. Check connectivity works both ways
