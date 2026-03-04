@@ -1886,50 +1886,18 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 
 	// infra constants
 	const (
-		bgpPeerSubnetIPv4 = "172.36.0.0/16"
-		bgpPeerSubnetIPv6 = "fc00:f853:ccd:36::/64"
-		// TODO: test with overlaps but we need better isolation from the infra
-		// provider, docker `--internal` bridge networks with iptables based
-		// isolation doesn't cut it. macvlan driver might be a better option.
-		bgpServerSubnetIPv4 = "172.38.0.0/16"
-		bgpServerSubnetIPv6 = "fc00:f853:ccd:38::/64"
-
-		otherBGPPeerSubnetIPv4   = "172.136.0.0/16"
-		otherBGPPeerSubnetIPv6   = "fc00:f853:ccd:136::/64"
-		otherBGPServerSubnetIPv4 = "172.138.0.0/16"
-		otherBGPServerSubnetIPv6 = "fc00:f853:ccd:138::/64"
-
-		bgpASN = 64512
+		bgpASN                   = 64512
+		bgpPeerSubnetPatternIPv4 = "172.36.%d.%d/29"
+		bgpPeerSubnetPatternIPv6 = "fc00:%x::/112"
 	)
 
-	// staleSubnets lists all subnets that may be left behind if a test times out during cleanup.
-	staleSubnets := sets.New(
-		bgpPeerSubnetIPv4, bgpPeerSubnetIPv6,
-		bgpServerSubnetIPv4, bgpServerSubnetIPv6,
-		otherBGPPeerSubnetIPv4, otherBGPPeerSubnetIPv6,
-		otherBGPServerSubnetIPv4, otherBGPServerSubnetIPv6,
-	)
-
-	cleanupStaleSubnets := func(ictx infraapi.Context) error {
-		networkNames, err := infraprovider.Get().ListNetworks()
-		if err != nil {
-			return err
-		}
-		for _, name := range networkNames {
-			network, err := infraprovider.Get().GetNetwork(name)
-			if err != nil {
-				continue
-			}
-			v4, v6, _ := network.IPv4IPv6Subnets()
-			if staleSubnets.Has(v4) || staleSubnets.Has(v6) {
-				framework.Logf("Cleaning up stale network %q with subnets %s/%s", name, v4, v6)
-				err := ictx.DeleteNetwork(network)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+	randomBGPPeerSubnets := func() (ipv4, ipv6 string) {
+		// 8192 possible /29 subnets in 172.27.0.0/16
+		n := randomN(8192)
+		// 32 /29-aligned slots per third octet (256/8), so divide to get octet pair
+		third := n / 32
+		fourth := (n % 32) * 8
+		return fmt.Sprintf("172.36.%d.%d/29", third, fourth), fmt.Sprintf("fc00:%x::/112", n)
 	}
 
 	// configuration helper to setup infra
@@ -1941,23 +1909,21 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		networkName string,
 		networkType networkType,
 		networkSpec *udnv1.NetworkSpec,
-		withOtherInfra bool,
 	) (*corev1.Namespace, []string) {
 		ginkgo.GinkgoHelper()
 
 		var servers []string
 		switch networkType {
 		case cudnAdvertisedVRFLite:
-			gomega.Expect(cleanupStaleSubnets(ictx)).To(gomega.Succeed())
 			ginkgo.By("Running a BGP network with an agnhost server")
 			agnhostName := networkName + "-vrflite-agnhost"
 			agnhostNetworkName := agnhostName
-			bgpPeerCIDRs := []string{bgpPeerSubnetIPv4, bgpPeerSubnetIPv6}
-			bgpServerCIDRs := []string{bgpServerSubnetIPv4, bgpServerSubnetIPv6}
-			if withOtherInfra {
-				bgpPeerCIDRs = []string{otherBGPPeerSubnetIPv4, otherBGPPeerSubnetIPv6}
-				bgpServerCIDRs = []string{otherBGPServerSubnetIPv4, otherBGPServerSubnetIPv6}
-			}
+			bgpPeerSubnetV4, bgpPeerSubnetV6 := randomBGPPeerSubnets()
+			bgpPeerCIDRs := []string{bgpPeerSubnetV4, bgpPeerSubnetV6}
+			framework.Logf("Networks allocated for VRF-Lite BGP peers: %v", bgpPeerCIDRs)
+			bgpServerSubnetV4, bgpServerSubnetV6 := randomIPVRFAgnhostSubnets()
+			bgpServerCIDRs := []string{bgpServerSubnetV4, bgpServerSubnetV6}
+			framework.Logf("Networks allocated for VRF-Lite Agnhost servers: %v", bgpServerCIDRs)
 			gomega.Expect(
 				runBGPNetworkAndServer(
 					f,
@@ -1975,8 +1941,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			ginkgo.By("Running a EVPN network with an agnhost server")
 			ipVRFAgnhostIPv4, ipVRFAgnhostIPv6 := randomIPVRFAgnhostSubnets()
 			ipVRFAgnhostSubnets := []string{ipVRFAgnhostIPv4, ipVRFAgnhostIPv6}
+			framework.Logf("Networks allocated for EVPN Agnhost servers: %v", ipVRFAgnhostSubnets)
 			vtepIPv4, vtepIPv6 := randomVTEPSubnets()
 			vtepSubnets := []string{vtepIPv4, vtepIPv6}
+			framework.Logf("Networks allocated for EVPN VTEPs: %v", vtepSubnets)
 			macVRFAgnhostName := networkName + "-macvrf-agnhost"
 			macVRFNetworkName := macVRFAgnhostName
 			ipVRFAgnhostName := networkName + "-ipvrf-agnhost"
@@ -2161,23 +2129,19 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 	})
 
 	// define networks to test with
-	const (
-		cudnCIDRv4 = "103.103.0.0/16"
-		cudnCIDRv6 = "2014:100:200::0/60"
-	)
 	var (
 		layer3NetworkSpec = &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer3,
 			Layer3: &udnv1.Layer3Config{
 				Role:    "Primary",
-				Subnets: []udnv1.Layer3Subnet{{CIDR: cudnCIDRv4, HostSubnet: 24}, {CIDR: cudnCIDRv6, HostSubnet: 64}},
+				Subnets: randomL3CUDNSubnets(),
 			},
 		}
 		layer2NetworkSpec = &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer2,
 			Layer2: &udnv1.Layer2Config{
 				Role:    "Primary",
-				Subnets: udnv1.DualStackCIDRs{cudnCIDRv4, cudnCIDRv6},
+				Subnets: randomL2CUDNSubnets(),
 			},
 		}
 		layer2MACVRFNetworkSpec = &udnv1.NetworkSpec{
@@ -2261,7 +2225,6 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
 				}
 
-				var withMainInfra bool
 				testNamespace, externalServers = configureNetworkWithInfra(
 					f,
 					ictx,
@@ -2270,7 +2233,6 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					testNetworkName,
 					testedNetworkType,
 					networkSpec,
-					withMainInfra,
 				)
 			})
 
@@ -2510,24 +2472,19 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				)
 
 				ginkgo.Describe("When there is other network", func() {
-					const (
-						otherUDNCIDRv4 = "103.203.0.0/16"
-						otherUDNCIDRv6 = "2014:200:200::0/60"
-					)
-
 					var (
 						otherLayer3NetworkSpec = &udnv1.NetworkSpec{
 							Topology: udnv1.NetworkTopologyLayer3,
 							Layer3: &udnv1.Layer3Config{
 								Role:    "Primary",
-								Subnets: []udnv1.Layer3Subnet{{CIDR: otherUDNCIDRv4, HostSubnet: 24}, {CIDR: otherUDNCIDRv6, HostSubnet: 64}},
+								Subnets: randomL3CUDNSubnets(),
 							},
 						}
 						otherLayer2NetworkSpec = &udnv1.NetworkSpec{
 							Topology: udnv1.NetworkTopologyLayer2,
 							Layer2: &udnv1.Layer2Config{
 								Role:    "Primary",
-								Subnets: udnv1.DualStackCIDRs{otherUDNCIDRv4, otherUDNCIDRv6},
+								Subnets: randomL2CUDNSubnets(),
 							},
 						}
 					)
@@ -2562,7 +2519,6 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
 								}
 
-								withOtherInfra := true
 								otherNamespace, _ = configureNetworkWithInfra(
 									f,
 									ictx,
@@ -2571,7 +2527,6 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									otherNamespaceName,
 									networkType,
 									networkSpec,
-									withOtherInfra,
 								)
 							})
 
