@@ -9,3 +9,11 @@ type ValidateCRScenario struct {
 	Manifest    string
 	ExpectedErr string
 }
+
+// UpdateCRScenario represents a test scenario where a resource is first created with InitialManifest,
+// then updated with the embedded Manifest. If ExpectedErr is non-empty, the update is expected to
+// fail with that error substring; otherwise it is expected to succeed.
+type UpdateCRScenario struct {
+	ValidateCRScenario
+	InitialManifest string
+}

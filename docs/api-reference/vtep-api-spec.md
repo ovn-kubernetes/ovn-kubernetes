@@ -113,7 +113,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `cidrs` _[DualStackCIDRs](#dualstackcidrs)_ | CIDRs is the list of IP ranges from which VTEP IPs are discovered or allocated.<br />Multiple CIDRs may be specified to expand capacity. Only IPv4 CIDRs are currently supported.<br />The format should match standard CIDR notation (for example, "100.64.0.0/24"). |  | MaxItems: 10 <br />MaxLength: 43 <br />MinItems: 1 <br />Required: \{\} <br /> |
+| `cidrs` _[DualStackCIDRs](#dualstackcidrs)_ | CIDRs is the list of IP ranges from which VTEP IPs are discovered or allocated.<br />Multiple CIDRs may be specified to expand capacity. Only IPv4 CIDRs are currently supported.<br />IPv6 VTEP endpoints are not yet supported by FRR for EVPN transport.<br />The format should match standard CIDR notation (for example, "100.64.0.0/24"). |  | MaxItems: 10 <br />MaxLength: 43 <br />MinItems: 1 <br />Required: \{\} <br /> |
 | `mode` _[VTEPMode](#vtepmode)_ | Mode specifies how VTEP IPs are managed.<br />"Managed" means OVN-Kubernetes allocates and assigns VTEP IPs per node automatically.<br />"Unmanaged" means an external provider handles IP assignment; OVN-Kubernetes discovers existing IPs on nodes.<br />Defaults to "Managed". | Managed | Enum: [Managed Unmanaged] <br /> |
 
 

@@ -72,6 +72,8 @@ type CIDR string
 // +kubebuilder:validation:MinItems=1
 // +kubebuilder:validation:MaxItems=10
 // +kubebuilder:validation:XValidation:rule="self.all(c, isCIDR(c) && cidr(c).ip().family() == 4)", message="Only IPv4 CIDRs are currently supported; IPv6 VTEP endpoints are not yet supported by FRR for EVPN transport"
+// +kubebuilder:validation:XValidation:rule="size(self) >= size(oldSelf)", message="CIDRs cannot be removed; only appending new CIDRs is allowed"
+// +kubebuilder:validation:XValidation:rule="oldSelf.all(i, v, cidr(self[i]).containsIP(cidr(v).ip()) && cidr(self[i]).prefixLength() <= cidr(v).prefixLength())", message="Existing CIDRs must remain at the same position and can only be expanded to a wider mask; shrinking or reordering is not allowed"
 type DualStackCIDRs []CIDR
 
 // VTEPMode defines the mode of VTEP IP allocation.
