@@ -36,7 +36,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	"k8s.io/klog/v2"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
+	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -994,6 +996,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		})
 
 		ginkgo.It("should get node not ready with a too small MTU", func() {
+			logger := klog.FromContext(ctx)
 			// set the defaults interface MTU very low
 			_, err := infraprovider.Get().ExecK8NodeCommand(testNodeName, []string{"ip", "link", "set", deploymentconfig.Get().ExternalBridgeName(), "mtu", "1000"})
 			if err != nil {
@@ -1013,7 +1016,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 				if err != nil {
 					framework.Failf("could not find node resource: %s", err)
 				}
-				return e2enode.IsNodeReady(node)
+				return e2enode.IsNodeReady(logger, node)
 			}, 30*time.Second).Should(gomega.BeFalse())
 		})
 
@@ -1035,7 +1038,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 				if err != nil {
 					framework.Failf("could not find node resource: %s", err)
 				}
-				return e2enode.IsNodeReady(node)
+				return e2enode.IsNodeReady(logger, node)
 			}, 30*time.Second).Should(gomega.BeTrue())
 		})
 	})
