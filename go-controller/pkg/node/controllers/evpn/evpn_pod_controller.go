@@ -242,149 +242,111 @@ func (c *Controller) deletePodNeighbors(key string) error {
 	return nil
 }
 
-// podInitialSync adds missing neighbor entries and removes stale ones.
-func (c *Controller) podInitialSync() error {
+// cleanStalePodEntries removes stale neighbor and FDB entries.
+func (c *Controller) cleanStalePodEntries() error {
 	if !util.WaitForInformerCacheSyncWithTimeout("evpn-pod", c.stopChan, c.watchFactory.PodCoreInformer().Informer().HasSynced) {
 		return fmt.Errorf("timed out waiting for pod informer cache to sync")
 	}
 
-	type evpnDevices struct {
+	type evpnNetworkDevices struct {
 		sviName     string
 		ovsPortName string
-		macvrfVID   int
+		nadKeys     []string
 	}
-	evpnNetworks := make(map[string]evpnDevices)
+	var networks []evpnNetworkDevices
 	err := c.networkMgr.DoWithLock(func(netInfo util.NetInfo) error {
 		if netInfo == nil || netInfo.EVPNVTEPName() == "" {
 			return nil
 		}
-		evpnNetworks[netInfo.GetNetworkName()] = evpnDevices{
+		networks = append(networks, evpnNetworkDevices{
 			sviName:     GetEVPNL2SVIName(netInfo),
 			ovsPortName: GetEVPNOVSPortName(netInfo),
-			macvrfVID:   netInfo.EVPNMACVRFVID(),
-		}
+			nadKeys:     c.networkMgr.GetNADKeysForNetwork(netInfo.GetNetworkName()),
+		})
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to collect EVPN networks: %w", err)
 	}
 
-	type nsEVPNInfo struct {
-		nadKey string
-		evpnDevices
-	}
-	evpnNamespaces := make(map[string]nsEVPNInfo)
-	for networkName, dev := range evpnNetworks {
-		for _, nadKey := range c.networkMgr.GetNADKeysForNetwork(networkName) {
+	for _, net := range networks {
+		desiredIPs := sets.New[string]()
+		desiredMACs := sets.New[string]()
+
+		for _, nadKey := range net.nadKeys {
 			ns, _, _ := cache.SplitMetaNamespaceKey(nadKey)
-			evpnNamespaces[ns] = nsEVPNInfo{nadKey: nadKey, evpnDevices: dev}
-		}
-	}
-
-	pods, err := c.podLister.List(labels.Everything())
-	if err != nil {
-		return fmt.Errorf("failed to list pods: %w", err)
-	}
-
-	desiredBySVI := make(map[string]sets.Set[string])
-	desiredMACsByOVSPort := make(map[string]sets.Set[string])
-	for _, pod := range pods {
-		if pod.Spec.NodeName != c.nodeName || util.PodCompleted(pod) {
-			continue
-		}
-
-		nsInfo, ok := evpnNamespaces[pod.Namespace]
-		if !ok {
-			continue
-		}
-
-		key, err := cache.MetaNamespaceKeyFunc(pod)
-		if err != nil {
-			klog.Errorf("Failed to get namespace key for pod %s: %v", pod.Name, err)
-			continue
-		}
-
-		podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nsInfo.nadKey)
-		if err != nil {
-			klog.Errorf("Failed to unmarshal pod annotation for pod %s: %v", pod.Name, err)
-			continue
-		}
-
-		entries := &neighEntries{sviName: nsInfo.sviName, ovsPortName: nsInfo.ovsPortName, macvrfVID: nsInfo.macvrfVID, mac: podAnnotation.MAC}
-		if desiredMACsByOVSPort[nsInfo.ovsPortName] == nil {
-			desiredMACsByOVSPort[nsInfo.ovsPortName] = sets.New[string]()
-		}
-		desiredMACsByOVSPort[nsInfo.ovsPortName].Insert(podAnnotation.MAC.String())
-		for _, ipNet := range podAnnotation.IPs {
-			if desiredBySVI[nsInfo.sviName] == nil {
-				desiredBySVI[nsInfo.sviName] = sets.New[string]()
-			}
-			desiredBySVI[nsInfo.sviName].Insert(ipNet.IP.String())
-			entries.ips = append(entries.ips, ipNet.IP)
-		}
-
-		if err := c.ensurePodNeighbors(entries); err != nil {
-			klog.Errorf("Failed to ensure pod neighbor entries: %v", err)
-			continue
-		}
-
-		c.podNeighLock.Lock()
-		c.podNeighbors[key] = entries
-		c.podNeighLock.Unlock()
-	}
-
-	for _, dev := range evpnNetworks {
-		// Clean up stale neighbor entries on SVI
-		svi, err := util.GetNetLinkOps().LinkByName(dev.sviName)
-		if err != nil {
-			klog.V(5).Infof("SVI %s not found, skipping", dev.sviName)
-			continue
-		}
-		for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
-			neighs, err := util.GetNetLinkOps().NeighList(svi.Attrs().Index, family)
+			pods, err := c.podLister.Pods(ns).List(labels.Everything())
 			if err != nil {
-				klog.Errorf("Failed to get neighbor entries from %s: %v", dev.sviName, err)
+				klog.Errorf("Failed to list pods in namespace %s: %v", ns, err)
 				continue
 			}
-			desiredIPs := desiredBySVI[dev.sviName]
-			for _, n := range neighs {
-				if n.State&netlink.NUD_PERMANENT == 0 {
+			for _, pod := range pods {
+				if pod.Spec.NodeName != c.nodeName || util.PodCompleted(pod) {
 					continue
 				}
-				if desiredIPs == nil || !desiredIPs.Has(n.IP.String()) {
-					if err := util.LinkNeighDel(svi, n.IP); err != nil {
-						klog.Errorf("Failed to delete stale neighbor %s from %s: %v", n.IP, dev.sviName, err)
-					} else {
-						klog.V(5).Infof("Deleted stale neighbor %s lladdr %s from %s", n.IP, n.HardwareAddr, dev.sviName)
-					}
+				podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
+				if err != nil {
+					continue
+				}
+				desiredMACs.Insert(podAnnotation.MAC.String())
+				for _, ipNet := range podAnnotation.IPs {
+					desiredIPs.Insert(ipNet.IP.String())
 				}
 			}
 		}
 
-		// Clean up stale FDB entries on OVS port
-		ovsPort, err := util.GetNetLinkOps().LinkByName(dev.ovsPortName)
+		c.cleanStaleNeighbors(net.sviName, desiredIPs)
+		c.cleanStaleFDB(net.ovsPortName, desiredMACs)
+	}
+	return nil
+}
+
+func (c *Controller) cleanStaleNeighbors(sviName string, desiredIPs sets.Set[string]) {
+	svi, err := util.GetNetLinkOps().LinkByName(sviName)
+	if err != nil {
+		return
+	}
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		neighs, err := util.GetNetLinkOps().NeighList(svi.Attrs().Index, family)
 		if err != nil {
-			klog.V(5).Infof("OVS port %s not found, skipping", dev.ovsPortName)
+			klog.Errorf("Failed to list neighbors on %s: %v", sviName, err)
 			continue
 		}
-		fdbs, err := util.GetNetLinkOps().NeighList(ovsPort.Attrs().Index, syscall.AF_BRIDGE)
-		if err != nil {
-			klog.Errorf("Failed to get FDB entries from %s: %v", dev.ovsPortName, err)
-			continue
-		}
-		desiredMACs := desiredMACsByOVSPort[dev.ovsPortName]
-		for _, f := range fdbs {
-			if f.State&netlink.NUD_NOARP == 0 || f.Flags&netlink.NTF_MASTER == 0 {
+		for _, n := range neighs {
+			if n.State&netlink.NUD_PERMANENT == 0 {
 				continue
 			}
-			if desiredMACs == nil || !desiredMACs.Has(f.HardwareAddr.String()) {
-				if err := util.LinkFDBDel(ovsPort, f.HardwareAddr, f.Vlan); err != nil {
-					klog.Errorf("Failed to delete stale FDB %s from %s: %v", f.HardwareAddr, dev.ovsPortName, err)
+			if !desiredIPs.Has(n.IP.String()) {
+				if err := util.LinkNeighDel(svi, n.IP); err != nil {
+					klog.Errorf("Failed to delete stale neighbor %s from %s: %v", n.IP, sviName, err)
 				} else {
-					klog.V(5).Infof("Deleted stale FDB %s from %s", f.HardwareAddr, dev.ovsPortName)
+					klog.V(5).Infof("Deleted stale neighbor %s from %s", n.IP, sviName)
 				}
 			}
 		}
 	}
-	return nil
+}
+
+func (c *Controller) cleanStaleFDB(ovsPortName string, desiredMACs sets.Set[string]) {
+	ovsPort, err := util.GetNetLinkOps().LinkByName(ovsPortName)
+	if err != nil {
+		return
+	}
+	fdbs, err := util.GetNetLinkOps().NeighList(ovsPort.Attrs().Index, syscall.AF_BRIDGE)
+	if err != nil {
+		klog.Errorf("Failed to list FDB on %s: %v", ovsPortName, err)
+		return
+	}
+	for _, f := range fdbs {
+		if f.State&netlink.NUD_NOARP == 0 || f.Flags&netlink.NTF_MASTER == 0 {
+			continue
+		}
+		if !desiredMACs.Has(f.HardwareAddr.String()) {
+			if err := util.LinkFDBDel(ovsPort, f.HardwareAddr, f.Vlan); err != nil {
+				klog.Errorf("Failed to delete stale FDB %s from %s: %v", f.HardwareAddr, ovsPortName, err)
+			} else {
+				klog.V(5).Infof("Deleted stale FDB %s from %s", f.HardwareAddr, ovsPortName)
+			}
+		}
+	}
 }

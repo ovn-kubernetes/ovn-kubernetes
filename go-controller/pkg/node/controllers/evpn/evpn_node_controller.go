@@ -158,13 +158,27 @@ func (c *Controller) initialSync() error {
 		return fmt.Errorf("failed to list VTEPs: %w", err)
 	}
 
-	// Reconcile all VTEPs to populate NDM desired state before starting it.
-	// This prevents NDM from removing interfaces that existed before restart.
+	node, err := c.watchFactory.GetNode(c.nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %w", c.nodeName, err)
+	}
+
+	// Pre-populate NDM desired state so it doesn't remove existing devices on startup.
+	// Only NDM-managed devices (bridge, VXLANs, SVIs) are handled here.
+	// OVS ports are deferred to normal reconciliation after controllers start.
 	activeVTEPs := sets.New[string]()
 	for _, vtep := range vteps {
 		activeVTEPs.Insert(vtep.Name)
-		if err := c.reconcile(vtep.Name); err != nil {
-			klog.Errorf("Failed to reconcile VTEP %s during initial sync: %v", vtep.Name, err)
+		vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(vtep, node)
+		if err != nil {
+			klog.Errorf("Failed to get VTEP IPs for %s: %v", vtep.Name, err)
+			continue
+		}
+		if vtepIPv4 == nil && vtepIPv6 == nil {
+			continue
+		}
+		if _, err := c.ensureDevices(vtep, vtepIPv4, vtepIPv6); err != nil {
+			klog.Errorf("Failed to pre-populate NDM for VTEP %s: %v", vtep.Name, err)
 		}
 	}
 
@@ -175,7 +189,7 @@ func (c *Controller) initialSync() error {
 		klog.Errorf("Failed to to clean up stale OVS ports: %v", err)
 	}
 
-	if err := c.podInitialSync(); err != nil {
+	if err := c.cleanStalePodEntries(); err != nil {
 		klog.Errorf("Failed to sync pod neighbors: %v", err)
 	}
 
@@ -304,12 +318,27 @@ func (c *Controller) reconcile(key string) error {
 		return c.deleteVTEPDevices(key)
 	}
 
+	networks, err := c.ensureDevices(vtep, vtepIPv4, vtepIPv6)
+	if err != nil {
+		return err
+	}
+
+	if err := c.reconcileOVSPorts(vtep.Name, GetEVPNBridgeName(vtep.Name), networks); err != nil {
+		return fmt.Errorf("failed to reconcile OVS ports: %w", err)
+	}
+
+	return nil
+}
+
+// ensureDevices programs NDM-managed devices for a VTEP: bridge, VXLANs, and SVIs.
+// OVS ports are handled separately by reconcileOVSPorts.
+func (c *Controller) ensureDevices(vtep *vtepv1.VTEP, vtepIPv4, vtepIPv6 net.IP) ([]evpnNetworkInfo, error) {
 	bridgeName := GetEVPNBridgeName(vtep.Name)
 
 	klog.V(4).Infof("Applying EVPN devices for VTEP %s: bridge=%s, IPv4=%v, IPv6=%v",
 		vtep.Name, bridgeName, vtepIPv4, vtepIPv6)
 
-	err = c.ndm.EnsureLink(netlinkdevicemanager.DeviceConfig{
+	err := c.ndm.EnsureLink(netlinkdevicemanager.DeviceConfig{
 		Link: &netlink.Bridge{
 			LinkAttrs:       netlink.LinkAttrs{Name: bridgeName},
 			VlanFiltering:   ptr.To(true),
@@ -317,48 +346,44 @@ func (c *Controller) reconcile(key string) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to apply bridge %s: %w", bridgeName, err)
+		return nil, fmt.Errorf("failed to apply bridge %s: %w", bridgeName, err)
 	}
 
 	networks, err := c.collectEVPNNetworks(vtep.Name)
 	if err != nil {
-		return fmt.Errorf("failed to collect EVPN networks: %w", err)
+		return nil, fmt.Errorf("failed to collect EVPN networks: %w", err)
 	}
 
 	mappings := c.getVIDVNIMappings(networks)
 	if vtepIPv4 != nil {
 		vxlan4Name := GetEVPNVXLANName(vtep.Name, utilnet.IPv4)
 		if err := c.ensureVXLAN(vxlan4Name, bridgeName, vtepIPv4, mappings); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		// Cover losing ipv4 vtep IP
 		if err := c.ndm.DeleteLink(GetEVPNVXLANName(vtep.Name, utilnet.IPv4)); err != nil {
-			return fmt.Errorf("failed to delete VTEP VXLAN device: %w", err)
+			return nil, fmt.Errorf("failed to delete VTEP VXLAN device: %w", err)
 		}
 	}
 
 	if vtepIPv6 != nil {
 		vxlan6Name := GetEVPNVXLANName(vtep.Name, utilnet.IPv6)
 		if err := c.ensureVXLAN(vxlan6Name, bridgeName, vtepIPv6, mappings); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		// Cover losing ipv6 vtep IP
 		if err := c.ndm.DeleteLink(GetEVPNVXLANName(vtep.Name, utilnet.IPv6)); err != nil {
-			return fmt.Errorf("failed to delete VTEP VXLAN device: %w", err)
+			return nil, fmt.Errorf("failed to delete VTEP VXLAN device: %w", err)
 		}
 	}
 
 	if err := c.reconcileSVIs(bridgeName, networks); err != nil {
-		return fmt.Errorf("failed to reconcile SVIs: %w", err)
+		return nil, fmt.Errorf("failed to reconcile SVIs: %w", err)
 	}
 
-	if err := c.reconcileOVSPorts(vtep.Name, bridgeName, networks); err != nil {
-		return fmt.Errorf("failed to reconcile OVS ports: %w", err)
-	}
-
-	return nil
+	return networks, nil
 }
 
 func (c *Controller) reconcileNAD(key string) error {
