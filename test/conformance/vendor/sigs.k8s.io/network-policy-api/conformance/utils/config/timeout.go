@@ -44,6 +44,14 @@ type TimeoutConfig struct {
 	// RequestTimeout represents the maximum time before which the connection attempt from client to server will timeout.
 	// Max value for conformant implementation: None
 	RequestTimeout time.Duration
+
+	// PokeTimeout represents the maximum time to wait for PokeServer to report the expected result.
+	// Max value for conformant implementation: None
+	PokeTimeout time.Duration
+
+	// PokingInterval represents the polling interval for PokeServer retries.
+	// Max value for conformant implementation: None
+	PokeInterval time.Duration
 }
 
 // DefaultTimeoutConfig populates a TimeoutConfig with the default values.
@@ -55,6 +63,8 @@ func DefaultTimeoutConfig() TimeoutConfig {
 		ManifestFetchTimeout:  10 * time.Second,
 		NamespacesMustBeReady: 300 * time.Second,
 		RequestTimeout:        3 * time.Second,
+		PokeTimeout:           10 * time.Second,
+		PokeInterval:          500 * time.Millisecond,
 	}
 }
 
@@ -77,5 +87,11 @@ func SetupTimeoutConfig(timeoutConfig *TimeoutConfig) {
 	}
 	if timeoutConfig.RequestTimeout == 0 {
 		timeoutConfig.RequestTimeout = defaultTimeoutConfig.RequestTimeout
+	}
+	if timeoutConfig.PokeTimeout == 0 {
+		timeoutConfig.PokeTimeout = defaultTimeoutConfig.PokeTimeout
+	}
+	if timeoutConfig.PokeInterval == 0 {
+		timeoutConfig.PokeInterval = defaultTimeoutConfig.PokeInterval
 	}
 }
