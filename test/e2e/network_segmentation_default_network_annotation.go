@@ -16,9 +16,9 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 )
 
 var _ = Describe("Network Segmentation: Default network multus annotation", feature.NetworkSegmentation, func() {
@@ -177,11 +177,6 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 			Expect(err).NotTo(HaveOccurred(), "Should create UserDefinedNetwork")
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udn.Namespace, udn.Name), 5*time.Second, time.Second).Should(Succeed())
 
-			By("Creating a pod without the default-network annotation")
-			podWithoutAnnotation := e2epod.NewAgnhostPod(f.Namespace.Name, "pod-without-annotation", nil, nil, nil)
-			podWithoutAnnotation.Spec.Containers[0].Command = []string{"sleep", "infinity"}
-			podWithoutAnnotation = e2epod.NewPodClient(f).CreateSync(context.TODO(), podWithoutAnnotation)
-
 			By("Creating a pod with the default-network annotation")
 
 			nse := []nadapi.NetworkSelectionElement{{
@@ -199,6 +194,11 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 			}
 			podWithAnnotation.Spec.Containers[0].Command = []string{"sleep", "infinity"}
 			podWithAnnotation = e2epod.NewPodClient(f).CreateSync(context.TODO(), podWithAnnotation)
+
+			By("Creating a pod without the default-network annotation")
+			podWithoutAnnotation := e2epod.NewAgnhostPod(f.Namespace.Name, "pod-without-annotation", nil, nil, nil)
+			podWithoutAnnotation.Spec.Containers[0].Command = []string{"sleep", "infinity"}
+			podWithoutAnnotation = e2epod.NewPodClient(f).CreateSync(context.TODO(), podWithoutAnnotation)
 
 			By("Attempting to add the default-network annotation to the pod without annotation")
 			podWithoutAnnotation.Annotations = map[string]string{

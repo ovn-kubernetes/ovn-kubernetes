@@ -32,21 +32,21 @@ import (
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utilnet "k8s.io/utils/net"
 
-	ovnconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	eipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
-	egressiplisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iptables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/egressip"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	ovnconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	eipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	egressipinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
+	egressiplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/egressip"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
@@ -567,6 +567,10 @@ func (c *Controller) processEIP(eip *eipv1.EgressIP) (*eIPConfig, sets.Set[strin
 			if err != nil {
 				return nil, selectedNamespaces, selectedPods, selectedNamespacesPodIPs, fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
 			}
+			if netInfo == nil {
+				// no active network
+				continue
+			}
 			if netInfo.IsUserDefinedNetwork() {
 				// EIP for secondary host interfaces is not supported for secondary networks
 				continue
@@ -1036,6 +1040,10 @@ func (c *Controller) repairNode() error {
 					if err != nil {
 						return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
 					}
+					if netInfo == nil {
+						// no active network
+						continue
+					}
 					if netInfo.IsUserDefinedNetwork() {
 						// EIP for secondary host interfaces is not supported for secondary networks
 						continue
@@ -1142,8 +1150,12 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 		if err != nil {
 			return err
 		}
-		node.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.UpdateNodeStatus(node)
+		nodeToUpdate := node.DeepCopy()
+		if nodeToUpdate.Annotations == nil {
+			nodeToUpdate.Annotations = map[string]string{}
+		}
+		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
+		return c.kube.UpdateNodeStatus(nodeToUpdate)
 	})
 }
 
@@ -1174,8 +1186,12 @@ func (c *Controller) addIPToAnnotation(ip string) error {
 		if err != nil {
 			return err
 		}
-		node.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.UpdateNodeStatus(node)
+		nodeToUpdate := node.DeepCopy()
+		if nodeToUpdate.Annotations == nil {
+			nodeToUpdate.Annotations = map[string]string{}
+		}
+		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
+		return c.kube.UpdateNodeStatus(nodeToUpdate)
 	})
 }
 
@@ -1206,8 +1222,12 @@ func (c *Controller) deleteIPFromAnnotation(ip string) error {
 		if err != nil {
 			return err
 		}
-		node.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.UpdateNodeStatus(node)
+		nodeToUpdate := node.DeepCopy()
+		if nodeToUpdate.Annotations == nil {
+			nodeToUpdate.Annotations = map[string]string{}
+		}
+		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
+		return c.kube.UpdateNodeStatus(nodeToUpdate)
 	})
 }
 

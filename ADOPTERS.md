@@ -5,6 +5,8 @@
 1. Red Hat, Inc. (Uses OVN-Kubernetes as their default CNI in OpenShift product)
 2. NVIDIA (Uses OVN-Kubernetes in their production environments)
 3. Internet Initiative Japan Inc. (Uses OVN-Kubernetes in their on-premise Kubernetes platform)
+4. SAIC Motor Corp. Ltd (Uses OVN-Kubernetes as a networking solution to build a multi-tenant private cloud)
+5. Nutanix (Builds Flow CNI on OVN-Kubernetes, integrated with Nutanix Flow and VPC networking)
 
 ## Projects
 

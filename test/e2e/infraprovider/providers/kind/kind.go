@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/portalloc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/containerengine"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/portalloc"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -66,6 +66,10 @@ func (k *kind) ExternalContainerPrimaryInterfaceName() string {
 
 func (k *kind) GetNetwork(name string) (api.Network, error) {
 	return getNetwork(name)
+}
+
+func (k *kind) ListNetworks() ([]string, error) {
+	return listNetworks()
 }
 
 func (k *kind) GetExternalContainerNetworkInterface(container api.ExternalContainer, network api.Network) (api.NetworkInterface, error) {
@@ -232,6 +236,12 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
 	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	if container.IPv4 != "" {
+		cmd = append(cmd, "--ip", container.IPv4)
+	}
+	if container.IPv6 != "" {
+		cmd = append(cmd, "--ip6", container.IPv6)
+	}
 	if container.Entrypoint != "" {
 		cmd = append(cmd, "--entrypoint", container.Entrypoint)
 	}
@@ -607,6 +617,8 @@ const (
 	inspectNetworkMACKeyStr        = "{{ with index .NetworkSettings.Networks %q }}{{ .MacAddress }}{{ end }}"
 	inspectNetworkContainersKeyStr = "{{ range $key, $value := .Containers }}{{ printf \"%s\\n\" $value.Name}}{{ end }}'"
 	emptyValue                     = "<no value>"
+	// Docker 29+ returns "invalid IP" for IP fields
+	emptyIPValue = "invalid IP"
 )
 
 func isNetworkAttachedToContainer(networkName, containerName string) bool {
@@ -627,13 +639,27 @@ func doesContainerNameExist(name string) (bool, error) {
 	return state != "", nil
 }
 
-func doesNetworkExist(networkName string) (bool, error) {
-	dataBytes, err := exec.Command(containerengine.Get().String(), "network", "ls", "--format", nameFormat).CombinedOutput()
+func listNetworks() ([]string, error) {
+	output, err := exec.Command(containerengine.Get().String(), "network", "ls", "--format", nameFormat).CombinedOutput()
 	if err != nil {
-		return false, fmt.Errorf("failed to list networks: %w", err)
+		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
-	for _, existingNetworkName := range strings.Split(strings.Trim(string(dataBytes), "\n"), "\n") {
-		if existingNetworkName == networkName {
+	var networks []string
+	for _, name := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if name != "" {
+			networks = append(networks, name)
+		}
+	}
+	return networks, nil
+}
+
+func doesNetworkExist(networkName string) (bool, error) {
+	networks, err := listNetworks()
+	if err != nil {
+		return false, err
+	}
+	for _, name := range networks {
+		if name == networkName {
 			return true, nil
 		}
 	}
@@ -715,57 +741,51 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 		}
 		valueStr := strings.Trim(string(value), "\n")
 		valueStr = strings.Trim(valueStr, "'")
-		if valueStr == emptyValue {
+		if valueStr == emptyValue || valueStr == emptyIPValue {
 			return "", nil
 		}
 		return valueStr, nil
 	}
 
-	getIPFamilyFlagForIPRoute2 := func(ipStr string) (string, error) {
+	getIPFamilyForIPRoute2 := func(ipStr string) (string, error) {
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
 			return "", fmt.Errorf("invalid IP address: %s", ipStr)
 		}
 		if utilnet.IsIPv6(ip) {
-			return "-6", nil
+			return "inet6", nil
 		}
-		return "-4", nil
+		return "inet", nil
 	}
 
 	getInterfaceNameUsingIP := func(ip string) (string, error) {
-		ipFlag, err := getIPFamilyFlagForIPRoute2(ip)
+		ipFamily, err := getIPFamilyForIPRoute2(ip)
 		if err != nil {
-			return "", fmt.Errorf("failed to get IP family flag for %s: %w", ip, err)
+			return "", fmt.Errorf("failed to get IP family for %s: %w", ip, err)
 		}
-		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "-br", ipFlag, "a", "sh").CombinedOutput()
+		cmdArgs := []string{"exec", "-i", containerName, "ip", "-o", "-f", ipFamily, "addr", "show"}
+		allInfAddrBytes, err := exec.Command(containerengine.Get().String(), cmdArgs...).CombinedOutput()
 		if err != nil {
-			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command 'ip -br a sh': err %v, out: %s", ip, containerName,
-				err, allInfAddrBytes)
+			return "", fmt.Errorf("failed to find interface with IP %s on container %s with command %q: err %v, out: %s", ip, containerName,
+				strings.Join(cmdArgs[3:], " "), err, allInfAddrBytes)
 		}
-		var ipLine string
+		var infName string
 		for _, line := range strings.Split(string(allInfAddrBytes), "\n") {
 			if strings.Contains(line, ip) {
-				ipLine = line
+				fields := strings.Fields(line)
+				if len(fields) < 2 {
+					return "", fmt.Errorf("failed to parse 'ip addr' output line %q", line)
+				}
+				infName = strings.TrimSuffix(fields[1], ":")
+				if strings.Contains(infName, "@") {
+					infName = strings.SplitN(infName, "@", 2)[0]
+				}
 				break
 			}
 		}
-		if ipLine == "" {
+		if infName == "" {
 			return "", fmt.Errorf("failed to find IP %q within 'ip a' command on container %q:\n\n%q", ip, containerName, string(allInfAddrBytes))
 		}
-		ipLineSplit := strings.Split(ipLine, " ")
-		if len(ipLine) == 0 {
-			return "", fmt.Errorf("failed to find interface name from 'ip a' output line %q", ipLine)
-		}
-		infNames := ipLineSplit[0]
-		splitChar := " "
-		if strings.Contains(infNames, "@") {
-			splitChar = "@"
-		}
-		infNamesSplit := strings.Split(infNames, splitChar)
-		if len(infNamesSplit) == 0 {
-			return "", fmt.Errorf("failed to extract inf name + veth name from %q splitting by %q", infNames, splitChar)
-		}
-		infName := infNamesSplit[0]
 		// validate its an interface name on the Node with iproute2
 		out, err := exec.Command(containerengine.Get().String(), "exec", "-i", containerName, "ip", "link", "show", infName).CombinedOutput()
 		if err != nil {
@@ -787,7 +807,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv4 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv4)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv4, err)
+			framework.Logf("failed to get network interface name using IPv4 address %s on container %q: %v", ni.IPv4, containerName, err)
 		}
 	}
 	ni.IPv6Gateway, err = getContainerNetwork(inspectNetworkIPv6GWKeyStr)
@@ -805,7 +825,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv6 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv6, err)
+			framework.Logf("failed to get network interface name using IPv6 address %s on container %q: %v", ni.IPv6, containerName, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)

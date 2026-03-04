@@ -19,17 +19,17 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/knftables"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
-	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -42,21 +42,7 @@ const (
 	linkName            = "breth0"
 )
 
-func initFakeNodePortWatcher(iptV4, iptV6 util.IPTablesHelper) *nodePortWatcher {
-	initIPTable := map[string]util.FakeTable{
-		"nat":    {},
-		"filter": {},
-		"mangle": {},
-	}
-
-	f4 := iptV4.(*util.FakeIPTables)
-	err := f4.MatchState(initIPTable, nil)
-	Expect(err).NotTo(HaveOccurred())
-
-	f6 := iptV6.(*util.FakeIPTables)
-	err = f6.MatchState(initIPTable, nil)
-	Expect(err).NotTo(HaveOccurred())
-
+func initFakeNodePortWatcher() *nodePortWatcher {
 	gwMACParsed, _ := net.ParseMAC(gwMAC)
 
 	defaultBridge := bridgeconfig.TestDefaultBridgeConfig()
@@ -291,7 +277,7 @@ var _ = Describe("Node Operations", func() {
 		err = nft.ParseDump(getBaseNFTRules(types.K8sMgmtIntfName))
 		Expect(err).NotTo(HaveOccurred())
 
-		fNPW = initFakeNodePortWatcher(iptV4, iptV6)
+		fNPW = initFakeNodePortWatcher()
 	})
 
 	AfterEach(func() {

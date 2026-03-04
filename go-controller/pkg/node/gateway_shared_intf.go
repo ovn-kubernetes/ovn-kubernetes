@@ -23,22 +23,22 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/egressip"
-	nodeipt "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iptables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
-	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
-	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
-	nodeutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/egressip"
+	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
@@ -827,38 +827,14 @@ func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoi
 		}
 		nftElems := getGatewayNFTRules(service, localEndpoints, true)
 		nftElems = append(nftElems, getGatewayNFTRules(service, localEndpoints, false)...)
+		if util.IsNetworkSegmentationSupportEnabled() {
+			nftElems = append(nftElems, getUDNNFTRules(service, nil)...)
+		}
 		if len(nftElems) > 0 {
 			if err := nodenft.DeleteNFTElements(nftElems); err != nil {
 				err = fmt.Errorf("failed to delete nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
-			}
-		}
-
-		if util.IsNetworkSegmentationSupportEnabled() {
-			// NOTE: The code below is not using nodenft.DeleteNFTElements because it first adds elements
-			// before removing them, which fails for UDN NFT rules. These rules only have map keys,
-			// not key-value pairs, making it impossible to add.
-			// Attempt to delete the elements directly and handle the IsNotFound error.
-			//
-			// TODO: Switch to `nft destroy` when supported.
-			nftElems = getUDNNFTRules(service, nil)
-			if len(nftElems) > 0 {
-				nft, err := nodenft.GetNFTablesHelper()
-				if err != nil {
-					return utilerrors.Join(append(errors, err)...)
-				}
-
-				tx := nft.NewTransaction()
-				for _, elem := range nftElems {
-					tx.Delete(elem)
-				}
-
-				if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
-					err = fmt.Errorf("failed to delete nftables rules for UDN service %s/%s: %v",
-						service.Namespace, service.Name, err)
-					errors = append(errors, err)
-				}
 			}
 		}
 	}
@@ -889,13 +865,14 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	}
 
 	klog.V(5).Infof("Adding service %s in namespace %s", service.Name, service.Namespace)
-
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
-			return nil
-		}
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
+	}
+
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	name := ktypes.NamespacedName{Namespace: service.Namespace, Name: service.Name}
@@ -977,10 +954,11 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
-			if util.IsInvalidPrimaryNetworkError(err) {
-				return utilerrors.Join(errors...)
-			}
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
 		}
 
 		if err = addServiceRules(new, netInfo, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw); err != nil {
@@ -1219,12 +1197,18 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		}
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
-		// The InvalidPrimaryNetworkError is returned when the UDN is not found because it has already been deleted.
-		if util.IsInvalidPrimaryNetworkError(err) {
+		if err != nil {
+			// During startup sync, avoid failing the entire processExisting loop for namespaces that
+			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
+			// be reconciled later via regular add/update events once the NAD exists.
+			if util.IsInvalidPrimaryNetworkError(err) {
+				continue
+			}
+			errors = append(errors, err)
 			continue
 		}
-		if err != nil {
-			errors = append(errors, err)
+		if netInfo == nil {
+			// network not active on our node
 			continue
 		}
 
@@ -1306,6 +1290,10 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(epSlice.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for endpointslice %s in namespace %s: %w", epSlice.Name, epSlice.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && !util.IsEndpointSliceForNetwork(epSlice, netInfo) {
@@ -1425,19 +1413,17 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 		// and allows graceful handling of deletion race conditions.
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
 		if err != nil {
-			// If the namespace was deleted, skip adding new service rules
-			if apierrors.IsNotFound(err) {
-				klog.V(5).Infof("Namespace not found for service %s/%s during endpoint slice delete, skipping adding service rules",
-					namespacedName.Namespace, namespacedName.Name)
-				return utilerrors.Join(errors...)
-			}
-			// If the UDN was deleted, skip adding new service rules
+			// If the UDN was deleted or not processed yet, skip adding new service rules
 			if util.IsInvalidPrimaryNetworkError(err) {
-				klog.V(5).Infof("Skipping addServiceRules for %s/%s during endpoint slice delete: primary network invalid: %v",
+				klog.V(5).Infof("Skipping addServiceRules for %s/%s during endpoint slice delete: primary network unavailable: %v",
 					namespacedName.Namespace, namespacedName.Name, err)
 				return utilerrors.Join(errors...)
 			}
 			errors = append(errors, fmt.Errorf("error getting active network for service %s/%s: %w", namespacedName.Namespace, namespacedName.Name, err))
+			return utilerrors.Join(errors...)
+		}
+		if netInfo == nil {
+			// network not active on our node
 			return utilerrors.Join(errors...)
 		}
 
@@ -1479,6 +1465,10 @@ func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discover
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(newEpSlice.Namespace)
 	if err != nil {
 		return fmt.Errorf("error getting active network for endpointslice %s in namespace %s: %w", newEpSlice.Name, newEpSlice.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && !util.IsEndpointSliceForNetwork(newEpSlice, netInfo) {
@@ -1566,10 +1556,11 @@ func (npwipt *nodePortWatcherIptables) AddService(service *corev1.Service) error
 
 	netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
-			return nil
-		}
 		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
+	}
+	if netInfo == nil {
+		// network not active on our node
+		return nil
 	}
 
 	if err := addServiceRules(service, netInfo, nil, false, nil); err != nil {
@@ -1597,10 +1588,11 @@ func (npwipt *nodePortWatcherIptables) UpdateService(old, new *corev1.Service) e
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
 		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(new.Namespace)
 		if err != nil {
-			if util.IsInvalidPrimaryNetworkError(err) {
-				return utilerrors.Join(errors...)
-			}
 			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
+		}
+		if netInfo == nil {
+			// network not active on our node
+			return utilerrors.Join(errors...)
 		}
 
 		if err = addServiceRules(new, netInfo, nil, false, nil); err != nil {
@@ -1640,6 +1632,21 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		}
 		// don't process headless service
 		if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
+			continue
+		}
+		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.GetNamespace())
+		if err != nil {
+			// During startup sync, avoid failing the entire processExisting loop for namespaces that
+			// require a UDN but have no primary NAD yet (or it has been deleted). Those services will
+			// be reconciled later via regular add/update events once the NAD exists.
+			if util.IsInvalidPrimaryNetworkError(err) {
+				continue
+			}
+			errors = append(errors, err)
+			continue
+		}
+		if netInfo == nil {
+			// network not on our node
 			continue
 		}
 		// Add correct iptables rules.

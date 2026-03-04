@@ -78,6 +78,7 @@ rules:
           - clusteruserdefinednetworks
           - routeadvertisements
           - vteps
+          - clusternetworkconnects
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
@@ -90,6 +91,8 @@ rules:
           - clusteruserdefinednetworks/status
           - clusteruserdefinednetworks/finalizers
           - routeadvertisements/status
+          - clusternetworkconnects
+          - clusternetworkconnects/status
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:
@@ -97,7 +100,7 @@ rules:
       verbs: ["create", "patch", "update"]
     - apiGroups: [""]
       resources:
-          - pods/status # used in multi-homing: https://github.com/ovn-org/ovn-kubernetes/blob/a9beb6fd4f8ea32b264999a8ebec25cd6bdc2281/go-controller/pkg/util/pod.go#L49
+          - pods/status # used in multi-homing: https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a9beb6fd4f8ea32b264999a8ebec25cd6bdc2281/go-controller/pkg/util/pod.go#L49
           - nodes/status
           - services/status
       verbs: [ "patch", "update" ]

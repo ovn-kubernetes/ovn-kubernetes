@@ -13,12 +13,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const RetryObjInterval = 30 * time.Second
@@ -415,7 +415,9 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			}
 		}
 
-		klog.Infof("Retry successful for %s %s after %d failed attempt(s)", r.ResourceHandler.ObjType, objKey, entry.failedAttempts)
+		if entry.failedAttempts > 0 {
+			klog.Infof("Retry successful for %s %s after %d failed attempt(s)", r.ResourceHandler.ObjType, objKey, entry.failedAttempts)
+		}
 		if initObj != nil {
 			r.ResourceHandler.RecordSuccessEvent(initObj)
 		}
@@ -489,13 +491,13 @@ func (r *RetryFramework) processObjectInTerminalState(obj interface{}, lockedKey
 	_, loaded := r.terminatedObjects.LoadOrStore(lockedKey, true)
 	if loaded {
 		// object was already terminated
-		klog.Infof("Detected object %s of type %s in terminal state (e.g. completed) will be "+
+		klog.V(5).Infof("Detected object %s of type %s in terminal state (e.g. completed) will be "+
 			"ignored as it has already been processed", lockedKey, r.ResourceHandler.ObjType)
 		return
 	}
 
 	// The object is in a terminal state: delete it from the cluster, delete its retry entry and return.
-	klog.Infof("Detected object %s of type %s in terminal state (e.g. completed)"+
+	klog.V(5).Infof("Detected object %s of type %s in terminal state (e.g. completed)"+
 		" during %s event: will remove it", lockedKey, r.ResourceHandler.ObjType, event)
 	internalCacheEntry := r.ResourceHandler.GetInternalCacheEntry(obj)
 	retryEntry := r.initRetryObjWithDelete(obj, lockedKey, internalCacheEntry, true) // set up the retry obj for deletion
@@ -597,8 +599,6 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 						r.ResourceHandler.ObjType, err)
 					return
 				}
-				klog.V(5).Infof("Update event received for resource %s, old object is equal to new: %t",
-					r.ResourceHandler.ObjType, areEqual)
 				if areEqual {
 					return
 				}
@@ -650,7 +650,6 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 				}
 
 				klog.V(5).Infof("Update event received for %s %s", r.ResourceHandler.ObjType, newKey)
-
 				r.DoWithLock(newKey, func(key string) {
 					// STEP 1:
 					// Delete existing (old) object if:
@@ -765,7 +764,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 					// If object is in terminal state, check if we have already processed it in a previous update.
 					// We cannot blindly handle multiple delete operations for the same pod currently. There can be races
 					// where other pod handlers are removing IP addresses from address sets when they shouldn't be, etc.
-					// See: https://github.com/ovn-org/ovn-kubernetes/pull/3318#issuecomment-1349804450
+					// See: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3318#issuecomment-1349804450
 					if _, loaded := r.terminatedObjects.LoadAndDelete(key); loaded {
 						// object was already terminated
 						klog.Infof("Ignoring delete event for resource in terminal state %s %s",

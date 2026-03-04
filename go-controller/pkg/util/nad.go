@@ -11,8 +11,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // EnsureDefaultNetworkNAD ensures that a well-known NAD exists for the
@@ -35,7 +35,7 @@ func EnsureDefaultNetworkNAD(nadLister nadlisters.NetworkAttachmentDefinitionLis
 				Namespace: config.Kubernetes.OVNConfigNamespace,
 			},
 			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
-				Config: fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
+				Config: fmt.Sprintf("{\"cniVersion\": \"%s\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNISpecVersion, config.CNI.Plugin),
 			},
 		},
 		// note we don't set ourselves as field manager for this create as we

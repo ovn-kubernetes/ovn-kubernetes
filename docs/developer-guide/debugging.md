@@ -72,6 +72,64 @@ Use the [Delve](https://github.com/go-delve/delve) debugger for post-mortem anal
    (dlv) print <var>          # Print variable value
    ```
 
+### Debugging C Binaries with GDB (e.g. FRR)
+
+Some coredumps come from C binaries such as FRR's `bgpd` or `zebra`, not from Go
+binaries. These require GDB instead of Delve.
+
+The key challenge is matching the exact container image that produced the coredump,
+since GDB needs the same binary and shared libraries to resolve symbols.
+
+1. **Identify the image that produced the coredump.** Check the CI job logs for the
+   `docker run` command that started the crashed process. For example, the external
+   FRR container may use `quay.io/frrouting/frr:9.1.0` (deployed via
+   `contrib/kind-common.sh`).
+
+2. **Run the same image with the coredumps mounted:**
+
+   ```bash
+   docker run --platform linux/amd64 -it \
+     -v /path/to/coredumps:/coredumps \
+     quay.io/frrouting/frr:9.1.0 sh
+   ```
+
+   Using `--platform linux/amd64` is important if the coredump was generated on
+   x86_64 and you are on a different architecture (e.g. Apple Silicon).
+
+3. **Install GDB and debug symbols inside the container:**
+
+   ```bash
+   apk add gdb frr-dbg musl-dbg
+   ```
+
+   The exact package names depend on the base distro. Alpine uses `-dbg` suffix.
+
+4. **Run GDB:**
+
+   ```bash
+   gdb /usr/lib/frr/bgpd /coredumps/core.38907.bgpd.ovn-control-plane.11
+   ```
+
+5. **Explore the crash:**
+
+   ```
+   (gdb) bt                        # Show backtrace
+   (gdb) thread apply all bt       # Backtraces for all threads
+   (gdb) frame <n>                 # Select stack frame
+   (gdb) info locals               # Show local variables
+   (gdb) info args                 # Show function arguments
+   (gdb) print *some_ptr           # Dereference and print a pointer
+   (gdb) info sharedlibrary        # Check if all shared libraries are resolved
+   ```
+
+6. **Troubleshooting missing symbols.** If the backtrace shows `??` for most frames:
+   - Run `info sharedlibrary` in GDB. Lines marked `(*)` are missing debug info.
+   - Verify you are using the exact same image tag that produced the coredump.
+     Floating tags (like `latest` or even `9.1.0`) may have been rebuilt with updated
+     packages. If the shared library versions don't match (GDB will print warnings
+     about missing `.so` files), you need the exact image digest from CI.
+   - Install additional `-dbg` packages for libraries that appear in the backtrace.
+
 ### Local Development
 
 To enable coredump collection in a local KIND cluster:

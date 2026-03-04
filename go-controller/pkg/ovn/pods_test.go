@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
@@ -20,16 +21,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 	utilnet "k8s.io/utils/net"
 
-	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	ipallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func getPodAnnotations(fakeClient kubernetes.Interface, namespace, name string) string {
@@ -142,6 +143,7 @@ func newNode(nodeName, nodeIPv4CIDR string) *corev1.Node {
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4CIDR, ""),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
+				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
 				"k8s.ovn.org/zone-name":           "global",
 			},
 			Labels: map[string]string{
@@ -167,6 +169,7 @@ func newNodeGlobalZoneNotEgressableV4Only(nodeName, nodeIPv4 string) *corev1.Nod
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4, ""),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4),
+				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
 				"k8s.ovn.org/zone-name":           "global",
 			},
 		},
@@ -189,6 +192,7 @@ func newNodeGlobalZoneNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Nod
 				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", "", nodeIPv6),
 				"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v6Node1Subnet),
 				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv6),
+				util.OvnNodeChassisID:             chassisIDForNode(nodeName),
 				"k8s.ovn.org/zone-name":           "global",
 			},
 		},
@@ -210,19 +214,20 @@ func newNodeGlobalZoneNotEgressableV6Only(nodeName, nodeIPv6 string) *corev1.Nod
 }
 
 type testPod struct {
-	portUUID     string
-	nodeName     string
-	nodeSubnet   string
-	nodeMgtIP    string
-	nodeGWIP     string
-	podName      string
-	podIP        string
-	podMAC       string
-	namespace    string
-	portName     string
-	routes       []util.PodRoute
-	noIfaceIdVer bool
-	networkRole  string
+	portUUID      string
+	nodeName      string
+	nodeChassisID string
+	nodeSubnet    string
+	nodeMgtIP     string
+	nodeGWIP      string
+	podName       string
+	podIP         string
+	podMAC        string
+	namespace     string
+	portName      string
+	routes        []util.PodRoute
+	noIfaceIdVer  bool
+	networkRole   string
 
 	udnPodInfos map[string]*udnPodInfo
 }
@@ -245,21 +250,40 @@ type portInfo struct {
 	prefixLen int
 }
 
+func chassisIDForNode(nodeName string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(nodeName)).String()
+}
+
+func requestedChassisForPod(pod testPod) string {
+	if pod.nodeChassisID != "" {
+		return pod.nodeChassisID
+	}
+	if pod.nodeName == "" {
+		return ""
+	}
+	return chassisIDForNode(pod.nodeName)
+}
+
 func newTPod(nodeName, nodeSubnet, nodeMgtIP, nodeGWIP, podName, podIPs, podMAC, namespace string) testPod {
 	portName := util.GetLogicalPortName(namespace, podName)
+	nodeChassisID := ""
+	if nodeName != "" {
+		nodeChassisID = chassisIDForNode(nodeName)
+	}
 	to := testPod{
-		portUUID:    portName + "-UUID",
-		nodeSubnet:  nodeSubnet,
-		nodeMgtIP:   nodeMgtIP,
-		nodeGWIP:    nodeGWIP,
-		podIP:       podIPs,
-		podMAC:      podMAC,
-		portName:    portName,
-		nodeName:    nodeName,
-		podName:     podName,
-		namespace:   namespace,
-		udnPodInfos: map[string]*udnPodInfo{},
-		networkRole: ovntypes.NetworkRolePrimary, // all tests here run with network-segmentation disabled by default by default
+		portUUID:      portName + "-UUID",
+		nodeSubnet:    nodeSubnet,
+		nodeMgtIP:     nodeMgtIP,
+		nodeGWIP:      nodeGWIP,
+		podIP:         podIPs,
+		podMAC:        podMAC,
+		portName:      portName,
+		nodeName:      nodeName,
+		nodeChassisID: nodeChassisID,
+		podName:       podName,
+		namespace:     namespace,
+		udnPodInfos:   map[string]*udnPodInfo{},
+		networkRole:   ovntypes.NetworkRolePrimary, // all tests here run with network-segmentation disabled by default by default
 	}
 
 	var routeSources []*net.IPNet
@@ -479,7 +503,7 @@ func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, 
 				"namespace": pod.namespace,
 			},
 			Options: map[string]string{
-				libovsdbops.RequestedChassis: pod.nodeName,
+				libovsdbops.RequestedChassis: requestedChassisForPod(pod),
 				"iface-id-ver":               pod.podName,
 			},
 			PortSecurity: []string{podAddr},
@@ -2030,7 +2054,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t2.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t2),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},
@@ -2045,7 +2069,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 								"namespace": t2.namespace,
 							},
 							Options: map[string]string{
-								libovsdbops.RequestedChassis: t2.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t2),
 								//"iface-id-ver": is empty to check that it won't be set on update
 							},
 							PortSecurity: []string{fmt.Sprintf("%s %s", t2.podMAC, t2.podIP)},
@@ -2060,7 +2084,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t3.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t3),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},
@@ -2230,7 +2254,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 							},
 							Options: map[string]string{
 								// check requested-chassis will be updated to correct t1.nodeName value
-								libovsdbops.RequestedChassis: t1.nodeName,
+								libovsdbops.RequestedChassis: requestedChassisForPod(t1),
 								// check old value for iface-id-ver will be updated to pod.UID
 								"iface-id-ver": "wrong_value",
 							},

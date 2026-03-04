@@ -13,13 +13,13 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // getConnectRouterName returns the connect router name for a CNC.
@@ -557,8 +557,15 @@ func (c *Controller) ensureConnectPortsOps(ops []ovsdb.Operation, cnc *networkco
 			} else {
 				// Remote node: create only the connect-router side port with requested-chassis set
 				// This makes the port type: remote in SB, enabling cross-zone tunneling
+				chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+				if err != nil {
+					if util.IsAnnotationNotSetError(err) {
+						return nil, ovntypes.NewSuppressedError(err)
+					}
+					return nil, fmt.Errorf("failed to parse node chassis-id for node %s: %w", node.Name, err)
+				}
 				ops, err = c.createRouterPortOps(ops, connectRouterName, connectPortName, portPairInfo.connectPortIPs,
-					"", cncName, networkID, nodeID, tunnelKey, node.Name)
+					"", cncName, networkID, nodeID, tunnelKey, chassisID)
 				if err != nil {
 					return nil, fmt.Errorf("failed to create remote connect router port ops %s: %v", connectPortName, err)
 				}

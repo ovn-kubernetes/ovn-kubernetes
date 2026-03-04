@@ -113,12 +113,27 @@ spec:
         # ovnkube-node dpu-host mounts
         - mountPath: /var/run/ovn
           name: var-run-ovn
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        {%- if ovn_network_segmentation_enable=="true" %}
+        - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
+          name: host-devinfo-dp
+          readOnly: true
+        {%- endif %}
         {%- endif %}
 
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
+          {%- if ovnkube_app_name=="ovnkube-node-dpu-host" and ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
+            {{ ovnkube_node_mgmt_port_dp_resource_name }}: {{ mgmt_port_vfs_count | default(1) }}
+          {%- endif %}
+          limits:
+          {%- if ovnkube_app_name=="ovnkube-node-dpu-host" and ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
+            {{ ovnkube_node_mgmt_port_dp_resource_name }}: {{ mgmt_port_vfs_count | default(1) }}
+          {%- endif %}
         env:
         {% if (enable_coredumps | default("false")) == "true" -%}
         - name: GOTRACEBACK
@@ -228,6 +243,10 @@ spec:
           value: "{{ ovn_enable_ovnkube_identity }}"
         - name: OVN_NETWORK_QOS_ENABLE
           value: "{{ ovn_network_qos_enable }}"
+        - name: OVN_ENABLE_INTERCONNECT
+          value: "{{ ovn_enable_interconnect }}"
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: "{{ ovn_network_segmentation_enable }}"
         {% if ovnkube_app_name!="ovnkube-node-dpu-host" -%}
         - name: OVN_SSL_ENABLE
           value: "{{ ovn_ssl_en }}"
@@ -245,8 +264,6 @@ spec:
           value: "{{ ovn_lflow_cache_limit_kb }}"
         - name: OVN_MULTI_NETWORK_ENABLE
           value: "{{ ovn_multi_network_enable }}"
-        - name: OVN_NETWORK_SEGMENTATION_ENABLE
-          value: "{{ ovn_network_segmentation_enable }}"
         - name: OVN_NETWORK_CONNECT_ENABLE
           value: "{{ ovn_network_connect_enable }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
@@ -261,14 +278,14 @@ spec:
           value: "{{ ovn_dynamic_udn_grace_period }}"
         - name: OVN_NO_OVERLAY_ENABLE
           value: "{{ ovn_no_overlay_enable }}"
-        - name: OVN_ENABLE_INTERCONNECT
-          value: "{{ ovn_enable_interconnect }}"
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: "{{ ovn_enable_multi_external_gateway }}"
         {% endif -%}
         {% if ovnkube_app_name=="ovnkube-node-dpu-host" -%}
         - name: OVNKUBE_NODE_MODE
           value: "dpu-host"
+        - name: OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME
+          value: "{{ ovnkube_node_mgmt_port_dp_resource_name }}"
         {% endif -%}
         {% if ovnkube_app_name=="ovnkube-node-dpu" -%}
         - name: OVNKUBE_NODE_MODE
@@ -492,6 +509,11 @@ spec:
       {%- else %}
       - name: var-run-ovn
         emptyDir: {}
+      {%- if ovn_network_segmentation_enable=="true" %}
+      - name: host-devinfo-dp
+        hostPath:
+          path: /var/run/k8s.cni.cncf.io/devinfo/dp
+      {%- endif %}
       {%- endif %}
 
       tolerations:

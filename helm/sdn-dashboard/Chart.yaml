@@ -4,5 +4,5 @@ name: "sdn-dashboard"
 version: "1.2.0"
 home: https://www.ovn.org/
 sources:
-  - https://github.com/ovn-org/ovn-kubernetes
+  - https://github.com/ovn-kubernetes/ovn-kubernetes
 appVersion: "1.2.0"

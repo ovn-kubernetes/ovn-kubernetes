@@ -8,6 +8,7 @@ tags:
   ovnkube-node-dpu: false
   ovnkube-node-dpu-host: false
   ovnkube-single-node-zone: false
+  ovnkube-single-node-zone-dpu: false
   ovnkube-zone-controller: false
 
 # -- Endpoint of Kubernetes api server
@@ -103,6 +104,8 @@ global:
   enableLFlowCache: true
   # -- Configure to use DNSNameResolver feature with ovn-kubernetes
   enableDNSNameResolver: false
+  # -- Configure to allow ICMP and ICMPv6 traffic to bypass NetworkPolicy deny rules
+  allowICMPNetworkPolicy: false
   # -- Maximum number of logical flow cache entries ovn-controller may create when the logical flow cache is enabled
   # @default -- unlimited
   lFlowCacheLimit: ""

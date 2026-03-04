@@ -6,6 +6,7 @@ import (
 	"net"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -22,16 +23,16 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func getFakeController(controllerName string) *DefaultNetworkController {
@@ -107,7 +108,7 @@ func getDefaultDenyDataHelper(policyTypeIngress, policyTypeEgress bool, params *
 	egressDenyACL.UUID = aclIDs.String() + "-UUID"
 
 	aclIDs = fakeController.getDefaultDenyPolicyACLIDs(namespace, libovsdbutil.ACLEgress, arpAllowACL)
-	egressAllowACL := libovsdbops.BuildACL(
+	egressARPAllowACL := libovsdbops.BuildACL(
 		libovsdbutil.GetACLName(aclIDs),
 		nbdb.ACLDirectionFromLport,
 		types.DefaultAllowPriority,
@@ -122,7 +123,36 @@ func getDefaultDenyDataHelper(policyTypeIngress, policyTypeEgress bool, params *
 		},
 		types.DefaultACLTier,
 	)
-	egressAllowACL.UUID = aclIDs.String() + "-UUID"
+	egressARPAllowACL.UUID = aclIDs.String() + "-UUID"
+
+	testData := []libovsdbtest.TestData{
+		egressDenyACL,
+		egressARPAllowACL,
+	}
+	egressACLs := []*nbdb.ACL{egressDenyACL, egressARPAllowACL}
+
+	if config.OVNKubernetesFeature.AllowICMPNetworkPolicy {
+		aclIDs = fakeController.getDefaultDenyPolicyACLIDs(namespace, libovsdbutil.ACLEgress, icmpAllowACL)
+		egressICMPAllowACL := libovsdbops.BuildACL(
+			libovsdbutil.GetACLName(aclIDs),
+			nbdb.ACLDirectionFromLport,
+			types.DefaultAllowPriority,
+			"inport == @"+egressPGName+" && "+icmpAllowPolicyMatch,
+			nbdb.ACLActionAllow,
+			types.OvnACLLoggingMeter,
+			"",
+			false,
+			aclIDs.GetExternalIDs(),
+			map[string]string{
+				"apply-after-lb": "true",
+			},
+			types.DefaultACLTier,
+		)
+		egressICMPAllowACL.UUID = aclIDs.String() + "-UUID"
+		testData = append(testData, egressICMPAllowACL)
+		egressACLs = append(egressACLs, egressICMPAllowACL)
+
+	}
 
 	ingressPGName := fakeController.defaultDenyPortGroupName(namespace, libovsdbutil.ACLIngress)
 	aclIDs = fakeController.getDefaultDenyPolicyACLIDs(namespace, libovsdbutil.ACLIngress, defaultDenyACL)
@@ -142,7 +172,7 @@ func getDefaultDenyDataHelper(policyTypeIngress, policyTypeEgress bool, params *
 	ingressDenyACL.UUID = aclIDs.String() + "-UUID"
 
 	aclIDs = fakeController.getDefaultDenyPolicyACLIDs(namespace, libovsdbutil.ACLIngress, arpAllowACL)
-	ingressAllowACL := libovsdbops.BuildACL(
+	ingressARPAllowACL := libovsdbops.BuildACL(
 		libovsdbutil.GetACLName(aclIDs),
 		nbdb.ACLDirectionToLport,
 		types.DefaultAllowPriority,
@@ -155,7 +185,31 @@ func getDefaultDenyDataHelper(policyTypeIngress, policyTypeEgress bool, params *
 		nil,
 		types.DefaultACLTier,
 	)
-	ingressAllowACL.UUID = aclIDs.String() + "-UUID"
+	ingressARPAllowACL.UUID = aclIDs.String() + "-UUID"
+
+	ingressACLs := []*nbdb.ACL{ingressDenyACL, ingressARPAllowACL}
+	if config.OVNKubernetesFeature.AllowICMPNetworkPolicy {
+		aclIDs = fakeController.getDefaultDenyPolicyACLIDs(namespace, libovsdbutil.ACLIngress, icmpAllowACL)
+		ingressICMPAllowACL := libovsdbops.BuildACL(
+			libovsdbutil.GetACLName(aclIDs),
+			nbdb.ACLDirectionToLport,
+			types.DefaultAllowPriority,
+			"outport == @"+ingressPGName+" && "+icmpAllowPolicyMatch,
+			nbdb.ACLActionAllow,
+			types.OvnACLLoggingMeter,
+			"",
+			false,
+			aclIDs.GetExternalIDs(),
+			nil,
+			types.DefaultACLTier,
+		)
+		ingressICMPAllowACL.UUID = aclIDs.String() + "-UUID"
+		ingressACLs = append(ingressACLs, ingressICMPAllowACL)
+	}
+
+	for _, acl := range ingressACLs {
+		testData = append(testData, acl)
+	}
 
 	lsps := []*nbdb.LogicalSwitchPort{}
 	for _, uuid := range params.localPortUUIDs {
@@ -166,10 +220,11 @@ func getDefaultDenyDataHelper(policyTypeIngress, policyTypeEgress bool, params *
 	if policyTypeEgress {
 		egressDenyPorts = lsps
 	}
+
 	egressDenyPG := libovsdbutil.BuildPortGroup(
 		fakeController.getDefaultDenyPolicyPortGroupIDs(namespace, libovsdbutil.ACLEgress),
 		egressDenyPorts,
-		[]*nbdb.ACL{egressDenyACL, egressAllowACL},
+		egressACLs,
 	)
 	egressDenyPG.UUID = egressDenyPG.Name + "-UUID"
 
@@ -180,18 +235,11 @@ func getDefaultDenyDataHelper(policyTypeIngress, policyTypeEgress bool, params *
 	ingressDenyPG := libovsdbutil.BuildPortGroup(
 		fakeController.getDefaultDenyPolicyPortGroupIDs(namespace, libovsdbutil.ACLIngress),
 		ingressDenyPorts,
-		[]*nbdb.ACL{ingressDenyACL, ingressAllowACL},
+		ingressACLs,
 	)
 	ingressDenyPG.UUID = ingressDenyPG.Name + "-UUID"
 
-	return []libovsdbtest.TestData{
-		egressDenyACL,
-		egressAllowACL,
-		ingressDenyACL,
-		ingressAllowACL,
-		egressDenyPG,
-		ingressDenyPG,
-	}
+	return append(testData, egressDenyPG, ingressDenyPG)
 }
 
 func getDefaultDenyData(params *netpolDataParams) []libovsdbtest.TestData {
@@ -291,10 +339,24 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 		acl.UUID = dbIDs.String() + "-UUID"
 		acls = append(acls, acl)
 	}
-	for i, ipBlock := range ipBlocks {
-		match := fmt.Sprintf("ip4.%s == %s && %s == @%s", ipDir, ipBlock, portDir, pgName)
+	if len(ipBlocks) > 0 {
+		var ipBlockMatches []string
+		for _, ipBlock := range ipBlocks {
+			ipVersion := "ip4"
+			if utilnet.IsIPv6CIDRString(ipBlock) {
+				ipVersion = "ip6"
+			}
+			ipBlockMatches = append(ipBlockMatches, fmt.Sprintf("%s.%s == %s", ipVersion, ipDir, ipBlock))
+		}
+		var match string
+		if len(ipBlockMatches) == 1 {
+			match = ipBlockMatches[0]
+		} else {
+			match = fmt.Sprintf("(%s)", strings.Join(ipBlockMatches, " || "))
+		}
+		match = fmt.Sprintf("%s && %s == @%s", match, portDir, pgName)
 		action := allowAction(params.statelessNetPol)
-		dbIDs := gp.getNetpolACLDbIDs(i, libovsdbutil.UnspecifiedL4Protocol)
+		dbIDs := gp.getNetpolACLDbIDs(ipBlockCombinedIdx, libovsdbutil.UnspecifiedL4Protocol)
 		acl := libovsdbops.BuildACL(
 			libovsdbutil.GetACLName(dbIDs),
 			direction,
@@ -361,6 +423,17 @@ func getPolicyData(params *netpolDataParams) []libovsdbtest.TestData {
 		acls = append(acls, getGressACLs(i, egress.To, knet.PolicyTypeEgress, params)...)
 	}
 
+	pg := getPolicyPortGroup(params, acls)
+
+	data := []libovsdbtest.TestData{}
+	for _, acl := range acls {
+		data = append(data, acl)
+	}
+	data = append(data, pg)
+	return data
+}
+
+func getPolicyPortGroup(params *netpolDataParams, acls []*nbdb.ACL) *nbdb.PortGroup {
 	lsps := []*nbdb.LogicalSwitchPort{}
 	for _, uuid := range params.localPortUUIDs {
 		lsps = append(lsps, &nbdb.LogicalSwitchPort{UUID: uuid})
@@ -375,12 +448,7 @@ func getPolicyData(params *netpolDataParams) []libovsdbtest.TestData {
 	)
 	pg.UUID = pg.Name + "-UUID"
 
-	data := []libovsdbtest.TestData{}
-	for _, acl := range acls {
-		data = append(data, acl)
-	}
-	data = append(data, pg)
-	return data
+	return pg
 }
 
 func newNetpolDataParams(networkPolicy *knet.NetworkPolicy) *netpolDataParams {
@@ -776,33 +844,38 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 		})
 
-		ginkgo.It("reconciles an existing networkPolicy with empty db", func() {
-			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
-				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
-				namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
-				// add namespaces to initial Database
-				initialDB.NBData = append(initialDB.NBData, namespace1AddressSetv4, namespace2AddressSetv4)
+		ginkgo.DescribeTable("reconciles an existing networkPolicy with empty db",
+			func(allowICMPNetworkPolicy bool) {
+				app.Action = func(*cli.Context) error {
+					config.OVNKubernetesFeature.AllowICMPNetworkPolicy = allowICMPNetworkPolicy
+					namespace1 := *newNamespace(namespaceName1)
+					namespace2 := *newNamespace(namespaceName2)
+					namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
+					namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
+					// add namespaces to initial Database
+					initialDB.NBData = append(initialDB.NBData, namespace1AddressSetv4, namespace2AddressSetv4)
 
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
-					namespace2.Name, "", true, true)
-				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
-					nil, nil)
+					networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+						namespace2.Name, "", true, true)
+					startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
+						nil, nil)
 
-				_, err := fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
-					Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					_, err := fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
+						Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				expectedData := getNamespaceWithSinglePolicyExpectedData(
-					newNetpolDataParams(networkPolicy).withPeerNamespaces(namespace2.Name),
-					initialDB.NBData)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData))
-				return nil
-			}
+					expectedData := getNamespaceWithSinglePolicyExpectedData(
+						newNetpolDataParams(networkPolicy).withPeerNamespaces(namespace2.Name),
+						initialDB.NBData)
+					gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData))
+					return nil
+				}
 
-			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
-		})
+				gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+			},
+			ginkgo.Entry("with allow ICMP network policy disabled", false),
+			ginkgo.Entry("with allow ICMP network policy enabled", true),
+		)
 
 		ginkgo.It("reconciles an ingress networkPolicy updating an existing ACL", func() {
 			app.Action = func(*cli.Context) error {
@@ -948,6 +1021,149 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				finalData := initialDB.NBData
 				finalData = append(finalData, namespace1AddressSetv4)
 				finalData = append(finalData, gressUpdatedPolicy1ExpectedData...)
+				finalData = append(finalData, gressPolicy2ExpectedData...)
+				finalData = append(finalData, defaultDenyExpectedData...)
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(finalData))
+
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
+		ginkgo.It("reconciles existing networkPolicies with has legacy ipBlock ACLs", func() {
+			app.Action = func(*cli.Context) error {
+				namespace1 := *newNamespace(namespaceName1)
+				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
+				peer := knet.NetworkPolicyPeer{
+					IPBlock: &knet.IPBlock{
+						CIDR: "1.1.1.1",
+					},
+				}
+				// equivalent rules in one peer
+				networkPolicy1 := newNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
+					[]knet.NetworkPolicyIngressRule{{
+						From: []knet.NetworkPolicyPeer{peer, peer},
+					}}, nil)
+				// equivalent rules in different peers
+				networkPolicy2 := newNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
+					[]knet.NetworkPolicyIngressRule{
+						{
+							From: []knet.NetworkPolicyPeer{peer},
+						},
+						{
+							From: []knet.NetworkPolicyPeer{peer},
+						},
+					}, nil)
+				initialData := initialDB.NBData
+				initialData = append(initialData, namespace1AddressSetv4)
+				defaultDenyExpectedData := getDefaultDenyDataMultiplePolicies([]*knet.NetworkPolicy{networkPolicy1, networkPolicy2})
+				initialData = append(initialData, defaultDenyExpectedData...)
+
+				// NetworkPolicy 1 contains a single gress policy that previously
+				// created one legacy ACL per ipBlock. Simulate two legacy ACLs
+				// corresponding to ipBlock indexes 0 and 1 of the gress policy.
+				// ACL1 => libovsdbops.GressIdxKey: 0, libovsdbops.IpBlockIndexKey: 0
+				// ACL2 => libovsdbops.GressIdxKey: 0, libovsdbops.IpBlockIndexKey: 1
+				netInfo := &util.DefaultNetInfo{}
+				fakeController := getFakeBaseController(netInfo)
+				controllerName := getNetworkControllerName(netInfo.GetNetworkName())
+				pgName1 := fakeController.getNetworkPolicyPGName(namespace1.Name, networkPolicy1.Name)
+				gp1 := gressPolicy{
+					policyNamespace: networkPolicy1.Namespace,
+					policyName:      networkPolicy1.Name,
+					policyType:      knet.PolicyTypeIngress,
+					idx:             0,
+					controllerName:  controllerName,
+				}
+				var legacyACLPolicy1 []*nbdb.ACL
+				for idx := 0; idx < 2; idx++ {
+					legacyACLIDs := gp1.getNetpolACLDbIDs(idx, libovsdbutil.UnspecifiedL4Protocol)
+					legacyACL := libovsdbops.BuildACL(
+						libovsdbutil.GetACLName(legacyACLIDs),
+						nbdb.ACLDirectionToLport,
+						types.DefaultAllowPriority,
+						fmt.Sprintf("ip4.src == 1.1.1.1 && outport == @%s", pgName1),
+						nbdb.ACLActionAllowRelated,
+						types.OvnACLLoggingMeter,
+						"",
+						false,
+						legacyACLIDs.GetExternalIDs(),
+						nil,
+						types.DefaultACLTier,
+					)
+					legacyACL.UUID = legacyACLIDs.String() + "-UUID"
+					initialData = append(initialData, legacyACL)
+					legacyACLPolicy1 = append(legacyACLPolicy1, legacyACL)
+				}
+				pgNetworkPolicy1 := getPolicyPortGroup(newNetpolDataParams(networkPolicy1), legacyACLPolicy1)
+				initialData = append(initialData, pgNetworkPolicy1)
+
+				// NetworkPolicy 2 contains two gress policies, each with one legacy
+				// ACL per ipBlock. Simulate two legacy ACL corresponding to gress
+				// policy indexes 0 and 1, respectively.
+				// ACL1 => libovsdbops.GressIdxKey: 0, libovsdbops.IpBlockIndexKey: 0
+				// ACL2 => libovsdbops.GressIdxKey: 1, libovsdbops.IpBlockIndexKey: 0
+				pgName2 := fakeController.getNetworkPolicyPGName(namespace1.Name, networkPolicy2.Name)
+				firstgp2 := gressPolicy{
+					policyNamespace: networkPolicy2.Namespace,
+					policyName:      networkPolicy2.Name,
+					policyType:      knet.PolicyTypeIngress,
+					idx:             0,
+					controllerName:  controllerName,
+				}
+				secondgp2 := gressPolicy{
+					policyNamespace: networkPolicy2.Namespace,
+					policyName:      networkPolicy2.Name,
+					policyType:      knet.PolicyTypeIngress,
+					idx:             1,
+					controllerName:  controllerName,
+				}
+				legacyACLID := firstgp2.getNetpolACLDbIDs(0, libovsdbutil.UnspecifiedL4Protocol)
+				legacyACL := libovsdbops.BuildACL(
+					libovsdbutil.GetACLName(legacyACLID),
+					nbdb.ACLDirectionToLport,
+					types.DefaultAllowPriority,
+					fmt.Sprintf("ip4.src == 1.1.1.1 && outport == @%s", pgName2),
+					nbdb.ACLActionAllowRelated,
+					types.OvnACLLoggingMeter,
+					"",
+					false,
+					legacyACLID.GetExternalIDs(),
+					nil,
+					types.DefaultACLTier,
+				)
+				legacyACL.UUID = legacyACLID.String() + "-UUID"
+				initialData = append(initialData, legacyACL)
+
+				legacyACLID2 := secondgp2.getNetpolACLDbIDs(0, libovsdbutil.UnspecifiedL4Protocol)
+				legacyACL2 := libovsdbops.BuildACL(
+					libovsdbutil.GetACLName(legacyACLID2),
+					nbdb.ACLDirectionToLport,
+					types.DefaultAllowPriority,
+					fmt.Sprintf("ip4.src == 1.1.1.1 && outport == @%s", pgName2),
+					nbdb.ACLActionAllowRelated,
+					types.OvnACLLoggingMeter,
+					"",
+					false,
+					legacyACLID2.GetExternalIDs(),
+					nil,
+					types.DefaultACLTier,
+				)
+				legacyACL2.UUID = legacyACLID2.String() + "-UUID"
+				initialData = append(initialData, legacyACL2)
+				pgNetworkPolicy2 := getPolicyPortGroup(newNetpolDataParams(networkPolicy2), []*nbdb.ACL{legacyACL, legacyACL2})
+				initialData = append(initialData, pgNetworkPolicy2)
+
+				startOvn(libovsdbtest.TestSetup{NBData: initialData}, []corev1.Namespace{namespace1},
+					[]knet.NetworkPolicy{*networkPolicy1, *networkPolicy2},
+					nil, nil)
+
+				// check the initial data is updated and all legacy ACLs should be cleaned up
+				gressPolicy1ExpectedData := getPolicyData(newNetpolDataParams(networkPolicy1))
+				gressPolicy2ExpectedData := getPolicyData(newNetpolDataParams(networkPolicy2))
+				finalData := initialDB.NBData
+				finalData = append(finalData, namespace1AddressSetv4)
+				finalData = append(finalData, gressPolicy1ExpectedData...)
 				finalData = append(finalData, gressPolicy2ExpectedData...)
 				finalData = append(finalData, defaultDenyExpectedData...)
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(finalData))

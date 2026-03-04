@@ -18,8 +18,8 @@ limitations under the License.
 package v1
 
 import (
-	clusternetworkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	clusternetworkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	types "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 )
 
 // ClusterNetworkConnectSpecApplyConfiguration represents a declarative configuration of the ClusterNetworkConnectSpec type for use

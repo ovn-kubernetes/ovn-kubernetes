@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,18 +20,22 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 )
+
+func chassisIDForNode(nodeName string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(nodeName)).String()
+}
 
 type testNetworkManager struct {
 	networkmanager.FakeNetworkManager
@@ -377,7 +382,7 @@ func TestCreateRouterPortOps(t *testing.T) {
 			networkID:         1,
 			nodeID:            2,
 			tunnelKey:         101,
-			remoteChassisName: "node2",
+			remoteChassisName: chassisIDForNode("node2"),
 			initialDB: []libovsdbtest.TestData{
 				&nbdb.LogicalRouter{
 					UUID: "router-uuid",
@@ -555,6 +560,7 @@ func TestEnsureConnectPortsOps(t *testing.T) {
 						Name: "node1",
 						Annotations: map[string]string{
 							"k8s.ovn.org/node-id": "1",
+							util.OvnNodeChassisID: chassisIDForNode("node1"),
 							util.OvnNodeZoneName:  "node1", // local zone
 						},
 					},
@@ -587,6 +593,7 @@ func TestEnsureConnectPortsOps(t *testing.T) {
 						Name: "node2", // remote node
 						Annotations: map[string]string{
 							"k8s.ovn.org/node-id": "2",
+							util.OvnNodeChassisID: chassisIDForNode("node2"),
 							util.OvnNodeZoneName:  "node2", // different zone
 						},
 					},
@@ -619,6 +626,7 @@ func TestEnsureConnectPortsOps(t *testing.T) {
 						Name: "node1", // local node
 						Annotations: map[string]string{
 							"k8s.ovn.org/node-id": "1",
+							util.OvnNodeChassisID: chassisIDForNode("node1"),
 							util.OvnNodeZoneName:  "node1", // local zone
 						},
 					},
@@ -628,6 +636,7 @@ func TestEnsureConnectPortsOps(t *testing.T) {
 						Name: "node2", // remote node
 						Annotations: map[string]string{
 							"k8s.ovn.org/node-id": "2",
+							util.OvnNodeChassisID: chassisIDForNode("node2"),
 							util.OvnNodeZoneName:  "node2", // different zone
 						},
 					},
@@ -833,7 +842,7 @@ func TestCleanupNetworkConnections(t *testing.T) {
 						libovsdbops.RouterNameKey.String(): "connect_router_test-cnc",
 					},
 					Options: map[string]string{
-						libovsdbops.RequestedChassis: "node2",
+						libovsdbops.RequestedChassis: chassisIDForNode("node2"),
 					},
 					// Remote port has no peer
 				},
@@ -916,6 +925,7 @@ func TestSyncNetworkConnectionsInactiveNetwork(t *testing.T) {
 			Annotations: map[string]string{
 				util.OvnNodeZoneName:       "zone1",
 				util.OvnNodeID:             "1",
+				util.OvnNodeChassisID:      chassisIDForNode("node1"),
 				"k8s.ovn.org/node-subnets": string(subnetsBytes),
 			},
 		},
@@ -1496,6 +1506,7 @@ func TestEnsureRoutingPoliciesOps(t *testing.T) {
 						Name: "node1",
 						Annotations: map[string]string{
 							"k8s.ovn.org/node-id": "1",
+							util.OvnNodeChassisID: chassisIDForNode("node1"),
 						},
 					},
 				},
@@ -1504,6 +1515,7 @@ func TestEnsureRoutingPoliciesOps(t *testing.T) {
 						Name: "node2",
 						Annotations: map[string]string{
 							"k8s.ovn.org/node-id": "2",
+							util.OvnNodeChassisID: chassisIDForNode("node2"),
 						},
 					},
 				},

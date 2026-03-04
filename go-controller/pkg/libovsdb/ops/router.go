@@ -11,8 +11,8 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
 // ROUTER OPs
@@ -187,6 +187,9 @@ func CreateOrUpdateLogicalRouterPort(nbClient libovsdbclient.Client, router *nbd
 // and returns the corresponding ops
 func CreateOrUpdateLogicalRouterPortOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, router *nbdb.LogicalRouter,
 	lrp *nbdb.LogicalRouterPort, chassis *nbdb.GatewayChassis, fields ...interface{}) ([]ovsdb.Operation, error) {
+	if err := validateRequestedChassisOption(lrp.Options); err != nil {
+		return nil, err
+	}
 	opModels := []operationModel{}
 	if chassis != nil {
 		opModels = append(opModels, operationModel{

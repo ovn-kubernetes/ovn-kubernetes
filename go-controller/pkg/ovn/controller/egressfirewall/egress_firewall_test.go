@@ -19,19 +19,19 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	egressfirewallfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/fake"
-	egressipv1fake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
-	egressservicefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
-	networkqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	fakenetworkmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	egressfirewallapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	egressfirewallfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/fake"
+	egressipv1fake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
+	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	networkqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	fakenetworkmanager "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestEgressFirewall(t *testing.T) {
@@ -484,7 +484,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 				subnets = append(subnets, config.CIDRNetworkEntry{CIDR: cidr})
 			}
 			config.Default.ClusterSubnets = subnets
-			entry := &cacheEntry{}
+			entry := &cacheEntry{subnets: subnetsForNetInfo(&util.DefaultNetInfo{})}
 			output, err := efController.newEgressFirewallRule("default", tc.egressFirewallRule, tc.id, entry)
 			if tc.err == true {
 				gomega.Expect(err).To(gomega.HaveOccurred())
@@ -716,8 +716,13 @@ func TestValidateAndGetEgressFirewallDestination(t *testing.T) {
 			if len(tc.udnName) > 0 {
 				network = tc.udnName
 			}
+			entry := &cacheEntry{subnets: subnetsForNetInfo(&util.DefaultNetInfo{})}
+			if len(tc.udnName) > 0 {
+				entry.subnets = subnetsForNetInfo(netInfo)
+			}
+
 			cidrSelector, dnsName, clusterSubnetIntersection, nodeSelector, err :=
-				efController.validateAndGetEgressFirewallDestination(network, tc.egressFirewallDestination)
+				efController.validateAndGetEgressFirewallDestination(network, tc.egressFirewallDestination, entry)
 			if tc.expectedErr {
 				require.Error(t, err)
 			} else {

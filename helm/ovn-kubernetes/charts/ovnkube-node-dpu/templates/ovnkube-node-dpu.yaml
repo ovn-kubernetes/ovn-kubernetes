@@ -108,6 +108,9 @@ spec:
           name: run-systemd
           subPath: private
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -241,6 +244,8 @@ spec:
           value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
         - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:
@@ -397,5 +402,8 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       tolerations:
       - operator: "Exists"

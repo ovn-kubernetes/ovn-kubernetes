@@ -91,15 +91,15 @@ var _ = Describe("PrimaryNetAttachDefNotExist", func() {
 		nads := []*netv1.NetworkAttachmentDefinition{
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-net1", Namespace: "blue"},
-				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.0.0","type": "ovn-k8s-cni-overlay","role": "secondary"}`},
+				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.1.0","type": "ovn-k8s-cni-overlay","role": "secondary"}`},
 			},
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-net2", Namespace: "blue"},
-				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.0.0","type": "ovn-k8s-cni-overlay","role": "secondary"}`},
+				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.1.0","type": "ovn-k8s-cni-overlay","role": "secondary"}`},
 			},
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-net3", Namespace: "blue"},
-				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.0.0","type": "fake-ovn-cni","role": "primary"}`},
+				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.1.0","type": "fake-ovn-cni","role": "primary"}`},
 			},
 		}
 		Expect(PrimaryNetAttachDefNotExist(nads)).To(Succeed())
@@ -108,15 +108,15 @@ var _ = Describe("PrimaryNetAttachDefNotExist", func() {
 		nads := []*netv1.NetworkAttachmentDefinition{
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-net1", Namespace: "blue"},
-				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.0.0","type": "ovn-k8s-cni-overlay","role": "primary"}`},
+				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.1.0","type": "ovn-k8s-cni-overlay","role": "primary"}`},
 			},
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-net2", Namespace: "blue"},
-				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.0.0","type": "ovn-k8s-cni-overlay","role": "secondary"}`},
+				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.1.0","type": "ovn-k8s-cni-overlay","role": "secondary"}`},
 			},
 			{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-net3", Namespace: "blue"},
-				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.0.0","type": "fake-ovn-cni","role": "primary"}`},
+				Spec:       netv1.NetworkAttachmentDefinitionSpec{Config: `{"cniVersion": "1.1.0","type": "fake-ovn-cni","role": "primary"}`},
 			},
 		}
 		Expect(PrimaryNetAttachDefNotExist(nads)).ToNot(Succeed())

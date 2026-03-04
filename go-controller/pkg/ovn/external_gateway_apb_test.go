@@ -18,17 +18,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	adminpolicybasedrouteapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
-	adminpolicybasedrouteclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	adminpolicybasedrouteapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	adminpolicybasedrouteclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
@@ -178,7 +178,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				Name: "namespace1_myPod",
 				Options: map[string]string{
 					"iface-id-ver":               "myPod",
-					libovsdbops.RequestedChassis: "node1",
+					libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 				},
 				PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 			},
@@ -214,7 +214,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -324,7 +324,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				Name: "namespace1_myPod",
 				Options: map[string]string{
 					"iface-id-ver":               "myPod",
-					libovsdbops.RequestedChassis: "node1",
+					libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 				},
 				PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 			},
@@ -360,7 +360,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -463,7 +463,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				Name: "namespace1_myPod",
 				Options: map[string]string{
 					"iface-id-ver":               "myPod",
-					libovsdbops.RequestedChassis: "node1",
+					libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 				},
 				PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 			},
@@ -499,7 +499,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -606,7 +606,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -652,7 +652,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -814,7 +814,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -896,7 +896,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -1039,7 +1039,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:49:a1:93:cb fd00:10:244:2::3"},
 					},
@@ -1167,7 +1167,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -1238,7 +1238,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -1339,7 +1339,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				Name: "namespace1_myPod",
 				Options: map[string]string{
 					"iface-id-ver":               "myPod",
-					libovsdbops.RequestedChassis: "node1",
+					libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 				},
 				PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 			},
@@ -1375,7 +1375,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -1481,7 +1481,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				Name: "namespace1_myPod",
 				Options: map[string]string{
 					"iface-id-ver":               "myPod",
-					libovsdbops.RequestedChassis: "node1",
+					libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 				},
 				PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 			},
@@ -1517,7 +1517,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -1643,7 +1643,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				Name: "namespace1_myPod",
 				Options: map[string]string{
 					"iface-id-ver":               "myPod",
-					libovsdbops.RequestedChassis: "node1",
+					libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 				},
 				PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 			},
@@ -1679,7 +1679,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -1797,7 +1797,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -1833,7 +1833,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -1860,7 +1860,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					Name: "namespace1_myPod",
 					Options: map[string]string{
 						"iface-id-ver":               "myPod",
-						libovsdbops.RequestedChassis: "node1",
+						libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 					},
 					PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 				},
@@ -1902,7 +1902,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -1992,7 +1992,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -2112,7 +2112,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -2243,7 +2243,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -2285,7 +2285,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -2341,7 +2341,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Name: "namespace1_myPod",
 						Options: map[string]string{
 							"iface-id-ver":               "myPod",
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},
 					},
@@ -2539,7 +2539,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						},
 						Name: "namespace1_myPod",
 						Options: map[string]string{
-							libovsdbops.RequestedChassis: "node1",
+							libovsdbops.RequestedChassis: chassisIDForNode("node1"),
 							"iface-id-ver":               "myPod",
 						},
 						PortSecurity: []string{"0a:58:0a:80:01:03 10.128.1.3"},

@@ -17,14 +17,14 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -748,7 +748,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node1].transitSwitchPortIPv4, nodeByName[node1].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node1].subnetIPv4, nodeByName[node1].subnetIPv6),
 										"k8s.ovn.org/l3-gateway-config":               fmt.Sprintf(`{"default": {"mode": "local", "mac-address":"7e:57:f8:f0:3c:51", "ip-addresses":[%q, %q]}}`, nodeByName[node1].addressIPv4, nodeByName[node1].addressIPv6),
-										"k8s.ovn.org/node-chassis-id":                 "1",
+										"k8s.ovn.org/node-chassis-id":                 chassisIDForNode(node1),
 										util.OvnNodeID:                                nodeByName[node1].nodeID,
 									},
 								},
@@ -760,7 +760,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node2].transitSwitchPortIPv4, nodeByName[node2].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node2].subnetIPv4, nodeByName[node2].subnetIPv6),
 										"k8s.ovn.org/l3-gateway-config":               fmt.Sprintf(`{"default": {"mode": "local", "mac-address":"7e:57:f8:f0:3c:52", "ip-addresses":[%q, %q]}}`, nodeByName[node2].addressIPv4, nodeByName[node2].addressIPv6),
-										"k8s.ovn.org/node-chassis-id":                 "2",
+										"k8s.ovn.org/node-chassis-id":                 chassisIDForNode(node2),
 										util.OvnNodeID:                                nodeByName[node2].nodeID,
 									},
 								},
@@ -772,7 +772,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node3].transitSwitchPortIPv4, nodeByName[node3].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node3].subnetIPv4, nodeByName[node3].subnetIPv6),
 										"k8s.ovn.org/l3-gateway-config":               fmt.Sprintf(`{"default": {"mode": "local", "mac-address":"7e:57:f8:f0:3c:53", "ip-addresses":[%q, %q]}}`, nodeByName[node3].addressIPv4, nodeByName[node3].addressIPv6),
-										"k8s.ovn.org/node-chassis-id":                 "3",
+										"k8s.ovn.org/node-chassis-id":                 chassisIDForNode(node3),
 										util.OvnNodeID:                                nodeByName[node3].nodeID,
 									},
 								},

@@ -1,4 +1,4 @@
-module github.com/ovn-org/ovn-kubernetes/test/conformance
+module github.com/ovn-kubernetes/ovn-kubernetes/test/conformance
 
 go 1.25.0
 
@@ -7,7 +7,7 @@ require (
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
 	sigs.k8s.io/controller-runtime v0.22.1
-	sigs.k8s.io/network-policy-api v0.1.8
+	sigs.k8s.io/network-policy-api v0.1.9-0.20260225114943-e80807c44a00
 )
 
 require (

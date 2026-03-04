@@ -1,7 +1,7 @@
 site_name: OVN-Kubernetes
 site_url: https://www.ovn.org/ovn-kubernetes/
-repo_url: https://github.com/ovn-org/ovn-kubernetes
-repo_name: ovn-org/ovn-kubernetes
+repo_url: https://github.com/ovn-kubernetes/ovn-kubernetes
+repo_name: ovn-kubernetes/ovn-kubernetes
 edit_uri: edit/master/docs
 extra_css:
   - stylesheets/extra.css
@@ -82,10 +82,11 @@ nav:
     - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
     - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
     - Internal Subnets: design/ovn-kubernetes-subnets.md
-    - Kubevirt VM Live Migration: design/live-migration.md
+    - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
     - Launching OVN-Kubernetes: installation/launching-ovn-kubernetes-on-kind.md
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
+    - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
     - Configuration Guide: getting-started/configuration.md
     - CLI Guide: getting-started/cli-guide.md
     - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md

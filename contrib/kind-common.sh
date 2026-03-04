@@ -103,6 +103,7 @@ set_common_default_params() {
   OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
   ENABLE_COREDUMPS=${ENABLE_COREDUMPS:-false}
   METRICS_IP=${METRICS_IP:-""}
+  OVN_ALLOW_ICMP_NETPOL=${OVN_ALLOW_ICMP_NETPOL:-false}
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
   if [ "$OVN_COMPACT_MODE" == true ]; then
     KIND_NUM_WORKER=0
@@ -178,6 +179,11 @@ set_common_default_params() {
     echo "EVPN requires Route advertisements to be enabled (-rae)"
     exit 1
   fi
+  if [ "$ENABLE_EVPN" == true ] && [ "$OVN_GATEWAY_MODE" != "local" ]; then
+    echo "EVPN requires local gateway mode (-gm local)"
+    exit 1
+  fi
+  
 
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
   if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
@@ -234,6 +240,7 @@ build_ovn_image() {
 }
 
 run_kubectl() {
+  kind export kubeconfig --name ${KIND_CLUSTER_NAME} 
   local retries=0
   local attempts=10
   while true; do
@@ -943,6 +950,19 @@ clone_frr() {
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
     git apply ../patches/*
+
+    # The upstream frr-k8s demo.sh hardcodes quay.io/frrouting/frr:9.1.0,
+    # which crashes on musl libc (Alpine) due to a race condition in
+    # pthread_setname_np during BGP keepalive thread startup
+    # (https://github.com/FRRouting/frr/issues/15699, fixed in FRR 10.1 by
+    # https://github.com/FRRouting/frr/pull/15714).
+    #
+    # Bump to 10.4.1 for upstream demo was posted here: https://github.com/metallb/frr-k8s/pull/404
+    # We bump further to 10.4.2 to include additional fixes for EVPN:
+    # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3907335193
+    # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3898408592
+    sed -i 's|quay.io/frrouting/frr:9.1.0|quay.io/frrouting/frr:10.4.2|g' hack/demo/demo.sh
+
     popd
 
     popd || exit 1
@@ -989,6 +1009,30 @@ deploy_frr_external_container() {
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
+    # Enable keep_addr_on_down to preserve IPv6 addresses during VRF enslavement.
+    # Without this, IPv6 global addresses are removed when interfaces are moved to a VRF,
+    # causing FRR/zebra to fail creating FIB nexthop groups ("no fib nhg" bug).
+    # See: https://docs.kernel.org/networking/vrf.html (section 4: Enslave L3 interfaces)
+    #      https://github.com/FRRouting/frr/issues/1666
+    $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.keep_addr_on_down=1
+  fi
+
+  if [ "$ENABLE_EVPN" == true ]; then
+    echo "Configuring global EVPN BGP on external FRR (advertise-all-vni + neighbor activation)..."
+    # Enable l2vpn evpn address-family, activate all neighbors, and advertise-all-vni.
+    # Neighbors are already configured by demo.sh; extract them from the running config.
+    # This is cluster-level infrastructure shared across all EVPN tests; configured once
+    # at install time so individual tests don't need to manage it.
+    local bgp_neighbors vtysh_cmds
+    bgp_neighbors=$($OCI_BIN exec frr vtysh -c "show running-config" | grep "^ neighbor.*remote-as" | awk '{print $2}')
+    vtysh_cmds=(-c "configure terminal" -c "router bgp 64512" -c "address-family l2vpn evpn")
+    for neighbor in $bgp_neighbors; do
+      vtysh_cmds+=(-c "neighbor $neighbor activate")
+      vtysh_cmds+=(-c "neighbor $neighbor route-reflector-client")
+    done
+    vtysh_cmds+=(-c "advertise-all-vni" -c "exit-address-family" -c "end" -c "write memory")
+    $OCI_BIN exec frr vtysh "${vtysh_cmds[@]}"
+    echo "Global EVPN BGP config complete on external FRR"
   fi
 }
 

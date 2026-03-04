@@ -8,9 +8,9 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // LOGICAL_SWITCH OPs
@@ -323,6 +323,9 @@ func createOrUpdateLogicalSwitchPortsOps(nbClient libovsdbclient.Client, ops []o
 	opModels := make([]operationModel, 0, len(lsps)+1)
 
 	for _, lsp := range lsps {
+		if err := validateRequestedChassisOption(lsp.Options); err != nil {
+			return nil, err
+		}
 		opModel := createOrUpdateLogicalSwitchPortOpModelWithCustomFields(sw, lsp, createLSP, customFields)
 		opModels = append(opModels, opModel)
 	}
@@ -379,6 +382,13 @@ func CreateOrUpdateLogicalSwitchPortsOnSwitch(nbClient libovsdbclient.Client, sw
 // if it does not exist
 func CreateOrUpdateLogicalSwitchPortsAndSwitch(nbClient libovsdbclient.Client, sw *nbdb.LogicalSwitch, lsps ...*nbdb.LogicalSwitchPort) error {
 	return createOrUpdateLogicalSwitchPorts(nbClient, sw, true, lsps...)
+}
+
+// CreateOrUpdateLogicalSwitchPortsAndSwitchOps creates or updates the provided
+// logical switch ports and adds them to the provided logical switch creating it
+// if it does not exist and returns the corresponding ops
+func CreateOrUpdateLogicalSwitchPortsAndSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, sw *nbdb.LogicalSwitch, lsps ...*nbdb.LogicalSwitchPort) ([]ovsdb.Operation, error) {
+	return createOrUpdateLogicalSwitchPortsOps(nbClient, ops, sw, true, true, nil, lsps...)
 }
 
 // DeleteLogicalSwitchPortsOps deletes the provided logical switch ports, removes
@@ -479,39 +489,4 @@ func DeleteLogicalSwitchPortsWithPredicateOps(nbClient libovsdbclient.Client, op
 
 	m := newModelClient(nbClient)
 	return m.DeleteOps(ops, opModels...)
-}
-
-// UpdateLogicalSwitchPortSetOptions sets options on the provided logical switch
-// port adding any missing, removing the ones set to an empty value and updating
-// existing
-func UpdateLogicalSwitchPortSetOptions(nbClient libovsdbclient.Client, lsp *nbdb.LogicalSwitchPort) error {
-	options := lsp.Options
-	lsp, err := GetLogicalSwitchPort(nbClient, lsp)
-	if err != nil {
-		return err
-	}
-
-	if lsp.Options == nil {
-		lsp.Options = map[string]string{}
-	}
-
-	for k, v := range options {
-		if v == "" {
-			delete(lsp.Options, k)
-		} else {
-			lsp.Options[k] = v
-		}
-	}
-
-	opModel := operationModel{
-		// For LSP's Name is a valid index, so no predicate is needed
-		Model:          lsp,
-		OnModelUpdates: []interface{}{&lsp.Options},
-		ErrNotFound:    true,
-		BulkOp:         false,
-	}
-
-	m := newModelClient(nbClient)
-	_, err = m.CreateOrUpdate(opModel)
-	return err
 }

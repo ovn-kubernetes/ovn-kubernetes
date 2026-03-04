@@ -81,8 +81,8 @@ type NetConf struct {
 	PhysicalNetworkName string `json:"physicalNetworkName,omitempty"`
 
 	// Transport describes the transport protocol for east-west traffic.
-	// Valid values are "no-overlay", "geneve", and "evpn".
-	// Defaults to "geneve".
+	// Valid values are "no-overlay" and "evpn".
+	// When omitted, the default OVN overlay transport is used.
 	Transport string `json:"transport,omitempty"`
 
 	// EVPNConfig contains configuration for EVPN mode.

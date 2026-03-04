@@ -18,13 +18,13 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // Test for cncNeedsUpdate function
@@ -519,7 +519,7 @@ func TestController_syncNAD(t *testing.T) {
 		context.Background(), cnc, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	nadConfig := `{"cniVersion":"0.4.0","name":"net1","type":"ovn-k8s-cni-overlay","topology":"layer3","role":"primary","netAttachDefName":"ns1/nad1"}`
+	nadConfig := `{"cniVersion":"1.1.0","name":"net1","type":"ovn-k8s-cni-overlay","topology":"layer3","role":"primary","netAttachDefName":"ns1/nad1"}`
 	nad := &nettypes.NetworkAttachmentDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "ns1",

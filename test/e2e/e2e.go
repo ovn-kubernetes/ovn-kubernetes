@@ -17,13 +17,13 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/containerengine"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
@@ -1416,7 +1416,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 
 				// It is expected that endpoints take a bit of time to come up after conversion. We remove all iptables rules and all breth0 flows.
 				// Therefore, test IPv4 endpoints until they are stable, only then proceed to the actual test.
-				// To be removed once https://github.com/ovn-org/ovn-kubernetes/issues/2933 is fixed.
+				// To be removed once https://github.com/ovn-kubernetes/ovn-kubernetes/issues/2933 is fixed.
 				framework.Logf("Monitoring endpoints for up to 60 seconds for IPv4 to give them time to come up (issue 2933)")
 				gomega.Eventually(func() (r bool) {
 					// Sleep for 5 seconds before proceeding.
@@ -1456,7 +1456,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					for nodeName, ipAddresses := range nodeToAddressesMapping {
 						for _, address := range ipAddresses {
 							// Use a slice for stable order, always tests http first and udp second due to
-							// https://github.com/ovn-org/ovn-kubernetes/issues/2913.
+							// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/2913.
 							for _, protocol := range []string{"http", "udp"} {
 								port := protocolPorts[protocol]
 								ginkgo.By(fmt.Sprintf("Hitting nodeport %s/%d on %s with IP %s and reaching all the endpoints ", protocol, port, nodeName, address))
@@ -1948,6 +1948,20 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 		return fmt.Sprintf(collectorContainerTemplate, port)
 	}
 
+	getCollectorArgs := func(protocol flowMonitoringProtocol, port uint16) []string {
+		args := []string{"-kafka=false"}
+		switch protocol {
+		case sflow:
+			// Disable other collectors to avoid non-deterministic startup ordering in logs.
+			args = append(args, "-nf=false", "-nfl=false", "-sflow=true", fmt.Sprintf("-sflow.port=%d", port))
+		case netflow_v5:
+			args = append(args, "-nf=false", "-sflow=false", "-nfl=true", fmt.Sprintf("-nfl.port=%d", port))
+		case ipfix:
+			args = append(args, "-nfl=false", "-sflow=false", "-nf=true", fmt.Sprintf("-nf.port=%d", port))
+		}
+		return args
+	}
+
 	keywordInLogs := map[flowMonitoringProtocol]string{
 		netflow_v5: "NETFLOW_V5", ipfix: "IPFIX", sflow: "SFLOW_5"}
 
@@ -1968,7 +1982,7 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "failed to get primary network")
 			collectorExternalContainer := infraapi.ExternalContainer{Name: getContainerName(collectorPort), Image: "cloudflare/goflow",
-				Network: primaryProviderNetwork, CmdArgs: []string{"-kafka=false"}, ExtPort: collectorPort}
+				Network: primaryProviderNetwork, CmdArgs: getCollectorArgs(protocol, collectorPort), ExtPort: collectorPort}
 			collectorExternalContainer, err = providerCtx.CreateExternalContainer(collectorExternalContainer)
 			if err != nil {
 				framework.Failf("failed to start flow collector container %s: %v", getContainerName(collectorPort), err)
@@ -1986,6 +2000,58 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 			setEnv := map[string]string{ovnEnvVar: addressAndPort}
 			setUnsetTemplateContainerEnv(f.ClientSet, ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), setEnv)
 
+			ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNamespace).List(context.TODO(), metav1.ListOptions{
+				LabelSelector: "app=ovnkube-node",
+			})
+			if err != nil {
+				framework.Failf("could not get ovnkube-node pods: %v", err)
+			}
+
+			if protocol == sflow {
+				ginkgo.By("Waiting for ovnkube-node to configure br-int sflow and setting sampling/polling for better signal")
+				for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
+					var sFlowUUID string
+					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+						getSFlowExecOptions := e2epod.ExecOptions{
+							Command:       []string{"ovs-vsctl", "--if-exists", "get", "bridge", "br-int", "sflow"},
+							Namespace:     ovnKubeNamespace,
+							PodName:       ovnKubeNodePod.Name,
+							ContainerName: getNodeContainerName(),
+							CaptureStdout: true,
+							CaptureStderr: true,
+						}
+						rawUUID, stderr, execErr := e2epod.ExecWithOptions(f, getSFlowExecOptions)
+						if execErr != nil {
+							framework.Logf("waiting for sflow row on %s: query failed: %v, stderr: %s",
+								ovnKubeNodePod.Name, execErr, stderr)
+							return false, nil
+						}
+						rawUUID = strings.TrimSpace(strings.Trim(rawUUID, "\""))
+						if rawUUID == "" || rawUUID == "[]" {
+							framework.Logf("waiting for sflow row on %s: br-int has no sflow row yet", ovnKubeNodePod.Name)
+							return false, nil
+						}
+						sFlowUUID = rawUUID
+						return true, nil
+					})
+					framework.ExpectNoError(err, "timed out waiting for br-int sflow row on %s", ovnKubeNodePod.Name)
+
+					setSFlowExecOptions := e2epod.ExecOptions{
+						Command:       []string{"ovs-vsctl", "--if-exists", "set", "sflow", sFlowUUID, "sampling=1", "polling=1"},
+						Namespace:     ovnKubeNamespace,
+						PodName:       ovnKubeNodePod.Name,
+						ContainerName: getNodeContainerName(),
+						CaptureStdout: true,
+						CaptureStderr: true,
+					}
+					_, setStderr, setErr := e2epod.ExecWithOptions(f, setSFlowExecOptions)
+					if setErr != nil {
+						framework.Logf("skipping sflow sampling tuning on %s: failed to set sampling/polling for row %s: %v, stderr: %s",
+							ovnKubeNodePod.Name, sFlowUUID, setErr, setStderr)
+					}
+				}
+			}
+
 			ginkgo.By(fmt.Sprintf("Checking that the collector container received %s data", protocolStr))
 			keyword := keywordInLogs[protocol]
 			collectorContainerLogsTest := func() wait.ConditionFunc {
@@ -1997,14 +2063,14 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 					}
 					collectorContainerLogs = strings.TrimSuffix(collectorContainerLogs, "\n")
 					logLines := strings.Split(collectorContainerLogs, "\n")
-					lastLine := logLines[len(logLines)-1]
 					// check that flow monitoring traffic has been logged
-					if strings.Contains(lastLine, keyword) {
-						framework.Logf("Successfully found string %s in last log line of"+
-							" the collector: %s", keyword, lastLine)
-						return true, nil
+					for _, line := range logLines {
+						if strings.Contains(line, keyword) {
+							framework.Logf("Successfully found string %s in collector logs line: %s", keyword, line)
+							return true, nil
+						}
 					}
-					framework.Logf("%s not found in last log line: %s", keyword, lastLine)
+					framework.Logf("%s not found in collector logs", keyword)
 					return false, nil
 				}
 			}
@@ -2016,7 +2082,7 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 			ginkgo.By(fmt.Sprintf("Unsetting %s variable in ovnkube-node daemonset", ovnEnvVar))
 			setUnsetTemplateContainerEnv(f.ClientSet, ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), nil, ovnEnvVar)
 
-			ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNamespace).List(context.TODO(), metav1.ListOptions{
+			ovnKubeNodePods, err = f.ClientSet.CoreV1().Pods(ovnKubeNamespace).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 			})
 			if err != nil {
@@ -2034,9 +2100,9 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 					CaptureStderr: true,
 				}
 
-				targets, stderr, _ := e2epod.ExecWithOptions(f, execOptions)
+				targets, stderr, execErr := e2epod.ExecWithOptions(f, execOptions)
 				framework.Logf("execOptions are %v", execOptions)
-				if err != nil {
+				if execErr != nil {
 					framework.Failf("could not lookup ovs %s targets: %v", protocolStr, stderr)
 				}
 				gomega.Expect(targets).To(gomega.BeEmpty())

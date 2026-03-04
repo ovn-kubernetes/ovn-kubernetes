@@ -8,7 +8,7 @@ import (
 	corev1informer "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 )
 
 type NamespaceReconciler interface {
@@ -46,10 +46,11 @@ func NewNamespaceNotifier(nsInformer corev1informer.NamespaceInformer, subscribe
 func (c *NamespaceNotifier) needUpdate(old, new *corev1.Namespace) bool {
 	nsCreated := old == nil && new != nil
 	nsDeleted := old != nil && new == nil
+	nsDeleting := new != nil && !new.DeletionTimestamp.IsZero()
 	nsLabelsChanged := old != nil && new != nil &&
 		!reflect.DeepEqual(old.Labels, new.Labels)
 
-	return nsCreated || nsDeleted || nsLabelsChanged
+	return nsCreated || nsDeleted || nsDeleting || nsLabelsChanged
 }
 
 // reconcile notify subscribers with the request namespace key following namespace events.

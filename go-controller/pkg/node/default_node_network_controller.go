@@ -28,29 +28,30 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
-	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
-	config "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	adminpolicybasedrouteclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/informer"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
-	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/ovspinning"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
-	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	honode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
+	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	adminpolicybasedrouteclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/dpulease"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/ovspinning"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 type CommonNodeNetworkControllerInfo struct {
@@ -125,6 +126,8 @@ type DefaultNodeNetworkController struct {
 
 	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
 	retryNodes *retry.RetryFramework
+
+	dpuNodeLeaseManager *dpulease.Manager
 
 	apbExternalRouteNodeController *apbroute.ExternalGatewayNodeController
 
@@ -740,6 +743,22 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to parse kubernetes node IP address. %v", nodeAddrStr)
 	}
 
+	if (config.OvnKubeNode.Mode == types.NodeModeDPUHost || config.OvnKubeNode.Mode == types.NodeModeDPU) &&
+		config.OvnKubeNode.DPUNodeLeaseRenewInterval > 0 {
+		nc.dpuNodeLeaseManager = dpulease.NewManager(
+			nc.client,
+			config.Kubernetes.OVNConfigNamespace,
+			node,
+			time.Duration(config.OvnKubeNode.DPUNodeLeaseRenewInterval)*time.Second,
+			time.Duration(config.OvnKubeNode.DPUNodeLeaseDuration)*time.Second,
+		)
+		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if _, err := nc.dpuNodeLeaseManager.EnsureLease(ctx); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Make sure that the node zone matches with the Southbound db zone.
 	// Wait for 300s before giving up
 	var sbZone string
@@ -814,7 +833,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		if !ok {
 			return fmt.Errorf("cannot get kubeclient for starting CNI server")
 		}
-		cniServer, err = cni.NewCNIServer(nc.watchFactory, kclient.KClient, nc.networkManager, nc.ovsClient)
+		cniServer, err = cni.NewCNIServer(nc.watchFactory, kclient.KClient, nc.networkManager, nc.ovsClient, nc.dpuNodeLeaseManager)
 		if err != nil {
 			return err
 		}
@@ -969,10 +988,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 			return err
 		}
 		nc.wg.Add(1)
-		go func() {
+		go func(stopCh <-chan struct{}) {
 			defer nc.wg.Done()
-			nodeController.Run(nc.stopChan)
-		}()
+			nodeController.Run(stopCh)
+		}(nc.stopChan)
 	} else if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		// attempt to cleanup the possibly stale bridge
 		_, stderr, err := util.RunOVSVsctl("--if-exists", "del-br", "br-ext")
@@ -1025,6 +1044,25 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	if nc.healthzServer != nil {
 		nc.healthzServer.Start(nc.stopChan, nc.wg)
+	}
+
+	if nc.dpuNodeLeaseManager != nil {
+		if config.OvnKubeNode.Mode == types.NodeModeDPU {
+			nc.wg.Add(1)
+			go func() {
+				defer nc.wg.Done()
+				nc.dpuNodeLeaseManager.RunUpdater(ctx)
+			}()
+		} else if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if err := nc.dpuNodeLeaseManager.CheckStatus(ctx); err != nil {
+				klog.Warningf("Initial DPU node lease check failed: %v", err)
+			}
+			nc.wg.Add(1)
+			go func() {
+				defer nc.wg.Done()
+				nc.dpuNodeLeaseManager.RunMonitor(ctx)
+			}()
+		}
 	}
 
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
@@ -1080,7 +1118,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	nc.linkManager.Run(nc.stopChan, nc.wg)
 
 	nc.wg.Add(1)
-	go func() {
+	go func(stopCh <-chan struct{}) {
 		defer nc.wg.Done()
 		podResClient, err := podresourcesapi.New()
 		if err != nil {
@@ -1092,8 +1130,8 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 				klog.V(4).Infof("Error closing PodResourcesAPI client: %v", err)
 			}
 		}()
-		ovspinning.Run(ctx, nc.stopChan, podResClient)
-	}()
+		ovspinning.Run(ctx, stopCh, podResClient)
+	}(nc.stopChan)
 
 	klog.Infof("Default node network controller initialized and ready.")
 	return nil
@@ -1135,10 +1173,10 @@ func (nc *DefaultNodeNetworkController) startEgressIPHealthCheckingServer(mgmtPo
 	}
 
 	nc.wg.Add(1)
-	go func() {
+	go func(stopCh <-chan struct{}) {
 		defer nc.wg.Done()
-		healthServer.Run(nc.stopChan)
-	}()
+		healthServer.Run(stopCh)
+	}(nc.stopChan)
 	return nil
 }
 

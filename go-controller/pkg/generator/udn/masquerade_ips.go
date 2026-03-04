@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ipgenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
 )
 
 const (

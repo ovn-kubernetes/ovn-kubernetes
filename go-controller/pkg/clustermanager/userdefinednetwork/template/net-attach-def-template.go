@@ -12,11 +12,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -24,8 +24,6 @@ const (
 
 	FinalizerUserDefinedNetwork = "k8s.ovn.org/user-defined-network-protection"
 	LabelUserDefinedNetwork     = "k8s.ovn.org/user-defined-network"
-
-	cniVersion = "1.0.0"
 )
 
 type SpecGetter interface {
@@ -139,13 +137,13 @@ func validateTopology(spec SpecGetter) error {
 func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *RenderOptions) (map[string]interface{}, error) {
 	netConfSpec := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
-			CNIVersion: cniVersion,
+			CNIVersion: config.CNISpecVersion,
 			Type:       OvnK8sCNIOverlay,
 			Name:       networkName,
 		},
 		NADName:   nadName,
 		Topology:  strings.ToLower(string(spec.GetTopology())),
-		Transport: transportFromCRD(string(spec.GetTransport())),
+		Transport: transportFromCRD(spec.GetTransport()),
 	}
 
 	switch spec.GetTopology() {
@@ -224,7 +222,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 	// Generating the net-conf JSON string using 'map[string]struct{}' provide the
 	// expected result.
 	cniNetConf := map[string]interface{}{
-		"cniVersion":       cniVersion,
+		"cniVersion":       config.CNISpecVersion,
 		"type":             OvnK8sCNIOverlay,
 		"name":             networkName,
 		"netAttachDefName": nadName,
@@ -279,18 +277,16 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 }
 
 // transportFromCRD converts CRD PascalCase format to canonical format.
-// CRD format uses PascalCase: "Geneve", "NoOverlay", "EVPN"
-// Returns canonical lowercase format: "geneve", "no-overlay", "evpn"
-func transportFromCRD(crdTransport string) string {
+// CRD format uses PascalCase: "NoOverlay", "EVPN"; empty string means default OVN transport.
+// Returns canonical lowercase format: "no-overlay", "evpn", or "" for default.
+func transportFromCRD(crdTransport userdefinednetworkv1.TransportOption) string {
 	switch crdTransport {
-	case "Geneve":
-		return types.NetworkTransportGeneve
-	case "NoOverlay":
+	case userdefinednetworkv1.TransportOptionNoOverlay:
 		return types.NetworkTransportNoOverlay
-	case "EVPN":
+	case userdefinednetworkv1.TransportOptionEVPN:
 		return types.NetworkTransportEVPN
 	default:
-		return crdTransport // Return as-is for validation to catch
+		return "" // empty string means default OVN transport; kubebuilder prevents unknown values
 	}
 }
 

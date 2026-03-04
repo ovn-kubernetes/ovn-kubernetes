@@ -15,17 +15,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	networkconnectfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // NOTE: This file tests the full controller in an integrated fashion.
@@ -59,8 +59,12 @@ func newTestCNC(name string, selectors []apitypes.NetworkSelector, connectSubnet
 	}
 }
 
-// newTestUDNNAD creates a test NAD owned by a UserDefinedNetwork.
 func newTestUDNNAD(name, namespace, network string, networkID string) *nadv1.NetworkAttachmentDefinition {
+	return newTestUDNNADWithSubnetsAndTransport(name, namespace, network, networkID, fmt.Sprintf("10.%s.0.0/16/24", networkID), "")
+}
+
+// newTestUDNNAD creates a test NAD owned by a UserDefinedNetwork.
+func newTestUDNNADWithSubnetsAndTransport(name, namespace, network string, networkID, subnets, transport string) *nadv1.NetworkAttachmentDefinition {
 	return &nadv1.NetworkAttachmentDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -73,22 +77,28 @@ func newTestUDNNAD(name, namespace, network string, networkID string) *nadv1.Net
 		},
 		Spec: nadv1.NetworkAttachmentDefinitionSpec{
 			Config: fmt.Sprintf(
-				`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "10.0.0.0/16/24"}`,
+				`{"cniVersion": "1.1.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "%s", "transport": "%s"}`,
 				network,
 				config.CNI.Plugin,
 				namespace,
 				name,
+				subnets,
+				transport,
 			),
 		},
 	}
 }
 
-// newTestCUDNNAD creates a test NAD owned by a ClusterUserDefinedNetwork.
-func newTestCUDNNAD(name, namespace, network string, labels map[string]string, networkID string) *nadv1.NetworkAttachmentDefinition {
-	nad := newTestUDNNAD(name, namespace, network, networkID)
+func newTestCUDNNADWithSubnetsAndTransport(name, namespace, network string, labels map[string]string, networkID, subnets, transport string) *nadv1.NetworkAttachmentDefinition {
+	nad := newTestUDNNADWithSubnetsAndTransport(name, namespace, network, networkID, subnets, transport)
 	nad.Labels = labels
 	nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef(network)}
 	return nad
+}
+
+// newTestCUDNNAD creates a test NAD owned by a ClusterUserDefinedNetwork.
+func newTestCUDNNAD(name, namespace, network string, labels map[string]string, networkID string) *nadv1.NetworkAttachmentDefinition {
+	return newTestCUDNNADWithSubnetsAndTransport(name, namespace, network, labels, networkID, fmt.Sprintf("10.%s.0.0/16/24", networkID), "")
 }
 
 // newTestNamespace creates a test namespace with the given name and labels.
@@ -601,7 +611,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					},
 					Spec: nadv1.NetworkAttachmentDefinitionSpec{
 						Config: fmt.Sprintf(
-							`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "secondary-ns/cudn-secondary", "subnets": "10.0.0.0/16/24"}`,
+							`{"cniVersion": "1.1.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "secondary-ns/cudn-secondary", "subnets": "10.0.0.0/16/24"}`,
 							network,
 							config.CNI.Plugin,
 						),
@@ -1204,7 +1214,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					},
 					Spec: nadv1.NetworkAttachmentDefinitionSpec{
 						// Invalid JSON config - missing required fields, will fail ParseNADInfo
-						Config: `{"cniVersion": "0.4.0", "name": "malformed", "type": "invalid-type"}`,
+						Config: `{"cniVersion": "1.1.0", "name": "malformed", "type": "invalid-type"}`,
 					},
 				}
 				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("malformed-ns").Create(
@@ -1242,6 +1252,382 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				// The malformed NAD should have been skipped due to parse error
 				gomega.Expect(getSubnetAnnotationNetworkCount(cncName)).To(gomega.Equal(1))
 
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.Context("ClusterNetworkConnect ClusterManager Status Tests", func() {
+		ginkgo.BeforeEach(func() {
+			config.IPv6Mode = true
+		})
+
+		getCNCCondition := func(cncName, conditionType string) *metav1.Condition {
+			cnc, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+				context.Background(), cncName, metav1.GetOptions{})
+			if err != nil {
+				return nil
+			}
+			for i := range cnc.Status.Conditions {
+				if cnc.Status.Conditions[i].Type == conditionType {
+					return &cnc.Status.Conditions[i]
+				}
+			}
+			return nil
+		}
+
+		checkAcceptedCondition := func(cncName, errorSubstring string) {
+			gomega.Eventually(func() error {
+				cond := getCNCCondition(cncName, "Accepted")
+				if cond == nil {
+					return fmt.Errorf("missing Accepted condition")
+				}
+				if errorSubstring != "" {
+					gomega.Expect(cond.Status).To(gomega.Equal(metav1.ConditionFalse), fmt.Sprintf("condition message: %s", cond.Message))
+					gomega.Expect(cond.Reason).To(gomega.Equal("ResourceAllocationFailed"))
+					gomega.Expect(cond.Message).To(gomega.ContainSubstring(errorSubstring))
+				} else {
+					gomega.Expect(cond.Status).To(gomega.Equal(metav1.ConditionTrue), fmt.Sprintf("condition message: %s", cond.Message))
+					gomega.Expect(cond.Reason).To(gomega.Equal("ResourceAllocationSucceeded"))
+					gomega.Expect(cond.Message).To(gomega.Equal("All validation checks passed successfully"))
+				}
+				return nil
+			}).WithTimeout(5 * time.Second).Should(gomega.Succeed())
+		}
+
+		createPrimaryUDNOrCUDN := func(namespace, udnName, networkID, subnets, transport string, cudn bool) {
+			ns1 := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: namespace,
+					Labels: map[string]string{
+						types.RequiredUDNNamespaceLabel: "",
+					},
+				},
+			}
+			_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(
+				context.Background(), ns1, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			network := util.GenerateUDNNetworkName(namespace, udnName)
+			var nad *nadv1.NetworkAttachmentDefinition
+			if cudn {
+				nad = newTestCUDNNADWithSubnetsAndTransport(udnName, namespace, network, nil, networkID, subnets, transport)
+			} else {
+				nad = newTestUDNNADWithSubnetsAndTransport(udnName, namespace, network, networkID, subnets, transport)
+			}
+			_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(
+				context.Background(), nad, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			netInfo, err := util.ParseNADInfo(nad)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			mutableNetInfo := util.NewMutableNetInfo(netInfo)
+			mutableNetInfo.AddNADs(namespace + "/" + udnName)
+			fakeNM.Lock()
+			fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
+			fakeNM.NADNetworks[namespace+"/"+udnName] = netInfo
+			fakeNM.Unlock()
+		}
+
+		createPrimaryUDN := func(namespace, udnName, networkID, subnets string) {
+			createPrimaryUDNOrCUDN(namespace, udnName, networkID, subnets, "", false)
+		}
+
+		ginkgo.It("sets Accepted=True condition on successful reconciliation", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "104.104.0.0/16/24")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("sets Accepted=False condition on insufficient connect subnet size", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				// create 3 UDNs but only 2 connect subnets can be allocated from the /30 subnet
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "104.104.0.0/16/24")
+				createPrimaryUDN("frontend-c", "primary-udn", "3", "105.105.0.0/16/24")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/30", NetworkPrefix: 31},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "no subnets available")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition on overlapping pod subnets", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "103.103.1.0/24/28")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "selected networks have overlapping subnets")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition on overlapping connect subnet with pod subnet", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "104.104.0.0/16/24")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "103.103.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "selected networks overlap with cluster network connect subnets")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition on overlapping connect subnet with cluster service subnet", func() {
+			app.Action = func(*cli.Context) error {
+				config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("10.96.0.0/24")
+				cncName := "test-cnc"
+				start()
+
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "104.104.0.0/16/24")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "10.96.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "cluster subnets overlap with cluster network connect subnets")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition on overlapping connect subnet with another CNC selecting the same network", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				cnc2Name := "test-cnc2"
+				start()
+
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "104.104.0.0/16/24")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// Wait for the first CNC to report success
+				checkAcceptedCondition(cncName, "")
+
+				// create second CNC selecting the same networks
+				cnc.Name = cnc2Name
+				_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Wait for the second CNC to report error
+				checkAcceptedCondition(cnc2Name, "connectSubnets overlap detected between CNC test-cnc2 and CNC test-cnc which both select networks")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition on selected networks ip family mismatch", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+				createPrimaryUDN("frontend-b", "primary-udn", "2", "fc00:104::/50")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "has only ipv6 subnets")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition on selected network and connect subnets ip family mismatch", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				// create only 1 UDN with ipv4 subnet for pre-defined error message that mentions network name
+				createPrimaryUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "fc00:104::/50", NetworkPrefix: 64},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "connected network frontend-a_primary-udn is ipv4-only but connectSubnets do not contain an ipv4 subnet")
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition and ignores selected networks using NoOverlay or EVPN transport", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+
+				createPrimaryUDNOrCUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24", types.NetworkTransportNoOverlay, true)
+				createPrimaryUDNOrCUDN("frontend-b", "primary-udn", "2", "103.104.0.0/16/24", types.NetworkTransportEVPN, true)
+				// add one valid CUDN will get allocated subnets
+				createPrimaryUDNOrCUDN("frontend-c", "primary-udn", "3", "103.105.0.0/16/24", "", true)
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedCondition(cncName, "has transport type no-overlay that is not supported for networkConnect")
+				// Verify the correct CUDN has subnets allocated
+				gomega.Eventually(func() int {
+					return getSubnetAnnotationNetworkCount(cncName)
+				}).WithTimeout(5 * time.Second).Should(gomega.Equal(1))
 				return nil
 			}
 			err := app.Run([]string{app.Name})

@@ -15,13 +15,13 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
     * `ovnkube-identity`: is the executable that is invoked to run ovn-kubernetes identity manager, which includes the admission webhook and the CertificateSigningRequest approver
 * `ovnkube` API configuration 
 * scripts used to deploy OVN-Kubernetes including helm charts
-* Images for [fedora](https://github.com/ovn-org/ovn-kubernetes/pkgs/container/ovn-kubernetes%2Fovn-kube-fedora) and [ubuntu](https://github.com/ovn-org/ovn-kubernetes/pkgs/container/ovn-kubernetes%2Fovn-kube-ubuntu)
+* Images for [fedora](https://github.com/ovn-kubernetes/ovn-kubernetes/pkgs/container/ovn-kubernetes%2Fovn-kube-fedora) and [ubuntu](https://github.com/ovn-kubernetes/ovn-kubernetes/pkgs/container/ovn-kubernetes%2Fovn-kube-ubuntu)
 
 ## Release Planning
 
-* OVN-Kubernetes projects uses [milestones](https://github.com/ovn-org/ovn-kubernetes/milestones) to track our release planning
+* OVN-Kubernetes projects uses [milestones](https://github.com/ovn-kubernetes/ovn-kubernetes/milestones) to track our release planning
 * All PRs and Issues must be tagged with the correct milestone so that it get's included in the release planning
-* Please check our [roadmap](https://github.com/orgs/ovn-org/projects/5/views/4) for more details on our release tracking process
+* Please check our [roadmap](https://github.com/orgs/ovn-kubernetes/projects/5/views/4) for more details on our release tracking process
 
 ## Release Cadence
 
@@ -36,12 +36,12 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 
 ## Release Process
 
-* You can find our current releases [here](https://github.com/ovn-org/ovn-kubernetes/releases).
+* You can find our current releases [here](https://github.com/ovn-kubernetes/ovn-kubernetes/releases).
 * Every major release cut will be preceded by an alpha prerelease and beta prerelease.
-* See [sample release PR](https://github.com/ovn-org/ovn-kubernetes/pull/4333) which
+* See [sample release PR](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4333) which
   will become the head commit for a given release.
 * Branch will be cut on the day of release once the release PR merges.
-* CI-CD for the release branch will be added to the [GitHub Workflow](https://github.com/ovn-org/ovn-kubernetes/blob/master/.github/workflows/test.yml#L6).
+* CI-CD for the release branch will be added to the [GitHub Workflow](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml#L6).
 
 ## BackPort Request
 

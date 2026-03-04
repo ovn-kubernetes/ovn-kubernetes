@@ -3,7 +3,7 @@ package ops
 import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
 // CreateOrUpdateStaticMacBinding creates or updates the provided static mac binding

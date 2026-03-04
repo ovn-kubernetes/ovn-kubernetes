@@ -30,21 +30,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	udnapplyconfkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
-	userdefinednetworkclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
-	userdefinednetworkscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
-	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
-	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
-	vtepinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
-	vteplister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnapplyconfkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
+	userdefinednetworkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	userdefinednetworkscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
+	userdefinednetworkinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
+	userdefinednetworklister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
+	vtepinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/informers/externalversions/vtep/v1"
+	vteplister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -504,14 +505,14 @@ func (c *Controller) ReconcileNetAttachDef(key string) error {
 // ReconcileNamespace enqueue relevant Cluster UDN CR requests following namespace events.
 func (c *Controller) ReconcileNamespace(key string) error {
 	namespace, err := c.namespaceInformer.Lister().Get(key)
-	if err != nil {
-		// Ignore removed namespaces
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get namespace %q from cache: %w", key, err)
 	}
-	namespaceLabels := labels.Set(namespace.Labels)
+
+	var namespaceLabels labels.Set
+	if namespace != nil {
+		namespaceLabels = namespace.Labels
+	}
 
 	c.namespaceTrackerLock.RLock()
 	defer c.namespaceTrackerLock.RUnlock()
@@ -519,8 +520,16 @@ func (c *Controller) ReconcileNamespace(key string) error {
 	for cudnName, affectedNamespaces := range c.namespaceTracker {
 		affectedNamespace := affectedNamespaces.Has(key)
 
-		selectedNamespace := false
+		// For deleted namespaces, only reconcile if tracked
+		if namespace == nil {
+			if affectedNamespace {
+				klog.Errorf("BUG: namespace %q was deleted but still tracked by ClusterUDN %q, forcing reconcile to cleanup", key, cudnName)
+				c.cudnController.Reconcile(cudnName)
+			}
+			continue
+		}
 
+		selectedNamespace := false
 		if !affectedNamespace {
 			cudn, err := c.cudnLister.Get(cudnName)
 			if err != nil {
@@ -866,7 +875,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 		metrics.IncrementCUDNCount(role, topology)
 	}
 
-	if err := c.validateEVPNVTEP(cudn); err != nil {
+	if err := c.validateEVPN(cudn); err != nil {
 		return nil, err
 	}
 
@@ -912,6 +921,10 @@ func (c *Controller) getSelectedNamespaces(sel metav1.LabelSelector) (sets.Set[s
 		return nil, fmt.Errorf("failed to list namespaces: %w", err)
 	}
 	for _, selectedNs := range selectedNamespacesList {
+		if !selectedNs.DeletionTimestamp.IsZero() {
+			klog.V(5).Infof("Namespace %s is being deleted, skipping", selectedNs.Name)
+			continue
+		}
 		selectedNamespaces.Insert(selectedNs.Name)
 	}
 	return selectedNamespaces, nil
@@ -1008,15 +1021,18 @@ func newClusterNetworkCreatedCondition(nads []netv1.NetworkAttachmentDefinition,
 	return condition
 }
 
-// validateEVPNVTEP validates EVPN configuration for a CUDN.
+// validateEVPN validates EVPN configuration for a CUDN.
 // Returns an error if EVPN is requested but disabled, or if the referenced VTEP doesn't exist.
-func (c *Controller) validateEVPNVTEP(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
+func (c *Controller) validateEVPN(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
 	if cudn.Spec.Network.Transport != userdefinednetworkv1.TransportOptionEVPN {
 		return nil // Not an EVPN network
 	}
 
-	if !util.IsEVPNEnabled() {
+	if !config.OVNKubernetesFeature.EnableEVPN {
 		return fmt.Errorf("EVPN transport requested but EVPN feature is not enabled")
+	}
+	if config.Gateway.Mode != config.GatewayModeLocal {
+		return fmt.Errorf("EVPN transport requested but EVPN feature is only supported in local gateway mode")
 	}
 
 	// CEL validation ensures EVPN is set when transport is EVPN.

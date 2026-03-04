@@ -21,18 +21,18 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
-	subnetipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
-	podallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	ipallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip"
+	subnetipallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	podallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	logicalswitchmanager "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (bnc *BaseNetworkController) allocatePodIPs(pod *corev1.Pod,
@@ -538,15 +538,6 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	if !lspExist || len(existingLSP.Options["iface-id-ver"]) != 0 {
 		lsp.Options["iface-id-ver"] = string(pod.UID)
 	}
-	// Bind the port to the node's chassis; prevents ping-ponging between
-	// chassis if ovnkube-node isn't running correctly and hasn't cleared
-	// out iface-id for an old instance of this pod, and the pod got
-	// rescheduled.
-
-	if !config.Kubernetes.DisableRequestedChassis {
-		lsp.Options[libovsdbops.RequestedChassis] = pod.Spec.NodeName
-	}
-
 	// let's calculate if this network controller's role for this pod
 	// and pass that information while determining the podAnnotations
 	networkRole, err := bnc.GetNetworkRole(pod)
@@ -557,6 +548,28 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	if networkRole == ovntypes.NetworkRoleNone {
 		// pod not on this controller, nothing to do
 		return nil, nil, nil, false, nil
+	}
+
+	// Bind the port to the node's chassis.
+	// For IC this is required for Layer 2 networks with remote ports.
+	// For Legacy with OVN Central Mode it prevents ping-ponging between
+	// chassis if ovnkube-node isn't running correctly and hasn't cleared
+	// out iface-id for an old instance of this pod, and the pod got
+	// rescheduled.
+	var node *corev1.Node
+	if !config.Kubernetes.DisableRequestedChassis {
+		node, err = bnc.watchFactory.GetNode(pod.Spec.NodeName)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+		if err != nil {
+			if util.IsAnnotationNotSetError(err) {
+				return nil, nil, nil, false, ovntypes.NewSuppressedError(err)
+			}
+			return nil, nil, nil, false, err
+		}
+		lsp.Options[libovsdbops.RequestedChassis] = chassisID
 	}
 
 	// Although we have different code to allocate the pod annotation for the
@@ -609,7 +622,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	customFields = append(customFields, libovsdbops.LogicalSwitchPortPortSecurity)
 
 	// On layer2 topology with interconnect, we need to add specific port config
-	if bnc.isLayer2Interconnect() {
+	if bnc.isLayer2WithInterconnectTransport() {
 		isRemotePort := !bnc.isPodScheduledinLocalZone(pod)
 		err = bnc.zoneICHandler.AddTransitPortConfig(isRemotePort, podAnnotation, lsp)
 		if err != nil {
@@ -800,7 +813,8 @@ func calculateStaticMAC(podDesc string, mac string) (net.HardwareAddr, error) {
 }
 
 // allocatePodAnnotation and update the corresponding pod annotation.
-func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc, nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
+func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc,
+	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
 	var releaseIPs bool
 	var podMac net.HardwareAddr
 	var podIfAddrs []*net.IPNet

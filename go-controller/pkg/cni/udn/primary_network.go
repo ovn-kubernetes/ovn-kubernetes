@@ -12,9 +12,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // wait on a certain pod annotation related condition. in case of non-nil error,
@@ -151,6 +151,10 @@ func (p *UserDefinedPrimaryNetwork) ensureActiveNetwork(namespace string) error 
 	activeNetwork, err := p.networkManager.GetActiveNetworkForNamespace(namespace)
 	if err != nil {
 		return err
+	}
+	// CNI should always have an active network for a pod on our node
+	if activeNetwork == nil {
+		return fmt.Errorf("no active network found for namespace %s", namespace)
 	}
 	if activeNetwork.IsDefault() {
 		return fmt.Errorf("missing primary user defined network NAD for namespace '%s'", namespace)

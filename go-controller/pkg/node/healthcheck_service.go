@@ -9,11 +9,11 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/healthcheck"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/healthcheck"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // initLoadBalancerHealthChecker initializes the health check server for
@@ -47,6 +47,8 @@ func (l *loadBalancerHealthChecker) AddService(svc *corev1.Service) error {
 		if err := l.server.SyncServices(l.services); err != nil {
 			return fmt.Errorf("unable to sync service %v; err: %v", name, err)
 		}
+		// we can use CDN here and do not care about UDN because we are just looking for a count
+		// which will be the same between CDN and UDN
 		epSlices, err := l.watchFactory.GetServiceEndpointSlices(svc.Namespace, svc.Name, types.DefaultNetworkName)
 		if err != nil {
 			return fmt.Errorf("could not fetch endpointslices "+

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"net"
@@ -26,7 +27,7 @@ import (
 	kexec "k8s.io/utils/exec"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // getSupportedPlatformTypes returns a list of all supported platform types
@@ -101,7 +102,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
-		Transport:                    types.NetworkTransportGeneve,
+		Transport:                    "",
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -235,7 +236,9 @@ var (
 
 	// OvnKubeNode holds ovnkube-node parsed config file parameters and command-line overrides
 	OvnKubeNode = OvnKubeNodeConfig{
-		Mode: types.NodeModeFull,
+		Mode:                      types.NodeModeFull,
+		DPUNodeLeaseRenewInterval: 10,
+		DPUNodeLeaseDuration:      40,
 	}
 
 	ClusterManager = ClusterManagerConfig{
@@ -363,8 +366,8 @@ type DefaultConfig struct {
 	UDNAllowedDefaultServices []string
 
 	// Transport specifies the transport technology used for the default network.
-	// Accepts: "geneve" or "no-overlay".
-	// Defaults to "geneve".
+	// Accepts: "" (empty, uses OVN default overlay) or "no-overlay".
+	// Defaults to "" (empty).
 	Transport string `gcfg:"transport"`
 }
 
@@ -437,6 +440,7 @@ type KubernetesConfig struct {
 	CertDuration            time.Duration `gcfg:"cert-duration"`
 	Kubeconfig              string        `gcfg:"kubeconfig"`
 	CACert                  string        `gcfg:"cacert"`
+	CACertData              string        `gcfg:"cacert-data"`
 	CAData                  []byte
 	APIServer               string `gcfg:"apiserver"`
 	Token                   string `gcfg:"token"`
@@ -505,6 +509,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableServiceTemplateSupport    bool `gcfg:"enable-svc-template-support"`
 	EnableObservability             bool `gcfg:"enable-observability"`
 	EnableNetworkQoS                bool `gcfg:"enable-network-qos"`
+	AllowICMPNetworkPolicy          bool `gcfg:"allow-icmp-network-policy"`
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
@@ -637,9 +642,11 @@ type HybridOverlayConfig struct {
 
 // OvnKubeNodeConfig holds ovnkube-node configurations
 type OvnKubeNodeConfig struct {
-	Mode                   string `gcfg:"mode"`
-	MgmtPortNetdev         string `gcfg:"mgmt-port-netdev"`
-	MgmtPortDPResourceName string `gcfg:"mgmt-port-dp-resource-name"`
+	Mode                      string `gcfg:"mode"`
+	MgmtPortNetdev            string `gcfg:"mgmt-port-netdev"`
+	MgmtPortDPResourceName    string `gcfg:"mgmt-port-dp-resource-name"`
+	DPUNodeLeaseRenewInterval int    `gcfg:"dpu-node-lease-renew-interval"`
+	DPUNodeLeaseDuration      int    `gcfg:"dpu-node-lease-duration"`
 }
 
 // ClusterManagerConfig holds configuration for ovnkube-cluster-manager
@@ -818,6 +825,7 @@ func PrepareTestConfig() error {
 	// Don't pick up defaults from the environment
 	os.Unsetenv("KUBECONFIG")
 	os.Unsetenv("K8S_CACERT")
+	os.Unsetenv("K8S_CACERT_DATA")
 	os.Unsetenv("K8S_APISERVER")
 	os.Unsetenv("K8S_TOKEN")
 	os.Unsetenv("K8S_TOKEN_FILE")
@@ -1032,7 +1040,7 @@ var CommonFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "transport",
 		Value:       Default.Transport,
-		Usage:       "Transport technology used for the default network, default to geneve if unspecified. (geneve, no-overlay)",
+		Usage:       "Transport technology for the default network. When unset, the OVN default overlay transport is used. (no-overlay)",
 		Destination: &cliConfig.Default.Transport,
 	},
 	&cli.BoolFlag{
@@ -1265,6 +1273,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Value:       OVNKubernetesFeature.EnableStatelessNetPol,
 	},
 	&cli.BoolFlag{
+		Name:        "allow-icmp-network-policy",
+		Usage:       "Allow ICMP/ICMPv6 traffic to bypass NetworkPolicy default-deny rules.",
+		Destination: &cliConfig.OVNKubernetesFeature.AllowICMPNetworkPolicy,
+		Value:       OVNKubernetesFeature.AllowICMPNetworkPolicy,
+	},
+	&cli.BoolFlag{
 		Name:        "enable-interconnect",
 		Usage:       "Enable interconnecting multiple zones.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableInterconnect,
@@ -1379,6 +1393,11 @@ var K8sFlags = []cli.Flag{
 		Name:        "k8s-cacert",
 		Usage:       "the absolute path to the Kubernetes API CA certificate (not required if --k8s-kubeconfig is given)",
 		Destination: &cliConfig.Kubernetes.CACert,
+	},
+	&cli.StringFlag{
+		Name:        "k8s-cacert-data",
+		Usage:       "the Base64 encoded Kubernetes API CA certificate data (not required if --k8s-kubeconfig is given)",
+		Destination: &cliConfig.Kubernetes.CACertData,
 	},
 	&cli.StringFlag{
 		Name:        "k8s-token",
@@ -1824,6 +1843,18 @@ var OvnKubeNodeFlags = []cli.Flag{
 		Value:       OvnKubeNode.MgmtPortDPResourceName,
 		Destination: &cliConfig.OvnKubeNode.MgmtPortDPResourceName,
 	},
+	&cli.IntFlag{
+		Name:        "dpu-node-lease-renew-interval",
+		Usage:       "Interval in seconds at which the DPU updates its custom node lease. Set to 0 to disable DPU health checking",
+		Value:       OvnKubeNode.DPUNodeLeaseRenewInterval,
+		Destination: &cliConfig.OvnKubeNode.DPUNodeLeaseRenewInterval,
+	},
+	&cli.IntFlag{
+		Name:        "dpu-node-lease-duration",
+		Usage:       "Lease duration in seconds before the DPU is considered unhealthy",
+		Value:       OvnKubeNode.DPUNodeLeaseDuration,
+		Destination: &cliConfig.OvnKubeNode.DPUNodeLeaseDuration,
+	},
 }
 
 // ClusterManagerFlags captures ovnkube-cluster-manager specific configurations
@@ -1946,8 +1977,46 @@ func setOVSExternalID(exec kexec.Interface, key, value string) error {
 	return nil
 }
 
+// reconcileKubernetesAuthFields ensures that if a config stage provides Token/TokenFile
+// or CACert/CACertData, stale value for any of these set by previous stage is cleared.
+// This is required since any combination of these fields could be set by any stage
+// and might get overwritten only partially.
+func reconcileKubernetesAuthFields(k *KubernetesConfig, override *KubernetesConfig) {
+	// If this stage provided either Token or TokenFile, clear the other field
+	// not provided by this stage.
+	overrideHasToken := override.Token != ""
+	overrideHasTokenFile := override.TokenFile != ""
+
+	if overrideHasToken || overrideHasTokenFile {
+		if !overrideHasToken {
+			k.Token = ""
+		}
+		if !overrideHasTokenFile {
+			k.TokenFile = ""
+		}
+	}
+
+	// If this stage provided either CACert or CACertData, clear the other field
+	// not provided by this stage.
+	overrideHasCACert := override.CACert != ""
+	overrideHasCACertData := override.CACertData != ""
+
+	if overrideHasCACert || overrideHasCACertData {
+		if !overrideHasCACert {
+			k.CACert = ""
+		}
+		if !overrideHasCACertData {
+			k.CACertData = ""
+		}
+	}
+}
+
 func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath string, defaults *Defaults) error {
-	// token adn ca.crt may be from files mounted in container.
+	// values for token, cacert, kubeconfig, api-server may be found in several places.
+	// Priority order (highest first): OVS config, command line options, config file,
+	// environment variables, service account files
+
+	// token and ca.crt may be from files mounted in container.
 	saConfig := savedKubernetes
 	if data, err := os.ReadFile(filepath.Join(saPath, kubeServiceAccountFileToken)); err == nil {
 		saConfig.Token = string(data)
@@ -1961,16 +2030,13 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		return err
 	}
 
-	// values for token, cacert, kubeconfig, api-server may be found in several places.
-	// Priority order (highest first): OVS config, command line options, config file,
-	// environment variables, service account files
-
 	envConfig := savedKubernetes
 	envVarsMap := map[string]string{
 		"Kubeconfig":           "KUBECONFIG",
 		"BootstrapKubeconfig":  "BOOTSTRAP_KUBECONFIG",
 		"CertDir":              "CERT_DIR",
 		"CACert":               "K8S_CACERT",
+		"CACertData":           "K8S_CACERT_DATA",
 		"APIServer":            "K8S_APISERVER",
 		"Token":                "K8S_TOKEN",
 		"TokenFile":            "K8S_TOKEN_FILE",
@@ -1985,16 +2051,19 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 	if err := overrideFields(&Kubernetes, &envConfig, &savedKubernetes); err != nil {
 		return err
 	}
+	reconcileKubernetesAuthFields(&Kubernetes, &envConfig)
 
 	// Copy config file values over default values
 	if err := overrideFields(&Kubernetes, &file.Kubernetes, &savedKubernetes); err != nil {
 		return err
 	}
+	reconcileKubernetesAuthFields(&Kubernetes, &file.Kubernetes)
 
 	// And CLI overrides over config file and default values
 	if err := overrideFields(&Kubernetes, &cli.Kubernetes, &savedKubernetes); err != nil {
 		return err
 	}
+	reconcileKubernetesAuthFields(&Kubernetes, &cli.Kubernetes)
 
 	// Grab default values from OVS external IDs
 	if defaults.K8sAPIServer {
@@ -2015,8 +2084,15 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		return fmt.Errorf("kubernetes kubeconfig file %q not found", Kubernetes.Kubeconfig)
 	}
 
-	if Kubernetes.CACert != "" {
-		bytes, err := os.ReadFile(Kubernetes.CACert)
+	if Kubernetes.CACert != "" || Kubernetes.CACertData != "" {
+		var bytes []byte
+		var err error
+		if Kubernetes.CACert != "" {
+			bytes, err = os.ReadFile(Kubernetes.CACert)
+		} else {
+			bytes, err = base64.StdEncoding.DecodeString(Kubernetes.CACertData)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -2383,9 +2459,9 @@ func buildNoOverlayConfig(file *config) error {
 
 // validateNoOverlayConfig validates the no-overlay configuration
 func validateNoOverlayConfig() error {
-	// Validate transport option
-	if Default.Transport != types.NetworkTransportGeneve && Default.Transport != types.NetworkTransportNoOverlay {
-		return fmt.Errorf("invalid transport %q: must be %q or %q", Default.Transport, types.NetworkTransportGeneve, types.NetworkTransportNoOverlay)
+	// Validate transport option; empty string means default OVN overlay transport
+	if Default.Transport != "" && Default.Transport != types.NetworkTransportNoOverlay {
+		return fmt.Errorf("invalid transport %q: must be empty (default OVN overlay) or %q", Default.Transport, types.NetworkTransportNoOverlay)
 	}
 
 	// If transport is no-overlay, validate required no-overlay options
@@ -2612,6 +2688,7 @@ func stripTokenFromK8sConfig() KubernetesConfig {
 	// Token and CAData are sensitive fields so stripping
 	// them while logging.
 	k8sConf.Token = ""
+	k8sConf.CACertData = ""
 	k8sConf.CAData = []byte{}
 	return k8sConf
 }
@@ -3126,6 +3203,17 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 	// ovnkube-node-mode dpu/dpu-host does not support hybrid overlay
 	if OvnKubeNode.Mode != types.NodeModeFull && HybridOverlay.Enabled {
 		return fmt.Errorf("hybrid overlay is not supported with ovnkube-node mode %s", OvnKubeNode.Mode)
+	}
+
+	if OvnKubeNode.DPUNodeLeaseRenewInterval < 0 {
+		return fmt.Errorf("invalid dpu-node-lease-renew-interval '%d'. must be >= 0", OvnKubeNode.DPUNodeLeaseRenewInterval)
+	}
+	if OvnKubeNode.DPUNodeLeaseDuration <= 0 {
+		return fmt.Errorf("invalid dpu-node-lease-duration '%d'. must be > 0", OvnKubeNode.DPUNodeLeaseDuration)
+	}
+	if OvnKubeNode.DPUNodeLeaseDuration <= OvnKubeNode.DPUNodeLeaseRenewInterval {
+		return fmt.Errorf("invalid dpu-node-lease-duration '%d'. must be > dpu-node-lease-renew-interval '%d'",
+			OvnKubeNode.DPUNodeLeaseDuration, OvnKubeNode.DPUNodeLeaseRenewInterval)
 	}
 
 	// Warn the user if both MgmtPortNetdev and MgmtPortDPResourceName are specified since they

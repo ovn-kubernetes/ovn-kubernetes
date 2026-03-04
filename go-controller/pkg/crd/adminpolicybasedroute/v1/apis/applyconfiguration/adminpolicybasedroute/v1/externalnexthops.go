@@ -18,7 +18,7 @@ limitations under the License.
 package v1
 
 import (
-	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	adminpolicybasedroutev1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 )
 
 // ExternalNextHopsApplyConfiguration represents a declarative configuration of the ExternalNextHops type for use

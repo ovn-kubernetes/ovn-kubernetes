@@ -21,19 +21,19 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 func (bsnc *BaseUserDefinedNetworkController) getPortInfoForUserDefinedNetwork(pod *corev1.Pod) map[string]*lpInfo {
@@ -274,7 +274,11 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 		}
 		activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 		if err != nil {
-			return fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
+			return fmt.Errorf("failed to find active network for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+		if activeNetwork == nil {
+			// no active network, pod doesn't belong to our controller
+			return nil
 		}
 	}
 
@@ -348,7 +352,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	// we also need to create a remote logical port for remote pods on layer2
 	// topologies with interconnect
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-	requiresLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
+	requiresLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	if requiresLogicalPort {
 		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadKey, network, lspEnabled)
@@ -375,13 +379,13 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		bsnc.logicalPortCache.remove(pod, nadKey)
 	}
 
-	if shouldHandleLiveMigration &&
-		kubevirtLiveMigrationStatus.IsTargetDomainReady() &&
-		// At localnet there is no source pod remote LSP so it should be skipped
-		(bsnc.TopologyType() != types.LocalnetTopology || bsnc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod)) {
-		ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)
-		if err != nil {
-			return fmt.Errorf("failed to create LSP ops for source pod during Live-migration status: %w", err)
+	if shouldHandleLiveMigration && kubevirtLiveMigrationStatus.IsTargetDomainReady() {
+		hasSourcePodLogicalPort := bsnc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod) || bsnc.isLayer2WithInterconnectTransport()
+		if hasSourcePodLogicalPort {
+			ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)
+			if err != nil {
+				return fmt.Errorf("failed to create LSP ops for source pod during Live-migration status: %w", err)
+			}
 		}
 	}
 
@@ -422,6 +426,9 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 
 	if lsp != nil {
 		_ = bsnc.logicalPortCache.add(pod, switchName, nadKey, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
+		if bsnc.onLogicalPortCacheAdd != nil {
+			bsnc.onLogicalPortCacheAdd(pod, nadKey)
+		}
 		if bsnc.requireDHCP(pod) {
 			if err := bsnc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
 				return err
@@ -451,7 +458,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 	// there is only a logical port for local pods or remote pods of layer2
 	// networks on interconnect, so only delete in these cases
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-	hasLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
+	hasLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	// for a specific NAD belongs to this network, Pod's logical port might already be created half-way
 	// without its lpInfo cache being created; need to deleted resources created for that NAD as well.
@@ -624,28 +631,17 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		var activeNetwork util.NetInfo
 		var err error
 		if bsnc.IsPrimaryNetwork() {
-			// check to see if the primary NAD is even applicable to our controller
-			foundNamespaceNAD, err := bsnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
-			if err != nil {
-				return fmt.Errorf("failed to get primary network namespace NAD: %w", err)
-			}
-			if foundNamespaceNAD == types.DefaultNetworkName {
-				continue
-			}
-			networkName := bsnc.networkManager.GetNetworkNameForNADKey(foundNamespaceNAD)
-			if networkName != "" && networkName != bsnc.GetNetworkName() {
-				continue
-			}
 			activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 			if err != nil {
-				if apierrors.IsNotFound(err) {
-					// namespace is gone after we listed this pod, that means the pod no longer exists
-					// we don't need to preserve it's previously allocated IP address or logical switch port
-					klog.Infof("%s network controller pod sync: pod %s/%s namespace has been deleted, ignoring pod",
-						bsnc.GetNetworkName(), pod.Namespace, pod.Name)
-					continue
-				}
-				return fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
+				return fmt.Errorf("failed to find the active network for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			}
+			if activeNetwork == nil || activeNetwork.IsDefault() {
+				// no active network for pod, or is a default network pod
+				continue
+			}
+			if activeNetwork.GetNetworkName() != bsnc.GetNetworkName() {
+				// network name found but doesn't apply to our controller
+				continue
 			}
 		}
 
@@ -666,7 +662,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		}
 
 		isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-		hasRemotePort := !isLocalPod || bsnc.isLayer2Interconnect()
+		hasRemotePort := !isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 		for nadKey := range networkMap {
 			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
@@ -821,6 +817,75 @@ func (bsnc *BaseUserDefinedNetworkController) WatchMultiNetworkPolicy() error {
 	}
 	bsnc.multiNetPolicyHandler = handler
 	return nil
+}
+
+// cleanupGatewayRoutersForNetworkFromDB discovers all gateway routers for the given network from
+// the NB DB (by ExternalIDs and GWRouterPrefix) and cleans each one via a dummy GatewayManager.
+// Used when gateway managers are empty (e.g. dummy controller or stale cleanup) so cleanup works
+// even when nodes are gone.
+func cleanupGatewayRoutersForNetworkFromDB(
+	nbClient libovsdbclient.Client,
+	netInfo util.NetInfo,
+	clusterRouterName, joinSwitchName string,
+) error {
+	var errs []error
+	networkName := netInfo.GetNetworkName()
+	pred := func(lr *nbdb.LogicalRouter) bool {
+		return lr.ExternalIDs[types.NetworkExternalID] == networkName &&
+			strings.HasPrefix(lr.Name, types.GWRouterPrefix)
+	}
+	routers, err := libovsdbops.FindLogicalRoutersWithPredicate(nbClient, pred)
+	if err != nil {
+		return fmt.Errorf("failed to find gateway routers for network %s: %w", networkName, err)
+	}
+	layer2UseTransitRouter := netInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter
+	for _, lr := range routers {
+		nodeName := netInfo.RemoveNetworkScopeFromName(util.GetWorkerFromGatewayRouter(lr.Name))
+		gw := NewGatewayManagerForCleanup(nbClient, netInfo, clusterRouterName, joinSwitchName, lr.Name, nodeName, layer2UseTransitRouter)
+		if err := gw.Cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to cleanup gateway router %s for network %q (node %s): %w", lr.Name, networkName, nodeName, err))
+		}
+	}
+	return utilerrors.Join(errs...)
+}
+
+// cleanupLoadBalancerGroups removes load balancer groups for a user-defined network controller.
+// When LB group UUIDs are known (normal controller), they are deleted directly by UUID.
+// Otherwise (dummy/stale cleanup controller), the groups are looked up by network-scoped name.
+func cleanupLoadBalancerGroups(
+	nbClient libovsdbclient.Client,
+	netInfo util.NetInfo,
+	switchLBGroupUUID, clusterLBGroupUUID, routerLBGroupUUID string,
+) {
+	networkName := netInfo.GetNetworkName()
+	if switchLBGroupUUID != "" || clusterLBGroupUUID != "" || routerLBGroupUUID != "" {
+		lbGroups := make([]*nbdb.LoadBalancerGroup, 0, 3)
+		for _, lbGroupUUID := range []string{switchLBGroupUUID, clusterLBGroupUUID, routerLBGroupUUID} {
+			if lbGroupUUID != "" {
+				lbGroups = append(lbGroups, &nbdb.LoadBalancerGroup{UUID: lbGroupUUID})
+			}
+		}
+		if err := libovsdbops.DeleteLoadBalancerGroups(nbClient, lbGroups); err != nil {
+			klog.Errorf("Failed to delete load balancer groups on network: %q, error: %v", networkName, err)
+		}
+		return
+	}
+	// Dummy controller (e.g. stale UDN cleanup): find LB groups by network-scoped name and delete them
+	names := map[string]bool{
+		netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterLBGroupName):       true,
+		netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterSwitchLBGroupName): true,
+		netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName): true,
+	}
+	staleLBGroups, err := libovsdbops.FindLoadBalancerGroupsWithPredicate(nbClient, func(g *nbdb.LoadBalancerGroup) bool {
+		return names[g.Name]
+	})
+	if err != nil {
+		klog.Errorf("Failed to find load balancer groups for stale network %q: %v", networkName, err)
+	} else if len(staleLBGroups) > 0 {
+		if err := libovsdbops.DeleteLoadBalancerGroups(nbClient, staleLBGroups); err != nil {
+			klog.Errorf("Failed to delete load balancer groups on stale network: %q, error: %v", networkName, err)
+		}
+	}
 }
 
 // cleanupPolicyLogicalEntities cleans up all the port groups and address sets that belong to the given controller

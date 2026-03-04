@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
@@ -18,18 +19,18 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	egresssvc "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var (
@@ -7042,7 +7043,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						"namespace": egressPod1.Namespace,
 					},
 					Options: map[string]string{
-						libovsdbops.RequestedChassis: egressPod1.Spec.NodeName,
+						libovsdbops.RequestedChassis: node1.Annotations[util.OvnNodeChassisID],
 						"iface-id-ver":               egressPod1.Name,
 					},
 					PortSecurity: []string{podAddr},
@@ -7395,7 +7396,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						"namespace": egressPod1.Namespace,
 					},
 					Options: map[string]string{
-						libovsdbops.RequestedChassis: egressPod1.Spec.NodeName,
+						libovsdbops.RequestedChassis: node1.Annotations[util.OvnNodeChassisID],
 						"iface-id-ver":               egressPod1.Name,
 					},
 					PortSecurity: []string{podAddr},
@@ -7816,7 +7817,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							"namespace": egressPod1.Namespace,
 						},
 						Options: map[string]string{
-							libovsdbops.RequestedChassis: egressPod1.Spec.NodeName,
+							libovsdbops.RequestedChassis: node1.Annotations[util.OvnNodeChassisID],
 							"iface-id-ver":               egressPod1.Name,
 						},
 						PortSecurity: []string{podAddr},
@@ -15681,10 +15682,20 @@ func getReRouteStaticRoute(clusterSubnet, nextHop string) *nbdb.LogicalRouterSta
 }
 
 func getNodeObj(nodeName string, annotations, labels map[string]string) corev1.Node {
+	nodeAnnotations := map[string]string{}
+	if annotations != nil {
+		nodeAnnotations = make(map[string]string, len(annotations)+1)
+		for k, v := range annotations {
+			nodeAnnotations[k] = v
+		}
+	}
+	if _, ok := nodeAnnotations[util.OvnNodeChassisID]; !ok {
+		nodeAnnotations[util.OvnNodeChassisID] = uuid.NewSHA1(uuid.NameSpaceOID, []byte(nodeName)).String()
+	}
 	return corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        nodeName,
-			Annotations: annotations,
+			Annotations: nodeAnnotations,
 			Labels:      labels,
 		},
 		Status: corev1.NodeStatus{

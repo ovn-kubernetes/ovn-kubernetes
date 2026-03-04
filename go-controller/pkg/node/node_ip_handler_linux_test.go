@@ -18,15 +18,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
-	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	mgmtportmock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	mgmtportmock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -167,6 +167,54 @@ var _ = Describe("Node IP Handler event tests", func() {
 				return nodeHasAddress(tc.fakeClient, nodeName, ipNet)
 			}, 5).Should(BeFalse())
 		})
+	})
+})
+
+var _ = Describe("Node IP Handler helper tests", func() {
+	const nodeName = "node1"
+
+	It("removes cached IPs even when they are no longer valid node IPs", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		tc.ipManager.Lock()
+		tc.ipManager.cidrs.Insert(tc.mgmtPortIP4.String())
+		tc.ipManager.Unlock()
+
+		Expect(tc.ipManager.delAddr(*tc.mgmtPortIP4)).To(BeTrue())
+		_, networks := tc.ipManager.ListAddresses()
+		Expect(networks).To(BeEmpty())
+	})
+
+	It("syncs stale host-cidrs when egress IP annotations change", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		tc.ipManager.addHandlerForAddrChange()
+
+		staleEIP := "2001:db8:abcd:1234:c001::"
+		node, err := tc.fakeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		nodeToUpdate := node.DeepCopy()
+		nodeToUpdate.Annotations[util.OVNNodeHostCIDRs] = fmt.Sprintf("[\"%s\", \"%s\", \"%s/128\"]", "10.1.1.10/24", "2001:db8::10/64", staleEIP)
+		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = fmt.Sprintf("[\"%s\"]", staleEIP)
+		_, err = tc.fakeClient.CoreV1().Nodes().Update(context.TODO(), nodeToUpdate, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			updatedNode, err := tc.fakeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+			if err != nil {
+				return false
+			}
+			hostIPs, err := util.ParseNodeHostCIDRsDropNetMask(updatedNode)
+			if err != nil {
+				return false
+			}
+			return !hostIPs.Has(staleEIP)
+		}, 5).Should(BeTrue())
 	})
 })
 

@@ -1,6 +1,6 @@
 # OKEP-4380: Network QoS Support
 
-* Issue: [#4380](https://github.com/ovn-org/ovn-kubernetes/issues/4380)
+* Issue: [#4380](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4380)
 
 ## Problem Statement
 
@@ -159,7 +159,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 )
 
 // +genclient

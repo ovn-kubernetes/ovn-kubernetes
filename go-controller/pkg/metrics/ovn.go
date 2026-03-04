@@ -10,10 +10,10 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // ovnController Configuration metrics
@@ -364,7 +364,7 @@ func updateSBDBConnectionMetric(ovsAppctl ovsClient) {
 }
 
 // RegisterOvnControllerMetrics registers the ovn-controller metrics
-func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client, ovnRegistry *prometheus.Registry) {
+func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client, ovnRegistry prometheus.Registerer) {
 	getOvnControllerVersionInfo()
 	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{

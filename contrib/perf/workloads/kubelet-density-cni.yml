@@ -39,11 +39,11 @@ jobs:
       mode: objects
     objects:
 
-      - objectTemplate: templates/webserver-deployment.yml
+      - objectTemplate: workloads/templates/kubelet-density-cni/webserver-deployment.yml
         replicas: 1
 
-      - objectTemplate: templates/webserver-service.yml
+      - objectTemplate: workloads/templates/kubelet-density-cni/webserver-service.yml
         replicas: 1
 
-      - objectTemplate: templates/curl-deployment.yml
+      - objectTemplate: workloads/templates/kubelet-density-cni/curl-deployment.yml
         replicas: 1

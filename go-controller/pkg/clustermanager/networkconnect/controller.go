@@ -2,6 +2,7 @@ package networkconnect
 
 import (
 	"fmt"
+	"net"
 	"reflect"
 	"sync"
 	"time"
@@ -20,17 +21,17 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
-	networkconnectlisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	networkconnectclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
+	networkconnectlisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var (
@@ -45,6 +46,8 @@ type clusterNetworkConnectState struct {
 	name string
 	// allocator for this CNC's subnet allocation
 	allocator HybridConnectSubnetAllocator
+	// connectSubnets are used for overlap check across multiple CNCs
+	connectSubnets []*net.IPNet
 	// map of NADs currently selected by this CNC's network selectors
 	// {value: NAD namespace/name key}
 	// this cache is mainly required to be able to detect when a
@@ -218,6 +221,13 @@ func (c *Controller) initialSync() error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize subnet allocator for CNC %s: %w", cnc.Name, err)
 		}
+		connectSubnets := []*net.IPNet{}
+		for _, cs := range cnc.Spec.ConnectSubnets {
+			// ignore error, this was already parsed for NewHybridConnectSubnetAllocator
+			_, cidr, _ := net.ParseCIDR(string(cs.CIDR))
+			connectSubnets = append(connectSubnets, cidr)
+		}
+		cncState.connectSubnets = connectSubnets
 		cncState.allocator = connectSubnetAllocator
 		c.cncCache[cnc.Name] = cncState
 
@@ -407,16 +417,19 @@ func (c *Controller) mustProcessCNCForNAD(nad *nadv1.NetworkAttachmentDefinition
 					continue
 				}
 				for _, namespace := range namespaces {
-					primaryNAD, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+					nsPrimaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 					if err != nil {
-						if util.IsUnprocessedActiveNetworkError(err) || util.IsInvalidPrimaryNetworkError(err) {
+						if util.IsInvalidPrimaryNetworkError(err) {
 							continue
 						}
 						klog.Errorf("Failed to get active network for namespace %s: %v", namespace.Name, err)
 						continue
 					}
+					if nsPrimaryNetwork == nil {
+						continue
+					}
 					networkName := c.networkManager.GetNetworkNameForNADKey(nadKey)
-					if networkName != "" && networkName == primaryNAD.GetNetworkName() {
+					if networkName != "" && networkName == nsPrimaryNetwork.GetNetworkName() {
 						isSelected = true
 						break selectorLoop
 					}

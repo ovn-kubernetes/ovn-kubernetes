@@ -18,19 +18,19 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/gateway"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/gatewayrouter"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/gateway"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/gatewayrouter"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type GatewayManager struct {
@@ -1379,6 +1379,37 @@ func (gw *GatewayManager) Cleanup() error {
 	// This will cleanup the NodeSubnetPolicy in local and shared gateway modes. It will be a no-op for any other mode.
 	gw.delPbrAndNatRules(gw.nodeName)
 	return nil
+}
+
+// NewGatewayManagerForCleanup returns a minimal GatewayManager used only for Cleanup(). Used when
+// discovering gateway routers from the DB (e.g. stale cleanup when nodes are gone). layer2UseTransitRouter
+// selects the peer port cleanup path (transit router LRP vs join switch LSP).
+//
+// NOTE: transitRouterInfo is set to an empty struct (not nil) when layer2UseTransitRouter is true.
+// This is safe because Cleanup() only checks (transitRouterInfo != nil) to choose between
+// deleteGWRouterPeerRouterPort and deleteGWRouterPeerSwitchPort — neither of which accesses
+// transitRouterInfo fields. If Cleanup() is ever changed to dereference transitRouterInfo fields,
+// this constructor must be updated accordingly.
+func NewGatewayManagerForCleanup(
+	nbClient libovsdbclient.Client,
+	netInfo util.NetInfo,
+	clusterRouterName, joinSwitchName, gwRouterName, nodeName string,
+	layer2UseTransitRouter bool,
+) *GatewayManager {
+	var tri *transitRouterInfo
+	if layer2UseTransitRouter {
+		tri = &transitRouterInfo{}
+	}
+	return &GatewayManager{
+		nodeName:          nodeName,
+		clusterRouterName: clusterRouterName,
+		gwRouterName:      gwRouterName,
+		extSwitchName:     netInfo.GetNetworkScopedExtSwitchName(nodeName),
+		joinSwitchName:    joinSwitchName,
+		nbClient:          nbClient,
+		netInfo:           netInfo,
+		transitRouterInfo: tri,
+	}
 }
 
 func (gw *GatewayManager) delPbrAndNatRules(nodeName string) {
