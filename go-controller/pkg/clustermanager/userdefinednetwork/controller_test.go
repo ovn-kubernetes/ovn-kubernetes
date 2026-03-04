@@ -2086,6 +2086,28 @@ var _ = Describe("User Defined Network Controller", func() {
 			}).Should(BeTrue(), "NAD should be deleted when namespace is terminating")
 		})
 
+		It("when NAD is not tracked by namespace tracker, ReconcileNetAttachDef should delete stale NAD", func() {
+			const cudnName = "test-network"
+			testNs := testNamespace("blue")
+			cudn := testClusterUDN(cudnName, testNs.Name)
+			expectedNAD := testClusterUdnNAD(cudnName, testNs.Name)
+
+			By("create controller with existing NAD but empty namespace tracker")
+			c := newTestController(renderNadStub(expectedNAD), cudn, testNs, expectedNAD)
+
+			By("verify NAD exists in the lister and tracker is empty")
+			_, err := c.nadLister.NetworkAttachmentDefinitions(testNs.Name).Get(cudnName)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(c.namespaceTracker).ToNot(HaveKey(cudnName))
+
+			By("ReconcileNetAttachDef should detect NAD as stale and delete it")
+			Expect(c.ReconcileNetAttachDef(testNs.Name + "/" + cudnName)).To(Succeed())
+
+			By("verify NAD was deleted")
+			_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(testNs.Name).Get(context.Background(), cudnName, metav1.GetOptions{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		})
+
 		It("when CR is deleted, CR has no finalizer, should succeed", func() {
 			deletedCUDN := testClusterUDN("test", "blue")
 			deletedCUDN.Finalizers = []string{}
