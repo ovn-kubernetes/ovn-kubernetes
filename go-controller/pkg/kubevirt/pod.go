@@ -757,7 +757,7 @@ func execOnNodePodsAnnotation(watchFactory *factory.WatchFactory, pod *corev1.Po
 		}
 		sameSubnetPodAnnotation, err := util.UnmarshalPodAnnotation(podToNotify.Annotations, nadName)
 		if err != nil {
-			klog.Errorf("Failed unmarshaling pod ovn for pod %s/%s annotations before GARP: %v", podToNotify.Namespace, podToNotify.Name, err)
+			// Skip pods that don't have annotations for this network (e.g. pods on different NADs)
 			continue
 		}
 		// Skip if those are pods for the same VM

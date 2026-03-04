@@ -176,8 +176,18 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 		}
 	}
 
-	if !util.PodWantsHostNetwork(pod) && addPort {
-		if err := oc.addLogicalPort(pod); err != nil {
+	var kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus
+	if kubevirt.IsPodLiveMigratable(pod) {
+		var err error
+		kubevirtLiveMigrationStatus, err = kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory, pod)
+		if err != nil {
+			return fmt.Errorf("failed to discover Live-migration status: %w", err)
+		}
+	}
+	updatePort := kubevirtLiveMigrationStatus != nil && pod.Name == kubevirtLiveMigrationStatus.TargetPod.Name
+
+	if !util.PodWantsHostNetwork(pod) && (addPort || updatePort) {
+		if err := oc.addLogicalPort(pod, kubevirtLiveMigrationStatus); err != nil {
 			return fmt.Errorf("addLogicalPort failed for %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	} else {
@@ -303,6 +313,19 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 		}
 		return nil
 	}
+	if kubevirt.IsPodLiveMigratable(pod) {
+		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		if err != nil {
+			return err
+		}
+		nadKey := ovntypes.DefaultNetworkName
+		if podAnnotation, ok := podNetworks[nadKey]; ok {
+			if err := oc.enableSourceLSPFailedLiveMigration(pod, nadKey, podAnnotation.MAC, podAnnotation.IPs); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err := oc.deleteLogicalPort(pod, portInfo); err != nil {
 		return fmt.Errorf("deleteLogicalPort failed for pod %s: %w",
 			getPodNamespacedName(pod), err)

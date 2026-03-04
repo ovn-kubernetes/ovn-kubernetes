@@ -20,6 +20,7 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
@@ -93,7 +94,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 
 func init() {
 	if os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" {
-		images.Add(images.IPerf3())
+		images.Add(images.Netshoot())
 	}
 }
 
@@ -183,7 +184,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					}
 
 					By(fmt.Sprintf("check iperf3 east/west connectivity for %s: %s", serverPodIP, stage))
-					output, err = virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -c %s -t 1", serverPodIP), polling)
+					output, err = virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -c %s -b 500M -t 1", serverPodIP), polling)
 					if err != nil {
 						return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
 					}
@@ -252,7 +253,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				}
 
 				By(fmt.Sprintf("check iperf3 connectivity for %s: %s", address, stage))
-				output, err = execFn(fmt.Sprintf("iperf3 -c %s -p %d -t 1", address, port))
+				output, err = execFn(fmt.Sprintf("iperf3 -c %s -b 500M -p %d -t 1", address, port))
 				if err != nil {
 					return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
 				}
@@ -760,7 +761,7 @@ ethernets:
 		iperfServerScript = `
 #!/bin/bash
 set -xe
-iface=$(ip -o link show | awk -F': ' '{print $2}' | grep -v "eth0\|lo" | head -1| sed "s#@.*##")
+iface=$(ip -o link show up | awk -F': ' '{print $2}' | grep -v "eth0\|lo" | head -1| sed "s#@.*##")
 iface=${iface:-eth0}
 
 ipv4=$(ip -4 addr show dev $iface | awk '/inet / {print $2}' | sed "s#/.*##")
@@ -947,6 +948,7 @@ fi
 	})
 
 	Context("with cluster default network and migratable virtual machines", Ordered, func() {
+		d := diagnostics.New(fr)
 		AfterAll(func() {
 			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
 		})
@@ -1092,9 +1094,9 @@ write_files:
 			externalContainerName := namespace + "-iperf"
 			externalContainerSpec := infraapi.ExternalContainer{
 				Name:    externalContainerName,
-				Image:   images.IPerf3(),
+				Image:   images.Netshoot(),
 				Network: providerNetwork,
-				CmdArgs: []string{"sleep infinity"},
+				CmdArgs: []string{"sleep", "infinity"},
 				ExtPort: externalContainerPort,
 			}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
@@ -1184,6 +1186,9 @@ write_files:
 				WithTimeout(5*time.Second).
 				WithPolling(time.Second).
 				Should(ConsistOf(expectedAddreses), step)
+
+			d.ConntrackDumpingDaemonSet()
+			d.TCPDumpDaemonSet([]string{"ovn-k8s-mp0"}, "arp or icmp6")
 
 			step = by(vmi.Name, fmt.Sprintf("Check east/west traffic before virtual machine %s", td.test.description))
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)

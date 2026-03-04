@@ -16,7 +16,7 @@ func (d *Diagnostics) ConntrackDumpingDaemonSet() {
 	By("Creating conntrack dumping daemonsets")
 	daemonSets := []appsv1.DaemonSet{}
 	daemonSetName := fmt.Sprintf("dump-conntrack")
-	cmd := composePeriodicCmd("conntrack -L", 10)
+	cmd := composePeriodicCmd("/host/usr/sbin/conntrack -L", 10)
 	daemonSets = append(daemonSets, d.composeDiagnosticsDaemonSet(daemonSetName, cmd, "conntrack"))
 	Expect(d.runDaemonSets(daemonSets)).To(Succeed())
 }

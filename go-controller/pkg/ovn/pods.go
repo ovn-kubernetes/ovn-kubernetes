@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
@@ -237,7 +238,7 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 	return oc.releasePodIPs(pInfo)
 }
 
-func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) {
+func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod, kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus) (err error) {
 	// If a node does node have an assigned hostsubnet don't wait for the logical switch to appear
 	switchName := pod.Spec.NodeName
 	if oc.lsManager.IsNonHostSubnetSwitch(switchName) {
@@ -272,9 +273,25 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	}()
 
 	nadKey := types.DefaultNetworkName
-	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(pod, nadKey, network, nil)
+
+	var lspEnabled *bool
+	shouldHandleLiveMigration := kubevirtLiveMigrationStatus != nil && pod.Name == kubevirtLiveMigrationStatus.TargetPod.Name
+	if shouldHandleLiveMigration {
+		lspEnabled = ptr.To(kubevirtLiveMigrationStatus.IsTargetDomainReady())
+	}
+
+	ops, lsp, podAnnotation, newlyCreatedPort, err = oc.addLogicalPortToNetwork(pod, nadKey, network, lspEnabled)
 	if err != nil {
 		return err
+	}
+
+	if shouldHandleLiveMigration && kubevirtLiveMigrationStatus.IsTargetDomainReady() {
+		if kubevirtLiveMigrationStatus.SourcePod != nil && oc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod) {
+			ops, err = oc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)
+			if err != nil {
+				return fmt.Errorf("failed to create LSP ops for source pod during Live-migration status: %w", err)
+			}
+		}
 	}
 
 	// If default network is not primary, update secondaryPods port group to isolate default network
