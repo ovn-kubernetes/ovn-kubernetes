@@ -7,7 +7,6 @@ import (
 	"reflect"
 
 	"github.com/go-logr/logr"
-	"github.com/google/uuid"
 	"github.com/ovn-kubernetes/libovsdb/cache"
 	"github.com/ovn-kubernetes/libovsdb/model"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
@@ -33,10 +32,6 @@ type API interface {
 	// the same type or an error will be generated when operations are
 	// are performed on the ConditionalAPI.
 	Where(...model.Model) ConditionalAPI
-
-	// Select selects all rows from a table, with optional column filtering.
-	// The model is used to determine the table, but not for filtering.
-	Select(model.Model, ...any) ([]ovsdb.Operation, error)
 
 	// WhereAny creates a ConditionalAPI from a list of Conditions where
 	// operations apply to elements that match any (eg, logical OR) of the
@@ -86,13 +81,6 @@ type ConditionalAPI interface {
 	// Wait returns the operations needed to perform the wait specified
 	// by the until condition, timeout, row and columns based on provided parameters.
 	Wait(ovsdb.WaitCondition, *int, model.Model, ...any) ([]ovsdb.Operation, error)
-
-	// Select returns the operations to search on the database.
-	// Depending on the Condition, it might return one or many operations.
-	// Use GetSelectResults on the results of the transaction to gather the found Models
-	// Optional fields can be passed (pointer to fields in the model) to select specific
-	// columns to be returned. If no fields are provided, all columns will be selected.
-	Select(m model.Model, fields ...any) ([]ovsdb.Operation, error)
 }
 
 // ErrWrongType is used to report the user provided parameter has the wrong type
@@ -115,18 +103,10 @@ type api struct {
 	cond          Conditional
 	logger        *logr.Logger
 	validateModel bool
-	// withReadLock optionally acquires a read lock (and any preconditions such as
-	// cache-consistency checks) and returns an unlock function.
-	withReadLock func(context.Context) func()
 }
 
 // List populates a slice of Models given as parameter based on the configured Condition
-func (a api) List(ctx context.Context, result any) error {
-	unlock := a.lockForRead(ctx)
-	if unlock != nil {
-		defer unlock()
-	}
-
+func (a api) List(_ context.Context, result any) error {
 	resultPtr := reflect.ValueOf(result)
 	if resultPtr.Type().Kind() != reflect.Ptr {
 		return &ErrWrongType{resultPtr.Type(), "Expected pointer to slice of valid Models"}
@@ -199,24 +179,24 @@ func (a api) List(ctx context.Context, result any) error {
 // Where returns a conditionalAPI based on model indexes. All provided models
 // must be the same type.
 func (a api) Where(models ...model.Model) ConditionalAPI {
-	return newConditionalAPI(a.cache, a.conditionFromModels(models), a.logger, a.validateModel, a.withReadLock)
+	return newConditionalAPI(a.cache, a.conditionFromModels(models), a.logger, a.validateModel)
 }
 
 // WhereAny returns a conditionalAPI based on a Condition list that matches any
 // of the conditions individually
 func (a api) WhereAny(m model.Model, cond ...model.Condition) ConditionalAPI {
-	return newConditionalAPI(a.cache, a.conditionFromExplicitConditions(false, m, cond...), a.logger, a.validateModel, a.withReadLock)
+	return newConditionalAPI(a.cache, a.conditionFromExplicitConditions(false, m, cond...), a.logger, a.validateModel)
 }
 
 // WhereAll returns a conditionalAPI based on a Condition list that matches all
 // of the conditions together
 func (a api) WhereAll(m model.Model, cond ...model.Condition) ConditionalAPI {
-	return newConditionalAPI(a.cache, a.conditionFromExplicitConditions(true, m, cond...), a.logger, a.validateModel, a.withReadLock)
+	return newConditionalAPI(a.cache, a.conditionFromExplicitConditions(true, m, cond...), a.logger, a.validateModel)
 }
 
 // WhereCache returns a conditionalAPI based a Predicate
 func (a api) WhereCache(predicate any) ConditionalAPI {
-	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger, a.validateModel, a.withReadLock)
+	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger, a.validateModel)
 }
 
 // Conditional interface implementation
@@ -239,12 +219,10 @@ func (a api) conditionFromModels(models []model.Model) Conditional {
 	if len(models) == 0 {
 		return newErrorConditional(fmt.Errorf("at least one model required"))
 	}
-
 	tableName, err := a.getTableFromModel(models[0])
-	if err != nil {
+	if tableName == "" {
 		return newErrorConditional(err)
 	}
-
 	conditional, err := newEqualityConditional(tableName, a.cache, models)
 	if err != nil {
 		return newErrorConditional(err)
@@ -277,12 +255,7 @@ func (a api) conditionFromExplicitConditions(matchAll bool, m model.Model, cond 
 //
 // The way the cache is searched depends on the fields already populated in 'result'
 // Any table index (including _uuid) will be used for comparison
-func (a api) Get(ctx context.Context, m model.Model) error {
-	unlock := a.lockForRead(ctx)
-	if unlock != nil {
-		defer unlock()
-	}
-
+func (a api) Get(_ context.Context, m model.Model) error {
 	table, err := a.getTableFromModel(m)
 	if err != nil {
 		return err
@@ -303,15 +276,6 @@ func (a api) Get(ctx context.Context, m model.Model) error {
 	model.CloneInto(found, m)
 
 	return nil
-}
-
-// lockForRead runs the optional read-lock hook and returns an unlock function.
-// If no hook is configured, it returns nil.
-func (a api) lockForRead(ctx context.Context) func() {
-	if a.withReadLock == nil {
-		return nil
-	}
-	return a.withReadLock(ctx)
 }
 
 // Create is a generic function capable of creating any row in the DB
@@ -655,98 +619,21 @@ func (a api) getTableFromFunc(predicate any) (string, error) {
 	return table, nil
 }
 
-// newAPI returns a new API to interact with the database.
-// If withReadLock is provided, the first hook is used by read-path methods
-// (currently Get and List) to guard cache reads and return a matching unlock func.
-func newAPI(cache *cache.TableCache, logger *logr.Logger, validateModel bool, withReadLock ...func(context.Context) func()) API {
-	var readLockFn func(context.Context) func()
-	if len(withReadLock) > 0 {
-		readLockFn = withReadLock[0]
-	}
-
+// newAPI returns a new API to interact with the database
+func newAPI(cache *cache.TableCache, logger *logr.Logger, validateModel bool) API {
 	return api{
 		cache:         cache,
 		logger:        logger,
 		validateModel: validateModel,
-		withReadLock:  readLockFn,
 	}
 }
 
-// newConditionalAPI returns a new ConditionalAPI to interact with the database.
-// If withReadLock is provided, the first hook is propagated to conditional
-// read-path methods (currently List) to guard cache reads.
-func newConditionalAPI(cache *cache.TableCache, cond Conditional, logger *logr.Logger, validateModel bool, withReadLock ...func(context.Context) func()) ConditionalAPI {
-	var readLockFn func(context.Context) func()
-	if len(withReadLock) > 0 {
-		readLockFn = withReadLock[0]
-	}
-
+// newConditionalAPI returns a new ConditionalAPI to interact with the database
+func newConditionalAPI(cache *cache.TableCache, cond Conditional, logger *logr.Logger, validateModel bool) ConditionalAPI {
 	return api{
 		cache:         cache,
 		cond:          cond,
 		logger:        logger,
 		validateModel: validateModel,
-		withReadLock:  readLockFn,
 	}
-}
-
-// Select returns the operations to search on the database.
-// Depending on the Condition, it might return one or many operations.
-// If non-conditional it means select all and m should be a zero value.
-// Use GetSelectResults on the results of the transaction to gather the found Models
-func (a api) Select(m model.Model, fields ...any) ([]ovsdb.Operation, error) {
-	tableName, err := a.getTableFromModel(m)
-	if err != nil {
-		return nil, err
-	}
-	var ovsdbConditionsList [][]ovsdb.Condition
-	if a.cond != nil {
-		ovsdbConditionsList, err = a.cond.Generate()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		ovsdbConditionsList = [][]ovsdb.Condition{{}}
-	}
-
-	// Determine columns to select
-	if a.cache == nil || !a.cache.DatabaseModel().Valid() {
-		return nil, fmt.Errorf("database model/schema info not available for select")
-	}
-
-	var columnsToSelect []string
-	if len(fields) > 0 {
-		columnsToSelect, err = a.getColumns(m, fields...)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	correlationID := uuid.NewString()
-	operations := make([]ovsdb.Operation, 0, len(ovsdbConditionsList))
-	for _, whereClause := range ovsdbConditionsList {
-		selectOp := ovsdb.Operation{
-			Op:      ovsdb.OperationSelect,
-			Table:   tableName,
-			Where:   whereClause,
-			Columns: columnsToSelect,
-		}
-		ovsdb.SetCorrelationID(&selectOp, correlationID)
-		operations = append(operations, selectOp)
-	}
-
-	return operations, nil
-}
-
-// getColumns is a helper function that determines which columns to select
-// based on a model and a list of field pointers.
-func (a api) getColumns(m model.Model, fields ...any) ([]string, error) {
-	if len(fields) == 0 {
-		return nil, nil
-	}
-	info, err := a.cache.DatabaseModel().NewModelInfo(m)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create model info for select: %w", err)
-	}
-	return info.ColumnsByPtrWithUUID(fields...)
 }

@@ -65,13 +65,6 @@ type Client interface {
 	NewMonitor(...MonitorOption) *Monitor
 	CurrentEndpoint() string
 	API
-	// GetSelectResultsByIndex parses the result of the select operation indicated by
-	// the 0-based index from the transaction results of the provided operations.
-	GetSelectResultsByIndex(ops []ovsdb.Operation, results []ovsdb.OperationResult, target interface{}, index int) error
-
-	// GetSelectResults parses the result of the first select operation from the
-	// transaction results of the provided operations.
-	GetSelectResults(ops []ovsdb.Operation, results []ovsdb.OperationResult, target interface{}) error
 }
 
 type bufferedUpdate struct {
@@ -401,12 +394,7 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 				db.cacheMutex.Unlock()
 				return "", err
 			}
-			dbNameForWait := dbName
-			dbForWait := db
-			db.api = newAPI(db.cache, o.logger, o.options.validateModel, func(ctx context.Context) func() {
-				waitForCacheConsistent(ctx, dbForWait, o.logger, dbNameForWait)
-				return dbForWait.cacheMutex.RUnlock
-			})
+			db.api = newAPI(db.cache, o.logger, o.options.validateModel)
 		}
 		db.cacheMutex.Unlock()
 	}
@@ -1096,7 +1084,6 @@ func (o *ovsdbClient) Echo(ctx context.Context) error {
 		if err == rpc2.ErrShutdown {
 			return ErrNotConnected
 		}
-		return err
 	}
 	if !reflect.DeepEqual(args, reply) {
 		return fmt.Errorf("incorrect server response: %v, %v", args, reply)
@@ -1414,7 +1401,10 @@ func hasMonitors(db *database) bool {
 
 // Get implements the API interface's Get function
 func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
-	return o.primaryDB().api.Get(ctx, model)
+	primaryDB := o.primaryDB()
+	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	defer primaryDB.cacheMutex.RUnlock()
+	return primaryDB.api.Get(ctx, model)
 }
 
 // Create implements the API interface's Create function
@@ -1424,7 +1414,10 @@ func (o *ovsdbClient) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 
 // List implements the API interface's List function
 func (o *ovsdbClient) List(ctx context.Context, result any) error {
-	return o.primaryDB().api.List(ctx, result)
+	primaryDB := o.primaryDB()
+	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	defer primaryDB.cacheMutex.RUnlock()
+	return primaryDB.api.List(ctx, result)
 }
 
 // Where implements the API interface's Where function
@@ -1445,134 +1438,4 @@ func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) Con
 // WhereCache implements the API interface's WhereCache function
 func (o *ovsdbClient) WhereCache(predicate any) ConditionalAPI {
 	return o.primaryDB().api.WhereCache(predicate)
-}
-
-// Select implements the API interface's Select function
-func (o *ovsdbClient) Select(m model.Model, fields ...any) ([]ovsdb.Operation, error) {
-	return o.primaryDB().api.Select(m, fields...)
-}
-
-// GetSelectResultsByIndex parses the results of a transaction containing select operations
-// and populates the target slice with the specified select query's results.
-// The index parameter specifies which select query to retrieve (0-based).
-// Use index=0 for single select queries (WhereAny, WhereCache, etc.).
-func (o *ovsdbClient) GetSelectResultsByIndex(ops []ovsdb.Operation, results []ovsdb.OperationResult, target interface{}, index int) error {
-	if len(ops) != len(results) {
-		return fmt.Errorf("number of operations (%d) and results (%d) must match", len(ops), len(results))
-	}
-
-	// Validate target parameter
-	slicePtr := reflect.ValueOf(target)
-	if slicePtr.Type().Kind() != reflect.Ptr || slicePtr.IsNil() {
-		return &ErrWrongType{slicePtr.Type(), "target must be a non-nil pointer to a slice of models"}
-	}
-
-	sliceVal := reflect.Indirect(slicePtr)
-	if sliceVal.Type().Kind() != reflect.Slice {
-		return &ErrWrongType{slicePtr.Type(), "target must be a pointer to a slice of models"}
-	}
-
-	// GetSelectResultsByIndex only accepts a pointer to a slice of pointers to models
-	modelType := sliceVal.Type().Elem()
-	if modelType.Kind() != reflect.Ptr {
-		return &ErrWrongType{slicePtr.Type(), "target must be a pointer to a slice of model pointers"}
-	}
-	modelType = modelType.Elem()
-
-	o.primaryDB().modelMutex.RLock()
-	dbModel := o.primaryDB().model
-	o.primaryDB().modelMutex.RUnlock()
-
-	// Determine the target table name from the model type
-	dummyModel := reflect.New(modelType).Interface().(model.Model)
-	info, err := dbModel.NewModelInfo(dummyModel)
-	if err != nil {
-		return fmt.Errorf("failed to get model info for target type: %w", err)
-	}
-	targetTable := info.Metadata.TableName
-
-	// Create a map to store merged rows (deduplicated by UUID)
-	mergedRows := make(map[string]ovsdb.Row)
-	mergeRows := func(result ovsdb.OperationResult) error {
-		if result.Error != "" {
-			return fmt.Errorf("operation error: %s: %s", result.Error, result.Details)
-		}
-
-		for _, row := range result.Rows {
-			uuidVal, ok := row["_uuid"]
-			if !ok {
-				return fmt.Errorf("failed to get UUID from row: %v", row)
-			}
-			uuid, ok := uuidVal.(ovsdb.UUID)
-			if !ok {
-				return fmt.Errorf("failed to cast UUID from row: %v", row)
-			}
-			// Deduplicate by UUID - later results overwrite earlier ones
-			// Note different results may have different selected columns
-			mergedRows[uuid.GoUUID] = row
-		}
-		return nil
-	}
-
-	// Single pass to find and collect results for the target index
-	currentIndex := -1
-	var currentCorrelationID string
-	for i, op := range ops {
-		if op.Op != ovsdb.OperationSelect || op.Table != targetTable {
-			continue
-		}
-
-		correlationID := ovsdb.GetCorrelationID(op)
-		if correlationID != currentCorrelationID {
-			currentIndex++
-			currentCorrelationID = correlationID
-		}
-
-		if currentIndex < index {
-			continue
-		}
-		if currentIndex > index {
-			break
-		}
-
-		err := mergeRows(results[i])
-		if err != nil {
-			return err
-		}
-	}
-
-	if currentIndex < index {
-		return fmt.Errorf("index %d is out of range: found %d query groups for table '%s'",
-			index, currentIndex+1, targetTable)
-	}
-
-	// Populate the target slice with optimized memory allocation
-	resultCount := len(mergedRows)
-
-	// Pre-allocate slice with exact capacity to avoid repeated allocations
-	if sliceVal.IsNil() || sliceVal.Cap() < resultCount {
-		sliceVal.Set(reflect.MakeSlice(sliceVal.Type(), resultCount, resultCount))
-	} else {
-		// Reuse existing slice but set to exact length
-		sliceVal.SetLen(resultCount)
-	}
-
-	// Use index-based assignment to avoid append overhead
-	var i int
-	for uuid, row := range mergedRows {
-		model, err := model.CreateModel(dbModel, targetTable, &row, uuid)
-		if err != nil {
-			return fmt.Errorf("failed to create model: %w", err)
-		}
-		sliceVal.Index(i).Set(reflect.ValueOf(model))
-		i++
-	}
-
-	return nil
-}
-
-// GetSelectResults parses select operation results from a transaction.
-// Equivalent to GetSelectResultsByIndex with index 0 (first select query)
-func (o *ovsdbClient) GetSelectResults(ops []ovsdb.Operation, results []ovsdb.OperationResult, target interface{}) error {
-	return o.GetSelectResultsByIndex(ops, results, target, 0)
 }

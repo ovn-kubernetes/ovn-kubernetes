@@ -246,11 +246,11 @@ func (b *BaseType) MinInteger() (int, error) {
 	if b.minInteger != nil {
 		return *b.minInteger, nil
 	}
-	return math.MinInt64, nil
+	return int(math.Pow(-2, 63)), nil
 }
 
-// MaxInteger returns the maximum integer value
-// RFC7047 specifies the maximum to be 2^63-1
+// MaxInteger returns the minimum integer value
+// RFC7047 specifies the minimum to be 2^63-1
 func (b *BaseType) MaxInteger() (int, error) {
 	if b.Type != TypeInteger {
 		return 0, fmt.Errorf("%s is not an integer", b.Type)
@@ -258,7 +258,7 @@ func (b *BaseType) MaxInteger() (int, error) {
 	if b.maxInteger != nil {
 		return *b.maxInteger, nil
 	}
-	return math.MaxInt64, nil
+	return int(math.Pow(2, 63)) - 1, nil
 }
 
 // MinLength returns the minimum string length
@@ -276,15 +276,15 @@ func (b *BaseType) MinLength() (int, error) {
 
 // MaxLength returns the maximum string length
 // RFC7047 doesn't specify a default, but we assume
-// that it must be 2^63-1
+// that it must 2^63-1
 func (b *BaseType) MaxLength() (int, error) {
 	if b.Type != TypeString {
-		return 0, fmt.Errorf("%s is not a string", b.Type)
+		return 0, fmt.Errorf("%s is not an string", b.Type)
 	}
 	if b.maxLength != nil {
 		return *b.maxLength, nil
 	}
-	return math.MaxInt64, nil
+	return int(math.Pow(2, 63)) - 1, nil
 }
 
 // RefTable returns the table to which a UUID type refers
@@ -348,30 +348,9 @@ func (b *BaseType) UnmarshalJSON(data []byte) error {
 			oSet := bt.Enum.([]any)
 			innerSet := oSet[1].([]any)
 			b.Enum = make([]any, len(innerSet))
-
-			// json unmarshal will convert all numeric types to float64, Convert float64 to int if the base type is integer
-			if bt.Type == "integer" {
-				for i, v := range innerSet {
-					if f, ok := v.(float64); ok {
-						b.Enum[i] = int(f)
-					} else {
-						b.Enum[i] = v
-					}
-				}
-			} else {
-				copy(b.Enum, innerSet)
-			}
+			copy(b.Enum, innerSet)
 		default:
-			// Single element enum
-			if bt.Type == "integer" {
-				if f, ok := bt.Enum.(float64); ok {
-					b.Enum = []any{int(f)}
-				} else {
-					b.Enum = []any{bt.Enum}
-				}
-			} else {
-				b.Enum = []any{bt.Enum}
-			}
+			b.Enum = []any{bt.Enum}
 		}
 	}
 	b.Type = bt.Type
