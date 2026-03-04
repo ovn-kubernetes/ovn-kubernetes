@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vishvananda/netlink"
+	nl "github.com/vishvananda/netlink/nl"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/workqueue"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // Interface defines the contract for NetlinkDeviceManager Controller.
@@ -31,7 +34,7 @@ import (
 // operations and applying rate-limited retry on transient failures.
 //
 // This design was chosen over a synchronous "apply-and-return-error" approach
-// for three reasons:
+// for four reasons:
 //
 //  1. Cross-device dependencies. Unlike routes, devices depend on each other:
 //     a VXLAN requires its master bridge, an SVI requires both a VLAN parent
@@ -67,6 +70,11 @@ import (
 //     would still need to serialize all entrypoints through that same
 //     reconciler, which effectively converges on the workqueue pattern.
 //
+//  4. Netlink back-pressure control. Funneling all netlink I/O through a
+//     single worker goroutine with a rate-limited workqueue gives the manager
+//     direct control over how much pressure it puts on the kernel's netlink
+//     subsystem.
+//
 // Because the API is asynchronous, downstream controllers that depend on
 // device readiness (e.g., EVPN waiting for the bridge before attaching OVS
 // ports) are notified via the DeviceReconciler subscriber interface.
@@ -75,14 +83,6 @@ import (
 // calling EnsureLink. A dedicated synchronous interface may be added in the
 // future if specific use cases (e.g., synchronous startup sequences) require
 // it.
-//
-// # Startup Contract
-//
-// Controllers MUST call EnsureLink for all previously-existing desired devices
-// before calling Run. On startup, Run performs orphan cleanup: it scans the
-// kernel for devices with our ownership alias that are not in the desired state
-// store and deletes them. If the store is empty, all previously-managed devices
-// will be removed.
 //
 // # Ownership
 //
@@ -96,6 +96,14 @@ import (
 // # Supported Device Types
 //
 // The manager supports Bridge, Vxlan, Vlan, Vrf, and Dummy device types.
+//
+// # NOTE on Route Management
+//
+// NDM manages addresses but DOES NOT manage routes. When an address is added
+// to a device, the kernel may automatically create a connected route for that
+// subnet. If someone removes a kernel-created route, neither the kernel nor
+// NDM will restore it. Route management, if needed, must be handled through a
+// separate mechanism (e.g., route manager).
 type Interface interface {
 	// EnsureLink declares the desired configuration for a device.
 	//
@@ -119,6 +127,10 @@ type Interface interface {
 	// If a dependency (Master, VLANParent) does not exist in the kernel,
 	// the device is marked DeviceStatePending and automatically retried
 	// when the dependency appears via netlink event.
+	//
+	// The device is always brought UP after all configuration is applied,
+	// regardless of the Flags field in Link.Attrs(). Callers cannot create
+	// devices in a permanently DOWN state through this API.
 	//
 	// Full-state semantics: the provided config is the complete desired
 	// state. Attributes not specified are treated as "use kernel default."
@@ -162,23 +174,11 @@ type Interface interface {
 	// device name to their own work items and re-queue them — heavy
 	// processing should not be done inline.
 	//
-	// Safe to call before or after Run(). Subscribers that register after
-	// Run() will receive notifications for all subsequent state transitions;
-	// they can query current state of devices they care about via
-	// GetDeviceState or IsDeviceReady.
+	// Safe to call before or after the controller is started. Subscribers
+	// registered after startup will receive notifications for all subsequent
+	// state transitions; they can query current state of devices they care
+	// about via GetDeviceState or IsDeviceReady.
 	RegisterDeviceReconciler(r DeviceReconciler)
-
-	// Run starts the background reconciler and netlink event listener.
-	//
-	// Callers MUST call EnsureLink for all desired devices before Run.
-	// On startup, Run performs orphan cleanup (removing devices with our
-	// alias not in the store) and then begins processing the reconciliation
-	// queue. Netlink events are subscribed to before the worker starts to
-	// prevent missed events.
-	//
-	// The reconciler runs until stopCh is closed. doneWg is decremented
-	// when the reconciler has fully stopped.
-	Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error
 }
 
 // DeviceState represents the lifecycle state of a managed device.
@@ -197,44 +197,6 @@ const (
 type DeviceReconciler interface {
 	ReconcileDevice(key string) error
 }
-
-// managedAliasPrefix is the prefix used in IFLA_IFALIAS to mark devices managed by this controller.
-// This allows safe cleanup: only delete devices with this prefix.
-// Format: "ovn-k8s-ndm:<type>:<name>" for debugging and collision avoidance.
-const managedAliasPrefix = "ovn-k8s-ndm:"
-
-// maxInterfaceNameLength is the maximum length for Linux interface names.
-// Linux's IFNAMSIZ is 16 (including null terminator), so max usable length is 15.
-const maxInterfaceNameLength = 15
-
-// NotOwnedError is returned when an operation is blocked because the device
-// exists but is not owned by us (no alias or foreign alias).
-// This is a permanent error - retrying won't help unless the external device is removed.
-type NotOwnedError struct {
-	DeviceName string
-	Reason     string
-}
-
-func (e *NotOwnedError) Error() string {
-	return fmt.Sprintf("device %s not owned by us: %s", e.DeviceName, e.Reason)
-}
-
-// IsNotOwnedError returns true if the error indicates a device ownership conflict.
-func IsNotOwnedError(err error) bool {
-	var notOwned *NotOwnedError
-	return errors.As(err, &notOwned)
-}
-
-// defaultReconcilePeriod is the default interval for periodic sync as a safety net.
-const defaultReconcilePeriod = 60 * time.Second
-
-// Key prefixes for workqueue item type routing.
-// Workqueue deduplicates by key, so rapid updates to the same device coalesce.
-const (
-	deviceKeyPrefix = "device/"  // e.g., "device/br-evpn"
-	fullSyncKey     = "fullsync" // Startup: orphan cleanup + re-enqueue all
-	syncKey         = "sync"     // Periodic: re-enqueue all (no orphan scan)
-)
 
 // DeviceConfig represents the complete desired configuration for a network device.
 // Controllers provide the FULL configuration; manager enforces EXACTLY what's provided.
@@ -290,6 +252,11 @@ type DeviceConfig struct {
 	//                    Missing mappings are added, stale mappings are removed.
 	//
 	// Each VID and each VNI must be unique within the slice.
+	//
+	// Architectural constraint (SVD model): VIDs must also be unique across all
+	// devices sharing the same bridge master. Stale mappings are removed
+	// including their bridge self VLAN, so a VID shared by two VXLAN devices
+	// on the same bridge would cause removal of one mapping to disrupt the other.
 	VIDVNIMappings []VIDVNIMapping
 }
 
@@ -306,18 +273,63 @@ type BridgePortSettings struct {
 	Learning      bool // Enable MAC learning
 }
 
+// managedAliasPrefix is the prefix used in IFLA_IFALIAS to mark devices managed by this controller.
+// This allows safe cleanup: only delete devices with this prefix.
+// Format: "ovn-k8s-ndm:<type>:<name>" for debugging and collision avoidance.
+const managedAliasPrefix = "ovn-k8s-ndm:"
+
+// maxInterfaceNameLength is the maximum length for Linux interface names.
+// Linux's IFNAMSIZ is 16 (including null terminator), so max usable length is 15.
+const maxInterfaceNameLength = 15
+
+// NotOwnedError is returned when an operation is blocked because the device
+// exists but is not owned by us (no alias or foreign alias).
+// This is a permanent error - retrying won't help unless the external device is removed.
+type NotOwnedError struct {
+	DeviceName string
+	Reason     string
+}
+
+func (e *NotOwnedError) Error() string {
+	return fmt.Sprintf("device %s not owned by us: %s", e.DeviceName, e.Reason)
+}
+
+// IsNotOwnedError returns true if the error indicates a device ownership conflict.
+func IsNotOwnedError(err error) bool {
+	var notOwned *NotOwnedError
+	return errors.As(err, &notOwned)
+}
+
+// defaultReconcilePeriod is the default interval for periodic sync as a safety net.
+const defaultReconcilePeriod = 60 * time.Second
+
+// defaultMaxSyncJitter is the maximum random delay added when enqueuing
+// devices during periodic sync. Distributes reconciliation over time to
+// avoid CPU spikes at scale.
+const defaultMaxSyncJitter = 5 * time.Second
+
+// Key prefixes for workqueue item type routing.
+// Workqueue deduplicates by key, so rapid updates to the same device coalesce.
+const (
+	deviceKeyPrefix = "device/"  // e.g., "device/br-evpn"
+	fullSyncKey     = "fullsync" // Channel recreation: orphan cleanup + re-enqueue all devices
+	syncKey         = "sync"     // Periodic: re-enqueue VXLAN devices for VNI filter drift recovery
+)
+
 // managedDevice tracks a device with its config and status
 type managedDevice struct {
 	cfg        DeviceConfig // Complete desired config
 	state      DeviceState  // Lifecycle state (Ready, Pending, Failed, Blocked)
+	ifindex    int          // Kernel ifindex, updated on successful reconciliation
 	lastError  error        // Last error from reconciliation (preserved for status/debug)
 	generation uint64       // Monotonic counter incremented by EnsureLink on config change; used by reconciler for staleness detection
 }
 
 // Controller manages Linux network device lifecycle using a workqueue-based reconciler.
 // Public API methods store desired state and enqueue work; a single worker goroutine
-// performs all netlink I/O. Self-heals via periodic sync, orphan cleanup, and netlink
-// event-driven reconciliation.
+// performs all netlink I/O. Self-heals via periodic sync (VNI filter drift),
+// orphan cleanup, and netlink event-driven reconciliation (link events via
+// address events).
 type Controller struct {
 	mu    sync.RWMutex
 	store map[string]*managedDevice // device name -> managed device info
@@ -327,8 +339,14 @@ type Controller struct {
 	subscribers   []DeviceReconciler
 
 	// ReconcilePeriod is the interval for periodic sync as a safety net.
-	// Defaults to DefaultReconcilePeriod. Can be overridden before calling Run().
+	// Defaults to defaultReconcilePeriod. Can be overridden before calling Run().
 	ReconcilePeriod time.Duration
+
+	// MaxSyncJitter is the maximum random delay added per device when
+	// enqueuing during periodic sync. Each device gets a delay in
+	// [0, MaxSyncJitter) to spread reconciliation over time.
+	// Defaults to defaultMaxSyncJitter. Can be overridden before calling Run().
+	MaxSyncJitter time.Duration
 }
 
 // NewController creates a new NetlinkDeviceManager with default settings.
@@ -337,6 +355,7 @@ func NewController() *Controller {
 	c := &Controller{
 		store:           make(map[string]*managedDevice),
 		ReconcilePeriod: defaultReconcilePeriod,
+		MaxSyncJitter:   defaultMaxSyncJitter,
 	}
 
 	c.reconciler = controller.NewReconciler("netlink-device-manager", &controller.ReconcilerConfig{
@@ -370,6 +389,11 @@ func (c *Controller) reconcileWorkqueue(key string) error {
 // Handles both create/update (device in store) and delete (device not in store).
 // Pattern: Lock → copy config → Unlock → I/O outside lock → Lock → update state → Unlock → notify.
 func (c *Controller) reconcileDeviceKey(name string) error {
+	start := time.Now()
+	defer func() {
+		klog.V(5).Infof("NetlinkDeviceManager: reconcile %s took %v", name, time.Since(start))
+	}()
+
 	// Read config under RLock
 	c.mu.RLock()
 	unlock := sync.OnceFunc(c.mu.RUnlock)
@@ -395,7 +419,7 @@ func (c *Controller) reconcileDeviceKey(name string) error {
 	unlock()
 
 	// All netlink I/O OUTSIDE lock
-	modified, err := applyDeviceConfig(&cfg)
+	modified, ifindex, err := applyDeviceConfig(&cfg)
 
 	// Update state under Lock
 	c.mu.Lock()
@@ -421,6 +445,7 @@ func (c *Controller) reconcileDeviceKey(name string) error {
 	case err == nil:
 		newState = DeviceStateReady
 		device.lastError = nil
+		device.ifindex = ifindex
 	case isDependencyError(err):
 		newState = DeviceStatePending
 		device.lastError = err // Preserve reason: "pending on X (reason)" for status/debug
@@ -492,26 +517,52 @@ func (c *Controller) cleanupOrphanedDevices() error {
 	return nil
 }
 
-// reconcileFullSyncKey runs orphan cleanup then re-enqueues all items.
-// Used at startup and after netlink resubscribe.
+// reconcileFullSyncKey runs orphan cleanup then re-enqueues ALL managed devices.
 func (c *Controller) reconcileFullSyncKey() error {
 	if err := c.cleanupOrphanedDevices(); err != nil {
 		klog.Errorf("NetlinkDeviceManager: orphan cleanup failed: %v", err)
-		// Continue — enqueue items anyway
 	}
-	return c.reconcileSyncKey()
+	count := c.enqueueDevices(nil)
+	klog.V(5).Infof("NetlinkDeviceManager: full sync enqueued %d device(s) (max jitter: %v)", count, c.MaxSyncJitter)
+	return nil
 }
 
-// reconcileSyncKey re-enqueues all stored items for individual reconciliation.
-// Used for periodic sync. Does NOT do orphan cleanup (that's fullsync).
+// reconcileSyncKey re-enqueues VXLAN devices for VNI filter drift recovery.
+// Only VXLAN devices need periodic sync because VNI filter changes emit
+// RTNLGRP_TUNNEL events, which the netlink library has no subscription API for.
+// Link and address attributes are covered by their respective event subscriptions.
 func (c *Controller) reconcileSyncKey() error {
+	isVxlan := func(d *managedDevice) bool {
+		_, ok := d.cfg.Link.(*netlink.Vxlan)
+		return ok
+	}
+	count := c.enqueueDevices(isVxlan)
+	if count > 0 {
+		klog.V(5).Infof("NetlinkDeviceManager: periodic sync enqueued %d VXLAN device(s) (max jitter: %v)", count, c.MaxSyncJitter)
+	}
+	return nil
+}
+
+// enqueueDevices iterates the store and enqueues matching devices for reconciliation
+// with a random delay in [0, MaxSyncJitter). If filter is nil, all devices are enqueued.
+// Returns the number of devices enqueued.
+func (c *Controller) enqueueDevices(filter func(*managedDevice) bool) int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for name := range c.store {
-		c.reconciler.Reconcile(deviceKeyPrefix + name)
+	var count int
+	for name, device := range c.store {
+		if filter != nil && !filter(device) {
+			continue
+		}
+		var jitter time.Duration
+		if c.MaxSyncJitter > 0 {
+			jitter = rand.N(c.MaxSyncJitter)
+		}
+		c.reconciler.ReconcileAfter(deviceKeyPrefix+name, jitter)
+		count++
 	}
-	return nil
+	return count
 }
 
 // validateConfig checks that a DeviceConfig is well-formed.
@@ -702,16 +753,16 @@ func (c *Controller) notifySubscribers(name string) {
 	}
 }
 
-// linkChanBufferSize is the buffer size for the netlink event channel.
+// eventChanBufferSize is the buffer size for netlink event channels (link and addr).
 // The buffer decouples the kernel socket drain rate from event processing,
 // absorbing bursts (e.g., during startup or bulk reconfiguration) without
 // tearing down the subscription.
-const linkChanBufferSize = 100
+const eventChanBufferSize = 100
 
 // subscribeLinkEvents creates a buffered channel and subscribes to netlink link
 // events. Returns the channel on success or nil on failure.
 func subscribeLinkEvents(stopCh <-chan struct{}, onError func(error)) chan netlink.LinkUpdate {
-	ch := make(chan netlink.LinkUpdate, linkChanBufferSize)
+	ch := make(chan netlink.LinkUpdate, eventChanBufferSize)
 	options := netlink.LinkSubscribeOptions{
 		ErrorCallback: onError,
 	}
@@ -722,8 +773,27 @@ func subscribeLinkEvents(stopCh <-chan struct{}, onError func(error)) chan netli
 	return ch
 }
 
-// Run starts the controller's workqueue reconciler and netlink event listener.
-// Controllers should call EnsureLink for all desired devices BEFORE calling Run().
+// subscribeAddrEvents creates a buffered channel and subscribes to netlink address
+// events. Returns the channel on success or nil on failure.
+func subscribeAddrEvents(stopCh <-chan struct{}, onError func(error)) chan netlink.AddrUpdate {
+	ch := make(chan netlink.AddrUpdate, eventChanBufferSize)
+	options := netlink.AddrSubscribeOptions{
+		ErrorCallback: onError,
+	}
+	if err := netlink.AddrSubscribeWithOptions(ch, stopCh, options); err != nil {
+		onError(err)
+		return nil
+	}
+	return ch
+}
+
+// Run starts the background reconciler and netlink event listener.
+//
+// Callers MUST call EnsureLink for all previously-existing desired devices
+// before calling Run. On startup, Run performs orphan cleanup: it scans the
+// kernel for devices with our ownership alias that are not in the desired state
+// store and deletes them. If the store is empty, all previously-managed devices
+// will be removed.
 func (c *Controller) Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error {
 	reconcilePeriod := c.ReconcilePeriod
 
@@ -733,6 +803,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error {
 		klog.Errorf("NetlinkDeviceManager: netlink subscribe error: %v", err)
 	}
 	linkChan := subscribeLinkEvents(stopCh, onSubscribeError)
+	addrChan := subscribeAddrEvents(stopCh, onSubscribeError)
 
 	// Start reconciler with orphan cleanup as initial sync.
 	if err := controller.StartWithInitialSync(
@@ -765,13 +836,11 @@ func (c *Controller) Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error {
 
 			select {
 			case update, ok := <-linkChan:
-				// Note: we do NOT reset the periodic sync timer on link events.
+				// Note: we do NOT reset the periodic sync timer on events.
 				// Resetting would starve periodic sync on busy nodes with many
 				// netlink events. The periodic sync is a hard safety net.
 				if !ok {
-					// The channel is closed when the subscribe goroutine exits.
-					// Resubscribe and trigger a full sync to catch missed events.
-					klog.Warning("NetlinkDeviceManager: netlink channel closed, resubscribing")
+					klog.Warning("NetlinkDeviceManager: link channel closed, resubscribing")
 					linkChan = subscribeLinkEvents(stopCh, onSubscribeError)
 					if linkChan != nil {
 						c.reconciler.Reconcile(fullSyncKey)
@@ -780,14 +849,35 @@ func (c *Controller) Run(stopCh <-chan struct{}, doneWg *sync.WaitGroup) error {
 				}
 				c.handleLinkUpdate(update.Link)
 
+			case update, ok := <-addrChan:
+				if !ok {
+					klog.Warning("NetlinkDeviceManager: addr channel closed, resubscribing")
+					addrChan = subscribeAddrEvents(stopCh, onSubscribeError)
+					if addrChan != nil {
+						c.reconciler.Reconcile(fullSyncKey)
+					}
+					continue
+				}
+				c.handleAddrUpdate(update)
+
 			case <-syncTimer.C:
-				klog.V(5).Info("NetlinkDeviceManager: periodic sync")
-				c.reconciler.Reconcile(syncKey)
+				var resubscribed bool
 				if linkChan == nil {
 					linkChan = subscribeLinkEvents(stopCh, onSubscribeError)
 					if linkChan != nil {
-						c.reconciler.Reconcile(fullSyncKey)
+						resubscribed = true
 					}
+				}
+				if addrChan == nil {
+					addrChan = subscribeAddrEvents(stopCh, onSubscribeError)
+					if addrChan != nil {
+						resubscribed = true
+					}
+				}
+				if resubscribed {
+					c.reconciler.Reconcile(fullSyncKey)
+				} else {
+					c.reconciler.Reconcile(syncKey)
 				}
 
 			case <-stopCh:
@@ -821,6 +911,23 @@ func (c *Controller) handleLinkUpdate(link netlink.Link) {
 			if device.cfg.Master == linkName || device.cfg.VLANParent == linkName {
 				c.reconciler.Reconcile(deviceKeyPrefix + name)
 			}
+		}
+	}
+}
+
+// handleAddrUpdate enqueues reconciliation for a device affected by an address change.
+//
+// AddrUpdate only carries LinkIndex, so we match it against ifindexes tracked in
+// the store (populated during reconciliation).
+func (c *Controller) handleAddrUpdate(update netlink.AddrUpdate) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for name, device := range c.store {
+		if device.ifindex > 0 && device.ifindex == update.LinkIndex {
+			klog.V(5).Infof("NetlinkDeviceManager: addr update for %s (ifindex %d)", name, update.LinkIndex)
+			c.reconciler.Reconcile(deviceKeyPrefix + name)
+			return
 		}
 	}
 }
@@ -868,14 +975,15 @@ func resolveDependencies(cfg *DeviceConfig) error {
 }
 
 // applyDeviceConfig creates or updates a single device in the kernel.
-// Returns (modified, err) where modified indicates whether kernel state was
-// actually changed.
+// Returns (modified, ifindex, err):
+//   - modified: whether kernel state was actually changed
+//   - ifindex: kernel-assigned interface index (>0 on success, 0 on error)
 //
 // Ownership rules:
 //   - If device doesn't exist: create it with our alias
 //   - If device exists with our alias: update or recreate as needed
 //   - If device exists without our alias: return NotOwnedError (could be human-created)
-func applyDeviceConfig(cfg *DeviceConfig) (bool, error) {
+func applyDeviceConfig(cfg *DeviceConfig) (bool, int, error) {
 	name := cfg.deviceName()
 	// Resolve all dependencies first. For the delete-then-recreate path, this ensures
 	// we never delete an existing device unless all dependencies are present to recreate it.
@@ -883,7 +991,7 @@ func applyDeviceConfig(cfg *DeviceConfig) (bool, error) {
 	// both return DependencyError and mark the config pending. But for existing devices,
 	// failing after delete would leave us in a worse state (device gone, can't recreate).
 	if err := resolveDependencies(cfg); err != nil {
-		return false, err
+		return false, 0, err
 	}
 	modified := false
 	// Check if device already exists
@@ -891,30 +999,32 @@ func applyDeviceConfig(cfg *DeviceConfig) (bool, error) {
 	if err == nil {
 		// Device exists - verify ownership before modifying
 		if err := checkOwnership(link); err != nil {
-			return modified, err
+			return modified, 0, err
 		}
 
 		// Check for critical mismatches (immutable attributes that require recreate)
 		if hasCriticalMismatch(link, cfg) {
 			klog.Warningf("NetlinkDeviceManager: device %s has critical config drift, recreating", name)
 			if err := util.GetNetLinkOps().LinkDelete(link); err != nil {
-				return modified, fmt.Errorf("failed to delete mismatched device %s: %w", name, err)
+				return modified, 0, fmt.Errorf("failed to delete mismatched device %s: %w", name, err)
 			}
 			modified = true
 			// Fall through to create
 		} else {
 			// Device exists with correct critical attrs, update mutable attrs
-			return updateDevice(link, cfg)
+			modified, err := updateDevice(link, cfg)
+			return modified, link.Attrs().Index, err
 		}
 	} else if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
-		return modified, fmt.Errorf("failed to check device %s: %w", name, err)
+		return modified, 0, fmt.Errorf("failed to check device %s: %w", name, err)
 	}
 
 	// Device doesn't exist (or was just deleted), create it
-	if err := createDevice(cfg); err != nil {
-		return modified, err
+	ifindex, err := createDevice(cfg)
+	if err != nil {
+		return modified, 0, err
 	}
-	return true, nil
+	return true, ifindex, nil
 }
 
 // hasCriticalMismatch checks if the existing device has immutable attributes
@@ -1038,19 +1148,17 @@ func hasCriticalMismatch(existing netlink.Link, cfg *DeviceConfig) bool {
 }
 
 // createDevice creates a new netlink device.
+// Returns (ifindex, err) where ifindex is the kernel-assigned interface index.
 // Preconditions:
 //   - Master (if specified) has been validated to exist
 //   - VLANParent (if specified) has been resolved to ParentIndex
 //     or alternatively ParentIndex (if specified) has been validated to exist
-func createDevice(cfg *DeviceConfig) error {
+func createDevice(cfg *DeviceConfig) (int, error) {
 	name := cfg.deviceName()
-
-	// Set alias before creation.
-	cfg.Link.Attrs().Alias = cfg.alias()
 
 	link, err := createLink(cfg)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Set master if specified (Master existence already validated by resolveDependencies,
@@ -1059,44 +1167,49 @@ func createDevice(cfg *DeviceConfig) error {
 		masterLink, err := util.GetNetLinkOps().LinkByName(cfg.Master)
 		if err != nil {
 			if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-				return &DependencyError{Dependency: cfg.Master, Reason: "master not found (deleted after validation)"}
+				return 0, &DependencyError{Dependency: cfg.Master, Reason: "master not found (deleted after validation)"}
 			}
-			return fmt.Errorf("failed to find master %s for device %s: %w", cfg.Master, name, err)
+			return 0, fmt.Errorf("failed to find master %s for device %s: %w", cfg.Master, name, err)
 		}
 		if err := util.GetNetLinkOps().LinkSetMaster(link, masterLink); err != nil {
-			return fmt.Errorf("failed to set master %s for device %s: %w", cfg.Master, name, err)
+			return 0, fmt.Errorf("failed to set master %s for device %s: %w", cfg.Master, name, err)
 		}
 		klog.V(5).Infof("NetlinkDeviceManager: set master %s for device %s", cfg.Master, name)
 
 		// Apply bridge port settings after attaching to master (required for settings to take effect)
 		if cfg.BridgePortSettings != nil {
 			if err := applyBridgePortSettings(link, *cfg.BridgePortSettings); err != nil {
-				return fmt.Errorf("failed to apply bridge port settings for %s: %w", name, err)
+				return 0, fmt.Errorf("failed to apply bridge port settings for %s: %w", name, err)
 			}
 			klog.V(5).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
 		}
 	}
 
-	// Bring the device up after creation
-	if err := ensureDeviceUp(link); err != nil {
-		return err
-	}
-
 	// Sync addresses if configured
 	if err := syncAddresses(link, cfg); err != nil {
-		return err
+		return 0, err
 	}
 
 	// Sync VID/VNI mappings (VXLAN bridge ports only)
 	if err := syncVIDVNIMappings(link, cfg); err != nil {
-		return err
+		return 0, err
+	}
+
+	// Bring the device up last: the device was created in DOWN state
+	// so all configuration above is applied while no traffic can
+	// flow through it. Bringing it up only after fully configured.
+	if err := ensureDeviceUp(link); err != nil {
+		return 0, err
 	}
 
 	klog.V(5).Infof("NetlinkDeviceManager: created device %s", name)
-	return nil
+	return link.Attrs().Index, nil
 }
 
 // updateDevice updates an existing device to match config.
+// Returns (modified, err) where modified indicates whether kernel state was
+// actually changed.
+//
 // Preconditions:
 //   - Caller has verified ownership (device has our alias)
 //   - Master (if specified) has been validated to exist
@@ -1128,7 +1241,6 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 	// Check and update master (not handled by LinkModify).
 	// Master existence already validated by preconditions, but it could be deleted
 	// between validation and now - treat as DependencyError for retry.
-	masterChanged := false
 	if cfg.Master != "" {
 		masterLink, err := util.GetNetLinkOps().LinkByName(cfg.Master)
 		if err != nil {
@@ -1138,12 +1250,20 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 			return modified, fmt.Errorf("failed to find master %s: %w", cfg.Master, err)
 		}
 		if currentAttrs.MasterIndex != masterLink.Attrs().Index {
+			// Bring device down before master change to avoid having traffic flowing
+			// through the device during intermediate states.
+			if err := util.GetNetLinkOps().LinkSetDown(link); err != nil {
+				return modified, fmt.Errorf("failed to set link %s down before master change: %w", name, err)
+			}
+			modified = true
 			if err := util.GetNetLinkOps().LinkSetMaster(link, masterLink); err != nil {
 				return modified, fmt.Errorf("failed to set master %s for device %s: %w", cfg.Master, name, err)
 			}
-			masterChanged = true
-			modified = true
 			klog.V(5).Infof("NetlinkDeviceManager: updated master %s for device %s", cfg.Master, name)
+		}
+		// Apply bridge port settings if configured (not handled by LinkModify).
+		if err := ensureBridgePortSettings(link, cfg); err != nil {
+			return modified, err
 		}
 	} else if currentAttrs.MasterIndex != 0 {
 		// Desired config has no master, but device is currently attached to one.
@@ -1155,15 +1275,6 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 		klog.V(5).Infof("NetlinkDeviceManager: detached device %s from master (ifindex %d)", name, currentAttrs.MasterIndex)
 	}
 
-	// Apply bridge port settings if configured (not handled by LinkModify).
-	if err := ensureBridgePortSettings(link, cfg, masterChanged); err != nil {
-		return modified, err
-	}
-
-	if err := ensureDeviceUp(link); err != nil {
-		return modified, err
-	}
-
 	// Sync addresses if configured
 	if err := syncAddresses(link, cfg); err != nil {
 		return modified, err
@@ -1171,6 +1282,12 @@ func updateDevice(link netlink.Link, cfg *DeviceConfig) (bool, error) {
 
 	// Sync VID/VNI mappings (VXLAN bridge ports only)
 	if err := syncVIDVNIMappings(link, cfg); err != nil {
+		return modified, err
+	}
+
+	// Bring device up.
+	// For already-up devices (no master change) this is a no-op.
+	if err := ensureDeviceUp(link); err != nil {
 		return modified, err
 	}
 
@@ -1280,10 +1397,19 @@ func cloneLink(link netlink.Link) netlink.Link {
 	}
 }
 
-// createLink creates a netlink device and returns the created link.
-// The returned link has kernel-assigned attributes (ifindex, etc.).
+// createLink creates a netlink device with our ownership alias and returns
+// the created link with kernel-assigned attributes (ifindex, etc.).
+//
+// The alias is set via a dedicated LinkSetAlias call after
+// LinkAdd because the kernel's newlink does not process alias.
+// See https://github.com/torvalds/linux/blob/v7.0-rc2/Documentation/netlink/specs/rt-link.yaml#L2384-L2412:
+// ifalias is not listed as a valid newlink request attribute.
+// If alias-setting fails, the device is rolled back (deleted) to avoid
+// leaving an unowned device in the kernel.
 func createLink(cfg *DeviceConfig) (netlink.Link, error) {
 	name := cfg.deviceName()
+	// Strip FlagUp so the device is always created in DOWN state.
+	cfg.Link.Attrs().Flags &^= net.FlagUp
 	if err := util.GetNetLinkOps().LinkAdd(cfg.Link); err != nil {
 		return nil, fmt.Errorf("failed to create device %s: %w", name, err)
 	}
@@ -1291,6 +1417,13 @@ func createLink(cfg *DeviceConfig) (netlink.Link, error) {
 	link, err := util.GetNetLinkOps().LinkByName(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get created device %s: %w", name, err)
+	}
+	if err := util.GetNetLinkOps().LinkSetAlias(link, cfg.alias()); err != nil {
+		klog.Errorf("NetlinkDeviceManager: failed to set alias on %s, rolling back: %v", name, err)
+		if delErr := util.GetNetLinkOps().LinkDelete(link); delErr != nil {
+			klog.Errorf("NetlinkDeviceManager: rollback failed, device %s may be orphaned: %v", name, delErr)
+		}
+		return nil, fmt.Errorf("failed to set alias on device %s: %w", name, err)
 	}
 	return link, nil
 }
@@ -1360,7 +1493,7 @@ func syncAddresses(currentLink netlink.Link, cfg *DeviceConfig) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("address sync errors on %s: %w", name, errors.Join(errs...))
+		return fmt.Errorf("address sync errors on %s: %w", name, utilerrors.Join(errs...))
 	}
 	return nil
 }
@@ -1386,18 +1519,16 @@ func isLinkLocalAddress(ip net.IP) bool {
 // syncVIDVNIMappings ensures the VXLAN device has exactly the desired VID/VNI mappings.
 // If cfg.VIDVNIMappings is nil, no mapping management is performed.
 //
-// Each mapping consists of four kernel components:
-//  1. Bridge self VLAN (on the bridge device)
-//  2. VXLAN VID membership (on the VXLAN bridge port)
-//  3. VNI filter entry (on the VXLAN device)
-//  4. Tunnel-info (VID→VNI mapping on the VXLAN bridge port)
+// Each mapping requires four independent kernel entries:
+//   - Bridge self VLAN — the bridge's own VLAN filter (on the bridge device)
+//   - VXLAN VID membership — the port VLAN filter (on the VXLAN bridge port)
+//   - VNI filter entry — allowed VNIs (on the VXLAN device)
+//   - Tunnel info — the VID→VNI mapping (on the VXLAN bridge port)
 //
-// For removals, we diff against current tunnel-info (the only queryable component).
-// For additions, we always ensure ALL desired mappings on every cycle rather than
-// relying on tunnel-info as a proxy for full state. This is critical because the
-// other three components can be independently removed (e.g., bridge self VLAN deleted
-// externally) while tunnel-info remains intact, and addVIDVNIMapping is idempotent
-// (handles EEXIST for each component).
+// All four are queried to build a complete picture; only mappings with at least
+// one missing entry are re-applied (addVIDVNIMapping handles EEXIST for the
+// intact entries). This self-heals against external removal of any individual
+// entry without redundantly re-applying fully intact mappings.
 func syncVIDVNIMappings(link netlink.Link, cfg *DeviceConfig) error {
 	if cfg.VIDVNIMappings == nil {
 		return nil
@@ -1417,38 +1548,55 @@ func syncVIDVNIMappings(link netlink.Link, cfg *DeviceConfig) error {
 		return fmt.Errorf("failed to get bridge %s for mappings: %w", cfg.Master, err)
 	}
 
-	current, err := getVIDVNIMappings(link)
+	tunnelMappings, err := getVIDVNIMappings(link)
 	if err != nil {
-		return fmt.Errorf("failed to read current mappings for %s: %w", name, err)
+		return fmt.Errorf("failed to read tunnel info for %s: %w", name, err)
 	}
 
-	toRemove := staleMappings(current, cfg.VIDVNIMappings)
+	vlanList, err := nlOps.BridgeVlanList()
+	if err != nil {
+		return fmt.Errorf("failed to read bridge VLAN list: %w", err)
+	}
+
+	vniList, err := nlOps.BridgeVniList()
+	if err != nil {
+		return fmt.Errorf("failed to read VNI filter list: %w", err)
+	}
+
+	vxlanIdx := int32(link.Attrs().Index)
+	toAdd, toRemove := diffVIDVNIMappings(
+		cfg.VIDVNIMappings,
+		tunnelMappings,
+		extractVIDs(vlanList[int32(bridgeLink.Attrs().Index)]),
+		extractVIDs(vlanList[vxlanIdx]),
+		extractVNIs(vniList[vxlanIdx]),
+	)
 
 	var errs []error
 
 	for _, mapping := range toRemove {
-		if err := removeVIDVNIMapping(link, mapping); err != nil {
+		if err := removeVIDVNIMapping(bridgeLink, link, mapping); err != nil {
 			klog.Warningf("NetlinkDeviceManager: failed to remove mapping VID=%d VNI=%d from %s: %v",
 				mapping.VID, mapping.VNI, name, err)
 			errs = append(errs, err)
 		}
 	}
 
-	for _, mapping := range cfg.VIDVNIMappings {
+	for _, mapping := range toAdd {
 		if err := addVIDVNIMapping(bridgeLink, link, mapping); err != nil {
-			klog.Warningf("NetlinkDeviceManager: failed to ensure mapping VID=%d VNI=%d on %s: %v",
+			klog.Warningf("NetlinkDeviceManager: failed to add mapping VID=%d VNI=%d on %s: %v",
 				mapping.VID, mapping.VNI, name, err)
 			errs = append(errs, err)
 		}
 	}
 
-	if len(cfg.VIDVNIMappings) > 0 || len(toRemove) > 0 {
-		klog.V(5).Infof("NetlinkDeviceManager: mappings %s (ensured=%d, removed=%d, errors=%d)",
-			name, len(cfg.VIDVNIMappings), len(toRemove), len(errs))
+	if len(toAdd) > 0 || len(toRemove) > 0 {
+		klog.V(5).Infof("NetlinkDeviceManager: VID/VNI mappings synced for %s (added=%d, removed=%d, errors=%d)",
+			name, len(toAdd), len(toRemove), len(errs))
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to apply %d mappings on %s: %w", len(errs), name, errors.Join(errs...))
+		return fmt.Errorf("failed to apply %d mappings on %s: %w", len(errs), name, utilerrors.Join(errs...))
 	}
 	return nil
 }
@@ -1476,6 +1624,63 @@ func getVIDVNIMappings(link netlink.Link) ([]VIDVNIMapping, error) {
 
 	klog.V(5).Infof("NetlinkDeviceManager: found %d existing VID/VNI mappings on %s", len(mappings), name)
 	return mappings, nil
+}
+
+// extractVIDs returns the set of VIDs from a BridgeVlanInfo slice.
+func extractVIDs(infos []*nl.BridgeVlanInfo) sets.Set[uint16] {
+	s := sets.New[uint16]()
+	for _, info := range infos {
+		s.Insert(info.Vid)
+	}
+	return s
+}
+
+// extractVNIs returns the set of VNIs from a BridgeVniInfo slice.
+// Handles both single entries and ranges (VniEnd > 0).
+func extractVNIs(infos []*nl.BridgeVniInfo) sets.Set[uint32] {
+	s := sets.New[uint32]()
+	for _, info := range infos {
+		end := max(info.VniEnd, info.Vni)
+		for vni := info.Vni; vni <= end; vni++ {
+			s.Insert(vni)
+		}
+	}
+	return s
+}
+
+// diffVIDVNIMappings computes which mappings need to be added or removed.
+// Returns two slices:
+//   - toRemove: tunnel info entries not in desired (stale mappings).
+//   - toAdd: desired mappings where any of the four kernel entries is missing.
+//
+// Known limitation: toRemove is derived solely from tunnel-info (the "current"
+// parameter). If tunnel-info for a mapping is externally removed and that
+// mapping is later removed from the desired set, the remaining three kernel
+// entries (bridge self VLAN, VXLAN port VID, VNI filter) become orphaned.
+// This is because the Linux kernel provides no ownership marker for
+// bridge VLAN/VNI entries, so we cannot distinguish entries we created from
+// entries added by other systems.
+func diffVIDVNIMappings(desired, current []VIDVNIMapping,
+	bridgeSelfVIDs, vxlanPortVIDs sets.Set[uint16],
+	activeVNIs sets.Set[uint32]) (toAdd, toRemove []VIDVNIMapping) {
+
+	currentSet := sets.New(current...)
+	desiredSet := sets.New(desired...)
+	toRemove = currentSet.Difference(desiredSet).UnsortedList()
+
+	for _, m := range desired {
+		if !isMappingFullyPresent(m, bridgeSelfVIDs, vxlanPortVIDs, activeVNIs, currentSet) {
+			toAdd = append(toAdd, m)
+		}
+	}
+	return toAdd, toRemove
+}
+
+func isMappingFullyPresent(m VIDVNIMapping, bridgeSelfVIDs, vxlanPortVIDs sets.Set[uint16], activeVNIs sets.Set[uint32], currentSet sets.Set[VIDVNIMapping]) bool {
+	return bridgeSelfVIDs.Has(m.VID) &&
+		vxlanPortVIDs.Has(m.VID) &&
+		activeVNIs.Has(m.VNI) &&
+		currentSet.Has(m)
 }
 
 // validateMappings checks VID/VNI ranges and uniqueness constraints.
@@ -1507,11 +1712,6 @@ func validateMappings(mappings []VIDVNIMapping) error {
 		seenVNIs[m.VNI] = true
 	}
 	return nil
-}
-
-// staleMappings returns mappings present in current but not in desired.
-func staleMappings(current, desired []VIDVNIMapping) []VIDVNIMapping {
-	return sets.New(current...).Difference(sets.New(desired...)).UnsortedList()
 }
 
 // addVIDVNIMapping adds a VID/VNI mapping to a VXLAN device.
@@ -1553,69 +1753,69 @@ func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error
 }
 
 // removeVIDVNIMapping removes a VID/VNI mapping from a VXLAN device.
+// Symmetric with addVIDVNIMapping: removes all four kernel entries in
+// reverse order (tunnel info, VNI filter, VXLAN VID, bridge self VLAN).
+//
+// The bridge self VLAN removal is safe because the SVD (Single VXLAN Device)
+// architecture guarantees exactly one VXLAN per bridge, and each VID is
+// unique per network — no sibling device can reference the same VID.
+//
 // This function does NOT hold any locks - caller must ensure thread safety.
-// Note: Unlike addVIDVNIMapping, this does NOT remove the bridge self VID because:
-// 1. Other VXLAN mappings or ports might still use that VID
-// 2. Bridge self VIDs are automatically cleaned up by the kernel when the bridge is deleted
-func removeVIDVNIMapping(vxlanLink netlink.Link, m VIDVNIMapping) error {
+func removeVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error {
 	nlOps := util.GetNetLinkOps()
 
-	// Remove in reverse order of add for symmetry.
 	var errs []error
 
-	// 1. Remove tunnel_info mapping first
+	// Remove tunnel_info mapping
 	if err := nlOps.BridgeVlanDelTunnelInfo(vxlanLink, m.VID, m.VNI, false, true); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
 			errs = append(errs, fmt.Errorf("tunnel_info VID=%d->VNI=%d: %w", m.VID, m.VNI, err))
 		}
 	}
 
-	// 2. Remove VNI from VNI filter
+	// Remove VNI from VNI filter
 	if err := nlOps.BridgeVniDel(vxlanLink, m.VNI); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
 			errs = append(errs, fmt.Errorf("VNI %d: %w", m.VNI, err))
 		}
 	}
 
-	// 3. Remove VID from VXLAN
+	// Remove VID from VXLAN
 	if err := nlOps.BridgeVlanDel(vxlanLink, m.VID, false, false, false, true); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
-			errs = append(errs, fmt.Errorf("VID %d: %w", m.VID, err))
+			errs = append(errs, fmt.Errorf("VXLAN VID %d: %w", m.VID, err))
+		}
+	}
+
+	// Remove VID from bridge self
+	if err := nlOps.BridgeVlanDel(bridgeLink, m.VID, false, false, true, false); err != nil {
+		if !nlOps.IsEntryNotFoundError(err) {
+			errs = append(errs, fmt.Errorf("bridge self VID %d: %w", m.VID, err))
 		}
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to remove mapping from %s: %w", vxlanLink.Attrs().Name, errors.Join(errs...))
+		return fmt.Errorf("failed to remove mapping from %s: %w", vxlanLink.Attrs().Name, utilerrors.Join(errs...))
 	}
 	return nil
 }
 
-// ensureBridgePortSettings applies bridge port settings if needed.
-// Settings are applied if: master was just changed, or settings differ from current.
-// If current settings can't be read, we skip to avoid loops (periodic reconciliation will retry).
-func ensureBridgePortSettings(link netlink.Link, cfg *DeviceConfig, masterChanged bool) error {
-	if cfg.BridgePortSettings == nil || cfg.Master == "" {
+// ensureBridgePortSettings applies bridge port settings if they differ from current.
+//
+// Compare-then-write is required because the kernel's emits RTM_NEWLINK even
+// for no-op writes (e.g. setting Learning=false when it is already false).
+// Without the comparison, every reconciliation would trigger notifications
+// which would trigger a infinite loop.
+func ensureBridgePortSettings(link netlink.Link, cfg *DeviceConfig) error {
+	if cfg.BridgePortSettings == nil {
 		return nil
 	}
 
 	name := link.Attrs().Name
 
-	// Master just changed - always apply settings
-	if masterChanged {
-		if err := applyBridgePortSettings(link, *cfg.BridgePortSettings); err != nil {
-			return fmt.Errorf("failed to apply bridge port settings for %s: %w", name, err)
-		}
-		klog.V(5).Infof("NetlinkDeviceManager: applied bridge port settings for device %s", name)
-		return nil
-	}
-
-	// Check if settings differ from current
 	current, err := getBridgePortSettings(link)
 	if err != nil {
-		// Can't read current settings - log and skip.
-		// This can happen if device is not yet attached to a bridge.
-		klog.V(5).Infof("NetlinkDeviceManager: could not read bridge port settings for %s (skipping comparison): %v", name, err)
-		return nil
+		return fmt.Errorf("failed to read bridge port settings for %s: %w", name, err)
 	}
 
 	if !ptr.Equal(current, cfg.BridgePortSettings) {
@@ -1938,9 +2138,8 @@ func checkOwnership(link netlink.Link) error {
 	if isOurDevice(link) {
 		return nil
 	}
-	alias := link.Attrs().Alias
-	if alias == "" {
-		return &NotOwnedError{DeviceName: link.Attrs().Name, Reason: "no alias (may be externally managed)"}
+	return &NotOwnedError{
+		DeviceName: link.Attrs().Name,
+		Reason:     fmt.Sprintf("alias does not match managed prefix (alias=%q)", link.Attrs().Alias),
 	}
-	return &NotOwnedError{DeviceName: link.Attrs().Name, Reason: fmt.Sprintf("foreign alias %q", alias)}
 }

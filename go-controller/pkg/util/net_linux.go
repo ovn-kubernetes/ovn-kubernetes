@@ -72,6 +72,8 @@ type NetLinkOps interface {
 	BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, self, master bool) error
 	BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, self, master bool) error
 	BridgeVlanTunnelShowDev(link netlink.Link) ([]nl.TunnelInfo, error)
+	BridgeVlanList() (map[int32][]*nl.BridgeVlanInfo, error)
+	BridgeVniList() (map[int32][]*nl.BridgeVniInfo, error)
 	// Bridge port settings
 	LinkSetVlanTunnel(link netlink.Link, mode bool) error
 	LinkSetBrNeighSuppress(link netlink.Link, mode bool) error
@@ -271,6 +273,14 @@ func (defaultNetLinkOps) BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, 
 
 func (defaultNetLinkOps) BridgeVlanTunnelShowDev(link netlink.Link) ([]nl.TunnelInfo, error) {
 	return netlink.BridgeVlanTunnelShowDev(link)
+}
+
+func (defaultNetLinkOps) BridgeVlanList() (map[int32][]*nl.BridgeVlanInfo, error) {
+	return netlink.BridgeVlanList()
+}
+
+func (defaultNetLinkOps) BridgeVniList() (map[int32][]*nl.BridgeVniInfo, error) {
+	return netlink.BridgeVniList()
 }
 
 func (defaultNetLinkOps) LinkSetVlanTunnel(link netlink.Link, mode bool) error {

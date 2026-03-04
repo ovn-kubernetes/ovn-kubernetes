@@ -155,6 +155,36 @@ func (_m *NetLinkOps) BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni
 	return r0
 }
 
+// BridgeVlanList provides a mock function with no fields
+func (_m *NetLinkOps) BridgeVlanList() (map[int32][]*nl.BridgeVlanInfo, error) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for BridgeVlanList")
+	}
+
+	var r0 map[int32][]*nl.BridgeVlanInfo
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (map[int32][]*nl.BridgeVlanInfo, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() map[int32][]*nl.BridgeVlanInfo); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[int32][]*nl.BridgeVlanInfo)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // BridgeVlanTunnelShowDev provides a mock function with given fields: link
 func (_m *NetLinkOps) BridgeVlanTunnelShowDev(link netlink.Link) ([]nl.TunnelInfo, error) {
 	ret := _m.Called(link)
@@ -219,6 +249,36 @@ func (_m *NetLinkOps) BridgeVniDel(link netlink.Link, vni uint32) error {
 	}
 
 	return r0
+}
+
+// BridgeVniList provides a mock function with no fields
+func (_m *NetLinkOps) BridgeVniList() (map[int32][]*nl.BridgeVniInfo, error) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for BridgeVniList")
+	}
+
+	var r0 map[int32][]*nl.BridgeVniInfo
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (map[int32][]*nl.BridgeVniInfo, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() map[int32][]*nl.BridgeVniInfo); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[int32][]*nl.BridgeVniInfo)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }
 
 // ConntrackDeleteFilters provides a mock function with given fields: table, family, filters

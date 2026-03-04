@@ -12,6 +12,7 @@ import (
 
 	"k8s.io/utils/ptr"
 
+	controllerPkg "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
@@ -50,9 +51,10 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			// applyDeviceConfig: device doesn't exist
 			nlMock.On("LinkByName", "br0").Return(nil, linkNotFoundErr).Once()
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
-			// createLink: LinkAdd + re-fetch
+			// createLink: LinkAdd + re-fetch + set alias
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Bridge")).Return(nil)
 			nlMock.On("LinkByName", "br0").Return(createdBridge, nil)
+			nlMock.On("LinkSetAlias", createdBridge, managedAliasPrefix+"bridge:br0").Return(nil)
 			// ensureDeviceUp: idempotent, always called
 			nlMock.On("LinkSetUp", createdBridge).Return(nil)
 
@@ -84,9 +86,10 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			// applyDeviceConfig: VXLAN doesn't exist
 			nlMock.On("LinkByName", "vxlan0").Return(nil, linkNotFoundErr).Once()
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
-			// createLink: LinkAdd + re-fetch
+			// createLink: LinkAdd + re-fetch + set alias
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Vxlan")).Return(nil)
 			nlMock.On("LinkByName", "vxlan0").Return(createdVxlan, nil)
+			nlMock.On("LinkSetAlias", createdVxlan, managedAliasPrefix+"vxlan:vxlan0").Return(nil)
 			// setMaster + bridge port settings
 			nlMock.On("LinkSetMaster", createdVxlan, bridgeLink).Return(nil)
 			nlMock.On("LinkSetVlanTunnel", createdVxlan, true).Return(nil)
@@ -117,6 +120,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Dummy")).Return(nil)
 			nlMock.On("LinkByName", "dummy0").Return(createdDummy, nil)
+			nlMock.On("LinkSetAlias", createdDummy, managedAliasPrefix+"dummy:dummy0").Return(nil)
 			nlMock.On("LinkSetUp", createdDummy).Return(nil)
 			// syncAddresses: no current addresses -> add desired
 			nlMock.On("AddrList", createdDummy, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
@@ -151,9 +155,10 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			// applyDeviceConfig: VLAN doesn't exist
 			nlMock.On("LinkByName", "vlan100").Return(nil, linkNotFoundErr).Once()
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
-			// createLink: LinkAdd + re-fetch
+			// createLink: LinkAdd + re-fetch + set alias
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Vlan")).Return(nil)
 			nlMock.On("LinkByName", "vlan100").Return(createdVlan, nil)
+			nlMock.On("LinkSetAlias", createdVlan, managedAliasPrefix+"vlan:vlan100").Return(nil)
 			// ensureDeviceUp
 			nlMock.On("LinkSetUp", createdVlan).Return(nil)
 
@@ -194,8 +199,10 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("LinkByName", "vxlan0").Return(existingVxlan, nil)
 			// updateDevice: needsLinkModify -> false (alias matches, mutable fields match)
 			// Master changed: MasterIndex(5) != newBridge.Index(20)
+			nlMock.On("LinkSetDown", existingVxlan).Return(nil)
 			nlMock.On("LinkSetMaster", existingVxlan, newBridge).Return(nil)
-			// Bridge port settings: masterChanged=true -> always apply
+			// Bridge port settings: kernel defaults differ from desired -> apply
+			nlMock.On("LinkGetProtinfo", existingVxlan).Return(netlink.Protinfo{Learning: true}, nil)
 			nlMock.On("LinkSetVlanTunnel", existingVxlan, true).Return(nil)
 			nlMock.On("LinkSetBrNeighSuppress", existingVxlan, true).Return(nil)
 			nlMock.On("LinkSetLearning", existingVxlan, false).Return(nil)
@@ -284,6 +291,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			// createDevice after delete
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Vrf")).Return(nil)
 			nlMock.On("LinkByName", "vrf0").Return(recreatedVrf, nil)
+			nlMock.On("LinkSetAlias", recreatedVrf, managedAliasPrefix+"vrf:vrf0").Return(nil)
 			nlMock.On("LinkSetUp", recreatedVrf).Return(nil)
 
 			Expect(controller.reconcileDeviceKey("vrf0")).To(Succeed())
@@ -353,7 +361,6 @@ var _ = Describe("NetlinkDeviceManager", func() {
 
 			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("LinkByName", "vxlan0").Return(existingVxlan, nil)
-			// Master unchanged (MasterIndex matches) -> masterChanged=false
 			// getBridgePortSettings returns matching settings -> skip apply
 			nlMock.On("LinkGetProtinfo", existingVxlan).Return(netlink.Protinfo{
 				VlanTunnel:    true,
@@ -540,6 +547,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("LinkByName", "br0").Return(nil, linkNotFoundErr).Once()
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Bridge")).Return(nil)
 			nlMock.On("LinkByName", "br0").Return(createdBridge, nil)
+			nlMock.On("LinkSetAlias", createdBridge, managedAliasPrefix+"bridge:br0").Return(nil)
 			nlMock.On("LinkSetMaster", createdBridge, vrfLink).Return(nil)
 			nlMock.On("LinkSetUp", createdBridge).Return(nil)
 
@@ -597,10 +605,13 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{
 				{Vid: 30, TunId: 300},
 			}, nil)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 
 			nlMock.On("BridgeVlanDelTunnelInfo", vxlanLink, uint16(30), uint32(300), false, true).Return(nil)
 			nlMock.On("BridgeVniDel", vxlanLink, uint32(300)).Return(nil)
 			nlMock.On("BridgeVlanDel", vxlanLink, uint16(30), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanDel", bridgeLink, uint16(30), false, false, true, false).Return(nil)
 
 			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil)
 			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil)
@@ -625,7 +636,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			Expect(syncVIDVNIMappings(vxlanLink, cfg)).To(Succeed())
 		})
 
-		It("handles idempotent adds (EEXIST) — self-healing re-applies even when tunnel-info matches", func() {
+		It("skips fully present mappings — no adds when all four components exist", func() {
 			cfg := &DeviceConfig{
 				Link:           &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0"}},
 				Master:         "br0",
@@ -634,25 +645,97 @@ var _ = Describe("NetlinkDeviceManager", func() {
 
 			bridgeLink := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}
 			vxlanLink := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0", Index: 10}}
-			eexistErr := errors.New("file exists")
 
 			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{
 				{Vid: 10, TunId: 100},
 			}, nil)
-
-			nlMock.On("BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr)
-			nlMock.On("IsAlreadyExistsError", eexistErr).Return(true)
-			nlMock.On("BridgeVniAdd", mock.Anything, mock.Anything).Return(eexistErr)
-			nlMock.On("BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{
+				5:  {{Vid: 10}},
+				10: {{Vid: 10}},
+			}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{
+				10: {{Vni: 100}},
+			}, nil)
 
 			Expect(syncVIDVNIMappings(vxlanLink, cfg)).To(Succeed())
 
-			nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false)
-			nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true)
-			nlMock.AssertCalled(GinkgoT(), "BridgeVniAdd", vxlanLink, uint32(100))
-			nlMock.AssertCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true)
+			nlMock.AssertNotCalled(GinkgoT(), "BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			nlMock.AssertNotCalled(GinkgoT(), "BridgeVniAdd", mock.Anything, mock.Anything)
+			nlMock.AssertNotCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
+
+		DescribeTable("self-heals when any single component is externally removed",
+			func(vlanList map[int32][]*nl.BridgeVlanInfo, vniList map[int32][]*nl.BridgeVniInfo, tunnelInfo []nl.TunnelInfo) {
+				cfg := &DeviceConfig{
+					Link:           &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0"}},
+					Master:         "br0",
+					VIDVNIMappings: []VIDVNIMapping{{VID: 10, VNI: 100}},
+				}
+
+				bridgeLink := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}
+				vxlanLink := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0", Index: 10}}
+				eexistErr := errors.New("file exists")
+
+				nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
+				nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return(tunnelInfo, nil)
+				nlMock.On("BridgeVlanList").Return(vlanList, nil)
+				nlMock.On("BridgeVniList").Return(vniList, nil)
+
+				nlMock.On("BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr).Maybe()
+				nlMock.On("IsAlreadyExistsError", eexistErr).Return(true).Maybe()
+				nlMock.On("BridgeVniAdd", mock.Anything, mock.Anything).Return(eexistErr).Maybe()
+				nlMock.On("BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr).Maybe()
+
+				nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil).Maybe()
+				nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil).Maybe()
+				nlMock.On("BridgeVniAdd", vxlanLink, uint32(100)).Return(nil).Maybe()
+				nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true).Return(nil).Maybe()
+
+				Expect(syncVIDVNIMappings(vxlanLink, cfg)).To(Succeed())
+
+				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false)
+				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true)
+				nlMock.AssertCalled(GinkgoT(), "BridgeVniAdd", vxlanLink, uint32(100))
+				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true)
+			},
+			Entry("bridge self VLAN missing",
+				map[int32][]*nl.BridgeVlanInfo{
+					10: {{Vid: 10}},
+				},
+				map[int32][]*nl.BridgeVniInfo{
+					10: {{Vni: 100}},
+				},
+				[]nl.TunnelInfo{{Vid: 10, TunId: 100}},
+			),
+			Entry("VXLAN VID membership missing",
+				map[int32][]*nl.BridgeVlanInfo{
+					5: {{Vid: 10}},
+				},
+				map[int32][]*nl.BridgeVniInfo{
+					10: {{Vni: 100}},
+				},
+				[]nl.TunnelInfo{{Vid: 10, TunId: 100}},
+			),
+			Entry("VNI filter entry missing",
+				map[int32][]*nl.BridgeVlanInfo{
+					5:  {{Vid: 10}},
+					10: {{Vid: 10}},
+				},
+				map[int32][]*nl.BridgeVniInfo{},
+				[]nl.TunnelInfo{{Vid: 10, TunId: 100}},
+			),
+			Entry("tunnel info missing",
+				map[int32][]*nl.BridgeVlanInfo{
+					5:  {{Vid: 10}},
+					10: {{Vid: 10}},
+				},
+				map[int32][]*nl.BridgeVniInfo{
+					10: {{Vni: 100}},
+				},
+				[]nl.TunnelInfo{},
+			),
+		)
 	})
 
 	Describe("State transitions and subscriber notifications", func() {
@@ -676,6 +759,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Bridge")).Return(nil)
 			nlMock.On("LinkByName", "br0").Return(createdBridge, nil)
+			nlMock.On("LinkSetAlias", createdBridge, managedAliasPrefix+"bridge:br0").Return(nil)
 			nlMock.On("LinkSetUp", createdBridge).Return(nil)
 
 			Expect(controller.reconcileDeviceKey("br0")).To(Succeed())
@@ -782,6 +866,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Bridge")).Return(nil)
 			nlMock.On("LinkByName", "br0").Return(recreatedBridge, nil)
+			nlMock.On("LinkSetAlias", recreatedBridge, managedAliasPrefix+"bridge:br0").Return(nil)
 			nlMock.On("LinkSetUp", recreatedBridge).Return(nil)
 
 			Expect(controller.reconcileDeviceKey("br0")).To(Succeed())
@@ -834,6 +919,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				},
 			}
 			nlMock.On("LinkByName", "br0").Return(brLinkDetached, nil).Once()
+			nlMock.On("LinkSetDown", brLinkDetached).Return(nil)
 			nlMock.On("LinkSetMaster", brLinkDetached, vrfLink).Return(nil)
 			nlMock.On("LinkSetUp", brLinkDetached).Return(nil)
 
@@ -891,6 +977,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				controller.mu.Unlock()
 			})
 			nlMock.On("LinkByName", "br0").Return(createdBridge, nil)
+			nlMock.On("LinkSetAlias", createdBridge, managedAliasPrefix+"bridge:br0").Return(nil)
 			nlMock.On("LinkSetMaster", mock.Anything, mock.Anything).Return(nil)
 			nlMock.On("LinkSetUp", mock.Anything).Return(nil)
 
@@ -971,6 +1058,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Bridge")).Return(nil)
 			nlMock.On("LinkByName", "br0").Return(createdBridge, nil)
+			nlMock.On("LinkSetAlias", createdBridge, managedAliasPrefix+"bridge:br0").Return(nil)
 			nlMock.On("LinkSetUp", createdBridge).Return(errors.New("ENOMEM"))
 
 			err := controller.reconcileDeviceKey("br0")
@@ -995,6 +1083,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				nlMock.On("IsLinkNotFoundError", linkNotFoundErr).Return(true)
 				nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Vxlan")).Return(nil)
 				nlMock.On("LinkByName", "vxlan0").Return(createdVxlan, nil)
+				nlMock.On("LinkSetAlias", createdVxlan, managedAliasPrefix+"vxlan:vxlan0").Return(nil)
 				nlMock.On("LinkSetMaster", createdVxlan, bridgeLink).Return(nil)
 				setupMocks(nlMock, bridgeLink, createdVxlan)
 
@@ -1041,7 +1130,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			Expect(controller.GetDeviceState("br0")).To(Equal(DeviceStateFailed))
 		})
 
-		It("skips bridge port settings when getBridgePortSettings returns error", func() {
+		It("fails when getBridgePortSettings returns error", func() {
 			Expect(controller.EnsureLink(DeviceConfig{
 				Link: &netlink.Vxlan{
 					LinkAttrs: netlink.LinkAttrs{Name: "vxlan0"},
@@ -1067,12 +1156,11 @@ var _ = Describe("NetlinkDeviceManager", func() {
 
 			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("LinkByName", "vxlan0").Return(existingVxlan, nil)
-			// getBridgePortSettings fails -> ensureBridgePortSettings skips (logs, no error)
 			nlMock.On("LinkGetProtinfo", existingVxlan).Return(netlink.Protinfo{}, errors.New("no bridge port info"))
-			nlMock.On("LinkSetUp", existingVxlan).Return(nil)
 
-			Expect(controller.reconcileDeviceKey("vxlan0")).To(Succeed())
-			Expect(controller.GetDeviceState("vxlan0")).To(Equal(DeviceStateReady))
+			err := controller.reconcileDeviceKey("vxlan0")
+			Expect(err).To(HaveOccurred())
+			Expect(controller.GetDeviceState("vxlan0")).To(Equal(DeviceStateFailed))
 			nlMock.AssertNotCalled(GinkgoT(), "LinkSetVlanTunnel", mock.Anything, mock.Anything)
 		})
 	})
@@ -1254,6 +1342,8 @@ var _ = Describe("NetlinkDeviceManager", func() {
 
 			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{}, nil)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(errors.New("ENOMEM"))
 			nlMock.On("IsAlreadyExistsError", mock.Anything).Return(false)
 
@@ -1268,17 +1358,21 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				VIDVNIMappings: []VIDVNIMapping{},
 			}
 
+			bridgeLink := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}
 			vxlanLink := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0", Index: 10}}
 			entryNotFoundErr := errors.New("entry not found")
 
-			nlMock.On("LinkByName", "br0").Return(&netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}, nil)
+			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{
 				{Vid: 30, TunId: 300},
 			}, nil)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 			nlMock.On("BridgeVlanDelTunnelInfo", vxlanLink, uint16(30), uint32(300), false, true).Return(entryNotFoundErr)
 			nlMock.On("IsEntryNotFoundError", entryNotFoundErr).Return(true)
 			nlMock.On("BridgeVniDel", vxlanLink, uint32(300)).Return(entryNotFoundErr)
 			nlMock.On("BridgeVlanDel", vxlanLink, uint16(30), false, false, false, true).Return(entryNotFoundErr)
+			nlMock.On("BridgeVlanDel", bridgeLink, uint16(30), false, false, true, false).Return(entryNotFoundErr)
 
 			Expect(syncVIDVNIMappings(vxlanLink, cfg)).To(Succeed())
 		})
@@ -1290,17 +1384,21 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				VIDVNIMappings: []VIDVNIMapping{},
 			}
 
+			bridgeLink := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}
 			vxlanLink := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0", Index: 10}}
 			realErr := errors.New("device busy")
 
-			nlMock.On("LinkByName", "br0").Return(&netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}, nil)
+			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{
 				{Vid: 30, TunId: 300},
 			}, nil)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 			nlMock.On("BridgeVlanDelTunnelInfo", vxlanLink, uint16(30), uint32(300), false, true).Return(realErr)
 			nlMock.On("IsEntryNotFoundError", realErr).Return(false)
 			nlMock.On("BridgeVniDel", vxlanLink, uint32(300)).Return(nil)
 			nlMock.On("BridgeVlanDel", vxlanLink, uint16(30), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanDel", bridgeLink, uint16(30), false, false, true, false).Return(nil)
 
 			err := syncVIDVNIMappings(vxlanLink, cfg)
 			Expect(err).To(HaveOccurred())
@@ -1313,21 +1411,25 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				VIDVNIMappings: []VIDVNIMapping{},
 			}
 
+			bridgeLink := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}
 			vxlanLink := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "vxlan0", Index: 10}}
 			err1 := errors.New("error1")
 			err2 := errors.New("error2")
 			entryNotFoundErr := errors.New("entry not found")
 
-			nlMock.On("LinkByName", "br0").Return(&netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0", Index: 5}}, nil)
+			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{
 				{Vid: 30, TunId: 300},
 			}, nil)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 			nlMock.On("BridgeVlanDelTunnelInfo", vxlanLink, uint16(30), uint32(300), false, true).Return(err1)
 			nlMock.On("IsEntryNotFoundError", err1).Return(false)
 			nlMock.On("BridgeVniDel", vxlanLink, uint32(300)).Return(entryNotFoundErr)
 			nlMock.On("IsEntryNotFoundError", entryNotFoundErr).Return(true)
 			nlMock.On("BridgeVlanDel", vxlanLink, uint16(30), false, false, false, true).Return(err2)
 			nlMock.On("IsEntryNotFoundError", err2).Return(false)
+			nlMock.On("BridgeVlanDel", bridgeLink, uint16(30), false, false, true, false).Return(nil)
 
 			err := syncVIDVNIMappings(vxlanLink, cfg)
 			Expect(err).To(HaveOccurred())
@@ -1348,6 +1450,8 @@ var _ = Describe("NetlinkDeviceManager", func() {
 
 			nlMock.On("LinkByName", "br0").Return(bridgeLink, nil)
 			nlMock.On("BridgeVlanTunnelShowDev", vxlanLink).Return([]nl.TunnelInfo{}, nil)
+			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
+			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 
 			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil)
 			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil)
@@ -1782,33 +1886,6 @@ var _ = Describe("NetlinkDeviceManager", func() {
 		})
 	})
 
-	DescribeTable("staleMappings",
-		func(current, desired, expectedStale []VIDVNIMapping) {
-			stale := staleMappings(current, desired)
-			if len(expectedStale) == 0 {
-				Expect(stale).To(BeEmpty())
-			} else {
-				Expect(stale).To(ConsistOf(expectedStale))
-			}
-		},
-		Entry("equal mappings",
-			[]VIDVNIMapping{{VID: 10, VNI: 100}, {VID: 20, VNI: 200}},
-			[]VIDVNIMapping{{VID: 10, VNI: 100}, {VID: 20, VNI: 200}},
-			[]VIDVNIMapping{}),
-		Entry("new mappings in desired only",
-			[]VIDVNIMapping{{VID: 10, VNI: 100}},
-			[]VIDVNIMapping{{VID: 10, VNI: 100}, {VID: 20, VNI: 200}},
-			[]VIDVNIMapping{}),
-		Entry("stale mappings to remove",
-			[]VIDVNIMapping{{VID: 10, VNI: 100}, {VID: 20, VNI: 200}},
-			[]VIDVNIMapping{{VID: 10, VNI: 100}},
-			[]VIDVNIMapping{{VID: 20, VNI: 200}}),
-		Entry("empty desired",
-			[]VIDVNIMapping{{VID: 10, VNI: 100}, {VID: 20, VNI: 200}},
-			[]VIDVNIMapping{},
-			[]VIDVNIMapping{{VID: 10, VNI: 100}, {VID: 20, VNI: 200}}),
-	)
-
 	DescribeTable("isOurDevice ownership check",
 		func(link netlink.Link, expected bool) {
 			Expect(isOurDevice(link)).To(Equal(expected))
@@ -1857,6 +1934,7 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("LinkByName", "svi0").Return(nil, linkNotFoundErr).Once() // device doesn't exist
 			nlMock.On("LinkAdd", mock.AnythingOfType("*netlink.Bridge")).Return(nil).Once()
 			nlMock.On("LinkByName", "svi0").Return(bridgeLink, nil).Once() // createLink: fetch created link
+			nlMock.On("LinkSetAlias", bridgeLink, managedAliasPrefix+"bridge:svi0").Return(nil).Once()
 			nlMock.On("LinkSetMaster", bridgeLink, vrfLink).Return(nil).Once()
 			nlMock.On("LinkSetUp", bridgeLink).Return(nil).Once()
 
@@ -1884,6 +1962,147 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			Expect(controller.GetDeviceState("br0")).To(Equal(DeviceStateReady))
 		})
 
+	})
+
+	Describe("handleAddrUpdate", func() {
+		It("enqueues device when addr update matches a tracked ifindex", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+
+			controller.store["br0"] = &managedDevice{
+				cfg:     DeviceConfig{Link: &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0"}}},
+				state:   DeviceStateReady,
+				ifindex: 10,
+			}
+
+			controller.handleAddrUpdate(netlink.AddrUpdate{LinkIndex: 10})
+
+			Expect(fakeReconciler.Reconciles).To(ContainElement("Reconcile:device/br0"))
+		})
+
+		It("ignores addr update for untracked ifindex", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+
+			controller.store["br0"] = &managedDevice{
+				cfg:     DeviceConfig{Link: &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0"}}},
+				state:   DeviceStateReady,
+				ifindex: 10,
+			}
+
+			controller.handleAddrUpdate(netlink.AddrUpdate{LinkIndex: 99})
+
+			Expect(fakeReconciler.Reconciles).To(BeEmpty())
+		})
+
+		It("ignores addr update when ifindex is not yet populated", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+
+			controller.store["br0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "br0"}}},
+				state: DeviceStatePending,
+			}
+
+			controller.handleAddrUpdate(netlink.AddrUpdate{LinkIndex: 10})
+
+			Expect(fakeReconciler.Reconciles).To(BeEmpty())
+		})
+	})
+
+	Describe("reconcileSyncKey", func() {
+		It("only enqueues VXLAN devices", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+
+			bridgeAttrs := netlink.NewLinkAttrs()
+			bridgeAttrs.Name = "br0"
+			controller.store["br0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Bridge{LinkAttrs: bridgeAttrs}},
+				state: DeviceStateReady,
+			}
+
+			vxlanAttrs := netlink.NewLinkAttrs()
+			vxlanAttrs.Name = "vxlan0"
+			controller.store["vxlan0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vxlan{LinkAttrs: vxlanAttrs}},
+				state: DeviceStateReady,
+			}
+
+			vlanAttrs := netlink.NewLinkAttrs()
+			vlanAttrs.Name = "vlan100"
+			controller.store["vlan100"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vlan{LinkAttrs: vlanAttrs}},
+				state: DeviceStateReady,
+			}
+
+			vrfAttrs := netlink.NewLinkAttrs()
+			vrfAttrs.Name = "vrf0"
+			controller.store["vrf0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vrf{LinkAttrs: vrfAttrs}},
+				state: DeviceStateReady,
+			}
+
+			dummyAttrs := netlink.NewLinkAttrs()
+			dummyAttrs.Name = "dummy0"
+			controller.store["dummy0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Dummy{LinkAttrs: dummyAttrs}},
+				state: DeviceStateReady,
+			}
+
+			Expect(controller.reconcileSyncKey()).To(Succeed())
+
+			Expect(fakeReconciler.Reconciles).To(ConsistOf("After:device/vxlan0"))
+		})
+
+		It("enqueues multiple VXLAN devices", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+
+			vxlan1Attrs := netlink.NewLinkAttrs()
+			vxlan1Attrs.Name = "vxlan0"
+			controller.store["vxlan0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vxlan{LinkAttrs: vxlan1Attrs}},
+				state: DeviceStateReady,
+			}
+
+			vxlan2Attrs := netlink.NewLinkAttrs()
+			vxlan2Attrs.Name = "vxlan1"
+			controller.store["vxlan1"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vxlan{LinkAttrs: vxlan2Attrs}},
+				state: DeviceStateReady,
+			}
+
+			bridgeAttrs := netlink.NewLinkAttrs()
+			bridgeAttrs.Name = "br0"
+			controller.store["br0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Bridge{LinkAttrs: bridgeAttrs}},
+				state: DeviceStateReady,
+			}
+
+			Expect(controller.reconcileSyncKey()).To(Succeed())
+
+			Expect(fakeReconciler.Reconciles).To(ConsistOf(
+				"After:device/vxlan0",
+				"After:device/vxlan1",
+			))
+		})
+
+		It("enqueues nothing when no VXLAN devices exist", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+
+			bridgeAttrs := netlink.NewLinkAttrs()
+			bridgeAttrs.Name = "br0"
+			controller.store["br0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Bridge{LinkAttrs: bridgeAttrs}},
+				state: DeviceStateReady,
+			}
+
+			Expect(controller.reconcileSyncKey()).To(Succeed())
+
+			Expect(fakeReconciler.Reconciles).To(BeEmpty())
+		})
 	})
 
 	DescribeTable("hasCriticalMismatch",
@@ -2428,6 +2647,49 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("LinkList").Return(nil, errors.New("netlink error"))
 
 			Expect(controller.reconcileFullSyncKey()).To(Succeed())
+		})
+
+		It("enqueues all device types, not just VXLAN", func() {
+			fakeReconciler := &controllerPkg.FakeController{}
+			controller.reconciler = fakeReconciler
+			nlMock.On("LinkList").Return([]netlink.Link{}, nil)
+
+			bridgeAttrs := netlink.NewLinkAttrs()
+			bridgeAttrs.Name = "br0"
+			controller.store["br0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Bridge{LinkAttrs: bridgeAttrs}},
+				state: DeviceStateReady,
+			}
+
+			vxlanAttrs := netlink.NewLinkAttrs()
+			vxlanAttrs.Name = "vxlan0"
+			controller.store["vxlan0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vxlan{LinkAttrs: vxlanAttrs}},
+				state: DeviceStateReady,
+			}
+
+			vlanAttrs := netlink.NewLinkAttrs()
+			vlanAttrs.Name = "vlan100"
+			controller.store["vlan100"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Vlan{LinkAttrs: vlanAttrs}},
+				state: DeviceStateReady,
+			}
+
+			dummyAttrs := netlink.NewLinkAttrs()
+			dummyAttrs.Name = "dummy0"
+			controller.store["dummy0"] = &managedDevice{
+				cfg:   DeviceConfig{Link: &netlink.Dummy{LinkAttrs: dummyAttrs}},
+				state: DeviceStateReady,
+			}
+
+			Expect(controller.reconcileFullSyncKey()).To(Succeed())
+
+			Expect(fakeReconciler.Reconciles).To(ConsistOf(
+				"After:device/br0",
+				"After:device/vxlan0",
+				"After:device/vlan100",
+				"After:device/dummy0",
+			))
 		})
 	})
 
