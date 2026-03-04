@@ -1523,7 +1523,7 @@ spec:
 				f.ClientSet,
 				f.Namespace.Name,
 				serviceName,
-				expectedEndpointsNum
+				expectedEndpointsNum,
 			)
 			framework.ExpectNoError(err)
 
