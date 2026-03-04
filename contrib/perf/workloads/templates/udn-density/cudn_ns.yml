@@ -1,8 +1,8 @@
 ---
-apiVersion: v1
 kind: Namespace
+apiVersion: v1
 metadata:
-    name: "{{.JobName}}-{{.Iteration}}"
-    labels:
-      k8s.ovn.org/primary-user-defined-network: ""
-      cudn-scale: "{{.JobName}}-{{.Iteration}}"
+  name: cudn-density-l2-pods-netpol-{{sub .Replica 1}}
+  labels:
+    k8s.ovn.org/primary-user-defined-network: ""
+    kube-burner.io/cudn-group: group-{{ div (sub .Replica 1) 5 }}

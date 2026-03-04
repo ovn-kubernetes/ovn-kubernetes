@@ -2,13 +2,13 @@
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
 metadata:
-  name: l2-network-{{.Iteration}}
+  name: l2-network-{{ .Replica }}
 spec:
   namespaceSelector:
     matchLabels:
-      kubernetes.io/metadata.name: "{{.JobName}}-{{.Iteration}}"
+      kube-burner.io/cudn-group: group-{{ sub .Replica 1 }}
   network:
     topology: Layer2
     layer2:
-        role: Primary
-        subnets: ["10.132.0.0/16"]
+      role: Primary
+      subnets: ["10.132.0.0/16"]

@@ -23,38 +23,45 @@ global:
         labelSelector: {name: ovnkube-control-plane}
         url: http://localhost:9411/debug/pprof/heap?seconds=30
 jobs:
-  - name: cudn-density-l2-pods-netpol
-    jobIterations: 100
-    qps: 10
-    burst: 10
-    namespacedIterations: true 
-    namespace: cudn-density-l2-pods-netpol
-    namespaceLabels:
-      k8s.ovn.org/primary-user-defined-network: ""
-    waitWhenFinished: true
-    podWait: false 
-    preLoadImages: false 
-    preLoadPeriod: 2m
-    # Disabling churn until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5883 is resolved
-    #churnConfig:
-    #  percent: 10
-    #  cycles: 10
-    #  mode: objects
-    objects:
-      - objectTemplate: workloads/templates/udn-density/cudn_l2.yml
-        replicas: 1
-      
-      - objectTemplate: workloads/templates/udn-density/np-deny-all.yml
-        replicas: 1
+- name: cudn-density-l2-namespaces
+  jobIterations: 1
+  qps: 1
+  burst: 1
+  namespacedIterations: true
+  waitWhenFinished: true
+  cleanup: true
+  preLoadImages: false
+  objects:
+    - objectTemplate: workloads/templates/udn-density/cudn_l2.yml
+      replicas: 2
 
-      - objectTemplate: workloads/templates/udn-density/np-allow-from-clients.yml
-        replicas: 1
+    - objectTemplate: workloads/templates/udn-density/cudn_ns.yml
+      replicas: 10
 
-      - objectTemplate: workloads/templates/udn-density/service.yml
-        replicas: 1
+- name: cudn-density-l2-pods-netpol
+  jobIterations: 10
+  qps: 10
+  burst: 10
+  namespacedIterations: true
+  namespace: cudn-density-l2-pods-netpol
+  waitWhenFinished: true
+  cleanup: false
+  preLoadImages: true
+  preLoadPeriod: 10s
+  measurements:
+    - name: podLatency
+  objects:
+    - objectTemplate: workloads/templates/udn-density/np-deny-all.yml
+      replicas: 1
 
-      - objectTemplate: workloads/templates/udn-density/deployment-server.yml
-        replicas: 1
+    - objectTemplate: workloads/templates/udn-density/np-allow-from-clients.yml
+      replicas: 1
 
-      - objectTemplate: workloads/templates/udn-density/deployment-client.yml
-        replicas: 1
+    - objectTemplate: workloads/templates/udn-density/service.yml
+      replicas: 1
+
+    - objectTemplate: workloads/templates/udn-density/deployment-server.yml
+      replicas: 1
+
+    - objectTemplate: workloads/templates/udn-density/deployment-client.yml
+      replicas: 1
