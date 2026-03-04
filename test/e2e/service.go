@@ -1121,7 +1121,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			} else {
 				expectedEndpointsNum = len(endPoints)
 			}
-			err = e2eendpointslice.WaitForEndpointCount(ontext.TODO(), f.ClientSet, f.Namespace.Name,
+			err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name,
 				etpLocalServiceName, expectedEndpointsNum)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpLocalServiceName, f.Namespace.Name)
@@ -1720,7 +1720,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, hostNetPort, "NodePort", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1, time.Second, wait.ForeverTestTimeout)
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
 		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
 
 		svc, err := f.ClientSet.CoreV1().Services(namespaceName).Get(context.TODO(), "service-for-pods", metav1.GetOptions{})
@@ -2178,7 +2178,7 @@ spec:
 
 		ginkgo.By("Scale down endpoints of service: " + svcName + " to ensure iptable rules are also getting recreated correctly")
 		e2ekubectl.RunKubectlOrDie("default", "scale", "deployment", backendName, "--replicas=3")
-		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 3, time.Second, time.Second*120)
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, svcName, 3)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
@@ -2532,7 +2532,7 @@ spec:
 		// Now we test ETP=local works as expected without EIP re-routes messing with the reply traffic:
 		// lbclient->FRR router->ovn-worker->br-ex->GR_ovn-worker->join->cluster-router->ovn-worker-switch->pod and response goes back
 		// same way without it getting re-routed to egressNode ovn-worker2
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
+		err := e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, svcName, 4)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
