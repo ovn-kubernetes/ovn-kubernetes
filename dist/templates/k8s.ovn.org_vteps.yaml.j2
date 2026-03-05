@@ -67,6 +67,9 @@ spec:
                     allowed
                   rule: oldSelf.all(i, v, cidr(self[i]).containsIP(cidr(v).ip()) &&
                     cidr(self[i]).prefixLength() <= cidr(v).prefixLength())
+                - message: CIDRs must not overlap with each other
+                  rule: self.all(i, x, self.all(j, y, j <= i || !(cidr(x).containsIP(cidr(y).ip())
+                    || cidr(y).containsIP(cidr(x).ip()))))
               mode:
                 allOf:
                 - enum:

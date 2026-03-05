@@ -45,7 +45,7 @@ spec:
 `,
 	},
 	{
-		Description: "Valid VTEP with two IPv4 CIDRs",
+		Description: "Valid VTEP with two non-overlapping IPv4 CIDRs (even count)",
 		Name:        "vtep-two-ipv4",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
@@ -56,6 +56,21 @@ spec:
   cidrs:
   - "100.67.0.0/24"
   - "100.68.0.0/24"
+`,
+	},
+	{
+		Description: "Valid VTEP with three non-overlapping IPv4 CIDRs (odd count)",
+		Name:        "vtep-three-ipv4",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: VTEP
+metadata:
+  name: vtep-three-ipv4
+spec:
+  cidrs:
+  - "100.90.0.0/24"
+  - "100.91.0.0/24"
+  - "100.92.0.0/24"
 `,
 	},
 }

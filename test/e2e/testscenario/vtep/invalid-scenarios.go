@@ -105,4 +105,47 @@ spec:
   mode: "InvalidMode"
 `,
 	},
+	{
+		Description: "Two CIDRs where one contains the other (even count overlap)",
+		ExpectedErr: `CIDRs must not overlap with each other`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: VTEP
+metadata:
+  name: vtep-overlap-two
+spec:
+  cidrs:
+  - "10.40.0.0/16"
+  - "10.40.1.0/24"
+`,
+	},
+	{
+		Description: "Three CIDRs where second and third overlap (odd count overlap)",
+		ExpectedErr: `CIDRs must not overlap with each other`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: VTEP
+metadata:
+  name: vtep-overlap-three
+spec:
+  cidrs:
+  - "10.41.0.0/24"
+  - "10.42.0.0/16"
+  - "10.42.1.0/24"
+`,
+	},
+	{
+		Description: "Two identical CIDRs (exact duplicate)",
+		ExpectedErr: `CIDRs must not overlap with each other`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: VTEP
+metadata:
+  name: vtep-overlap-duplicate
+spec:
+  cidrs:
+  - "10.43.0.0/24"
+  - "10.43.0.0/24"
+`,
+	},
 }
