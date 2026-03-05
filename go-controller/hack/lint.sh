@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 VERSION=v2.5.0
 : "${GOLANGCI_LINT_VERSION:=$VERSION}"
-extra_flags=(--verbose --modules-download-mode=vendor --timeout=15m0s)
+: "${LINT_CONCURRENCY:=$(( $(nproc) * 2 / 3 ))}"
+extra_flags=(--verbose --modules-download-mode=vendor --timeout=15m0s --concurrency="${LINT_CONCURRENCY}")
 if [ "$#" -ne 1 ]; then
   if [ "$#" -eq 2 ] && [ "$2" == "fix" ]; then
     extra_flags+=(--fix)
@@ -31,7 +32,7 @@ if [ "$1" = "run-natively" ]; then
   /tmp/local/bin/golangci-lint run "${extra_flags[@]}" && \
   echo "lint OK!"
 else
-  $1 run --security-opt label=disable --rm \
+  $1 run --security-opt label=disable --rm --cpus "${LINT_CONCURRENCY}" \
     -v  "${HOME}"/.cache/golangci-lint:/cache -e GOLANGCI_LINT_CACHE=/cache \
     -v "$(pwd)":/app -w /app -e GO111MODULE=on docker.io/golangci/golangci-lint:"${VERSION}" \
     golangci-lint run "${extra_flags[@]}" && \
