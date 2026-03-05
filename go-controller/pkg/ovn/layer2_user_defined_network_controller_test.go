@@ -15,12 +15,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	knet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	ovnkcnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	testnm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -726,6 +728,60 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		_, err = controller.getLastJoinIPs()
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("cannot use the last IP of the join subnet"))
+	})
+
+	It("default network controller syncPods should not delete DHCP options owned by UDN controllers", func() {
+		// Regression test for: during cluster upgrade, the default network
+		// controller's SyncVirtualMachines deleted DHCP options created by UDN
+		// controllers because ownsItAndIsOrphanOrWrongZone did not filter by owner
+		// controller name. This caused VMs on primary UDNs (layer2) to lose their
+		// IP when the DHCP lease expired.
+		app.Action = func(*cli.Context) error {
+			vmKey := ktypes.NamespacedName{Namespace: ns, Name: "test-vm"}
+
+			// Build DHCP options as the UDN controller would for a VM on a primary
+			// layer2 UDN. The controller name follows the getNetworkControllerName
+			// convention: "<networkName>-network-controller".
+			udnControllerName := getNetworkControllerName(userDefinedNetworkName)
+			udnDHCPOptions := kubevirt.ComposeDHCPv4Options("100.200.0.100/16", udnControllerName, vmKey)
+			udnDHCPOptions.UUID = "udn-dhcp-options-uuid"
+
+			// Pre-populate the DB with the UDN-owned DHCP options, simulating the
+			// state right before the default network controller restarts (e.g.,
+			// during a rolling cluster upgrade): the UDN controller has already
+			// created DHCP options for the VM, but the default controller hasn't
+			// started yet.
+			initialDB.NBData = append(initialDB.NBData, udnDHCPOptions)
+
+			fakeOvn.startWithDBSetup(
+				initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{},
+				&corev1.PodList{},
+			)
+
+			// Call syncPods with an empty pod list, as happens when the default
+			// network controller starts up without any tracked VM pods.  Before the
+			// fix, this deleted the UDN-owned DHCP options because the VM was absent
+			// from the default controller's vms map (treated as an orphan).
+			Expect(fakeOvn.controller.syncPods(nil)).To(Succeed())
+
+			// The UDN-owned DHCP options must survive the default controller's sync.
+			Expect(fakeOvn.nbClient).To(libovsdbtest.HaveDataSubset(
+				[]libovsdbtest.TestData{udnDHCPOptions},
+			))
+
+			Consistently(fakeOvn.nbClient).
+				WithTimeout(5 * time.Second).
+				Should(
+					libovsdbtest.HaveDataSubset(
+						[]libovsdbtest.TestData{udnDHCPOptions},
+					),
+				)
+
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
 	})
 
 	Describe("Dynamic UDN allocation with remote node", func() {

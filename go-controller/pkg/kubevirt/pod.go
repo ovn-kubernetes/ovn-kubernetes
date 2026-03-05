@@ -276,19 +276,19 @@ func CleanUpLiveMigratablePod(nbClient libovsdbclient.Client, watchFactory *fact
 	return nil
 }
 
-func SyncVirtualMachines(nbClient libovsdbclient.Client, vms map[ktypes.NamespacedName]bool) error {
+func SyncVirtualMachines(nbClient libovsdbclient.Client, vms map[ktypes.NamespacedName]bool, controllerName string) error {
 	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(nbClient, ovntypes.OVNClusterRouter, func(item *nbdb.LogicalRouterStaticRoute) bool {
-		return ownsItAndIsOrphanOrWrongZone(item.ExternalIDs, vms)
+		return ownsItAndIsOrphanOrWrongZone(item.ExternalIDs, vms, controllerName)
 	}); err != nil {
 		return fmt.Errorf("failed deleting stale vm static routes: %v", err)
 	}
 	if err := libovsdbops.DeleteLogicalRouterPoliciesWithPredicate(nbClient, ovntypes.OVNClusterRouter, func(item *nbdb.LogicalRouterPolicy) bool {
-		return ownsItAndIsOrphanOrWrongZone(item.ExternalIDs, vms)
+		return ownsItAndIsOrphanOrWrongZone(item.ExternalIDs, vms, controllerName)
 	}); err != nil {
 		return fmt.Errorf("failed deleting stale vm policies: %v", err)
 	}
 	if err := libovsdbops.DeleteDHCPOptionsWithPredicate(nbClient, func(item *nbdb.DHCPOptions) bool {
-		return ownsItAndIsOrphanOrWrongZone(item.ExternalIDs, vms)
+		return ownsItAndIsOrphanOrWrongZone(item.ExternalIDs, vms, controllerName)
 	}); err != nil {
 		return fmt.Errorf("failed deleting stale dhcp options: %v", err)
 	}
