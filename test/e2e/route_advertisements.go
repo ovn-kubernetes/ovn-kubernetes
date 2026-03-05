@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 
 	"time"
@@ -2106,6 +2107,13 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
 	}
 
+	testForIPFamilies := func(ipFamilySet sets.Set[utilnet.IPFamily], test func(utilnet.IPFamily)) {
+		ginkgo.GinkgoHelper()
+		for _, family := range ipFamilySet.UnsortedList() {
+			test(family)
+		}
+	}
+
 	const (
 		baseName = "bgp"
 	)
@@ -2530,35 +2538,56 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								)
 							})
 
-							ginkgo.DescribeTableSubtree("And a pod runs on the other network",
-								func(getNode func() string) {
-									var otherPod *corev1.Pod
+							ginkgo.It("Both networks are isolated", func() {
+								ginkgo.By("Running two pods on the other network namespace on different nodes")
+								var otherPodSameNode, otherPodDiffNode *corev1.Pod
+								wg := sync.WaitGroup{}
+								wg.Add(2)
+								go func() {
+									ginkgo.GinkgoHelper()
+									defer ginkgo.GinkgoRecover()
+									defer wg.Done()
+									otherPodSameNode = e2epod.CreateExecPodOrFail(
+										context.Background(),
+										f.ClientSet,
+										otherNamespace.Name,
+										otherNamespace.Name+"-netexec-samenode-pod",
+										func(p *corev1.Pod) {
+											p.Spec.Containers[0].Args = []string{"netexec"}
+											p.Spec.NodeName = getSameNode()
+											p.Labels = map[string]string{"app": "netexec-samenode-pod"}
+										},
+									)
+								}()
+								go func() {
+									ginkgo.GinkgoHelper()
+									defer ginkgo.GinkgoRecover()
+									defer wg.Done()
+									otherPodDiffNode = e2epod.CreateExecPodOrFail(
+										context.Background(),
+										f.ClientSet,
+										otherNamespace.Name,
+										otherNamespace.Name+"-netexec-diffnode-pod",
+										func(p *corev1.Pod) {
+											p.Spec.Containers[0].Args = []string{"netexec"}
+											p.Spec.NodeName = getDifferentNode()
+											p.Labels = map[string]string{"app": "netexec-diffnode-pod"}
+										},
+									)
+								}()
+								wg.Wait()
 
-									ginkgo.BeforeEach(func() {
-										ginkgo.By("Running a pod on the other network namespace")
-										otherPod = e2epod.CreateExecPodOrFail(
-											context.Background(),
-											f.ClientSet,
-											otherNamespace.Name,
-											otherNamespace.Name+"-netexec-pod",
-											func(p *corev1.Pod) {
-												p.Spec.Containers[0].Args = []string{"netexec"}
-												p.Spec.NodeName = getNode()
-												p.Labels = map[string]string{"app": "netexec-pod"}
-											},
-										)
-									})
-
-									ginkgo.DescribeTable("The pod on the tested network cannot reach the pod on the other network",
+								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network pods")
+								for _, target := range []*corev1.Pod{otherPodSameNode, otherPodDiffNode} {
+									testForIPFamilies(
+										ipFamilySet,
 										func(family utilnet.IPFamily) {
-											if !ipFamilySet.Has(family) {
-												e2eskipper.Skipf("IP family %v not supported", family)
-											}
-											ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network pod")
+											ginkgo.GinkgoHelper()
+											framework.Logf("Ensuring a request from the tested network pod cannot reach the other network pod %s on IPv%v", target.Name, family)
 											otherPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
 												f.ClientSet,
-												otherPod.Namespace,
-												otherPod.Name,
+												target.Namespace,
+												target.Name,
 												otherNetworkName,
 												family,
 											)
@@ -2566,16 +2595,16 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											gomega.Expect(otherPodIP).ToNot(gomega.BeEmpty())
 											testPodToClientIPNOK(testPod, otherPodIP)
 										},
-										ginkgo.Entry("When the networks are IPv4", utilnet.IPv4),
-										ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
 									)
+								}
 
-									ginkgo.DescribeTable("The pod on the other network cannot reach the pod on the tested network",
+								ginkgo.By("Ensuring a request from the other network pods on the same node cannot reach the tested network pod")
+								for _, source := range []*corev1.Pod{otherPodSameNode, otherPodDiffNode} {
+									testForIPFamilies(
+										ipFamilySet,
 										func(family utilnet.IPFamily) {
-											if !ipFamilySet.Has(family) {
-												e2eskipper.Skipf("IP family %v not supported", family)
-											}
-											ginkgo.By("Ensuring a request from the other network pod cannot reach the tested network pod")
+											ginkgo.GinkgoHelper()
+											framework.Logf("Ensuring a request from the other network pod %s on the same node cannot reach the tested network pod on IPv%v", source.Name, family)
 											testPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
 												f.ClientSet,
 												testPod.Namespace,
@@ -2585,49 +2614,43 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											)
 											gomega.Expect(err).NotTo(gomega.HaveOccurred())
 											gomega.Expect(testPodIP).ToNot(gomega.BeEmpty())
-											testPodToClientIPNOK(otherPod, testPodIP)
+											testPodToClientIPNOK(source, testPodIP)
 										},
-										ginkgo.Entry("When the networks are IPv4", utilnet.IPv4),
-										ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
 									)
+								}
 
-									ginkgo.Describe("Backing a ClusterIP service", func() {
-										var service *corev1.Service
+								ginkgo.By("Creating services backed by the other network pods")
+								var services []*corev1.Service
+								for _, backend := range []*corev1.Pod{otherPodSameNode, otherPodDiffNode} {
+									service := e2eservice.CreateServiceSpec(
+										"service-"+backend.Name,
+										"",
+										false,
+										backend.Labels,
+									)
+									service.Spec.Ports = []corev1.ServicePort{{Port: netexecPort}}
+									familyPolicy := corev1.IPFamilyPolicyPreferDualStack
+									service.Spec.IPFamilyPolicy = &familyPolicy
+									var err error
+									service, err = f.ClientSet.CoreV1().Services(backend.Namespace).Create(context.Background(), service, metav1.CreateOptions{})
+									gomega.Expect(err).NotTo(gomega.HaveOccurred())
+									services = append(services, service)
+								}
 
-										ginkgo.BeforeEach(func() {
-											ginkgo.By("Creating a service backed by the other network pod")
-											service = e2eservice.CreateServiceSpec(
-												"service-for-netexec",
-												"",
-												false,
-												otherPod.Labels,
-											)
-											service.Spec.Ports = []corev1.ServicePort{{Port: netexecPort}}
-											familyPolicy := corev1.IPFamilyPolicyPreferDualStack
-											service.Spec.IPFamilyPolicy = &familyPolicy
-											var err error
-											service, err = f.ClientSet.CoreV1().Services(otherPod.Namespace).Create(context.Background(), service, metav1.CreateOptions{})
-											gomega.Expect(err).NotTo(gomega.HaveOccurred())
-										})
-
-										ginkgo.DescribeTable("The pod on the tested network cannot reach the service on the other network",
-											func(family utilnet.IPFamily) {
-												if !ipFamilySet.Has(family) {
-													e2eskipper.Skipf("IP family %v not supported", family)
-												}
-												ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network pod")
-												clusterIP := getFirstIPStringOfFamily(family, service.Spec.ClusterIPs)
-												gomega.Expect(clusterIP).ToNot(gomega.BeEmpty())
-												testPodToClientIPNOK(testPod, clusterIP)
-											},
-											ginkgo.Entry("When the networks are IPv4", utilnet.IPv4),
-											ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
-										)
-									})
-								},
-								ginkgo.Entry("On the same node", getSameNode),
-								ginkgo.Entry("On a different node", getDifferentNode),
-							)
+								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network services")
+								for _, service := range services {
+									testForIPFamilies(
+										ipFamilySet,
+										func(family utilnet.IPFamily) {
+											ginkgo.GinkgoHelper()
+											framework.Logf("Ensuring a request from the tested network pod cannot reach the other network service %s on IPv%v", service.Name, family)
+											clusterIP := getFirstIPStringOfFamily(family, service.Spec.ClusterIPs)
+											gomega.Expect(clusterIP).ToNot(gomega.BeEmpty())
+											testPodToClientIPNOK(testPod, clusterIP)
+										},
+									)
+								}
+							})
 						},
 						otherNetworksToTest,
 					)
