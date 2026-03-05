@@ -850,10 +850,8 @@ func serviceUpdateNotNeeded(old, new *corev1.Service) bool {
 		reflect.DeepEqual(new.Spec.Type, old.Spec.Type) &&
 		reflect.DeepEqual(new.Status.LoadBalancer.Ingress, old.Status.LoadBalancer.Ingress) &&
 		reflect.DeepEqual(new.Spec.ExternalTrafficPolicy, old.Spec.ExternalTrafficPolicy) &&
-		(new.Spec.InternalTrafficPolicy != nil && old.Spec.InternalTrafficPolicy != nil &&
-			reflect.DeepEqual(*new.Spec.InternalTrafficPolicy, *old.Spec.InternalTrafficPolicy)) &&
-		(new.Spec.AllocateLoadBalancerNodePorts != nil && old.Spec.AllocateLoadBalancerNodePorts != nil &&
-			reflect.DeepEqual(*new.Spec.AllocateLoadBalancerNodePorts, *old.Spec.AllocateLoadBalancerNodePorts))
+		reflect.DeepEqual(new.Spec.InternalTrafficPolicy, old.Spec.InternalTrafficPolicy) &&
+		reflect.DeepEqual(new.Spec.AllocateLoadBalancerNodePorts, old.Spec.AllocateLoadBalancerNodePorts)
 }
 
 // AddService handles configuring shared gateway bridge flows to steer External IP, Node Port, Ingress LB traffic into OVN
