@@ -20,6 +20,7 @@ import (
 	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	iperftest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/iperf"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
@@ -320,7 +321,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			polling := 15 * time.Second
 			for podName, serverPodIPs := range serverPodIPsByName {
 				for _, serverPodIP := range serverPodIPs {
-					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 -c %[2]s --logfile /tmp/%[1]s_%[2]s_iperf3.log &", podName, serverPodIP), polling)
+					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 --forceflush --timestamps='%%s ' -c %[2]s --logfile /tmp/%[1]s_%[2]s_iperf3.log &", podName, serverPodIP), polling)
 					if err != nil {
 						return fmt.Errorf("%s: %w", output, err)
 					}
@@ -329,37 +330,51 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			return nil
 		}
 
-		checkIperfTraffic = func(iperfLogFile string, execFn func(cmd string) (string, error), stage string) {
-			GinkgoHelper()
-			// Check the last line eventually show traffic flowing
-			Eventually(func() (string, error) {
+		checkIperfTraffic = func(iperfLogFile string, execFn func(cmd string) (string, error), startTime *time.Time, stage string) {
+			if startTime == nil {
+				// Legacy path: just check the last interval line shows traffic flowing
+				Eventually(func(g Gomega) {
+					iperfLog, err := execFn("cat " + iperfLogFile)
+					g.Expect(err).NotTo(HaveOccurred(), stage+": failed reading iperf3 log")
+					g.Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
+
+					lastIntervalLine := ""
+					for _, line := range strings.Split(strings.TrimSuffix(iperfLog, "\n"), "\n") {
+						if strings.Contains(line, " sec ") {
+							lastIntervalLine = line
+						}
+					}
+					g.Expect(lastIntervalLine).NotTo(BeEmpty(), stage+": no iperf3 interval logged yet")
+					g.Expect(lastIntervalLine).NotTo(ContainSubstring(iperftest.TrafficDownIperfLog),
+						fmt.Sprintf("%s: last iperf3 interval shows zero traffic:\n%s", stage, lastIntervalLine))
+				}).
+					WithPolling(50*time.Millisecond).
+					WithTimeout(5*time.Second).
+					Should(Succeed(), stage+": failed checking iperf3 traffic at file "+iperfLogFile)
+				return
+			}
+
+			// Poll the iperf3 log until traffic resumes or downtime exceeds
+			// 2 seconds (each iperf3 line is a 1 second interval).
+			Eventually(func(g Gomega) {
 				iperfLog, err := execFn("cat " + iperfLogFile)
-				if err != nil {
-					return "", err
-				}
-				// Fail fast
-				Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
-				// Remove last carriage return to properly split by new line.
-				iperfLog = strings.TrimSuffix(iperfLog, "\n")
-				iperfLogLines := strings.Split(iperfLog, "\n")
-				if len(iperfLogLines) == 0 {
-					return "", nil
-				}
-				lastIperfLogLine := iperfLogLines[len(iperfLogLines)-1]
-				return lastIperfLogLine, nil
+				g.Expect(err).NotTo(HaveOccurred(), stage+": failed reading iperf3 log")
+				g.Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
+
+				maxDowntime, err := iperftest.LogDowntime(iperfLog, *startTime)
+				g.Expect(err).NotTo(HaveOccurred(), stage+": traffic should have resumed")
+
+				g.Expect(maxDowntime).To(BeNumerically("<=", 2),
+					fmt.Sprintf("%s: expected at most 2 seconds of zero traffic since migration start %s, got %d:\n%s",
+						stage, startTime, maxDowntime, iperfLog))
+
 			}).
 				WithPolling(50*time.Millisecond).
-				WithTimeout(2*time.Second).
-				Should(
-					SatisfyAll(
-						ContainSubstring(" sec "),
-						Not(ContainSubstring("0.00 Bytes  0.00 bits/sec")),
-					),
-					stage+": failed checking iperf3 traffic at file "+iperfLogFile,
-				)
+				WithTimeout(5*time.Second).
+				Should(Succeed(), stage+": failed checking iperf3 traffic at file "+iperfLogFile)
 		}
 
-		checkEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, podIPsByName map[string][]string, stage string) {
+		checkEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, podIPsByName map[string][]string, migrationStart *time.Time, stage string) {
 			GinkgoHelper()
 			for podName, podIPs := range podIPsByName {
 				for _, podIP := range podIPs {
@@ -367,10 +382,11 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					execFn := func(cmd string) (string, error) {
 						return virtClient.RunCommand(vmi, cmd, 2*time.Second)
 					}
-					checkIperfTraffic(iperfLogFile, execFn, stage)
+					checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
 				}
 			}
 		}
+
 		startNorthSouthIperfTraffic = func(execFn execFnType, addresses []string, port int32, logPrefix, stage string) error {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
@@ -389,7 +405,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				}
 
 				By(fmt.Sprintf("start from %s: %s", address, stage))
-				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
+				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 --forceflush --timestamps='%%s ' -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
 				if err != nil {
 					return fmt.Errorf("failed at starting iperf3 in background %s: %w", output, err)
 				}
@@ -413,7 +429,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			return startNorthSouthIperfTraffic(execFn, addresses, port, "egress", stage)
 		}
 
-		checkNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, stage string) {
+		checkNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, migrationStart *time.Time, stage string) {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, ip := range addresses {
@@ -421,11 +437,11 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				execFn := func(cmd string) (string, error) {
 					return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
 				}
-				checkIperfTraffic(iperfLogFile, execFn, stage)
+				checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
 			}
 		}
 
-		checkNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, port int32, stage string) {
+		checkNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, port int32, migrationStart *time.Time, stage string) {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, ip := range addresses {
@@ -437,7 +453,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					execFn := func(cmd string) (string, error) {
 						return virtClient.RunCommand(vmi, cmd, 5*time.Second)
 					}
-					checkIperfTraffic(iperfLogFile, execFn, stage)
+					checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
 				}
 			}
 		}
@@ -612,6 +628,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				return vmi.Status.MigrationState.Completed
 			}).WithPolling(time.Second).WithTimeout(20*time.Minute).Should(BeTrue(), "should complete migration")
 			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			Expect(vmi.Status.MigrationState.StartTimestamp).NotTo(BeNil(), "should have a StartTimestamp")
 			Expect(vmi.Status.MigrationState.SourcePod).NotTo(BeEmpty())
 			Eventually(func() corev1.PodPhase {
 				sourcePod := &corev1.Pod{
@@ -695,6 +712,8 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(
 				Equal(kubevirtv1.MigrationFailed),
 			)
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			Expect(vmi.Status.MigrationState).NotTo(BeNil(), "should have a MigrationState")
 		}
 
 		liveMigrateFailed = func(vmi *kubevirtv1.VirtualMachineInstance) {
@@ -1939,7 +1958,7 @@ ip route add %[3]s via %[4]s
 
 			step = by(vmi.Name, fmt.Sprintf("Check east/west traffic before %s %s", td.resource.description, td.test.description))
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, nil, step)
 
 			if td.role == udnv1.NetworkRolePrimary {
 				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
@@ -1957,7 +1976,7 @@ ip route add %[3]s via %[4]s
 				output, err := virtClient.RunCommand(vmi, "/tmp/iperf-server.sh", time.Minute)
 				Expect(err).NotTo(HaveOccurred(), step+": "+output)
 				Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
-				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, nil, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
 					_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", iperfServerScript})
@@ -1970,7 +1989,7 @@ ip route add %[3]s via %[4]s
 						})
 						Expect(err).NotTo(HaveOccurred(), step+": "+output)
 					}
-					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
+					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, nil, step)
 				}
 			}
 
@@ -1990,6 +2009,7 @@ ip route add %[3]s via %[4]s
 				Should(ConsistOf(expectedAddresesAtGuest), step)
 
 			step = by(vmi.Name, fmt.Sprintf("Check east/west traffic after %s %s", td.resource.description, td.test.description))
+			var migrationStart *time.Time
 			if td.test.description == restart.description {
 				// At restart we need re-connect
 				Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
@@ -1998,14 +2018,16 @@ ip route add %[3]s via %[4]s
 					Expect(err).NotTo(HaveOccurred(), step+": "+output)
 					Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
 				}
+			} else if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.StartTimestamp != nil {
+				migrationStart = &vmi.Status.MigrationState.StartTimestamp.Time
 			}
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, migrationStart, step)
 			if td.role == udnv1.NetworkRolePrimary {
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic after %s %s", td.resource.description, td.test.description))
-				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, migrationStart, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
-					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
+					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, migrationStart, step)
 				}
 			}
 
@@ -2362,7 +2384,7 @@ chpasswd: { expire: False }
 
 			step = by(vmi.Name, "Check east/west traffic before virtual machine instance live migration")
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, nil, step)
 
 			by(vmi.Name, "Running live migration for virtual machine instance")
 			td(vmi)
@@ -2374,7 +2396,11 @@ chpasswd: { expire: False }
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
 			step = by(vmi.Name, "Check east/west traffic after virtual machine instance live migration")
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			var migrationStart *time.Time
+			if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.StartTimestamp != nil {
+				migrationStart = &vmi.Status.MigrationState.StartTimestamp.Time
+			}
+			checkEastWestIperfTraffic(vmi, testPodsIPs, migrationStart, step)
 
 			By("Stop iperf3 traffic before force killing vm, so iperf3 server do not get stuck")
 			output, err = virtClient.RunCommand(vmi, "killall --wait iperf3", 5*time.Second)
@@ -2408,13 +2434,20 @@ chpasswd: { expire: False }
 
 			step = by(vmi.Name, "Restart iperf traffic after forcing a vm failure")
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, nil, step)
 
 			by(vmi.Name, "Running live migration after forcing vm failure")
 			td(vmi)
 
+			// Update vmi status after live migration
+			Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+
 			step = by(vmi.Name, "Check east/west traffic for failed virtual machine after live migration")
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			var migrationStart2 *time.Time
+			if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.StartTimestamp != nil {
+				migrationStart2 = &vmi.Status.MigrationState.StartTimestamp.Time
+			}
+			checkEastWestIperfTraffic(vmi, testPodsIPs, migrationStart2, step)
 		},
 			Entry("after succeeded live migration", liveMigrateSucceed),
 			Entry("after failed live migration", liveMigrateFailed),
