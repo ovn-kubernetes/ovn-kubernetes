@@ -314,9 +314,9 @@ jobs:
         path: prometheus-install.log
         retention-days: 7
 
-    - name: Download and setup kube-burner v2.1.0
+    - name: Download and setup kube-burner v2.4.2
       run: |
-        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.1.0/kube-burner-V2.1.0-linux-x86_64.tar.gz | tar xz
+        curl -L https://github.com/kube-burner/kube-burner/releases/download/v2.4.2/kube-burner-V2.4.2-linux-x86_64.tar.gz | tar xz
         chmod +x kube-burner
         sudo mv kube-burner /usr/local/bin/
 

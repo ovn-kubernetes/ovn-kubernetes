@@ -3,7 +3,7 @@ global:
   measurements:
     - name: podLatency
     - name: pprof
-      pprofInterval: 1m
+      pprofInterval: 0s
       pprofDirectory: pprof-data
       pprofTargets:
       - name: ovnkube-controller
@@ -25,29 +25,29 @@ global:
 jobs:
 - name: cudn-density-l2-namespaces
   jobIterations: 1
-  qps: 1
-  burst: 1
+  qps: 10
+  burst: 10
   namespacedIterations: true
   waitWhenFinished: true
   cleanup: true
   preLoadImages: false
   objects:
-    - objectTemplate: workloads/templates/udn-density/cudn_l2.yml
-      replicas: 2
+    - objectTemplate: workloads/templates/udn-density/cudn_l2_grouped.yml
+      replicas: 30
 
-    - objectTemplate: workloads/templates/udn-density/cudn_ns.yml
-      replicas: 10
+    - objectTemplate: workloads/templates/udn-density/cudn_ns_grouped.yml
+      replicas: 150
 
 - name: cudn-density-l2-pods-netpol
-  jobIterations: 10
+  jobIterations: 150
   qps: 10
   burst: 10
   namespacedIterations: true
-  namespace: cudn-density-l2-pods-netpol
+  namespace: cudn-density-l2-namespaces
   waitWhenFinished: true
   cleanup: false
   preLoadImages: true
-  preLoadPeriod: 10s
+  preLoadPeriod: 2m
   measurements:
     - name: podLatency
   objects:
