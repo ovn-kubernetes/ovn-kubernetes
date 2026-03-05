@@ -76,6 +76,12 @@ func ipVRFKey(networkName string) string {
 	return networkName + "/ipvrf"
 }
 
+// vniKey identifies a VNI within a VTEP scope. VNIs must be unique per VTEP.
+type vniKey struct {
+	vtep string
+	vni  int32
+}
+
 type RenderNetAttachDefManifest func(obj client.Object, targetNamespace string, opts ...template.RenderOption) (*netv1.NetworkAttachmentDefinition, error)
 
 type networkInUseError struct {
@@ -119,6 +125,11 @@ type Controller struct {
 	// vidAllocator allocates cluster-wide VLAN IDs for EVPN networks.
 	// VIDs are allocated per network name and stored in the NAD config JSON.
 	vidAllocator id.Allocator
+
+	// reservedVNIs tracks (VTEP, VNI) → network name to ensure no two networks
+	// sharing the same VTEP use the same VNI.
+	reservedVNIs     map[vniKey]string
+	reservedVNIsLock sync.RWMutex
 
 	udnClient         userdefinednetworkclientset.Interface
 	udnLister         userdefinednetworklister.UserDefinedNetworkLister
@@ -167,6 +178,7 @@ func New(
 		networkManager:    networkManager,
 		namespaceTracker:  map[string]sets.Set[string]{},
 		vidAllocator:      vidAllocator,
+		reservedVNIs:      map[vniKey]string{},
 		eventRecorder:     eventRecorder,
 	}
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
@@ -394,6 +406,10 @@ func (c *Controller) recoverEVPNVIDsForCUDN(cudnName string) error {
 		return fmt.Errorf("failed to reserve VIDs for cudn %s: %w", cudnName, err)
 	}
 
+	if err := c.reserveVNIs(cudnName, netInfo.EVPNVTEPName(), netInfo.EVPNMACVRFVNI(), netInfo.EVPNIPVRFVNI()); err != nil {
+		return fmt.Errorf("failed to reserve VNIs for cudn %s: %w", cudnName, err)
+	}
+
 	klog.V(4).Infof("Recovered VIDs for CUDN %s (macVRF=%d, ipVRF=%d)", cudnName, macVRFVID, ipVRFVID)
 	return nil
 }
@@ -441,6 +457,40 @@ func (c *Controller) releaseVIDForNetwork(networkName string) {
 	ipVID := c.vidAllocator.ReleaseID(ipVRFKey(networkName))
 	if macVID >= 0 || ipVID >= 0 {
 		klog.V(4).Infof("Released VIDs for network %s: MAC-VRF=%d, IP-VRF=%d", networkName, macVID, ipVID)
+	}
+	c.releaseVNIs(networkName)
+}
+
+// reserveVNIs reserves VNIs for a network within a VTEP scope, ensuring no two
+// networks sharing the same VTEP use the same VNI.
+func (c *Controller) reserveVNIs(networkName, vtepName string, macVRFVNI, ipVRFVNI int32) error {
+	c.reservedVNIsLock.Lock()
+	defer c.reservedVNIsLock.Unlock()
+
+	var errs []error
+	for _, vni := range []int32{macVRFVNI, ipVRFVNI} {
+		if vni == 0 {
+			continue
+		}
+		key := vniKey{vtep: vtepName, vni: vni}
+		if owner, exists := c.reservedVNIs[key]; exists && owner != networkName {
+			errs = append(errs, fmt.Errorf("VNI %d on VTEP %q is already reserved by network %q", vni, vtepName, owner))
+			continue
+		}
+		c.reservedVNIs[key] = networkName
+	}
+	return errors.Join(errs...)
+}
+
+// releaseVNIs releases all VNIs owned by the given network.
+func (c *Controller) releaseVNIs(networkName string) {
+	c.reservedVNIsLock.Lock()
+	defer c.reservedVNIsLock.Unlock()
+
+	for vni, owner := range c.reservedVNIs {
+		if owner == networkName {
+			delete(c.reservedVNIs, vni)
+		}
 	}
 }
 

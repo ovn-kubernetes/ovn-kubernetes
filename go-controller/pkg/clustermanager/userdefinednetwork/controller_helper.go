@@ -174,10 +174,13 @@ func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.Ren
 	}
 
 	networkName := obj.GetName()
+
+	var macVRFVNI, ipVRFVNI int32
 	var macVRFVID, ipVRFVID int
 
 	// Allocate VID for MAC-VRF if present
 	if evpnCfg.MACVRF != nil {
+		macVRFVNI = evpnCfg.MACVRF.VNI
 		vid, err := c.vidAllocator.AllocateID(macVRFKey(networkName))
 		if err != nil {
 			return nil, fmt.Errorf("failed to allocate VID for MAC-VRF: %w", err)
@@ -188,12 +191,17 @@ func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.Ren
 
 	// Allocate VID for IP-VRF if present
 	if evpnCfg.IPVRF != nil {
+		ipVRFVNI = evpnCfg.IPVRF.VNI
 		vid, err := c.vidAllocator.AllocateID(ipVRFKey(networkName))
 		if err != nil {
 			return nil, fmt.Errorf("failed to allocate VID for IP-VRF: %w", err)
 		}
 		ipVRFVID = vid
 		klog.V(4).InfoS("Allocated VID for IP-VRF", "network", networkName, "vid", vid)
+	}
+
+	if err := c.reserveVNIs(networkName, evpnCfg.VTEP, macVRFVNI, ipVRFVNI); err != nil {
+		return nil, fmt.Errorf("failed to reserve VNIs: %w", err)
 	}
 
 	// Return render options with allocated VIDs.
