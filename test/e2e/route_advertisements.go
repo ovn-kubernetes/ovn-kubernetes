@@ -29,7 +29,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -2509,12 +2508,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						ginkgo.Entry("Default", defaultNetwork, nil),
 						ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, otherLayer3NetworkSpec),
 						ginkgo.Entry("Layer 2 CUDN VRF-Lite", cudnAdvertisedVRFLite, otherLayer2NetworkSpec),
-						// The following testcases are labeled as extended,
-						// might not be run on all jobs
-						ginkgo.Entry("Layer 3 UDN", udn, otherLayer3NetworkSpec, label.Extended()),
-						ginkgo.Entry("Layer 3 CUDN advertised", cudnAdvertised, otherLayer3NetworkSpec, label.Extended()),
-						ginkgo.Entry("Layer 2 UDN", udn, otherLayer2NetworkSpec, label.Extended()),
-						ginkgo.Entry("Layer 2 CUDN advertised", cudnAdvertised, otherLayer2NetworkSpec, label.Extended()),
+						ginkgo.Entry("Layer 3 UDN", udn, otherLayer3NetworkSpec),
+						ginkgo.Entry("Layer 3 CUDN advertised", cudnAdvertised, otherLayer3NetworkSpec),
+						ginkgo.Entry("Layer 2 UDN", udn, otherLayer2NetworkSpec),
+						ginkgo.Entry("Layer 2 CUDN advertised", cudnAdvertised, otherLayer2NetworkSpec),
 					}
 
 					ginkgo.DescribeTableSubtree("Of type",
