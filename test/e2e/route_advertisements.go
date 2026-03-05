@@ -1988,10 +1988,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			for _, node := range nodeList.Items {
 				iface, err := infraprovider.Get().GetK8NodeNetworkInterface(node.Name, network)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "link", "set", "dev", iface.InfName, "master", networkName})
+				// prevent the IPv6 address of the interface from being removed when attaching to VRF
+				_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"sysctl", "-w", "net.ipv6.conf." + iface.InfName + ".keep_addr_on_down=1"})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				// quirk: need to reset IPv6 address
-				_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "address", "add", iface.IPv6 + "/" + iface.IPv6Prefix, "dev", iface.InfName})
+				_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "link", "set", "dev", iface.InfName, "master", networkName})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 		case cudnAdvertisedEVPN:
