@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
 func TestGetDeviceIDFromNetdevice(t *testing.T) {

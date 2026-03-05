@@ -9,7 +9,7 @@ import (
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 	"github.com/urfave/cli/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 )
 
 func main() {
@@ -22,9 +22,11 @@ func main() {
 	c.Action = func(_ *cli.Context) error {
 		skel.PluginMainFuncs(
 			skel.CNIFuncs{
-				Add:   p.CmdAdd,
-				Check: p.CmdCheck,
-				Del:   p.CmdDel,
+				Add:    p.CmdAdd,
+				Check:  p.CmdCheck,
+				Del:    p.CmdDel,
+				GC:     p.CmdGC,
+				Status: p.CmdStatus,
 			},
 			version.All,
 			bv.BuildString("ovn-k8s-cni-overlay"))

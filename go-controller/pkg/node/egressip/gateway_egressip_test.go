@@ -15,15 +15,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
-	netlink_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/egressip"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/egressip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
 var _ = ginkgo.Describe("Gateway EgressIP", func() {

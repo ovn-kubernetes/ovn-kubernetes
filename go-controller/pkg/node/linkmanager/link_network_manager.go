@@ -12,8 +12,8 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/ndp"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
 // Gather all suitable interface address + network mask and offer this as a service.

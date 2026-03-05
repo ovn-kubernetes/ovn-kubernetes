@@ -118,6 +118,8 @@ global:
   enablePersistentIPs: true
   # -- Configure to use DNSNameResolver feature with ovn-kubernetes
   enableDNSNameResolver: false
+  # -- Configure to allow ICMP and ICMPv6 traffic to bypass NetworkPolicy deny rules
+  allowICMPNetworkPolicy: false
   # -- Whether to disable SNAT of egress traffic in namespaces annotated with routing-external-gws
   disableSnatMultipleGws: ""
   # -- Controls if forwarding is allowed on OVNK controlled interfaces

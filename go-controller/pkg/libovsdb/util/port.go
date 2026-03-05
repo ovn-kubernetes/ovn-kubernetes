@@ -7,8 +7,8 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
 // ExtractPortAddresses returns the MAC and IPs of the given logical switch port

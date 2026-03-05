@@ -25,18 +25,18 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	eiptypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	eiptypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type testRA struct {
@@ -332,7 +332,7 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 
 	// Build the config as a map to properly marshal EVPN config
 	cniConfig := map[string]interface{}{
-		"cniVersion":       "0.4.0",
+		"cniVersion":       "1.1.0",
 		"name":             tn.Network,
 		"type":             config.CNI.Plugin,
 		"netAttachDefName": tn.Namespace + "/" + tn.Name,
@@ -1388,6 +1388,8 @@ exit
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
 			config.OVNKubernetesFeature.EnableEVPN = true
+			// satisfy EVPN LGW restriction, otherwise no effect
+			config.Gateway.Mode = config.GatewayModeLocal
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
 			addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)

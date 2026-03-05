@@ -2,15 +2,16 @@ package managementport
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/deviceresource"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/deviceresource"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // MgmtPortDeviceManager manages the mapping between network name and its management port VF device details information
@@ -60,10 +61,22 @@ func (mpdm *MgmtPortDeviceManager) Init() error {
 	// validate the existing management port reservations:
 	for network, annotatedMgmtPortDetails := range annotatedMgmtPortDetailsMap {
 		deviceId := annotatedMgmtPortDetails.DeviceId
+		allDeviceIDs := mpdm.deviceAllocator.DeviceIDs()
+		if deviceId != "" && !slices.Contains(allDeviceIDs, deviceId) {
+			// The device ID from the annotation is no longer available in the
+			// resource pool. This can happen if the management port is
+			// re-enumerated at a different PCI address after a host reboot (for
+			// example, due to changes in DPU firmware settings).
+			klog.V(5).Infof("Manage port device %s of resource %s for network %s is no longer available, "+
+				"ignore DeviceID value from the annotation", deviceId, mpdm.deviceAllocator.ResourceName(), network)
+			deviceId = ""
+		}
 		if deviceId == "" {
-			// this must be legacyManagementPortDetails annotation for default network, try to find its deviceId.
-			// luckily this is one time thing
-			allDeviceIDs := mpdm.deviceAllocator.DeviceIDs()
+			// The device ID may be missing from the annotation (legacy default
+			// network annotation) or stale (not present in the resource pool).
+			// In either case, look up the device by PfId and FuncId, assuming
+			// the device plugin still exposes the same port and that we should
+			// consume the same VF index.
 			for _, d := range allDeviceIDs {
 				mgmtDetails, err := util.GetNetworkDeviceDetails(d)
 				if err == nil && mgmtDetails.PfId == annotatedMgmtPortDetails.PfId && mgmtDetails.FuncId == annotatedMgmtPortDetails.FuncId {

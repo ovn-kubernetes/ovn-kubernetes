@@ -30,21 +30,21 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	eiptypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	egressiplisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
-	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	raapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
-	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
-	ralisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	eiptypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	egressiplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	raapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
+	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	ralisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -533,8 +533,11 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 	// Validate EVPN configuration requirements
 	hasEVPNConfig := len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0
-	if hasEVPNConfig && !util.IsEVPNEnabled() {
+	if hasEVPNConfig && !config.OVNKubernetesFeature.EnableEVPN {
 		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is not enabled", errConfig)
+	}
+	if hasEVPNConfig && config.Gateway.Mode != config.GatewayModeLocal {
+		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is only supported in local gateway mode", errConfig)
 	}
 	// Require a router with default VRF for any EVPN configuration, since the
 	// global EVPN section with advertise-all-vni is required for EVPN to work properly.

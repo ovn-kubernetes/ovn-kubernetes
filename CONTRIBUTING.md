@@ -53,8 +53,8 @@ feedback on others’ ideas, and even sharing your own ideas, and experiences.
 ## Find an Issue
 
 We have good first issues for new contributors and help wanted issues suitable
-for any contributor. [good first issue](https://github.com/ovn-org/ovn-kubernetes/labels/good%20first%20issue) has extra information to
-help you make your first contribution. [help wanted](https://github.com/ovn-org/ovn-kubernetes/labels/help%20wanted) are issues
+for any contributor. [good first issue](https://github.com/ovn-kubernetes/ovn-kubernetes/labels/good%20first%20issue) has extra information to
+help you make your first contribution. [help wanted](https://github.com/ovn-kubernetes/ovn-kubernetes/labels/help%20wanted) are issues
 suitable for someone who isn't a core maintainer and is good to move onto after
 your first pull request.
 
@@ -84,7 +84,7 @@ In some cases, other changes may conflict with your PR. If this happens, you wil
 
 ## Development Environment Setup
 
-You can easily setup a developer environment by following the instructions [here](https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/kind.md).
+You can easily setup a developer environment by following the instructions [here](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/kind.md).
 
 ## Sign Your Commits
 
@@ -184,7 +184,7 @@ make lint
 ```
 
 * If you are introducing new CRDs verify that Yaml files have been formatted (see
-  [codegen generator](https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/developer.md#generating-crd-yamls-using-codegen))
+  [codegen generator](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/developer.md#generating-crd-yamls-using-codegen))
 * Verify that unit tests are passing locally
 
 ```console

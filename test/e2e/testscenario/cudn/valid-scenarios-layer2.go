@@ -1,10 +1,11 @@
 package cudn
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
+import "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
 
 var Layer2CUDNValid = []testscenario.ValidateCRScenario{
 	{
 		Description: "valid Primary network with defaultGatewayIPs",
+		Name:        "primary-with-default-gateway",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -22,6 +23,7 @@ spec:
 	},
 	{
 		Description: "valid dual-stack network with defaultGatewayIPs",
+		Name:        "dual-stack-with-gateways",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -39,6 +41,7 @@ spec:
 	},
 	{
 		Description: "valid network with infrastructureSubnets",
+		Name:        "network-with-infra-subnets",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -56,6 +59,7 @@ spec:
 	},
 	{
 		Description: "valid network with defaultGatewayIPs in infrastructureSubnets",
+		Name:        "gateway-in-infra-subnets",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -74,6 +78,7 @@ spec:
 	},
 	{
 		Description: "valid network with reservedSubnets",
+		Name:        "network-with-reserved-subnets",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -91,6 +96,7 @@ spec:
 	},
 	{
 		Description: "valid network with non-overlapping infrastructureSubnets and reservedSubnets",
+		Name:        "non-overlapping-subnets",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -110,6 +116,7 @@ spec:
 	},
 	{
 		Description: "valid complete dual-stack configuration",
+		Name:        "complete-dual-stack-config",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -131,6 +138,7 @@ spec:
 	},
 	{
 		Description: "valid IPv6-only network",
+		Name:        "ipv6-only-complete",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -149,6 +157,7 @@ spec:
 	},
 	{
 		Description: "valid Primary network with all fields unset (minimal config)",
+		Name:        "minimal-primary-config",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
@@ -165,6 +174,8 @@ spec:
 	},
 }
 
+// Layer2UDNValid scenarios use UserDefinedNetwork (namespace-scoped) — Name is intentionally
+// left empty since cleanupValidateCRsTest only verifies ClusterUserDefinedNetworks.
 var Layer2UDNValid = []testscenario.ValidateCRScenario{
 	{
 		Description: "valid Primary network with defaultGatewayIPs",

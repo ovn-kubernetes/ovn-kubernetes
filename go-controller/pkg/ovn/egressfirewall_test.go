@@ -21,20 +21,20 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	efcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressfirewall"
-	dnsnameresolver "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	t "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	egressfirewallapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	efcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressfirewall"
+	dnsnameresolver "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	t "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	util_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
 func newObjectMeta(name, namespace string) metav1.ObjectMeta {
@@ -422,8 +422,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					)
 					ignoreACL.UUID = "ignoreACL-UUID"
 
-					nodeSwitch.ACLs = []string{purgeACL.UUID, purgeACL2.UUID, updateACL.UUID, ignoreACL.UUID}
-					joinSwitch.ACLs = []string{purgeACL.UUID, purgeACL2.UUID, updateACL.UUID, ignoreACL.UUID}
 					clusterPortGroup.ACLs = []string{purgeACL.UUID, purgeACL2.UUID, updateACL.UUID, ignoreACL.UUID}
 
 					dbSetup := libovsdb.TestSetup{
@@ -441,10 +439,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					}
 
 					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
-
-					// All ACLs in the egress firewall priority range will be removed from the switches
-					joinSwitch.ACLs = []string{ignoreACL.UUID}
-					nodeSwitch.ACLs = []string{ignoreACL.UUID}
 					// purgeACL will be deleted as its namespace doesn't exist
 					clusterPortGroup.ACLs = []string{ignoreACL.UUID, purgeACL2.UUID}
 

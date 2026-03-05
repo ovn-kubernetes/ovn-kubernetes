@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/portalloc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/containerengine"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/portalloc"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -236,6 +236,12 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
 	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	if container.IPv4 != "" {
+		cmd = append(cmd, "--ip", container.IPv4)
+	}
+	if container.IPv6 != "" {
+		cmd = append(cmd, "--ip6", container.IPv6)
+	}
 	if container.Entrypoint != "" {
 		cmd = append(cmd, "--entrypoint", container.Entrypoint)
 	}
@@ -305,6 +311,7 @@ func (c *contextKind) deleteExternalContainer(container api.ExternalContainer) e
 			return false, fmt.Errorf("failed to check if external container (%s) is deleted: %v (%s)", container, err, stdOut)
 		}
 		if string(stdOut) != "" {
+			framework.Logf("Waiting for external container %s to be deleted", container.Name)
 			return false, nil
 		}
 		return true, nil
@@ -579,12 +586,14 @@ func (c *contextKind) cleanUp() error {
 	c.cleanUpFns = nil
 	// detach network(s) from nodes
 	for _, na := range c.cleanUpNetworkAttachments.List {
+		framework.Logf("Detaching network %s from %s", na.Network.Name(), na.Instance)
 		if err := c.detachNetwork(na.Network, na.Instance); err != nil && !errors.Is(err, api.NotFound) {
 			errs = append(errs, err)
 		}
 	}
 	// remove containers
 	for _, container := range c.cleanUpContainers {
+		framework.Logf("Deleting external container %s", container.Name)
 		if err := c.deleteExternalContainer(container); err != nil && !errors.Is(err, api.NotFound) {
 			errs = append(errs, err)
 		}
@@ -592,6 +601,7 @@ func (c *contextKind) cleanUp() error {
 	c.cleanUpContainers = nil
 	// delete secondary networks
 	for _, network := range c.cleanUpNetworks.List {
+		framework.Logf("Deleting network %s", network.Name())
 		if err := c.deleteNetwork(network); err != nil && !errors.Is(err, api.NotFound) {
 			errs = append(errs, err)
 		}
@@ -612,7 +622,7 @@ const (
 	inspectNetworkContainersKeyStr = "{{ range $key, $value := .Containers }}{{ printf \"%s\\n\" $value.Name}}{{ end }}'"
 	emptyValue                     = "<no value>"
 	// Docker 29+ returns "invalid IP" for IP fields
-	emptyIPValue                   = "invalid IP"
+	emptyIPValue = "invalid IP"
 )
 
 func isNetworkAttachedToContainer(networkName, containerName string) bool {
@@ -801,7 +811,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv4 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv4)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv4, err)
+			framework.Logf("failed to get network interface name using IPv4 address %s on container %q: %v", ni.IPv4, containerName, err)
 		}
 	}
 	ni.IPv6Gateway, err = getContainerNetwork(inspectNetworkIPv6GWKeyStr)
@@ -819,7 +829,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if ni.IPv6 != "" {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv6 address %s: %v", ni.IPv6, err)
+			framework.Logf("failed to get network interface name using IPv6 address %s on container %q: %v", ni.IPv6, containerName, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)

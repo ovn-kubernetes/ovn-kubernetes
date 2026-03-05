@@ -18,7 +18,7 @@ func (s *UserDefinedNetworkSpec) GetLocalnet() *LocalnetConfig {
 }
 
 func (s *UserDefinedNetworkSpec) GetTransport() TransportOption {
-	// UDN (namespace-scoped) does not support EVPN transport
+	// UDN (namespace-scoped) does not support transport customization
 	return ""
 }
 

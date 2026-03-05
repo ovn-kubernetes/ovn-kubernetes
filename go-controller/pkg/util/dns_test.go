@@ -11,9 +11,9 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	util_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
 func TestNewDNS(t *testing.T) {

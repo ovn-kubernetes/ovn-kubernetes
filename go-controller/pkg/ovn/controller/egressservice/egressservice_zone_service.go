@@ -15,12 +15,12 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const EgressServiceServedPodsAddrSetName = "egresssvc-served-pods"
@@ -179,7 +179,7 @@ func (c *Controller) allEndpointsFor(svc *corev1.Service) (
 			}
 			for _, ip := range ep.Addresses {
 				ipStr := utilnet.ParseIPSloppy(ip).String()
-				if !services.IsHostEndpoint(ipStr) {
+				if !services.IsHostEndpoint(ipStr, &util.DefaultNetInfo{}) {
 					if isEpLocal {
 						localEndpoints.Insert(ipStr)
 					} else {

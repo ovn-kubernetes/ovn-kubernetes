@@ -13,14 +13,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // namespaceInfo contains information related to a Namespace. Use oc.getNamespaceLocked()

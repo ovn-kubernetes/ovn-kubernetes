@@ -6,9 +6,9 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
-	testscenariovtep "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario/vtep"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
+	testscenariovtep "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario/vtep"
 )
 
 var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feature.EVPN, func() {
@@ -44,9 +44,16 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 
 func cleanupVTEPCRsTest(scenarios []testscenario.ValidateCRScenario) {
 	for _, s := range scenarios {
-		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "-f", "-")
+		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "--ignore-not-found", "-f", "-")
 	}
-	_, stderr, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "vteps")
-	Expect(err).NotTo(HaveOccurred())
-	Expect(stderr).To(Equal("No resources found\n"))
+	// Verify each named resource is gone individually — a global "no resources found"
+	// check is not parallel-safe since other concurrent tests may have live VTEPs.
+	for _, s := range scenarios {
+		if s.Name == "" {
+			continue
+		}
+		stdout, _, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "vtep", s.Name, "--ignore-not-found")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stdout).To(BeEmpty(), "VTEP %q should have been deleted", s.Name)
+	}
 }

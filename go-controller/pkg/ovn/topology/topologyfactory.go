@@ -6,10 +6,10 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type GatewayTopologyFactory struct {
@@ -41,12 +41,13 @@ func (gtf *GatewayTopologyFactory) NewClusterRouterWithMulticastSupport(
 }
 
 func (gtf *GatewayTopologyFactory) NewTransitRouter(
+	transitRouterName string,
 	netInfo util.NetInfo,
 	coopUUID string,
 	tunnelKey string,
 ) (*nbdb.LogicalRouter, error) {
 	routerOptions := map[string]string{libovsdbops.RequestedTnlKey: tunnelKey}
-	return gtf.newClusterRouter(netInfo.GetNetworkScopedClusterRouterName(), netInfo, coopUUID, routerOptions)
+	return gtf.newClusterRouter(transitRouterName, netInfo, coopUUID, routerOptions)
 }
 
 func (gtf *GatewayTopologyFactory) newClusterRouter(

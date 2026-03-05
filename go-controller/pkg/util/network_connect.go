@@ -11,10 +11,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	networkconnectapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/applyconfiguration/clusternetworkconnect/v1"
-	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	networkconnectapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/applyconfiguration/clusternetworkconnect/v1"
+	networkconnectclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 const (

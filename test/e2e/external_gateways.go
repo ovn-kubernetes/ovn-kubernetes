@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	"github.com/google/go-cmp/cmp"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -1626,7 +1626,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 
 					// We have to remove a gateway so that traffic consistently goes to the same gateway. This
 					// is due to lack of consistent hashing support in github actions:
-					// https://github.com/ovn-org/ovn-kubernetes/pull/4114#issuecomment-1940916326
+					// https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4114#issuecomment-1940916326
 					// TODO(trozet) change this back to 2 gateways once github actions kernel is updated
 					ginkgo.By(fmt.Sprintf("Reducing to one gateway. Removing gateway: %s", gatewayPodName2))
 					err := e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, gatewayPodName2, servingNamespace)

@@ -9,9 +9,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // HONodeController is the node hybrid overlay controller

@@ -14,15 +14,15 @@ import (
 
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	ovntesting "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-	multinetworkmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	ovntesting "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
+	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 )
 
 func Test_controller_syncNetwork(t *testing.T) {

@@ -52,6 +52,7 @@ const (
 	EgressGWSwitchPrefix       = "exgw-"
 	PatchPortPrefix            = "patch-"
 	PatchPortSuffix            = "-to-br-int"
+	MACVRFPortPrefix           = "macvrf-"
 
 	// types.OVNLayer2Switch is the name of layer2 topology switch
 	OVNLayer2Switch = "ovn_layer2_switch"
@@ -97,6 +98,14 @@ const (
 	PrimaryUDNAllowPriority = 1001
 	// Default deny acl rule priority
 	PrimaryUDNDenyPriority = 1000
+	// Priority for allowing service traffic to pass through before the drop ACL
+	// for network connect partial service connectivity
+	NetworkConnectPassServiceTrafficPriority = 500
+	// Priority for allowing same-network traffic to pass through before the drop ACL
+	// This prevents the drop ACL from blocking intra-network communication
+	NetworkConnectPassSameNetworkPriority = 475
+	// Priority for dropping pod-to-pod traffic between connected networks
+	NetworkConnectDropPodTrafficPriority = 450
 
 	// ACL Tiers
 	// Tier 0 is called Primary as it is evaluated before any other feature-related Tiers.
@@ -212,6 +221,11 @@ const (
 	ClusterSwitchLBGroupName = "clusterSwitchLBGroup"
 	ClusterRouterLBGroupName = "clusterRouterLBGroup"
 
+	// NetworkConnectServiceLBGroupPrefix is the prefix for per-CNC LoadBalancerGroups
+	// used for cross-network service connectivity. Each CNC gets its own LBG
+	// so that overlapping CNCs don't interfere with each other's cleanup.
+	NetworkConnectServiceLBGroupPrefix = "cnc_svc_"
+
 	// key for network name external-id
 	NetworkExternalID = OvnK8sPrefix + "/" + "network"
 	// key for node name external-id
@@ -253,7 +267,6 @@ const (
 	NetworkRoleNone           = "none"
 
 	// Network transport types - canonical format (lowercase)
-	NetworkTransportGeneve    = "geneve"
 	NetworkTransportNoOverlay = "no-overlay"
 	NetworkTransportEVPN      = "evpn"
 

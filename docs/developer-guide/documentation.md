@@ -26,7 +26,7 @@ so that they remain relevant. Open a commit adding it to our `docs/design` folde
 
 * **Feature Docs**: If your enhancement proposal has merged; next step is to
 implement that feature. As part of the main implementation PR we mandate adding a
-feature documentation commit. See [here](https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/features/template.md)
+feature documentation commit. See [here](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/template.md)
 for how a feature documentation should be done. Open a commit adding it to our
 `docs/features` folder.
 
@@ -79,7 +79,7 @@ please follow the instructions below.
 
 ## Clone the repository
 ```text
-# git clone https://github.com/ovn-org/ovn-kubernetes
+# git clone https://github.com/ovn-kubernetes/ovn-kubernetes
 Cloning into 'ovn-kubernetes'...
 remote: Enumerating objects: 84258, done.
 remote: Counting objects: 100% (1546/1546), done.

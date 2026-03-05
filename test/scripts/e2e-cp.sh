@@ -6,18 +6,18 @@ set -ex
 export KUBERNETES_CONFORMANCE_TEST=y
 export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
 
-# Skip tests which are not IPv6 ready yet (see description of https://github.com/ovn-org/ovn-kubernetes/pull/2276)
+# Skip tests which are not IPv6 ready yet (see description of https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2276)
 # (Note that netflow v5 is IPv4 only)
 # NOTE: Some of these tests that check connectivity to internet cannot be run.
 #       See https://github.com/actions/runner-images/issues/668#issuecomment-1480921915 for details
 # There were some past efforts to re-enable some of these skipped tests, but that never happened and they are
-# still failing v6 lane: https://github.com/ovn-org/ovn-kubernetes/pull/2505,
-# https://github.com/ovn-org/ovn-kubernetes/pull/2524, https://github.com/ovn-org/ovn-kubernetes/pull/2287; so
+# still failing v6 lane: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2505,
+# https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2524, https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2287; so
 # going to skip them again.
 # TODO: Fix metalLB integration with KIND on IPV6 in LGW mode and enable those service tests.See
-# https://github.com/ovn-org/ovn-kubernetes/issues/4131 for details.
-# TODO: Fix EIP tests. See https://github.com/ovn-org/ovn-kubernetes/issues/4130 for details.
-# TODO: Fix MTU tests. See https://github.com/ovn-org/ovn-kubernetes/issues/4160 for details.
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4131 for details.
+# TODO: Fix EIP tests. See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4130 for details.
+# TODO: Fix MTU tests. See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4160 for details.
 IPV6_SKIPPED_TESTS="Should be allowed by externalip services|\
 should provide connection to external host by DNS name from a pod|\
 should provide Internet connection continuously when ovnkube-node pod is killed|\
@@ -90,12 +90,12 @@ if [ "$OVN_DISABLE_SNAT_MULTIPLE_GWS" == false ]; then
 fi
 
 if [ "$OVN_GATEWAY_MODE" == "shared" ]; then
-  # See https://github.com/ovn-org/ovn-kubernetes/issues/4138 for details
+  # See https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4138 for details
   skip "Should ensure load balancer service|LGW"
 fi
 
 if [ "$OVN_GATEWAY_MODE" == "local" ]; then
-  # See https://github.com/ovn-org/ovn-kubernetes/labels/ci-ipv6 for details
+  # See https://github.com/ovn-kubernetes/ovn-kubernetes/labels/ci-ipv6 for details
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     skip "Should be allowed by nodeport services"
     skip "Should successfully create then remove a static pod"
@@ -159,6 +159,10 @@ SERIAL_LABEL="Serial"
 if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
   require_label "$SERIAL_LABEL"
   shift # don't "focus" on Serial since we filter by label
+fi
+
+if [ "$ENABLE_EVPN" != true ]; then
+  skip_label "Feature:EVPN"
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
@@ -260,16 +264,40 @@ GO_TEST_TIMEOUT=$((TEST_TIMEOUT + 5))
 pushd e2e
 
 go mod download
-go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
-        -ginkgo.v \
-        -ginkgo.focus ${FOCUS:-.} \
-        -ginkgo.timeout ${TEST_TIMEOUT}m \
-        -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
-        -ginkgo.skip="${SKIPPED_TESTS}" \
-        ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
-        -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
+
+if [ "$ENABLE_EVPN" = true ]; then
+  # EVPN tests are parallel-safe (unique per-test resource names, randomized
+  # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
+  # processes — one per DescribeTable entry.  go test cannot drive Ginkgo
+  # parallelism directly; only the ginkgo binary can start the sync server and
+  # fan out the worker processes.
+  ginkgo run \
+        -procs=3 \
+        -v \
+        --focus="${FOCUS:-.}" \
+        --timeout="${TEST_TIMEOUT}m" \
+        --flake-attempts="${FLAKE_ATTEMPTS:-2}" \
+        --skip="${SKIPPED_TESTS}" \
+        ${LABELED_TESTS:+--label-filter="${LABELED_TESTS}"} \
+        --junit-report="${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml" \
+        . \
+        -- \
         -provider skeleton \
-        -kubeconfig ${KUBECONFIG} \
+        -kubeconfig "${KUBECONFIG}" \
         ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
         ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
+else
+  go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
+          -ginkgo.v \
+          -ginkgo.focus ${FOCUS:-.} \
+          -ginkgo.timeout ${TEST_TIMEOUT}m \
+          -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
+          -ginkgo.skip="${SKIPPED_TESTS}" \
+          ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
+          -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
+          -provider skeleton \
+          -kubeconfig ${KUBECONFIG} \
+          ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
+          ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
+fi
 popd

@@ -18,7 +18,7 @@ limitations under the License.
 package v1
 
 import (
-	vtepv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 )
 
 // VTEPSpecApplyConfiguration represents a declarative configuration of the VTEPSpec type for use

@@ -72,10 +72,13 @@ Use the [Delve](https://github.com/go-delve/delve) debugger for post-mortem anal
    (dlv) print <var>          # Print variable value
    ```
 
-### Debugging C Binaries with GDB (e.g. FRR)
+### Debugging C Binaries with GDB (Alpine-based, e.g. FRR)
 
 Some coredumps come from C binaries such as FRR's `bgpd` or `zebra`, not from Go
 binaries. These require GDB instead of Delve.
+
+**This procedure is for Alpine-based containers** (like FRR). For OVN/OVS components
+running in Fedora containers, see the next section.
 
 The key challenge is matching the exact container image that produced the coredump,
 since GDB needs the same binary and shared libraries to resolve symbols.
@@ -129,6 +132,140 @@ since GDB needs the same binary and shared libraries to resolve symbols.
      packages. If the shared library versions don't match (GDB will print warnings
      about missing `.so` files), you need the exact image digest from CI.
    - Install additional `-dbg` packages for libraries that appear in the backtrace.
+
+### Debugging OVN Services with GDB
+
+OVN services (ovn-northd, ovn-controller) and OVS components are C binaries that run
+in Fedora-based containers. The CI builds strip debug symbols to reduce image size,
+so debugging coredumps requires installing matching debuginfo packages.
+
+**This procedure is specific to OVN/OVS components running in Fedora containers.** It
+differs from the Alpine/FRR approach above because:
+- OVN runs in Fedora (uses RPM packages), not Alpine (apk packages)
+- Debuginfo must be downloaded from koji and installed separately
+- The CI image doesn't contain debuginfo packages (they're stripped during build)
+
+This procedure works for any OVN/OVS binary crash: northd, controller, or other components.
+
+#### Prerequisites
+
+You need:
+- A coredump from CI (e.g., `core.24481.ovn-northd.ovn-control-plane.11`)
+- The matching binary from `coredumps/binaries/` (e.g., `ovn-northd`, `ovn-controller`)
+- Docker to run a Fedora container
+
+#### Debugging Procedure
+
+1. **Start a Fedora container** (matching the build environment):
+
+   CI records the exact Fedora base image digest used to build the OVN image in
+   `coredumps/binaries/fedora-base-image.txt`. Use this digest to ensure your
+   debugging container matches the CI environment:
+
+   ```bash
+   cd ~/kind-logs-*/coredumps
+   cat binaries/fedora-base-image.txt
+   # Example output:
+   # quay.io/fedora/fedora@sha256:b489f8cafcb6e79d...
+
+   docker run --rm -it \
+     --platform linux/amd64 \
+     -v "$(pwd):/coredumps:ro" \
+     --name ovn-debug \
+     "$(cat binaries/fedora-base-image.txt)" \
+     bash
+   ```
+
+   If `fedora-base-image.txt` is not available, fall back to the floating tag:
+
+   ```bash
+   docker run --rm -it \
+     --platform linux/amd64 \
+     -v "$(pwd):/coredumps:ro" \
+     --name ovn-debug \
+     quay.io/fedora/fedora:42 \
+     bash
+   ```
+
+2. **Inside the container, install debugging tools**:
+
+   ```bash
+   dnf install -y gdb dnf-utils dnf5-plugins koji file
+   ```
+
+3. **Determine the OVN version** from the binary:
+
+   ```bash
+   # Replace ovn-northd with your binary name (ovn-controller, etc.)
+   strings /coredumps/binaries/ovn-northd | grep -E '{"type":"rpm".*ovn' | head -1
+   ```
+
+   Example output: `{"type":"rpm","name":"ovn","version":"25.09.2-2.fc42"...}`
+
+4. **Download and install OVN packages from koji**:
+
+   ```bash
+   # Download the exact build (replace version as needed)
+   koji download-build ovn-25.09.2-2.fc42 --arch=x86_64
+
+   # Install with dependency resolution
+   dnf install -y ./ovn-*.rpm
+   ```
+
+5. **Download and install debuginfo packages**:
+
+   ```bash
+   # Download all debuginfo packages for this OVN build
+   koji download-build ovn-25.09.2-2.fc42 --debuginfo --arch=x86_64
+
+   # Install all debuginfo packages (important: install ALL of them)
+   dnf install -y ./ovn-debuginfo-*.rpm \
+                  ./ovn-debugsource-*.rpm \
+                  ./ovn-central-debuginfo-*.rpm \
+                  ./ovn-host-debuginfo-*.rpm \
+                  ./ovn-vtep-debuginfo-*.rpm
+   ```
+
+   **Note**: OVN debuginfo is split into separate packages by component:
+   - `ovn-central-debuginfo` - contains ovn-northd and related binaries
+   - `ovn-host-debuginfo` - contains ovn-controller and related binaries
+   - `ovn-debuginfo` - base package with common utilities
+   - `ovn-debugsource` - source code mappings
+
+   Install all of them to ensure complete symbols for any OVN component.
+
+6. **Enable debuginfo repositories** (for system libraries if needed):
+
+   ```bash
+   dnf config-manager setopt fedora-debuginfo.enabled=1
+   dnf config-manager setopt updates-debuginfo.enabled=1
+   ```
+
+   **Note**: On first run, GDB may suggest additional debuginfo packages for system
+   libraries (glibc, openssl, systemd, python, etc.). Install them using the command
+   GDB provides, or use `debuginfo-install <package-name>` to let dnf resolve the
+   correct debuginfo package names.
+
+7. **Load the coredump in GDB**:
+
+   ```bash
+   # Replace the binary and core file names with the exact files from your CI artifacts
+   gdb /coredumps/binaries/ovn-northd /coredumps/core.24481.ovn-northd.ovn-control-plane.11
+   ```
+
+8. **Examine the crash**:
+
+   ```gdb
+   (gdb) bt              # Show backtrace with file:line numbers
+   (gdb) bt full         # Show backtrace with local variables
+   (gdb) frame 0         # Select crash frame
+   (gdb) list            # Show source code at crash location
+   (gdb) info locals     # Show local variables
+   (gdb) info args       # Show function arguments
+   (gdb) print <var>     # Print specific variable
+   (gdb) info threads    # List all threads
+   (gdb) thread <n>      # Switch to thread
+   ```
 
 ### Local Development
 

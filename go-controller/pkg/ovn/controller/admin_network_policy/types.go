@@ -10,8 +10,8 @@ import (
 	"k8s.io/klog/v2"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // NOTE: Iteration v1 of ANP will only support upto 100 ANPs

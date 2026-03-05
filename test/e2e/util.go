@@ -20,11 +20,11 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1438,6 +1438,12 @@ func isDynamicUDNEnabled() bool {
 func isNetworkSegmentationEnabled() bool {
 	val, present := os.LookupEnv("ENABLE_NETWORK_SEGMENTATION")
 	return present && val == "true"
+}
+
+func isICMPNetworkPolicyBypassEnabled() bool {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_ALLOW_ICMP_NETPOL")
+	return val == "true"
 }
 
 func isLocalGWModeEnabled() bool {

@@ -14,8 +14,8 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 )
 
 var updateInterval time.Duration = 500 * time.Millisecond

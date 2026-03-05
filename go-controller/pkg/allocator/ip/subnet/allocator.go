@@ -12,9 +12,9 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	bitmapallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
-	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	bitmapallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
+	ipallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // SubnetConfig contains configuration parameters for adding or updating a subnet
@@ -295,7 +295,7 @@ func (allocator *allocator) AllocateIPPerSubnet(name string, ips []*net.IPNet) e
 
 // reserveSubnets reserves subnet IPs
 func reserveSubnets(subnet *net.IPNet, ipam ipallocator.ContinuousAllocator) error {
-	// FIXME: allocate IP ranges when https://github.com/ovn-org/ovn-kubernetes/issues/3369 is fixed
+	// FIXME: allocate IP ranges when https://github.com/ovn-kubernetes/ovn-kubernetes/issues/3369 is fixed
 	for ip := subnet.IP; subnet.Contains(ip); ip = iputils.NextIP(ip) {
 		if ipam.Reserved(ip) {
 			continue

@@ -14,15 +14,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/knftables"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressserviceapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
-	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	egressserviceapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	util "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -55,7 +55,6 @@ var _ = Describe("Egress Service Operations", func() {
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
-		_, _ = util.SetFakeIPTablesHelpers()
 		fExec = ovntest.NewLooseCompareFakeExec()
 		err := util.SetExec(fExec)
 		Expect(err).NotTo(HaveOccurred())
@@ -325,7 +324,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.4 comment "nam
 			err := app.Run([]string{app.Name})
 			Expect(err).NotTo(HaveOccurred())
 		})
-		It("manages iptables rules for LoadBalancer egress service backed by cluster networked pods", func() {
+		It("manages nftables rules for LoadBalancer egress service backed by cluster networked pods", func() {
 			app.Action = func(*cli.Context) error {
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ip -4 --json rule show",
@@ -439,7 +438,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("manages iptables/ip rules for LoadBalancer egress service backed by ovn-k pods with Network", func() {
+		It("manages nftables/ip rules for LoadBalancer egress service backed by ovn-k pods with Network", func() {
 			app.Action = func(*cli.Context) error {
 				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ip -4 --json rule show",

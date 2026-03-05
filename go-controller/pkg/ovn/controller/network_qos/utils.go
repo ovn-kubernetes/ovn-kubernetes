@@ -5,9 +5,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	ovnkutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	ovnkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func joinMetaNamespaceAndName(namespace, name string, separator ...string) string {

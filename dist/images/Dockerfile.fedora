@@ -133,6 +133,9 @@ FROM ${OVN_FROM}
 
 USER root
 
+ARG FEDORA_BASE_DIGEST
+RUN if [ -n "${FEDORA_BASE_DIGEST}" ]; then echo "${FEDORA_BASE_DIGEST}" > /root/fedora_base_image; fi
+
 ENV PYTHONDONTWRITEBYTECODE yes
 
 # install needed rpms - openvswitch must be 2.10.4 or higher

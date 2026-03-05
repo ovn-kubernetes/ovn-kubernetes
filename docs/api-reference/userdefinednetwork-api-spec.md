@@ -357,7 +357,7 @@ _Appears in:_
 | `layer3` _[Layer3Config](#layer3config)_ | Layer3 is the Layer3 topology configuration. |  |  |
 | `layer2` _[Layer2Config](#layer2config)_ | Layer2 is the Layer2 topology configuration. |  |  |
 | `localnet` _[LocalnetConfig](#localnetconfig)_ | Localnet is the Localnet topology configuration. |  |  |
-| `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay", "Geneve", and "EVPN".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "Geneve": The network uses Geneve overlay.<br />- "EVPN": The network uses EVPN transport.<br />When omitted, the default behaviour is Geneve. |  | Enum: [NoOverlay Geneve EVPN] <br /> |
+| `transport` _[TransportOption](#transportoption)_ | Transport describes the transport technology for pod-to-pod traffic.<br />Allowed values are "NoOverlay" and "EVPN".<br />- "NoOverlay": The network operates in no-overlay mode.<br />- "EVPN": The network uses EVPN transport.<br />When omitted, the network uses the default OVN overlay transport (e.g. Geneve, VXLAN) as configured by ovn-encap-type. |  | Enum: [NoOverlay EVPN] <br /> |
 | `noOverlay` _[NoOverlayConfig](#nooverlayconfig)_ | NoOverlay contains configuration for no-overlay mode.<br />This is only allowed when Transport is "NoOverlay". |  |  |
 | `evpn` _[EVPNConfig](#evpnconfig)_ | EVPN contains configuration for EVPN mode.<br />This is only allowed when Transport is "EVPN". |  |  |
 
@@ -478,7 +478,6 @@ _Appears in:_
 | Field | Description |
 | --- | --- |
 | `NoOverlay` |  |
-| `Geneve` |  |
 | `EVPN` |  |
 
 

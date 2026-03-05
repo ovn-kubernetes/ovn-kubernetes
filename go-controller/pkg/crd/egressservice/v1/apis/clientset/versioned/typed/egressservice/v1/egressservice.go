@@ -20,9 +20,9 @@ package v1
 import (
 	context "context"
 
-	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
-	applyconfigurationegressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/applyconfiguration/egressservice/v1"
-	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/scheme"
+	egressservicev1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	applyconfigurationegressservicev1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/applyconfiguration/egressservice/v1"
+	scheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"

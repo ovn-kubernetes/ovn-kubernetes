@@ -17,14 +17,14 @@ import (
 	"github.com/onsi/ginkgo/v2/dsl/table"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -807,14 +807,6 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		// configure and add additional network to worker containers for EIP multi NIC feature
 		secondaryProviderNetwork, err := providerCtx.CreateNetwork(secondaryNetworkName, secondarySubnet)
 		framework.ExpectNoError(err, "creation of network %q with subnet %s must succeed", secondaryNetworkName, secondarySubnet)
-		// this is only required for KinD infra provider
-		if isIPv6TestRun && infraprovider.Get().Name() == "kind" {
-			// HACK: ensure bridges don't talk to each other. For IPv6, docker support for isolated networks is experimental.
-			// Remove when it is no longer experimental. See func description for full details.
-			if err := isolateKinDIPv6Networks(primaryProviderNetwork.Name(), secondaryProviderNetwork.Name()); err != nil {
-				framework.Failf("failed to isolate IPv6 networks: %v", err)
-			}
-		}
 		nodes, err = f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 		framework.ExpectNoError(err, "must list all Nodes")
 		for _, node := range nodes.Items {
@@ -869,6 +861,15 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 	})
 
 	ginkgo.AfterEach(func() {
+		// ensure all nodes are ready and reachable before any other cleanup;
+		// tests may have left nodes NotReady or unreachable intentionally
+		for _, node := range []string{egress1Node.name, egress2Node.name} {
+			setNodeReady(providerCtx, node, true)
+			setNodeReachable(node, true)
+			waitForNoTaint(node, "node.kubernetes.io/unreachable")
+			waitForNoTaint(node, "node.kubernetes.io/not-ready")
+		}
+
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 3 {
@@ -881,14 +882,6 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName2, "--ignore-not-found=true")
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", egress1Node.name, "k8s.ovn.org/egress-assignable-")
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", egress2Node.name, "k8s.ovn.org/egress-assignable-")
-
-		// ensure all nodes are ready and reachable
-		for _, node := range []string{egress1Node.name, egress2Node.name} {
-			setNodeReady(providerCtx, node, true)
-			setNodeReachable(node, true)
-			waitForNoTaint(node, "node.kubernetes.io/unreachable")
-			waitForNoTaint(node, "node.kubernetes.io/not-ready")
-		}
 	})
 	// Validate the egress IP by creating a httpd container on the kind networking
 	// (effectively seen as "outside" the cluster) and curl it from a pod in the cluster

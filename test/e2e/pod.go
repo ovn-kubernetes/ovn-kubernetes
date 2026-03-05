@@ -12,11 +12,11 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

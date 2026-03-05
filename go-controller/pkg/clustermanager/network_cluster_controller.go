@@ -20,21 +20,21 @@ import (
 	k8snodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
-	annotationalloc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/pod"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
-	objretry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/mac"
+	annotationalloc "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/node"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/pod"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	objretry "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type NetworkStatusReporter func(networkName string, fieldManager string, condition *metav1.Condition, events ...*util.EventDetails) error
@@ -362,7 +362,7 @@ func (ncc *networkClusterController) init() error {
 // When at least one node reports an error, condition will be set to false and an event with node-specific error will be
 // generated.
 // Call this function after every node event handling, set handlerErr to nil to report no error.
-// There are potential optimization to when an error should be reported, see https://github.com/ovn-org/ovn-kubernetes/pull/4647#discussion_r1763352619.
+// There are potential optimization to when an error should be reported, see https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4647#discussion_r1763352619.
 func (ncc *networkClusterController) updateNetworkStatus(nodeName string, handlerErr error) error {
 	if ncc.statusReporter == nil {
 		return nil

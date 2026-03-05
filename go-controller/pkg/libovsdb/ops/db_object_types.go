@@ -1,6 +1,6 @@
 package ops
 
-import "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+import "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 
 const (
 	addressSet dbObjType = iota
@@ -166,6 +166,13 @@ var AddressSetAdvertisedNetwork = newObjectIDsType(addressSet, AdvertisedNetwork
 	IPFamilyKey,
 })
 
+var AddressSetClusterNetworkConnect = newObjectIDsType(addressSet, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// IP family: v4 or v6
+	IPFamilyKey,
+})
+
 var ACLAdvertisedNetwork = newObjectIDsType(acl, AdvertisedNetworkOwnerType, []ExternalIDKey{
 	// ACL name
 	ObjectNameKey,
@@ -290,6 +297,13 @@ var ACLUDN = newObjectIDsType(acl, UDNIsolationOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// egress or ingress
 	PolicyDirectionKey,
+})
+
+var ACLClusterNetworkConnect = newObjectIDsType(acl, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// type of ACL: allow-service, drop-pod, or allow-same-network-{networkID}
+	TypeKey,
 })
 
 var VirtualMachineDHCPOptions = newObjectIDsType(dhcpOptions, VirtualMachineOwnerType, []ExternalIDKey{

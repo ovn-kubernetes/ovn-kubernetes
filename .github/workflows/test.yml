@@ -289,8 +289,8 @@ jobs:
         go install github.com/modocache/gover@latest
         PATH=$PATH:$(go env GOPATH)/bin
 
-        mkdir -p $(go env GOPATH)/src/github.com/ovn-org
-        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-org/ovn-kubernetes
+        mkdir -p $(go env GOPATH)/src/github.com/ovn-kubernetes
+        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-kubernetes/ovn-kubernetes
 
         gover
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
@@ -505,6 +505,7 @@ jobs:
           - {"target": "bgp-no-overlay-helm", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
           - {"target": "bgp-no-overlay",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}          
           - {"target": "bgp-loose-isolation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
+          - {"target": "evpn", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
           - {"target": "traffic-flow-test-only","ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
           - {"target": "serial", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
@@ -535,7 +536,7 @@ jobs:
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
-      ENABLE_EVPN: "${{ matrix.routeadvertisements != '' }}"
+      ENABLE_EVPN: "${{ matrix.target == 'evpn' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
       ENABLE_NETWORK_CONNECT: "${{ startsWith(matrix.target, 'network-segmentation') }}"
       ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation') }}"
@@ -688,7 +689,7 @@ jobs:
       # set 3 hours for control-plane tests as these might take a while
       # give 10m extra to give ginkgo chance to timeout before github so that we
       # get its output
-      timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
+      timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'evpn' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
       run: |
         # used by e2e diagnostics package
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
@@ -713,6 +714,8 @@ jobs:
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
+        elif [ "${{ matrix.target }}" == "evpn" ]; then
+          make -C test control-plane WHAT="EVPN"
         elif [[ "${{ matrix.target }}" == bgp* ]]; then
           make -C test control-plane
         elif [ "${{ matrix.target }}" == "serial" ]; then

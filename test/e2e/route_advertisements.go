@@ -16,18 +16,18 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
+	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -750,6 +750,19 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, nodeIPv6LLA)
 					}, 30*time.Second).Should(gomega.BeTrue())
+				}
+			}
+
+			ginkgo.By("ensure CUDN pod subnet is advertised to the external FRR router")
+			for _, serverContainerIP := range serverContainerIPs {
+				for _, node := range nodes.Items {
+					if cudnTemplate.Spec.Network.Layer3 != nil {
+						checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cUDN.Name)
+					} else if cudnTemplate.Spec.Network.Layer2 != nil {
+						checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnTemplate.Spec.Network.Layer2.Subnets)
+					} else {
+						ginkgo.Fail("unexpected topology: neither Layer3 nor Layer2 network spec is set")
+					}
 				}
 			}
 
@@ -2759,6 +2772,7 @@ const (
 	cudn                  networkType = "CUDN"
 	cudnAdvertised        networkType = "CUDN_ADVERTISED"
 	cudnAdvertisedVRFLite networkType = "CUDN_ADVERTISED_VRFLITE"
+	cudnAdvertisedEVPN    networkType = "CUDN_ADVERTISED_EVPN"
 )
 
 // createNamespaceWithPrimaryNetworkOfType helper function configures a
@@ -2780,7 +2794,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 	case cudnAdvertised:
 		networkLabels = map[string]string{"advertise": name}
 		frrConfigurationLabels = map[string]string{"name": "receive-all"}
-	case cudnAdvertisedVRFLite:
+	case cudnAdvertisedVRFLite, cudnAdvertisedEVPN:
 		targetVRF = name
 		networkLabels = map[string]string{"advertise": name}
 		frrConfigurationLabels = map[string]string{"network": name}

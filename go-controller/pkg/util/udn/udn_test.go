@@ -1,7 +1,7 @@
 package udn
 
 import (
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

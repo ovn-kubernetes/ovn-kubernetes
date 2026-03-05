@@ -12,6 +12,7 @@ import (
 // tests that are unable to execute in certain environments. Such as those without
 // root or cap_net_admin privileges
 func OnSupportedPlatformsIt(description string, f interface{}) {
+	ginkgo.GinkgoHelper()
 	if !NoRoot() {
 		ginkgo.It(description, f)
 	} else {

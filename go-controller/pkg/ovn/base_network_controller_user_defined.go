@@ -21,19 +21,19 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 func (bsnc *BaseUserDefinedNetworkController) getPortInfoForUserDefinedNetwork(pod *corev1.Pod) map[string]*lpInfo {
@@ -352,7 +352,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	// we also need to create a remote logical port for remote pods on layer2
 	// topologies with interconnect
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-	requiresLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
+	requiresLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	if requiresLogicalPort {
 		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadKey, network, lspEnabled)
@@ -379,13 +379,13 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		bsnc.logicalPortCache.remove(pod, nadKey)
 	}
 
-	if shouldHandleLiveMigration &&
-		kubevirtLiveMigrationStatus.IsTargetDomainReady() &&
-		// At localnet there is no source pod remote LSP so it should be skipped
-		(bsnc.TopologyType() != types.LocalnetTopology || bsnc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod)) {
-		ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)
-		if err != nil {
-			return fmt.Errorf("failed to create LSP ops for source pod during Live-migration status: %w", err)
+	if shouldHandleLiveMigration && kubevirtLiveMigrationStatus.IsTargetDomainReady() {
+		hasSourcePodLogicalPort := bsnc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod) || bsnc.isLayer2WithInterconnectTransport()
+		if hasSourcePodLogicalPort {
+			ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)
+			if err != nil {
+				return fmt.Errorf("failed to create LSP ops for source pod during Live-migration status: %w", err)
+			}
 		}
 	}
 
@@ -458,7 +458,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 	// there is only a logical port for local pods or remote pods of layer2
 	// networks on interconnect, so only delete in these cases
 	isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-	hasLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
+	hasLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	// for a specific NAD belongs to this network, Pod's logical port might already be created half-way
 	// without its lpInfo cache being created; need to deleted resources created for that NAD as well.
@@ -662,7 +662,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		}
 
 		isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
-		hasRemotePort := !isLocalPod || bsnc.isLayer2Interconnect()
+		hasRemotePort := !isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 		for nadKey := range networkMap {
 			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)

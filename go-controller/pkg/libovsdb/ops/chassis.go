@@ -10,8 +10,8 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/sbdb"
 )
 
 // ListChassis looks up all chassis from the cache

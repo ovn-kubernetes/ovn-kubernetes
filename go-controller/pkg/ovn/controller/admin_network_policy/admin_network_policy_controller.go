@@ -23,11 +23,11 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (

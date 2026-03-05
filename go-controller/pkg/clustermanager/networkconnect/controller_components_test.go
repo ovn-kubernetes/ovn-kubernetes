@@ -20,19 +20,19 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
-	networkconnectfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // NOTE: This file tests the elements of the networkconnect controller
@@ -769,7 +769,9 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 				for _, n := range nads {
 					mutableNetInfo.AddNADs(fmt.Sprintf("%s/%s", n.Namespace, n.Name))
 				}
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
+				fakeNM.Unlock()
 			}
 			for _, nad := range tt.nads {
 				nadKey := fmt.Sprintf("%s/%s", nad.Namespace, nad.Name)
@@ -1259,11 +1261,11 @@ func TestNADNeedsUpdate(t *testing.T) {
 	udnOwner := makeUDNOwnerRef("test-udn")
 
 	makePrimaryNADConfig := func(name string) string {
-		return fmt.Sprintf(`{"cniVersion": "0.4.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "role": "primary", "netAttachDefName": "test/%s"}`, name, name)
+		return fmt.Sprintf(`{"cniVersion": "1.1.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "role": "primary", "netAttachDefName": "test/%s"}`, name, name)
 	}
 
 	makeSecondaryNADConfig := func(name string) string {
-		return fmt.Sprintf(`{"cniVersion": "0.4.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "netAttachDefName": "test/%s"}`, name, name)
+		return fmt.Sprintf(`{"cniVersion": "1.1.0", "name": "%s", "type": "ovn-k8s-cni-overlay", "topology": "layer3", "netAttachDefName": "test/%s"}`, name, name)
 	}
 
 	tests := []struct {
@@ -1789,7 +1791,9 @@ func TestMustProcessCNCForNAD(t *testing.T) {
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.SetNADs(tt.nad.Namespace + "/" + tt.nad.Name)
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[tt.nad.Namespace] = mutableNetInfo
+				fakeNM.Unlock()
 			}
 			if tt.nad != nil {
 				nadKey := fmt.Sprintf("%s/%s", tt.nad.Namespace, tt.nad.Name)
@@ -2499,7 +2503,9 @@ func TestController_reconcileNamespace(t *testing.T) {
 				for _, n := range nads {
 					mutableNetInfo.AddNADs(fmt.Sprintf("%s/%s", n.Namespace, n.Name))
 				}
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
+				fakeNM.Unlock()
 			}
 			for _, nad := range tt.nads {
 				nadKey := fmt.Sprintf("%s/%s", nad.Namespace, nad.Name)

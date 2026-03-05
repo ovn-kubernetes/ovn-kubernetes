@@ -4,7 +4,7 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	"k8s.io/utils/ptr"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // USED ONLY FOR TESTING
@@ -65,6 +65,12 @@ func MakeUnassignedEndpoint(addresses ...string) discovery.Endpoint {
 }
 
 func MirrorEndpointSlice(defaultEndpointSlice *discovery.EndpointSlice, network string, keepEndpoints bool) *discovery.EndpointSlice {
+	return MirrorEndpointSliceWithIPTransform(defaultEndpointSlice, network, keepEndpoints, nil)
+}
+
+// MirrorEndpointSliceWithIPTransform creates a mirrored endpoint slice for UDN with optional IP transformation.
+// The ipTransform function, if provided, transforms each endpoint IP to the corresponding UDN IP.
+func MirrorEndpointSliceWithIPTransform(defaultEndpointSlice *discovery.EndpointSlice, network string, keepEndpoints bool, ipTransform func(string) string) *discovery.EndpointSlice {
 	mirror := defaultEndpointSlice.DeepCopy()
 	mirror.Name = defaultEndpointSlice.Name + "-mirrored"
 	mirror.Labels[discovery.LabelManagedBy] = types.EndpointSliceMirrorControllerName
@@ -77,6 +83,13 @@ func MirrorEndpointSlice(defaultEndpointSlice *discovery.EndpointSlice, network 
 
 	if !keepEndpoints {
 		mirror.Endpoints = nil
+	} else if ipTransform != nil {
+		// Transform endpoint IPs to UDN-specific IPs
+		for i := range mirror.Endpoints {
+			for j := range mirror.Endpoints[i].Addresses {
+				mirror.Endpoints[i].Addresses[j] = ipTransform(mirror.Endpoints[i].Addresses[j])
+			}
+		}
 	}
 
 	return mirror

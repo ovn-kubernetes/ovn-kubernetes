@@ -1,7 +1,7 @@
 package kubevirt
 
 import (
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 const (

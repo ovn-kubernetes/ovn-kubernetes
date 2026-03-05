@@ -13,8 +13,8 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/model"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/observability-lib/ovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/observability-lib/ovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
 const OVSDBTimeout = 10 * time.Second

@@ -18,7 +18,7 @@ limitations under the License.
 package v1
 
 import (
-	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	adminpolicybasedroutev1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
 	listers "k8s.io/client-go/listers"
 	cache "k8s.io/client-go/tools/cache"

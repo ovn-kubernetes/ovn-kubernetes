@@ -9,7 +9,7 @@ import (
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 
 	v1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
@@ -197,6 +197,123 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				},
 				*podConfig(
 					"client-pod",
+				),
+				*podConfig(
+					"server-pod",
+					withCommand(func() []string {
+						return httpServerContainerCmd(port)
+					}),
+				),
+			),
+		)
+
+		ginkgo.DescribeTable(
+			"ICMP should bypass default deny policy for UDNs when enabled",
+			func(
+				netConfigParams networkAttachmentConfigParams,
+				clientPodConfig podConfiguration,
+				serverPodConfig podConfiguration,
+			) {
+				if !isICMPNetworkPolicyBypassEnabled() {
+					ginkgo.Skip("ICMP Network Policy bypass is not enabled, skipping ICMP bypass network policy tests")
+				}
+
+				ginkgo.By("Creating the attachment configuration")
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = f.Namespace.Name
+				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
+				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+					context.Background(),
+					generateNAD(netConfig, f.ClientSet),
+					metav1.CreateOptions{},
+				)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("creating client/server pods")
+				serverPodConfig.namespace = f.Namespace.Name
+				clientPodConfig.namespace = f.Namespace.Name
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+				framework.ExpectNoError(err, "")
+				if len(nodes.Items) < 2 {
+					ginkgo.Skip("requires at least 2 Nodes")
+				}
+				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
+				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
+				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
+
+				ginkgo.By("creating a \"default deny\" network policy")
+				_, err = makeDenyAllPolicy(f, f.Namespace.Name, "deny-all")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				var serverIPs []string
+				for i, cidr := range strings.Split(netConfig.cidr, ",") {
+					if cidr == "" {
+						continue
+					}
+					serverIP, err := getPodAnnotationIPsForAttachmentByIndex(
+						cs,
+						f.Namespace.Name,
+						serverPodConfig.name,
+						namespacedName(f.Namespace.Name, netConfig.name),
+						i,
+					)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					serverIPs = append(serverIPs, serverIP)
+				}
+				gomega.Expect(serverIPs).NotTo(gomega.BeEmpty())
+
+				ginkgo.By("asserting the *client* pod can ping the server pod despite the default deny policy")
+				for _, serverIP := range serverIPs {
+					gomega.Eventually(func() error {
+						return pingServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP)
+					}, 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+				}
+
+				ginkgo.By("asserting the *client* pod can not reach the server pod HTTP endpoint due to default deny policy")
+				for _, serverIP := range serverIPs {
+					gomega.Eventually(func() error {
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+					}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+					gomega.Consistently(func() error {
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+					}, 15*time.Second, 5*time.Second).ShouldNot(gomega.Succeed())
+				}
+			},
+			ginkgo.Entry(
+				"in L2 dualstack primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+				*podConfig(
+					"client-pod",
+					withCommand(func() []string {
+						return []string{"/agnhost", "pause"}
+					}),
+				),
+				*podConfig(
+					"server-pod",
+					withCommand(func() []string {
+						return httpServerContainerCmd(port)
+					}),
+				),
+			),
+			ginkgo.Entry(
+				"in L3 dualstack primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+				*podConfig(
+					"client-pod",
+					withCommand(func() []string {
+						return []string{"/agnhost", "pause"}
+					}),
 				),
 				*podConfig(
 					"server-pod",

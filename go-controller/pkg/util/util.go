@@ -29,8 +29,8 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // OvnConflictBackoff is the backoff used for pod annotation update conflict
@@ -155,6 +155,12 @@ func GetExtSwitchFromNode(node string) string {
 // bridge.
 func GetExtPortName(bridgeID, nodeName string) string {
 	return bridgeID + "_" + nodeName
+}
+
+// GetMACVRFPortName returns the logical switch port name used for a MACVRF
+// attachment.
+func GetMACVRFPortName(switchName string) string {
+	return types.MACVRFPortPrefix + switchName
 }
 
 // GetPatchPortName determines the name of the patch port on the external

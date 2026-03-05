@@ -91,6 +91,7 @@ rules:
           - clusteruserdefinednetworks/finalizers
           - routeadvertisements/status
           - clusternetworkconnects # Unlike core kubernetes objects, for CRDs there is strict enforcement of status subresource permissions. Since CM has to annotate CNC we need to provide full object patch permissions.
+          - clusternetworkconnects/status
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:
@@ -98,7 +99,7 @@ rules:
       verbs: ["create", "patch", "update"]
     - apiGroups: [""]
       resources:
-          - pods/status # used in multi-homing: https://github.com/ovn-org/ovn-kubernetes/blob/a9beb6fd4f8ea32b264999a8ebec25cd6bdc2281/go-controller/pkg/util/pod.go#L49
+          - pods/status # used in multi-homing: https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a9beb6fd4f8ea32b264999a8ebec25cd6bdc2281/go-controller/pkg/util/pod.go#L49
           - nodes/status
           - services/status
       verbs: [ "patch", "update" ]

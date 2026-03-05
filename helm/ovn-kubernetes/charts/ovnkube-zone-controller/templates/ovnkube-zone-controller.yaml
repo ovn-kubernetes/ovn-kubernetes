@@ -388,6 +388,8 @@ spec:
           value: "local"
         - name: OVN_ENABLE_DNSNAMERESOLVER
           value: {{ hasKey .Values.global "enableDNSNameResolver" | ternary .Values.global.enableDNSNameResolver false | quote }}
+        - name: OVN_ALLOW_ICMP_NETPOL
+          value: {{ hasKey .Values.global "allowICMPNetworkPolicy" | ternary .Values.global.allowICMPNetworkPolicy false | quote }}
         - name: OVN_OBSERV_ENABLE
           value: {{ hasKey .Values.global "enableObservability" | ternary .Values.global.enableObservability false | quote }}
       # end of container

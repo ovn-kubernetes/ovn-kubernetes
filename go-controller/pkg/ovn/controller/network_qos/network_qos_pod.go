@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
-	nqosv1alpha1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	nqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 )
 
 func (c *Controller) processNextNQOSPodWorkItem(wg *sync.WaitGroup) bool {

@@ -28,29 +28,28 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	egressfirewallapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/applyconfiguration/egressfirewall/v1"
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/informers/externalversions/egressfirewall/v1"
-	v2 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
-	dnsnameresolver "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/batching"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	egressfirewallapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	egressfirewallapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/applyconfiguration/egressfirewall/v1"
+	v1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/informers/externalversions/egressfirewall/v1"
+	v2 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
+	dnsnameresolver "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/batching"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
-	aclDeleteBatchSize = 1000
 	// transaction time to delete 80K ACLs from 2 port groups is ~4.5 sec.
 	// transaction time to delete 80K acls from one port group and add them to another
 	// is ~3 sec
@@ -254,11 +253,6 @@ func (oc *EFController) initialSync() error {
 	egressFirewalls, err := oc.efLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("%s: failed to list egress firewalls: %w", oc.name, err)
-	}
-
-	err = oc.deleteStaleACLs()
-	if err != nil {
-		return err
 	}
 
 	existingEFNamespaces := map[string]bool{}
@@ -854,49 +848,6 @@ func (oc *EFController) addEgressFirewallRules(ef *egressFirewall, pgName string
 			ef.namespace, ef.name, err)
 	}
 
-	return nil
-}
-
-// deleteStaleACLs cleans up 2 previous implementations:
-//   - Cleanup the old implementation (using LRP) in local GW mode
-//     For this it just deletes all LRP setup done for egress firewall
-//   - Cleanup the old implementation (using ACLs on the join and node switches)
-//     For this it deletes all the ACLs on the join and node switches, they will be created from scratch later.
-func (oc *EFController) deleteStaleACLs() error {
-	// In any gateway mode, make sure to delete all LRPs on ovn_cluster_router.
-	p := func(item *nbdb.LogicalRouterPolicy) bool {
-		return item.Priority <= types.EgressFirewallStartPriority && item.Priority >= types.MinimumReservedEgressFirewallPriority
-	}
-	err := libovsdbops.DeleteLogicalRouterPoliciesWithPredicate(oc.nbClient, types.OVNClusterRouter, p)
-	if err != nil {
-		return fmt.Errorf("error deleting egress firewall policies on router %s: %v", types.OVNClusterRouter, err)
-	}
-
-	// delete acls from all switches, they reside on the port group now
-	// Lookup all ACLs used for egress Firewalls
-	aclPred := func(item *nbdb.ACL) bool {
-		return item.Priority >= types.MinimumReservedEgressFirewallPriority && item.Priority <= types.EgressFirewallStartPriority
-	}
-	egressFirewallACLs, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, aclPred)
-	if err != nil {
-		return fmt.Errorf("unable to list egress firewall ACLs, cannot cleanup old stale data, err: %v", err)
-	}
-	if len(egressFirewallACLs) != 0 {
-		err = batching.Batch[*nbdb.ACL](aclDeleteBatchSize, egressFirewallACLs, func(batchACLs []*nbdb.ACL) error {
-			// optimize the predicate to exclude switches that don't reference deleting acls.
-			aclsToDelete := sets.NewString()
-			for _, acl := range batchACLs {
-				aclsToDelete.Insert(acl.UUID)
-			}
-			swWithACLsPred := func(sw *nbdb.LogicalSwitch) bool {
-				return aclsToDelete.HasAny(sw.ACLs...)
-			}
-			return libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(oc.nbClient, swWithACLsPred, batchACLs...)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to remove egress firewall acls from node logical switches: %v", err)
-		}
-	}
 	return nil
 }
 

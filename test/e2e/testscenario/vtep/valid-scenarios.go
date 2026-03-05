@@ -1,10 +1,11 @@
 package vtep
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
+import "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/testscenario"
 
 var Valid = []testscenario.ValidateCRScenario{
 	{
 		Description: "Valid VTEP with single IPv4 CIDR and default mode",
+		Name:        "vtep-ipv4-default",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
@@ -17,6 +18,7 @@ spec:
 	},
 	{
 		Description: "Valid VTEP with single IPv4 CIDR and Managed mode",
+		Name:        "vtep-ipv4-managed",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
@@ -30,6 +32,7 @@ spec:
 	},
 	{
 		Description: "Valid VTEP with single IPv4 CIDR and Unmanaged mode",
+		Name:        "vtep-ipv4-unmanaged",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
@@ -43,6 +46,7 @@ spec:
 	},
 	{
 		Description: "Valid VTEP with single IPv6 CIDR",
+		Name:        "vtep-ipv6",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
@@ -55,6 +59,7 @@ spec:
 	},
 	{
 		Description: "Valid VTEP with dual-stack CIDRs",
+		Name:        "vtep-dualstack",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
@@ -68,6 +73,7 @@ spec:
 	},
 	{
 		Description: "Valid VTEP with dual-stack CIDRs (IPv6 first)",
+		Name:        "vtep-dualstack-ipv6-first",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: VTEP

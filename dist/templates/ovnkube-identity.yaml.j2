@@ -120,6 +120,9 @@ webhooks:
       caBundle: {{ webhook_ca_bundle }}
     admissionReviewVersions: ['v1']
     sideEffects: None
+    matchConditions:
+      - name: skip-ovnkube-identity-self-pods
+        expression: '!(request.namespace == "ovn-kubernetes" && has(object.metadata.labels) && "name" in object.metadata.labels && object.metadata.labels["name"] == "ovnkube-identity")'
     rules:
       - operations: [ "UPDATE" ]
         apiGroups: ["*"]

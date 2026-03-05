@@ -14,25 +14,25 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
-	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/topology"
-	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	svccontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
+	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/topology"
+	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 type Layer3UserDefinedNetworkControllerEventHandler struct {
@@ -596,6 +596,21 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 		}
 	}
 
+	// Delete all load balancers owned by this network to prevent orphaned LBs.
+	// When network is deleted, all switches and routers are also deleted, but load balancers are not.
+	// Load_Balancer is a root table in OVSDB, so rows are never auto-deleted
+	// when the switch or LB group referencing them is removed.
+	lbs, err := libovsdbops.FindLoadBalancersWithPredicate(oc.nbClient, func(lb *nbdb.LoadBalancer) bool {
+		return lb.ExternalIDs[types.NetworkExternalID] == netName
+	})
+	if err != nil {
+		klog.Errorf("Failed to find load balancers for network %q: %v", netName, err)
+	} else if len(lbs) > 0 {
+		if err := libovsdbops.DeleteLoadBalancers(oc.nbClient, lbs); err != nil {
+			klog.Errorf("Failed to delete load balancers on network %q: %v", netName, err)
+		}
+	}
+
 	// remove load balancer groups
 	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
 		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
@@ -848,7 +863,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		}
 	}
 
-	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
+	if oc.hasInterconnectTransport() && nSyncs.syncZoneIC {
 		if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
 			errs = append(errs, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
@@ -891,7 +906,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 	}
 
 	var err error
-	if syncZoneIc && config.OVNKubernetesFeature.EnableInterconnect {
+	if oc.hasInterconnectTransport() && syncZoneIc {
 		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
 			err = fmt.Errorf("failed to add the remote zone node [%s] to the zone interconnect handler, err : %w", node.Name, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
@@ -993,7 +1008,7 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 		oc.nodeClusterRouterPortFailed.Delete(node.Name)
 		oc.gatewaysFailed.Delete(node.Name)
 	} else {
-		if config.OVNKubernetesFeature.EnableInterconnect {
+		if oc.hasInterconnectTransport() {
 			if err := oc.zoneICHandler.DeleteNode(node); err != nil {
 				return err
 			}
@@ -1070,7 +1085,7 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 		}
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
+	if oc.hasInterconnectTransport() {
 		if err := oc.zoneICHandler.CleanupStaleNodes(activeNodes); err != nil {
 			return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
 		}

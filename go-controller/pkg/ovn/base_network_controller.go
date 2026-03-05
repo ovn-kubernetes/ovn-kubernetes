@@ -25,28 +25,28 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics/recorders"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	nqoscontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
-	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
-	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
-	ovnretry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	nqoscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
+	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
+	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
+	ovnretry "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // CommonNetworkControllerInfo structure is place holder for all fields shared among controllers.
@@ -1052,8 +1052,26 @@ func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error
 	return role, nil
 }
 
-func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
-	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer2Topology
+// hasInterconnectTransport returns whether the network East/West traffic goes
+// through the interconnect overlay or not. This is not the case for networks
+// that have no overlay or that use EVPN, and this method would typically be
+// used to inhibit the configuration of interconnect resources in those cases.
+func (bnc *BaseNetworkController) hasInterconnectTransport() bool {
+	if !config.OVNKubernetesFeature.EnableInterconnect {
+		return false
+	}
+	switch bnc.Transport() {
+	case types.NetworkTransportEVPN, types.NetworkTransportNoOverlay:
+		return false
+	default:
+		return true
+	}
+}
+
+// isLayer2WithInterconnectTransport returns whether this is Layer 2 network
+// that has East/West interconnect traffic. See hasInterconnectTransport.
+func (bnc *BaseNetworkController) isLayer2WithInterconnectTransport() bool {
+	return bnc.hasInterconnectTransport() && bnc.TopologyType() == types.Layer2Topology
 }
 
 // HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.
