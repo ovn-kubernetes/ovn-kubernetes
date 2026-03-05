@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -188,8 +189,13 @@ func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.Ren
 	}
 
 	networkName := obj.GetName()
-	var macVRFVID, ipVRFVID int
 
+	// ptr.Deref yields zero-value VRFConfig for nil VRFs, reserveVNIs skips VNI 0
+	if err := c.reserveVNIs(networkName, evpnCfg.VTEP, ptr.Deref(evpnCfg.MACVRF, userdefinednetworkv1.VRFConfig{}).VNI, ptr.Deref(evpnCfg.IPVRF, userdefinednetworkv1.VRFConfig{}).VNI); err != nil {
+		return nil, fmt.Errorf("failed to reserve VNIs: %w", err)
+	}
+
+	var macVRFVID, ipVRFVID int
 	// Allocate VID for MAC-VRF if present
 	if evpnCfg.MACVRF != nil {
 		vid, err := c.vidAllocator.AllocateID(macVRFKey(networkName))
