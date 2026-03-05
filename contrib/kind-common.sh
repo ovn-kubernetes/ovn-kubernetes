@@ -368,6 +368,40 @@ install_ingress() {
 }
 
 METALLB_DIR="/tmp/metallb"
+
+align_metallb_pool_with_ip_family() {
+  # In single-stack jobs, dev-env can provide dual-stack addresses, which
+  # causes withdraw/announce churn and flaky connectivity checks.
+  if [ "$PLATFORM_IPV4_SUPPORT" == "$PLATFORM_IPV6_SUPPORT" ]; then
+    return
+  fi
+
+  local pool_json filtered_addresses_json matched_count
+  pool_json=$(kubectl -n metallb-system get ipaddresspool dev-env-bgp -o json 2>/dev/null || true)
+  if [ -z "${pool_json}" ]; then
+    echo "Failed to read dev-env-bgp pool"
+    kubectl -n metallb-system get ipaddresspool dev-env-bgp -o yaml || true
+    exit 1
+  fi
+
+  filtered_addresses_json=$(echo "${pool_json}" | jq -c \
+    --arg ipv4 "${PLATFORM_IPV4_SUPPORT}" \
+    --arg ipv6 "${PLATFORM_IPV6_SUPPORT}" '
+    .spec.addresses
+    | if $ipv6 == "true" and $ipv4 != "true" then map(select(test(":")))
+      elif $ipv4 == "true" and $ipv6 != "true" then map(select(test(":") | not))
+      else .
+      end
+  ')
+  matched_count=$(echo "${filtered_addresses_json}" | jq 'length')
+  if [ "${matched_count}" -eq 0 ]; then
+    echo "Failed to derive family-matching addresses from dev-env-bgp pool: $(echo "${pool_json}" | jq -c '.spec.addresses')"
+    exit 1
+  fi
+  kubectl -n metallb-system patch ipaddresspool dev-env-bgp --type='merge' \
+    -p "{\"spec\":{\"addresses\":${filtered_addresses_json}}}"
+}
+
 install_metallb() {
   local metallb_version=v0.15.3
   mkdir -p /tmp/metallb
@@ -400,6 +434,8 @@ install_metallb() {
   fi
   # Override GOBIN until https://github.com/metallb/metallb/issues/2218 is fixed.
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
+
+  align_metallb_pool_with_ip_family
 
   $OCI_BIN network rm -f clientnet
   $OCI_BIN network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge clientnet
