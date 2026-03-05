@@ -1151,13 +1151,12 @@ var _ = Describe("Watch Factory Operations", func() {
 		for i := 0; i < 2; i++ {
 			for _, ot := range testPods {
 				pods = append(pods, ot.pod)
-				podWatch.Add(ot.pod)
-				ot.mu.Lock()
-				ot.pod.Spec.NodeName = nodeName
-				ot.mu.Unlock()
-				podWatch.Modify(ot.pod)
+				podWatch.Add(ot.pod.DeepCopy())
+				updatedPod := ot.pod.DeepCopy()
+				updatedPod.Spec.NodeName = nodeName
+				podWatch.Modify(updatedPod)
 				pods = pods[:0]
-				podWatch.Delete(ot.pod)
+				podWatch.Delete(ot.pod.DeepCopy())
 			}
 		}
 

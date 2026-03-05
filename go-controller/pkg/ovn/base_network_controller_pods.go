@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
@@ -1235,4 +1236,72 @@ func (bnc *BaseNetworkController) wasPodReleasedBeforeStartup(uid, nadKey string
 
 func (bnc *BaseNetworkController) isNonHostSubnetSwitch(switchName string) bool {
 	return bnc.doesNetworkRequireIPAM() && bnc.lsManager.IsNonHostSubnetSwitch(switchName)
+}
+
+func (bnc *BaseNetworkController) setPodLogicalSwitchPortAddressesAndEnabledField(
+	pod *corev1.Pod, nadKey string, mac string, ips []string, enabled bool, ops []ovsdb.Operation,
+) ([]ovsdb.Operation, *nbdb.LogicalSwitchPort, error) {
+	lsp := &nbdb.LogicalSwitchPort{Name: bnc.GetLogicalPortName(pod, nadKey)}
+	lsp.Enabled = ptr.To(enabled)
+	customFields := []libovsdbops.ModelUpdateField{
+		libovsdbops.LogicalSwitchPortEnabled,
+		libovsdbops.LogicalSwitchPortAddresses,
+	}
+	if !enabled {
+		lsp.Addresses = nil
+	} else {
+		if len(mac) == 0 || len(ips) == 0 {
+			return nil, nil, fmt.Errorf("failed to configure addresses for lsp, missing mac and ips for pod %s", pod.Name)
+		}
+
+		// Remove length
+		for i, ip := range ips {
+			ips[i] = strings.Split(ip, "/")[0]
+		}
+
+		lsp.Addresses = []string{
+			strings.Join(append([]string{mac}, ips...), " "),
+		}
+	}
+	switchName, err := bnc.getExpectedSwitchName(pod)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch switch name for pod %s: %w", pod.Name, err)
+	}
+	ops, err = libovsdbops.UpdateLogicalSwitchPortsOnSwitchWithCustomFieldsOps(bnc.nbClient, ops, &nbdb.LogicalSwitch{Name: switchName}, customFields, lsp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed updating logical switch port %+v on switch %s: %w", *lsp, switchName, err)
+	}
+	return ops, lsp, nil
+}
+
+func (bnc *BaseNetworkController) disableLiveMigrationSourceLSPOps(
+	kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus,
+	nadKey string, ops []ovsdb.Operation,
+) ([]ovsdb.Operation, error) {
+	// closing the sourcePod lsp to ensure traffic goes to the now ready targetPod.
+	ops, _, err := bnc.setPodLogicalSwitchPortAddressesAndEnabledField(kubevirtLiveMigrationStatus.SourcePod, nadKey, "", nil, false, ops)
+	return ops, err
+}
+
+func (bnc *BaseNetworkController) enableSourceLSPFailedLiveMigration(pod *corev1.Pod, nadKey string, mac string, ips []string) error {
+	kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(bnc.watchFactory, pod)
+	if err != nil {
+		return fmt.Errorf("failed to discover Live-migration status after pod termination: %w", err)
+	}
+	if kubevirtLiveMigrationStatus == nil ||
+		pod.Name != kubevirtLiveMigrationStatus.TargetPod.Name ||
+		kubevirtLiveMigrationStatus.State != kubevirt.LiveMigrationFailed {
+		return nil
+	}
+	// make sure sourcePod lsp is enabled if migration failed after DomainReady was set.
+	ops, sourcePodLsp, err := bnc.setPodLogicalSwitchPortAddressesAndEnabledField(kubevirtLiveMigrationStatus.SourcePod, nadKey, mac, ips, true, nil)
+	if err != nil {
+		return fmt.Errorf("failed to set source Pod lsp to enabled after migration failed: %w", err)
+	}
+	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(bnc.nbClient, sourcePodLsp, ops)
+	if err != nil {
+		return fmt.Errorf("failed transacting operations %+v: %w", ops, err)
+	}
+
+	return nil
 }

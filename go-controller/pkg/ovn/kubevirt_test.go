@@ -99,6 +99,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		expectedDhcpv6       []testDHCPOptions
 		expectedPolicies     []testPolicy
 		expectedStaticRoutes []testStaticRoute
+		zone                 string
 	}
 	type testNode struct {
 		nodeID                string
@@ -236,6 +237,12 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				nodeSet[t.migrationTarget.nodeName] = true
 			}
 
+			// Determine migration LSP state: when there is a migration target,
+			// addLogicalPort sets the Enabled field on the target LSP and may
+			// disable the source LSP when the target domain is ready.
+			targetDomainReady := t.migrationTarget.nodeName != "" &&
+				t.migrationTarget.extraAnnotations[kubevirtv1.MigrationTargetReadyTimestamp] != ""
+
 			nodes := []string{}
 			for node := range nodeSet {
 				nodes = append(nodes, node)
@@ -253,6 +260,23 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 							if findDHCPOptionsWithHostname(t.expectedDhcpv6, p.vmName) != nil {
 								model.Dhcpv6Options = ptr.To(dhcpv6OptionsUUID + p.vmName)
 							}
+						}
+					}
+					// Set Enabled field on migration LSPs: addLogicalPort sets Enabled
+					// on the target pod's LSP and when disabled, skips address/port-security
+					// configuration to avoid installing l2 lookup flows.
+					if t.migrationTarget.nodeName != "" && isLocalNode(t, t.migrationTarget.nodeName) {
+						targetPortName := util.GetLogicalPortName(t.migrationTarget.namespace, t.migrationTarget.podName)
+						sourcePortName := util.GetLogicalPortName(t.namespace, t.podName)
+						if model.Name == targetPortName {
+							model.Enabled = ptr.To(targetDomainReady)
+							if !targetDomainReady {
+								model.Addresses = nil
+							}
+						}
+						if model.Name == sourcePortName && targetDomainReady && isLocalNode(t, t.nodeName) {
+							model.Enabled = ptr.To(false)
+							model.Addresses = nil
 						}
 					}
 				case *nbdb.LogicalSwitch:
@@ -637,6 +661,10 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 
 			initialDB = libovsdb.TestSetup{NBData: []libovsdb.TestData{}}
 
+			if t.zone != "" {
+				initialDB.NBData = append(initialDB.NBData, &nbdb.NBGlobal{Name: t.zone})
+			}
+
 			initialOvnClusterRouter := ovnClusterRouter.DeepCopy()
 
 			for i, p := range t.policies {
@@ -892,6 +920,10 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 							expectedOVN = append(expectedOVN, nat)
 						}
 					}
+				}
+
+				if t.zone != "" {
+					expectedOVN = append(expectedOVN, &nbdb.NBGlobal{Name: t.zone})
 				}
 
 				Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedOVN), "should populate ovn")
@@ -1168,6 +1200,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			}),
 			Entry("for pre-copy live migration at local zone", testData{
 				interconnected: true,
+				zone:           node2,
 				ipv4:           true,
 				ipv6:           true,
 				remoteNodes:    []string{node1},
@@ -1222,6 +1255,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			}),
 			Entry("for pre-copy live migration between zones that do not own the original subnet", testData{
 				interconnected: true,
+				zone:           node2,
 				ipv4:           true,
 				ipv6:           true,
 				remoteNodes:    []string{node3},
@@ -1405,6 +1439,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				ipv4:           true,
 				ipv6:           true,
 				interconnected: true,
+				zone:           node1,
 				remoteNodes:    []string{node2},
 				lrpNetworks:    []string{nodeByName[node1].lrpNetworkIPv4, nodeByName[node1].lrpNetworkIPv6},
 				dnsServiceIPs:  []string{dnsServiceIPv4, dnsServiceIPv6},

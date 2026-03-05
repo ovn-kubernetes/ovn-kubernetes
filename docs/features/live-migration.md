@@ -262,6 +262,7 @@ To implement live migration ovn-kubernetes do the following:
 - Send DHCP replies advertising the allocated IP address and subnet gateway to the guest VM (via OVN-Kubernetes DHCP options configured for the logical switch ports).
 - A point to point routing is used so one node's subnet IP can be routed from different node
 - The VM's gateway IP (subnet gateway) and MAC are kept consistent across nodes using ARP proxy
+- Send GARPs and unsolicited NAs after live migration to fix neighbors tables and point to gw mac
 
 **Point to point routing:**
 
@@ -344,7 +345,7 @@ priority than the ones from the node logical switch so ARP flows are not overrid
 │ lsp stor-node1     │──┘     └───│ lsp stor-node2      │
 │ options:           │            │ options:            │
 │  arp_proxy:        │            │   arp_proxy:        │
-│   0a:58:0a:f3:00:00│            │    0a:58:0a:f3:00:00│
+│   0a:58:a9:fe:01:01│            │    0a:58:a9:fe:01:01│
 │   169.254.1.1      │            │    169.254.1.1      │
 │   10.244.0.0/16    │            │    10.244.0.0/16    │
 └────────────────────┘            └─────────────────────┘
@@ -422,6 +423,108 @@ The point to point routing cleanup (remove of static routes and policies) will b
 - VM is deleted, all the routing related to the VM is removed at all the ovn zones.
 - VM is live migrated back to the node that owns its IP, all the routing related to the VM is removed at all the ovn zones.
 - ovn-kubernetes controllers are restarted, stale routing is removed.
+
+**Advertising neighbors:**
+
+NOTE: This is currently only implemented for interconnect (IC) deployments.
+
+To improve connectivity after live migration, ovn-k broadcasts GARPs and unsolicited NAs on the
+management interface of both the node owning the subnet and the migration target node.
+
+Additionally, the gateway IP neighbor entry must also be updated on the migrated VM.
+After https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5773 the VM's IPv4
+gateway is no longer the arp_proxy link-local IP (169.254.1.1) but the actual
+subnet gateway IP (e.g., 10.244.0.1). On the subnet-owning switch the router
+port's (LRP) ARP responder has higher priority than arp_proxy, so the VM
+resolves the gateway to the node's real LRP MAC instead of the arp_proxy MAC.
+After migration to a different switch, that LRP MAC is not present and only the
+arp_proxy can answer. However, the VM still has the stale LRP MAC cached for the
+gateway, so we must also send a GARP for the gateway IP to update the VM's
+neighbor entry to the arp_proxy MAC.
+
+To understand this, first we have to check how the neighbor tables look before live migration for a VM and pods running on the
+same node.
+
+Let's first look at the logical switch ports of one VM and one pod running on the same node and their neighbor tables:
+
+```text
+    ┌───────────────────────────────┐
+    │     logical switch node1      │
+    │       (10.244.0.0/24)         │
+    └───────────────────────────────┘
+┌──────────────────────┐  │     │   ┌──────────────────────┐
+│ lsp ns-virt-launcher1│──┘     └───│ lsp pod1             │
+│ address:             │            │ address:             │
+│  0a:58:0a:f4:00:01   │            │  0a:58:0a:f4:00:02   │
+│  10.244.0.8          │            │  10.244.0.9          │
+└──────────────────────┘            └──────────────────────┘
+neighbors table vm:
+┌──────────────────────────────────────────────────────┐
+│ 10.244.0.9 -> 0a:58:0a:f4:00:02                      │
+│ 10.244.0.1 -> 0a:58:0a:f4:00:03 (gateway, LRP MAC)   │
+└──────────────────────────────────────────────────────┘
+neighbors table pod1:
+┌─────────────────────────────────┐
+│ 10.244.0.8 -> 0a:58:0a:f4:00:01 │
+└─────────────────────────────────┘
+```
+
+Now after live migration from node1 to node2 the situation is the following:
+
+
+```text
+    ┌────────────────────────┐ ┌────────────────────────┐
+    │  logical switch node2  │ │  logical switch node1  │
+    │    (10.244.1.0/24)     │ │    (10.244.0.0/24)     │
+    └────────────────────────┘ └────────────────────────┘
+┌──────────────────────┐  │     │   ┌──────────────────────┐
+│ lsp ns-virt-launcher1│──┘     └───│ lsp pod1             │
+│ address:             │            │ address:             │
+│  0a:58:0a:f4:00:01   │            │  0a:58:0a:f4:00:02   │
+│  10.244.0.8          │            │  10.244.0.9          │
+└──────────────────────┘            └──────────────────────┘
+neighbors table vm:
+┌──────────────────────────────────────────────────────────────────────┐
+│ 10.244.0.9 -> 0a:58:0a:f4:00:02 (stale, pod1 is on a diff. switch)  │
+│ 10.244.0.1 -> 0a:58:0a:f4:00:03 (stale, LRP MAC from node1)        │
+└──────────────────────────────────────────────────────────────────────┘
+neighbors table pod1:
+┌──────────────────────────────────────────────────────────────────┐
+│ 10.244.0.8 -> 0a:58:0a:f4:00:01 (stale, VM is on a diff. switch) │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Now the neighbor tables are incorrect since none of those MAC addresses are
+part of the logical switches. Additionally, the VM's gateway entry still points
+to node1's LRP MAC which doesn't exist on node2's switch. After some time or
+traffic, neighbor caches get invalidated and updated so they will point to the
+arp_proxy MAC `0a:58:a9:fe:01:01`, problem is that it may take too much time
+and connections will be broken.
+
+To improve the situation ovn-k sends the following GARPs and unsolicited NAs taking
+into account that the arp_proxy MAC is `0a:58:a9:fe:01:01`. All GARPs are
+broadcast on the management interface (`ovn-k8s-mp0`):
+
+At node1, broadcast that the VM's IP should use the arp_proxy MAC:
+- `GARP(10.244.0.8 -> 0a:58:a9:fe:01:01, broadcast)`
+- one per migrated VM
+
+At node2, broadcast that pods from the same subnet should be reached via arp_proxy:
+- `GARP(10.244.0.9 -> 0a:58:a9:fe:01:01, broadcast)`
+- one per pod on the same subnet (in this example, only for pod1).
+
+At node2, broadcast that the gateway IP should use the arp_proxy MAC:
+- `GARP(10.244.0.1 -> 0a:58:a9:fe:01:01, broadcast)`
+- one per gateway IP (one for IPv4, one for IPv6 if dual-stack)
+
+Also ovn-k removes the MAC address from the VM's old LSP after live migration
+to be sure that generated ARPs from pods are not answered back with the VM's MAC
+instead of the arp_proxy MAC.
+
+When the VM migrates back to the node that owns its subnet, ovn-k sends GARPs
+to restore the real MAC addresses (pod MACs and LRP MAC for the gateway) so
+that direct L2 communication is used again instead of going through the
+arp_proxy.
 
 ## Future Items
 
