@@ -241,6 +241,9 @@ spec:
                     x-kubernetes-validations:
                     - message: at least one of macVRF or ipVRF must be specified
                       rule: has(self.macVRF) || has(self.ipVRF)
+                    - message: macVRF and ipVRF must use different VNIs
+                      rule: '!has(self.macVRF) || !has(self.ipVRF) || self.macVRF.vni
+                        != self.ipVRF.vni'
                   layer2:
                     description: Layer2 is the Layer2 topology configuration.
                     properties:
