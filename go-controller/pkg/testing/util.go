@@ -12,6 +12,8 @@ import (
 
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -125,5 +127,37 @@ func AddNetworkConnectApplyReactor(fakeClient *networkconnectfake.Clientset) {
 		_ = fakeClient.Tracker().Update(
 			networkconnectv1.SchemeGroupVersion.WithResource("clusternetworkconnects"), cnc, "")
 		return true, cnc, nil
+	})
+}
+
+// AddVTEPApplyReactor adds a reactor to handle Apply (patch) operations on the VTEP fake client.
+func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
+	fakeClient.PrependReactor("patch", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction := action.(ktesting.PatchAction)
+		name := patchAction.GetName()
+
+		existingObj, err := fakeClient.Tracker().Get(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), "", name)
+		if err != nil {
+			return true, nil, err
+		}
+
+		vtep := existingObj.(*vtepv1.VTEP)
+		if patchAction.GetSubresource() == "status" {
+			type StatusPatch struct {
+				Status vtepv1.VTEPStatus `json:"status"`
+			}
+
+			var patchData StatusPatch
+			if err := json.Unmarshal(patchAction.GetPatch(), &patchData); err != nil {
+				return true, nil, err
+			}
+
+			vtep.Status = patchData.Status
+		}
+
+		_ = fakeClient.Tracker().Update(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), vtep, "")
+		return true, vtep, nil
 	})
 }
