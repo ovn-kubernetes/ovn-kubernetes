@@ -2029,9 +2029,15 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		// external FRR container fails to start on the first attempt for
 		// unknown reasons delaying the overall availability, so we need to use
 		// long timeouts
-		timeout    = 240 * time.Second
-		timeoutNOK = 10 * time.Second
-		pollingNOK = 1 * time.Second
+		timeout = 240 * time.Second
+		polling = 1 * time.Second
+		// Isolation tests, consistently check isolation with these timeouts
+		timeoutNOK = 5 * time.Second        // 4-6 attempts
+		pollingNOK = 100 * time.Millisecond // poll immediately
+
+		// 1s, minimum
+		curlMaxTime    = 1
+		curlMaxTimeStr = "1"
 	)
 	var netexecPortStr = fmt.Sprintf("%d", netexecPort)
 	testPodToHostnameAndExpect := func(src *corev1.Pod, dstIP, expect string) {
@@ -2039,8 +2045,8 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		hostname, err := e2epodoutput.RunHostCmdWithRetries(
 			src.Namespace,
 			src.Name,
-			fmt.Sprintf("curl --max-time 2 -g -q -s http://%s/hostname", net.JoinHostPort(dstIP, netexecPortStr)),
-			framework.Poll,
+			fmt.Sprintf("curl --max-time %d -g -q -s http://%s/hostname", curlMaxTime, net.JoinHostPort(dstIP, netexecPortStr)),
+			polling,
 			timeout,
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2051,8 +2057,8 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		_, err := e2epodoutput.RunHostCmdWithRetries(
 			src.Namespace,
 			src.Name,
-			fmt.Sprintf("curl --max-time 2 -g -q -s http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr)),
-			framework.Poll,
+			fmt.Sprintf("curl --max-time %d -g -q -s http://%s/clientip", curlMaxTime, net.JoinHostPort(dstIP, netexecPortStr)),
+			polling,
 			timeout,
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2062,8 +2068,8 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		ip, err := e2epodoutput.RunHostCmdWithRetries(
 			src.Namespace,
 			src.Name,
-			fmt.Sprintf("curl --max-time 2 -g -q -s http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr)),
-			framework.Poll,
+			fmt.Sprintf("curl --max-time %d -g -q -s http://%s/clientip", curlMaxTime, net.JoinHostPort(dstIP, netexecPortStr)),
+			polling,
 			timeout,
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2079,29 +2085,31 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			// different but ExecK8NodeCommand is more convinient
 			ip, err := infraprovider.Get().ExecK8NodeCommand(
 				src,
-				[]string{"curl", "--max-time", "2", "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
+				[]string{"curl", "--max-time", curlMaxTimeStr, "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
 			)
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			ip, _, err = net.SplitHostPort(ip)
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(ip).To(gomega.Equal(expect))
-		}).WithTimeout(timeout).WithPolling(pollingNOK).Should(gomega.Succeed())
+		}).WithTimeout(timeout).WithPolling(polling).Should(gomega.Succeed())
 	}
 	testPodToClientIPNOK := func(src *corev1.Pod, dstIP string) {
+		ginkgo.GinkgoHelper()
 		gomega.Consistently(func(g gomega.Gomega) {
 			_, err := e2epodoutput.RunHostCmd(
 				src.Namespace,
 				src.Name,
-				fmt.Sprintf("curl --max-time 2 -g -q -s http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr)),
+				fmt.Sprintf("curl --max-time %d -g -q -s http://%s/clientip", curlMaxTime, net.JoinHostPort(dstIP, netexecPortStr)),
 			)
 			g.Expect(err).To(gomega.HaveOccurred())
 		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
 	}
 	testContainerToClientIPNOK := func(src, dstIP string) {
+		ginkgo.GinkgoHelper()
 		gomega.Consistently(func(g gomega.Gomega) {
 			_, err := infraprovider.Get().ExecK8NodeCommand(
 				src,
-				[]string{"curl", "--max-time", "2", "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
+				[]string{"curl", "--max-time", curlMaxTimeStr, "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
 			)
 			g.Expect(err).To(gomega.HaveOccurred())
 		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
@@ -2326,8 +2334,8 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					output, err := e2epodoutput.RunHostCmdWithRetries(
 						testPod.Namespace,
 						testPod.Name,
-						"curl --max-time 2 -g -q -s -k https://kubernetes.default/healthz",
-						framework.Poll,
+						fmt.Sprintf("curl --max-time %d -g -q -s -k https://kubernetes.default/healthz", curlMaxTime),
+						polling,
 						timeout,
 					)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2577,6 +2585,24 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								}()
 								wg.Wait()
 
+								ginkgo.By("Ensuring the pods from the other network can talk to each other")
+								testForIPFamilies(
+									ipFamilySet,
+									func(family utilnet.IPFamily) {
+										ginkgo.GinkgoHelper()
+										otherPodSameNodeIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+											f.ClientSet,
+											otherPodSameNode.Namespace,
+											otherPodSameNode.Name,
+											otherNetworkName,
+											family,
+										)
+										gomega.Expect(err).NotTo(gomega.HaveOccurred())
+										gomega.Expect(otherPodSameNodeIP).ToNot(gomega.BeEmpty())
+										testPodToClientIP(otherPodDiffNode, otherPodSameNodeIP)
+									},
+								)
+
 								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network pods")
 								for _, target := range []*corev1.Pod{otherPodSameNode, otherPodDiffNode} {
 									testForIPFamilies(
@@ -2635,6 +2661,20 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									service, err = f.ClientSet.CoreV1().Services(backend.Namespace).Create(context.Background(), service, metav1.CreateOptions{})
 									gomega.Expect(err).NotTo(gomega.HaveOccurred())
 									services = append(services, service)
+								}
+
+								ginkgo.By("Ensuring the pods from the other network can reach their services")
+								for source, target := range map[*corev1.Pod]*corev1.Service{otherPodSameNode: services[1], otherPodDiffNode: services[0]} {
+									testForIPFamilies(
+										ipFamilySet,
+										func(family utilnet.IPFamily) {
+											ginkgo.GinkgoHelper()
+											framework.Logf("Ensuring a request from the other network pod %s can reach the its network service %s on IPv%v", source.Name, target.Name, family)
+											clusterIP := getFirstIPStringOfFamily(family, target.Spec.ClusterIPs)
+											gomega.Expect(clusterIP).ToNot(gomega.BeEmpty())
+											testPodToClientIP(source, clusterIP)
+										},
+									)
 								}
 
 								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network services")
