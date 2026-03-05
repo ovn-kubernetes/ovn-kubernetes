@@ -2502,6 +2502,48 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								Subnets: randomL2CUDNSubnets(),
 							},
 						}
+						otherLayer2MACVRFNetworkSpec = &udnv1.NetworkSpec{
+							Topology: udnv1.NetworkTopologyLayer2,
+							Layer2: &udnv1.Layer2Config{
+								Role:    udnv1.NetworkRolePrimary,
+								Subnets: randomL2CUDNSubnets(),
+							},
+							Transport: udnv1.TransportOptionEVPN,
+							EVPN: &udnv1.EVPNConfig{
+								MACVRF: &udnv1.VRFConfig{
+									VNI: randomVNI(),
+								},
+							},
+						}
+						otherL2MACVRFIPVRFNetworkSpec = &udnv1.NetworkSpec{
+							Topology: udnv1.NetworkTopologyLayer2,
+							Layer2: &udnv1.Layer2Config{
+								Role:    udnv1.NetworkRolePrimary,
+								Subnets: randomL2CUDNSubnets(),
+							},
+							Transport: udnv1.TransportOptionEVPN,
+							EVPN: &udnv1.EVPNConfig{
+								MACVRF: &udnv1.VRFConfig{
+									VNI: randomVNI(),
+								},
+								IPVRF: &udnv1.VRFConfig{
+									VNI: randomVNI(),
+								},
+							},
+						}
+						otherL3IPVRFNetworkSpec = &udnv1.NetworkSpec{
+							Topology: udnv1.NetworkTopologyLayer3,
+							Layer3: &udnv1.Layer3Config{
+								Role:    udnv1.NetworkRolePrimary,
+								Subnets: randomL3CUDNSubnets(),
+							},
+							Transport: udnv1.TransportOptionEVPN,
+							EVPN: &udnv1.EVPNConfig{
+								IPVRF: &udnv1.VRFConfig{
+									VNI: randomVNI(),
+								},
+							},
+						}
 					)
 
 					otherNetworksToTest := []ginkgo.TableEntry{
@@ -2512,6 +2554,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						ginkgo.Entry("Layer 3 CUDN advertised", cudnAdvertised, otherLayer3NetworkSpec),
 						ginkgo.Entry("Layer 2 UDN", udn, otherLayer2NetworkSpec),
 						ginkgo.Entry("Layer 2 CUDN advertised", cudnAdvertised, otherLayer2NetworkSpec),
+						ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, cudnAdvertisedEVPN, otherL3IPVRFNetworkSpec),
+						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, cudnAdvertisedEVPN, otherLayer2MACVRFNetworkSpec),
+						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, cudnAdvertisedEVPN, otherL2MACVRFIPVRFNetworkSpec),
 					}
 
 					ginkgo.DescribeTableSubtree("Of type",
@@ -2520,7 +2565,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 							var otherNetworkName string
 
 							ginkgo.BeforeEach(func() {
-								otherNetworkName = testBaseName + "-other"
+								otherNetworkName = testBaseName + "o"
 								otherNamespaceName := otherNetworkName
 
 								switch {
