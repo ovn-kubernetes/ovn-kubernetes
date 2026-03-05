@@ -27,6 +27,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	topologycontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/topology"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/gateway"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/gatewayrouter"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -45,7 +46,7 @@ type GatewayManager struct {
 	netInfo                 util.NetInfo
 	watchFactory            *factory.WatchFactory
 	getNetworkNameForNADKey func(nadKey string) string
-	nodeAnnotationCache     util.NodeAnnotationCache
+	nodeAnnotationCache     *topologycontroller.NodeAnnotationCache
 	// Cluster wide Load_Balancer_Group UUID.
 	// Includes all node switches and node gateway routers.
 	clusterLoadBalancerGroupUUID string
@@ -63,7 +64,7 @@ type GatewayManager struct {
 
 type GatewayOption func(*GatewayManager)
 
-func WithNodeAnnotationCache(cache util.NodeAnnotationCache) GatewayOption {
+func WithNodeAnnotationCache(cache *topologycontroller.NodeAnnotationCache) GatewayOption {
 	return func(gw *GatewayManager) {
 		gw.nodeAnnotationCache = cache
 	}
@@ -129,16 +130,17 @@ func newGWManager(
 	watchFactory *factory.WatchFactory,
 	opts ...GatewayOption) *GatewayManager {
 	gwManager := &GatewayManager{
-		nodeName:          nodeName,
-		clusterRouterName: clusterRouterName,
-		gwRouterName:      netInfo.GetNetworkScopedGWRouterName(nodeName),
-		extSwitchName:     extSwitchName,
-		joinSwitchName:    joinSwitchName,
-		coppUUID:          coopUUID,
-		kube:              kube,
-		nbClient:          nbClient,
-		netInfo:           netInfo,
-		watchFactory:      watchFactory,
+		nodeName:            nodeName,
+		clusterRouterName:   clusterRouterName,
+		gwRouterName:        netInfo.GetNetworkScopedGWRouterName(nodeName),
+		extSwitchName:       extSwitchName,
+		joinSwitchName:      joinSwitchName,
+		coppUUID:            coopUUID,
+		kube:                kube,
+		nbClient:            nbClient,
+		netInfo:             netInfo,
+		watchFactory:        watchFactory,
+		nodeAnnotationCache: topologycontroller.NewNodeAnnotationCache(),
 	}
 
 	for _, opt := range opts {
@@ -372,7 +374,7 @@ func (gw *GatewayManager) createGWRouterPeerSwitchPort(nodeName string) error {
 		if err != nil {
 			return fmt.Errorf("failed to fetch node %s from watch factory %w", node.Name, err)
 		}
-		tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDsWithCache(node, gw.netInfo.GetNetworkName(), gw.nodeAnnotationCache)
+		tunnelID, err := gw.nodeAnnotationCache.ParseUDNLayer2NodeGRLRPTunnelID(node, gw.netInfo.GetNetworkName())
 		if err != nil {
 			if util.IsAnnotationNotSetError(err) {
 				// remote node may not have the annotation yet, suppress it

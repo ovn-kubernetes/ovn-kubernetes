@@ -39,6 +39,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	nqoscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
+	topologycontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/topology"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
@@ -108,7 +109,7 @@ type BaseNetworkController struct {
 	// node reconciler for shared node controllers (optional)
 	nodeReconciler NodeReconciler
 	// node annotation cache for shared node controllers (optional)
-	nodeAnnotationCache util.NodeAnnotationCache
+	nodeAnnotationCache *topologycontroller.NodeAnnotationCache
 	// nodeHandlerRegistrar registers this controller with a shared node controller.
 	nodeHandlerRegistrar func()
 
@@ -321,7 +322,10 @@ func (oc *BaseNetworkController) SetNodeReconciler(reconciler NodeReconciler) {
 	oc.nodeReconciler = reconciler
 }
 
-func (oc *BaseNetworkController) SetNodeAnnotationCache(cache util.NodeAnnotationCache) {
+func (oc *BaseNetworkController) SetNodeAnnotationCache(cache *topologycontroller.NodeAnnotationCache) {
+	if cache == nil {
+		cache = topologycontroller.NewNodeAnnotationCache()
+	}
 	oc.nodeAnnotationCache = cache
 }
 

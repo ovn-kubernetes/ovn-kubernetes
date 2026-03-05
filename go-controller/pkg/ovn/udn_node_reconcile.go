@@ -7,6 +7,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	topologycontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/topology"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -18,18 +19,18 @@ func nodesToInterfaces(nodes []*corev1.Node) []interface{} {
 	return objs
 }
 
-func nodeSubnetChangedForUDN(oldNode, newNode *corev1.Node, netName string, cache util.NodeAnnotationCache, oldState, newState *util.NodeAnnotationState) bool {
+func nodeSubnetChangedForUDN(oldNode, newNode *corev1.Node, netName string, cache *topologycontroller.NodeAnnotationCache, oldState, newState *topologycontroller.NodeAnnotationState) bool {
 	if !util.NodeSubnetAnnotationChanged(oldNode, newNode) {
 		return false
 	}
 	if oldState != nil && newState != nil {
-		return util.NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, netName)
+		return topologycontroller.NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, netName)
 	}
-	return util.NodeSubnetAnnotationChangedForNetworkWithCache(oldNode, newNode, netName, cache)
+	return cache.NodeSubnetAnnotationChangedForNetwork(oldNode, newNode, netName)
 }
 
 // ReconcileNode reconciles a node for a layer3 UDN controller.
-func (oc *Layer3UserDefinedNetworkController) ReconcileNode(oldNode, newNode *corev1.Node, oldState, newState *util.NodeAnnotationState) error {
+func (oc *Layer3UserDefinedNetworkController) ReconcileNode(oldNode, newNode *corev1.Node, oldState, newState *topologycontroller.NodeAnnotationState) error {
 	if newNode == nil {
 		return fmt.Errorf("nil node received for network %s", oc.GetNetworkName())
 	}
@@ -129,7 +130,7 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 }
 
 // DeleteNode deletes node resources for a layer3 UDN controller.
-func (oc *Layer3UserDefinedNetworkController) DeleteNode(node *corev1.Node, _ *util.NodeAnnotationState) error {
+func (oc *Layer3UserDefinedNetworkController) DeleteNode(node *corev1.Node, _ *topologycontroller.NodeAnnotationState) error {
 	return oc.deleteNodeEvent(node)
 }
 
@@ -139,7 +140,7 @@ func (oc *Layer3UserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) er
 }
 
 // ReconcileNode reconciles a node for a layer2 UDN controller.
-func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *corev1.Node, oldState, newState *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *corev1.Node, oldState, newState *topologycontroller.NodeAnnotationState) error {
 	if newNode == nil {
 		return fmt.Errorf("nil node received for network %s", oc.GetNetworkName())
 	}
@@ -221,7 +222,7 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 }
 
 // DeleteNode deletes node resources for a layer2 UDN controller.
-func (oc *Layer2UserDefinedNetworkController) DeleteNode(node *corev1.Node, _ *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) DeleteNode(node *corev1.Node, _ *topologycontroller.NodeAnnotationState) error {
 	return oc.deleteNodeEvent(node)
 }
 
@@ -231,7 +232,7 @@ func (oc *Layer2UserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) er
 }
 
 // ReconcileNode reconciles a node for a localnet UDN controller.
-func (oc *LocalnetUserDefinedNetworkController) ReconcileNode(_ *corev1.Node, newNode *corev1.Node, _ *util.NodeAnnotationState, _ *util.NodeAnnotationState) error {
+func (oc *LocalnetUserDefinedNetworkController) ReconcileNode(_ *corev1.Node, newNode *corev1.Node, _ *topologycontroller.NodeAnnotationState, _ *topologycontroller.NodeAnnotationState) error {
 	if newNode == nil {
 		return fmt.Errorf("nil node received for network %s", oc.GetNetworkName())
 	}
@@ -239,7 +240,7 @@ func (oc *LocalnetUserDefinedNetworkController) ReconcileNode(_ *corev1.Node, ne
 }
 
 // DeleteNode deletes node resources for a localnet UDN controller.
-func (oc *LocalnetUserDefinedNetworkController) DeleteNode(node *corev1.Node, _ *util.NodeAnnotationState) error {
+func (oc *LocalnetUserDefinedNetworkController) DeleteNode(node *corev1.Node, _ *topologycontroller.NodeAnnotationState) error {
 	return oc.deleteNodeEvent(node)
 }
 

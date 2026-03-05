@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	svccontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
+	topologycontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/topology"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/topology"
@@ -374,6 +375,7 @@ func NewLayer3UserDefinedNetworkController(
 				cancelableCtx:               util.NewCancelableContext(),
 				networkManager:              networkManager,
 				routeImportManager:          routeImportManager,
+				nodeAnnotationCache:         topologycontroller.NewNodeAnnotationCache(),
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -1207,9 +1209,7 @@ func (oc *Layer3UserDefinedNetworkController) gatewayOptions() []GatewayOption {
 	if resolver := oc.getNetworkNameForNADKeyFunc(); resolver != nil {
 		opts = append(opts, WithNetworkNameForNADKeyResolver(resolver))
 	}
-	if oc.nodeAnnotationCache != nil {
-		opts = append(opts, WithNodeAnnotationCache(oc.nodeAnnotationCache))
-	}
+	opts = append(opts, WithNodeAnnotationCache(oc.nodeAnnotationCache))
 	return opts
 }
 

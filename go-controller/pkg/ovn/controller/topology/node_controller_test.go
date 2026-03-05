@@ -28,11 +28,11 @@ func (f *fakeNodeHandler) GetNetworkName() string {
 	return f.netName
 }
 
-func (f *fakeNodeHandler) ReconcileNode(_, _ *corev1.Node, _, _ *util.NodeAnnotationState) error {
+func (f *fakeNodeHandler) ReconcileNode(_, _ *corev1.Node, _, _ *NodeAnnotationState) error {
 	return nil
 }
 
-func (f *fakeNodeHandler) DeleteNode(_ *corev1.Node, _ *util.NodeAnnotationState) error {
+func (f *fakeNodeHandler) DeleteNode(_ *corev1.Node, _ *NodeAnnotationState) error {
 	return nil
 }
 

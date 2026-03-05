@@ -253,6 +253,11 @@ func newAnnotationNotSetError(format string, args ...interface{}) error {
 	return &annotationNotSetError{msg: fmt.Sprintf(format, args...)}
 }
 
+// NewAnnotationNotSetError returns an error that satisfies IsAnnotationNotSetError.
+func NewAnnotationNotSetError(format string, args ...interface{}) error {
+	return newAnnotationNotSetError(format, args...)
+}
+
 // IsAnnotationNotSetError returns true if the error indicates that an annotation is not set
 func IsAnnotationNotSetError(err error) bool {
 	var annotationNotSetError *annotationNotSetError

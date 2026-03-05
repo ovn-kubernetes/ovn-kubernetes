@@ -29,6 +29,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	svccontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
+	topologycontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/topology"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/topology"
@@ -389,6 +390,7 @@ func NewLayer2UserDefinedNetworkController(
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
 					routeImportManager:          routeImportManager,
+					nodeAnnotationCache:         topologycontroller.NewNodeAnnotationCache(),
 				},
 			},
 		},
@@ -677,7 +679,7 @@ func (oc *Layer2UserDefinedNetworkController) newRetryFramework(
 	)
 }
 
-func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs, state *topologycontroller.NodeAnnotationState) error {
 	var errs []error
 	var err error
 
@@ -776,7 +778,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 	return err
 }
 
-func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, syncZoneIC bool, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, syncZoneIC bool, state *topologycontroller.NodeAnnotationState) error {
 	var errs []error
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
@@ -800,7 +802,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 	return err
 }
 
-func (oc *Layer2UserDefinedNetworkController) addInterconnectSetupForRemoteNode(node *corev1.Node, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) addInterconnectSetupForRemoteNode(node *corev1.Node, state *topologycontroller.NodeAnnotationState) error {
 	var err error
 	if config.Layer2UsesTransitRouter {
 		err = oc.addRouterSetupForRemoteNodeGR(node, state)
@@ -813,14 +815,14 @@ func (oc *Layer2UserDefinedNetworkController) addInterconnectSetupForRemoteNode(
 	return nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) tunnelIDForNode(node *corev1.Node, state *util.NodeAnnotationState) (int, error) {
+func (oc *Layer2UserDefinedNetworkController) tunnelIDForNode(node *corev1.Node, state *topologycontroller.NodeAnnotationState) (int, error) {
 	if state != nil {
 		return state.TunnelID(oc.GetNetworkName())
 	}
-	return util.ParseUDNLayer2NodeGRLRPTunnelIDsWithCache(node, oc.GetNetworkName(), oc.nodeAnnotationCache)
+	return oc.nodeAnnotationCache.ParseUDNLayer2NodeGRLRPTunnelID(node, oc.GetNetworkName())
 }
 
-func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node *corev1.Node, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) addSwitchPortForRemoteNodeGR(node *corev1.Node, state *topologycontroller.NodeAnnotationState) error {
 	nodeJoinSubnetIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
@@ -891,7 +893,7 @@ func (oc *Layer2UserDefinedNetworkController) cleanupSwitchPortForRemoteNodeGR(n
 	return libovsdbops.DeleteLogicalSwitchPorts(oc.nbClient, sw, logicalSwitchPort)
 }
 
-func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node *corev1.Node, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node *corev1.Node, state *topologycontroller.NodeAnnotationState) error {
 	if _, ok := oc.remoteNodesNoRouter.Load(node.Name); ok {
 		// remote node uses old topology
 		if util.UDNLayer2NodeUsesTransitRouter(node) {
@@ -1243,9 +1245,7 @@ func (oc *Layer2UserDefinedNetworkController) gatewayOptions() []GatewayOption {
 	if resolver := oc.getNetworkNameForNADKeyFunc(); resolver != nil {
 		opts = append(opts, WithNetworkNameForNADKeyResolver(resolver))
 	}
-	if oc.nodeAnnotationCache != nil {
-		opts = append(opts, WithNodeAnnotationCache(oc.nodeAnnotationCache))
-	}
+	opts = append(opts, WithNodeAnnotationCache(oc.nodeAnnotationCache))
 	return opts
 }
 
@@ -1296,7 +1296,7 @@ func (oc *Layer2UserDefinedNetworkController) reconcileLiveMigrationTargetZone(k
 }
 
 // syncClusterRouterPorts connects the network switch to the transit router
-func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev1.Node, hostSubnets []*net.IPNet, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev1.Node, hostSubnets []*net.IPNet, state *topologycontroller.NodeAnnotationState) error {
 	switchName := oc.GetNetworkScopedSwitchName("")
 
 	// Connect the switch to the router.
@@ -1343,7 +1343,7 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 	return nil
 }
 
-func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1.Node, state *util.NodeAnnotationState) error {
+func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1.Node, state *topologycontroller.NodeAnnotationState) error {
 	switchName := oc.GetNetworkScopedSwitchName("")
 	sw := nbdb.LogicalSwitch{Name: switchName}
 
