@@ -130,6 +130,22 @@ func AddNetworkConnectApplyReactor(fakeClient *networkconnectfake.Clientset) {
 	})
 }
 
+// AddVTEPGarbageCollectionReactor simulates API server garbage collection:
+// when a VTEP is updated with no finalizers and a non-zero DeletionTimestamp,
+// it is removed from the tracker as the real API server would do.
+func AddVTEPGarbageCollectionReactor(fakeClient *vtepfake.Clientset) {
+	fakeClient.PrependReactor("update", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		updateAction := action.(ktesting.UpdateAction)
+		vtep := updateAction.GetObject().(*vtepv1.VTEP)
+		if !vtep.DeletionTimestamp.IsZero() && len(vtep.Finalizers) == 0 {
+			_ = fakeClient.Tracker().Delete(
+				vtepv1.SchemeGroupVersion.WithResource("vteps"), "", vtep.Name)
+			return true, vtep, nil
+		}
+		return false, nil, nil
+	})
+}
+
 // AddVTEPApplyReactor adds a reactor to handle Apply (patch) operations on the VTEP fake client.
 func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
 	fakeClient.PrependReactor("patch", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {

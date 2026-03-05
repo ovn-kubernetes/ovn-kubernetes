@@ -21,6 +21,7 @@ const (
 
 	reasonManagedModeNotSupported = "ManagedModeNotSupported"
 	reasonAllocated               = "Allocated"
+	reasonCIDROverlap             = "CIDROverlap"
 )
 
 func (c *Controller) updateStatusCondition(vtep *vtepv1.VTEP, conditionType string, status metav1.ConditionStatus, reason, message string) error {

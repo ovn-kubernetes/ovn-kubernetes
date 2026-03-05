@@ -102,7 +102,8 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 
 		fakeVTEP = vtepfake.NewSimpleClientset(vtepObjects...)
 		ovntest.AddVTEPApplyReactor(fakeVTEP)
-		fakeRecorder = record.NewFakeRecorder(10)
+		ovntest.AddVTEPGarbageCollectionReactor(fakeVTEP)
+		fakeRecorder = record.NewFakeRecorder(100)
 
 		fakeClientset := util.GetOVNClientset(otherObjects...).GetClusterManagerClientset()
 		fakeClientset.VTEPClient = fakeVTEP
@@ -266,5 +267,323 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				return getVTEPFinalizers(fakeVTEP, "blocked-vtep")
 			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 		})
+	})
+
+	ginkgo.Context("Cross-VTEP CIDR overlap validation", func() {
+		ginkgo.It("sets Accepted=True when VTEPs have non-overlapping CIDRs", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/24")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.1.0.0/24")
+			start(vtepA, vtepB)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+		})
+
+		ginkgo.It("sets Accepted=False on both VTEPs when CIDRs overlap", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/16")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.1.0/24")
+			start(vtepA, vtepB)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			condA := getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			gomega.Expect(condA.Reason).To(gomega.Equal(reasonCIDROverlap))
+			gomega.Expect(condA.Message).To(gomega.ContainSubstring("vtep-b"))
+
+			condB := getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			gomega.Expect(condB.Reason).To(gomega.Equal(reasonCIDROverlap))
+			gomega.Expect(condB.Message).To(gomega.ContainSubstring("vtep-a"))
+		})
+
+		ginkgo.It("converges without infinite re-queue loop when VTEPs overlap", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/16")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.1.0/24")
+			start(vtepA, vtepB)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			// After both VTEPs settle, the API action count must stabilize.
+			// An infinite re-queue ping-pong would cause repeated reconciles;
+			// while updateStatusCondition guards against redundant writes, the
+			// re-queue guard in validateCIDRsAcrossVTEPs is what actually
+			// prevents the loop. This verifies no further API calls are made.
+			settled := len(fakeVTEP.Actions())
+			gomega.Consistently(func() int {
+				return len(fakeVTEP.Actions())
+			}).WithTimeout(2 * time.Second).Should(gomega.Equal(settled))
+		})
+
+		ginkgo.It("emits a CIDROverlap warning event when VTEPs overlap", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/16")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.1.0/24")
+			start(vtepA, vtepB)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(fakeRecorder.Events).Should(gomega.Receive(
+				gomega.ContainSubstring(reasonCIDROverlap),
+			))
+		})
+
+		ginkgo.It("sets Accepted=False on all three VTEPs when CIDRs overlap", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/8")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.1.0.0/24")
+			vtepC := newVTEP("vtep-c", vtepv1.VTEPModeUnmanaged, "10.2.0.0/24")
+			start(vtepA, vtepB, vtepC)
+
+			for _, name := range []string{"vtep-a", "vtep-b", "vtep-c"} {
+				gomega.Eventually(func() *metav1.Condition {
+					return getVTEPCondition(fakeVTEP, name, conditionTypeAccepted)
+				}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+				cond := getVTEPCondition(fakeVTEP, name, conditionTypeAccepted)
+				gomega.Expect(cond.Reason).To(gomega.Equal(reasonCIDROverlap))
+			}
+		})
+
+		ginkgo.It("updates conflict message when a new overlapping VTEP joins an existing conflict", func() {
+			// vtep-b and vtep-c overlap via vtep-b's /8
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.0.0/8")
+			vtepC := newVTEP("vtep-c", vtepv1.VTEPModeUnmanaged, "10.2.0.0/24")
+			start(vtepB, vtepC)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", gomega.Equal(reasonCIDROverlap)),
+			))
+
+			// vtep-b's message should mention vtep-c but not vtep-a (doesn't exist yet)
+			condB := getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			gomega.Expect(condB.Message).To(gomega.ContainSubstring("vtep-c"))
+			gomega.Expect(condB.Message).NotTo(gomega.ContainSubstring("vtep-a"))
+
+			// Create vtep-a which also overlaps with vtep-b
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.1.0.0/24")
+			_, err := fakeVTEP.K8sV1().VTEPs().Create(context.Background(), vtepA, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// vtep-b's message should now mention both vtep-a and vtep-c
+			gomega.Eventually(func() string {
+				cond := getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+				if cond == nil {
+					return ""
+				}
+				return cond.Message
+			}).WithTimeout(5 * time.Second).Should(gomega.And(
+				gomega.ContainSubstring("vtep-a"),
+				gomega.ContainSubstring("vtep-c"),
+			))
+		})
+
+		ginkgo.It("sets Accepted=False when a new overlapping VTEP is created after startup", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/16")
+			start(vtepA)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			// Create an overlapping VTEP
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.1.0/24")
+			_, err := fakeVTEP.K8sV1().VTEPs().Create(context.Background(), vtepB, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Both should eventually be Accepted=False
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+		})
+
+		ginkgo.It("sets Accepted=False on both when a mask expansion causes overlap", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/24")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.0.1.0/24")
+			start(vtepA, vtepB)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			// Expand vtep-a's mask from /24 to /16, now it contains 10.0.1.0/24
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-a", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			v.Spec.CIDRs = vtepv1.DualStackCIDRs{"10.0.0.0/16"}
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Both should eventually be Accepted=False
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+		})
+
+		ginkgo.It("sets Accepted=False on both when a newly appended CIDR causes overlap", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/24")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.1.0.0/24")
+			start(vtepA, vtepB)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			// Append a new CIDR to vtep-a that overlaps with vtep-b
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-a", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			v.Spec.CIDRs = append(v.Spec.CIDRs, "10.1.0.0/16")
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Both should eventually be Accepted=False
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+		})
+
+		ginkgo.It("clears Accepted=False only when all conflicts are resolved", func() {
+			vtepA := newVTEP("vtep-a", vtepv1.VTEPModeUnmanaged, "10.0.0.0/8")
+			vtepB := newVTEP("vtep-b", vtepv1.VTEPModeUnmanaged, "10.1.0.0/24")
+			vtepC := newVTEP("vtep-c", vtepv1.VTEPModeUnmanaged, "10.2.0.0/24")
+			start(vtepA, vtepB, vtepC)
+
+			// All three should be Accepted=False due to overlap
+			for _, name := range []string{"vtep-a", "vtep-b", "vtep-c"} {
+				gomega.Eventually(func() *metav1.Condition {
+					return getVTEPCondition(fakeVTEP, name, conditionTypeAccepted)
+				}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+			}
+
+			// Delete vtep-c: vtep-a and vtep-b still overlap, both stay Accepted=False
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-c", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now := metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Consistently(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(2 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Consistently(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-b", conditionTypeAccepted)
+			}).WithTimeout(2 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			// Delete vtep-b: vtep-a is the only one left, no more conflicts
+			v, err = fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-b", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now = metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+		})
+	})
+})
+
+var _ = ginkgo.Describe("vtepNameInMessage", func() {
+	ginkgo.It("returns false for empty brackets", func() {
+		gomega.Expect(vtepNameInMessage("CIDRs overlap with VTEPs: []", "vtep-a")).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("returns false when no brackets present", func() {
+		gomega.Expect(vtepNameInMessage("no brackets here", "vtep-a")).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("matches single entry", func() {
+		msg := "CIDRs overlap with VTEPs: [vtep-a]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-a")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("matches in two entries", func() {
+		msg := "CIDRs overlap with VTEPs: [vtep-a, vtep-b]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-a")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-c")).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("matches in three entries", func() {
+		msg := "CIDRs overlap with VTEPs: [vtep-a, vtep-b, vtep-c]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-a")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-c")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-d")).To(gomega.BeFalse())
+	})
+
+	ginkgo.It("does not substring match", func() {
+		msg := "CIDRs overlap with VTEPs: [vtep-bb]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeFalse())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bb")).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("does not substring match in multi-entry list", func() {
+		msg := "CIDRs overlap with VTEPs: [vtep-aa, vtep-bb]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-a")).To(gomega.BeFalse())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeFalse())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-aa")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bb")).To(gomega.BeTrue())
+	})
+
+	ginkgo.It("does not substring match vtep-b against vtep-bb and vtep-bbb", func() {
+		msg := "CIDRs overlap with VTEPs: [vtep-b, vtep-bb, vtep-bbb]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bb")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bbb")).To(gomega.BeTrue())
+
+		msg = "CIDRs overlap with VTEPs: [vtep-bb, vtep-bbb]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeFalse())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bb")).To(gomega.BeTrue())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bbb")).To(gomega.BeTrue())
+
+		msg = "CIDRs overlap with VTEPs: [vtep-bbb]"
+		gomega.Expect(vtepNameInMessage(msg, "vtep-b")).To(gomega.BeFalse())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bb")).To(gomega.BeFalse())
+		gomega.Expect(vtepNameInMessage(msg, "vtep-bbb")).To(gomega.BeTrue())
 	})
 })

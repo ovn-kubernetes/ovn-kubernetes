@@ -3,11 +3,15 @@ package vtep
 import (
 	"context"
 	"fmt"
+	"net"
 	"reflect"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
@@ -99,6 +103,7 @@ func (c *Controller) reconcileVTEP(key string) error {
 	vtep, err := c.vtepLister.Get(vtepName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			c.requeueConflictingVTEPs(vtepName)
 			return nil
 		}
 		return fmt.Errorf("failed to get VTEP %s: %w", vtepName, err)
@@ -117,6 +122,19 @@ func (c *Controller) reconcileVTEP(key string) error {
 
 	if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
 		return c.handleManagedModeNotSupported(vtep)
+	}
+
+	if err := c.validateCIDRsAcrossVTEPs(vtep); err != nil {
+		existingCond := meta.FindStatusCondition(vtep.Status.Conditions, conditionTypeAccepted)
+		if existingCond == nil || existingCond.Status != metav1.ConditionFalse || existingCond.Reason != reasonCIDROverlap || existingCond.Message != err.Error() {
+			vtepRef, refErr := reference.GetReference(vtepscheme.Scheme, vtep)
+			if refErr != nil {
+				return fmt.Errorf("failed to get object reference for VTEP %s: %w", vtep.Name, refErr)
+			}
+			c.eventRecorder.Event(vtepRef, corev1.EventTypeWarning, reasonCIDROverlap, err.Error())
+		}
+		return c.updateStatusCondition(vtep, conditionTypeAccepted, metav1.ConditionFalse,
+			reasonCIDROverlap, err.Error())
 	}
 
 	return c.updateStatusCondition(vtep, conditionTypeAccepted, metav1.ConditionTrue,
@@ -185,6 +203,101 @@ func cudnReferencesVTEP(cudn *udnv1.ClusterUserDefinedNetwork, vtepName string) 
 		return true
 	}
 	return false
+}
+
+// validateCIDRsAcrossVTEPs checks that none of this VTEP's CIDRs overlap with
+// any other VTEP's CIDRs. All overlapping VTEPs are re-queued so both sides
+// of a conflict discover it and set Accepted=False.
+func (c *Controller) validateCIDRsAcrossVTEPs(vtep *vtepv1.VTEP) error {
+	currentCIDRs, err := parseVTEPCIDRs(vtep)
+	if err != nil {
+		return fmt.Errorf("failed to parse CIDRs for VTEP %s: %w", vtep.Name, err)
+	}
+
+	allVTEPs, err := c.vtepLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list VTEPs: %w", err)
+	}
+
+	var conflicting []string
+	for _, other := range allVTEPs {
+		if other.Name == vtep.Name {
+			continue
+		}
+		// A VTEP with DeletionTimestamp and no finalizers is being garbage
+		// collected by the API server. The informer cache may briefly lag
+		// behind, so skip it to avoid false overlap with a dying VTEP.
+		if !other.DeletionTimestamp.IsZero() && len(other.Finalizers) == 0 {
+			continue
+		}
+		otherCIDRs, err := parseVTEPCIDRs(other)
+		if err != nil {
+			klog.Errorf("Failed to parse CIDRs for VTEP %s, skipping overlap check: %v", other.Name, err)
+			continue
+		}
+		if util.NetworksOverlap(currentCIDRs, otherCIDRs) {
+			conflicting = append(conflicting, other.Name)
+			otherCond := meta.FindStatusCondition(other.Status.Conditions, conditionTypeAccepted)
+			if otherCond == nil || otherCond.Status != metav1.ConditionFalse || otherCond.Reason != reasonCIDROverlap ||
+				!vtepNameInMessage(otherCond.Message, vtep.Name) {
+				c.vtepController.Reconcile(other.Name)
+			}
+		}
+	}
+	if len(conflicting) > 0 {
+		sort.Strings(conflicting)
+		return fmt.Errorf("CIDRs overlap with VTEPs: [%s]",
+			strings.Join(conflicting, ", "))
+	}
+	return nil
+}
+
+// requeueConflictingVTEPs re-queues VTEPs whose Accepted=False/CIDROverlap
+// condition message mentions the deleted VTEP by name, so they can
+// re-evaluate whether their conflicts are resolved.
+func (c *Controller) requeueConflictingVTEPs(deletedVTEPName string) {
+	allVTEPs, err := c.vtepLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list VTEPs during conflict requeue: %v", err)
+		return
+	}
+	for _, other := range allVTEPs {
+		cond := meta.FindStatusCondition(other.Status.Conditions, conditionTypeAccepted)
+		if cond != nil && cond.Status == metav1.ConditionFalse && cond.Reason == reasonCIDROverlap &&
+			vtepNameInMessage(cond.Message, deletedVTEPName) {
+			klog.V(4).Infof("Re-queuing VTEP %s after deletion of conflicting VTEP %s", other.Name, deletedVTEPName)
+			c.vtepController.Reconcile(other.Name)
+		}
+	}
+}
+
+// vtepNameInMessage checks whether name appears as an exact entry in the
+// bracketed, comma-separated list embedded in the condition message.
+// Message format: "CIDRs overlap with VTEPs: [vtep-a, vtep-b]"
+func vtepNameInMessage(message, name string) bool {
+	start := strings.Index(message, "[")
+	end := strings.LastIndex(message, "]")
+	if start == -1 || end == -1 || end <= start {
+		return false
+	}
+	for _, entry := range strings.Split(message[start+1:end], ", ") {
+		if entry == name {
+			return true
+		}
+	}
+	return false
+}
+
+func parseVTEPCIDRs(vtep *vtepv1.VTEP) ([]*net.IPNet, error) {
+	cidrs := make([]*net.IPNet, 0, len(vtep.Spec.CIDRs))
+	for _, c := range vtep.Spec.CIDRs {
+		_, ipNet, err := net.ParseCIDR(string(c))
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q: %w", c, err)
+		}
+		cidrs = append(cidrs, ipNet)
+	}
+	return cidrs, nil
 }
 
 func (c *Controller) handleManagedModeNotSupported(vtep *vtepv1.VTEP) error {
