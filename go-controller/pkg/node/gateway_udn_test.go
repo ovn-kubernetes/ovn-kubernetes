@@ -613,8 +613,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
 
-		_ = nodenft.SetFakeNFTablesHelper()
-
 		// Make Management port
 		nodeSubnets := ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet)
 		mp, err := managementport.NewManagementPortController(node, nodeSubnets, "", "", rm, netInfo)
@@ -845,8 +843,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
 
-		_ = nodenft.SetFakeNFTablesHelper()
-
 		// Make Management port
 		nodeSubnets := ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet)
 		mp, err := managementport.NewManagementPortController(node, nodeSubnets, "", "", rm, netInfo)
@@ -1046,9 +1042,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			wg.Wait()
 		}()
 		err = wf.Start()
-
-		_ = nodenft.SetFakeNFTablesHelper()
-
 		Expect(err).NotTo(HaveOccurred())
 
 		// Make Management port
@@ -1282,8 +1275,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
-
-		_ = nodenft.SetFakeNFTablesHelper()
 
 		// Make Management port
 		nodeSubnets := ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet)
@@ -1729,7 +1720,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		defer func() {
 			wf.Shutdown()
 		}()
-		nodenft.SetFakeNFTablesHelper()
 		fNPW := initFakeNodePortWatcher()
 		fNPW.watchFactory = wf
 		// in-order to simulate a namespace with an Invalid UDN (when GetActiveNamespace is called), we add an entry

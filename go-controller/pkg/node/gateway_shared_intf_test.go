@@ -22,7 +22,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
-	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
@@ -356,7 +355,6 @@ var _ = Describe("SyncServices", func() {
 		config.Gateway.Mode = config.GatewayModeLocal
 		config.IPv4Mode = true
 		config.IPv6Mode = false
-		_ = nodenft.SetFakeNFTablesHelper()
 
 		fakeClient = &util.OVNNodeClientset{
 			KubeClient: fake.NewSimpleClientset(),
