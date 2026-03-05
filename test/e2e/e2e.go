@@ -996,6 +996,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		})
 
 		ginkgo.It("should get node not ready with a too small MTU", func() {
+			ctx := context.Background()
 			logger := klog.FromContext(ctx)
 			// set the defaults interface MTU very low
 			_, err := infraprovider.Get().ExecK8NodeCommand(testNodeName, []string{"ip", "link", "set", deploymentconfig.Get().ExternalBridgeName(), "mtu", "1000"})
