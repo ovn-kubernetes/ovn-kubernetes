@@ -163,5 +163,6 @@ nav:
     - No-Overlay Mode: okeps/okep-5259-no-overlay.md
     - EVPN: okeps/okep-5088-evpn.md
     - DPU Healthcheck: okeps/okep-5674-dpu-healthcheck.md
+    - VRF-Lite Shared Gateway Mode with External Bridges: okeps/okep-6019-vrf-lite-shared-gateway-external-bridges.md
   - Blog:
     - blog/index.md
