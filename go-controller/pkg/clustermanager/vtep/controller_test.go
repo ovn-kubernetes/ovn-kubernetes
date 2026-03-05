@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -33,6 +34,37 @@ func newVTEP(name string, mode vtepv1.VTEPMode, cidrs ...string) *vtepv1.VTEP {
 			Mode:  mode,
 		},
 	}
+}
+
+func newCUDNWithEVPN(name, vtepName string) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: udnv1.ClusterUserDefinedNetworkSpec{
+			NamespaceSelector: metav1.LabelSelector{},
+			Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3,
+				Layer3: &udnv1.Layer3Config{
+					Subnets: []udnv1.Layer3Subnet{
+						{CIDR: "10.0.0.0/16"},
+					},
+				},
+				EVPN: &udnv1.EVPNConfig{
+					VTEP:  vtepName,
+					IPVRF: &udnv1.VRFConfig{VNI: 100},
+				},
+			},
+		},
+	}
+}
+
+func getVTEPFinalizers(client *vtepfake.Clientset, vtepName string) []string {
+	vtep, err := client.K8sV1().VTEPs().Get(context.Background(), vtepName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	return vtep.Finalizers
 }
 
 func getVTEPCondition(client *vtepfake.Clientset, vtepName, conditionType string) *metav1.Condition {
@@ -91,6 +123,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 	ginkgo.BeforeEach(func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
 		config.Gateway.Mode = config.GatewayModeLocal
@@ -180,6 +213,58 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				gomega.HaveField("Status", metav1.ConditionTrue),
 				gomega.HaveField("Reason", gomega.Equal("Allocated")),
 			))
+		})
+	})
+
+	ginkgo.Context("Finalizer management", func() {
+		ginkgo.It("adds finalizer to a new VTEP", func() {
+			vtep := newVTEP("finalize-vtep", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep)
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "finalize-vtep")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+		})
+
+		ginkgo.It("removes finalizer and allows deletion when no CUDNs reference the VTEP", func() {
+			vtep := newVTEP("delete-vtep", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep)
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "delete-vtep")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "delete-vtep", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now := metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "delete-vtep")
+			}).WithTimeout(5 * time.Second).ShouldNot(gomega.ContainElement(finalizerVTEP))
+		})
+
+		ginkgo.It("blocks deletion when a CUDN references the VTEP", func() {
+			cudn := newCUDNWithEVPN("test-cudn", "blocked-vtep")
+			vtep := newVTEP("blocked-vtep", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep, cudn)
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "blocked-vtep")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "blocked-vtep", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now := metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Consistently(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "blocked-vtep")
+			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 		})
 	})
 })
