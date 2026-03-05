@@ -1236,7 +1236,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				secConInfo.bnc.logicalPortCache.add(&egressPodUDNLocal, "", util.GetNADName(nad.Namespace, nad.Name), "", nil, []*net.IPNet{nUDN})
 				_, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(secConInfo.bnc.WatchNodes()).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.registerUDNNodeHandler(networkName1)).To(gomega.Succeed())
 				egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
 				egressIPServedPodsASCDNv4, _ := buildEgressIPServedPodsAddressSets([]string{podV4IP}, ovntypes.DefaultNetworkName, DefaultNetworkControllerName)
 				egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets([]string{node1IPv4, node2IPv4})
@@ -2728,7 +2728,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				secConInfo, ok := fakeOvn.userDefinedNetworkControllers[networkName1]
 				gomega.Expect(ok).To(gomega.BeTrue())
 				secConInfo.bnc.zone = node1.Name
-				gomega.Expect(secConInfo.bnc.WatchNodes()).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.registerUDNNodeHandler(networkName1)).To(gomega.Succeed())
 				// Add pod IPs to UDN cache
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN

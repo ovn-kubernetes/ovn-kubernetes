@@ -365,19 +365,17 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		gomega.Expect(asf.ControllerName).To(gomega.Equal(getNetworkControllerName(userDefinedNetworkName)))
 
 		for _, ocInfo := range fakeOvn.userDefinedNetworkControllers {
-			// localnet topology can't watch for nodes
-			if watchNodes && ocInfo.bnc.TopologyType() != ovntypes.LocalnetTopology {
+			if watchNodes {
 				if ocInfo.bnc.TopologyType() == ovntypes.Layer3Topology && config.OVNKubernetesFeature.EnableInterconnect {
 					// add the transit switch port bindings on behalf of ovn-controller
-					// before WatchNodes so it does not synchrounously wait for them
+					// before registering the node handler so it does not synchronously wait for them
 					for _, node := range nodes {
 						transistSwitchPortName := ocInfo.bnc.GetNetworkScopedName(ovntypes.TransitSwitchToRouterPrefix + node.Name)
 						err = libovsdb.CreateTransitSwitchPortBindings(fakeOvn.sbClient, ovntypes.TransitSwitch, transistSwitchPortName)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					}
 				}
-				err = ocInfo.bnc.WatchNodes()
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(fakeOvn.registerUDNNodeHandler(ocInfo.bnc.GetNetworkName())).To(gomega.Succeed())
 			}
 
 			if namespaces != nil {

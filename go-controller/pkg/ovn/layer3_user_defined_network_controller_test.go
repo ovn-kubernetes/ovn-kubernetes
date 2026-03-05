@@ -189,7 +189,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
-				Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
@@ -238,7 +238,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					defaultNetExpectations = append(defaultNetExpectations, ingressPG)
 					defaultNetExpectations = append(defaultNetExpectations, defaultDenyExpectedData...)
 				}
-				Eventually(fakeOvn.nbClient).Should(
+				Eventually(fakeOvn.nbClient).WithTimeout(5 * time.Second).Should(
 					libovsdbtest.HaveData(
 						append(
 							defaultNetExpectations,
@@ -424,7 +424,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
-				Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
@@ -523,7 +523,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			l3Controller, ok := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
 			Expect(l3Controller.init()).To(Succeed())
-			Expect(l3Controller.WatchNodes()).To(Succeed())
+			l3Controller.RegisterNodeHandler()
 			Expect(l3Controller.WatchPods()).To(Succeed())
 			Expect(l3Controller.WatchNetworkPolicy()).To(Succeed())
 
@@ -552,6 +552,10 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(routers).NotTo(BeEmpty(), "gateway router %q should exist", gwRouterName)
 			}).WithTimeout(10 * time.Second).Should(Succeed())
+
+			// Deregister the active controller's node handler before stale cleanup
+			// to avoid concurrent node reconciliation re-creating entities while cleanup runs.
+			l3Controller.DeregisterNodeHandler()
 
 			// Do NOT delete the NAD. Simulate CleanupStaleNetworks(no valid networks): dummy controller
 			// with InvalidID runs Cleanup() so our network is treated as stale and all its entities are removed.
@@ -639,7 +643,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			Expect(err).NotTo(HaveOccurred())
 			err = l3Controller.init()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+			Expect(fakeOvn.registerUDNNodeHandler(netInfo.netName)).To(Succeed())
 
 			By("Remote node should not have a port on transit subnet before activation")
 			Consistently(func() bool {
@@ -862,7 +866,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			err = util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(l3Controller.init()).To(Succeed())
-			Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+			Expect(fakeOvn.registerUDNNodeHandler(netName)).To(Succeed())
 
 			By("Remote node should not have a port on transit subnet before activation")
 			Consistently(func() bool {

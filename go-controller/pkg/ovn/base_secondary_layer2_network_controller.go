@@ -33,6 +33,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 		return
 	}
 	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
+	oc.DeregisterNodeHandler()
 	close(oc.stopChan)
 	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
