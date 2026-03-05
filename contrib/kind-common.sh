@@ -1322,6 +1322,11 @@ export_logs() {
 
   kind export logs --name "${KIND_CLUSTER_NAME}" --verbosity 4 "$logs_dir"
   collect_coredump_binaries
+
+  # Collect host docker daemon logs for debugging container/network lifecycle
+  # operations that happen outside the kind nodes (e.g. external container
+  # cleanup in e2e tests).
+  journalctl -u docker --no-pager > "$logs_dir/host-docker-daemon.log" 2>&1 || true
 }
 
 # Helper function to try extracting a binary from a container
