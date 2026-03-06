@@ -2,11 +2,13 @@ package vtep
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -65,6 +67,26 @@ func getVTEPFinalizers(client *vtepfake.Clientset, vtepName string) []string {
 		return nil
 	}
 	return vtep.Finalizers
+}
+
+func newNodeWithHostCIDRs(name string, cidrs ...string) *corev1.Node {
+	annotation, _ := json.Marshal(cidrs)
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Annotations: map[string]string{
+				"k8s.ovn.org/host-cidrs": string(annotation),
+			},
+		},
+	}
+}
+
+func getNodeAllocations(client *vtepfake.Clientset, vtepName string) []vtepv1.NodeVTEPAllocation {
+	vtep, err := client.K8sV1().VTEPs().Get(context.Background(), vtepName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	return vtep.Status.NodeAllocations
 }
 
 func getVTEPCondition(client *vtepfake.Clientset, vtepName, conditionType string) *metav1.Condition {
@@ -521,6 +543,129 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
 				gomega.HaveField("Status", metav1.ConditionTrue),
 				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+		})
+	})
+
+	ginkgo.Context("Node VTEP IP discovery", func() {
+		ginkgo.It("discovers a single IPv4 VTEP IP and populates NodeAllocations", func() {
+			node := newNodeWithHostCIDRs("node-1", "100.64.0.5/24", "192.168.1.10/24")
+			vtep := newVTEP("vtep-discover", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-discover")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{
+					NodeName: "node-1",
+					VTEPIPs:  vtepv1.DualStackIPs{"100.64.0.5"},
+				},
+			))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-discover", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+		})
+
+		ginkgo.It("skips nodes without host-cidrs annotation", func() {
+			nodeNoAnnotation := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "bare-node"},
+			}
+			vtep := newVTEP("vtep-skip", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, nodeNoAnnotation)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-skip", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+
+			allocs := getNodeAllocations(fakeVTEP, "vtep-skip")
+			gomega.Expect(allocs).To(gomega.BeEmpty())
+		})
+
+		ginkgo.It("sets Accepted=False when a node has no IP matching any VTEP CIDR", func() {
+			node := newNodeWithHostCIDRs("node-nomatch", "192.168.1.10/24")
+			vtep := newVTEP("vtep-nomatch", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-nomatch", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocationFailed)),
+			))
+
+			cond := getVTEPCondition(fakeVTEP, "vtep-nomatch", conditionTypeAccepted)
+			gomega.Expect(cond.Message).To(gomega.ContainSubstring("node-nomatch"))
+
+			gomega.Eventually(fakeRecorder.Events).Should(gomega.Receive(
+				gomega.ContainSubstring(reasonAllocationFailed),
+			))
+		})
+
+		ginkgo.It("sets Accepted=False when a node has ambiguous VTEP IPs", func() {
+			node := newNodeWithHostCIDRs("node-ambiguous", "100.64.0.5/24", "100.64.1.10/24")
+			vtep := newVTEP("vtep-ambig", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-ambig", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocationFailed)),
+			))
+
+			cond := getVTEPCondition(fakeVTEP, "vtep-ambig", conditionTypeAccepted)
+			gomega.Expect(cond.Message).To(gomega.ContainSubstring("ambiguous"))
+			gomega.Expect(cond.Message).To(gomega.ContainSubstring("node-ambiguous"))
+
+			gomega.Eventually(fakeRecorder.Events).Should(gomega.Receive(
+				gomega.ContainSubstring(reasonAllocationFailed),
+			))
+		})
+
+		ginkgo.It("discovers VTEP IPs from multiple nodes", func() {
+			node1 := newNodeWithHostCIDRs("node-1", "100.64.0.1/24")
+			node2 := newNodeWithHostCIDRs("node-2", "100.64.0.2/24")
+			node3 := newNodeWithHostCIDRs("node-3", "100.64.0.3/24")
+			vtep := newVTEP("vtep-multi", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node1, node2, node3)
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-multi")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-1", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+				vtepv1.NodeVTEPAllocation{NodeName: "node-2", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.2"}},
+				vtepv1.NodeVTEPAllocation{NodeName: "node-3", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.3"}},
+			))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-multi", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+		})
+
+		ginkgo.It("still updates valid nodes when some nodes fail discovery", func() {
+			nodeGood := newNodeWithHostCIDRs("node-good", "100.64.0.1/24")
+			nodeBad := newNodeWithHostCIDRs("node-bad", "100.64.0.5/24", "100.64.1.10/24")
+			vtep := newVTEP("vtep-partial", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, nodeGood, nodeBad)
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-partial")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-good", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+			))
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-partial", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocationFailed)),
 			))
 		})
 	})

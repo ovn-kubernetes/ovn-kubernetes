@@ -2,6 +2,7 @@ package vtep
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/tools/reference"
@@ -41,6 +43,7 @@ type Controller struct {
 	vtepClient     vtepclientset.Interface
 	vtepLister     vteplisters.VTEPLister
 	cudnLister     udnlisters.ClusterUserDefinedNetworkLister
+	nodeLister     corelisters.NodeLister
 	vtepController controllerutil.Controller
 	eventRecorder  record.EventRecorder
 }
@@ -56,6 +59,7 @@ func NewController(
 		vtepClient:    ovnClient.VTEPClient,
 		vtepLister:    vtepLister,
 		cudnLister:    wf.ClusterUserDefinedNetworkInformer().Lister(),
+		nodeLister:    wf.NodeCoreInformer().Lister(),
 		eventRecorder: recorder,
 	}
 
@@ -135,6 +139,17 @@ func (c *Controller) reconcileVTEP(key string) error {
 		}
 		return c.updateStatusCondition(vtep, conditionTypeAccepted, metav1.ConditionFalse,
 			reasonCIDROverlap, err.Error())
+	}
+
+	if err := c.reconcileNodeAllocations(vtep); err != nil {
+		vtepRef, refErr := reference.GetReference(vtepscheme.Scheme, vtep)
+		if refErr != nil {
+			return fmt.Errorf("failed to get object reference for VTEP %s: %w", vtep.Name, refErr)
+		}
+		c.eventRecorder.Event(vtepRef, corev1.EventTypeWarning, reasonAllocationFailed, err.Error())
+		statusErr := c.updateStatusCondition(vtep, conditionTypeAccepted, metav1.ConditionFalse,
+			reasonAllocationFailed, err.Error())
+		return errors.Join(statusErr, fmt.Errorf("failed to allocate VTEP IPs for VTEP %s: %w", vtep.Name, err))
 	}
 
 	return c.updateStatusCondition(vtep, conditionTypeAccepted, metav1.ConditionTrue,
@@ -298,6 +313,104 @@ func parseVTEPCIDRs(vtep *vtepv1.VTEP) ([]*net.IPNet, error) {
 		cidrs = append(cidrs, ipNet)
 	}
 	return cidrs, nil
+}
+
+// discoverNodeVTEPIPs finds IPs on the node that fall within the VTEP's CIDRs.
+// For unmanaged VTEPs, an external provider has already assigned IPs to the node;
+// this discovers them from the host-cidrs annotation.
+// Returns at most one IPv4 and one IPv6 address. If multiple IPs of the same
+// family match, an error is returned (ambiguous assignment).
+func discoverNodeVTEPIPs(vtepCIDRs []*net.IPNet, node *corev1.Node) (net.IP, net.IP, error) {
+	hostCIDRs, err := util.ParseNodeHostCIDRs(node)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse host-cidrs on node %s: %w", node.Name, err)
+	}
+
+	var v4Matches, v6Matches []net.IP
+	for hostCIDR := range hostCIDRs {
+		ip, _, err := net.ParseCIDR(hostCIDR)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid host CIDR %q on node %s: %w", hostCIDR, node.Name, err)
+		}
+		for _, cidr := range vtepCIDRs {
+			if cidr.Contains(ip) {
+				if ip.To4() != nil {
+					v4Matches = append(v4Matches, ip)
+				} else {
+					v6Matches = append(v6Matches, ip)
+				}
+				break
+			}
+		}
+	}
+
+	if len(v4Matches) > 1 {
+		return nil, nil, fmt.Errorf("ambiguous VTEP IPv4 on node %s: found %v", node.Name, v4Matches)
+	}
+	if len(v6Matches) > 1 {
+		return nil, nil, fmt.Errorf("ambiguous VTEP IPv6 on node %s: found %v", node.Name, v6Matches)
+	}
+
+	var v4, v6 net.IP
+	if len(v4Matches) == 1 {
+		v4 = v4Matches[0]
+	}
+	if len(v6Matches) == 1 {
+		v6 = v6Matches[0]
+	}
+	return v4, v6, nil
+}
+
+// reconcileNodeAllocations discovers VTEP IPs from all nodes and updates
+// VTEPStatus.NodeAllocations via SSA. Returns an aggregated error listing
+// nodes where discovery failed, so the controller retries.
+func (c *Controller) reconcileNodeAllocations(vtep *vtepv1.VTEP) error {
+	vtepCIDRs, err := parseVTEPCIDRs(vtep)
+	if err != nil {
+		return fmt.Errorf("failed to parse CIDRs for VTEP %s: %w", vtep.Name, err)
+	}
+
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	desired := make(map[string]vtepv1.DualStackIPs, len(nodes))
+	var errs []error
+	for _, node := range nodes {
+		v4, v6, err := discoverNodeVTEPIPs(vtepCIDRs, node)
+		if err != nil {
+			// Node without host-cidrs is not yet OVN-managed; skip it.
+			// A future node update event will re-queue the VTEP when the
+			// annotation appears.
+			if util.IsAnnotationNotSetError(err) {
+				continue
+			}
+			klog.Warningf("VTEP %s: skipping node %s due to discovery error: %v", vtep.Name, node.Name, err)
+			errs = append(errs, err)
+			continue
+		}
+		if v4 == nil && v6 == nil {
+			klog.Warningf("VTEP %s: node %s has no IP matching any VTEP CIDR", vtep.Name, node.Name)
+			errs = append(errs, fmt.Errorf("node %s has no IP matching any VTEP %s CIDR", node.Name, vtep.Name))
+			continue
+		}
+		ips := vtepv1.DualStackIPs{}
+		if v4 != nil {
+			ips = append(ips, vtepv1.IP(v4.String()))
+		}
+		if v6 != nil {
+			ips = append(ips, vtepv1.IP(v6.String()))
+		}
+		desired[node.Name] = ips
+	}
+
+	updateErr := c.updateNodeAllocations(vtep, desired)
+
+	if len(errs) > 0 {
+		return errors.Join(updateErr, fmt.Errorf("VTEP %s: node allocation errors: %v", vtep.Name, errs))
+	}
+	return updateErr
 }
 
 func (c *Controller) handleManagedModeNotSupported(vtep *vtepv1.VTEP) error {

@@ -146,7 +146,10 @@ func AddVTEPGarbageCollectionReactor(fakeClient *vtepfake.Clientset) {
 	})
 }
 
-// AddVTEPApplyReactor adds a reactor to handle Apply (patch) operations on the VTEP fake client.
+// AddVTEPApplyReactor adds a reactor to handle Apply (patch) operations on the
+// VTEP fake client. It merges status fields individually so that separate SSA
+// field managers (e.g. one for conditions, one for nodeAllocations) don't
+// overwrite each other's fields.
 func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
 	fakeClient.PrependReactor("patch", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {
 		patchAction := action.(ktesting.PatchAction)
@@ -160,16 +163,25 @@ func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
 
 		vtep := existingObj.(*vtepv1.VTEP)
 		if patchAction.GetSubresource() == "status" {
-			type StatusPatch struct {
-				Status vtepv1.VTEPStatus `json:"status"`
+			type statusFields struct {
+				Conditions      *[]metav1.Condition          `json:"conditions,omitempty"`
+				NodeAllocations *[]vtepv1.NodeVTEPAllocation `json:"nodeAllocations,omitempty"`
+			}
+			type statusPatch struct {
+				Status statusFields `json:"status"`
 			}
 
-			var patchData StatusPatch
-			if err := json.Unmarshal(patchAction.GetPatch(), &patchData); err != nil {
+			var patch statusPatch
+			if err := json.Unmarshal(patchAction.GetPatch(), &patch); err != nil {
 				return true, nil, err
 			}
 
-			vtep.Status = patchData.Status
+			if patch.Status.Conditions != nil {
+				vtep.Status.Conditions = *patch.Status.Conditions
+			}
+			if patch.Status.NodeAllocations != nil {
+				vtep.Status.NodeAllocations = *patch.Status.NodeAllocations
+			}
 		}
 
 		_ = fakeClient.Tracker().Update(
