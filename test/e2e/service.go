@@ -1895,6 +1895,18 @@ metadata:
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", nonBackendNodeName, "k8s.ovn.org/egress-assignable-")
 	})
 
+	tryWgetLoadBalancer := func(externalContainer infraapi.ExternalContainer, svcLoadBalancerIP string) {
+		err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+			_, err := wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
+			if err != nil {
+				framework.Logf("retrying wget to %s: %v", svcLoadBalancerIP, err)
+				return false, nil
+			}
+			return true, nil
+		})
+		framework.ExpectNoError(err, "failed to curl load balancer service")
+	}
+
 	ginkgo.It("Should ensure connectivity works on an external service when mtu changes in intermediate node", func() {
 		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
@@ -2147,8 +2159,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		ginkgo.By("patching service " + svcName + " to allocateLoadBalancerNodePorts=false and externalTrafficPolicy=local")
 
@@ -2291,8 +2302,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		// Patch the service to use named ports.
 		ginkgo.By("patching service " + svcName + " to named ports")
@@ -2316,8 +2326,7 @@ spec:
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer = infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		// Patch the service to use allocateLoadBalancerNodeProts=false and externalTrafficPolicy=local.
 		ginkgo.By("patching service " + svcName + " to allocateLoadBalancerNodePorts=false and externalTrafficPolicy=local")
@@ -2349,8 +2358,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		pktSize := 60
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
@@ -2382,8 +2390,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(backendNodeName, 1, fmt.Sprintf("[1:%d] -A OVN-KUBE-ETP", pktSize)))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of iptable rules, err: %v", err)
