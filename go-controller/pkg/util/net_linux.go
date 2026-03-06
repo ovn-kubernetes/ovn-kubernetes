@@ -251,9 +251,70 @@ func LinkDelete(interfaceName string) error {
 	return nil
 }
 
+// AddrList lists addresses on the given link, filtered by family.
+func AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
+	return retryOnDumpInterrupted(func() ([]netlink.Addr, error) {
+		return netLinkOps.AddrList(link, family)
+	})
+}
+
+// RouteList lists routes on the given link, filtered by family.
+func RouteList(link netlink.Link, family int) ([]netlink.Route, error) {
+	return retryOnDumpInterrupted(func() ([]netlink.Route, error) {
+		return netLinkOps.RouteList(link, family)
+	})
+}
+
+// RouteListFiltered lists routes filtered by the given route and filter mask.
+func RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error) {
+	return retryOnDumpInterrupted(func() ([]netlink.Route, error) {
+		return netLinkOps.RouteListFiltered(family, filter, filterMask)
+	})
+}
+
+// RuleListFiltered lists rules filtered by the given rule and filter mask.
+func RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
+	return retryOnDumpInterrupted(func() ([]netlink.Rule, error) {
+		return netLinkOps.RuleListFiltered(family, filter, filterMask)
+	})
+}
+
+// NeighList lists neighbor entries for the given link index and family.
+func NeighList(linkIndex, family int) ([]netlink.Neigh, error) {
+	return retryOnDumpInterrupted(func() ([]netlink.Neigh, error) {
+		return netLinkOps.NeighList(linkIndex, family)
+	})
+}
+
+// ConntrackDeleteFilters deletes conntrack entries matching the given filters.
+func ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error) {
+	return retryOnDumpInterrupted(func() (uint, error) {
+		return netLinkOps.ConntrackDeleteFilters(table, family, filters...)
+	})
+}
+
+// LinkList lists all links.
+func LinkList() ([]netlink.Link, error) {
+	return retryOnDumpInterrupted(func() ([]netlink.Link, error) {
+		return netLinkOps.LinkList()
+	})
+}
+
+func retryOnDumpInterrupted[T any](fn func() (T, error)) (T, error) {
+	const maxRetries = 3
+	for i := 0; i < maxRetries; i++ {
+		result, err := fn()
+		if err == nil || !errors.Is(err, netlink.ErrDumpInterrupted) {
+			return result, err
+		}
+		klog.V(5).Infof("Netlink dump interrupted, retrying (%d/%d)", i+1, maxRetries)
+	}
+	return fn()
+}
+
 // LinkAddrFlush flushes all the addresses on the given link, except IPv6 link-local addresses
 func LinkAddrFlush(link netlink.Link) error {
-	addrs, err := netLinkOps.AddrList(link, netlink.FAMILY_ALL)
+	addrs, err := AddrList(link, netlink.FAMILY_ALL)
 	if err != nil {
 		return fmt.Errorf("failed to list addresses for the link %s: %v", link.Attrs().Name, err)
 	}
@@ -284,7 +345,7 @@ func SyncAddresses(link netlink.Link, addresses []*net.IPNet) error {
 		}
 	}
 
-	addrs, err := netLinkOps.AddrList(link, firstFamily)
+	addrs, err := AddrList(link, firstFamily)
 	if err != nil {
 		return fmt.Errorf("failed to list addresses for the link %s: %v",
 			link.Attrs().Name, err)
@@ -333,7 +394,7 @@ func SyncAddresses(link netlink.Link, addresses []*net.IPNet) error {
 
 // LinkAddrExist returns true if the given address is present on the link
 func LinkAddrExist(link netlink.Link, address *net.IPNet) (bool, error) {
-	addrs, err := netLinkOps.AddrList(link, getFamily(address.IP))
+	addrs, err := AddrList(link, getFamily(address.IP))
 	if err != nil {
 		return false, fmt.Errorf("failed to list addresses for the link %s: %v",
 			link.Attrs().Name, err)
@@ -348,7 +409,7 @@ func LinkAddrExist(link netlink.Link, address *net.IPNet) (bool, error) {
 
 // LinkAddrGetIPNet returns IPNet given the IP of an address present on given link
 func LinkAddrGetIPNet(link netlink.Link, ip net.IP) (*net.IPNet, error) {
-	addrs, err := netLinkOps.AddrList(link, getFamily(ip))
+	addrs, err := AddrList(link, getFamily(ip))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list addresses for the link %s: %v",
 			link.Attrs().Name, err)
@@ -389,7 +450,7 @@ func IsDeprecatedAddr(link netlink.Link, address *net.IPNet) (bool, error) {
 	if address == nil {
 		return false, fmt.Errorf("nil address is not allowed")
 	}
-	existingAddrs, err := netLinkOps.AddrList(link, getFamily(address.IP))
+	existingAddrs, err := AddrList(link, getFamily(address.IP))
 	if err != nil {
 		return false, fmt.Errorf("failed to detect if address %s is deprecated because unable to list addresses on link %s: %v",
 			address.IP.String(), link.Attrs().Name, err)
@@ -410,7 +471,7 @@ func IsDeprecatedAddr(link netlink.Link, address *net.IPNet) (bool, error) {
 // if subnets is empty, then all routes will be removed for a link
 // if any item in subnets is nil the default route will be removed
 func LinkRoutesDel(link netlink.Link, subnets []*net.IPNet) error {
-	routes, err := netLinkOps.RouteList(link, netlink.FAMILY_ALL)
+	routes, err := RouteList(link, netlink.FAMILY_ALL)
 	if err != nil {
 		return fmt.Errorf("failed to get all the routes for link %s: %v",
 			link.Attrs().Name, err)
@@ -486,7 +547,7 @@ func IsNilOrAnyNetwork(ipNet *net.IPNet) bool {
 // LinkRouteGetFilteredRoute gets a route for the given route filter.
 // returns nil if route is not found
 func LinkRouteGetFilteredRoute(routeFilter *netlink.Route, filterMask uint64) (*netlink.Route, error) {
-	routes, err := netLinkOps.RouteListFiltered(getFamily(routeFilter.Dst.IP), routeFilter, filterMask)
+	routes, err := RouteListFiltered(getFamily(routeFilter.Dst.IP), routeFilter, filterMask)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to get routes for filter %v with mask %d: %v", *routeFilter, filterMask, err)
@@ -559,7 +620,7 @@ func GetMACAddressFromARP(neighIP net.IP) (net.HardwareAddr, error) {
 
 // LinkNeighExists checks to see if the given MAC/IP bindings exists
 func LinkNeighExists(link netlink.Link, neighIP net.IP, neighMAC net.HardwareAddr) (bool, error) {
-	neighs, err := netLinkOps.NeighList(link.Attrs().Index, getFamily(neighIP))
+	neighs, err := NeighList(link.Attrs().Index, getFamily(neighIP))
 	if err != nil {
 		return false, fmt.Errorf("failed to get the list of neighbour entries for link %s",
 			link.Attrs().Name)
@@ -578,7 +639,7 @@ func LinkNeighExists(link netlink.Link, neighIP net.IP, neighMAC net.HardwareAdd
 
 // LinkNeighIPExists checks to see if the IP exists in IP neighbour cache
 func LinkNeighIPExists(link netlink.Link, neighIP net.IP) (bool, error) {
-	neighs, err := netLinkOps.NeighList(link.Attrs().Index, getFamily(neighIP))
+	neighs, err := NeighList(link.Attrs().Index, getFamily(neighIP))
 	if err != nil {
 		return false, fmt.Errorf("failed to get the list of neighbour entries for link %s",
 			link.Attrs().Name)
@@ -634,9 +695,9 @@ func DeleteConntrack(ip string, port int32, protocol corev1.Protocol, ipFilterTy
 	var matched uint
 	var err error
 	if ipAddress.To4() != nil {
-		matched, err = netLinkOps.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter)
+		matched, err = ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter)
 	} else {
-		matched, err = netLinkOps.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V6, filter)
+		matched, err = ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V6, filter)
 	}
 	return matched, err
 }
@@ -681,7 +742,7 @@ func GetFilteredInterfaceAddrs(link netlink.Link, v4, v6 bool) ([]netlink.Addr, 
 	} else if !v4 && v6 {
 		ipFamily = netlink.FAMILY_V6
 	}
-	addrs, err := netLinkOps.AddrList(link, ipFamily)
+	addrs, err := AddrList(link, ipFamily)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list addresses for %q: %v", link.Attrs().Name, err)
 	}
@@ -745,7 +806,7 @@ func GetIPv6OnSubnet(iface string, ip *net.IPNet) (*net.IPNet, error) {
 		Gw:        nil,
 	}
 	filterMask := netlink.RT_FILTER_GW | netlink.RT_FILTER_OIF
-	routes, err := netLinkOps.RouteListFiltered(netlink.FAMILY_V6, routeFilter, filterMask)
+	routes, err := RouteListFiltered(netlink.FAMILY_V6, routeFilter, filterMask)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get on-link routes for ip %s and iface %s", ip.String(), iface)
 	}
@@ -764,7 +825,7 @@ func GetIPv6OnSubnet(iface string, ip *net.IPNet) (*net.IPNet, error) {
 func GetIFNameAndMTUForAddress(ifAddress net.IP) (string, int, error) {
 	// from the IP address arrive at the link
 	addressFamily := getFamily(ifAddress)
-	allAddresses, err := netLinkOps.AddrList(nil, addressFamily)
+	allAddresses, err := AddrList(nil, addressFamily)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to list all the addresses for address family (%d): %v", addressFamily, err)
 

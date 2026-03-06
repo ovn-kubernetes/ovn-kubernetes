@@ -93,7 +93,7 @@ func getDefaultGatewayInterfaceByFamily(family int, gwIface string) (string, net
 		klog.Infof("Provided gateway interface %q, found as index: %d", gwIface, gwIfIdx)
 	}
 
-	routeList, err := util.GetNetLinkOps().RouteListFiltered(family, filter, mask)
+	routeList, err := util.RouteListFiltered(family, filter, mask)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to get routing table in node: %w", err)
 	}

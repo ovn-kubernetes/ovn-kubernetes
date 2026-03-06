@@ -660,7 +660,7 @@ func generateRoutesForLink(link netlink.Link, isV6 bool) ([]netlink.Route, error
 		routeTable = int(vrf.Table)
 	}
 	filterRoute, filterMask := filterRouteByLinkTable(link.Attrs().Index, routeTable)
-	linkRoutes, err := util.GetNetLinkOps().RouteListFiltered(util.GetIPFamily(isV6), filterRoute, filterMask)
+	linkRoutes, err := util.RouteListFiltered(util.GetIPFamily(isV6), filterRoute, filterMask)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get routes for link %s: %v", link.Attrs().Name, err)
 	}
@@ -904,7 +904,7 @@ func (c *Controller) repairNode() error {
 	if err != nil {
 		return fmt.Errorf("failed to get annotation: %v", err)
 	}
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return fmt.Errorf("failed to list links: %v", err)
 	}
@@ -928,7 +928,7 @@ func (c *Controller) repairNode() error {
 			}
 		}
 		filter, mask := filterRouteByLinkTable(linkIdx, util.CalculateRouteTableID(linkIdx))
-		existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
+		existingRoutes, err := util.RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
 		if err != nil {
 			return fmt.Errorf("unable to get route list using filter (%s): %v", filter.String(), err)
 		}
@@ -939,7 +939,7 @@ func (c *Controller) repairNode() error {
 		}
 	}
 	filter, mask := filterRuleByPriority(rulePriority)
-	existingRules, err := util.GetNetLinkOps().RuleListFiltered(netlink.FAMILY_ALL, filter, mask)
+	existingRules, err := util.RuleListFiltered(netlink.FAMILY_ALL, filter, mask)
 	if err != nil {
 		return fmt.Errorf("failed to list IP rules: %v", err)
 	}
@@ -1121,7 +1121,7 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 		// if annotation is set, exit early as migration from labels must have has been completed previously
 		return nil
 	}
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return fmt.Errorf("failed to ensure IP is correctly configured becase we could not list links: %v", err)
 	}
@@ -1416,7 +1416,7 @@ func findLinkOnSameNetworkAsIP(ip net.IP, v4, v6 bool) (bool, netlink.Link, erro
 func findLinkOnSameNetworkAsIPUsingLPM(ip net.IP, v4, v6 bool) (bool, netlink.Link, error) {
 	prefixLinks := map[string]netlink.Link{} // key is network CIDR
 	prefixes := make([]netip.Prefix, 0)
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to list links: %v", err)
 	}
@@ -1562,7 +1562,7 @@ func isEgressIPOnLink(linkIndex, ipFamily int, assignedEIPs sets.Set[string]) (b
 		}
 		return false, err
 	}
-	addresses, err := netlink.AddrList(link, ipFamily)
+	addresses, err := util.AddrList(link, ipFamily)
 	if err != nil {
 		return false, err
 	}

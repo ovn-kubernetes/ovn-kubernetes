@@ -247,11 +247,11 @@ func NicToBridge(iface string) (string, error) {
 
 	// Get ip addresses and routes before any real operations.
 	family := syscall.AF_UNSPEC
-	addrs, err := netLinkOps.AddrList(ifaceLink, family)
+	addrs, err := AddrList(ifaceLink, family)
 	if err != nil {
 		return "", err
 	}
-	routes, err := netLinkOps.RouteList(ifaceLink, family)
+	routes, err := RouteList(ifaceLink, family)
 	if err != nil {
 		return "", err
 	}
@@ -285,11 +285,11 @@ func BridgeToNic(bridge string) error {
 
 	// Get ip addresses and routes before any real operations.
 	family := syscall.AF_UNSPEC
-	addrs, err := netLinkOps.AddrList(bridgeLink, family)
+	addrs, err := AddrList(bridgeLink, family)
 	if err != nil {
 		return err
 	}
-	routes, err := netLinkOps.RouteList(bridgeLink, family)
+	routes, err := RouteList(bridgeLink, family)
 	if err != nil {
 		return err
 	}

@@ -136,7 +136,7 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 
 // getInterfaceByIP retrieves Interface that has `ip` assigned to it
 func getInterfaceByIP(ip net.IP) (string, error) {
-	links, err := util.GetNetLinkOps().LinkList()
+	links, err := util.LinkList()
 	if err != nil {
 		return "", fmt.Errorf("failed to list network devices in the system. %v", err)
 	}

@@ -236,7 +236,7 @@ func (c *Controller) sync() {
 	// form all tables
 	filter := &netlink.Route{}
 	mask := netlink.RT_FILTER_TABLE
-	existing, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
+	existing, err := util.RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
 	if err != nil {
 		klog.Errorf("Route Manager: failed to list routes: %v", err)
 		return

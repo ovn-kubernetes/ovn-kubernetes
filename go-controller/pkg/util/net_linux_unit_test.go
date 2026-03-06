@@ -243,6 +243,69 @@ func TestLinkAddrFlush(t *testing.T) {
 	}
 }
 
+func TestAddrList(t *testing.T) {
+	mockNetLinkOps := new(mocks.NetLinkOps)
+	mockLink := new(netlink_mocks.Link)
+	netLinkOps = mockNetLinkOps
+
+	expectedAddrs := []netlink.Addr{
+		{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")},
+	}
+
+	tests := []struct {
+		desc                     string
+		errExp                   bool
+		expectedAddrs            []netlink.Addr
+		onRetArgsNetLinkLibOpers []ovntest.TestifyMockHelper
+	}{
+		{
+			desc:          "succeeds on first attempt",
+			expectedAddrs: expectedAddrs,
+			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{expectedAddrs, nil}},
+			},
+		},
+		{
+			desc:          "retries on ErrDumpInterrupted and succeeds",
+			expectedAddrs: expectedAddrs,
+			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, netlink.ErrDumpInterrupted}},
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{expectedAddrs, nil}},
+			},
+		},
+		{
+			desc:   "returns error after all retries exhausted",
+			errExp: true,
+			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, netlink.ErrDumpInterrupted}},
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, netlink.ErrDumpInterrupted}},
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, netlink.ErrDumpInterrupted}},
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, netlink.ErrDumpInterrupted}},
+			},
+		},
+		{
+			desc:   "does not retry on non-transient error",
+			errExp: true,
+			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
+				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, fmt.Errorf("fatal error")}},
+			},
+		},
+	}
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
+			addrs, err := AddrList(mockLink, netlink.FAMILY_V4)
+			if tc.errExp {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.expectedAddrs, addrs)
+			}
+			mockNetLinkOps.AssertExpectations(t)
+		})
+	}
+}
+
 func TestLinkAddrExist(t *testing.T) {
 	mockNetLinkOps := new(mocks.NetLinkOps)
 	mockLink := new(netlink_mocks.Link)

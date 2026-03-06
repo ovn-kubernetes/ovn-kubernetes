@@ -482,13 +482,13 @@ func (c *addressManager) sync() {
 	var addrs []netlink.Addr
 
 	if c.useNetlink {
-		links, err := netlink.LinkList()
+		links, err := util.LinkList()
 		if err != nil {
 			klog.Errorf("Failed sync due to being unable to list links: %v", err)
 			return
 		}
 		for _, link := range links {
-			foundAddrs, err := netlink.AddrList(link, getSupportedIPFamily())
+			foundAddrs, err := util.AddrList(link, getSupportedIPFamily())
 			if err != nil {
 				klog.Errorf("Failed sync due to being unable to list addresses for %q: %v", link.Attrs().Name, err)
 				return
