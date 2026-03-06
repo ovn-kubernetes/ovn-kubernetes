@@ -162,6 +162,36 @@ func TestEnsureLeaseRetriesOnAlreadyExists(t *testing.T) {
 	g.Expect(*fetched.Spec.LeaseDurationSeconds).To(gomega.Equal(int32(20)))
 }
 
+func TestSetStatusTransitions(t *testing.T) {
+	g := gomega.NewWithT(t)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
+	client := fake.NewSimpleClientset()
+	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 30*time.Second)
+
+	// After construction, manager should be ready (NewManager calls setStatus("", true))
+	ready, reason := mgr.Ready()
+	g.Expect(ready).To(gomega.BeTrue())
+	g.Expect(reason).To(gomega.BeEmpty())
+
+	// Transition to unhealthy
+	mgr.setStatus("lease expired", false)
+	ready, reason = mgr.Ready()
+	g.Expect(ready).To(gomega.BeFalse())
+	g.Expect(reason).To(gomega.Equal("lease expired"))
+
+	// Transition back to healthy (recovery)
+	mgr.setStatus("", true)
+	ready, reason = mgr.Ready()
+	g.Expect(ready).To(gomega.BeTrue())
+	g.Expect(reason).To(gomega.BeEmpty())
+
+	// Idempotent: setting same status again doesn't change anything
+	mgr.setStatus("", true)
+	ready, reason = mgr.Ready()
+	g.Expect(ready).To(gomega.BeTrue())
+	g.Expect(reason).To(gomega.BeEmpty())
+}
+
 func ptrToString(val string) *string {
 	return &val
 }

@@ -200,7 +200,12 @@ func (m *Manager) setStatus(reason string, ready bool) {
 	m.statusMu.Lock()
 	defer m.statusMu.Unlock()
 
-	if m.ready != ready || m.reason != reason {
+	prevReady := m.ready
+	prevReason := m.reason
+	if prevReady != ready || prevReason != reason {
+		if ready && !prevReady && prevReason != "" {
+			klog.V(4).Infof("DPU lease %s marked healthy", m.leaseName())
+		}
 		m.ready = ready
 		m.reason = reason
 	}
@@ -222,7 +227,7 @@ func (m *Manager) newLease(now metav1.MicroTime) *coordinationv1.Lease {
 					Name:               m.nodeName,
 					UID:                m.nodeUID,
 					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
+					BlockOwnerDeletion: boolPtr(false),
 				},
 			},
 		},
@@ -266,7 +271,7 @@ func (m *Manager) updateLeaseSpec(lease *coordinationv1.Lease, now metav1.MicroT
 			Name:               m.nodeName,
 			UID:                m.nodeUID,
 			Controller:         boolPtr(true),
-			BlockOwnerDeletion: boolPtr(true),
+			BlockOwnerDeletion: boolPtr(false),
 		})
 		changed = true
 	}
