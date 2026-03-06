@@ -473,6 +473,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(udnNetController)
 				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
+				Expect(udnNetController.bnc.WatchNamespaces()).To(Succeed())
 				Expect(udnNetController.bnc.WatchPods()).To(Succeed())
 
 				Expect(fakeOvn.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})).To(Succeed())
@@ -554,6 +555,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			Expect(ok).To(BeTrue())
 			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 			l2Controller.RegisterNodeHandler()
+			Expect(l2Controller.WatchNamespaces()).To(Succeed())
 			Expect(l2Controller.WatchPods()).To(Succeed())
 			Expect(l2Controller.WatchNetworkPolicy()).To(Succeed())
 
@@ -578,6 +580,8 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			}).WithTimeout(10 * time.Second).Should(Succeed())
 
 			// Dummy controller with InvalidID runs Cleanup() to remove all entities for this network.
+			// Stop node-driven reconciliation to avoid racing with the cleanup assertions below.
+			l2Controller.DeregisterNodeHandler()
 			dummyController, err := NewLayer2UserDefinedNetworkController(
 				&l2Controller.CommonNetworkControllerInfo,
 				mutableNetInfoCleanup,
@@ -1304,6 +1308,9 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 	podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
 	if err = fakeOvn.registerUDNNodeHandler(userDefinedNetworkName); err != nil {
+		return err
+	}
+	if err = userDefinedNetController.bnc.WatchNamespaces(); err != nil {
 		return err
 	}
 	if err = userDefinedNetController.bnc.WatchPods(); err != nil {

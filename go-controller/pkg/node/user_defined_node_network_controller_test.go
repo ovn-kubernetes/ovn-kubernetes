@@ -303,6 +303,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		nodeInformer.On("Lister").Return(&nodeLister)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		nodenft.SetFakeNFTablesHelper()
+		util.SetFakeIPTablesHelpers()
 
 		kubeFakeClient := fake.NewSimpleClientset(
 			&corev1.NodeList{
