@@ -20,6 +20,7 @@ import (
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -139,7 +140,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			},
-			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to modify pods %q annotations", nodeName+"_rougeOne", podName),
+			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to modify annotations on pod %q", nodeName+"_rougeOne", podName),
 		},
 		{
 			name: "ovnkube-node cannot modify pod annotations that do not belong to it",
@@ -280,7 +281,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 			},
 		},
 		{
-			name: "ovnkube-node can modify DPUConnectionDetailsAnnot annotation on a pod",
+			name: "full-mode ovnkube-node cannot modify DPUConnectionDetailsAnnot annotation on a pod",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,
@@ -306,9 +307,10 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			},
+			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to set the following annotations on pod: %q: %v", nodeName, podName, []string{util.DPUConnectionDetailsAnnot}),
 		},
 		{
-			name: "ovnkube-node can modify DPUConnetionStatusAnnot annotation on a pod",
+			name: "full-mode ovnkube-node cannot modify DPUConnectionStatusAnnot annotation on a pod",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,
@@ -334,6 +336,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			},
+			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to set the following annotations on pod: %q: %v", nodeName, podName, []string{util.DPUConnectionStatusAnnot}),
 		},
 		{
 			name: "ovnkube-node cannot modify anything other than pods annotations",
@@ -439,6 +442,144 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 			})
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
 			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
+				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
+				return
+			}
+		})
+	}
+}
+
+func TestPodAdmission_ValidateUpdateDPUExtraUser(t *testing.T) {
+	extraUser := "system:serviceaccount:ovn-kubernetes:ovnkube-node-dpu"
+	tests := []struct {
+		name        string
+		node        *corev1.Node
+		ctx         context.Context
+		oldObj      *corev1.Pod
+		newObj      *corev1.Pod
+		expectedErr error
+	}{
+		{
+			name: "ovnkube-node-dpu can set DPUConnectionStatusAnnot on pod",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: extraUser,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.DPUConnectionStatusAnnot: `{"default":{"Status":"Ready","Reason":""}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			padm := NewPodAdmissionWebhook(&fakeNodeLister{
+				nodes: map[string]*corev1.Node{tt.node.Name: tt.node},
+			}, nil, extraUser)
+			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
+				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
+				return
+			}
+		})
+	}
+}
+
+func TestPodAdmission_ValidateUpdateDPUHost(t *testing.T) {
+	dpuHostUser := authenticationv1.UserInfo{
+		Username: fmt.Sprintf("%s:%s", csrapprover.NamePrefixDPUHost, nodeName),
+		Groups:   []string{"system:nodes", csrapprover.OVNNodesDPUHostGroup, "system:authenticated"},
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        nodeName,
+			Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+		},
+	}
+	tests := []struct {
+		name        string
+		ctx         context.Context
+		oldObj      *corev1.Pod
+		newObj      *corev1.Pod
+		expectedErr error
+	}{
+		{
+			name: "dpu-host can set DPUConnectionDetailsAnnot on its own node's pod",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: dpuHostUser},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.DPUConnectionDetailsAnnot: `{"default":{"pfId":"0","vfId":"0","sandboxId":"abc"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
+			name: "dpu-host cannot set DPUConnectionStatusAnnot (written by the DPU)",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: dpuHostUser},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName},
+				Spec:       corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.DPUConnectionStatusAnnot: `{"default":{"Status":"Ready","Reason":""}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			expectedErr: fmt.Errorf("ovnkube-node on dpu-host node: %q is not allowed to set the following annotations on pod: %q: %v", nodeName, podName, []string{util.DPUConnectionStatusAnnot}),
+		},
+		{
+			name: "dpu-host cannot modify pods on a different node",
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: dpuHostUser},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: podName},
+				Spec:       corev1.PodSpec{NodeName: nodeName + "_other"},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.DPUConnectionDetailsAnnot: `{"default":{"pfId":"0","vfId":"0","sandboxId":"abc"}}`},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName + "_other"},
+			},
+			expectedErr: fmt.Errorf("ovnkube-node on dpu-host node: %q is not allowed to modify annotations on pod %q", nodeName, podName),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			padm := NewPodAdmissionWebhook(&fakeNodeLister{
+				nodes: map[string]*corev1.Node{node.Name: node},
+			}, nil)
+			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
+			if err != tt.expectedErr && (err == nil || tt.expectedErr == nil || err.Error() != tt.expectedErr.Error()) {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
