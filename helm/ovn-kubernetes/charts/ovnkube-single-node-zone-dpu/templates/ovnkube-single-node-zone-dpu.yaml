@@ -314,6 +314,8 @@ spec:
           value: {{ default "" .Values.global.dpuHostClusterK8sTokenFile | quote }}
         - name: K8S_CACERT
           value: {{ default "" .Values.global.dpuHostClusterK8sCACert | quote }}
+        - name: GENERATE_DPU_HOST_CSR
+          value: {{ hasKey .Values.global "generateDPUHostCSR" | ternary .Values.global.generateDPUHostCSR false | quote }}
         - name: OVN_MTU
           value: {{ default "" .Values.global.mtu | quote }}
         - name: OVN_GATEWAY_MODE

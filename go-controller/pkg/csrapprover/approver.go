@@ -28,6 +28,7 @@ import (
 const (
 	ControllerName = "ovnkube-csr-approver-controller"
 	NamePrefix     = "system:ovn-node"
+	NamePrefixDPU  = "system:ovn-node-dpu"
 	MaxDuration    = time.Hour * 24 * 365
 )
 
@@ -74,7 +75,7 @@ func InitCSRAcceptanceConditions(fileName string) (conditions []CSRAcceptanceCon
 		}
 	}
 
-	conditions = append([]CSRAcceptanceCondition{DefaultCSRAcceptanceCondition}, conditions...)
+	conditions = append([]CSRAcceptanceCondition{DefaultCSRAcceptanceCondition, DPUCSRAcceptanceCondition}, conditions...)
 	// initialize Sets from slices
 	for i, v := range conditions {
 		conditions[i].groupsSet = sets.New[string](v.Groups...)
@@ -91,6 +92,16 @@ var (
 		Groups:           []string{"system:nodes", "system:ovn-nodes", "system:authenticated"},
 		UserPrefixes:     []string{"system:node", NamePrefix},
 		Default:          true,
+	}
+	// DPU CSRs
+	// (1) Initial CSR will use SA token and have Username like system:serviceaccount:ovn-kubernetes:ovnkube-node
+	// (2) Renewal of DPU certs will use system:ovn-node-dpus group while referencing DPU Host nodename
+	DPUCSRAcceptanceCondition = CSRAcceptanceCondition{
+		CommonNamePrefix: NamePrefixDPU,
+		Organizations:    []string{"system:ovn-node-dpus"},
+		Groups:           []string{"system:serviceaccounts", "system:serviceaccounts:ovn-kubernetes", "system:authenticated", "system:ovn-node-dpus"},
+		UserPrefixes:     []string{"system:serviceaccount", NamePrefixDPU},
+		Default:          false,
 	}
 	Usages = sets.New[certificatesv1.KeyUsage](
 		certificatesv1.UsageDigitalSignature,
@@ -269,17 +280,51 @@ func (c *OVNKubeCSRController) Reconcile(ctx context.Context, request reconcile.
 }
 
 func (c *CSRAcceptanceCondition) validateCSR(req *certificatesv1.CertificateSigningRequest, x509CSR *x509.CertificateRequest, acceptUsages sets.Set[certificatesv1.KeyUsage]) error {
-
-	// expected username format: userPrefix:nodeName
-	// example: system:ovn-node:ovn-worker2
-	i := strings.LastIndex(req.Spec.Username, ":")
-	if i == -1 || i == len(req.Spec.Username)-1 {
-		return fmt.Errorf("failed to parse the username: %s", req.Spec.Username)
-	}
-	prefix := req.Spec.Username[:i]
-	nodeName := req.Spec.Username[i+1:]
-	if !c.userPrefixesSet.Has(prefix) {
-		return fmt.Errorf("CSR %q was created by an unexpected user: %q", req.Name, req.Spec.Username)
+	// For DPU two cases need to be handled since initial CSR and cert renewal have different usernames.
+	// Initial CSR with SA token bootstrap: Username is SA (e.g. system:serviceaccount:ovn-kubernetes:ovnkube-node), nodeName has to be derived from CSR CN.
+	// Cert renewal: Username is system:ovn-node-dpu:<dpu host nodeName>, nodeName has to be derived from Username.
+	var nodeName string
+	if c.CommonNamePrefix == NamePrefixDPU {
+		if !strings.HasPrefix(x509CSR.Subject.CommonName, c.CommonNamePrefix+":") {
+			return fmt.Errorf("CSR %q common name %q does not have expected prefix %q", req.Name, x509CSR.Subject.CommonName, c.CommonNamePrefix+":")
+		}
+		cnNodeName := strings.TrimPrefix(x509CSR.Subject.CommonName, c.CommonNamePrefix+":")
+		if strings.HasPrefix(req.Spec.Username, NamePrefixDPU+":") {
+			// Cert renewal: nodeName from Username
+			nodeName = strings.TrimPrefix(req.Spec.Username, NamePrefixDPU+":")
+			if nodeName != cnNodeName {
+				return fmt.Errorf("CSR %q username node %q does not match common name node %q", req.Name, nodeName, cnNodeName)
+			}
+		} else {
+			// Token bootstrap: nodeName from CSR CN; require request from service account
+			nodeName = cnNodeName
+			var hasAllowedPrefix bool
+			for _, p := range c.UserPrefixes {
+				// Skip system:ovn-node-dpu prefix in Token bootstrap path (only allow service account)
+				if p == NamePrefixDPU {
+					continue
+				}
+				if strings.HasPrefix(req.Spec.Username, p+":") {
+					hasAllowedPrefix = true
+					break
+				}
+			}
+			if !hasAllowedPrefix {
+				return fmt.Errorf("CSR %q was created by an unexpected user: %q (expected prefix in %v)", req.Name, req.Spec.Username, c.UserPrefixes)
+			}
+		}
+	} else {
+		// For non DPU, expected username format: userPrefix:nodeName
+		// example: system:ovn-node:ovn-worker2
+		i := strings.LastIndex(req.Spec.Username, ":")
+		if i == -1 || i == len(req.Spec.Username)-1 {
+			return fmt.Errorf("failed to parse the username: %s", req.Spec.Username)
+		}
+		prefix := req.Spec.Username[:i]
+		nodeName = req.Spec.Username[i+1:]
+		if !c.userPrefixesSet.Has(prefix) {
+			return fmt.Errorf("CSR %q was created by an unexpected user: %q", req.Name, req.Spec.Username)
+		}
 	}
 
 	if errs := validation.IsDNS1123Subdomain(nodeName); len(errs) != 0 {

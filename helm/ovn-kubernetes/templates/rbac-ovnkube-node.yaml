@@ -4,8 +4,12 @@ metadata:
     name: ovnkube-node
     namespace: ovn-kubernetes
 
+{{- $tags := (.Values.tags | default dict) }}
 # When ovn_enable_ovnkube_identity is true, an ovnkube-node process will identify as a user in a system:ovn-nodes group,
-# not the ovnkube-node serviceAccount
+# not the ovnkube-node serviceAccount.
+# DPUs will initially present ovnkube-node serviceAccount to request CSR, but after approval identify as a user in a
+# separate system:ovn-node-dpus group and reference dpu host node name.
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -20,6 +24,11 @@ subjects:
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
+    {{- if not (eq (index $tags "ovnkube-node-dpu-host") false) }}
+    - kind: Group
+      name: system:ovn-node-dpus
+      apiGroup: rbac.authorization.k8s.io
+    {{- end }}
     {{- else }}
     - kind: ServiceAccount
       name: ovnkube-node
@@ -60,6 +69,11 @@ subjects:
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
+    {{- if not (eq (index $tags "ovnkube-node-dpu-host") false) }}
+    - kind: Group
+      name: system:ovn-node-dpus
+      apiGroup: rbac.authorization.k8s.io
+    {{- end }}
     {{- else }}
     - kind: ServiceAccount
       name: ovnkube-node
@@ -84,6 +98,11 @@ subjects:
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
+    {{- if not (eq (index $tags "ovnkube-node-dpu-host") false) }}
+    - kind: Group
+      name: system:ovn-node-dpus
+      apiGroup: rbac.authorization.k8s.io
+    {{- end }}
     {{- else }}
     - kind: ServiceAccount
       name: ovnkube-node
@@ -109,6 +128,36 @@ subjects:
       name: ovnkube-node
       namespace: ovn-kubernetes
 
+# When ovnkube-identity is enabled DPU needs token/CA for ovnkube-node SA to create CSRs and hence require CSR permissions in addition
+{{- if and (eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true) (not (eq (index $tags "ovnkube-node-dpu-host") false)) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    name: ovnkube-node-csr-bootstrap
+rules:
+    - apiGroups: ["certificates.k8s.io"]
+      resources:
+          - certificatesigningrequests
+      verbs:
+        - create
+        - get
+        - list
+        - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+    name: ovnkube-node-csr-bootstrap
+roleRef:
+    name: ovnkube-node-csr-bootstrap
+    kind: ClusterRole
+    apiGroup: rbac.authorization.k8s.io
+subjects:
+    - kind: ServiceAccount
+      name: ovnkube-node
+      namespace: ovn-kubernetes
+{{- end }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -241,8 +290,7 @@ rules:
           - create
           {{- end }}
 
-{{- $tags := (.Values.tags | default dict) }}
-{{- if (index $tags "ovnkube-node-dpu-host") }}
+{{- if not (eq (index $tags "ovnkube-node-dpu-host") false) }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

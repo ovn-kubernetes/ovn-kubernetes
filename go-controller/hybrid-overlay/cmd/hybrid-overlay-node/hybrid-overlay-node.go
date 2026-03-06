@@ -103,7 +103,7 @@ func runHybridOverlay(ctx *cli.Context) error {
 	wg := &sync.WaitGroup{}
 	clientCfg := config.Kubernetes
 	if config.Kubernetes.BootstrapKubeconfig != "" {
-		if err := util.StartNodeCertificateManager(ctx.Context, wg, nodeName, &config.Kubernetes); err != nil {
+		if err := util.StartNodeCertificateManager(ctx.Context, wg, nodeName, false, &config.Kubernetes); err != nil {
 			return fmt.Errorf("failed to start the node certificate manager: %w", err)
 		}
 

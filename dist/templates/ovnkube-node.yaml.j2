@@ -177,14 +177,12 @@ spec:
               name: ovn-config
               key: routable_mtu
               optional: true
-       {%-if ovnkube_app_name=="ovnkube-node-dpu" %}
-        - name: K8S_NODE_DPU
-       {%- else %}
+       {%-if ovnkube_app_name!="ovnkube-node-dpu" %}
         - name: K8S_NODE
-       {%- endif %}
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+       {%- endif %}
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -371,14 +369,12 @@ spec:
             configMapKeyRef:
               name: ovn-config
               key: k8s_apiserver
-       {%- if ovnkube_app_name=="ovnkube-node-dpu" %}
-        - name: K8S_NODE_DPU
-       {%- else %}
+        {%- if ovnkube_app_name!="ovnkube-node-dpu" %}
         - name: K8S_NODE
-       {%- endif %}
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        {%- endif %}
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:

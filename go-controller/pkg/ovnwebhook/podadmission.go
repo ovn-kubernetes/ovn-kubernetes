@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/exp/maps"
 
@@ -14,6 +15,7 @@ import (
 	listers "k8s.io/client-go/listers/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -22,7 +24,7 @@ import (
 // checkPodAnnot defines additional checks for the allowed annotations
 type checkPodAnnot func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error
 
-// interconnectPodAnnotationChecks holds annotations allowed for ovnkube-node:<nodeName> users in IC environments
+// interconnectPodAnnotations holds annotations allowed for ovnkube-node:<nodeName> and ovnkube-node-dpu:<nodeName> users in IC environments.
 var interconnectPodAnnotations = map[string]checkPodAnnot{
 	util.OvnPodAnnotationName: func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error {
 		// Ignore kubevirt pods with live migration, the IP can cross node-subnet boundaries
@@ -128,6 +130,7 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 		return nil, err
 	}
 	isOVNKubeNode, podAdmission, nodeName := checkNodeIdentity(p.podAdmissions, req.UserInfo)
+	isDPU := isOVNKubeNode && strings.HasPrefix(req.UserInfo.Username, csrapprover.NamePrefixDPU+":")
 
 	changes := mapDiff(oldPod.Annotations, newPod.Annotations)
 	changedKeys := maps.Keys(changes)
@@ -174,18 +177,24 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 	if podAdmission != nil {
 		prefixName = podAdmission.CommonNamePrefix
 	}
+	identityDescription := prefixName + " on node"
+	if isDPU {
+		identityDescription = "ovnkube-node-dpu for node"
+	} else if strings.HasPrefix(req.UserInfo.Username, csrapprover.NamePrefix+":") {
+		identityDescription = "ovnkube-node on node"
+	}
 
 	if oldPod.Spec.NodeName != nodeName {
-		return nil, fmt.Errorf("%s on node: %q is not allowed to modify pods %q annotations", prefixName, nodeName, oldPod.Name)
+		return nil, fmt.Errorf("%s: %q is not allowed to modify annotations on pod %q", identityDescription, nodeName, oldPod.Name)
 	}
 	if newPod.Spec.NodeName != nodeName {
-		return nil, fmt.Errorf("%s on node: %q is not allowed to modify pods %q annotations", prefixName, nodeName, newPod.Name)
+		return nil, fmt.Errorf("%s: %q is not allowed to modify annotations on pod %q", identityDescription, nodeName, newPod.Name)
 	}
 
-	// ovnkube-node is not allowed to change annotations outside of it's scope
+	// ovnkube-node / ovnkube-node-dpu is not allowed to change annotations outside of its scope
 	if isOVNKubeNode && !p.annotationKeys.HasAll(changedKeys...) {
-		return nil, fmt.Errorf("%s on node: %q is not allowed to set the following annotations on pod: %q: %v",
-			prefixName, nodeName, newPod.Name,
+		return nil, fmt.Errorf("%s: %q is not allowed to set the following annotations on pod: %q: %v",
+			identityDescription, nodeName, newPod.Name,
 			sets.New[string](changedKeys...).Difference(p.annotationKeys).UnsortedList())
 	}
 
@@ -200,7 +209,7 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 	newPodShallowCopy.ManagedFields = nil
 	if !apiequality.Semantic.DeepEqual(oldPodShallowCopy.ObjectMeta, newPodShallowCopy.ObjectMeta) ||
 		!apiequality.Semantic.DeepEqual(oldPodShallowCopy.Status, newPodShallowCopy.Status) {
-		return nil, fmt.Errorf("%s on node: %q is not allowed to modify anything other than annotations", prefixName, nodeName)
+		return nil, fmt.Errorf("%s: %q is not allowed to modify anything other than annotations", identityDescription, nodeName)
 	}
 
 	return nil, nil

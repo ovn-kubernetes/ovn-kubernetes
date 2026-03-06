@@ -173,6 +173,8 @@ global:
   dpuHostClusterK8sTokenFile: ""
   # -- DPU Host cluster's Kubernetes Access Certs File
   dpuHostClusterK8sCACert: ""
+  # -- When true, token and certificate data from fields above will be used to obtain a client cert for the DPU host cluster via CSR
+  generateDPUHostCSR: false
   # -- DPU Host cluster's Network CIDR
   dpuHostClusterNetworkCIDR: 10.244.0.0/16/24
   # -- DPU Host cluster's Service CIDR

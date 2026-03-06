@@ -17,6 +17,7 @@ import (
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -135,7 +136,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			},
-			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to modify pods %q annotations", nodeName+"_rougeOne", podName),
+			expectedErr: fmt.Errorf("ovnkube-node on node: %q is not allowed to modify annotations on pod %q", nodeName+"_rougeOne", podName),
 		},
 		{
 			name: "ovnkube-node cannot modify pod annotations that do not belong to it",
@@ -327,6 +328,33 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        podName,
 					Annotations: map[string]string{util.DPUConnectionStatusAnnot: "new"},
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+		},
+		{
+			name: "ovnkube-node-dpu can set DPUConnectionStatusAnnot on pod",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24"}`},
+				},
+			},
+			ctx: admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{
+					Username: csrapprover.NamePrefixDPU + ":" + nodeName,
+				}},
+			}),
+			oldObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: podName,
+				},
+				Spec: corev1.PodSpec{NodeName: nodeName},
+			},
+			newObj: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        podName,
+					Annotations: map[string]string{util.DPUConnectionStatusAnnot: `{"default":{"Status":"Ready","Reason":""}}`},
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			},

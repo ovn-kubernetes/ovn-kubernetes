@@ -86,6 +86,7 @@ fi
 # OVNKUBE_NODE_MGMT_PORT_NETDEV - ovnkube node management port netdev.
 # OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME - ovnkube node management port device plugin resource
 # OVN_ENCAP_IP - encap IP to be used for OVN traffic on the node. mandatory in case ovnkube-node-mode=="dpu"
+# GENERATE_DPU_HOST_CSR - when true, DPU node uses K8s token and CAcert to obtain a client cert for the host cluster via CSR
 # OVN_HOST_NETWORK_NAMESPACE - namespace to classify host network traffic for applying network policies
 # OVN_DISABLE_FORWARDING - disable forwarding on OVNK controlled interfaces
 # OVN_ENABLE_MULTI_EXTERNAL_GATEWAY - enable multi external gateway for ovn-kubernetes
@@ -2394,6 +2395,7 @@ ovnkube-controller-with-node() {
     [[ -n ${K8S_TOKEN_FILE} ]] && cluster_access_opts+="--k8s-token-file=${K8S_TOKEN_FILE} "
     [[ -n ${K8S_CACERT_DATA} ]] && cluster_access_opts+="--k8s-cacert-data=${K8S_CACERT_DATA} "
     [[ -n ${K8S_CACERT} ]] && cluster_access_opts+="--k8s-cacert=${K8S_CACERT} "
+    [[ "${GENERATE_DPU_HOST_CSR}" == "true" ]] && cluster_access_opts+="--generate-dpu-host-csr "
   fi
 
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="

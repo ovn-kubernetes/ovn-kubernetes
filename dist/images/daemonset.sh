@@ -451,6 +451,12 @@ while [ "$1" != "" ]; do
   --dpuhost-cluster-k8s-cacert)
     DPUHOST_CLUSTER_K8S_CACERT=$value
     ;;
+  --generate-dpu-host-csr)
+    GENERATE_DPU_HOST_CSR=$VALUE
+    ;;
+  --dpu-host-in-cluster)
+    DPU_HOST_IN_CLUSTER=$VALUE
+    ;;
   *)
     echo "WARNING: unknown parameter \"$PARAM\""
     exit 1
@@ -684,6 +690,12 @@ echo "ovn_nohostsubnet_label: ${ovn_nohostsubnet_label}"
 
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS}
 echo "ovn_disable_requestedchassis: ${ovn_disable_requestedchassis}"
+
+dpu_host_in_cluster=${DPU_HOST_IN_CLUSTER:-"false"}
+echo "dpu_host_in_cluster: ${dpu_host_in_cluster}"
+
+generate_dpu_host_csr=${GENERATE_DPU_HOST_CSR:-"false"}
+echo "generate_dpu_host_csr: ${generate_dpu_host_csr}"
 
 ovn_image=${ovnkube_image} \
   ovnkube_compact_mode_enable=${ovnkube_compact_mode_enable} \
@@ -1177,6 +1189,7 @@ ovn_image=${ovnkube_image} \
   dpuhost_cluster_k8s_cacert_data=${dpuhost_cluster_k8s_cacert_data} \
   dpuhost_cluster_k8s_token_file=${dpuhost_cluster_k8s_token_file} \
   dpuhost_cluster_k8s_cacert=${dpuhost_cluster_k8s_cacert} \
+  generate_dpu_host_csr=${generate_dpu_host_csr} \
   jinjanate ../templates/ovnkube-single-node-zone-dpu.yaml.j2 -o ${output_dir}/ovnkube-single-node-zone-dpu.yaml
 
 ovn_image=${ovnkube_image} \
@@ -1317,6 +1330,7 @@ net_cidr=${net_cidr} svc_cidr=${svc_cidr} \
 
 ovn_enable_interconnect=${ovn_enable_interconnect} \
 ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
+dpu_host_in_cluster=${dpu_host_in_cluster} \
 ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
 ovn_allow_icmp_netpol=${ovn_allow_icmp_netpol} \
   jinjanate ../templates/rbac-ovnkube-node.yaml.j2 -o ${output_dir}/rbac-ovnkube-node.yaml

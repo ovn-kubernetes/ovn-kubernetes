@@ -5,7 +5,9 @@ metadata:
     namespace: ovn-kubernetes
 
 # When ovn_enable_ovnkube_identity is true, an ovnkube-node process will identify as a user in a system:ovn-nodes group,
-# not the ovnkube-node serviceAccount
+# not the ovnkube-node serviceAccount.
+# DPUs will initially present ovnkube-node serviceAccount to request CSR, but after approval identify as a user in a
+# separate system:ovn-node-dpus group and reference dpu host node name.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -20,6 +22,11 @@ subjects:
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
+    {% if (dpu_host_in_cluster | default("false")) == "true" -%}
+    - kind: Group
+      name: system:ovn-node-dpus
+      apiGroup: rbac.authorization.k8s.io
+    {% endif -%}
     {% else %}
     - kind: ServiceAccount
       name: ovnkube-node
@@ -60,6 +67,11 @@ subjects:
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
+    {% if (dpu_host_in_cluster | default("false")) == "true" -%}
+    - kind: Group
+      name: system:ovn-node-dpus
+      apiGroup: rbac.authorization.k8s.io
+    {% endif -%}
     {% else %}
     - kind: ServiceAccount
       name: ovnkube-node
@@ -84,6 +96,11 @@ subjects:
     - kind: Group
       name: system:ovn-nodes
       apiGroup: rbac.authorization.k8s.io
+    {% if (dpu_host_in_cluster | default("false")) == "true" -%}
+    - kind: Group
+      name: system:ovn-node-dpus
+      apiGroup: rbac.authorization.k8s.io
+    {% endif -%}
     {% else %}
     - kind: ServiceAccount
       name: ovnkube-node
@@ -109,6 +126,37 @@ subjects:
       name: ovnkube-node
       namespace: ovn-kubernetes
 
+
+# When ovnkube-identity is enabled DPU needs token/CA for ovnkube-node SA to create CSRs and hence require CSR permissions in addition
+{% if ovn_enable_ovnkube_identity == "true" and (dpu_host_in_cluster | default("false")) == "true" -%}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    name: ovnkube-node-csr-bootstrap
+rules:
+    - apiGroups: ["certificates.k8s.io"]
+      resources:
+          - certificatesigningrequests
+      verbs:
+        - create
+        - get
+        - list
+        - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+    name: ovnkube-node-csr-bootstrap
+roleRef:
+    name: ovnkube-node-csr-bootstrap
+    kind: ClusterRole
+    apiGroup: rbac.authorization.k8s.io
+subjects:
+    - kind: ServiceAccount
+      name: ovnkube-node
+      namespace: ovn-kubernetes
+{% endif %}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -237,6 +285,8 @@ rules:
           - create
           {%- endif %}
 
+# ovnkube-node-dpu-leases is required only when ovnkube-node-dpu-host is in the cluster
+{% if (dpu_host_in_cluster | default("false")) == "true" -%}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -251,6 +301,9 @@ subjects:
     {% if ovn_enable_ovnkube_identity == "true" -%}
     - kind: Group
       name: system:ovn-nodes
+      apiGroup: rbac.authorization.k8s.io
+    - kind: Group
+      name: system:ovn-node-dpus
       apiGroup: rbac.authorization.k8s.io
     {% else %}
     - kind: ServiceAccount
@@ -269,3 +322,4 @@ rules:
       resources:
           - leases
       verbs: [ "get", "create", "update" ]
+{%- endif %}

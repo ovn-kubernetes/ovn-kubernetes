@@ -156,10 +156,6 @@ spec:
               name: ovn-config
               key: routable_mtu
               optional: true
-        - name: K8S_NODE_DPU
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:
@@ -216,6 +212,8 @@ spec:
           value: {{ default "" .Values.global.extGatewayNetworkInterface | quote }}
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
           value: {{ hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true | quote }}
+        - name: GENERATE_DPU_HOST_CSR
+          value: {{ hasKey .Values.global "generateDPUHostCSR" | ternary .Values.global.generateDPUHostCSR false | quote }}
         - name: OVN_SSL_ENABLE
           value: {{ include "isSslEnabled" . | quote }}
         - name: OVN_REMOTE_PROBE_INTERVAL
@@ -307,10 +305,6 @@ spec:
             configMapKeyRef:
               name: ovn-config
               key: k8s_apiserver
-        - name: K8S_NODE_DPU
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:

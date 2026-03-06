@@ -310,6 +310,8 @@ spec:
           value: "{{ dpuhost_cluster_k8s_token_file }}"
         - name: K8S_CACERT
           value: "{{ dpuhost_cluster_k8s_cacert }}"
+        - name: GENERATE_DPU_HOST_CSR
+          value: "{{ generate_dpu_host_csr }}"
         - name: OVN_MTU
           value: "{{ mtu_value }}"
         - name: OVN_GATEWAY_MODE

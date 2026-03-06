@@ -440,6 +440,7 @@ type KubernetesConfig struct {
 	APIServer               string `gcfg:"apiserver"`
 	Token                   string `gcfg:"token"`
 	TokenFile               string `gcfg:"tokenFile"`
+	GenerateDPUHostCSR      bool   `gcfg:"generate-dpu-host-csr"`
 	CompatServiceCIDR       string `gcfg:"service-cidr"`
 	RawServiceCIDRs         string `gcfg:"service-cidrs"`
 	ServiceCIDRs            []*net.IPNet
@@ -1408,6 +1409,11 @@ var K8sFlags = []cli.Flag{
 		Name:        "k8s-token-file",
 		Usage:       "the path to Kubernetes API token. If set, it is periodically read and takes precedence over k8s-token",
 		Destination: &cliConfig.Kubernetes.TokenFile,
+	},
+	&cli.BoolFlag{
+		Name:        "generate-dpu-host-csr",
+		Usage:       "when true, DPU node uses k8s token and CACert to obtain a client cert for the DPU Host cluster via CSR",
+		Destination: &cliConfig.Kubernetes.GenerateDPUHostCSR,
 	},
 	&cli.StringFlag{
 		Name:        "ovn-config-namespace",
