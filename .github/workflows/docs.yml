@@ -63,7 +63,7 @@ jobs:
           pip install mkdocs-material
           pip install mkdocs-awesome-pages-plugin # Install the missing plugin
           pip install $(mkdocs-get-deps)
-      - run: mkdocs build
+      - run: mkdocs build --strict
       - name: Upload Artifact (Test)
         uses: actions/upload-artifact@v4
         with:

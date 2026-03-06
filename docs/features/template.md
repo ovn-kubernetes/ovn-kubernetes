@@ -61,6 +61,9 @@ Did you write new configs or knobs that need to be turned on
 for this feature? If so educate end users on those details.
 How can users disable this feature if they don't want it?
 
+(Copy the next line as is for every feature pointing to the common requirement page. Don't forget to edit the path if your feature file is in a folder.)
+Always check the dependencies on the [Requirements page](requirements.md)
+
 ## Workflow Description
 
 Explain how the user will use the feature. Be detailed and explicit.

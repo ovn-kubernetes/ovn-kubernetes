@@ -11,6 +11,8 @@ For more info, consider looking at the following links:
 - [Assigning an egress IP address](https://docs.okd.io/latest/networking/ovn_kubernetes_network_provider/assigning-egress-ips-ovn.html)
 - [Managing Egress IP in OpenShift 4 with OVN-Kubernetes](https://rcarrata.com/openshift/egress-ip-ovn/)
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Example
 
 An example of EgressIP might look like this:

@@ -24,6 +24,8 @@ The following manufacturers are known to work:
 - sriov-device-plugin
 - multus-cni
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Worker Node SR-IOV Configuration
 
 In order to enable Open vSwitch hardware offloading, the following steps

@@ -16,6 +16,8 @@ and [2236](https://datatracker.ietf.org/doc/html/rfc2236).
 The feature is gated by config flag. In order to create a KIND cluster with
 multicast feature enabled, use the `--multicast-enabled` option with KIND.
 
+Always check the dependencies on the [Requirements page](requirements.md)
+
 ### Enabling multicast per namespace
 The multicast traffic between pods in the cluster is blocked by default; it can
 be enabled **per namespace** - but it **cannot** be enabled cluster wide.

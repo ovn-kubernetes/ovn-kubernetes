@@ -60,6 +60,8 @@ the following path on the host filesystem:
 /etc/openvswitch/enable_dynamic_cpu_affinity
 ```
 
+Always check the dependencies on the [Requirements page](requirements.md)
+
 ### Enabling the feature
 
 To enable the feature on a specific node:

@@ -39,9 +39,6 @@ plugins:
   - search
   - awesome-pages
   - mike
-  - macros:
-      #include_dir: examples
-      j2_line_comment_prefix: "#$"
   - mermaid2
   - blog:
       # NOTE: configuration options can be found at
@@ -88,6 +85,7 @@ nav:
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
     - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
     - Configuration Guide: getting-started/configuration.md
+    - Requirements: features/requirements.md
     - CLI Guide: getting-started/cli-guide.md
     - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md
     - Deploying Services on OVN-Kubernetes cluster: getting-started/example-service-creation.md

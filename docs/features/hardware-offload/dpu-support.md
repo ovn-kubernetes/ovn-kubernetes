@@ -22,12 +22,11 @@ Design document can be found [here](https://docs.google.com/document/d/11IoMKioh
 
 The **ovn-kubernetes** deployment will have two parts one on the host and another on the DPU side.
 
-
 These aforementioned parts are expected to be deployed also on two different Kubernetes clusters, one for the host and another for the DPUs.
 
+Always check the dependencies on the [Requirements page](../requirements.md)
 
 ### Host Cluster
----
 
 #### OVN-Kubernetes control plane related component
 - ovn-cluster-manager
@@ -46,7 +45,6 @@ These aforementioned parts are expected to be deployed also on two different Kub
 For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gateway Interface Configuration](dpu-gateway-interface.md).
 
 ### DPU Cluster
----
 
 #### OVN-Kubernetes components
 - local-nb-ovsdb 

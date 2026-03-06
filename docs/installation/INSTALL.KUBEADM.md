@@ -2,7 +2,7 @@ The following is a walkthrough for an installation in an environment with 4 virt
 
 Note that the resulting environment might be highly unstable.
 
-If your goal is to set up an environment quickly or to set up a development environment, see the [kind installation documentation](kind.md) instead.
+If your goal is to set up an environment quickly or to set up a development environment, see the [kind installation documentation](launching-ovn-kubernetes-on-kind.md) instead.
 
 ## Environment setup
 

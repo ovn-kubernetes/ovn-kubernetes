@@ -19,7 +19,7 @@ aligning MTU across the stack and configuring the right VLANs that fit the provi
 
 ## Introduction
 
-As of today OVN-Kubernetes [multi-homing feature](../../docs/features/multiple-networks/multi-homing.md) 
+As of today OVN-Kubernetes [multi-homing feature](../features/multiple-networks/multi-homing.md) 
 supports creating localnet topology networks and enables connecting workloads to the host network using `NetworkAttachmentDefinition` (NAD).
 
 This proposal introduces a well-formed API on top of the `ClusterUserDefinedNetwork` CRD.
