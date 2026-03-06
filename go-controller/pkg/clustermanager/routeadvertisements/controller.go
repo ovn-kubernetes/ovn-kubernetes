@@ -770,25 +770,31 @@ func (c *Controller) generateFRRConfiguration(
 
 			// For no-overlay networks, add routes to pod subnets to the accepted routes list
 			// frr-k8s will merge the prefixes from both the generated and the base FRRConfiguration
-			if selectedNetworks.networkTransport[matchedNetwork] == types.NetworkTransportNoOverlay {
-				// Get the pod subnets for this network (the network subnets, not host subnets)
-				podSubnets := selectedNetworks.networkSubnets[matchedNetwork]
-				if len(podSubnets) > 0 {
-					// Filter pod subnets by IP family to match the neighbor
-					filteredPodSubnets := util.MatchAllIPNetsStringFamily(isIPV6, podSubnets)
-					if len(filteredPodSubnets) > 0 {
-						neighbor.ToReceive = frrtypes.Receive{
-							Allowed: frrtypes.AllowedInPrefixes{
-								Mode: frrtypes.AllowRestricted,
-							},
-						}
-						for _, subnet := range filteredPodSubnets {
-							neighbor.ToReceive.Allowed.Prefixes = append(neighbor.ToReceive.Allowed.Prefixes, frrtypes.PrefixSelector{
-								Prefix: subnet,
-								LE:     selectedNetworks.prefixLength[subnet],
-								GE:     selectedNetworks.prefixLength[subnet],
-							})
-						}
+			// Collect pod subnets from all selected no-overlay networks
+			var allNoOverlayPodSubnets []string
+			for _, networkName := range selectedNetworks.networks {
+				if selectedNetworks.networkTransport[networkName] == types.NetworkTransportNoOverlay {
+					// Get the pod subnets for this network (the network subnets, not host subnets)
+					if podSubnets := selectedNetworks.networkSubnets[networkName]; len(podSubnets) > 0 {
+						allNoOverlayPodSubnets = append(allNoOverlayPodSubnets, podSubnets...)
+					}
+				}
+			}
+			if len(allNoOverlayPodSubnets) > 0 {
+				// Filter pod subnets by IP family to match the neighbor
+				filteredPodSubnets := util.MatchAllIPNetsStringFamily(isIPV6, allNoOverlayPodSubnets)
+				if len(filteredPodSubnets) > 0 {
+					neighbor.ToReceive = frrtypes.Receive{
+						Allowed: frrtypes.AllowedInPrefixes{
+							Mode: frrtypes.AllowRestricted,
+						},
+					}
+					for _, subnet := range filteredPodSubnets {
+						neighbor.ToReceive.Allowed.Prefixes = append(neighbor.ToReceive.Allowed.Prefixes, frrtypes.PrefixSelector{
+							Prefix: subnet,
+							LE:     selectedNetworks.prefixLength[subnet],
+							GE:     selectedNetworks.prefixLength[subnet],
+						})
 					}
 				}
 			}
