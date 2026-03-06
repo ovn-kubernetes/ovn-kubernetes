@@ -24,6 +24,7 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -477,5 +478,33 @@ var _ = Describe("SyncServices", func() {
 			verifyIPTablesRule(iptV4, "10.96.0.40", 80, 30093, true,
 				"iptables rule should be created when UDN is active on this node")
 		})
+	})
+})
+
+var _ = Describe("ensureMasqueradeResources", func() {
+	var netlinkMock *utilMocks.NetLinkOps
+
+	BeforeEach(func() {
+		netlinkMock = new(utilMocks.NetLinkOps)
+		util.SetNetLinkOpMockInst(netlinkMock)
+		lastMasqueradeLinkIndex = 0
+	})
+
+	AfterEach(func() {
+		util.ResetNetLinkOpMockInst()
+	})
+
+	It("returns error when interface name is empty", func() {
+		netlinkMock.On("LinkByName", "").Return(nil, fmt.Errorf("no such network interface"))
+		err := ensureMasqueradeResources(nil, "", "node1", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("not found"))
+	})
+
+	It("returns error when interface does not exist", func() {
+		netlinkMock.On("LinkByName", "nonexistent0").Return(nil, fmt.Errorf("no such network interface"))
+		err := ensureMasqueradeResources(nil, "nonexistent0", "node1", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("interface nonexistent0 not found"))
 	})
 })

@@ -173,6 +173,34 @@ var _ = Describe("Node IP Handler event tests", func() {
 				}, 3).Should(BeFalse())
 			})
 		})
+
+		Context("when receiving an event with nil IP", func() {
+			It("should not panic and should not trigger masquerade or address change callbacks", func() {
+				var changedCount atomic.Int32
+				var masqueradeCount atomic.Int32
+				tc.ipManager.OnChanged = func() {
+					changedCount.Add(1)
+				}
+				tc.ipManager.OnMasqueradeIPChanged = func() {
+					masqueradeCount.Add(1)
+				}
+
+				tc.addrChan <- netlink.AddrUpdate{
+					LinkAddress: net.IPNet{},
+					NewAddr:     true,
+				}
+
+				Consistently(func() int32 {
+					return changedCount.Load() + masqueradeCount.Load()
+				}, 3).Should(Equal(int32(0)))
+
+				// Confirm normal events still work after nil IP event
+				ipNet := ipEvent(nodeAddr4, true, tc.addrChan)
+				Eventually(func() bool {
+					return nodeHasAddress(tc.fakeClient, nodeName, ipNet)
+				}, 5).Should(BeTrue())
+			})
+		})
 	})
 
 	Describe("Subscription errors", func() {

@@ -173,7 +173,8 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				}
 				continue
 			}
-			if util.IsAddressReservedForInternalUse(a.LinkAddress.IP) || config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if (a.LinkAddress.IP != nil && util.IsAddressReservedForInternalUse(a.LinkAddress.IP)) ||
+				config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 				c.OnMasqueradeIPChanged()
 				continue
 			}

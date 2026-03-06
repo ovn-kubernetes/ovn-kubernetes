@@ -163,7 +163,7 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		if err := c.updateGatewayMAC(link); err != nil {
 			return err
 		}
-		if c.Gateway != nil && link.Attrs().Name == config.Gateway.Interface {
+		if c.Gateway != nil && config.Gateway.Interface != "" && link.Attrs().Name == config.Gateway.Interface {
 			if err := ensureMasqueradeResources(c.routeManager, config.Gateway.Interface, c.name, c.watchFactory); err != nil {
 				klog.Errorf("Masquerade reconciler on link event: %v", err)
 			}
@@ -978,7 +978,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	// Set masquerade IP reconciliation callback for all modes except DPU.
 	// DPU mode does not configure masquerade resources.
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
-		gw := nc.Gateway.(*gateway)
+		gw, ok := nc.Gateway.(*gateway)
+		if !ok {
+			return fmt.Errorf("unexpected gateway type %T, expected *gateway", nc.Gateway)
+		}
 		if gw.nodeIPManager == nil {
 			return fmt.Errorf("node IP manager not initialized for gateway")
 		}
