@@ -47,6 +47,7 @@ type Controller struct {
 	nodeLister     corelisters.NodeLister
 	vtepController controllerutil.Controller
 	cudnController controllerutil.Controller
+	nodeController controllerutil.Controller
 	eventRecorder  record.EventRecorder
 
 	// cudnVTEPIndex tracks which VTEP each EVPN-enabled CUDN references
@@ -101,6 +102,20 @@ func NewController(
 		cudnCfg,
 	)
 
+	nodeLister := wf.NodeCoreInformer().Lister()
+	nodeCfg := &controllerutil.ControllerConfig[corev1.Node]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Informer:       wf.NodeCoreInformer().Informer(),
+		Lister:         nodeLister.List,
+		Reconcile:      c.reconcileNode,
+		ObjNeedsUpdate: nodeNeedsUpdate,
+		Threadiness:    1,
+	}
+	c.nodeController = controllerutil.NewController(
+		"clustermanager-vtep-node-controller",
+		nodeCfg,
+	)
+
 	return c
 }
 
@@ -111,12 +126,13 @@ func (c *Controller) Start() error {
 		nil,
 		c.vtepController,
 		c.cudnController,
+		c.nodeController,
 	)
 }
 
 // Stop shuts down the VTEP controller.
 func (c *Controller) Stop() {
-	controllerutil.Stop(c.vtepController, c.cudnController)
+	controllerutil.Stop(c.vtepController, c.cudnController, c.nodeController)
 }
 
 func (c *Controller) reconcileVTEP(key string) error {
@@ -497,6 +513,29 @@ func cudnNeedsUpdate(oldObj, newObj *udnv1.ClusterUserDefinedNetwork) bool {
 		return newObj.Spec.Network.EVPN != nil
 	}
 	return false
+}
+
+// reconcileNode is called when a node's host-cidrs annotation changes (or on
+// node create/delete). It re-queues all VTEPs so reconcileNodeAllocations can
+// rediscover VTEP IPs for the affected node.
+//
+// NOTE: currently we re-queue all VTEPs because every node participates in
+// every VTEP (FRR runs on all nodes). If partial VTEP participation is
+// supported in the future, we could compare the node's IPs against each
+// VTEP's CIDRs and only re-queue overlapping VTEPs.
+func (c *Controller) reconcileNode(_ string) error {
+	c.vtepController.ReconcileAll()
+	return nil
+}
+
+// nodeNeedsUpdate triggers VTEP reconciliation only when the host-cidrs
+// annotation changes. This avoids unnecessary re-queues from node heartbeats,
+// status updates, label changes, etc.
+func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
+	if oldObj == nil || newObj == nil {
+		return true
+	}
+	return util.NodeHostCIDRsAnnotationChanged(oldObj, newObj)
 }
 
 func vtepNeedsUpdate(oldObj, newObj *vtepv1.VTEP) bool {

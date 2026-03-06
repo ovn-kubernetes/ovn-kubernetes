@@ -3,6 +3,7 @@ package vtep
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ktesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/record"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -818,6 +820,310 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 		})
 
+	})
+
+	ginkgo.Context("Node watch for VTEP IP re-discovery", func() {
+		ginkgo.It("updates NodeAllocations when a node's host-cidrs annotation is added", func() {
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-late"}}
+			vtep := newVTEP("vtep-node-add", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			// Node has no host-cidrs yet — it's silently skipped (not yet
+			// OVN-managed), so VTEP is Accepted with empty allocations.
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-node-add", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			gomega.Expect(getNodeAllocations(fakeVTEP, "vtep-node-add")).To(gomega.BeEmpty())
+
+			// Simulate host-cidrs appearing on the node
+			n, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-late", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.10/24"})
+			n.Annotations = map[string]string{"k8s.ovn.org/host-cidrs": string(annotation)}
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Node controller detects host-cidrs change, re-queues VTEP,
+			// which now discovers the IP.
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-node-add")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-late", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.10"}},
+			))
+		})
+
+		ginkgo.It("updates NodeAllocations when a node's host-cidrs annotation changes", func() {
+			node := newNodeWithHostCIDRs("node-change", "100.64.0.1/24")
+			vtep := newVTEP("vtep-node-change", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-node-change")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-change", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+			))
+
+			// Change the node's host-cidrs to a different IP
+			n, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-change", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.99/24"})
+			n.Annotations["k8s.ovn.org/host-cidrs"] = string(annotation)
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// NodeAllocations should reflect the new IP
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-node-change")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-change", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.99"}},
+			))
+		})
+
+		ginkgo.It("removes node from NodeAllocations when node is deleted", func() {
+			node1 := newNodeWithHostCIDRs("node-keep", "100.64.0.1/24")
+			node2 := newNodeWithHostCIDRs("node-remove", "100.64.0.2/24")
+			vtep := newVTEP("vtep-node-del", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node1, node2)
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-node-del")
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveLen(2))
+
+			// Delete node-remove
+			err := fakeClientset.KubeClient.CoreV1().Nodes().Delete(
+				context.Background(), "node-remove", metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Only node-keep should remain
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-node-del")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-keep", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+			))
+		})
+
+		ginkgo.It("recovers from AllocationFailed when no-match host-cidrs are fixed", func() {
+			// Node starts with an IP outside the VTEP CIDR
+			node := newNodeWithHostCIDRs("node-nomatch", "192.168.1.10/24")
+			vtep := newVTEP("vtep-nomatch-fix", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-nomatch-fix", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocationFailed)),
+			))
+
+			// Fix the node: add a matching IP
+			n, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-nomatch", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.20/24"})
+			n.Annotations["k8s.ovn.org/host-cidrs"] = string(annotation)
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-nomatch-fix", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-nomatch-fix")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-nomatch", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.20"}},
+			))
+		})
+
+		ginkgo.It("recovers from AllocationFailed when ambiguous host-cidrs are fixed", func() {
+			// Node starts with two IPs in the VTEP CIDR — ambiguous
+			node := newNodeWithHostCIDRs("node-ambig", "100.64.0.5/24", "100.64.1.10/24")
+			vtep := newVTEP("vtep-recover", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-recover", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionFalse),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocationFailed)),
+			))
+
+			// Fix the node: update host-cidrs to a single matching IP
+			n, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-ambig", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.5/24"})
+			n.Annotations["k8s.ovn.org/host-cidrs"] = string(annotation)
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// VTEP should recover to Accepted=True
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-recover", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-recover")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-ambig", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.5"}},
+			))
+		})
+
+		ginkgo.It("does not issue any VTEP API update when host-cidrs change is unrelated", func() {
+			var patchCount atomic.Int32
+			node := newNodeWithHostCIDRs("node-stable", "100.64.0.1/24", "192.168.1.10/24")
+			vtep := newVTEP("vtep-stable", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node)
+
+			fakeVTEP.PrependReactor("patch", "vteps", func(_ ktesting.Action) (bool, runtime.Object, error) {
+				patchCount.Add(1)
+				return false, nil, nil
+			})
+
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-stable", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-stable")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-stable", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+			))
+
+			// Confirm the initial reconcile did issue API updates
+			initialPatches := patchCount.Load()
+			gomega.Expect(initialPatches).To(gomega.BeNumerically(">", int32(0)))
+
+			// Reset counter before the unrelated change
+			patchCount.Store(0)
+
+			// Update host-cidrs with a different non-matching IP (VTEP IP unchanged)
+			n, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-stable", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.1/24", "10.0.0.50/24"})
+			n.Annotations["k8s.ovn.org/host-cidrs"] = string(annotation)
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// The diff guards should prevent any VTEP status API calls
+			gomega.Consistently(func() int32 {
+				return patchCount.Load()
+			}).WithTimeout(3 * time.Second).Should(gomega.Equal(int32(0)))
+		})
+
+		ginkgo.It("reconciles multiple VTEPs when a single node's host-cidrs changes", func() {
+			node := newNodeWithHostCIDRs("node-shared", "100.64.0.1/24", "200.10.0.1/24")
+			vtepA := newVTEP("vtep-a-multi", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			vtepB := newVTEP("vtep-b-multi", vtepv1.VTEPModeUnmanaged, "200.10.0.0/16")
+			start(vtepA, vtepB, node)
+
+			// Both VTEPs should settle with allocations from the same node
+			for _, name := range []string{"vtep-a-multi", "vtep-b-multi"} {
+				gomega.Eventually(func() *metav1.Condition {
+					return getVTEPCondition(fakeVTEP, name, conditionTypeAccepted)
+				}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+					gomega.HaveField("Status", metav1.ConditionTrue),
+					gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+				))
+			}
+			gomega.Expect(getNodeAllocations(fakeVTEP, "vtep-a-multi")).To(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-shared", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+			))
+			gomega.Expect(getNodeAllocations(fakeVTEP, "vtep-b-multi")).To(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-shared", VTEPIPs: vtepv1.DualStackIPs{"200.10.0.1"}},
+			))
+
+			// Change the node IPs: both VTEP ranges get new addresses
+			n, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-shared", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.99/24", "200.10.0.99/24"})
+			n.Annotations["k8s.ovn.org/host-cidrs"] = string(annotation)
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Both VTEPs should pick up the new IPs
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-a-multi")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-shared", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.99"}},
+			))
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-b-multi")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-shared", VTEPIPs: vtepv1.DualStackIPs{"200.10.0.99"}},
+			))
+		})
+
+		ginkgo.It("allocates a dynamically created node with host-cidrs already set", func() {
+			vtep := newVTEP("vtep-dynnode", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep)
+
+			// No nodes exist yet — VTEP should be Accepted with empty allocations
+			gomega.Eventually(func() *metav1.Condition {
+				return getVTEPCondition(fakeVTEP, "vtep-dynnode", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+			gomega.Expect(getNodeAllocations(fakeVTEP, "vtep-dynnode")).To(gomega.BeEmpty())
+
+			// Dynamically create a node that already has host-cidrs
+			node := newNodeWithHostCIDRs("node-late", "100.64.0.77/24")
+			_, err := fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-dynnode")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-late", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.77"}},
+			))
+		})
+
+		ginkgo.It("updates only the affected node's allocation when one of many nodes changes", func() {
+			node1 := newNodeWithHostCIDRs("node-m1", "100.64.0.1/24")
+			node2 := newNodeWithHostCIDRs("node-m2", "100.64.0.2/24")
+			node3 := newNodeWithHostCIDRs("node-m3", "100.64.0.3/24")
+			vtep := newVTEP("vtep-mnodes", vtepv1.VTEPModeUnmanaged, "100.64.0.0/16")
+			start(vtep, node1, node2, node3)
+
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-mnodes")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-m1", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+				vtepv1.NodeVTEPAllocation{NodeName: "node-m2", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.2"}},
+				vtepv1.NodeVTEPAllocation{NodeName: "node-m3", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.3"}},
+			))
+
+			// Change only node-m2's IP
+			n2, err := fakeClientset.KubeClient.CoreV1().Nodes().Get(context.Background(), "node-m2", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			annotation, _ := json.Marshal([]string{"100.64.0.22/24"})
+			n2.Annotations["k8s.ovn.org/host-cidrs"] = string(annotation)
+			_, err = fakeClientset.KubeClient.CoreV1().Nodes().Update(context.Background(), n2, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// node-m2 should get the new IP; node-m1 and node-m3 stay unchanged
+			gomega.Eventually(func() []vtepv1.NodeVTEPAllocation {
+				return getNodeAllocations(fakeVTEP, "vtep-mnodes")
+			}).WithTimeout(5 * time.Second).Should(gomega.ConsistOf(
+				vtepv1.NodeVTEPAllocation{NodeName: "node-m1", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.1"}},
+				vtepv1.NodeVTEPAllocation{NodeName: "node-m2", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.22"}},
+				vtepv1.NodeVTEPAllocation{NodeName: "node-m3", VTEPIPs: vtepv1.DualStackIPs{"100.64.0.3"}},
+			))
+
+			// Condition should remain Accepted=True throughout
+			gomega.Expect(getVTEPCondition(fakeVTEP, "vtep-mnodes", conditionTypeAccepted)).To(gomega.SatisfyAll(
+				gomega.HaveField("Status", metav1.ConditionTrue),
+				gomega.HaveField("Reason", gomega.Equal(reasonAllocated)),
+			))
+		})
 	})
 })
 
