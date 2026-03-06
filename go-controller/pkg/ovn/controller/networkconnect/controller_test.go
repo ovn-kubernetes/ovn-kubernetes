@@ -850,7 +850,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				}
 
 				// Create and start controller
-				controller = NewController(zoneName, nbClient, wf, fakeNM.Interface())
+				controller = NewController(zoneName, nbClient, wf, fakeNM.Interface(), nil)
 
 				err = controller.Start()
 				Expect(err).NotTo(HaveOccurred())
