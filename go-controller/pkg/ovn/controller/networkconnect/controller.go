@@ -14,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
+	ref "k8s.io/client-go/tools/reference"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	networkconnectscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/scheme"
 	networkconnectlisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -85,6 +88,8 @@ type Controller struct {
 	// We only support 1 node per zone for this feature.
 	// Updated during each CNC reconciliation via computeNodeInfo().
 	localZoneNode *corev1.Node
+
+	eventRecorder record.EventRecorder
 }
 
 // networkConnectState tracks the state of a single ClusterNetworkConnect
@@ -110,6 +115,7 @@ func NewController(
 	nbClient libovsdbclient.Client,
 	wf *factory.WatchFactory,
 	networkManager networkmanager.Interface,
+	recorder record.EventRecorder,
 ) *Controller {
 	cncLister := wf.ClusterNetworkConnectInformer().Lister()
 	nodeLister := wf.NodeCoreInformer().Lister()
@@ -127,6 +133,7 @@ func NewController(
 		networkManager:    networkManager,
 		addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode),
 		cncCache:          make(map[string]*networkConnectState),
+		eventRecorder:     recorder,
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{
@@ -365,7 +372,7 @@ func serviceProtocolsEqual(a, b *corev1.Service) bool {
 }
 
 // reconcileCNC reconciles a ClusterNetworkConnect object.
-func (c *Controller) reconcileCNC(key string) error {
+func (c *Controller) reconcileCNC(key string) (cncErr error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -380,7 +387,22 @@ func (c *Controller) reconcileCNC(key string) error {
 		klog.V(4).Infof("Reconciling CNC %s took %v", cncName, time.Since(startTime))
 	}()
 
+	// save cnc for event recording in case of error
 	cnc, err := c.cncLister.Get(cncName)
+
+	defer func() {
+		if cncErr != nil && cnc != nil {
+			cncRef, err := ref.GetReference(networkconnectscheme.Scheme, cnc)
+			if err != nil {
+				klog.Errorf("Couldn't get a reference to CNC %s to post an event: %v", cnc.Name, err)
+				return
+			}
+			klog.V(5).Infof("Posting %s event for CNC %s: %v", corev1.EventTypeWarning, cnc.Name, cncErr)
+			c.eventRecorder.Eventf(cncRef, corev1.EventTypeWarning, "ErrorReconcilingCNC",
+				fmt.Sprintf("Failed in zone %s: %s", c.zone, cncErr.Error()))
+		}
+	}()
+
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// CNC was deleted, clean up OVN resources
@@ -388,7 +410,6 @@ func (c *Controller) reconcileCNC(key string) error {
 		}
 		return err
 	}
-
 	return c.syncCNC(cnc)
 }
 
