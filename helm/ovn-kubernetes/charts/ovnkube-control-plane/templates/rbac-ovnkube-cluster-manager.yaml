@@ -76,10 +76,13 @@ rules:
           - networkqoses
           - userdefinednetworks
           - clusteruserdefinednetworks
-          - routeadvertisements
           - vteps
           - clusternetworkconnects
       verbs: [ "get", "list", "watch" ]
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - routeadvertisements
+      verbs: [ "get", "list", "watch", "create", "delete", "patch", "update" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - egressips

@@ -42,7 +42,7 @@ usage() {
     echo "                 [-dug | --dynamic-udn-removal-grace-period <seconds>]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
-    echo "                 [-noe | --no-overlay-enable [snat-enabled]]"
+    echo "                 [-noe | --no-overlay-enable [snat-enabled|managed]]"
     echo "                 [--isolated]"
     echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
@@ -125,7 +125,7 @@ echo "-dug | --dynamic-udn-removal-grace-period <seconds>     Configure the grac
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
-echo "-noe | --no-overlay-enable [snat-enabled]     Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT for pod outbound traffic. DEFAULT: disabled."
+echo "-noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled."
 echo "--allow-icmp-netpol                           Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules"
 echo ""
 }
@@ -363,13 +363,18 @@ parse_args() {
                                                     if [[ "$2" == "snat-enabled" ]]; then
                                                       ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
                                                       shift  # consume the value argument
+                                                    elif [[ "$2" == "managed" ]]; then
+                                                      ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
+                                                      ENABLE_NO_OVERLAY_MANAGED_ROUTING=true
+                                                      shift  # consume the value argument
                                                     else
                                                       echo "Error: Invalid value for --no-overlay-enable: $2"
-                                                      echo "Valid value is: snat-enabled"
+                                                      echo "Valid values are: snat-enabled, managed"
                                                       exit 1
                                                     fi
                                                   else
                                                     ENABLE_NO_OVERLAY_OUTBOUND_SNAT=false
+                                                    ENABLE_NO_OVERLAY_MANAGED_ROUTING=false
                                                   fi
                                                   ;;
             --disable-ovnkube-identity)         OVN_ENABLE_OVNKUBE_IDENTITY=false
@@ -482,6 +487,7 @@ print_params() {
      echo "DYNAMIC_UDN_GRACE_PERIOD =  $DYNAMIC_UDN_GRACE_PERIOD"
      echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
      echo "ENABLE_NO_OVERLAY_OUTBOUND_SNAT = $ENABLE_NO_OVERLAY_OUTBOUND_SNAT"
+     echo "ENABLE_NO_OVERLAY_MANAGED_ROUTING = $ENABLE_NO_OVERLAY_MANAGED_ROUTING"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -770,6 +776,7 @@ create_ovn_kube_manifests() {
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
     --no-overlay-enable="${ENABLE_NO_OVERLAY}" \
     --no-overlay-enable-snat="${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" \
+    --no-overlay-managed-routing="${ENABLE_NO_OVERLAY_MANAGED_ROUTING}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
     --metrics-ip="${METRICS_IP}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
@@ -1068,8 +1075,16 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     update_coredns_deployment_image
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  deploy_frr_external_container
-  deploy_bgp_external_server
+  frr_port=0
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+    # Enable bgp port listening on node, required for managed mode. FRR will listen on port 179 to receive BGP updates from other nodes.
+    frr_port=179
+  else
+    # external FRR is required for unmanaged mode
+    deploy_frr_external_container
+    deploy_bgp_external_server
+  fi
+  install_frr_k8s $frr_port
 fi
 build_ovn_image
 detect_apiserver_url
@@ -1107,8 +1122,13 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
     install_kubevirt_ipam_controller
   fi
 fi
+
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  install_frr_k8s
+  # wait for frr-k8s to be ready
+  wait_for_frr_k8s
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
+    configure_frr_k8s
+  fi
 fi
 
 interconnect_arg_check
