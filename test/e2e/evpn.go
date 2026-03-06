@@ -479,51 +479,45 @@ func setupIPVRFBGPOnExternalFRR(ictx infraapi.Context, vrfName string, asn, vni 
 }
 
 // =============================================================================
-// EVPN Agnhost Utilities
+// EVPN External Container Utilities
 // =============================================================================
 
-// evpnAgnhostInfo holds the discovered network information for an EVPN agnhost container.
-type evpnAgnhostInfo struct {
-	agnhostIPs       []string
-	agnhostInterface string
-	frrIPs           []string
-	frrInterface     string
+// evpnExternalContainerInfo holds the discovered network information for an EVPN external container.
+type evpnExternalContainerInfo struct {
+	containerIPs       []string
+	containerInterface string
+	frrIPs             []string
+	frrInterface       string
 }
 
-// createEVPNAgnhost creates a Docker network with the given subnets, creates an agnhost
+// createEVPNExternalContainer creates a Docker network with the given subnets, creates an external
 // container on it, attaches FRR to it, and discovers the assigned IPs and interface names.
 //
-// This is the shared foundation for both MAC-VRF and IP-VRF agnhost setups.
+// This is the shared foundation for both MAC-VRF and IP-VRF external container setups.
 // The caller is responsible for configuring FRR's interface (e.g., adding it to bridgeName
 // as an access port for MAC-VRF, or putting it in a VRF for IP-VRF).
 //
+// The container parameter provides the Name, Image, CmdArgs, and other fields.
+// The Network and --cap-add=NET_ADMIN runtime arg are set internally.
+//
 // Parameters:
+//   - container: ExternalContainer with Name, Image, CmdArgs, etc. (Network is set internally)
 //   - networkName: Name for the Docker network (e.g., "macvrf-net-100", "ipvrf-net-202")
-//   - containerName: Name for the agnhost container (e.g., "agnhost-macvrf-100")
 //   - ipFamilies: Cluster IP family support, used to filter discovered IPs
 //   - subnets: Subnets for the Docker network (e.g., "10.100.0.0/16" for IPv4, or both for dual-stack)
-//   - ipv4: Optional IPv4 address to request for the agnhost container (empty = let IPAM decide)
-//   - ipv6: Optional IPv6 address to request for the agnhost container (empty = let IPAM decide)
-func createEVPNAgnhost(ictx infraapi.Context, networkName, containerName string, ipFamilies sets.Set[utilnet.IPFamily], subnets []string, ipv4, ipv6 string) (*evpnAgnhostInfo, error) {
+func createEVPNExternalContainer(ictx infraapi.Context, container infraapi.ExternalContainer, networkName string, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) (*evpnExternalContainerInfo, error) {
 	// Step 1: Create Docker network with specific subnet(s)
 	network, err := ictx.CreateNetwork(networkName, subnets...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network %s: %w", networkName, err)
 	}
 
-	// Step 2: Create agnhost container on that network
-	agnhostContainer := infraapi.ExternalContainer{
-		Name:        containerName,
-		Image:       images.AgnHost(),
-		Network:     network,
-		IPv4:        ipv4,
-		IPv6:        ipv6,
-		CmdArgs:     []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
-		RuntimeArgs: []string{"--cap-add=NET_ADMIN"},
-	}
-	_, err = ictx.CreateExternalContainer(agnhostContainer)
+	// Step 2: Create external container on that network
+	container.Network = network
+	container.RuntimeArgs = append(container.RuntimeArgs, "--cap-add=NET_ADMIN")
+	_, err = ictx.CreateExternalContainer(container)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create agnhost container %s: %w", containerName, err)
+		return nil, fmt.Errorf("failed to create external container %s: %w", container.Name, err)
 	}
 
 	// Step 3: Connect FRR to the network
@@ -533,10 +527,10 @@ func createEVPNAgnhost(ictx infraapi.Context, networkName, containerName string,
 	}
 
 	// Step 4: Discover assigned IPs and interface names
-	agnhostNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-		infraapi.ExternalContainer{Name: containerName}, network)
+	containerNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+		infraapi.ExternalContainer{Name: container.Name}, network)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get agnhost network interface: %w", err)
+		return nil, fmt.Errorf("failed to get container network interface: %w", err)
 	}
 
 	frrNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
@@ -550,43 +544,43 @@ func createEVPNAgnhost(ictx infraapi.Context, networkName, containerName string,
 		return nil, fmt.Errorf("FRR interface name not found for network %s", networkName)
 	}
 
-	agnhostInterface := agnhostNetInf.InfName
-	if agnhostInterface == "" {
-		return nil, fmt.Errorf("agnhost interface name not found for network %s", networkName)
+	containerInterface := containerNetInf.InfName
+	if containerInterface == "" {
+		return nil, fmt.Errorf("container interface name not found for network %s", networkName)
 	}
 
 	// Collect IPs only for cluster-supported address families.
 	// Docker may assign IPs for families we didn't request (e.g., default IPv4 on IPv6-only networks),
 	// so we filter based on what the cluster actually supports.
-	var agnhostIPs, frrIPs []string
+	var containerIPs, frrIPs []string
 	if ipFamilies.Has(utilnet.IPv4) {
-		if agnhostNetInf.IPv4 != "" {
-			agnhostIPs = append(agnhostIPs, agnhostNetInf.IPv4)
+		if containerNetInf.IPv4 != "" {
+			containerIPs = append(containerIPs, containerNetInf.IPv4)
 		}
 		if frrNetInf.IPv4 != "" {
 			frrIPs = append(frrIPs, frrNetInf.IPv4)
 		}
 	}
 	if ipFamilies.Has(utilnet.IPv6) {
-		if agnhostNetInf.IPv6 != "" {
-			agnhostIPs = append(agnhostIPs, agnhostNetInf.IPv6)
+		if containerNetInf.IPv6 != "" {
+			containerIPs = append(containerIPs, containerNetInf.IPv6)
 		}
 		if frrNetInf.IPv6 != "" {
 			frrIPs = append(frrIPs, frrNetInf.IPv6)
 		}
 	}
 
-	framework.Logf("EVPN agnhost created: %s (agnhost IPs: %v, FRR IPs: %v, interface: %s, FRR interface: %s)", containerName, agnhostIPs, frrIPs, agnhostInterface, frrInterface)
-	return &evpnAgnhostInfo{
-		agnhostIPs:       agnhostIPs,
-		agnhostInterface: agnhostInterface,
-		frrIPs:           frrIPs,
-		frrInterface:     frrInterface,
+	framework.Logf("EVPN external container created: %s (container IPs: %v, FRR IPs: %v, interface: %s, FRR interface: %s)", container.Name, containerIPs, frrIPs, containerInterface, frrInterface)
+	return &evpnExternalContainerInfo{
+		containerIPs:       containerIPs,
+		containerInterface: containerInterface,
+		frrIPs:             frrIPs,
+		frrInterface:       frrInterface,
 	}, nil
 }
 
 // =============================================================================
-// MAC-VRF Agnhost Utilities
+// MAC-VRF External Container Utilities
 // =============================================================================
 
 // secondToLastIP returns the second-to-last usable IP in the given subnet.
@@ -618,61 +612,70 @@ func secondToLastIP(ipNet *net.IPNet) net.IP {
 	return result
 }
 
-// getMACVRFAgnhostIPsFromSubnets derives MAC-VRF agnhost IPs from CUDN subnets.
-// For each subnet, it returns an IP with host portion set to the high end address.
-// Example: "10.100.0.0/16" -> "10.100.0.253/16", "fd00:100::/64" -> "fd00:100::ffff:ffff:ffff:fffe"
-func getMACVRFAgnhostIPsFromSubnets(subnets []string) ([]string, error) {
-	var ips []string
-	for _, subnet := range subnets {
-		_, ipNet, err := net.ParseCIDR(subnet)
-		if err != nil {
-			return nil, err
-		}
-		ips = append(ips, secondToLastIP(ipNet).String())
-	}
-	return ips, nil
-}
-
-// setupMACVRFAgnhost creates an agnhost container connected to the EVPN bridge
+// setupMACVRFExternalContainer creates an external container connected to the EVPN bridge
 // for MAC-VRF (Layer 2) connectivity testing.
 //
 // This function:
-//  1. Creates a Docker network with the CUDN subnet and an agnhost on it,
-//     requesting the second-to-last IP of each subnet to avoid collisions
-//     with OVN IPAM and Docker IPAM (both allocate from the low end)
+//  1. Creates a Docker network with the CUDN subnet and the external container on it
 //  2. Connects FRR to the network (Docker creates a veth pair automatically)
-//  3. Moves FRR's interface to bridgeName as an access port for the MAC-VRF VLAN
+//  3. Replaces Docker-assigned IPs on the container with the second-to-last IP of the subnet
+//     to avoid collisions with OVN IPAM and Docker IPAM
+//  4. Moves FRR's interface to bridgeName as an access port for the MAC-VRF VLAN
 //
 // Requires: setupEVPNBridgeOnExternalFRR and setupMACVRFOnExternalFRR must be called first.
 //
-// The agnhost will be on the same L2 segment as pods on the CUDN, allowing
+// The container will be on the same L2 segment as pods on the CUDN, allowing
 // direct Layer 2 communication via EVPN Type-2/Type-3 routes.
 //
 // Parameters:
-//   - containerName: name of the agnhost container
-//   - networkName: name of the agnhost network
-//   - vid: VLAN ID for the access port on br0 (e.g., 100)
+//   - container: ExternalContainer definition (Name, Image, CmdArgs; Network is set internally)
+//   - bridgeName: Name of the EVPN bridge (e.g., "br0")
+//   - vid: VLAN ID for the access port on the EVPN bridge (e.g., 100)
 //   - ipFamilies: Cluster IP family support (e.g., sets.New(utilnet.IPv4, utilnet.IPv6))
 //   - subnets: Subnets for the Docker network matching the CUDN (e.g., "10.100.0.0/16")
-func setupMACVRFAgnhost(ictx infraapi.Context, containerName, networkName, bridgeName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets []string) error {
-	// Derive agnhost IPs from CUDN subnets
-	agnhostIPs, err := getMACVRFAgnhostIPsFromSubnets(subnets)
+//
+// Returns:
+//   - Container's IP addresses without prefix (e.g., ["10.100.0.253"] for a /24 subnet)
+func setupMACVRFExternalContainer(ictx infraapi.Context, container infraapi.ExternalContainer, bridgeName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) ([]string, error) {
+	networkName := fmt.Sprintf("macvrf-net-%d", vid)
+
+	info, err := createEVPNExternalContainer(ictx, container, networkName, ipFamilies, subnets...)
 	if err != nil {
-		return fmt.Errorf("Failed to derive MAC-VRF agnhost IPs from subnets: %w", err)
+		return nil, err
 	}
 
-	var ip4, ip6 string
-	ips4, ips6 := splitIPStringsByIPFamily(agnhostIPs)
-	if len(ips4) > 0 {
-		ip4 = ips4[0]
-	}
-	if len(ips6) > 0 {
-		ip6 = ips6[0]
+	// Replace Docker-assigned IPs with the second-to-last usable IP of each subnet,
+	// so using the high end avoids collisions on the shared L2 segment.
+	// We use targeted "ip addr del" (not flush) to preserve IPv6 link-local addresses
+	// needed for NDP on the L2 segment.
+	c := infraapi.ExternalContainer{Name: container.Name}
+
+	var ipCmds []string
+	var containerIPs []string
+	for _, subnet := range subnets {
+		_, ipNet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse subnet %s: %w", subnet, err)
+		}
+		ones, _ := ipNet.Mask.Size()
+		// Delete the Docker-assigned IP that falls within this subnet
+		for _, dockerIP := range info.containerIPs {
+			if ipNet.Contains(net.ParseIP(dockerIP)) {
+				ipCmds = append(ipCmds, fmt.Sprintf("ip addr del %s/%d dev %s", dockerIP, ones, info.containerInterface))
+				break
+			}
+		}
+		// Add the second-to-last usable IP of the subnet
+		newIP := secondToLastIP(ipNet)
+		ipCmds = append(ipCmds, fmt.Sprintf("ip addr add %s/%d dev %s", newIP, ones, info.containerInterface))
+		containerIPs = append(containerIPs, newIP.String())
 	}
 
-	info, err := createEVPNAgnhost(ictx, networkName, containerName, ipFamilies, subnets, ip4, ip6)
-	if err != nil {
-		return err
+	if len(ipCmds) > 0 {
+		combined := strings.Join(ipCmds, " && ")
+		if _, err := infraprovider.Get().ExecExternalContainerCommand(c, []string{"sh", "-c", combined}); err != nil {
+			return nil, fmt.Errorf("failed to replace Docker IPs on container: %w", err)
+		}
 	}
 
 	// Move FRR's interface to bridgeName and configure as access port
@@ -684,7 +687,7 @@ func setupMACVRFAgnhost(ictx infraapi.Context, containerName, networkName, bridg
 	}
 	for _, cmd := range frrCmds {
 		if _, err = infraprovider.Get().ExecExternalContainerCommand(frr, cmd); err != nil {
-			return fmt.Errorf("failed to configure %s as %s access port for VID %s: %w", info.frrInterface, bridgeName, vidStr, err)
+			return nil, fmt.Errorf("failed to configure %s as %s access port for VID %s: %w", info.frrInterface, bridgeName, vidStr, err)
 		}
 	}
 
@@ -693,62 +696,58 @@ func setupMACVRFAgnhost(ictx infraapi.Context, containerName, networkName, bridg
 	// - ictx.CreateExternalContainer() registers container deletion
 	// - ictx.AttachNetwork() registers network detachment
 
-	framework.Logf("MAC-VRF agnhost setup complete: %s (IPs: %v, VID: %d, FRR interface: %s)", containerName, agnhostIPs, vid, info.frrInterface)
-	return nil
+	framework.Logf("MAC-VRF external container setup complete: %s (IPs: %v, VID: %d, FRR interface: %s)", container.Name, containerIPs, vid, info.frrInterface)
+	return containerIPs, nil
+}
+
+// setupMACVRFAgnhost creates an agnhost container connected to the EVPN bridge
+// for MAC-VRF (Layer 2) connectivity testing.
+//
+// This is a convenience wrapper around setupMACVRFExternalContainer that uses
+// an agnhost container with netexec.
+func setupMACVRFAgnhost(ictx infraapi.Context, containerName, networkName, bridgeName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets []string) ([]string, error) {
+	container := infraapi.ExternalContainer{
+		Name:    containerName,
+		Image:   images.AgnHost(),
+		CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
+	}
+	return setupMACVRFExternalContainer(ictx, container, bridgeName, vid, ipFamilies, subnets...)
 }
 
 // =============================================================================
-// IP-VRF Agnhost Utilities
+// IP-VRF External Container Utilities
 // =============================================================================
 
-func getIPVRFAgnhostIPs(containerName, networkName string, ipFamilySet sets.Set[utilnet.IPFamily]) ([]string, error) {
-	network, err := infraprovider.Get().GetNetwork(networkName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get network %s: %w", networkName, err)
-	}
-
-	agnhostNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-		infraapi.ExternalContainer{Name: containerName}, network)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get agnhost network interface: %w", err)
-	}
-
-	ipVRFAgnhostIPs := matchIPStringsByIPFamilySet([]string{agnhostNetInf.IPv4, agnhostNetInf.IPv6}, ipFamilySet)
-	return ipVRFAgnhostIPs, nil
-}
-
-// setupIPVRFAgnhost creates an agnhost container connected to the external FRR's VRF
+// setupIPVRFExternalContainer creates an external container connected to the external FRR's VRF
 // for IP-VRF (Layer 3) connectivity testing.
 //
 // This function:
 //  1. Creates a Docker network with the specified subnet
-//  2. Creates an agnhost container on that network
+//  2. Creates the given container on that network
 //  3. Connects FRR to the network
 //  4. Discovers assigned IPs (Docker assigns them from subnet)
 //  5. Puts FRR's interface for that network into the VRF
-//  6. Sets agnhost's default route via FRR
+//  6. Sets container's default route via FRR
 //
 // Requires: setupIPVRFOnExternalFRR must be called first to create the VRF.
 //
-// The agnhost will be on a separate routed subnet, reachable via EVPN Type-5 routes.
-//
-// Names are derived from VID to support multiple IP-VRF agnhosts:
-//   - Network: ipvrf-net-<vid> (e.g., ipvrf-net-202)
-//   - Container: agnhost-ipvrf-<vid> (e.g., agnhost-ipvrf-202)
+// The container will be on a separate routed subnet, reachable via EVPN Type-5 routes.
 //
 // Parameters:
-//   - containerName: name of the agnhost container
-//   - networkName: name of the agnhost network
+//   - container: ExternalContainer with Name, Image, CmdArgs, etc. (Network is set internally)
+//   - vni: VNI used to derive the network name (e.g., ipvrf-net-<vni>)
 //   - vrfName: Name of the VRF to put FRR's interface in (must match setupIPVRFOnExternalFRR)
 //   - ipFamilies: Cluster IP family support (e.g., sets.New(utilnet.IPv4, utilnet.IPv6))
 //   - subnets: Subnets for the Docker network (e.g., "172.27.102.0/24" for IPv4, or both for dual-stack)
 //
 // Returns:
-//   - Agnhost's IP addresses (IPv4 and/or IPv6 depending on cluster IP family support)
-func setupIPVRFAgnhost(ictx infraapi.Context, containerName, networkName, vrfName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) error {
-	info, err := createEVPNAgnhost(ictx, networkName, containerName, ipFamilies, subnets, "", "")
+//   - Container's IP addresses (IPv4 and/or IPv6 depending on cluster IP family support)
+func setupIPVRFExternalContainer(ictx infraapi.Context, container infraapi.ExternalContainer, vni int, vrfName string, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) ([]string, error) {
+	networkName := fmt.Sprintf("ipvrf-net-%d", vni)
+
+	info, err := createEVPNExternalContainer(ictx, container, networkName, ipFamilies, subnets...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Put FRR's interface in the VRF
@@ -762,25 +761,25 @@ func setupIPVRFAgnhost(ictx infraapi.Context, containerName, networkName, vrfNam
 	}
 	for _, cmd := range frrCmds {
 		if _, err = infraprovider.Get().ExecExternalContainerCommand(frr, cmd); err != nil {
-			return fmt.Errorf("failed to assign %s to VRF %s: %w", info.frrInterface, vrfName, err)
+			return nil, fmt.Errorf("failed to assign %s to VRF %s: %w", info.frrInterface, vrfName, err)
 		}
 	}
 
-	// Set agnhost's default routes via FRR (for each address family)
-	agnhost := infraapi.ExternalContainer{Name: containerName}
+	// Set container's default routes via FRR (for each address family)
+	c := infraapi.ExternalContainer{Name: container.Name}
 
-	var routeCmds [][]string
+	var routeCmds []string
 	for _, gwIP := range info.frrIPs {
-		cmd := []string{"ip"}
+		family := ""
 		if utilnet.IsIPv6String(gwIP) {
-			cmd = append(cmd, "-6")
+			family = "-6 "
 		}
-		cmd = append(cmd, "route", "replace", "default", "via", gwIP, "dev", info.agnhostInterface)
-		routeCmds = append(routeCmds, cmd)
+		routeCmds = append(routeCmds, fmt.Sprintf("ip %sroute replace default via %s dev %s", family, gwIP, info.containerInterface))
 	}
-	for _, cmd := range routeCmds {
-		if _, err = infraprovider.Get().ExecExternalContainerCommand(agnhost, cmd); err != nil {
-			return fmt.Errorf("failed to set default routes on agnhost: %w", err)
+	if len(routeCmds) > 0 {
+		combined := strings.Join(routeCmds, " && ")
+		if _, err = infraprovider.Get().ExecExternalContainerCommand(c, []string{"sh", "-c", combined}); err != nil {
+			return nil, fmt.Errorf("failed to set default routes on container: %w", err)
 		}
 	}
 
@@ -789,8 +788,20 @@ func setupIPVRFAgnhost(ictx infraapi.Context, containerName, networkName, vrfNam
 	// - ictx.CreateExternalContainer() registers container deletion
 	// - ictx.AttachNetwork() registers network detachment
 
-	framework.Logf("IP-VRF agnhost setup complete: %s (IPs: %v, network: %s, VRF: %s)", containerName, info.agnhostIPs, networkName, vrfName)
-	return nil
+	framework.Logf("IP-VRF external container setup complete: %s (IPs: %v, network: %s, VRF: %s)", container.Name, info.containerIPs, networkName, vrfName)
+	return info.containerIPs, nil
+}
+
+// setupIPVRFAgnhost creates an agnhost container connected to the external FRR's VRF
+// for IP-VRF (Layer 3) connectivity testing.
+// This is a convenience wrapper around setupIPVRFExternalContainer for agnhost containers.
+func setupIPVRFAgnhost(ictx infraapi.Context, containerName, networkName, vrfName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) ([]string, error) {
+	container := infraapi.ExternalContainer{
+		Name:    containerName,
+		Image:   images.AgnHost(),
+		CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
+	}
+	return setupIPVRFExternalContainer(ictx, container, vid, vrfName, ipFamilies, subnets...)
 }
 
 // =============================================================================
@@ -1232,7 +1243,7 @@ func runEVPNNetworkAndServers(
 		}
 
 		framework.Logf("Creating MAC-VRF agnhost")
-		err = setupMACVRFAgnhost(ictx, macVRFAgnhostName, macVRFNetworkName, bridgeName, macVRFVID, ipFamilySet, cudnSubnetsFromSpec)
+		_, err = setupMACVRFAgnhost(ictx, macVRFAgnhostName, macVRFNetworkName, bridgeName, macVRFVID, ipFamilySet, cudnSubnetsFromSpec)
 		if err != nil {
 			return err
 		}
@@ -1257,7 +1268,7 @@ func runEVPNNetworkAndServers(
 
 		// Derive names from VID
 		framework.Logf("Creating IP-VRF agnhost")
-		err = setupIPVRFAgnhost(ictx, ipVRFAgnhostName, ipVRFNetworkName, ipVRFName, ipVRFVID, ipFamilySet, ipVRFAgnhostSubnets...)
+		_, err = setupIPVRFAgnhost(ictx, ipVRFAgnhostName, ipVRFNetworkName, ipVRFName, ipVRFVID, ipFamilySet, ipVRFAgnhostSubnets...)
 		if err != nil {
 			return err
 		}
