@@ -9,7 +9,6 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
@@ -22,8 +21,6 @@ import (
 // and reacting upon the watched resources (e.g. pods, endpoints) for user-defined networks
 type UserDefinedNodeNetworkController struct {
 	BaseNodeNetworkController
-	// pod events factory handler
-	podHandler *factory.Handler
 	// responsible for programing gateway elements for this network
 	gateway *UserDefinedNetworkGateway
 	// management port device manager
@@ -75,14 +72,13 @@ func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 
 	// enable adding ovs ports for dpu pods in both primary and secondary user-defined networks
 	if (config.OVNKubernetesFeature.EnableMultiNetwork || util.IsNetworkSegmentationSupportEnabled()) && config.OvnKubeNode.Mode == types.NodeModeDPU {
-		handler, err := nc.watchPodsDPU()
-		if err != nil {
+		if err := nc.watchPodsDPU(); err != nil {
 			return err
 		}
-		nc.podHandler = handler
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
 		if err := nc.gateway.AddNetwork(); err != nil {
+			nc.stopPodsDPU()
 			return fmt.Errorf("failed to add network to node gateway for network %s at node %s: %w",
 				nc.GetNetworkName(), nc.name, err)
 		}
@@ -97,13 +93,10 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 		return
 	}
 	klog.Infof("Stopping UDN node network controller for network %s", nc.GetNetworkName())
+	nc.stopPodsDPU()
 	close(nc.stopChan)
 	nc.stopChan = nil
 	nc.wg.Wait()
-
-	if nc.podHandler != nil {
-		nc.watchFactory.RemovePodHandler(nc.podHandler)
-	}
 }
 
 // Cleanup cleans up node entities for the given user-defined network

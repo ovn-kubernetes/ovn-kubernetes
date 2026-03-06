@@ -31,6 +31,7 @@ import (
 	honode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	adminpolicybasedrouteclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
@@ -77,12 +78,19 @@ type BaseNodeNetworkController struct {
 	// networkManager used for getting network information
 	networkManager networkmanager.Interface
 
-	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
-	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
-	// is nadName; value is DPU_ConnectionDetails when VF representor is successfully configured for that
-	// given NAD. DPU mode only
-	// Note that we assume that Pod's Network Attachment Selection Annotation will not change over time.
+	// podNADToDPUCDMap tracks the per-NAD DPU connection state for all NADs that each pod requests.
+	// Key is pod.UID; value is map[string]*dpuConnectionState.
+	// Key of the inner map is nadName; value is the connection state when VF representor is successfully
+	// configured for that given NAD. DPU mode only.
 	podNADToDPUCDMap sync.Map
+
+	// podKeyToUID maps pod key (namespace/name) to the pod UID tracked in podNADToDPUCDMap.
+	// Used by the level-driven controller to find the UID on the delete path where only
+	// namespace/name is available from the workqueue. DPU mode only.
+	podKeyToUID sync.Map
+
+	// dpuPodController is the level-driven controller for DPU pod reconciliation. DPU mode only.
+	dpuPodController controller.Controller
 
 	// stopChan and WaitGroup per controller
 	stopChan chan struct{}
@@ -927,11 +935,14 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 // Start learns the subnets assigned to it by the master controller
 // and calls the SetupNode script which establishes the logical switch
-func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
+func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 	klog.Infof("Starting the default node network controller")
 
-	var err error
-
+	defer func() {
+		if err != nil {
+			nc.stopPodsDPU()
+		}
+	}()
 	if nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
 	}
@@ -1079,7 +1090,8 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		if _, err := nc.watchPodsDPU(); err != nil {
+		err = nc.watchPodsDPU()
+		if err != nil {
 			return err
 		}
 	} else {
@@ -1157,6 +1169,7 @@ func (nc *DefaultNodeNetworkController) Stop() {
 		klog.Infof("Default node network controller is already stopped")
 		return
 	}
+	nc.stopPodsDPU()
 	close(nc.stopChan)
 	nc.stopChan = nil
 	nc.wg.Wait()

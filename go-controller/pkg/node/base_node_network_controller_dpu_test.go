@@ -447,7 +447,7 @@ var _ = Describe("Node DPU tests", func() {
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 --if-exists del-port br-int %s", "pf0vf9"),
 			})
-			err := dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			err := dnnc.delRepPort(&pod, scd.SandboxId, vfRep, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
@@ -458,7 +458,7 @@ var _ = Describe("Node DPU tests", func() {
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSDelPortCmd("pf0vf9"),
 			})
-			err := dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			err := dnnc.delRepPort(&pod, scd.SandboxId, vfRep, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
@@ -478,7 +478,7 @@ var _ = Describe("Node DPU tests", func() {
 				Err: nil,
 			})
 			// pass on the second
-			err := dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			err := dnnc.delRepPort(&pod, scd.SandboxId, vfRep, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
