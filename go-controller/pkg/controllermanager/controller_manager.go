@@ -245,7 +245,7 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 // NewControllerManager creates a new ovnkube controller manager to manage all the controller for all networks
 func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
 	libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
-	recorder record.EventRecorder, wg *sync.WaitGroup) (*ControllerManager, error) {
+	recorder record.EventRecorder, wg *sync.WaitGroup, identity string) (*ControllerManager, error) {
 	podRecorder := metrics.NewPodRecorder()
 
 	stopCh := make(chan struct{})
@@ -288,7 +288,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		if !config.OVNKubernetesFeature.EnableInterconnect {
 			return nil, fmt.Errorf("RouteAdvertisements can only be used if Interconnect is enabled")
 		}
-		cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient)
+		cm.routeImportManager = routeimport.New(identity, cm.nbClient)
 	}
 
 	return cm, nil
