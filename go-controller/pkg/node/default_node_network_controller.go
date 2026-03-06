@@ -31,6 +31,7 @@ import (
 	honode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	adminpolicybasedrouteclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
@@ -63,6 +64,8 @@ type CommonNodeNetworkControllerInfo struct {
 	apbExternalRouteClient adminpolicybasedrouteclientset.Interface
 	// route manager that creates and manages routes
 	routeManager *routemanager.Controller
+	// ovs client that allows to read ovs info
+	ovsClient client.Client
 }
 
 // BaseNodeNetworkController structure per-network fields and network specific configuration
@@ -75,20 +78,29 @@ type BaseNodeNetworkController struct {
 	// networkManager used for getting network information
 	networkManager networkmanager.Interface
 
-	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
-	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
-	// is nadName; value is DPU_ConnectionDetails when VF representor is successfully configured for that
-	// given NAD. DPU mode only
-	// Note that we assume that Pod's Network Attachment Selection Annotation will not change over time.
+	// podNADToDPUCDMap tracks the per-NAD DPU connection state for all NADs that each pod requests.
+	// Key is pod.UID; value is map[string]*dpuConnectionState.
+	// Key of the inner map is nadName; value is the connection state when VF representor is successfully
+	// configured for that given NAD. DPU mode only.
 	podNADToDPUCDMap sync.Map
+
+	// podKeyToUID maps pod key (namespace/name) to the pod UID tracked in podNADToDPUCDMap.
+	// Used by the level-driven controller to find the UID on the delete path where only
+	// namespace/name is available from the workqueue. DPU mode only.
+	podKeyToUID sync.Map
+
+	// dpuPodController is the level-driven controller for DPU pod reconciliation. DPU mode only.
+	dpuPodController controller.Controller
 
 	// stopChan and WaitGroup per controller
 	stopChan chan struct{}
 	wg       *sync.WaitGroup
 }
 
-func newCommonNodeNetworkControllerInfo(kubeClient clientset.Interface, kube kube.Interface, apbExternalRouteClient adminpolicybasedrouteclientset.Interface,
-	wf factory.NodeWatchFactory, eventRecorder record.EventRecorder, name string, routeManager *routemanager.Controller) *CommonNodeNetworkControllerInfo {
+func newCommonNodeNetworkControllerInfo(kubeClient clientset.Interface, kube kube.Interface,
+	apbExternalRouteClient adminpolicybasedrouteclientset.Interface, ovsClient client.Client,
+	wf factory.NodeWatchFactory, eventRecorder record.EventRecorder, name string,
+	routeManager *routemanager.Controller) *CommonNodeNetworkControllerInfo {
 
 	return &CommonNodeNetworkControllerInfo{
 		client:                 kubeClient,
@@ -98,13 +110,16 @@ func newCommonNodeNetworkControllerInfo(kubeClient clientset.Interface, kube kub
 		name:                   name,
 		recorder:               eventRecorder,
 		routeManager:           routeManager,
+		ovsClient:              ovsClient,
 	}
 }
 
 // NewCommonNodeNetworkControllerInfo creates and returns the base node network controller info
-func NewCommonNodeNetworkControllerInfo(kubeClient clientset.Interface, apbExternalRouteClient adminpolicybasedrouteclientset.Interface, wf factory.NodeWatchFactory,
-	eventRecorder record.EventRecorder, name string, routeManager *routemanager.Controller) *CommonNodeNetworkControllerInfo {
-	return newCommonNodeNetworkControllerInfo(kubeClient, &kube.Kube{KClient: kubeClient}, apbExternalRouteClient, wf, eventRecorder, name, routeManager)
+func NewCommonNodeNetworkControllerInfo(kubeClient clientset.Interface,
+	apbExternalRouteClient adminpolicybasedrouteclientset.Interface,
+	ovsClient client.Client, wf factory.NodeWatchFactory, eventRecorder record.EventRecorder,
+	name string, routeManager *routemanager.Controller) *CommonNodeNetworkControllerInfo {
+	return newCommonNodeNetworkControllerInfo(kubeClient, &kube.Kube{KClient: kubeClient}, apbExternalRouteClient, ovsClient, wf, eventRecorder, name, routeManager)
 }
 
 // DefaultNodeNetworkController is the object holder for utilities meant for node management of default network
@@ -137,12 +152,10 @@ type DefaultNodeNetworkController struct {
 
 	nodeAddress net.IP
 	sbZone      string
-
-	ovsClient client.Client
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
-	wg *sync.WaitGroup, routeManager *routemanager.Controller, networkManager networkmanager.Interface, ovsClient client.Client) *DefaultNodeNetworkController {
+	wg *sync.WaitGroup, routeManager *routemanager.Controller, networkManager networkmanager.Interface) *DefaultNodeNetworkController {
 
 	c := &DefaultNodeNetworkController{
 		BaseNodeNetworkController: BaseNodeNetworkController{
@@ -153,7 +166,6 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 			wg:                              wg,
 		},
 		routeManager: routeManager,
-		ovsClient:    ovsClient,
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != types.NodeModeDPU {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
@@ -164,11 +176,11 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 }
 
 // NewDefaultNodeNetworkController creates a new network controller for node management of the default network
-func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, networkManager networkmanager.Interface, ovsClient client.Client) (*DefaultNodeNetworkController, error) {
+func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, networkManager networkmanager.Interface) (*DefaultNodeNetworkController, error) {
 	var err error
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	nc := newDefaultNodeNetworkController(cnnci, stopChan, wg, cnnci.routeManager, networkManager, ovsClient)
+	nc := newDefaultNodeNetworkController(cnnci, stopChan, wg, cnnci.routeManager, networkManager)
 
 	if len(config.Kubernetes.HealthzBindAddress) != 0 {
 		klog.Infof("Enable node proxy healthz server on %s", config.Kubernetes.HealthzBindAddress)
@@ -923,11 +935,14 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 // Start learns the subnets assigned to it by the master controller
 // and calls the SetupNode script which establishes the logical switch
-func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
+func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 	klog.Infof("Starting the default node network controller")
 
-	var err error
-
+	defer func() {
+		if err != nil {
+			nc.stopPodsDPU()
+		}
+	}()
 	if nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
 	}
@@ -1075,7 +1090,8 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		if _, err := nc.watchPodsDPU(); err != nil {
+		err = nc.watchPodsDPU()
+		if err != nil {
 			return err
 		}
 	} else {
@@ -1153,6 +1169,7 @@ func (nc *DefaultNodeNetworkController) Stop() {
 		klog.Infof("Default node network controller is already stopped")
 		return
 	}
+	nc.stopPodsDPU()
 	close(nc.stopChan)
 	nc.stopChan = nil
 	nc.wg.Wait()
