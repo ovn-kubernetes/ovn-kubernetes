@@ -1739,6 +1739,12 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 
 })
 
+func init() {
+	if os.Getenv("KIND_INSTALL_METALLB") == "true" {
+		images.Add(images.Nginx(), images.MetalLBLBService(), images.UDPServerSrcIPPrinter())
+	}
+}
+
 var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Service, func() {
 
 	const (
@@ -1802,14 +1808,14 @@ spec:
            claimName: dynamic-claim
       initContainers:
       - name: get-big-file
-        image: quay.io/itssurya/dev-images:metallb-lbservice
+        image: ` + images.MetalLBLBService() + `
         command: ['sh', '-c', "dd if=/dev/zero of=/usr/share/nginx/html/big.iso  bs=1024 count=0 seek=102400"]
         volumeMounts:
         - name: data
           mountPath: "/usr/share/nginx/html"
       containers:
       - name: nginx
-        image: nginx:1
+        image: ` + images.Nginx() + `
         volumeMounts:
         - name: data
           mountPath: "/usr/share/nginx/html"
@@ -1817,7 +1823,7 @@ spec:
         - name: http
           containerPort: 80
       - name: udp-server
-        image: quay.io/itssurya/dev-images:udp-server-srcip-printer
+        image: ` + images.UDPServerSrcIPPrinter() + `
         imagePullPolicy: Always
         ports:
         - containerPort: 10001
