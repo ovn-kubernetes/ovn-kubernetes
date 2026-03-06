@@ -60,6 +60,20 @@ func GetNodeManagementIfAddr(subnet *net.IPNet) *net.IPNet {
 	return &net.IPNet{IP: iputils.NextIP(gwIfAddr.IP), Mask: subnet.Mask}
 }
 
+// evpnNodeMgmtPortMAC generates a deterministic, unique MAC address for a given
+// node on a given network using 02:00 prefix.
+func evpnNodeMgmtPortMAC(nodeName string, networkID int) net.HardwareAddr {
+	input := fmt.Sprintf("%s-%d", nodeName, networkID)
+	hash := sha256.Sum256([]byte(input))
+	return net.HardwareAddr{0x02, 0x00, hash[0], hash[1], hash[2], hash[3]}
+}
+
+// HasEVPNMgmtPortMACPrefix returns true if the given MAC address uses the
+// 02:00 prefix reserved for EVPN management port MACs.
+func HasEVPNMgmtPortMACPrefix(mac net.HardwareAddr) bool {
+	return len(mac) >= 2 && mac[0] == 0x02 && mac[1] == 0x00
+}
+
 // GetNodeHybridOverlayIfAddr returns the node logical switch hybrid overlay
 // port address (the ".3" address), return nil if the subnet is invalid
 func GetNodeHybridOverlayIfAddr(subnet *net.IPNet) *net.IPNet {

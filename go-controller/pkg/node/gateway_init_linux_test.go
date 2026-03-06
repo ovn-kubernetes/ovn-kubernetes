@@ -306,6 +306,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
 		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
 		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
+		netInfo.On("GetNodeManagementPortMAC", nodeName, hostSubnets[0]).Return(util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(hostSubnets[0]).IP))
 		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1246,6 +1247,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
 		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
 		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
+		netInfo.On("GetNodeManagementPortMAC", nodeName, hostSubnets[0]).Return(util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(hostSubnets[0]).IP))
 		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 

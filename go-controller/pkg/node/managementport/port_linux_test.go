@@ -249,6 +249,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		netInfo.On("GetNodeGatewayIP", nodeSubnetCIDRs[i]).Return(util.GetNodeGatewayIfAddr(nodeSubnetCIDRs[i]))
 		netInfo.On("GetNodeManagementIP", nodeSubnetCIDRs[i]).Return(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[i]))
 	}
+	netInfo.On("GetNodeManagementPortMAC", nodeName, nodeSubnetCIDRs[0]).Return(util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[0]).IP))
 
 	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: nodeName,
@@ -355,6 +356,7 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		netInfo.On("GetNodeGatewayIP", nodeSubnetCIDRs[i]).Return(util.GetNodeGatewayIfAddr(nodeSubnetCIDRs[i]))
 		netInfo.On("GetNodeManagementIP", nodeSubnetCIDRs[i]).Return(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[i]))
 	}
+	netInfo.On("GetNodeManagementPortMAC", nodeName, nodeSubnetCIDRs[0]).Return(util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[0]).IP))
 
 	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: nodeName,
@@ -461,6 +463,7 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		netInfo.On("GetNodeGatewayIP", nodeSubnetCIDRs[i]).Return(util.GetNodeGatewayIfAddr(nodeSubnetCIDRs[i]))
 		netInfo.On("GetNodeManagementIP", nodeSubnetCIDRs[i]).Return(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[i]))
 	}
+	netInfo.On("GetNodeManagementPortMAC", nodeName, nodeSubnetCIDRs[0]).Return(util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[0]).IP))
 
 	netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
 

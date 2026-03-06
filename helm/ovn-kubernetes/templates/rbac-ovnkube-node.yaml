@@ -188,6 +188,7 @@ rules:
           - routeadvertisements
           - networkqoses
           - clusternetworkconnects
+          - vteps
       verbs: [ "get", "list", "watch" ]
     {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
     - apiGroups: ["certificates.k8s.io"]

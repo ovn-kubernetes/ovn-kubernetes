@@ -1101,7 +1101,7 @@ func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressS
 		routerName = oc.GetNetworkScopedGWRouterName(nodeName)
 		outputPort = types.GWRouterToJoinSwitchPrefix + routerName
 	}
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, isUDNAdvertised)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, nodeName, isUDNAdvertised)
 	if err != nil {
 		return err
 	}
@@ -1251,7 +1251,7 @@ func (oc *Layer2UserDefinedNetworkController) StartServiceController(wg *sync.Wa
 
 func (oc *Layer2UserDefinedNetworkController) updateLocalPodEvent(pod *corev1.Pod) error {
 	if kubevirt.IsPodAllowedForMigration(pod, oc.GetNetInfo()) {
-		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory, pod)
+		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory.PodCoreInformer().Lister(), pod)
 		if err != nil {
 			return err
 		}

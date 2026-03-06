@@ -535,6 +535,11 @@ func allocatePodAnnotationWithRollback(
 		if err != nil {
 			return
 		}
+		if netInfo.Transport() == types.NetworkTransportEVPN && util.HasEVPNMgmtPortMACPrefix(tentative.MAC) {
+			err = fmt.Errorf("MAC address %s for pod %s uses the prefix reserved for EVPN infrastructure",
+				tentative.MAC, podDesc)
+			return
+		}
 		if macRegistry != nil {
 			if rerr := macRegistry.Reserve(macOwnerID, tentative.MAC); rerr != nil {
 				// repeated requests are no-op because mac already reserved

@@ -169,11 +169,6 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip_label "Feature:RouteAdvertisements"
 else
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
-    # Filter out extended RouteAdvertisements tests to keep job run time down
-    if [ "$ENABLE_NETWORK_SEGMENTATION" = true ]; then
-      skip_label "Feature:RouteAdvertisements && EXTENDED"
-    fi
-
     # Some test don't work when the default network is advertised, either because
     # the configuration that the test excercises does not make sense for an advertised network, or
     # there is some bug or functional gap

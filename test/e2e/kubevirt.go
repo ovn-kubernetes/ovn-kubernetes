@@ -13,6 +13,7 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v2"
 
@@ -20,6 +21,8 @@ import (
 	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	iperftest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/iperf"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
@@ -30,7 +33,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/kubevirt"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -40,6 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -59,7 +62,6 @@ import (
 
 	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
@@ -83,7 +85,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 	if err := ipamclaimsv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	if err := nadv1.AddToScheme(scheme); err != nil {
+	if err := nadapi.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -320,7 +322,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			polling := 15 * time.Second
 			for podName, serverPodIPs := range serverPodIPsByName {
 				for _, serverPodIP := range serverPodIPs {
-					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 -c %[2]s --logfile /tmp/%[1]s_%[2]s_iperf3.log &", podName, serverPodIP), polling)
+					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 --forceflush --timestamps='%%s ' -c %[2]s --logfile /tmp/%[1]s_%[2]s_iperf3.log &", podName, serverPodIP), polling)
 					if err != nil {
 						return fmt.Errorf("%s: %w", output, err)
 					}
@@ -329,37 +331,51 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			return nil
 		}
 
-		checkIperfTraffic = func(iperfLogFile string, execFn func(cmd string) (string, error), stage string) {
-			GinkgoHelper()
-			// Check the last line eventually show traffic flowing
-			Eventually(func() (string, error) {
+		checkIperfTraffic = func(iperfLogFile string, execFn func(cmd string) (string, error), startTime *time.Time, stage string) {
+			if startTime == nil {
+				// Legacy path: just check the last interval line shows traffic flowing
+				Eventually(func(g Gomega) {
+					iperfLog, err := execFn("cat " + iperfLogFile)
+					g.Expect(err).NotTo(HaveOccurred(), stage+": failed reading iperf3 log")
+					g.Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
+
+					lastIntervalLine := ""
+					for _, line := range strings.Split(strings.TrimSuffix(iperfLog, "\n"), "\n") {
+						if strings.Contains(line, " sec ") {
+							lastIntervalLine = line
+						}
+					}
+					g.Expect(lastIntervalLine).NotTo(BeEmpty(), stage+": no iperf3 interval logged yet")
+					g.Expect(lastIntervalLine).NotTo(ContainSubstring(iperftest.TrafficDownIperfLog),
+						fmt.Sprintf("%s: last iperf3 interval shows zero traffic:\n%s", stage, lastIntervalLine))
+				}).
+					WithPolling(50*time.Millisecond).
+					WithTimeout(5*time.Second).
+					Should(Succeed(), stage+": failed checking iperf3 traffic at file "+iperfLogFile)
+				return
+			}
+
+			// Poll the iperf3 log until traffic resumes or downtime exceeds
+			// 2 seconds (each iperf3 line is a 1 second interval).
+			Eventually(func(g Gomega) {
 				iperfLog, err := execFn("cat " + iperfLogFile)
-				if err != nil {
-					return "", err
-				}
-				// Fail fast
-				Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
-				// Remove last carriage return to properly split by new line.
-				iperfLog = strings.TrimSuffix(iperfLog, "\n")
-				iperfLogLines := strings.Split(iperfLog, "\n")
-				if len(iperfLogLines) == 0 {
-					return "", nil
-				}
-				lastIperfLogLine := iperfLogLines[len(iperfLogLines)-1]
-				return lastIperfLogLine, nil
+				g.Expect(err).NotTo(HaveOccurred(), stage+": failed reading iperf3 log")
+				g.Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
+
+				maxDowntime, err := iperftest.LogDowntime(iperfLog, *startTime)
+				g.Expect(err).NotTo(HaveOccurred(), stage+": traffic should have resumed")
+
+				g.Expect(maxDowntime).To(BeNumerically("<=", 2),
+					fmt.Sprintf("%s: expected at most 2 seconds of zero traffic since migration start %s, got %d:\n%s",
+						stage, startTime, maxDowntime, iperfLog))
+
 			}).
 				WithPolling(50*time.Millisecond).
-				WithTimeout(2*time.Second).
-				Should(
-					SatisfyAll(
-						ContainSubstring(" sec "),
-						Not(ContainSubstring("0.00 Bytes  0.00 bits/sec")),
-					),
-					stage+": failed checking iperf3 traffic at file "+iperfLogFile,
-				)
+				WithTimeout(5*time.Second).
+				Should(Succeed(), stage+": failed checking iperf3 traffic at file "+iperfLogFile)
 		}
 
-		checkEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, podIPsByName map[string][]string, stage string) {
+		checkEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, podIPsByName map[string][]string, migrationStart *time.Time, stage string) {
 			GinkgoHelper()
 			for podName, podIPs := range podIPsByName {
 				for _, podIP := range podIPs {
@@ -367,11 +383,11 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					execFn := func(cmd string) (string, error) {
 						return virtClient.RunCommand(vmi, cmd, 2*time.Second)
 					}
-					checkIperfTraffic(iperfLogFile, execFn, stage)
+					checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
 				}
 			}
 		}
-		startNorthSouthIperfTraffic = func(execFn execFnType, addresses []string, port int32, logPrefix, stage string) error {
+		startIperfTraffic = func(execFn execFnType, addresses []string, port int32, logPrefix, stage string) error {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, address := range addresses {
@@ -389,7 +405,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				}
 
 				By(fmt.Sprintf("start from %s: %s", address, stage))
-				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
+				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 --forceflush --timestamps='%%s ' -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
 				if err != nil {
 					return fmt.Errorf("failed at starting iperf3 in background %s: %w", output, err)
 				}
@@ -402,7 +418,58 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			execFn := func(cmd string) (string, error) {
 				return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
 			}
-			return startNorthSouthIperfTraffic(execFn, addresses, port, "ingress", stage)
+			return startIperfTraffic(execFn, addresses, port, "ingress", stage)
+		}
+
+		iperfServerScript = `
+#!/bin/bash -xe
+iface=$(ip -j link show | jq -r '.[].ifname | select(. != "eth0" and . != "lo")' | head -1)
+iface=${iface:-eth0}
+
+ipv4=$(ip -j -4 addr show dev $iface | jq -r '.[0].addr_info[0].local // empty')
+if [ "$ipv4" != "" ]; then
+	iperf3 -s -D --bind $ipv4 --logfile /tmp/test_${ipv4}_iperf3.log
+	sleep 1
+	if grep "iperf3: error" /tmp/test_${ipv4}_iperf3.log; then
+		cat /tmp/test_${ipv4}_iperf3.log
+		exit 1
+	fi
+fi
+
+cnt=0
+while [ "$ipv6" == "" -a $cnt -lt 10 ]; do
+	ipv6=$(ip -j -6 addr show dev $iface | jq -r '.[0].addr_info[] | select(.local | startswith("fe80") | not) | .local' | head -1)
+	sleep 1
+	cnt=$((cnt+1))
+done
+if [ "$ipv6" != "" ]; then
+	iperf3 -s -D --bind $ipv6 --logfile /tmp/test_${ipv6}_iperf3.log
+	sleep 1
+	if grep "iperf3: error" /tmp/test_${ipv6}_iperf3.log; then
+		cat /tmp/test_${ipv6}_iperf3.log 1>&2
+		exit 1
+	fi
+fi
+`
+
+		startExternalEastWestIperfTraffic = func(container infraapi.ExternalContainer, vmi *kubevirtv1.VirtualMachineInstance, macVRFContainerIPs []string, stage string) error {
+			GinkgoHelper()
+			Expect(macVRFContainerIPs).NotTo(BeEmpty())
+			// Start iperf3 server on the external container using the same script as pods
+			output, err := infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", iperfServerScript})
+			if err != nil {
+				return fmt.Errorf("failed starting iperf3 server on external container: %s: %w", output, err)
+			}
+			// Start iperf3 client on the VM connecting to the external container's IPs
+			polling := 15 * time.Second
+			for _, ip := range macVRFContainerIPs {
+				logFile := fmt.Sprintf("/tmp/external-east-west_%s_iperf3.log", ip)
+				output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 -c %[1]s --logfile %[2]s &", ip, logFile), polling)
+				if err != nil {
+					return fmt.Errorf("%s: %w", output, err)
+				}
+			}
+			return nil
 		}
 
 		startNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, port int32, stage string) error {
@@ -410,10 +477,10 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			execFn := func(cmd string) (string, error) {
 				return virtClient.RunCommand(vmi, cmd, 5*time.Second)
 			}
-			return startNorthSouthIperfTraffic(execFn, addresses, port, "egress", stage)
+			return startIperfTraffic(execFn, addresses, port, "egress", stage)
 		}
 
-		checkNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, stage string) {
+		checkNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, migrationStart *time.Time, stage string) {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, ip := range addresses {
@@ -421,11 +488,23 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				execFn := func(cmd string) (string, error) {
 					return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
 				}
-				checkIperfTraffic(iperfLogFile, execFn, stage)
+				checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
 			}
 		}
 
-		checkNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, port int32, stage string) {
+		checkExternalEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, macVRFContainerIPs []string, migrationStart *time.Time, stage string) {
+			GinkgoHelper()
+			Expect(macVRFContainerIPs).NotTo(BeEmpty())
+			for _, ip := range macVRFContainerIPs {
+				iperfLogFile := fmt.Sprintf("/tmp/external-east-west_%s_iperf3.log", ip)
+				execFn := func(cmd string) (string, error) {
+					return virtClient.RunCommand(vmi, cmd, 2*time.Second)
+				}
+				checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
+			}
+		}
+
+		checkNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, port int32, migrationStart *time.Time, stage string) {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, ip := range addresses {
@@ -437,7 +516,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					execFn := func(cmd string) (string, error) {
 						return virtClient.RunCommand(vmi, cmd, 5*time.Second)
 					}
-					checkIperfTraffic(iperfLogFile, execFn, stage)
+					checkIperfTraffic(iperfLogFile, execFn, migrationStart, stage)
 				}
 			}
 		}
@@ -612,6 +691,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				return vmi.Status.MigrationState.Completed
 			}).WithPolling(time.Second).WithTimeout(20*time.Minute).Should(BeTrue(), "should complete migration")
 			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			Expect(vmi.Status.MigrationState.StartTimestamp).NotTo(BeNil(), "should have a StartTimestamp")
 			Expect(vmi.Status.MigrationState.SourcePod).NotTo(BeEmpty())
 			Eventually(func() corev1.PodPhase {
 				sourcePod := &corev1.Pod{
@@ -695,6 +775,8 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(
 				Equal(kubevirtv1.MigrationFailed),
 			)
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			Expect(vmi.Status.MigrationState).NotTo(BeNil(), "should have a MigrationState")
 		}
 
 		liveMigrateFailed = func(vmi *kubevirtv1.VirtualMachineInstance) {
@@ -1209,37 +1291,6 @@ passwd:
 			return pods
 		}
 
-		iperfServerScript = `
-#!/bin/bash
-set -xe
-iface=$(ip -o link show | awk -F': ' '{print $2}' | grep -v "eth0\|lo" | head -1| sed "s#@.*##")
-iface=${iface:-eth0}
-
-ipv4=$(ip -4 addr show dev $iface | awk '/inet / {print $2}' | sed "s#/.*##")
-if [ "$ipv4" != "" ]; then
-	iperf3 -s -D --bind $ipv4 --logfile /tmp/test_${ipv4}_iperf3.log
-	sleep 1
-	if grep "iperf3: error" /tmp/test_${ipv4}_iperf3.log; then
-		cat /tmp/test_${ipv4}_iperf3.log
-		exit 1
-	fi
-fi
-
-cnt=0
-while [ "$ipv6" == "" -a $cnt -lt 10 ]; do
-	ipv6=$(ip -6 addr show dev $iface | awk '/inet6/ && !/fe80/ {print $2}' | sed "s#/.*##")
-	sleep 1
-	cnt=$((cnt+1))
-done
-if [ "$ipv6" != "" ]; then
-	iperf3 -s -D --bind $ipv6 --logfile /tmp/test_${ipv6}_iperf3.log
-	sleep 1
-	if grep "iperf3: error" /tmp/test_${ipv6}_iperf3.log; then
-		cat /tmp/test_${ipv6}_iperf3.log 1>&2
-		exit 1
-	fi
-fi
-`
 		nextIPs = func(idx int, subnets []string) ([]string, error) {
 			var ips []string
 			for _, subnet := range subnets {
@@ -1419,6 +1470,7 @@ fi
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
 			})
+			Expect(err).ToNot(HaveOccurred())
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
@@ -1597,16 +1649,44 @@ fi
 			description string
 			cmd         func() string
 		}
+		const (
+			bgpASN      = 64512
+			ipVRFBGPASN = 64600
+
+			// MAC-VRF parameters
+			macVRFVNI = 10100
+			// FIXME: VID should be derived from the NAD once the implementation is done
+			macVRFVID = 100
+
+			// IP-VRF parameters
+			ipVRFVNI = 20102
+			// FIXME: VID should be derived from the NAD once the implementation is done
+			ipVRFVID = 202
+
+			// IP-VRF agnhost subnet - external network for L3 connectivity testing
+			ipVRFAgnhostSubnetIPv4 = "172.27.102.0/24"
+			ipVRFAgnhostSubnetIPv6 = "fd00:102::/64"
+
+			// VTEP subnet for VTEP IP allocation
+			vtepSubnetIPv4 = "100.64.0.0/24"
+			vtepSubnetIPv6 = "fd00:64::/112"
+		)
 		var (
-			cudn       *udnv1.ClusterUserDefinedNetwork
-			vm         *kubevirtv1.VirtualMachine
-			vmi        *kubevirtv1.VirtualMachineInstance
-			cidrIPv4   = "172.31.0.0/24" // subnet in private range 172.16.0.0/12 (rfc1918)
-			cidrIPv6   = "2010:100:200::0/60"
-			staticIPv4 = "172.31.0.101"
-			staticIPv6 = "2010:100:200::101"
-			staticMAC  = "02:00:00:00:00:01"
-			restart    = testCommand{
+			cudn                    *udnv1.ClusterUserDefinedNetwork
+			vm                      *kubevirtv1.VirtualMachine
+			vmi                     *kubevirtv1.VirtualMachineInstance
+			cidrIPv4                = "172.31.0.0/24" // subnet in private range 172.16.0.0/12 (rfc1918)
+			cidrIPv6                = "2010:100:200::0/60"
+			staticIPv4              = "172.31.0.101"
+			staticIPv6              = "2010:100:200::101"
+			staticMAC               = "02:00:00:00:00:01"
+			externalMACVRFContainer = infraapi.ExternalContainer{
+				Name:    fmt.Sprintf("iperf3-macvrf-%d", macVRFVID),
+				Image:   images.Netshoot(),
+				CmdArgs: []string{"sleep", "infinity"},
+			}
+
+			restart = testCommand{
 				description: "restart",
 				cmd: func() {
 					By("Restarting vm")
@@ -1754,6 +1834,103 @@ write_files:
 				}
 				return filteredOutIPs
 			}
+			setupEVPNInfra = func(namespace, networkName string, cudn *udnv1.ClusterUserDefinedNetwork) {
+				if !isLocalGWModeEnabled() {
+					e2eskipper.Skipf("EVPN test cases only supported in Local Gateway mode")
+				}
+				if !isIPv4Supported(fr.ClientSet) {
+					// FRR does not support IPv6 underlay for EVPN VXLAN tunnels.
+					// See: https://github.com/FRRouting/frr/issues/5885
+					e2eskipper.Skipf("EVPN test cases require IPv4 for VXLAN underlay (FRR limitation)")
+				}
+
+				// Discover cluster IP family support
+				ipFamilies := getSupportedIPFamiliesSlice(fr.ClientSet)
+
+				// Reset slices for each test
+				var (
+					vtepSubnet string
+					nodeIPs    []string
+				)
+
+				// Discover external FRR IP
+				kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+				Expect(err).NotTo(HaveOccurred())
+				frrNetIf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+					infraapi.ExternalContainer{Name: externalFRRContainerName}, kindNetwork)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Use IPv4 or IPv6 based on cluster support (prefer IPv4 if both available)
+				externalFRRIP := ""
+				if isIPv4Supported(fr.ClientSet) && frrNetIf.IPv4 != "" {
+					externalFRRIP = frrNetIf.IPv4
+				} else if isIPv6Supported(fr.ClientSet) && frrNetIf.IPv6 != "" {
+					externalFRRIP = frrNetIf.IPv6
+				}
+				Expect(externalFRRIP).NotTo(BeEmpty(), "External FRR must have an IP on kind network")
+				e2eframework.Logf("External FRR IP: %s", externalFRRIP)
+
+				// Collect node IPs for BGP neighbors
+				nodes, err := fr.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				for _, node := range nodes.Items {
+					for _, family := range ipFamilies {
+						var ipProtocol corev1.IPFamily
+						switch family {
+						case utilnet.IPv4:
+							ipProtocol = corev1.IPv4Protocol
+						case utilnet.IPv6:
+							ipProtocol = corev1.IPv6Protocol
+						}
+						addrs := e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, ipProtocol)
+						nodeIPs = append(nodeIPs, addrs...)
+					}
+				}
+				e2eframework.Logf("Node IPs for BGP: %v", nodeIPs)
+
+				// Filter cudn.Spec.Network subnets based on cluster IP family support
+				if cudn.Spec.Network.Layer2 != nil {
+					cudn.Spec.Network.Layer2.Subnets = filterDualStackCIDRs(fr.ClientSet, cudn.Spec.Network.Layer2.Subnets)
+				}
+				if cudn.Spec.Network.Layer3 != nil {
+					cudn.Spec.Network.Layer3.Subnets = filterL3Subnets(fr.ClientSet, cudn.Spec.Network.Layer3.Subnets)
+				}
+
+				By("Setting up EVPN bridge on external FRR")
+				Expect(setupEVPNBridgeOnExternalFRR(providerCtx, externalFRRIP, "br0", "vxlan0")).To(Succeed())
+
+				By("Setting up MAC-VRF on external FRR")
+				Expect(setupMACVRFOnExternalFRR(int(cudn.Spec.Network.EVPN.MACVRF.VNI), macVRFVID, "br0", "vxlan0")).To(Succeed())
+
+				By("Setting up EVPN BGP on external FRR")
+				Expect(setupEVPNBGPOnExternalFRR(providerCtx, bgpASN, nodeIPs)).To(Succeed())
+
+				// Derive VRF name from VNI (unique per IP-VRF)
+				ipVRFName := fmt.Sprintf("vrf%d", cudn.Spec.Network.EVPN.IPVRF.VNI)
+
+				By("Setting up IP-VRF on external FRR")
+				Expect(setupIPVRFOnExternalFRR(providerCtx, ipVRFName, int(cudn.Spec.Network.EVPN.IPVRF.VNI), ipVRFVID, "br0", "vxlan0")).To(Succeed())
+
+				// Derive VTEP subnet from the kind network CIDRs(unmanaged mode)
+				// NOTE: FRR does not support dualstack VTEPs so pick one preferring v4
+				kindV4Subnet, kindV6Subnet, err := kindNetwork.IPv4IPv6Subnets()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				if isIPv6Supported(fr.ClientSet) && kindV6Subnet != "" {
+					vtepSubnet = kindV6Subnet
+				}
+
+				if isIPv4Supported(fr.ClientSet) && kindV4Subnet != "" {
+					vtepSubnet = kindV4Subnet
+				}
+
+				By("Creating VTEP CR")
+				Expect(createVTEP(fr, providerCtx, namespace, []string{vtepSubnet}, vtepv1.VTEPModeUnmanaged)).To(Succeed())
+
+				By("Creating FRRConfiguration for EVPN")
+				frrConfigLabels := map[string]string{"network": networkName}
+				err = createFRRConfiguration(providerCtx, namespace, deploymentconfig.Get().FRRK8sNamespace(), bgpASN, externalFRRIP, frrConfigLabels)
+				Expect(err).NotTo(HaveOccurred())
+			}
 		)
 		type testData struct {
 			description string
@@ -1764,6 +1941,7 @@ write_files:
 			ingress     string
 			ipRequests  []string
 			macRequest  string
+			evpn        *udnv1.EVPNConfig
 		}
 		var (
 			containerNetwork = func(td testData) (infraapi.Network, error) {
@@ -1784,7 +1962,7 @@ write_files:
 				serverPort := svc.Spec.Ports[0].NodePort
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), fr.ClientSet, 1)
 				Expect(err).NotTo(HaveOccurred())
-				serverIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+				serverIPs := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
 				return serverIPs, serverPort
 			}
 		)
@@ -1814,6 +1992,24 @@ write_files:
 			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
 			cudn, networkName = kubevirt.GenerateCUDN(namespace, "net1", td.topology, td.role, dualCIDRs)
 
+			if td.evpn != nil {
+				// Shorten the CUDN name to fit within the 15-char Linux VRF
+				// device name limit. This allows GetNetworkVRFName to use the
+				// CUDN name directly as the VRF name instead of falling back
+				// to the generated "mp<N>-udn-vrf" format.
+				shortName := "kv-evpn-" + namespace[len(namespace)-4:]
+				cudn.Name = shortName
+				cudn.Labels["name"] = shortName
+				networkName = util.GenerateCUDNNetworkName(shortName)
+
+				cudn.Spec.Network.Transport = udnv1.TransportOptionEVPN
+				cudn.Spec.Network.EVPN = td.evpn
+				cudn.Spec.Network.EVPN.VTEP = namespace
+
+				setupEVPNInfra(namespace, networkName, cudn)
+
+			}
+
 			if td.topology == udnv1.NetworkTopologyLocalnet {
 				By("setting up the localnet underlay")
 				Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
@@ -1821,7 +2017,7 @@ write_files:
 			createCUDN(cudn)
 
 			if td.ingress == "routed" {
-				createRA(&rav1.RouteAdvertisements{
+				ra := &rav1.RouteAdvertisements{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: cudn.Name,
 					},
@@ -1836,7 +2032,34 @@ write_files:
 							},
 						}},
 					},
-				})
+				}
+				if td.evpn != nil {
+					ra.Spec.FRRConfigurationSelector = metav1.LabelSelector{
+						MatchLabels: map[string]string{"network": networkName},
+					}
+					ra.Spec.TargetVRF = cudn.Name
+				}
+				createRA(ra)
+			}
+
+			if td.evpn != nil {
+				subnets := []string{}
+				for _, cidr := range dualCIDRs {
+					subnets = append(subnets, string(cidr))
+				}
+				kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+				Expect(err).NotTo(HaveOccurred())
+				frrNetIf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+					infraapi.ExternalContainer{Name: externalFRRContainerName}, kindNetwork)
+				Expect(err).NotTo(HaveOccurred())
+
+				externalFRRIP := ""
+				if isIPv4Supported(fr.ClientSet) && frrNetIf.IPv4 != "" {
+					externalFRRIP = frrNetIf.IPv4
+				} else if isIPv6Supported(fr.ClientSet) && frrNetIf.IPv6 != "" {
+					externalFRRIP = frrNetIf.IPv6
+				}
+				Expect(externalFRRIP).NotTo(BeEmpty(), "External FRR must have an IP on kind network")
 			}
 
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
@@ -1848,20 +2071,65 @@ write_files:
 			Expect(err).NotTo(HaveOccurred())
 
 			var externalContainer infraapi.ExternalContainer
+			var macVRFContainerIPs []string
 			if td.role == udnv1.NetworkRolePrimary {
-				providerNetwork, err := containerNetwork(td)
-				Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
-				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 				externalContainerName := namespace + "-iperf"
-				externalContainerSpec := infraapi.ExternalContainer{
+				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
+				externalContainer = infraapi.ExternalContainer{
 					Name:    externalContainerName,
 					Image:   images.Netshoot(),
-					Network: providerNetwork,
 					CmdArgs: []string{"sleep", "infinity"},
 					ExtPort: externalContainerPort,
 				}
-				externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
-				Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
+				if td.evpn == nil {
+					providerNetwork, err := containerNetwork(td)
+					Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
+					externalContainer.Network = providerNetwork
+					externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+					Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
+				} else {
+					var cudnSubnetsFromSpec []string
+					for _, cidr := range cudn.Spec.Network.Layer2.Subnets {
+						cudnSubnetsFromSpec = append(cudnSubnetsFromSpec, string(cidr))
+					}
+
+					// Discover cluster IP family support
+					ipFamilies := sets.New(getSupportedIPFamiliesSlice(fr.ClientSet)...)
+
+					By("Creating MAC-VRF iperf3 external container")
+					var err error
+					macVRFContainerIPs, err = setupMACVRFExternalContainer(providerCtx, externalMACVRFContainer, "br0", macVRFVID, ipFamilies, cudnSubnetsFromSpec...)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(macVRFContainerIPs).NotTo(BeEmpty())
+
+					// Derive VRF name from VNI (unique per IP-VRF)
+					ipVRFName := fmt.Sprintf("vrf%d", cudn.Spec.Network.EVPN.IPVRF.VNI)
+
+					var ipVRFAgnhostSubnets []string
+					// Configure subnets based on cluster IP family support
+					if ipFamilies.Has(utilnet.IPv4) {
+						ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostSubnetIPv4)
+					}
+					if ipFamilies.Has(utilnet.IPv6) {
+						ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostSubnetIPv6)
+					}
+
+					By("Creating IP-VRF external container")
+					ipVRFAgnhostIPs, err := setupIPVRFExternalContainer(providerCtx, externalContainer, int(cudn.Spec.Network.EVPN.IPVRF.VNI), ipVRFName, ipFamilies, ipVRFAgnhostSubnets...)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(ipVRFAgnhostIPs).NotTo(BeEmpty())
+					// Configure BGP AFTER container so FRR's interface is in the VRF
+					// and has a connected route for the subnet we want to advertise
+					By("Setting up IP-VRF BGP on external FRR")
+					Expect(setupIPVRFBGPOnExternalFRR(providerCtx, ipVRFName, bgpASN, int(cudn.Spec.Network.EVPN.IPVRF.VNI), ipFamilies, ipVRFAgnhostSubnets)).To(Succeed())
+					if len(ipVRFAgnhostIPs) > 0 {
+						externalContainer.IPv4 = ipVRFAgnhostIPs[0]
+					}
+					if len(ipVRFAgnhostIPs) > 1 {
+						externalContainer.IPv6 = ipVRFAgnhostIPs[1]
+					}
+
+				}
 			}
 
 			var externalContainerIPs []string
@@ -1872,7 +2140,7 @@ write_files:
 				externalContainerIPs = append(externalContainerIPs, externalContainer.IPv6)
 			}
 
-			if td.ingress == "routed" {
+			if td.ingress == "routed" && td.evpn == nil {
 				// pre=created test dependency and therefore we dont delete
 				frrExternalContainer := infraapi.ExternalContainer{Name: "frr"}
 				frrNetwork, err := containerNetwork(td)
@@ -1939,7 +2207,7 @@ ip route add %[3]s via %[4]s
 
 			step = by(vmi.Name, fmt.Sprintf("Check east/west traffic before %s %s", td.resource.description, td.test.description))
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, nil, step)
 
 			if td.role == udnv1.NetworkRolePrimary {
 				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
@@ -1953,11 +2221,18 @@ ip route add %[3]s via %[4]s
 						WithPolling(time.Second).
 						Should(Equal([]string{expectedIPv6GatewayPath}), "should filter remote ipv6 gateway nexthop")
 				}
-				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic before %s %s", td.resource.description, td.test.description))
 				output, err := virtClient.RunCommand(vmi, "/tmp/iperf-server.sh", time.Minute)
 				Expect(err).NotTo(HaveOccurred(), step+": "+output)
+
+				if td.evpn != nil {
+					step = by(vmi.Name, fmt.Sprintf("Check east/west external traffic (l2 stretching) before %s %s", td.resource.description, td.test.description))
+					Expect(startExternalEastWestIperfTraffic(externalMACVRFContainer, vmi, macVRFContainerIPs, step)).To(Succeed())
+					checkExternalEastWestIperfTraffic(vmi, macVRFContainerIPs, nil, step)
+				}
+
+				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic before %s %s", td.resource.description, td.test.description))
 				Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
-				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, nil, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
 					_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", iperfServerScript})
@@ -1970,7 +2245,7 @@ ip route add %[3]s via %[4]s
 						})
 						Expect(err).NotTo(HaveOccurred(), step+": "+output)
 					}
-					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
+					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, nil, step)
 				}
 			}
 
@@ -1990,6 +2265,7 @@ ip route add %[3]s via %[4]s
 				Should(ConsistOf(expectedAddresesAtGuest), step)
 
 			step = by(vmi.Name, fmt.Sprintf("Check east/west traffic after %s %s", td.resource.description, td.test.description))
+			var migrationStart *time.Time
 			if td.test.description == restart.description {
 				// At restart we need re-connect
 				Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
@@ -1997,15 +2273,24 @@ ip route add %[3]s via %[4]s
 					output, err := virtClient.RunCommand(vmi, "/tmp/iperf-server.sh &", time.Minute)
 					Expect(err).NotTo(HaveOccurred(), step+": "+output)
 					Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
+					if td.evpn != nil {
+						Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
+					}
 				}
+			} else if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.StartTimestamp != nil {
+				migrationStart = &vmi.Status.MigrationState.StartTimestamp.Time
 			}
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, migrationStart, step)
 			if td.role == udnv1.NetworkRolePrimary {
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic after %s %s", td.resource.description, td.test.description))
-				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, migrationStart, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
-					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
+					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, migrationStart, step)
+				}
+				if td.evpn != nil {
+					step = by(vmi.Name, fmt.Sprintf("Check east/west external traffic (l2 stretching) after %s %s", td.resource.description, td.test.description))
+					checkExternalEastWestIperfTraffic(vmi, macVRFContainerIPs, &vmi.Status.MigrationState.StartTimestamp.Time, step)
 				}
 			}
 
@@ -2026,6 +2311,7 @@ ip route add %[3]s via %[4]s
 				}
 				if isIPv6Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
+					By(step)
 
 					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred())
@@ -2046,7 +2332,7 @@ ip route add %[3]s via %[4]s
 				if td.ingress != "" {
 					ingress = td.ingress
 				}
-				return fmt.Sprintf("after %s of %s with %s/%s with %s ingress", td.test.description, td.resource.description, role, td.topology, ingress)
+				return fmt.Sprintf("after %s of %s with %s/%s with (ingress: %s and evpn: %v)", td.test.description, td.resource.description, role, td.topology, ingress, td.evpn)
 			},
 			Entry(nil, testData{
 				resource: virtualMachine,
@@ -2105,6 +2391,21 @@ ip route add %[3]s via %[4]s
 				topology: udnv1.NetworkTopologyLayer2,
 				role:     udnv1.NetworkRolePrimary,
 				ingress:  "routed",
+			}),
+			Entry(nil, testData{
+				resource: virtualMachineWithUDN,
+				test:     liveMigrate,
+				topology: udnv1.NetworkTopologyLayer2,
+				role:     udnv1.NetworkRolePrimary,
+				ingress:  "routed",
+				evpn: &udnv1.EVPNConfig{
+					MACVRF: &udnv1.VRFConfig{
+						VNI: macVRFVNI,
+					},
+					IPVRF: &udnv1.VRFConfig{
+						VNI: ipVRFVNI,
+					},
+				},
 			}),
 			Entry(nil, testData{
 				resource: virtualMachineInstance,
@@ -2170,6 +2471,7 @@ ip route add %[3]s via %[4]s
 				"e2e-framework":           fr.BaseName,
 				RequiredUDNNamespaceLabel: "",
 			})
+			Expect(err).ToNot(HaveOccurred())
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
@@ -2233,7 +2535,7 @@ ip route add %[3]s via %[4]s
 						fmt.Sprintf("ip_address = %s", expectedIP),
 						fmt.Sprintf("domain_name_servers = %s", expectedDNS),
 						fmt.Sprintf("routers = %s", expectedGateway),
-						fmt.Sprintf("interface_mtu = 1300"),
+						"interface_mtu = 1300",
 					))
 				Expect(primaryUDNValueForConnection("IP4.ADDRESS")).To(ConsistOf(expectedIP + "/24"))
 				Expect(primaryUDNValueForConnection("IP4.GATEWAY")).To(ConsistOf(expectedGateway))
@@ -2362,7 +2664,7 @@ chpasswd: { expire: False }
 
 			step = by(vmi.Name, "Check east/west traffic before virtual machine instance live migration")
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, nil, step)
 
 			by(vmi.Name, "Running live migration for virtual machine instance")
 			td(vmi)
@@ -2374,7 +2676,11 @@ chpasswd: { expire: False }
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
 			step = by(vmi.Name, "Check east/west traffic after virtual machine instance live migration")
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			var migrationStart *time.Time
+			if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.StartTimestamp != nil {
+				migrationStart = &vmi.Status.MigrationState.StartTimestamp.Time
+			}
+			checkEastWestIperfTraffic(vmi, testPodsIPs, migrationStart, step)
 
 			By("Stop iperf3 traffic before force killing vm, so iperf3 server do not get stuck")
 			output, err = virtClient.RunCommand(vmi, "killall --wait iperf3", 5*time.Second)
@@ -2408,13 +2714,20 @@ chpasswd: { expire: False }
 
 			step = by(vmi.Name, "Restart iperf traffic after forcing a vm failure")
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, nil, step)
 
 			by(vmi.Name, "Running live migration after forcing vm failure")
 			td(vmi)
 
+			// Update vmi status after live migration
+			Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+
 			step = by(vmi.Name, "Check east/west traffic for failed virtual machine after live migration")
-			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+			var migrationStart2 *time.Time
+			if vmi.Status.MigrationState != nil && vmi.Status.MigrationState.StartTimestamp != nil {
+				migrationStart2 = &vmi.Status.MigrationState.StartTimestamp.Time
+			}
+			checkEastWestIperfTraffic(vmi, testPodsIPs, migrationStart2, step)
 		},
 			Entry("after succeeded live migration", liveMigrateSucceed),
 			Entry("after failed live migration", liveMigrateFailed),

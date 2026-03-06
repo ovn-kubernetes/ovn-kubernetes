@@ -49,7 +49,7 @@ func newManagementPortConfig(node *corev1.Node, hostSubnets []*net.IPNet, netInf
 		if len(hostSubnets) == 0 {
 			return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", types.DefaultNetworkName)
 		}
-		mpMAC = util.IPAddrToHWAddr(netInfo.GetNodeManagementIP(hostSubnets[0]).IP)
+		mpMAC = netInfo.GetNodeManagementPortMAC(node.Name, hostSubnets[0])
 	}
 
 	mpcfg := &managementPortConfig{
