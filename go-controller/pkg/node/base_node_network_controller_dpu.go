@@ -10,7 +10,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -509,14 +508,11 @@ func (bnnc *BaseNodeNetworkController) delRepPort(pod *corev1.Pod, sandboxId, vf
 	}
 
 	// remove from br-int
-	return wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, 60*time.Second, true, func(_ context.Context) (bool, error) {
-		_, _, err := util.RunOVSVsctl("--if-exists", "del-port", "br-int", vfRepName)
-		if err != nil {
-			return false, nil
-		}
-		klog.Infof("Port %s deleted from bridge br-int", vfRepName)
-		return true, nil
-	})
+	if err = ovsops.DeletePortsFromBridge(bnnc.ovsClient, "br-int", vfRepName); err != nil {
+		return fmt.Errorf("failed to delete representor port %s from br-int for network %s: %w", vfRepName, bnnc.GetNetworkName(), err)
+	}
+	klog.Infof("Port %s deleted from bridge br-int", vfRepName)
+	return nil
 }
 
 // podKeyFromIfaceID extracts the namespace/name pod key from an OVS iface-id.
