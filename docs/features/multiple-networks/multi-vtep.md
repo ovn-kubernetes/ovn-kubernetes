@@ -42,6 +42,8 @@ On OVN-Kubernetes side, no additional configuration required to enable this feat
 This feature depends on a specific underlay network setup; it cannot be turned on
 without an adequate underlay network configuration.
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Implementation Details
 
 This feature requires an OVN version newer than v24.03.2.

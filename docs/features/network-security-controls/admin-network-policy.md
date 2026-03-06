@@ -93,6 +93,8 @@ existing CRs in the cluster.
 When the feature is enabled, the CRDs are installed on the cluster
 and the `AdminNetworkPolicy` controller is invoked.
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ```shell
 $ oc get crd adminnetworkpolicies.policy.networking.k8s.io
 NAME                                            CREATED AT

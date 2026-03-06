@@ -64,6 +64,8 @@ the flag for multiple-networks `--enable-multi-network` since UDNs
 use Network Attachment Definitions as underlying implementation detail
 construct and reuse the user-defined network controllers.
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Workflow Description
 
 A tenant consists of one or more namespaces in a cluster. Network segmentation

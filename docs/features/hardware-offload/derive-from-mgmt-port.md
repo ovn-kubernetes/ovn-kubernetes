@@ -46,6 +46,8 @@ The "derive-from-mgmt-port" feature automates the gateway interface discovery pr
 
 ## Technical Implementation
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ### Code Changes
 
 1. **New Constant**: Added `DeriveFromMgmtPort = "derive-from-mgmt-port"` constant in `go-controller/pkg/types/const.go`

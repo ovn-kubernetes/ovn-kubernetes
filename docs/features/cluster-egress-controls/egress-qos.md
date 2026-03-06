@@ -11,6 +11,8 @@ destination CIDR (dstCIDR) and an optional PodSelector (podSelector).
 A rule applies its DSCP marking to traffic coming from pods whose labels match the podSelector heading to the dstCIDR.
 A namespace supports having only one EgressQoS resource named `default` (other EgressQoSes will be ignored).
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Example
 
 ```yaml
