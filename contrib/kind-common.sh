@@ -1512,6 +1512,7 @@ create_kind_cluster() {
   ovn_num_worker=${KIND_NUM_WORKER} \
   kind_num_infra=${KIND_NUM_INFRA} \
   cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
+  kind_max_pods=${KIND_MAX_PODS:-250} \
   kind_local_registry_port=${KIND_LOCAL_REGISTRY_PORT} \
   kind_local_registry_name=${KIND_LOCAL_REGISTRY_NAME} \
   jinjanate "${KIND_CONFIG}" -o "${KIND_CONFIG_LCL}"

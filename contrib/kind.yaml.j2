@@ -47,11 +47,13 @@ kubeadmConfigPatches:
   nodeRegistration:
     kubeletExtraArgs:
       "v": "{{ cluster_log_level }}"
+      "max-pods": "{{ kind_max_pods | default(250) }}"
   ---
   kind: JoinConfiguration
   nodeRegistration:
     kubeletExtraArgs:
       "v": "{{ cluster_log_level }}"
+      "max-pods": "{{ kind_max_pods | default(250) }}"
 nodes:
  - role: control-plane
    kubeadmConfigPatches:
