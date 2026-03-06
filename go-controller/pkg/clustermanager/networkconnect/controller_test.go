@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -1296,16 +1297,17 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				if cond == nil {
 					return fmt.Errorf("missing Accepted condition")
 				}
-				if errorSubstring != "" {
-					gomega.Expect(cond.Status).To(gomega.Equal(metav1.ConditionFalse), fmt.Sprintf("condition message: %s", cond.Message))
-					gomega.Expect(cond.Reason).To(gomega.Equal("ResourceAllocationFailed"))
-					gomega.Expect(cond.Message).To(gomega.ContainSubstring(errorSubstring))
-				} else {
-					gomega.Expect(cond.Status).To(gomega.Equal(metav1.ConditionTrue), fmt.Sprintf("condition message: %s", cond.Message))
-					gomega.Expect(cond.Reason).To(gomega.Equal("ResourceAllocationSucceeded"))
-					gomega.Expect(cond.Message).To(gomega.Equal("All validation checks passed successfully"))
+				if errorSubstring != "" && cond.Status == metav1.ConditionFalse &&
+					cond.Reason == "ResourceAllocationFailed" &&
+					strings.Contains(cond.Message, errorSubstring) {
+					return nil
 				}
-				return nil
+				if errorSubstring == "" && cond.Status == metav1.ConditionTrue &&
+					cond.Reason == "ResourceAllocationSucceeded" &&
+					cond.Message == "All validation checks passed successfully" {
+					return nil
+				}
+				return fmt.Errorf("unexpected error, expected: %s, got %s", errorSubstring, cond.Message)
 			}).WithTimeout(5 * time.Second).Should(gomega.Succeed())
 		}
 
