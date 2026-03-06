@@ -8,6 +8,7 @@ tags:
   ovnkube-control-plane: false
   ovnkube-node-dpu-host: false
   ovnkube-single-node-zone: false
+  ovnkube-single-node-zone-dpu: true
 
 # -- Whether or not call `lookup` Helm function, set it to `true` if you want to run `helm dry-run/template/lint`
 skipCallToK8s: false

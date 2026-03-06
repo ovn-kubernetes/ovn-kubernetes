@@ -1,0 +1,150 @@
+{{- $tags := (.Values.tags | default dict) }}
+{{- if eq (index $tags "ovnkube-node-dpu-host") true }}
+# ovnkube-node-dpu-host runs on DPU-host nodes (ovn-node in dpu-host mode). It creates and
+# monitors DPU health leases in ovn-kubernetes and is bound to the dedicated
+# ovnkube-node-dpu-host ClusterRole below, which grants only the API access the dpu-host
+# process actually needs which is a subset of ovnkube-node).
+# - When ovnkube-identity is disabled, the binding targets the ovnkube-node-dpu-host
+#   service account.
+# - When ovnkube-identity is enabled, dpu-host authenticates as
+#   system:ovn-node-dpu-host:<node> in the system:ovn-nodes-dpu-host group (distinct from the
+#   full-node system:ovn-node:<node> / system:ovn-nodes identity), and the binding targets
+#   that group.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+    name: ovnkube-node-dpu-host
+    namespace: ovn-kubernetes
+
+---
+# Shared DPU health lease Role, referenced by both the dpu (ovnkube-node-dpu) and
+# dpu-host (ovnkube-node-dpu-host) lease RoleBindings.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+    name: ovnkube-node-dpu-leases
+    namespace: ovn-kubernetes
+rules:
+    - apiGroups: ["coordination.k8s.io"]
+      resources:
+          - leases
+      verbs: [ "get", "create", "update" ]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+    name: ovnkube-node-dpu-host-leases
+    namespace: ovn-kubernetes
+roleRef:
+    name: ovnkube-node-dpu-leases
+    kind: Role
+    apiGroup: rbac.authorization.k8s.io
+subjects:
+    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    - kind: Group
+      name: system:ovn-nodes-dpu-host
+      apiGroup: rbac.authorization.k8s.io
+    {{- else }}
+    - kind: ServiceAccount
+      name: ovnkube-node-dpu-host
+      namespace: ovn-kubernetes
+    {{- end }}
+
+# Dedicated ClusterRole for dpu-host.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    name: ovnkube-node-dpu-host
+rules:
+    - apiGroups: [""]
+      resources:
+          - namespaces
+          - nodes
+          - pods
+          - services
+      verbs: [ "get", "list", "watch" ]
+    - apiGroups: ["discovery.k8s.io"]
+      resources:
+          - endpointslices
+      verbs: [ "get", "list", "watch" ]
+    - apiGroups: [""]
+      resources:
+          - events
+      verbs: [ "create", "patch", "update" ]
+    - apiGroups: [""]
+      resources:
+          - nodes/status
+          - pods/status
+      verbs: [ "patch", "update" ]
+    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    - apiGroups: ["certificates.k8s.io"]
+      resources:
+          - certificatesigningrequests
+      verbs:
+        - create
+        - get
+        - list
+        - watch
+    {{- end }}
+    {{- if eq (hasKey .Values.global "enableEgressIp" | ternary .Values.global.enableEgressIp false) true }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - egressips
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+    {{- if eq (hasKey .Values.global "enableEgressService" | ternary .Values.global.enableEgressService false) true }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - egressservices
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+    {{- if eq (hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false) true }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - adminpolicybasedexternalroutes
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+    - apiGroups: ["k8s.cni.cncf.io"]
+      resources:
+          - network-attachment-definitions
+      verbs: [ "get", "list", "watch" ]
+    {{- if eq (hasKey .Values.global "enableNetworkSegmentation" | ternary .Values.global.enableNetworkSegmentation false) true }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - userdefinednetworks
+          - clusteruserdefinednetworks
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+    {{- if or (eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true) (eq (hasKey .Values.global "enableNoOverlayManagedRouting" | ternary .Values.global.enableNoOverlayManagedRouting false) true) }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - routeadvertisements
+      verbs: [ "get", "list", "watch" ]
+    {{- end }}
+
+# dpu-host is bound to the narrow dpu-host ClusterRole below. When ovnkube-identity is
+# enabled the subject is the system:ovn-nodes-dpu-host group (dpu-host authenticates as
+# system:ovn-node-dpu-host:<node>); otherwise it is the ovnkube-node-dpu-host service account.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+    name: ovnkube-node-dpu-host
+roleRef:
+    name: ovnkube-node-dpu-host
+    kind: ClusterRole
+    apiGroup: rbac.authorization.k8s.io
+subjects:
+    {{- if eq (hasKey .Values.global "enableOvnKubeIdentity" | ternary .Values.global.enableOvnKubeIdentity true) true }}
+    - kind: Group
+      name: system:ovn-nodes-dpu-host
+      apiGroup: rbac.authorization.k8s.io
+    {{- else }}
+    - kind: ServiceAccount
+      name: ovnkube-node-dpu-host
+      namespace: ovn-kubernetes
+    {{- end }}
+{{- end }}
