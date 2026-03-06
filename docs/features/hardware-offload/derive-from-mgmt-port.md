@@ -153,7 +153,7 @@ Potential improvements include:
 
 - [DPU Gateway Interface Configuration](dpu-gateway-interface.md)
 - [DPU Support](dpu-support.md)
-- [Gateway Accelerated Interface Configuration](../design/gateway-accelerated-interface-configuration.md)
+- [Gateway Accelerated Interface Configuration](../../design/gateway-accelerated-interface-configuration.md)
 - [Configuration Guide](../../getting-started/configuration.md)
 
 ## Support
