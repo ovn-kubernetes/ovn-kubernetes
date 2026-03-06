@@ -87,8 +87,8 @@ func (o *FakeOVNNode) init(ctx context.Context) {
 	o.watcher, err = factory.NewNodeWatchFactory(o.fakeClient, fakeNodeName)
 	Expect(err).NotTo(HaveOccurred())
 
-	cnnci := NewCommonNodeNetworkControllerInfo(o.fakeClient.KubeClient, o.fakeClient.AdminPolicyRouteClient, o.watcher, o.recorder, fakeNodeName, routemanager.NewController())
-	o.nc = newDefaultNodeNetworkController(cnnci, o.stopChan, o.wg, routemanager.NewController(), nil, nil)
+	cnnci := NewCommonNodeNetworkControllerInfo(o.fakeClient.KubeClient, o.fakeClient.AdminPolicyRouteClient, nil, o.watcher, o.recorder, fakeNodeName, routemanager.NewController())
+	o.nc = newDefaultNodeNetworkController(cnnci, o.stopChan, o.wg, routemanager.NewController(), nil)
 	// watcher is started by nodeControllerManager, not by nodeNetworkController, so start it here.
 	Expect(o.watcher.Start()).To(Succeed())
 	Expect(o.nc.Init(ctx)).To(Succeed())
