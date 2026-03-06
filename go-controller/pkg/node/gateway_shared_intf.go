@@ -1794,9 +1794,6 @@ func newGateway(
 				}
 			}
 			gw.openflowManager.requestFlowSync()
-			if err := ensureMasqueradeResources(routeManager, config.Gateway.Interface, nodeName, watchFactory); err != nil {
-				klog.Errorf("Masquerade reconciler on addr change: %v", err)
-			}
 		}
 		if config.Gateway.NodeportEnable {
 			klog.Info("Creating Gateway Node Port Watcher")
