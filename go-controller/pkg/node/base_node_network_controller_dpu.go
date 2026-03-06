@@ -14,9 +14,11 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // Check if the Pod is ready so that we can add its associated DPU to br-int.
@@ -348,4 +350,45 @@ func (bnnc *BaseNodeNetworkController) delRepPort(pod *corev1.Pod, dpuCD *util.D
 		klog.Infof("Port %s deleted from bridge br-int", vfRepName)
 		return true, nil
 	})
+}
+
+// cleanupAllOVSRepresentors removes all OVS representor ports belongs to this network.
+// It is called when the network is deleted and cleaned up.
+// checkForStaleOVSRepresentorInterfaces only removes ports whose pod no longer
+// exists, but does not handle the case where the pod is still running and the
+// network itself is deleted.
+func (bnnc *BaseNodeNetworkController) cleanupAllOVSRepresentors() error {
+	// find all representor interfaces of the network
+	p := func(item *vswitchd.Interface) bool {
+		if item.ExternalIDs["sandbox"] == "" || item.ExternalIDs["vf-netdev-name"] == "" {
+			return false
+		}
+		// this function is only called for non-default network
+		return item.ExternalIDs[types.NetworkExternalID] == bnnc.GetNetworkName()
+	}
+
+	ovsIfaces, err := ovsops.FindInterfacesWithPredicate(bnnc.ovsClient, p)
+	if err != nil {
+		return fmt.Errorf("failed to find representor interfaces when cleaning up network %s: %w", bnnc.GetNetworkName(), err)
+	}
+	if len(ovsIfaces) == 0 {
+		return nil
+	}
+
+	interfaces := make([]string, 0, len(ovsIfaces))
+	for _, ovsIface := range ovsIfaces {
+		interfaces = append(interfaces, ovsIface.Name)
+		link, err := util.GetNetLinkOps().LinkByName(ovsIface.Name)
+		if err != nil {
+			klog.Warningf("Failed to get link device for representor port %s. %v", ovsIface.Name, err)
+		} else if err = util.GetNetLinkOps().LinkSetDown(link); err != nil {
+			klog.Warningf("Failed to set link down for representor port %s. %v", ovsIface.Name, err)
+		}
+	}
+
+	err = ovsops.DeletePortsFromBridge(bnnc.ovsClient, "br-int", interfaces...)
+	if err != nil {
+		return fmt.Errorf("failed to delete representor interfaces %s of network %s: %w", interfaces, bnnc.GetNetworkName(), err)
+	}
+	return nil
 }

@@ -111,6 +111,11 @@ func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 	var errors []error
 	var err error
 
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		if err = nc.cleanupAllOVSRepresentors(); err != nil {
+			errors = append(errors, err)
+		}
+	}
 	if nc.gateway != nil {
 		if err = nc.gateway.DelNetwork(); err != nil {
 			errors = append(errors, fmt.Errorf("deleting network gateway for network %s failed: %v", nc.GetNetworkName(), err))
