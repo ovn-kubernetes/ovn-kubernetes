@@ -4485,4 +4485,65 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			}
 		})
 	})
+
+	It("should report events on failure", func() {
+		// Test identifiers
+		testID := rand.String(5)
+		cncName := fmt.Sprintf("color-1-%s", testID)
+		nextSubnets := newTestNetworkSubnetsAllocator()
+
+		// Network names
+		blueUDN := "blue-udn" // L2 UDN - shared between both CNCs
+		blueNs := fmt.Sprintf("blue-ns-%s", testID)
+		// Labels for CNC selection
+		blueLabel := map[string]string{"network-color": "blue"}
+
+		// Cleanup
+		DeferCleanup(func() {
+			By("Cleanup: Deleting all test resources")
+			deleteCNC(cncName)
+
+			deleteUDN(blueNs, blueUDN)
+			deleteNamespace(cs, blueNs)
+		})
+
+		// Create CNC selecting blue (no networks exist yet)
+		By("Creating CNC selecting blue UDN")
+		createOrUpdateCNCWithSubnets(cncName, nil, blueLabel, generateConnectSubnets(cs))
+		By("Creating blue namespace and L2 UDN")
+		createUDNNamespaceWithName(cs, blueNs, blueLabel)
+		v4, v6 := nextSubnets()
+		createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, v4, v6)
+
+		By("Waiting for blue UDN to be ready")
+		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+		By("Verifying CNC now has 1 network (blue)")
+		verifyCNCSubnetAnnotationNetworkCount(cncName, 1)
+
+		By("Breaking CNC annotation")
+		// Get current annotation, modify it, and update it back to the CNC to simulate a user breaking the annotation
+		annotations, err := getCNCAnnotations(cncName)
+		Expect(err).NotTo(HaveOccurred())
+		subnetAnnotation := annotations[ovnNetworkConnectSubnetAnnotation]
+		// we know the subnet annotation format: {"topo_ID":{"ipv4":"192.168.0.0/24"}}
+		// so we can break it by making the network have too large mask {"topo_ID":{"ipv4":"192.168.0.0/240"}}
+		subnetAnnotation = subnetAnnotation[:len(subnetAnnotation)-3] + "0" + subnetAnnotation[len(subnetAnnotation)-3:]
+
+		_, err = e2ekubectl.RunKubectl("", "annotate", "clusternetworkconnect", cncName, ovnNetworkConnectSubnetAnnotation+"="+subnetAnnotation, "--overwrite")
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Checking there is an event reported")
+		Eventually(func() error {
+			events, err := cs.CoreV1().Events("").List(context.Background(), metav1.ListOptions{})
+			framework.ExpectNoError(err)
+			for _, event := range events.Items {
+				if event.InvolvedObject.Kind == "ClusterNetworkConnect" && event.InvolvedObject.Name == cncName {
+					Expect(event.Reason).To(Equal("ErrorReconcilingCNC"))
+					Expect(event.Message).To(ContainSubstring("failed to parse subnet annotation"))
+					return nil
+				}
+			}
+			return fmt.Errorf("event not found for CNC %s", cncName)
+		}).WithTimeout(3 * time.Second).Should(Succeed())
+	})
 })
