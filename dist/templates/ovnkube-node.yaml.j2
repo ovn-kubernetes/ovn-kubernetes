@@ -127,11 +127,11 @@ spec:
           requests:
             cpu: 100m
             memory: 300Mi
-          {%- if ovnkube_app_name=="ovnkube-node-dpu-host" and ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
+            {%- if ovnkube_app_name=="ovnkube-node-dpu-host" and ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
             {{ ovnkube_node_mgmt_port_dp_resource_name }}: {{ mgmt_port_vfs_count | default(1) }}
-          {%- endif %}
-          limits:
+            {%- endif %}
           {%- if ovnkube_app_name=="ovnkube-node-dpu-host" and ovn_network_segmentation_enable=="true" and ovnkube_node_mgmt_port_dp_resource_name!="" %}
+          limits:
             {{ ovnkube_node_mgmt_port_dp_resource_name }}: {{ mgmt_port_vfs_count | default(1) }}
           {%- endif %}
         env:

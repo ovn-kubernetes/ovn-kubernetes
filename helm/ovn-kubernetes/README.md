@@ -568,15 +568,6 @@ unlimited
 			<td>A comma separated set of NetFlow collectors to export flow data</td>
 		</tr>
 		<tr>
-			<td>global.nodeMgmtPortNetdev</td>
-			<td>string</td>
-			<td><pre lang="json">
-""
-</pre>
-</td>
-			<td>The net device to be used for management port, will be renamed to ovn-k8s-mp0 and used to allow host network services and pods to access k8s pod and service networks</td>
-		</tr>
-		<tr>
 			<td>global.ofctrlWaitBeforeClear</td>
 			<td>string</td>
 			<td><pre lang="json">

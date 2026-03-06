@@ -3,3 +3,8 @@ logFileMaxSize: 100
 logFileMaxBackups: 5
 logFileMaxAge: 5
 ovnControllerLogLevel: "-vconsole:info"
+
+# To utilize hardware offloading, the net device to be used for management port can be specified.
+# This will be renamed to ovn-k8s-mp0 and used to allow host network services and pods to access k8s pod and service networks
+nodeMgmtPortNetdev: ""
+
