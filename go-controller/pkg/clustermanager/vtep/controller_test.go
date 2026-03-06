@@ -104,10 +104,11 @@ func getVTEPCondition(client *vtepfake.Clientset, vtepName, conditionType string
 
 var _ = ginkgo.Describe("VTEP Controller", func() {
 	var (
-		controller   *Controller
-		fakeVTEP     *vtepfake.Clientset
-		wf           *factory.WatchFactory
-		fakeRecorder *record.FakeRecorder
+		controller    *Controller
+		fakeVTEP      *vtepfake.Clientset
+		fakeClientset *util.OVNClusterManagerClientset
+		wf            *factory.WatchFactory
+		fakeRecorder  *record.FakeRecorder
 	)
 
 	start := func(objects ...runtime.Object) {
@@ -127,7 +128,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 		ovntest.AddVTEPGarbageCollectionReactor(fakeVTEP)
 		fakeRecorder = record.NewFakeRecorder(100)
 
-		fakeClientset := util.GetOVNClientset(otherObjects...).GetClusterManagerClientset()
+		fakeClientset = util.GetOVNClientset(otherObjects...).GetClusterManagerClientset()
 		fakeClientset.VTEPClient = fakeVTEP
 
 		var err error
@@ -668,6 +669,155 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				gomega.HaveField("Reason", gomega.Equal(reasonAllocationFailed)),
 			))
 		})
+	})
+
+	ginkgo.Context("CUDN watch for finalizer re-evaluation", func() {
+		ginkgo.It("indexes EVPN CUDNs on create and ignores non-EVPN CUDNs", func() {
+			evpnCUDN := newCUDNWithEVPN("cudn-evpn", "vtep-indexed")
+			nonEVPNCUDN := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "cudn-plain"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					NamespaceSelector: metav1.LabelSelector{},
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Subnets: []udnv1.Layer3Subnet{{CIDR: "10.0.0.0/16"}},
+						},
+					},
+				},
+			}
+			vtep := newVTEP("vtep-indexed", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep, evpnCUDN, nonEVPNCUDN)
+
+			// EVPN CUDN should be indexed
+			gomega.Eventually(func() bool {
+				_, ok := controller.cudnVTEPIndex.Load("cudn-evpn")
+				return ok
+			}).WithTimeout(5 * time.Second).Should(gomega.BeTrue())
+
+			val, _ := controller.cudnVTEPIndex.Load("cudn-evpn")
+			gomega.Expect(val).To(gomega.Equal("vtep-indexed"))
+
+			// Non-EVPN CUDN should NOT be indexed
+			_, ok := controller.cudnVTEPIndex.Load("cudn-plain")
+			gomega.Expect(ok).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("unblocks VTEP deletion when the referencing CUDN is deleted", func() {
+			cudn := newCUDNWithEVPN("cudn-ref", "vtep-cudn-del")
+			vtep := newVTEP("vtep-cudn-del", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep, cudn)
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-cudn-del")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			// Simulate deletion of the VTEP (sets DeletionTimestamp, blocked by finalizer)
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-cudn-del", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now := metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Finalizer should remain because CUDN still references the VTEP
+			gomega.Consistently(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-cudn-del")
+			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			// Delete the CUDN -- this should trigger the CUDN controller
+			// which re-queues the deleting VTEP
+			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+				context.Background(), "cudn-ref", metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Now the VTEP's finalizer should be removed
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-cudn-del")
+			}).WithTimeout(5 * time.Second).ShouldNot(gomega.ContainElement(finalizerVTEP))
+
+			// Index entry should be cleaned up
+			_, ok := controller.cudnVTEPIndex.Load("cudn-ref")
+			gomega.Expect(ok).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("keeps VTEP blocked until all referencing CUDNs are deleted", func() {
+			cudn1 := newCUDNWithEVPN("cudn-one", "vtep-multi-ref")
+			cudn2 := newCUDNWithEVPN("cudn-two", "vtep-multi-ref")
+			vtep := newVTEP("vtep-multi-ref", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep, cudn1, cudn2)
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-multi-ref")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			// Request VTEP deletion
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-multi-ref", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now := metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Delete first CUDN -- VTEP should still be blocked by cudn-two
+			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+				context.Background(), "cudn-one", metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Consistently(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-multi-ref")
+			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			// Delete second CUDN -- now VTEP should be unblocked
+			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+				context.Background(), "cudn-two", metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-multi-ref")
+			}).WithTimeout(5 * time.Second).ShouldNot(gomega.ContainElement(finalizerVTEP))
+		})
+
+		ginkgo.It("does not re-queue VTEPs when a non-EVPN CUDN is deleted", func() {
+			evpnCUDN := newCUDNWithEVPN("cudn-evpn", "vtep-norequeue")
+			nonEVPNCUDN := &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "cudn-plain"},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					NamespaceSelector: metav1.LabelSelector{},
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Subnets: []udnv1.Layer3Subnet{{CIDR: "10.0.0.0/16"}},
+						},
+					},
+				},
+			}
+			vtep := newVTEP("vtep-norequeue", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep, evpnCUDN, nonEVPNCUDN)
+
+			gomega.Eventually(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-norequeue")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			// Request VTEP deletion
+			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-norequeue", metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			now := metav1.Now()
+			v.DeletionTimestamp = &now
+			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Delete the non-EVPN CUDN -- should NOT unblock the VTEP
+			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+				context.Background(), "cudn-plain", metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// VTEP should remain blocked (the EVPN CUDN still references it)
+			gomega.Consistently(func() []string {
+				return getVTEPFinalizers(fakeVTEP, "vtep-norequeue")
+			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+		})
+
 	})
 })
 
