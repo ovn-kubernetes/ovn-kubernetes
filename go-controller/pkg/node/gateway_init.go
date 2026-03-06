@@ -448,7 +448,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 		return fmt.Errorf("failed to remove stale masquerade resources: %w", err)
 	}
 
-	if err := ensureMasqueradeResources(nc.routeManager, kubeIntf, nc.name, nc.watchFactory); err != nil {
+	if err := nc.masqReconciler.ensure(); err != nil {
 		return err
 	}
 

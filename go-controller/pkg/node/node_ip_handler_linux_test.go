@@ -24,8 +24,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
-	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	mgmtportmock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
+	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
@@ -232,10 +232,10 @@ var _ = Describe("Node IP Handler DPUHost event filtering", func() {
 	var tc *testCtx
 
 	const (
-		nodeName       = "node1"
-		gwIfIndex      = 42
-		otherIfIndex   = 99
-		someAddr       = "192.168.1.50/24"
+		nodeName     = "node1"
+		gwIfIndex    = 42
+		otherIfIndex = 99
+		someAddr     = "192.168.1.50/24"
 	)
 
 	BeforeEach(func() {

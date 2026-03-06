@@ -5,8 +5,10 @@ package node
 
 import (
 	"fmt"
+	"net"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -21,7 +23,9 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
@@ -481,30 +485,72 @@ var _ = Describe("SyncServices", func() {
 	})
 })
 
-var _ = Describe("ensureMasqueradeResources", func() {
-	var netlinkMock *utilMocks.NetLinkOps
+var _ = Describe("masqueradeReconciler", func() {
+	var (
+		netlinkMock *utilMocks.NetLinkOps
+		rm          *routemanager.Controller
+		wf          factory.NodeWatchFactory
+	)
 
 	BeforeEach(func() {
 		netlinkMock = new(utilMocks.NetLinkOps)
 		util.SetNetLinkOpMockInst(netlinkMock)
-		lastMasqueradeLinkIndex = 0
+		rm = routemanager.NewController()
+		fakeClient := fake.NewSimpleClientset()
+		var err error
+		wf, err = factory.NewNodeWatchFactory(&util.OVNNodeClientset{KubeClient: fakeClient}, "node1")
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	AfterEach(func() {
 		util.ResetNetLinkOpMockInst()
+		wf.Shutdown()
 	})
 
 	It("returns error when interface name is empty", func() {
+		r := &masqueradeReconciler{gwIface: "", nodeName: "node1", routeManager: rm, watchFactory: wf}
 		netlinkMock.On("LinkByName", "").Return(nil, fmt.Errorf("no such network interface"))
-		err := ensureMasqueradeResources(nil, "", "node1", nil)
+		err := r.ensure()
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("not found"))
 	})
 
 	It("returns error when interface does not exist", func() {
+		r := &masqueradeReconciler{gwIface: "nonexistent0", nodeName: "node1", routeManager: rm, watchFactory: wf}
 		netlinkMock.On("LinkByName", "nonexistent0").Return(nil, fmt.Errorf("no such network interface"))
-		err := ensureMasqueradeResources(nil, "nonexistent0", "node1", nil)
+		err := r.ensure()
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("interface nonexistent0 not found"))
+	})
+
+	It("skips reconciliation when mutex is already held", func() {
+		r := &masqueradeReconciler{gwIface: "breth0", nodeName: "node1", routeManager: rm, watchFactory: wf}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		err := r.ensure()
+		Expect(err).NotTo(HaveOccurred())
+		netlinkMock.AssertNotCalled(GinkgoT(), "LinkByName")
+	})
+
+	It("takes fast path when link index matches and masquerade IP is present", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+
+		linkMock := new(netlink_mocks.Link)
+		linkMock.On("Attrs").Return(&netlink.LinkAttrs{Index: 10, Name: "breth0"})
+
+		_, masqSubnet, _ := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+		masqSubnet.IP = config.Gateway.MasqueradeIPs.V4HostMasqueradeIP
+		netlinkMock.On("LinkByName", "breth0").Return(linkMock, nil)
+		netlinkMock.On("AddrList", linkMock, netlink.FAMILY_V4).Return([]netlink.Addr{
+			{IPNet: masqSubnet},
+		}, nil)
+
+		r := &masqueradeReconciler{gwIface: "breth0", nodeName: "node1", routeManager: rm, watchFactory: wf, lastLinkIndex: 10}
+		err := r.ensure()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.lastLinkIndex).To(Equal(10))
 	})
 })
