@@ -302,6 +302,7 @@ type testNAD struct {
 	Annotations           map[string]string
 	IsSecondary           bool
 	Topology              string
+	Transport             string
 	OwnUpdate             bool
 	EVPNMACVRFVNI         int32
 	EVPNMACVRFRouteTarget string
@@ -346,6 +347,9 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 	}
 	if tn.Topology != "" && !tn.IsSecondary {
 		cniConfig["role"] = "primary"
+	}
+	if tn.Transport != "" {
+		cniConfig["transport"] = tn.Transport
 	}
 
 	// Add EVPN configuration if present
@@ -871,6 +875,48 @@ func TestController_reconcile(t *testing.T) {
 					}},
 			},
 			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name:      "reconciles pod RouteAdvertisement for CUDN in no-overlay mode with ToReceive routes including CUDN pod subnets",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true, NetworkSelector: map[string]string{"selected": "true"}},
+			transport: types.NetworkTransportNoOverlay,
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue-ns", Network: types.CUDNPrefix + "blue", Topology: "layer3", Subnet: "10.10.0.0/16/24", Transport: types.NetworkTransportNoOverlay, Labels: map[string]string{"selected": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\",\"" + types.CUDNPrefix + "blue\":\"10.10.1.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.0.0/24", "10.10.1.0/24"}, VRF: "", Imports: []string{"blue"}, Neighbors: []*testNeighbor{
+							// ToReceive should include pod subnets from all no-overlay networks in alphabetical order: cluster-udn-blue (10.10.0.0/16) then default (1.1.0.0/16)
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.0.0/24", "10.10.1.0/24"}, Receive: []testPrefixSelector{
+								{Prefix: "10.10.0.0/16", LE: 24, GE: 24},
+								{Prefix: "1.1.0.0/16", LE: 24, GE: 24},
+							}},
+						}},
+						{ASN: 1, VRF: "blue", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{
+				"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+				"blue":    {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+			},
 		},
 		{
 			name: "fails to reconcile a secondary network",

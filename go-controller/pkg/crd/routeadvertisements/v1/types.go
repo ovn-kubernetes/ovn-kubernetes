@@ -68,6 +68,11 @@ const (
 	EgressIP AdvertisementType = "EgressIP"
 )
 
+const (
+	// RouteAdvertisementsAccepted is the condition type for RouteAdvertisements acceptance status
+	RouteAdvertisementsAccepted = "Accepted"
+)
+
 // RouteAdvertisementsStatus defines the observed state of RouteAdvertisements.
 // It should always be reconstructable from the state of the cluster and/or
 // outside world.
