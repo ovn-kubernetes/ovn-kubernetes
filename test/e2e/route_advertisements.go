@@ -2136,6 +2136,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		if !isLocalGWModeEnabled() {
 			e2eskipper.Skipf("Test case only supported in Local Gateway mode")
 		}
+		framework.Logf("Running in ginkgo process %d", ginkgo.GinkgoParallelProcess())
 		ipFamilySet = sets.New(getSupportedIPFamiliesSlice(f.ClientSet)...)
 		ictx = infraprovider.Get().NewTestContext()
 		testSuffix = framework.RandomSuffix()
@@ -2144,22 +2145,26 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 	})
 
 	// define networks to test with
-	var (
-		layer3NetworkSpec = &udnv1.NetworkSpec{
+	layer3NetworkSpecGen := func() *udnv1.NetworkSpec {
+		return &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer3,
 			Layer3: &udnv1.Layer3Config{
 				Role:    "Primary",
 				Subnets: randomL3CUDNSubnets(),
 			},
 		}
-		layer2NetworkSpec = &udnv1.NetworkSpec{
+	}
+	layer2NetworkSpecGen := func() *udnv1.NetworkSpec {
+		return &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer2,
 			Layer2: &udnv1.Layer2Config{
 				Role:    "Primary",
 				Subnets: randomL2CUDNSubnets(),
 			},
 		}
-		layer2MACVRFNetworkSpec = &udnv1.NetworkSpec{
+	}
+	layer2MACVRFNetworkSpecGen := func() *udnv1.NetworkSpec {
+		return &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer2,
 			Layer2: &udnv1.Layer2Config{
 				Role:    udnv1.NetworkRolePrimary,
@@ -2172,7 +2177,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				},
 			},
 		}
-		layer2MACVRFIPVRFNetworkSpec = &udnv1.NetworkSpec{
+	}
+	layer2MACVRFIPVRFNetworkSpecGen := func() *udnv1.NetworkSpec {
+		return &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer2,
 			Layer2: &udnv1.Layer2Config{
 				Role:    udnv1.NetworkRolePrimary,
@@ -2188,7 +2195,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				},
 			},
 		}
-		layer3IPVRFNetworkSpec = &udnv1.NetworkSpec{
+	}
+	layer3IPVRFNetworkSpecGen := func() *udnv1.NetworkSpec {
+		return &udnv1.NetworkSpec{
 			Topology: udnv1.NetworkTopologyLayer3,
 			Layer3: &udnv1.Layer3Config{
 				Role:    udnv1.NetworkRolePrimary,
@@ -2201,18 +2210,18 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				},
 			},
 		}
-	)
+	}
 
 	networksToTest := []ginkgo.TableEntry{
-		ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer3NetworkSpec),
-		ginkgo.Entry("Layer 2 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer2NetworkSpec),
-		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer3IPVRFNetworkSpec),
-		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFNetworkSpec),
-		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFIPVRFNetworkSpec),
+		ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer3NetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer2NetworkSpecGen),
+		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer3IPVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFIPVRFNetworkSpecGen),
 	}
 
 	ginkgo.DescribeTableSubtree("When the tested network is of type",
-		func(testedNetworkType networkType, networkSpec *udnv1.NetworkSpec) {
+		func(testedNetworkType networkType, networkSpecGen func() *udnv1.NetworkSpec) {
 			var testNamespace *corev1.Namespace
 			var testPod *corev1.Pod
 
@@ -2233,6 +2242,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			}
 
 			ginkgo.BeforeEach(func() {
+				networkSpec := networkSpecGen()
 				switch {
 				case networkSpec.Layer3 != nil:
 					networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
@@ -2487,80 +2497,26 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				)
 
 				ginkgo.Describe("When there is other network", func() {
-					var (
-						otherLayer3NetworkSpec = &udnv1.NetworkSpec{
-							Topology: udnv1.NetworkTopologyLayer3,
-							Layer3: &udnv1.Layer3Config{
-								Role:    "Primary",
-								Subnets: randomL3CUDNSubnets(),
-							},
-						}
-						otherLayer2NetworkSpec = &udnv1.NetworkSpec{
-							Topology: udnv1.NetworkTopologyLayer2,
-							Layer2: &udnv1.Layer2Config{
-								Role:    "Primary",
-								Subnets: randomL2CUDNSubnets(),
-							},
-						}
-						otherLayer2MACVRFNetworkSpec = &udnv1.NetworkSpec{
-							Topology: udnv1.NetworkTopologyLayer2,
-							Layer2: &udnv1.Layer2Config{
-								Role:    udnv1.NetworkRolePrimary,
-								Subnets: randomL2CUDNSubnets(),
-							},
-							Transport: udnv1.TransportOptionEVPN,
-							EVPN: &udnv1.EVPNConfig{
-								MACVRF: &udnv1.VRFConfig{
-									VNI: randomVNI(),
-								},
-							},
-						}
-						otherL2MACVRFIPVRFNetworkSpec = &udnv1.NetworkSpec{
-							Topology: udnv1.NetworkTopologyLayer2,
-							Layer2: &udnv1.Layer2Config{
-								Role:    udnv1.NetworkRolePrimary,
-								Subnets: randomL2CUDNSubnets(),
-							},
-							Transport: udnv1.TransportOptionEVPN,
-							EVPN: &udnv1.EVPNConfig{
-								MACVRF: &udnv1.VRFConfig{
-									VNI: randomVNI(),
-								},
-								IPVRF: &udnv1.VRFConfig{
-									VNI: randomVNI(),
-								},
-							},
-						}
-						otherL3IPVRFNetworkSpec = &udnv1.NetworkSpec{
-							Topology: udnv1.NetworkTopologyLayer3,
-							Layer3: &udnv1.Layer3Config{
-								Role:    udnv1.NetworkRolePrimary,
-								Subnets: randomL3CUDNSubnets(),
-							},
-							Transport: udnv1.TransportOptionEVPN,
-							EVPN: &udnv1.EVPNConfig{
-								IPVRF: &udnv1.VRFConfig{
-									VNI: randomVNI(),
-								},
-							},
-						}
-					)
+
+					nilNetworkSpecGen := func() *udnv1.NetworkSpec {
+						return nil
+					}
 
 					otherNetworksToTest := []ginkgo.TableEntry{
-						ginkgo.Entry("Default", defaultNetwork, nil),
-						ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, otherLayer3NetworkSpec),
-						ginkgo.Entry("Layer 2 CUDN VRF-Lite", cudnAdvertisedVRFLite, otherLayer2NetworkSpec),
-						ginkgo.Entry("Layer 3 UDN", udn, otherLayer3NetworkSpec),
-						ginkgo.Entry("Layer 3 CUDN advertised", cudnAdvertised, otherLayer3NetworkSpec),
-						ginkgo.Entry("Layer 2 UDN", udn, otherLayer2NetworkSpec),
-						ginkgo.Entry("Layer 2 CUDN advertised", cudnAdvertised, otherLayer2NetworkSpec),
-						ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, cudnAdvertisedEVPN, otherL3IPVRFNetworkSpec),
-						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, cudnAdvertisedEVPN, otherLayer2MACVRFNetworkSpec),
-						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, cudnAdvertisedEVPN, otherL2MACVRFIPVRFNetworkSpec),
+						ginkgo.Entry("Default", defaultNetwork, nilNetworkSpecGen),
+						ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer3NetworkSpecGen),
+						ginkgo.Entry("Layer 2 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer2NetworkSpecGen),
+						ginkgo.Entry("Layer 3 UDN", udn, layer3NetworkSpecGen),
+						ginkgo.Entry("Layer 3 CUDN advertised", cudnAdvertised, layer3NetworkSpecGen),
+						ginkgo.Entry("Layer 2 UDN", udn, layer2NetworkSpecGen),
+						ginkgo.Entry("Layer 2 CUDN advertised", cudnAdvertised, layer2NetworkSpecGen),
+						ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer3IPVRFNetworkSpecGen),
+						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFNetworkSpecGen),
+						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, cudnAdvertisedEVPN, layer2MACVRFIPVRFNetworkSpecGen),
 					}
 
 					ginkgo.DescribeTableSubtree("Of type",
-						func(networkType networkType, networkSpec *udnv1.NetworkSpec) {
+						func(networkType networkType, otherNetworkSpecGen func() *udnv1.NetworkSpec) {
 							var otherNamespace *corev1.Namespace
 							var otherNetworkName string
 
@@ -2568,13 +2524,14 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								otherNetworkName = testBaseName + "o"
 								otherNamespaceName := otherNetworkName
 
+								otherNetworkSpec := otherNetworkSpecGen()
 								switch {
-								case networkSpec == nil:
+								case otherNetworkSpec == nil:
 									otherNetworkName = "default"
-								case networkSpec.Layer3 != nil:
-									networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
-								case networkSpec.Layer2 != nil:
-									networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
+								case otherNetworkSpec.Layer3 != nil:
+									otherNetworkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, otherNetworkSpec.Layer3.Subnets...)
+								case otherNetworkSpec.Layer2 != nil:
+									otherNetworkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, otherNetworkSpec.Layer2.Subnets...)
 								}
 
 								otherNamespace, _ = configureNetworkWithInfra(
@@ -2584,7 +2541,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									ipFamilySet,
 									otherNamespaceName,
 									networkType,
-									networkSpec,
+									otherNetworkSpec,
 								)
 							})
 
