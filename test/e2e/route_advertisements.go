@@ -186,13 +186,13 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 			var expectedV4IP, expectedV6IP string
 			snatEnabled := isNoOverlayOutboundSNATEnabled(f)
-			
+
 			if snatEnabled {
 				ginkgo.By("queries to the external server are SNATed (uses node IP)")
 				// Get the node where the client pod is running
 				clientPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPodNodeName, metav1.GetOptions{})
 				framework.ExpectNoError(err, fmt.Sprintf("Getting node %s failed: %v", clientPodNodeName, err))
-				
+
 				// Get node IPs
 				nodeV4Addrs := e2enode.GetAddressesByTypeAndFamily(clientPodNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
 				nodeV6Addrs := e2enode.GetAddressesByTypeAndFamily(clientPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
@@ -2079,11 +2079,8 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 	testContainerToClientIPAndExpect := func(src, dstIP, expect string) {
 		ginkgo.GinkgoHelper()
 		gomega.Eventually(func(g gomega.Gomega) {
-			// FIXME: using ExecK8NodeCommand instead of
-			// ExecExternalContainerCommand, they arent any
-			// different but ExecK8NodeCommand is more convinient
-			ip, err := infraprovider.Get().ExecK8NodeCommand(
-				src,
+			ip, err := infraprovider.Get().ExecExternalContainerCommand(
+				infraapi.ExternalContainer{Name: src},
 				[]string{"curl", "--max-time", curlMaxTimeStr, "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
 			)
 			g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2103,11 +2100,21 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			g.Expect(err).To(gomega.HaveOccurred())
 		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
 	}
-	testContainerToClientIPNOK := func(src, dstIP string) {
+	testNodeToClientIPNOK := func(src, dstIP string) {
 		ginkgo.GinkgoHelper()
 		gomega.Consistently(func(g gomega.Gomega) {
 			_, err := infraprovider.Get().ExecK8NodeCommand(
 				src,
+				[]string{"curl", "--max-time", curlMaxTimeStr, "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
+			)
+			g.Expect(err).To(gomega.HaveOccurred())
+		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
+	}
+	testContainerToClientIPNOK := func(src, dstIP string) {
+		ginkgo.GinkgoHelper()
+		gomega.Consistently(func(g gomega.Gomega) {
+			_, err := infraprovider.Get().ExecExternalContainerCommand(
+				infraapi.ExternalContainer{Name: src},
 				[]string{"curl", "--max-time", curlMaxTimeStr, "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
 			)
 			g.Expect(err).To(gomega.HaveOccurred())
@@ -2284,7 +2291,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						for _, externalServer := range externalServers {
 							bgpServerNetwork, err := infraprovider.Get().GetNetwork(externalServer)
 							gomega.Expect(err).NotTo(gomega.HaveOccurred())
-							iface, err := infraprovider.Get().GetK8NodeNetworkInterface(externalServer, bgpServerNetwork)
+							iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+								infraapi.ExternalContainer{Name: externalServer},
+								bgpServerNetwork,
+							)
 							gomega.Expect(err).NotTo(gomega.HaveOccurred())
 							serverIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
 							gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
@@ -2317,7 +2327,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						for _, externalServer := range externalServers {
 							bgpServerNetwork, err := infraprovider.Get().GetNetwork(externalServer)
 							gomega.Expect(err).NotTo(gomega.HaveOccurred())
-							iface, err := infraprovider.Get().GetK8NodeNetworkInterface(externalServer, bgpServerNetwork)
+							iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+								infraapi.ExternalContainer{Name: externalServer},
+								bgpServerNetwork,
+							)
 							gomega.Expect(err).NotTo(gomega.HaveOccurred())
 							serverIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
 							gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
@@ -2360,7 +2373,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						// using the external server setup for the default network
 						bgpServerNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						iface, err := infraprovider.Get().GetK8NodeNetworkInterface(serverContainerName, bgpServerNetwork)
+						iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+							infraapi.ExternalContainer{Name: serverContainerName},
+							bgpServerNetwork,
+						)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						serverIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
 						gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
@@ -2409,7 +2425,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								)
 								gomega.Expect(err).NotTo(gomega.HaveOccurred())
 								gomega.Expect(podIP).ToNot(gomega.BeEmpty())
-								testContainerToClientIPNOK(getNode(), podIP)
+								testNodeToClientIPNOK(getNode(), podIP)
 							},
 							ginkgo.Entry("When the network is IPv4", utilnet.IPv4),
 							ginkgo.Entry("When the network is IPv6", utilnet.IPv6),
