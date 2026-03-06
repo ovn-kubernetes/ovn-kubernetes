@@ -50,7 +50,7 @@ func newFakeOvnkNodePod(deletionTimestamp *metav1.Time) *corev1.Pod {
 func initWatchFactoryWithObjects(objects ...runtime.Object) *factory.WatchFactory {
 	v1Objects := append([]runtime.Object{}, objects...)
 	fakeClient := &util.OVNNodeClientset{
-		KubeClient: fake.NewSimpleClientset(v1Objects...),
+		KubeClient: fake.NewClientset(v1Objects...),
 	}
 
 	watcher, err := factory.NewNodeWatchFactory(fakeClient, nodeName)

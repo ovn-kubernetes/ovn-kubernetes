@@ -23,6 +23,8 @@ import (
 
 // UserDefinedNetworkStatusApplyConfiguration represents a declarative configuration of the UserDefinedNetworkStatus type for use
 // with apply.
+//
+// UserDefinedNetworkStatus contains the observed status of the UserDefinedNetwork.
 type UserDefinedNetworkStatusApplyConfiguration struct {
 	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }

@@ -1,9 +1,8 @@
 package ops
 
 import (
+	"context"
 	"hash/fnv"
-
-	"golang.org/x/net/context"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/model"

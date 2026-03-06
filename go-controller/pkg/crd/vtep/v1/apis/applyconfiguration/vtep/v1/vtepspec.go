@@ -23,9 +23,18 @@ import (
 
 // VTEPSpecApplyConfiguration represents a declarative configuration of the VTEPSpec type for use
 // with apply.
+//
+// VTEPSpec defines the desired state of VTEP.
 type VTEPSpecApplyConfiguration struct {
+	// CIDRs is the list of IP ranges from which VTEP IPs are allocated.
+	// Dual-stack clusters may set 2 CIDRs (one for each IP family), otherwise only 1 CIDR is allowed.
+	// The format should match standard CIDR notation (for example, "100.64.0.0/24" or "fd00::/64").
 	CIDRs *vtepv1.DualStackCIDRs `json:"cidrs,omitempty"`
-	Mode  *vtepv1.VTEPMode       `json:"mode,omitempty"`
+	// Mode specifies how VTEP IPs are managed.
+	// "Managed" means OVN-Kubernetes allocates and assigns VTEP IPs per node automatically.
+	// "Unmanaged" means an external provider handles IP assignment; OVN-Kubernetes discovers existing IPs on nodes.
+	// Defaults to "Managed".
+	Mode *vtepv1.VTEPMode `json:"mode,omitempty"`
 }
 
 // VTEPSpecApplyConfiguration constructs a declarative configuration of the VTEPSpec type for use with

@@ -44,7 +44,7 @@ var _ = Describe("VTEPNotifier", func() {
 		// satisfy EVPN LGW restriction, otherwise no effect
 		config.Gateway.Mode = config.GatewayModeLocal
 		fakeClient := &util.OVNClusterManagerClientset{
-			KubeClient:                fake.NewSimpleClientset(),
+			KubeClient:                fake.NewClientset(),
 			NetworkAttchDefClient:     netv1fake.NewSimpleClientset(),
 			UserDefinedNetworkClient:  udnv1fake.NewSimpleClientset(),
 			RouteAdvertisementsClient: rafake.NewSimpleClientset(),

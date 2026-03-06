@@ -19,10 +19,17 @@ package v1
 
 // EVPNConfigApplyConfiguration represents a declarative configuration of the EVPNConfig type for use
 // with apply.
+//
+// EVPNConfig contains configuration options for networks operating in EVPN mode.
 type EVPNConfigApplyConfiguration struct {
-	VTEP   *string                      `json:"vtep,omitempty"`
+	// VTEP is the name of the VTEP CR that defines VTEP IPs for EVPN.
+	VTEP *string `json:"vtep,omitempty"`
+	// MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.
+	// This field is required for Layer2 topology and forbidden for Layer3 topology.
 	MACVRF *VRFConfigApplyConfiguration `json:"macVRF,omitempty"`
-	IPVRF  *VRFConfigApplyConfiguration `json:"ipVRF,omitempty"`
+	// IPVRF contains the IP-VRF configuration for Layer 3 EVPN.
+	// This field is required for Layer3 topology and optional for Layer2 topology.
+	IPVRF *VRFConfigApplyConfiguration `json:"ipVRF,omitempty"`
 }
 
 // EVPNConfigApplyConfiguration constructs a declarative configuration of the EVPNConfig type for use with

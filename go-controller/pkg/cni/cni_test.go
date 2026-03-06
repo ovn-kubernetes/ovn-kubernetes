@@ -77,7 +77,7 @@ var _ = Describe("Network Segmentation", func() {
 		podRequestInterfaceOps = prInterfaceOpsStub
 		obtainedPodIterfaceInfos = []*PodInterfaceInfo{}
 
-		fakeClientset = fake.NewSimpleClientset()
+		fakeClientset = fake.NewClientset()
 		pr = PodRequest{
 			Command:      CNIAdd,
 			PodNamespace: "foo-ns",

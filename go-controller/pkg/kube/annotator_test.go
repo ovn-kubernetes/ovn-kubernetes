@@ -27,7 +27,7 @@ var _ = Describe("Annotator", func() {
 			initialAnnotations := map[string]string{"initialKey": "initialVal", deleteKey: "val"}
 			expectedAnnotations := map[string]interface{}{"key1": "val1", "key2": "val2", deleteKey: nil}
 
-			fakeClient := fake.NewSimpleClientset()
+			fakeClient := fake.NewClientset()
 			kube := &Kube{
 				KClient: fakeClient,
 			}

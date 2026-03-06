@@ -31,7 +31,7 @@ var _ = Describe("NamespaceNotifier", func() {
 	)
 
 	BeforeEach(func() {
-		kubeClient = fake.NewSimpleClientset()
+		kubeClient = fake.NewClientset()
 
 		// enable features to make watch-factory start the namespace informer
 		Expect(config.PrepareTestConfig()).To(Succeed())

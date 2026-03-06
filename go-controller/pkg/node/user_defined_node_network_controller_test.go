@@ -304,7 +304,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		nodenft.SetFakeNFTablesHelper()
 
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			},

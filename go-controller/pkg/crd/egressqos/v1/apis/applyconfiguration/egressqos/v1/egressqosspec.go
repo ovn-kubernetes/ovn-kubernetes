@@ -19,7 +19,12 @@ package v1
 
 // EgressQoSSpecApplyConfiguration represents a declarative configuration of the EgressQoSSpec type for use
 // with apply.
+//
+// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
+// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// EgressQoSSpec defines the desired state of EgressQoS
 type EgressQoSSpecApplyConfiguration struct {
+	// a collection of Egress QoS rule objects
 	Egress []EgressQoSRuleApplyConfiguration `json:"egress,omitempty"`
 }
 

@@ -186,7 +186,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			dbSetup := libovsdbtest.TestSetup{}
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					newTestNode(nodeName, "windows", "", "", ""),
 				},
@@ -300,7 +300,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			}
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
@@ -577,7 +577,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
@@ -771,7 +771,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			}
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 
 					{
@@ -1074,7 +1074,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			testNode2 := node2.k8sNode("3")
 			testNode2.Annotations["k8s.ovn.org/node-subnets"] = "{\"default\":[\"10.1.3.0/24\"]}"
 
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					testNode1,
 					testNode2,
@@ -1282,7 +1282,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				DnatSnatIP:           "169.254.0.1",
 			}
 			testNode := node1.k8sNode("2")
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{
 					newTestHONode(hoNodeName, hoNodeSubnet, hoNodeDRMAC),
 					testNode,
@@ -1487,7 +1487,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				"k8s.ovn.org/ovn-node-id":  "2",
 			}
 
-			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}

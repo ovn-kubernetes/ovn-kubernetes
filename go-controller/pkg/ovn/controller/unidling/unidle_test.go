@@ -1,10 +1,9 @@
 package unidling
 
 import (
+	"context"
 	"testing"
 	"time"
-
-	"golang.org/x/net/context"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +43,7 @@ var _ = Describe("Unidling Controller", func() {
 	})
 
 	It("should respond to a controller event", func() {
-		client := fake.NewSimpleClientset()
+		client := fake.NewClientset()
 		recorder := record.NewFakeRecorder(10)
 		informerFactory := informers.NewSharedInformerFactory(client, 0)
 		serviceInformer := informerFactory.Core().V1().Services().Informer()
@@ -102,7 +101,8 @@ var _ = Describe("Unidling Controller", func() {
 		// Controller_Event is deleted
 		Eventually(
 			func() int {
-				ctx, _ := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+				ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+				defer cancel()
 				var events []sbdb.ControllerEvent
 				err = sbClient.List(ctx, &events)
 				Expect(err).NotTo(HaveOccurred())
@@ -122,7 +122,7 @@ var _ = Describe("Unidling Controller", func() {
 	})
 
 	It("should update unidled-at annotation when unidling", func() {
-		client := fake.NewSimpleClientset()
+		client := fake.NewClientset()
 		informerFactory := informers.NewSharedInformerFactory(client, 0)
 		serviceInformer := informerFactory.Core().V1().Services().Informer()
 

@@ -231,7 +231,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		config.IPv6Mode = false
 
 		fakeClient = &util.OVNNodeClientset{
-			KubeClient: fake.NewSimpleClientset(),
+			KubeClient: fake.NewClientset(),
 		}
 		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset()
 		fakeClient.NetworkAttchDefClient = nadfake.NewSimpleClientset()

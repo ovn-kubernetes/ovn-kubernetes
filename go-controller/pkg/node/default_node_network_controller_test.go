@@ -791,7 +791,7 @@ var _ = Describe("Node", func() {
 					}
 					nft := nodenft.SetFakeNFTablesHelper()
 
-					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 						Items: []corev1.Node{node, otherNode},
 					})
 					fakeClient := &util.OVNNodeClientset{
@@ -902,7 +902,7 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					}
 					nft := nodenft.SetFakeNFTablesHelper()
 
-					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 						Items: []corev1.Node{node, otherNode},
 					})
 					fakeClient := &util.OVNNodeClientset{
@@ -1055,7 +1055,7 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					}
 					nft := nodenft.SetFakeNFTablesHelper()
 
-					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 						Items: []corev1.Node{node, otherNode},
 					})
 					fakeClient := &util.OVNNodeClientset{
@@ -1165,7 +1165,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					}
 					nft := nodenft.SetFakeNFTablesHelper()
 
-					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 						Items: []corev1.Node{node, otherNode},
 					})
 					fakeClient := &util.OVNNodeClientset{
@@ -1326,7 +1326,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 
 					nft := nodenft.SetFakeNFTablesHelper()
 
-					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 						Items: []corev1.Node{node},
 					})
 					fakeClient := &util.OVNNodeClientset{
@@ -1447,7 +1447,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 
 					nft := nodenft.SetFakeNFTablesHelper()
 
-					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 						Items: []corev1.Node{node},
 					})
 					fakeClient := &util.OVNNodeClientset{
@@ -1900,9 +1900,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				// Setup fake client with service if provided
 				var fakeClient *fake.Clientset
 				if tc.service != nil {
-					fakeClient = fake.NewSimpleClientset(tc.service)
+					fakeClient = fake.NewClientset(tc.service)
 				} else {
-					fakeClient = fake.NewSimpleClientset()
+					fakeClient = fake.NewClientset()
 				}
 
 				wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{

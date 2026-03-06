@@ -19,7 +19,11 @@ package v1
 
 // AccessVLANConfigApplyConfiguration represents a declarative configuration of the AccessVLANConfig type for use
 // with apply.
+//
+// AccessVLANConfig describes an access VLAN configuration.
 type AccessVLANConfigApplyConfiguration struct {
+	// id is the VLAN ID (VID) to be set for the network.
+	// id should be higher than 0 and lower than 4095.
 	ID *int32 `json:"id,omitempty"`
 }
 

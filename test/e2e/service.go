@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -915,8 +916,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			e2epod.NewPodClient(f).CreateSync(ctx, serverPod1)
 
 			ginkgo.By("Waiting for the endpoint to be ready")
-			err = framework.WaitForServiceEndpointsNum(ctx, f.ClientSet, f.Namespace.Name,
-				serviceName, 1, time.Second, wait.ForeverTestTimeout)
+			err = e2eendpointslice.WaitForEndpointCount(ctx, f.ClientSet, f.Namespace.Name,
+				serviceName, 1)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				serviceName, f.Namespace.Name)
 
@@ -959,8 +960,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			e2epod.NewPodClient(f).DeleteSync(ctx, podBackend1, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
 
 			ginkgo.By("Waiting for the endpoint to be ready")
-			err = framework.WaitForServiceEndpointsNum(ctx, f.ClientSet, f.Namespace.Name,
-				serviceName, 1, time.Second, wait.ForeverTestTimeout)
+			err = e2eendpointslice.WaitForEndpointCount(ctx, f.ClientSet, f.Namespace.Name,
+				serviceName, 1)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				serviceName, f.Namespace.Name)
 
@@ -1120,14 +1121,13 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			} else {
 				expectedEndpointsNum = len(endPoints)
 			}
-
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpLocalServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
+			err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name,
+				etpLocalServiceName, expectedEndpointsNum)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpLocalServiceName, f.Namespace.Name)
 
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpClusterServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
+			err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name,
+				etpClusterServiceName, expectedEndpointsNum)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpClusterServiceName, f.Namespace.Name)
 
@@ -1381,13 +1381,13 @@ spec:
 				expectedEndpointsNum = len(endPoints)
 			}
 
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpLocalServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
+			err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name,
+				etpLocalServiceName, expectedEndpointsNum)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpLocalServiceName, f.Namespace.Name)
 
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpClusterServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
+			err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name,
+				etpClusterServiceName, expectedEndpointsNum)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpClusterServiceName, f.Namespace.Name)
 
@@ -1518,14 +1518,12 @@ spec:
 			if isDualStack {
 				expectedEndpointsNum = expectedEndpointsNum * 2
 			}
-			err = framework.WaitForServiceEndpointsNum(
+			err = e2eendpointslice.WaitForEndpointCount(
 				context.TODO(),
 				f.ClientSet,
 				f.Namespace.Name,
 				serviceName,
 				expectedEndpointsNum,
-				time.Second,
-				wait.ForeverTestTimeout,
 			)
 			framework.ExpectNoError(err)
 
@@ -1685,7 +1683,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, endpointHTTPPort, "ClusterIP", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1, time.Second, wait.ForeverTestTimeout)
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
 		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
 
 		ginkgo.By("by sending a TCP packet to service service-for-pods with type=ClusterIP in namespace " + namespaceName + " from backend pod " + backendName)
@@ -1722,7 +1720,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, hostNetPort, "NodePort", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
-		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1, time.Second, wait.ForeverTestTimeout)
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1)
 		framework.ExpectNoError(err, fmt.Sprintf("service: service-for-pods never had an endpoint, err: %v", err))
 
 		svc, err := f.ClientSet.CoreV1().Services(namespaceName).Get(context.TODO(), "service-for-pods", metav1.GetOptions{})
@@ -2180,7 +2178,7 @@ spec:
 
 		ginkgo.By("Scale down endpoints of service: " + svcName + " to ensure iptable rules are also getting recreated correctly")
 		e2ekubectl.RunKubectlOrDie("default", "scale", "deployment", backendName, "--replicas=3")
-		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 3, time.Second, time.Second*120)
+		err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, svcName, 3)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
@@ -2534,7 +2532,7 @@ spec:
 		// Now we test ETP=local works as expected without EIP re-routes messing with the reply traffic:
 		// lbclient->FRR router->ovn-worker->br-ex->GR_ovn-worker->join->cluster-router->ovn-worker-switch->pod and response goes back
 		// same way without it getting re-routed to egressNode ovn-worker2
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
+		err := e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, namespaceName, svcName, 4)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)

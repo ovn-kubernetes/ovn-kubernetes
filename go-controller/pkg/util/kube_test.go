@@ -377,7 +377,7 @@ func Test_GetNodePrimaryIP(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		client := clientsetfake.NewSimpleClientset(c.nodeInfo)
+		client := clientsetfake.NewClientset(c.nodeInfo)
 		node, _ := client.CoreV1().Nodes().Get(context.TODO(), c.hostname, metav1.GetOptions{})
 		ip, err := GetNodePrimaryIP(node)
 		if err != nil != c.wantErr {

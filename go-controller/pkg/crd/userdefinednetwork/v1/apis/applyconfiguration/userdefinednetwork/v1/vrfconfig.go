@@ -23,8 +23,26 @@ import (
 
 // VRFConfigApplyConfiguration represents a declarative configuration of the VRFConfig type for use
 // with apply.
+//
+// VRFConfig contains configuration for a VRF in EVPN.
 type VRFConfigApplyConfiguration struct {
-	VNI         *int32                                  `json:"vni,omitempty"`
+	// VNI is the Virtual Network Identifier for this VRF.
+	// VNI is a 24-bit field in the VXLAN header (RFC 7348), allowing values from 1 to 16777215.
+	// but in the future this could be having different limit for other dataplane implementations.
+	// Must be unique across all EVPN configurations in the cluster.
+	VNI *int32 `json:"vni,omitempty"`
+	// RouteTarget is the import/export route target for this VRF.
+	// If not specified, it will be auto-generated as "<AS (Autonomous System)>:<VNI (Virtual Network Identifier)>".
+	// Auto-generation will use 2-byte AS if VNI > 65535, since 4-byte AS/IPv4 only allows 2-byte local admin.
+	//
+	// Follows FRR EVPN L3 Route-Target format (A.B.C.D:MN|EF:OPQR|GHJK:MN|*:OPQR|*:MN):
+	// - EF:OPQR   = 2-byte AS (1-65535) : local admin (4 bytes, 1-4294967295)
+	// - GHJK:MN   = 4-byte AS (65536-4294967295) : local admin (2 bytes, 1-65535)
+	// - A.B.C.D:MN = IPv4 address : local admin (2 bytes, 1-65535)
+	// - *:OPQR    = wildcard AS : local admin (4 bytes, 1-4294967295) - for import matching
+	// - *:MN      = wildcard AS : local admin (2 bytes, 1-65535) - for import matching
+	//
+	// The 6-byte value constraint (RFC 4360) means AS size + local admin size = 6 bytes.
 	RouteTarget *userdefinednetworkv1.RouteTargetString `json:"routeTarget,omitempty"`
 }
 

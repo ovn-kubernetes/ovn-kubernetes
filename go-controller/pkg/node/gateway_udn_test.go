@@ -590,7 +590,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			},
@@ -822,7 +822,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			},
@@ -1023,7 +1023,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			},
@@ -1259,7 +1259,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		kubeFakeClient := fake.NewSimpleClientset(
+		kubeFakeClient := fake.NewClientset(
 			&corev1.NodeList{
 				Items: []corev1.Node{*node},
 			},

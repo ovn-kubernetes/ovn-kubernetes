@@ -24,13 +24,70 @@ import (
 // LocalnetConfigApplyConfiguration represents a declarative configuration of the LocalnetConfig type for use
 // with apply.
 type LocalnetConfigApplyConfiguration struct {
-	Role                *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
-	PhysicalNetworkName *string                              `json:"physicalNetworkName,omitempty"`
-	Subnets             *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
-	ExcludeSubnets      []userdefinednetworkv1.CIDR          `json:"excludeSubnets,omitempty"`
-	IPAM                *IPAMConfigApplyConfiguration        `json:"ipam,omitempty"`
-	MTU                 *int32                               `json:"mtu,omitempty"`
-	VLAN                *VLANConfigApplyConfiguration        `json:"vlan,omitempty"`
+	// role describes the network role in the pod, required.
+	// Controls whether the pod interface will act as primary or secondary.
+	// Localnet topology supports `Secondary` only.
+	// The network will be assigned to pods that have the `k8s.v1.cni.cncf.io/networks` annotation in place pointing
+	// to subject.
+	Role *userdefinednetworkv1.NetworkRole `json:"role,omitempty"`
+	// physicalNetworkName points to the OVS bridge-mapping's network-name configured in the nodes, required.
+	// Min length is 1, max length is 253, cannot contain `,` or `:` characters.
+	// In case OVS bridge-mapping is defined by Kubernetes-nmstate with `NodeNetworkConfigurationPolicy` (NNCP),
+	// this field should point to the NNCP `spec.desiredState.ovn.bridge-mappings` item's `localnet` value.
+	PhysicalNetworkName *string `json:"physicalNetworkName,omitempty"`
+	// subnets is a list of subnets used for pods in this localnet network across the cluster.
+	// The list may be either 1 IPv4 subnet, 1 IPv6 subnet, or 1 of each IP family.
+	// When set, OVN-Kubernetes assigns an IP address from the specified CIDRs to the connected pod,
+	// eliminating the need for manual IP assignment or reliance on an external IPAM service (e.g., a DHCP server).
+	// subnets is optional. When omitted OVN-Kubernetes won't assign IP address automatically.
+	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `ipam.mode` is `Disabled`.
+	// When physicalNetworkName points to the OVS bridge mapping of a network that provides IPAM services
+	// (e.g., a DHCP server), ipam.mode should be set to Disabled. This turns off OVN-Kubernetes IPAM and avoids
+	// conflicts with the existing IPAM services on this localnet network.
+	Subnets *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
+	// excludeSubnets is a list of CIDRs to be removed from the specified CIDRs in `subnets`.
+	// The CIDRs in this list must be in range of at least one subnet specified in `subnets`.
+	// excludeSubnets is optional. When omitted no IP address is excluded and all IP addresses specified in `subnets`
+	// are subject to assignment.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	// When `physicalNetworkName` points to OVS bridge mapping of a network with reserved IP addresses
+	// (which shouldn't be assigned by OVN-Kubernetes), the specified CIDRs will not be assigned. For example:
+	// Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned
+	// to pods: `10.0.0.201`, `10.0.0.202`.
+	ExcludeSubnets []userdefinednetworkv1.CIDR `json:"excludeSubnets,omitempty"`
+	// ipam configurations for the network.
+	// ipam is optional. When omitted, `subnets` must be specified.
+	// When `ipam.mode` is `Disabled`, `subnets` must be omitted.
+	// `ipam.mode` controls how much of the IP configuration will be managed by OVN.
+	// When `Enabled`, OVN-Kubernetes will apply IP configuration to the SDN infra and assign IPs from the selected
+	// subnet to the pods.
+	// When `Disabled`, OVN-Kubernetes only assigns MAC addresses, and provides layer2 communication, and enables users
+	// to configure IP addresses on the pods.
+	// `ipam.lifecycle` controls IP addresses management lifecycle.
+	// When set to 'Persistent', the assigned IP addresses will be persisted in `ipamclaims.k8s.cni.cncf.io` object.
+	// Useful for VMs, IP address will be persistent after restarts and migrations. Supported when `ipam.mode` is `Enabled`.
+	IPAM *IPAMConfigApplyConfiguration `json:"ipam,omitempty"`
+	// mtu is the maximum transmission unit for a network.
+	// mtu is optional. When omitted, the configured value in OVN-Kubernetes (defaults to 1500 for localnet topology)
+	// is used for the network.
+	// Minimum value for IPv4 subnet is 576, and for IPv6 subnet is 1280.
+	// Maximum value is 65536.
+	// In a scenario `physicalNetworkName` points to OVS bridge mapping of a network configured with certain MTU settings,
+	// this field enables configuring the same MTU on pod interface, having the pod MTU aligned with the network MTU.
+	// Misaligned MTU across the stack (e.g.: pod has MTU X, node NIC has MTU Y), could result in network disruptions
+	// and bad performance.
+	MTU *int32 `json:"mtu,omitempty"`
+	// vlan configuration for the network.
+	// vlan.mode is the VLAN mode.
+	// When "Access" is set, OVN-Kubernetes configures the network logical switch port in access mode.
+	// vlan.access is the access VLAN configuration.
+	// vlan.access.id is the VLAN ID (VID) to be set on the network logical switch port.
+	// vlan is optional, when omitted the underlying network default VLAN will be used (usually `1`).
+	// When set, OVN-Kubernetes will apply VLAN configuration to the SDN infra and to the connected pods.
+	VLAN *VLANConfigApplyConfiguration `json:"vlan,omitempty"`
 }
 
 // LocalnetConfigApplyConfiguration constructs a declarative configuration of the LocalnetConfig type for use with

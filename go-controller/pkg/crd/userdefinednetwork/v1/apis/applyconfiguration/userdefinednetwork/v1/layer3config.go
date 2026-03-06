@@ -24,9 +24,27 @@ import (
 // Layer3ConfigApplyConfiguration represents a declarative configuration of the Layer3Config type for use
 // with apply.
 type Layer3ConfigApplyConfiguration struct {
-	Role        *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
-	MTU         *int32                               `json:"mtu,omitempty"`
-	Subnets     []Layer3SubnetApplyConfiguration     `json:"subnets,omitempty"`
+	// Role describes the network role in the pod.
+	//
+	// Allowed values are "Primary" and "Secondary".
+	// Primary network is automatically assigned to every pod created in the same namespace.
+	// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
+	Role *userdefinednetworkv1.NetworkRole `json:"role,omitempty"`
+	// MTU is the maximum transmission unit for a network.
+	//
+	// MTU is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.
+	MTU *int32 `json:"mtu,omitempty"`
+	// Subnets are used for the pod network across the cluster.
+	//
+	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+	// Given subnet is split into smaller subnets for every node.
+	Subnets []Layer3SubnetApplyConfiguration `json:"subnets,omitempty"`
+	// JoinSubnets are used inside the OVN network topology.
+	//
+	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+	// This field is only allowed for "Primary" network.
+	// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+	// When omitted, the platform will choose a reasonable default which is subject to change over time.
 	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
 }
 

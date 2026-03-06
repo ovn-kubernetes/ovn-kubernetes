@@ -48,7 +48,7 @@ func getKubeClient(nodeCount int) *kube.Kube {
 			},
 		})
 	}
-	kubeFakeClient := fakeclientgo.NewSimpleClientset(&corev1.NodeList{Items: nodes})
+	kubeFakeClient := fakeclientgo.NewClientset(&corev1.NodeList{Items: nodes})
 	return &kube.Kube{KClient: kubeFakeClient}
 }
 

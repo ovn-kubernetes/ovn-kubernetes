@@ -195,7 +195,7 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 		}
 	}
 	o.fakeClient = &util.OVNMasterClientset{
-		KubeClient:               fake.NewSimpleClientset(v1Objects...),
+		KubeClient:               fake.NewClientset(v1Objects...),
 		ANPClient:                anpfake.NewSimpleClientset(anpObjects...),
 		EgressIPClient:           egressipfake.NewSimpleClientset(egressIPObjects...),
 		EgressFirewallClient:     egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),

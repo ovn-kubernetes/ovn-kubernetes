@@ -60,7 +60,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 	ginkgo.Context("User-Defined Networks", func() {
 		ginkgo.It("Attach layer3 UDN", func() {
 			app.Action = func(ctx *cli.Context) error {
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()})
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{Items: nodes()})
 				fakeClient := &util.OVNClusterManagerClientset{
 					KubeClient:            kubeFakeClient,
 					IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
@@ -115,7 +115,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 			ginkgo.BeforeEach(func() {
 
 				fakeClient = &util.OVNClusterManagerClientset{
-					KubeClient:            fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()}),
+					KubeClient:            fake.NewClientset(&corev1.NodeList{Items: nodes()}),
 					IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
 					NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 				}
@@ -218,7 +218,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 
 			ginkgo.BeforeEach(func() {
 				fakeClient = &util.OVNClusterManagerClientset{
-					KubeClient:            fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()}),
+					KubeClient:            fake.NewClientset(&corev1.NodeList{Items: nodes()}),
 					NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 				}
 
@@ -321,7 +321,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				kubeFakeClient := fake.NewClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -457,7 +457,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 				ginkgo.It("reserves IPs for the IPAMClaims for the network it manages", func() {
 					app.Action = func(ctx *cli.Context) error {
 						fakeClient := &util.OVNClusterManagerClientset{
-							KubeClient: fake.NewSimpleClientset(),
+							KubeClient: fake.NewClientset(),
 							IPAMClaimsClient: fakeipamclaimclient.NewSimpleClientset(
 								ipamClaimWithIPAddr(claimName, namespace, networkName, subnetIP),
 								ipamClaimWithIPAddr(claimName2, namespace, networkName, subnetIP2),
@@ -511,7 +511,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						const someOtherNetwork = "othernet"
 
 						fakeClient := &util.OVNClusterManagerClientset{
-							KubeClient: fake.NewSimpleClientset(),
+							KubeClient: fake.NewClientset(),
 							IPAMClaimsClient: fakeipamclaimclient.NewSimpleClientset(
 								ipamClaimWithIPAddr(claimName, namespace, someOtherNetwork, subnetIP),
 							),
@@ -562,7 +562,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 							ipamClaimWithIPAddr(claimName, namespace, networkName, subnetIP),
 						)
 						fakeClient := &util.OVNClusterManagerClientset{
-							KubeClient:            fake.NewSimpleClientset(),
+							KubeClient:            fake.NewClientset(),
 							IPAMClaimsClient:      ipamClaimsClient,
 							NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 						}
@@ -631,7 +631,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 							ipamClaimWithIPAddr(someOtherNetworkClaimName, namespace, someOtherNetwork, subnetIP),
 						)
 						fakeClient := &util.OVNClusterManagerClientset{
-							KubeClient:            fake.NewSimpleClientset(),
+							KubeClient:            fake.NewClientset(),
 							IPAMClaimsClient:      ipamClaimsClient,
 							NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 						}
@@ -701,7 +701,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 						fakeClient := &util.OVNClusterManagerClientset{
-							KubeClient: fake.NewSimpleClientset(),
+							KubeClient: fake.NewClientset(),
 							IPAMClaimsClient: fakeipamclaimclient.NewSimpleClientset(
 								ipamClaimWithIPAddr(claimName, namespace, networkName, subnetIP),
 							),
@@ -777,7 +777,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeClient = &util.OVNClusterManagerClientset{
-						KubeClient:            fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()}),
+						KubeClient:            fake.NewClientset(&corev1.NodeList{Items: nodes()}),
 						IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
 						NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 					}

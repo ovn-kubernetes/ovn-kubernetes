@@ -1,0 +1,48 @@
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: BaselineAdminNetworkPolicy
+metadata:
+  name: default
+spec:
+  subject:
+    namespaces:
+      matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-ravenclaw
+  ingress:
+  - name: "allow-from-gryffindor-everything"
+    action: "Allow"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-gryffindor
+  - name: "deny-from-gryffindor-everything"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-gryffindor
+  - name: "deny-from-slytherin-at-port-9003"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-slytherin
+    ports:
+      - portNumber:
+          protocol: SCTP
+          port: 9003
+  - name: "allow-from-hufflepuff-at-port-9003"
+    action: "Allow"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-hufflepuff
+    ports:
+      - portNumber:
+          protocol: SCTP
+          port: 9003
+  - name: "deny-from-hufflepuff-everything-else"
+    action: "Deny"
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: network-policy-conformance-hufflepuff

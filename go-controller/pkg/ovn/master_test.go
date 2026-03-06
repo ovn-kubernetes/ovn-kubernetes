@@ -1023,7 +1023,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		}
 		testNode = node1.k8sNode("2")
 
-		kubeFakeClient = fake.NewSimpleClientset(&corev1.NodeList{
+		kubeFakeClient = fake.NewClientset(&corev1.NodeList{
 			Items: []corev1.Node{testNode},
 		})
 		egressFirewallFakeClient := &egressfirewallfake.Clientset{}
@@ -2165,7 +2165,7 @@ func TestController_syncNodes(t *testing.T) {
 				},
 			}
 
-			kubeFakeClient := fake.NewSimpleClientset()
+			kubeFakeClient := fake.NewClientset()
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}
 			fakeClient := &util.OVNMasterClientset{
@@ -2271,7 +2271,7 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 				close(stopChan)
 				wg.Wait()
 			}()
-			kubeFakeClient := fake.NewSimpleClientset()
+			kubeFakeClient := fake.NewClientset()
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}
 			fakeClient := &util.OVNMasterClientset{

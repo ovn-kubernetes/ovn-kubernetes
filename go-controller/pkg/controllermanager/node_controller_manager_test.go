@@ -68,7 +68,7 @@ var _ = Describe("Healthcheck tests", func() {
 		factoryMock = factoryMocks.NodeWatchFactory{}
 		v1Objects := []runtime.Object{}
 		fakeClient = &util.OVNClientset{
-			KubeClient: fake.NewSimpleClientset(v1Objects...),
+			KubeClient: fake.NewClientset(v1Objects...),
 		}
 	})
 
@@ -214,7 +214,7 @@ var _ = Describe("Healthcheck tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			v1Objects := []runtime.Object{}
 			fakeClient = &util.OVNClientset{
-				KubeClient: fake.NewSimpleClientset(v1Objects...),
+				KubeClient: fake.NewClientset(v1Objects...),
 			}
 		})
 
