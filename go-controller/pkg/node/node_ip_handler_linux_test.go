@@ -24,9 +24,11 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	mgmtportmock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -223,6 +225,163 @@ var _ = Describe("Node IP Handler event tests", func() {
 				return nodeHasAddress(tc.fakeClient, nodeName, ipNet)
 			}, 5).Should(BeFalse())
 		})
+	})
+})
+
+var _ = Describe("Node IP Handler DPUHost event filtering", func() {
+	var tc *testCtx
+
+	const (
+		nodeName       = "node1"
+		gwIfIndex      = 42
+		otherIfIndex   = 99
+		someAddr       = "192.168.1.50/24"
+	)
+
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+		fexec := ovntest.NewFakeExec()
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 get Open_vSwitch . external_ids:ovn-encap-ip",
+			Output: "10.1.1.10",
+		})
+		Expect(util.SetExec(fexec)).ShouldNot(HaveOccurred())
+		tc = configureKubeOVNContext(nodeName, false)
+		tc.ipManager.gatewayIfIndex = gwIfIndex
+
+		subscribe := func() (bool, chan netlink.AddrUpdate, error) {
+			defer atomic.StoreUint32(&tc.subscribed, 1)
+			tc.addrChan = make(chan netlink.AddrUpdate)
+			return true, tc.addrChan, nil
+		}
+		tc.doneWg.Add(1)
+		go func() {
+			tc.ipManager.runInternal(tc.stopCh, subscribe)
+			tc.doneWg.Done()
+		}()
+		Eventually(func() bool {
+			return atomic.LoadUint32(&tc.subscribed) == 1
+		}, 5).Should(BeTrue())
+	})
+
+	AfterEach(func() {
+		close(tc.stopCh)
+		tc.doneWg.Wait()
+		tc.watchFactory.Shutdown()
+		close(tc.addrChan)
+		util.ResetRunner()
+	})
+
+	It("triggers masquerade reconciliation for events on the gateway interface", func() {
+		var masqueradeCount atomic.Int32
+		tc.ipManager.OnMasqueradeIPChanged = func() {
+			masqueradeCount.Add(1)
+		}
+
+		tc.addrChan <- netlink.AddrUpdate{
+			LinkAddress: *ovntest.MustParseIPNet(someAddr),
+			LinkIndex:   gwIfIndex,
+			NewAddr:     true,
+		}
+		Eventually(func() int32 {
+			return masqueradeCount.Load()
+		}, 5).Should(Equal(int32(1)))
+	})
+
+	It("does not trigger masquerade reconciliation for events on other interfaces", func() {
+		var masqueradeCount atomic.Int32
+		tc.ipManager.OnMasqueradeIPChanged = func() {
+			masqueradeCount.Add(1)
+		}
+
+		tc.addrChan <- netlink.AddrUpdate{
+			LinkAddress: *ovntest.MustParseIPNet(someAddr),
+			LinkIndex:   otherIfIndex,
+			NewAddr:     true,
+		}
+		Consistently(func() int32 {
+			return masqueradeCount.Load()
+		}, 3).Should(Equal(int32(0)))
+	})
+
+	It("does not trigger masquerade reconciliation when gateway index is unresolved", func() {
+		var masqueradeCount atomic.Int32
+		tc.ipManager.OnMasqueradeIPChanged = func() {
+			masqueradeCount.Add(1)
+		}
+		tc.ipManager.gatewayIfIndex = 0
+
+		tc.addrChan <- netlink.AddrUpdate{
+			LinkAddress: *ovntest.MustParseIPNet(someAddr),
+			LinkIndex:   gwIfIndex,
+			NewAddr:     true,
+		}
+		Consistently(func() int32 {
+			return masqueradeCount.Load()
+		}, 3).Should(Equal(int32(0)))
+	})
+
+	It("skips regular address processing for all events", func() {
+		tc.addrChan <- netlink.AddrUpdate{
+			LinkAddress: *ovntest.MustParseIPNet(someAddr),
+			LinkIndex:   otherIfIndex,
+			NewAddr:     true,
+		}
+		Consistently(func() bool {
+			return nodeHasAddress(tc.fakeClient, nodeName, ovntest.MustParseIPNet(someAddr))
+		}, 3).Should(BeFalse())
+	})
+})
+
+var _ = Describe("refreshGatewayIfIndex", func() {
+	const nodeName = "node1"
+
+	It("does nothing when Gateway.Interface is empty", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Gateway.Interface = ""
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		tc.ipManager.gatewayIfIndex = 42
+		tc.ipManager.refreshGatewayIfIndex()
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(42))
+	})
+
+	It("resets index to 0 when interface is not found", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Gateway.Interface = "nonexistent0"
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		nlMock := new(utilMocks.NetLinkOps)
+		util.SetNetLinkOpMockInst(nlMock)
+		defer util.ResetNetLinkOpMockInst()
+
+		nlMock.On("LinkByName", "nonexistent0").Return(nil, fmt.Errorf("not found"))
+
+		tc.ipManager.gatewayIfIndex = 42
+		tc.ipManager.refreshGatewayIfIndex()
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(0))
+	})
+
+	It("sets index from link when interface exists", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.Gateway.Interface = "breth0"
+		tc := configureKubeOVNContext(nodeName, false)
+		defer tc.watchFactory.Shutdown()
+
+		nlMock := new(utilMocks.NetLinkOps)
+		linkMock := new(netlink_mocks.Link)
+		util.SetNetLinkOpMockInst(nlMock)
+		defer util.ResetNetLinkOpMockInst()
+
+		nlMock.On("LinkByName", "breth0").Return(linkMock, nil)
+		linkMock.On("Attrs").Return(&netlink.LinkAttrs{Index: 77, Name: "breth0"})
+
+		tc.ipManager.gatewayIfIndex = 0
+		tc.ipManager.refreshGatewayIfIndex()
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(77))
 	})
 })
 

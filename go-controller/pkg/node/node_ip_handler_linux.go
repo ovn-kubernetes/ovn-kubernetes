@@ -43,6 +43,11 @@ type addressManager struct {
 
 	OnChanged             func()
 	OnMasqueradeIPChanged func()
+	// gatewayIfIndex caches the link index of config.Gateway.Interface.
+	// Used in DPUHost mode to filter address events to only the gateway
+	// interface. Refreshed in sync() every 30s; all access is from the
+	// runInternal goroutine so no synchronization is needed.
+	gatewayIfIndex int
 	sync.Mutex
 }
 
@@ -173,9 +178,14 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				}
 				continue
 			}
-			if (a.LinkAddress.IP != nil && util.IsAddressReservedForInternalUse(a.LinkAddress.IP)) ||
-				config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-				c.OnMasqueradeIPChanged()
+			if a.LinkAddress.IP != nil && util.IsAddressReservedForInternalUse(a.LinkAddress.IP) {
+				c.reconcileMasqueradeResources()
+				continue
+			}
+			if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+				if c.gatewayIfIndex != 0 && a.LinkIndex == c.gatewayIfIndex {
+					c.reconcileMasqueradeResources()
+				}
 				continue
 			}
 			addrChanged := false
@@ -483,12 +493,30 @@ func (c *addressManager) isValidNodeIP(addr net.IP, linkIndex int) bool {
 	return true
 }
 
+func (c *addressManager) reconcileMasqueradeResources() {
+	c.OnMasqueradeIPChanged()
+	c.refreshGatewayIfIndex()
+}
+
+func (c *addressManager) refreshGatewayIfIndex() {
+	if config.Gateway.Interface == "" {
+		return
+	}
+	link, err := util.GetNetLinkOps().LinkByName(config.Gateway.Interface)
+	if err != nil {
+		klog.V(5).Infof("Gateway interface %s not found, resetting cached index: %v", config.Gateway.Interface, err)
+		c.gatewayIfIndex = 0
+		return
+	}
+	c.gatewayIfIndex = link.Attrs().Index
+}
+
 func (c *addressManager) sync() {
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
 		return
 	}
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-		c.OnMasqueradeIPChanged()
+		c.reconcileMasqueradeResources()
 		return
 	}
 
@@ -531,6 +559,7 @@ func (c *addressManager) sync() {
 		c.OnChanged()
 	}
 	c.OnMasqueradeIPChanged()
+	c.refreshGatewayIfIndex()
 }
 
 // getSecondaryHostEgressIPs returns the set of egress IPs that are assigned to standard linux interfaces (non ovs type). The
