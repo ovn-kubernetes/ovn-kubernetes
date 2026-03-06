@@ -186,13 +186,13 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 			var expectedV4IP, expectedV6IP string
 			snatEnabled := isNoOverlayOutboundSNATEnabled(f)
-			
+
 			if snatEnabled {
 				ginkgo.By("queries to the external server are SNATed (uses node IP)")
 				// Get the node where the client pod is running
 				clientPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPodNodeName, metav1.GetOptions{})
 				framework.ExpectNoError(err, fmt.Sprintf("Getting node %s failed: %v", clientPodNodeName, err))
-				
+
 				// Get node IPs
 				nodeV4Addrs := e2enode.GetAddressesByTypeAndFamily(clientPodNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
 				nodeV6Addrs := e2enode.GetAddressesByTypeAndFamily(clientPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
@@ -802,6 +802,17 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					} else {
 						ginkgo.Fail("unexpected topology: neither Layer3 nor Layer2 network spec is set")
 					}
+				}
+			}
+
+			ginkgo.By("ensure external server CIDRs are imported as static routes into the OVN CUDN gateway router")
+			for _, node := range nodes.Items {
+				grName := fmt.Sprintf("%s%s%s_%s", types.GWRouterPrefix, types.CUDNPrefix, cUDN.Name, node.Name)
+				if isIPv4Supported(f.ClientSet) {
+					checkCIDRInOVNCUDNGatewayRouter(node, grName, externalServerV4CIDR)
+				}
+				if isIPv6Supported(f.ClientSet) {
+					checkCIDRInOVNCUDNGatewayRouter(node, grName, externalServerV6CIDR)
 				}
 			}
 
@@ -3148,4 +3159,32 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		framework.Logf("Routes in FRR for %s: %s", podCIDR, routes)
 		return strings.Contains(routes, nodeIP[0])
 	}, 30*time.Second).Should(gomega.BeTrue(), "route for %s via %s not found on %s", podCIDR, nodeIP[0], routerContainerName)
+}
+
+// checkCIDRInOVNCUDNGatewayRouter verifies that a CIDR (typically an external BGP-imported
+// network) is present as a static route in the given OVN CUDN gateway router.
+func checkCIDRInOVNCUDNGatewayRouter(node corev1.Node, grName, cidr string) {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+
+	ovnkubeNodePodName, err := e2ekubectl.RunKubectl(ovnKubeNamespace, "get", "pods",
+		"-l", "app=ovnkube-node",
+		"--field-selector", fmt.Sprintf("spec.nodeName=%s", node.Name),
+		"-o=jsonpath={.items[0].metadata.name}")
+	framework.ExpectNoError(err, "failed to get ovnkube-node pod for node %s", node.Name)
+	ovnkubeNodePodName = strings.Trim(ovnkubeNodePodName, "'")
+	gomega.Expect(ovnkubeNodePodName).NotTo(gomega.BeEmpty(), "no ovnkube-node pod found for node %s", node.Name)
+
+	framework.Logf("Checking external CIDR %s is a static route in CUDN gateway router %s on node %s", cidr, grName, node.Name)
+	gomega.Eventually(func() bool {
+		routes, err := e2ekubectl.RunKubectl(ovnKubeNamespace,
+			"exec", ovnkubeNodePodName, "--",
+			"ovn-nbctl", "--no-leader-only", "lr-route-list", grName)
+		if err != nil {
+			framework.Logf("failed to list routes in %s: %v", grName, err)
+			return false
+		}
+		framework.Logf("Routes in %s:\n%s", grName, routes)
+		return strings.Contains(routes, cidr)
+	}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(),
+		"external CIDR %s not found as a static route in CUDN gateway router %s", cidr, grName)
 }
