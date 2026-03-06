@@ -18,6 +18,7 @@ package v1
 
 // EVPNConfig contains configuration options for networks operating in EVPN mode.
 // +kubebuilder:validation:XValidation:rule="has(self.macVRF) || has(self.ipVRF)", message="at least one of macVRF or ipVRF must be specified"
+// +kubebuilder:validation:XValidation:rule="!has(self.macVRF) || !has(self.ipVRF) || self.macVRF.vni != self.ipVRF.vni", message="macVRF and ipVRF must use different VNIs"
 type EVPNConfig struct {
 	// VTEP is the name of the VTEP CR that defines VTEP IPs for EVPN.
 	// +kubebuilder:validation:Required
