@@ -202,10 +202,17 @@ func rawDump(exec Executor, filesToDump ...string) (string, error) {
 	}
 	res += out
 
-	res += "####### Routes published by BGP Speakers\n"
+	res += "####### Routes published by BGP Speakers (IPv4)\n"
 	out, err = exec.Exec("vtysh", "-c", "show ip bgp detail")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec show ip bgp detail: %v", err)
+	}
+	res += out
+
+	res += "####### Routes published by BGP Speakers (IPv6)\n"
+	out, err = exec.Exec("vtysh", "-c", "show bgp ipv6 unicast detail")
+	if err != nil {
+		allerrs = errors.Wrapf(allerrs, "\nFailed exec show bgp ipv6 unicast detail: %v", err)
 	}
 	res += out
 
@@ -213,6 +220,13 @@ func rawDump(exec Executor, filesToDump ...string) (string, error) {
 	out, err = exec.Exec("bash", "-c", "ip route show")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec ip route show: %v", err)
+	}
+	res += out
+
+	res += "####### ip -6 route show\n"
+	out, err = exec.Exec("bash", "-c", "ip -6 route show")
+	if err != nil {
+		allerrs = errors.Wrapf(allerrs, "\nFailed exec ip -6 route show: %v", err)
 	}
 	res += out
 

@@ -1895,6 +1895,18 @@ metadata:
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", nonBackendNodeName, "k8s.ovn.org/egress-assignable-")
 	})
 
+	tryWgetLoadBalancer := func(externalContainer infraapi.ExternalContainer, svcLoadBalancerIP string) {
+		err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+			_, err := wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
+			if err != nil {
+				framework.Logf("retrying wget to %s: %v", svcLoadBalancerIP, err)
+				return false, nil
+			}
+			return true, nil
+		})
+		framework.ExpectNoError(err, "failed to curl load balancer service")
+	}
+
 	ginkgo.It("Should ensure connectivity works on an external service when mtu changes in intermediate node", func() {
 		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
@@ -1987,10 +1999,14 @@ metadata:
 		numberOfETPRules := pokeNodeIPTableRules(backendNodeName, "OVN-KUBE-EXTERNALIP")
 		gomega.Expect(numberOfETPRules).To(gomega.Equal(5))
 
-		// curl the LB service from the client container to trigger BGP route advertisement
-		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "must fetch primary provider network")
+
+		ginkgo.By("waiting for BGP route to be installed on the FRR router")
+		waitForFRRBGPRoute(svcLoadBalancerIP, externalRouterContainerName, primaryProviderNetwork)
+
+		// curl the LB service from the client container to trigger BGP route advertisement
+		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: "lbclient", Network: primaryProviderNetwork} // pre-created
 		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 		framework.ExpectNoError(err, "failed to curl load balancer service")
@@ -2135,10 +2151,15 @@ spec:
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(backendNodeName, 0, "mgmtport-no-snat-nodeports"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 
+		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "must get primary provider network")
+
+		ginkgo.By("waiting for BGP route to be installed on the FRR router")
+		waitForFRRBGPRoute(svcLoadBalancerIP, externalRouterContainerName, primaryProviderNetwork)
+
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		ginkgo.By("patching service " + svcName + " to allocateLoadBalancerNodePorts=false and externalTrafficPolicy=local")
 
@@ -2281,8 +2302,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		// Patch the service to use named ports.
 		ginkgo.By("patching service " + svcName + " to named ports")
@@ -2306,8 +2326,7 @@ spec:
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer = infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		// Patch the service to use allocateLoadBalancerNodeProts=false and externalTrafficPolicy=local.
 		ginkgo.By("patching service " + svcName + " to allocateLoadBalancerNodePorts=false and externalTrafficPolicy=local")
@@ -2339,8 +2358,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		pktSize := 60
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
@@ -2372,8 +2390,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
-		framework.ExpectNoError(err, "failed to curl load balancer service")
+		tryWgetLoadBalancer(externalContainer, svcLoadBalancerIP)
 
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(backendNodeName, 1, fmt.Sprintf("[1:%d] -A OVN-KUBE-ETP", pktSize)))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of iptable rules, err: %v", err)
@@ -2693,6 +2710,26 @@ spec:
 		}
 	})
 })
+
+// waitForFRRBGPRoute waits for a BGP route for the given service VIP to be
+// installed in the external FRR router's kernel routing table.
+func waitForFRRBGPRoute(svcLoadBalancerIP string, frrContainerName string, providerNetwork infraapi.Network) {
+	ipVer := ""
+	if utilnet.IsIPv6String(svcLoadBalancerIP) {
+		ipVer = " -6"
+	}
+	cmd := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, svcLoadBalancerIP), " ")
+	frrContainer := infraapi.ExternalContainer{Name: frrContainerName, Network: providerNetwork}
+	gomega.Eventually(func() bool {
+		routes, err := infraprovider.Get().ExecExternalContainerCommand(frrContainer, cmd)
+		if err != nil {
+			framework.Logf("Failed to get routes from FRR: %v", err)
+			return false
+		}
+		framework.Logf("FRR routes for %s: %s", svcLoadBalancerIP, routes)
+		return strings.Contains(routes, "proto bgp")
+	}, 30*time.Second, 1*time.Second).Should(gomega.BeTrue(), "BGP route for %s was not installed on the FRR router", svcLoadBalancerIP)
+}
 
 func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 	node, err := c.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
