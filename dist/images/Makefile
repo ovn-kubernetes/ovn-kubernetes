@@ -21,11 +21,18 @@ IMAGE ?= ovn-daemonset-fedora
 
 OVN_REPO ?= https://github.com/ovn-org/ovn
 OVN_GITREF ?=
+OVN_BUILD_CFLAGS ?=
+OVN_EXTRA_PACKAGES ?=
 ifeq ($(OVN_GITREF),)
 OVN_FROM := koji
 else
 OVN_FROM := source
 OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V  |tail -1 | awk '{ print $$1 }')
+endif
+ifneq ($(strip $(OVN_BUILD_CFLAGS)),)
+ifeq ($(strip $(OVN_EXTRA_PACKAGES)),)
+OVN_EXTRA_PACKAGES = libasan libubsan
+endif
 endif
 GO_VERSION ?= 1.24
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
@@ -55,6 +62,8 @@ fedora-image:
 		--build-arg OVN_FROM=${OVN_FROM} \
 		--build-arg OVN_REPO=${OVN_REPO} \
 		--build-arg OVN_GITREF=${OVN_GITSHA} \
+		--build-arg OVN_BUILD_CFLAGS='${OVN_BUILD_CFLAGS}' \
+		--build-arg OVN_EXTRA_PACKAGES='${OVN_EXTRA_PACKAGES}' \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		--build-arg FEDORA_BASE_DIGEST=$${FEDORA_BASE_DIGEST} \
