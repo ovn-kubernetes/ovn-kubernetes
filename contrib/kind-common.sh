@@ -1140,6 +1140,10 @@ install_frr_k8s() {
   clone_frr
 
   # apply frr-k8s
+  # gcr.io/kubebuilder/kube-rbac-proxy is unreliable after Google's GCR
+  # deprecation; use the upstream image from quay.io instead.
+  sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy:v0.13.1|quay.io/brancz/kube-rbac-proxy:v0.18.1|g' \
+    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
   kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
   kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
