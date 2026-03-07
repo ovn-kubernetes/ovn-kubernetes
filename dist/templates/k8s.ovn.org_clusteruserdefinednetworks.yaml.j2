@@ -125,32 +125,32 @@ spec:
                             - message: RT global administrator must be either '*',
                                 an IPv4 address, or a number
                               rule: self.split(':').size() != 2 || (self.startsWith('*:')
-                                || isIP(self.split(':')[0]) || self.split(':')[0].matches('[0-9]+'))
+                                || isIP(self.split(':')[0]) || self.split(':')[0].matches('^[0-9]+$'))
                             - message: RT local administrator must be a number
-                              rule: self.split(':').size() != 2 || self.split(':')[1].matches('[0-9]+')
+                              rule: self.split(':').size() != 2 || self.split(':')[1].matches('^[0-9]+$')
                             - message: RT with wildcard global administrator must
                                 have format *:OPQR where OPQR <= 4294967295
                               rule: self.split(':').size() != 2 || !self.startsWith('*:')
-                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                || (self.split(':')[1].matches('^[0-9]+$') && uint(self.split(':')[1])
                                 <= 4294967295u)
                             - message: RT with IPv4 global administrator must have
                                 format A.B.C.D:MN where MN <= 65535
                               rule: self.split(':').size() != 2 || !self.split(':')[0].contains('.')
-                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                || (self.split(':')[1].matches('^[0-9]+$') && uint(self.split(':')[1])
                                 <= 65535u)
                             - message: RT with 4-byte ASN global administrator must
                                 have format GHJK:MN where GHJK <= 4294967295 and MN
                                 <= 65535
                               rule: self.split(':').size() != 2 || self.startsWith('*:')
-                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
-                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('^[0-9]+$')
+                                || !self.split(':')[1].matches('^[0-9]+$') || uint(self.split(':')[0])
                                 <= 65535u || uint(self.split(':')[1]) <= 65535u
                             - message: RT with 2-byte ASN global administrator must
                                 have format EF:OPQR where EF <= 65535 and OPQR <=
                                 4294967295
                               rule: self.split(':').size() != 2 || self.startsWith('*:')
-                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
-                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('^[0-9]+$')
+                                || !self.split(':')[1].matches('^[0-9]+$') || uint(self.split(':')[0])
                                 > 65535u || uint(self.split(':')[1]) <= 4294967295u
                           vni:
                             description: |-
@@ -192,32 +192,32 @@ spec:
                             - message: RT global administrator must be either '*',
                                 an IPv4 address, or a number
                               rule: self.split(':').size() != 2 || (self.startsWith('*:')
-                                || isIP(self.split(':')[0]) || self.split(':')[0].matches('[0-9]+'))
+                                || isIP(self.split(':')[0]) || self.split(':')[0].matches('^[0-9]+$'))
                             - message: RT local administrator must be a number
-                              rule: self.split(':').size() != 2 || self.split(':')[1].matches('[0-9]+')
+                              rule: self.split(':').size() != 2 || self.split(':')[1].matches('^[0-9]+$')
                             - message: RT with wildcard global administrator must
                                 have format *:OPQR where OPQR <= 4294967295
                               rule: self.split(':').size() != 2 || !self.startsWith('*:')
-                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                || (self.split(':')[1].matches('^[0-9]+$') && uint(self.split(':')[1])
                                 <= 4294967295u)
                             - message: RT with IPv4 global administrator must have
                                 format A.B.C.D:MN where MN <= 65535
                               rule: self.split(':').size() != 2 || !self.split(':')[0].contains('.')
-                                || (self.split(':')[1].matches('[0-9]+') && uint(self.split(':')[1])
+                                || (self.split(':')[1].matches('^[0-9]+$') && uint(self.split(':')[1])
                                 <= 65535u)
                             - message: RT with 4-byte ASN global administrator must
                                 have format GHJK:MN where GHJK <= 4294967295 and MN
                                 <= 65535
                               rule: self.split(':').size() != 2 || self.startsWith('*:')
-                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
-                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('^[0-9]+$')
+                                || !self.split(':')[1].matches('^[0-9]+$') || uint(self.split(':')[0])
                                 <= 65535u || uint(self.split(':')[1]) <= 65535u
                             - message: RT with 2-byte ASN global administrator must
                                 have format EF:OPQR where EF <= 65535 and OPQR <=
                                 4294967295
                               rule: self.split(':').size() != 2 || self.startsWith('*:')
-                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('[0-9]+')
-                                || !self.split(':')[1].matches('[0-9]+') || uint(self.split(':')[0])
+                                || self.split(':')[0].contains('.') || !self.split(':')[0].matches('^[0-9]+$')
+                                || !self.split(':')[1].matches('^[0-9]+$') || uint(self.split(':')[0])
                                 > 65535u || uint(self.split(':')[1]) <= 4294967295u
                           vni:
                             description: |-
