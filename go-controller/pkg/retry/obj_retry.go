@@ -274,6 +274,29 @@ func (r *RetryFramework) RequestRetryObjs() {
 	}
 }
 
+// RequestRetryObjWithNoBackoff requests immediate retry for the given object key
+// if it is already present in the retry cache. It returns true when a retry entry
+// was found and requested, false otherwise.
+func (r *RetryFramework) RequestRetryObjWithNoBackoff(obj interface{}) (bool, error) {
+	key, err := GetResourceKey(obj)
+	if err != nil {
+		return false, fmt.Errorf("could not get the key of %s %v: %v", r.ResourceHandler.ObjType, obj, err)
+	}
+	requested := false
+	r.DoWithLock(key, func(key string) {
+		entry, loaded := r.getRetryObj(key)
+		if !loaded {
+			return
+		}
+		r.setRetryObjWithNoBackoff(entry)
+		requested = true
+	})
+	if requested {
+		r.RequestRetryObjs()
+	}
+	return requested, nil
+}
+
 // Given an object and its type, it returns the key for this object and an error if the key retrieval failed.
 // For all namespaced resources, the key will be namespace/name. For resource types without a namespace,
 // the key will be the object name itself. obj must be a pointer to an API type.

@@ -169,9 +169,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				_, ok := pod.Annotations[util.OvnPodAnnotationName]
 				Expect(ok).To(BeFalse())
 
-				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
-				defer fakeOvn.networkManager.Stop()
-
 				// succeed the check for Load_Balancer_Group support
 				fexec := testing.NewFakeExec()
 				fexec.AddFakeCmdsNoOutputNoError([]string{"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group"})
@@ -406,9 +403,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				_, ok := pod.Annotations[util.OvnPodAnnotationName]
 				Expect(ok).To(BeFalse())
 
-				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
-				defer fakeOvn.networkManager.Stop()
-
 				// succeed the check for Load_Balancer_Group support
 				fexec := testing.NewFakeExec()
 				fexec.AddFakeCmdsNoOutputNoError([]string{"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group"})
@@ -441,8 +435,10 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					_, exists := fullL3UDNController.gatewayManagers.Load(nodeName)
 					return exists
 				}).Should(BeTrue())
+				// Avoid node reconcile while cleanup is tearing down network entities.
+				fullL3UDNController.DeregisterNodeHandler()
 				Expect(fullL3UDNController.Cleanup()).To(Succeed())
-				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(defaultNetExpectations))
+				Eventually(fakeOvn.nbClient).WithTimeout(5 * time.Second).Should(libovsdbtest.HaveData(defaultNetExpectations))
 
 				return nil
 			}
@@ -631,9 +627,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				&corev1.NodeList{Items: []corev1.Node{*localNode, *remoteNode}},
 				&corev1.PodList{Items: []corev1.Pod{localPod}},
 				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}})
-
-			Expect(fakeOvn.networkManager.Start()).To(Succeed())
-			defer fakeOvn.networkManager.Stop()
 
 			userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
@@ -854,9 +847,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				&corev1.PodList{Items: []corev1.Pod{localPod}},
 				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nadA, *nadB}},
 			)
-
-			Expect(fakeOvn.networkManager.Start()).To(Succeed())
-			defer fakeOvn.networkManager.Stop()
 
 			userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[netName]
 			Expect(ok).To(BeTrue())

@@ -287,9 +287,12 @@ func NewLayer2UserDefinedNetworkController(
 		eIPController:          eIPController,
 		remoteNodesNoRouter:    sync.Map{},
 	}
-	if oc.IsPrimaryNetwork() && oc.eIPController != nil {
+	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
-			oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
+			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
+			if oc.eIPController != nil {
+				oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
+			}
 		}
 	}
 
