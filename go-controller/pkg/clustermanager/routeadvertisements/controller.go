@@ -40,6 +40,8 @@ import (
 	ralisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vteplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -70,6 +72,7 @@ type Controller struct {
 	nodeLister      corelisters.NodeLister
 	raLister        ralisters.RouteAdvertisementsLister
 	namespaceLister corelisters.NamespaceLister
+	vtepLister      vteplisters.VTEPLister
 
 	frrClient frrclientset.Interface
 	nadClient nadclientset.Interface
@@ -81,6 +84,7 @@ type Controller struct {
 	nodeController controllerutil.Controller
 	raController   controllerutil.Controller
 	nsController   controllerutil.Controller
+	vtepController controllerutil.Controller
 
 	nm networkmanager.Interface
 }
@@ -182,30 +186,55 @@ func NewController(
 	}
 	c.nsController = controllerutil.NewController("clustermanager routeadvertisements namespace controller", nsConfig)
 
+	if util.IsEVPNEnabled() {
+		c.vtepLister = wf.VTEPInformer().Lister()
+		vtepConfig := &controllerutil.ControllerConfig[vtepv1.VTEP]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			// NOTE: We could filter out specific RAs by finding all the networks
+			// referencing the VTEP and only taking the RAs that select those networks.
+			// However, this would require additional caching and is not worth the complexity
+			// since VTEP changes are relatively rare and the performance impact is minimal.
+			Reconcile:      func(_ string) error { c.raController.ReconcileAll(); return nil },
+			Threadiness:    1,
+			Informer:       wf.VTEPInformer().Informer(),
+			Lister:         wf.VTEPInformer().Lister().List,
+			ObjNeedsUpdate: vtepNeedsUpdate,
+		}
+		c.vtepController = controllerutil.NewController("clustermanager routeadvertisements vtep controller", vtepConfig)
+	}
+
 	return c
 }
 
 func (c *Controller) Start() error {
 	defer klog.Infof("Cluster manager routeadvertisements started")
-	return controllerutil.Start(
+	controllers := []controllerutil.Reconciler{
 		c.eipController,
 		c.frrController,
 		c.nadController,
 		c.nodeController,
 		c.nsController,
 		c.raController,
-	)
+	}
+	if c.vtepController != nil {
+		controllers = append(controllers, c.vtepController)
+	}
+	return controllerutil.Start(controllers...)
 }
 
 func (c *Controller) Stop() {
-	controllerutil.Stop(
+	controllers := []controllerutil.Reconciler{
 		c.eipController,
 		c.frrController,
 		c.nadController,
 		c.nodeController,
 		c.nsController,
 		c.raController,
-	)
+	}
+	if c.vtepController != nil {
+		controllers = append(controllers, c.vtepController)
+	}
+	controllerutil.Stop(controllers...)
 	klog.Infof("Cluster manager routeadvertisements stopped")
 }
 
@@ -320,6 +349,13 @@ type selectedNetworks struct {
 	hostSubnets []string
 	// networkSubnets is a map of selected network names to their ordered network subnets
 	networkSubnets map[string][]string
+	// vtepIPsByNode maps node name to an ordered list of VTEP IP prefixes (/32 or /128)
+	// to advertise in the default-VRF router for EVPN underlay reachability.
+	// The value should mostly be a single /32 for IPv4 and /128 for IPv6, but its a string of IPs if we
+	// need to support dual-stack tunnels in the future which seems really uncommon and
+	// only has a rare migration use case OR we have 1 RA selecting more than one CUDN with each
+	// CUDN having a different VTEPs which is also rare.
+	vtepIPsByNode map[string][]string
 	// hostNetworkSubnets is a map of selected network names to their ordered network subnets specific for a node
 	hostNetworkSubnets map[string][]string
 	// prefixLength is a map of selected network to their prefix length
@@ -379,6 +415,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 	// validate and gather information about the networks
 	networkSet := sets.New[string]()
+	vtepNames := sets.New[string]()
 	selectedNetworks := &selectedNetworks{
 		networkVRFs:      map[string]string{},
 		networkSubnets:   map[string][]string{},
@@ -448,6 +485,9 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			})
 		}
 		hasEVPNConfig := network.EVPNMACVRFVNI() > 0 || network.EVPNIPVRFVNI() > 0
+		if vtepName := network.EVPNVTEPName(); hasEVPNConfig && vtepName != "" {
+			vtepNames.Insert(vtepName)
+		}
 		if hasEVPNConfig && ra.Spec.TargetVRF != "auto" && ra.Spec.TargetVRF != vrf {
 			return nil, nil, fmt.Errorf("%w: EVPN network %q with VRF %q requires TargetVRF to be 'auto' or %q, got %q",
 				errConfig, networkName, vrf, vrf, ra.Spec.TargetVRF)
@@ -469,6 +509,34 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	slices.SortFunc(selectedNetworks.macVRFConfigs, func(a, b *vrfConfig) int { return int(a.VNI - b.VNI) })
 	slices.SortFunc(selectedNetworks.ipVRFConfigs, func(a, b *ipVRFConfig) int { return int(a.VNI - b.VNI) })
 	selectedNetworks.networks = sets.List(networkSet)
+
+	// resolve VTEP IPs per node from VTEP status for EVPN underlay advertisement
+	if vtepNames.Len() > 0 {
+		vtepIPsByNode := map[string]sets.Set[string]{}
+		for _, vtepName := range sets.List(vtepNames) {
+			vtep, err := c.vtepLister.Get(vtepName)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%w: VTEP %q referenced by EVPN network not found: %w", errPending, vtepName, err)
+			}
+			for _, alloc := range vtep.Status.NodeAllocations {
+				if vtepIPsByNode[alloc.NodeName] == nil {
+					vtepIPsByNode[alloc.NodeName] = sets.New[string]()
+				}
+				for _, ip := range alloc.VTEPIPs {
+					ipStr := string(ip)
+					if utilnet.IsIPv6String(ipStr) {
+						vtepIPsByNode[alloc.NodeName].Insert(ipStr + "/128")
+					} else {
+						vtepIPsByNode[alloc.NodeName].Insert(ipStr + "/32")
+					}
+				}
+			}
+		}
+		selectedNetworks.vtepIPsByNode = make(map[string][]string, len(vtepIPsByNode))
+		for node, ips := range vtepIPsByNode {
+			selectedNetworks.vtepIPsByNode[node] = sets.List(ips)
+		}
+	}
 
 	// gather selected nodes
 	nodeSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NodeSelector)
@@ -890,6 +958,66 @@ func (c *Controller) generateFRRConfiguration(
 				VRF:      cfg.VRFName,
 				Prefixes: selectedNetworks.hostNetworkSubnets[cfg.NetworkName],
 			})
+		}
+	}
+
+	// For EVPN underlay reachability, advertise VTEP IPs as /32 (or /128) in
+	// the default-VRF router's address-family ipv4/ipv6 unicast.
+	//
+	// When targetVRF is "auto" or "", the main router matching loop above
+	// already includes the default-VRF router in the generated routers, so we
+	// append the VTEP IPs to it. When targetVRF is a specific VRF name (e.g.
+	// "red"), only that VRF's router is in the generated set — the default-VRF
+	// router is not included even though it exists in the user provided source (validated earlier).
+	// In that case we create a new default-VRF router from the source
+	// to carry the VTEP IPs.
+	if vtepIPs := selectedNetworks.vtepIPsByNode[nodeName]; len(vtepIPs) > 0 && globalRouterASN > 0 {
+		defaultIdx := slices.IndexFunc(routers, func(r frrtypes.Router) bool { return r.VRF == "" })
+		if defaultIdx >= 0 {
+			// dedup, ordered
+			// router level - injects the prefix into BGP
+			routers[defaultIdx].Prefixes = sets.List(sets.New(routers[defaultIdx].Prefixes...).Insert(vtepIPs...))
+			// neighbor level - filters the prefixes to the IP family of the neighbor to advertise
+			for i := range routers[defaultIdx].Neighbors {
+				allPrefixes := routers[defaultIdx].Prefixes
+				isIPV6 := utilnet.IsIPv6String(routers[defaultIdx].Neighbors[i].Address)
+				routers[defaultIdx].Neighbors[i].ToAdvertise.Allowed.Prefixes =
+					util.MatchAllIPNetsStringFamily(isIPV6, allPrefixes)
+			}
+		} else {
+			// No default-VRF router in the generated set; create one from the
+			// source to carry VTEP IPs alongside the source's neighbors.
+			for _, router := range source.Spec.BGP.Routers {
+				if router.VRF != "" {
+					continue
+				}
+				vtepRouter := frrtypes.Router{
+					ASN:      router.ASN,
+					Prefixes: vtepIPs,
+				}
+				for _, neighbor := range router.Neighbors {
+					if !neighbor.DisableMP {
+						continue
+					}
+					isIPV6 := utilnet.IsIPv6String(neighbor.Address)
+					filteredVTEPIPs := util.MatchAllIPNetsStringFamily(isIPV6, vtepIPs)
+					if len(filteredVTEPIPs) == 0 {
+						continue
+					}
+					n := neighbor
+					n.ToAdvertise = frrtypes.Advertise{
+						Allowed: frrtypes.AllowedOutPrefixes{
+							Mode:     frrtypes.AllowRestricted,
+							Prefixes: filteredVTEPIPs,
+						},
+					}
+					vtepRouter.Neighbors = append(vtepRouter.Neighbors, n)
+				}
+				if len(vtepRouter.Neighbors) > 0 {
+					routers = append(routers, vtepRouter)
+				}
+				break
+			}
 		}
 	}
 
@@ -1345,6 +1473,13 @@ func nsNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
 	// we only care about label changes, added/deleted namespaces served by a
 	// UDN will already be reflected in a network update
 	return oldObj != nil && newObj != nil && !reflect.DeepEqual(oldObj.Labels, newObj.Labels)
+}
+
+func vtepNeedsUpdate(oldObj, newObj *vtepv1.VTEP) bool {
+	if oldObj == nil || newObj == nil {
+		return true
+	}
+	return !reflect.DeepEqual(oldObj.Status.NodeAllocations, newObj.Status.NodeAllocations)
 }
 
 func (c *Controller) reconcileFRRConfiguration(key string) error {
