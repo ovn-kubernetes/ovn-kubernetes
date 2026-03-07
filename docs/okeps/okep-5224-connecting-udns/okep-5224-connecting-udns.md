@@ -337,7 +337,7 @@ spec:
     networkPrefix: 96
   connectivity:
     - PodNetwork
-    - ClusterIPServiceNetwork
+    - ServiceNetwork
 ```
 * `connectivity` field will ensure we can add support for enabling
   more types of features for the connected UDNs granularly in the future.
@@ -345,7 +345,7 @@ spec:
   for which combinations of these options could/should be set together
 * If `PodNetwork` is enabled then admin is asking for full
   pod2pod connectivity across UDNs
-* If `ClusterIPServiceNetwork` is enabled then admin is asking for
+* If `ServiceNetwork` is enabled then admin is asking for
   clusterIPs to be reachable across UDNs.
     * If this flag is set but `PodNetwork` is not set, then
       it means users only want partial connectivity through services and
@@ -493,15 +493,17 @@ type ConnectSubnet struct {
 }
 
 // ConnectivityType represents the different connectivity types that can be enabled for connected networks.
-// +kubebuilder:validation:Enum=PodNetwork;ClusterIPServiceNetwork
+// +kubebuilder:validation:Enum=PodNetwork;ServiceNetwork
 type ConnectivityType string
 
 const (
     // PodNetwork enables direct pod-to-pod communication across connected networks.
     PodNetwork ConnectivityType = "PodNetwork"
 
-    // ClusterIPServiceNetwork enables ClusterIP service access across connected networks.
-    ClusterIPServiceNetwork ConnectivityType = "ClusterIPServiceNetwork"
+    // ServiceNetwork enables ClusterIP service access across connected networks.
+    // Note that services of type nodeports and loadbalancers are already reachable
+	  // across networks by default.
+    ServiceNetwork ConnectivityType = "ServiceNetwork"
 )
 
 // StatusType represents the status of a ClusterNetworkConnect.
@@ -1176,13 +1178,13 @@ implemented.
 
 #### Services
 
-Case1: `ClusterIPServiceNetwork` is not set
+Case1: `ServiceNetwork` is not set
 
 no-op. Services connectivity is not supported across connected UDNs.
 
-Case2: `ClusterIPServiceNetwork` and `PodNetwork` are set
+Case2: `ServiceNetwork` and `PodNetwork` are set
 
-If the `ClusterIPServiceNetwork` is explicitly requested, then
+If the `ServiceNetwork` is explicitly requested, then
 it means the end user wants the services of both networks to be
 connected. In this case, we need to modify the services controller to
 program the OVN load balancers on the local network switches also for
@@ -1235,7 +1237,7 @@ UUID                                    LB                  PROTO      VIP      
 ab3397dd-6c4f-41bd-9239-60c73c25aaee    green_green.netw    tcp        10.96.69.71:80      104.104.1.4:8080,104.104.2.4:8080
 ```
 
-Case3: `ClusterIPServiceNetwork` is set and `PodNetwork` is not set
+Case3: `ServiceNetwork` is set and `PodNetwork` is not set
 
 This means user is asking for partial connectivity between UDNs
 through serviceCIDRs. They don't want direct connectivity between
@@ -1473,7 +1475,7 @@ A new `network-connect-controller` will be created that watches the
      Deterministic Static TunnelID Allocator approach mentioned below for details.
 5) Creates the `pass` and `drop` ACLs if only partial service connectivity
    is requested
-6) If `ClusterIPServiceNetwork` is set, then once the services
+6) If `ServiceNetwork` is set, then once the services
    controller of each network creates the load balancers (retries till
    its created), this controller will also attach those load balancers
    to the switches of the connected networks. This way, no changes are
@@ -1677,7 +1679,7 @@ compared to the solution we have today.
 Alternative Idea2: **Instead of doing the DNAT at the network
 switches, we could add the load balancers to the connect router.**
 
-If `ClusterIPServiceNetwork` is set, then we add routes for each
+If `ServiceNetwork` is set, then we add routes for each
 clusterIP that belongs to the other connected networks
 to be routed to the `connect-router` or a ClusterIP CIDR route.
 We would need to then either host all load balancers for all connected

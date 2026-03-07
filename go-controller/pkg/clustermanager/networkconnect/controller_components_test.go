@@ -933,7 +933,7 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			},
 			newObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			wantUpdate: false,

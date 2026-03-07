@@ -183,7 +183,7 @@ func createOrUpdateCNCWithSubnets(cncName string, cudnLabelSelector, udnLabelSel
 }
 
 // createOrUpdateCNCWithConnectivity creates or updates a CNC with custom connectivity types
-// connectivity should be a slice like []string{"PodNetwork"} or []string{"PodNetwork", "ClusterIPServiceNetwork"}
+// connectivity should be a slice like []string{"PodNetwork"} or []string{"PodNetwork", "ServiceNetwork"}
 func createOrUpdateCNCWithConnectivity(cs clientset.Interface, cncName string, cudnLabelSelector, udnLabelSelector map[string]string, connectivity []string) {
 	createOrUpdateCNCWithSubnetsAndConnectivity(cncName, cudnLabelSelector, udnLabelSelector,
 		generateConnectSubnets(cs), connectivity)
@@ -3032,12 +3032,12 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   Non-transitive service connectivity with overlapping CNCs:
 
 		   Same topology as the pod connectivity test above, but with
-		   ClusterIPServiceNetwork enabled on both CNCs:
+		   ServiceNetwork enabled on both CNCs:
 		   - CNC-1: selects blue (L2 UDN) + red (L3 CUDN) with service connectivity
 		   - CNC-2: selects blue (L2 UDN) + green (L3 UDN) with service connectivity
 
 		   Steps:
-		   1. Create CNC-1 and CNC-2 with ClusterIPServiceNetwork enabled
+		   1. Create CNC-1 and CNC-2 with ServiceNetwork enabled
 		   2. Create networks (blue, red, green) with pods
 		   3. Verify CNC annotations
 		   4. Create ClusterIP services in all networks
@@ -3053,7 +3053,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			if isDynamicUDNEnabled() {
 				Skip("Service connectivity with dynamic UDN allocation is not yet supported, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5963")
 			}
-			// Same topology as above but with ClusterIPServiceNetwork enabled:
+			// Same topology as above but with ServiceNetwork enabled:
 			// CNC-1: blue + red, CNC-2: blue + green
 			// Verify service VIPs work cross-network and survive CNC-1 deletion
 
@@ -3101,16 +3101,16 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			})
 
 			// =====================================================================
-			// Step 1: Create CNCs with ClusterIPServiceNetwork enabled
+			// Step 1: Create CNCs with ServiceNetwork enabled
 			// =====================================================================
 			By("1. Creating CNC-1 selecting blue and red with service connectivity")
 			createOrUpdateCNCWithSubnetsAndConnectivity(cnc1Name, redLabel, blueLabel,
-				generateConnectSubnets(cs), []string{"PodNetwork", "ClusterIPServiceNetwork"})
+				generateConnectSubnets(cs), []string{"PodNetwork", "ServiceNetwork"})
 
 			By("1. Creating CNC-2 selecting blue and green with service connectivity")
 			createOrUpdateCNCWithSubnetsAndConnectivity(cnc2Name, nil, cnc2Label,
 				generateConnectSubnetsWithCIDRs(cs, cnc2ConnectSubnetIPv4CIDR, cnc2ConnectSubnetIPv4Prefix, cnc2ConnectSubnetIPv6CIDR, cnc2ConnectSubnetIPv6Prefix),
-				[]string{"PodNetwork", "ClusterIPServiceNetwork"})
+				[]string{"PodNetwork", "ServiceNetwork"})
 
 			// =====================================================================
 			// Step 2: Create networks and pods
@@ -3272,7 +3272,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   Exact same network selection by 2 CNCs with service connectivity:
 
 		   Both CNCs select the exact same pair of networks with
-		   ClusterIPServiceNetwork enabled. This tests the LB cross-referencing
+		   ServiceNetwork enabled. This tests the LB cross-referencing
 		   concern: when CNC-1 is deleted, its cleanup should not remove LB
 		   attachments that CNC-2 still needs.
 
@@ -3293,7 +3293,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			if isDynamicUDNEnabled() {
 				Skip("Service connectivity with dynamic UDN allocation is not yet supported, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5963")
 			}
-			// Both CNCs select the same 2 networks with ClusterIPServiceNetwork
+			// Both CNCs select the same 2 networks with ServiceNetwork
 			// Deleting one CNC should not break the other's service connectivity
 
 			testID := rand.String(5)
@@ -3338,12 +3338,12 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("1. Creating CNC-1 selecting both networks with service connectivity")
 			createOrUpdateCNCWithSubnetsAndConnectivity(cnc1Name, sharedCUDNLabel, sharedUDNLabel,
-				generateConnectSubnets(cs), []string{"PodNetwork", "ClusterIPServiceNetwork"})
+				generateConnectSubnets(cs), []string{"PodNetwork", "ServiceNetwork"})
 
 			By("1. Creating CNC-2 selecting the same networks with service connectivity (different subnets)")
 			createOrUpdateCNCWithSubnetsAndConnectivity(cnc2Name, sharedCUDNLabel, sharedUDNLabel,
 				generateConnectSubnetsWithCIDRs(cs, cnc2ConnectSubnetIPv4CIDR, cnc2ConnectSubnetIPv4Prefix, cnc2ConnectSubnetIPv6CIDR, cnc2ConnectSubnetIPv6Prefix),
-				[]string{"PodNetwork", "ClusterIPServiceNetwork"})
+				[]string{"PodNetwork", "ServiceNetwork"})
 
 			// =====================================================================
 			// Step 2: Create networks and pods
@@ -3453,14 +3453,14 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 	})
 
 	// Service connectivity validation through CNC (ClusterNetworkConnect).
-	// This context validates end-to-end service connectivity when CNC enables ClusterIPServiceNetwork.
+	// This context validates end-to-end service connectivity when CNC enables ServiceNetwork.
 	// Tests cover full lifecycle management of services across connected networks, including:
 	// - Network deselection/reselection (via namespace labels and CNC selector updates)
 	// - Network deletion/recreation
 	// - Service deletion/recreation
 	// - Endpoint deletion (OVNLB reject behavior)
 	// - CNC lifecycle (deletion and recreation)
-	// - Connectivity type toggling (PodNetwork vs ClusterIPServiceNetwork)
+	// - Connectivity type toggling (PodNetwork vs ServiceNetwork)
 	Context("Service connectivity validation", func() {
 		const (
 			nodeHostnameKey = "kubernetes.io/hostname"
@@ -3758,7 +3758,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   5.  Create CNC selecting all 4 networks with connectivity: ["PodNetwork"] only
 		   6.  Verify CNC annotations are set correctly (subnet allocation, 4 networks)
 		   7.  Verify pods CANNOT reach ClusterIP services of other networks (service connectivity not enabled)
-		   8.  Update CNC to enable service connectivity: ["PodNetwork", "ClusterIPServiceNetwork"]
+		   8.  Update CNC to enable service connectivity: ["PodNetwork", "ServiceNetwork"]
 		   9.  Verify pods can reach ClusterIP services of all connected networks (full mesh pod-to-service)
 		   10. Verify intra-network service connectivity still works
 
@@ -3839,8 +3839,8 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			// Step 8: Update CNC to enable service connectivity
 			// =====================================================================
-			By("8. Updating CNC to enable ClusterIPServiceNetwork connectivity")
-			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+			By("8. Updating CNC to enable ServiceNetwork connectivity")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ServiceNetwork"})
 
 			// =====================================================================
 			// Step 9: Verify pods can reach ClusterIP services of all connected networks
@@ -3902,7 +3902,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// Step 15: Deselect green PUDN (L2) via CNC selector update (remove PUDN selector)
 			// =====================================================================
 			By("15. Deselecting green PUDN via CNC selector update (remove PUDN selector)")
-			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, nil, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, nil, []string{"PodNetwork", "ServiceNetwork"})
 
 			// =====================================================================
 			// Step 16: Verify CNC subnet annotation now has 2 networks (only CUDNs)
@@ -3928,7 +3928,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// Step 19: Re-select green PUDN via CNC selector update (add PUDN selector back)
 			// =====================================================================
 			By("19. Re-selecting green PUDN via CNC selector update")
-			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ServiceNetwork"})
 
 			By("19. Verifying CNC subnet annotation has 3 networks (green re-added)")
 			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
@@ -4237,7 +4237,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// Step 44: Re-create CNC with service connectivity enabled
 			// =====================================================================
 			By("44. Re-creating CNC with service connectivity enabled")
-			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ServiceNetwork"})
 
 			By("44. Verifying CNC has both annotations")
 			verifyCNCHasBothAnnotations(cncName)
@@ -4255,7 +4255,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		})
 
 		/*
-		   Test: Connectivity type toggling (PodNetwork vs ClusterIPServiceNetwork)
+		   Test: Connectivity type toggling (PodNetwork vs ServiceNetwork)
 		   Creates 4 networks (2 CUDNs, 2 PUDNs) with pods and services, then validates
 		   independent control of pod and service connectivity through CNC.
 
@@ -4265,10 +4265,10 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   5-6.  Create CNC with ["PodNetwork"] only, verify annotations
 		   7.    Verify pod-to-pod works cross-network and within same network
 		   8.    Verify pod-to-service FAILS cross-network (service connectivity not enabled)
-		   9.    Update CNC: ["PodNetwork", "ClusterIPServiceNetwork"]
+		   9.    Update CNC: ["PodNetwork", "ServiceNetwork"]
 		   10.   Verify pod-to-service works cross-network (full mesh)
 		   11.   Verify pod-to-pod still works
-		   12.   Update CNC: ["ClusterIPServiceNetwork"] only (disable PodNetwork)
+		   12.   Update CNC: ["ServiceNetwork"] only (disable PodNetwork)
 		   13.   Verify service connectivity still works cross-network
 		   14.   Verify pod-to-pod FAILS cross-network
 		   15.   Verify pod-to-pod still works WITHIN same network
@@ -4331,8 +4331,8 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			// Step 9: Update CNC to enable service connectivity
 			// =====================================================================
-			By("9. Updating CNC to enable ClusterIPServiceNetwork connectivity")
-			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ClusterIPServiceNetwork"})
+			By("9. Updating CNC to enable ServiceNetwork connectivity")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork", "ServiceNetwork"})
 
 			// =====================================================================
 			// Step 10: Verify pods can reach ClusterIP services of all connected networks
@@ -4355,8 +4355,8 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			// Step 12: Update CNC to enable only service connectivity
 			// =====================================================================
-			By("12. Updating CNC to enable ONLY ClusterIPServiceNetwork (disabling PodNetwork)")
-			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"ClusterIPServiceNetwork"})
+			By("12. Updating CNC to enable ONLY ServiceNetwork (disabling PodNetwork)")
+			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"ServiceNetwork"})
 
 			// =====================================================================
 			// Step 13: Ensure ClusterIP service cross network works
@@ -4385,7 +4385,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			// Step 16: Swap service connectivity with podnetwork in CNC update
 			// =====================================================================
-			By("16. Updating CNC to enable ONLY PodNetwork (disabling ClusterIPServiceNetwork)")
+			By("16. Updating CNC to enable ONLY PodNetwork (disabling ServiceNetwork)")
 			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel, []string{"PodNetwork"})
 
 			// =====================================================================
@@ -4401,7 +4401,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			// Step 18: Ensure service connectivity cross network fails but works within same network
 			// =====================================================================
-			By("18. Verifying service connectivity FAILS cross-network (ClusterIPServiceNetwork disabled)")
+			By("18. Verifying service connectivity FAILS cross-network (ServiceNetwork disabled)")
 			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"white-svc": serviceIPs["white-svc"]}, false)
 			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"blue-svc": serviceIPs["blue-svc"]}, false)
 			verifyCrossNetworkConnectivity(blackPodMap, map[string][]string{"green-svc": serviceIPs["green-svc"]}, false)
@@ -4422,7 +4422,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   triggers the CNC controller to reconcile and add the new _cluster LB to the LBG.
 
 		   Steps:
-		   1. Create CNC with ["PodNetwork", "ClusterIPServiceNetwork"]
+		   1. Create CNC with ["PodNetwork", "ServiceNetwork"]
 		   2. Verify blue service reachable from other networks (TCP)
 		   3. Update blue service to add a UDP port (new protocol -> new _cluster LB)
 		   4. Verify blue service TCP still works (proves CNC reconciled without breaking existing LBs)
@@ -4430,9 +4430,9 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		*/
 		It("should maintain cross-network service connectivity after service protocol update", func() {
 			// Step 1: Create CNC with service connectivity
-			By("1. Creating CNC with PodNetwork and ClusterIPServiceNetwork")
+			By("1. Creating CNC with PodNetwork and ServiceNetwork")
 			createOrUpdateCNCWithConnectivity(cs, cncName, cudnLabel, pudnLabel,
-				[]string{"PodNetwork", "ClusterIPServiceNetwork"})
+				[]string{"PodNetwork", "ServiceNetwork"})
 
 			By("1. Verifying CNC annotations")
 			verifyCNCHasBothAnnotations(cncName)

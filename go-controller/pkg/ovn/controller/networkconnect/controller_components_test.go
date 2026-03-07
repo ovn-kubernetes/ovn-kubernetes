@@ -70,7 +70,7 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			},
 			newObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork},
 				},
 			},
 			expected: true,
@@ -753,7 +753,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 		expected        bool
 	}{
 		{
-			name:     "CNC without ClusterIPServiceNetwork - should return false",
+			name:     "CNC without ServiceNetwork - should return false",
 			cncCache: map[string]*networkConnectState{},
 			cnc: &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
@@ -768,12 +768,12 @@ func TestMustProcessCNCForService(t *testing.T) {
 			expected:        false,
 		},
 		{
-			name:     "CNC with ClusterIPServiceNetwork but not in cache - should return false",
+			name:     "CNC with ServiceNetwork but not in cache - should return false",
 			cncCache: map[string]*networkConnectState{},
 			cnc: &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			svc: &corev1.Service{
@@ -794,7 +794,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 			cnc: &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			svc: &corev1.Service{
@@ -815,7 +815,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 			cnc: &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			svc: &corev1.Service{
@@ -825,7 +825,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 			expected:        true,
 		},
 		{
-			name: "CNC with multiple connectivity types including ClusterIPServiceNetwork - should return true",
+			name: "CNC with multiple connectivity types including ServiceNetwork - should return true",
 			cncCache: map[string]*networkConnectState{
 				"cnc1": {
 					name:              "cnc1",
@@ -838,7 +838,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
 					Connectivity: []networkconnectv1.ConnectivityType{
 						networkconnectv1.PodNetwork,
-						networkconnectv1.ClusterIPServiceNetwork,
+						networkconnectv1.ServiceNetwork,
 					},
 				},
 			},
@@ -860,7 +860,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 			cnc: &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			svc: &corev1.Service{
@@ -881,7 +881,7 @@ func TestMustProcessCNCForService(t *testing.T) {
 			cnc: &networkconnectv1.ClusterNetworkConnect{
 				ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			svc: &corev1.Service{
@@ -918,19 +918,19 @@ func TestController_reconcileService(t *testing.T) {
 
 	fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
 
-	// Create test CNCs - cnc1 has ClusterIPServiceNetwork and connects layer3_1
-	// cnc2 has ClusterIPServiceNetwork but connects different network
+	// Create test CNCs - cnc1 has ServiceNetwork and connects layer3_1
+	// cnc2 has ServiceNetwork but connects different network
 	// cnc3 has only PodNetwork
 	cnc1 := &networkconnectv1.ClusterNetworkConnect{
 		ObjectMeta: metav1.ObjectMeta{Name: "cnc1"},
 		Spec: networkconnectv1.ClusterNetworkConnectSpec{
-			Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+			Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 		},
 	}
 	cnc2 := &networkconnectv1.ClusterNetworkConnect{
 		ObjectMeta: metav1.ObjectMeta{Name: "cnc2"},
 		Spec: networkconnectv1.ClusterNetworkConnectSpec{
-			Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+			Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 		},
 	}
 	cnc3 := &networkconnectv1.ClusterNetworkConnect{
@@ -1007,7 +1007,7 @@ func TestController_reconcileService(t *testing.T) {
 			"cnc3": {
 				name:              "cnc3",
 				tunnelID:          11111,
-				connectedNetworks: sets.New("layer3_1"), // connects layer3_1 but no ClusterIPServiceNetwork
+				connectedNetworks: sets.New("layer3_1"), // connects layer3_1 but no ServiceNetwork
 			},
 		},
 	}
@@ -1046,7 +1046,7 @@ func TestController_reconcileService(t *testing.T) {
 	err = c.reconcileService("ns1/svc1")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
-	// Verify only cnc1 was requeued (has ClusterIPServiceNetwork AND connects layer3_1)
+	// Verify only cnc1 was requeued (has ServiceNetwork AND connects layer3_1)
 	// cnc2 doesn't connect layer3_1, cnc3 has only PodNetwork
 	g.Eventually(func() []string {
 		reconciledMutex.Lock()
