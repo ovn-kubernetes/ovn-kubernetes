@@ -378,4 +378,7 @@ const (
 	// management port.
 	NFTMgmtPortNoSNATSubnetsV4 = "mgmtport-no-snat-subnets-v4"
 	NFTMgmtPortNoSNATSubnetsV6 = "mgmtport-no-snat-subnets-v6"
+
+	// DefaultKubeletCRIOperationTimeout is the default timeout for kubelet CRI operation.
+	DefaultKubeletCRIOperationTimeout = 120 // in seconds
 )

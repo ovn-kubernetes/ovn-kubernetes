@@ -29,8 +29,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const kubeletDefaultCRIOperationTimeout = 2 * time.Minute
-
 // *** The Server is PRIVATE API between OVN components and may be
 // changed at any time.  It is in no way a supported interface or API. ***
 //
@@ -169,8 +167,7 @@ func cniRequestToPodRequest(cr *Request) (*PodRequest, error) {
 
 	// STATUS requests do not carry pod-specific context. Return early after validating config.
 	if req.Command == CNIStatus {
-		// Match the Kubelet default CRI operation timeout of 2m.
-		req.ctx, req.cancel = context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+		req.ctx, req.cancel = context.WithTimeout(context.Background(), time.Duration(config.Default.KubeletCRIOperationTimeout)*time.Second)
 		return req, nil
 	}
 
@@ -236,8 +233,7 @@ func cniRequestToPodRequest(cr *Request) (*PodRequest, error) {
 		}
 	}
 
-	// Match the Kubelet default CRI operation timeout of 2m.
-	req.ctx, req.cancel = context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+	req.ctx, req.cancel = context.WithTimeout(context.Background(), time.Duration(config.Default.KubeletCRIOperationTimeout)*time.Second)
 	return req, nil
 }
 
