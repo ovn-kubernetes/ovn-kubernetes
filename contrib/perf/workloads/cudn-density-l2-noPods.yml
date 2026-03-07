@@ -3,7 +3,7 @@ global:
   measurements:
     - name: podLatency
     - name: pprof
-      pprofInterval: 1m
+      pprofInterval: 0s
       pprofDirectory: pprof-data
       pprofTargets:
       - name: ovnkube-controller
