@@ -1017,6 +1017,7 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 		}
 		hadUpdates = true
 	}
+	klog.Infof("Updated FRRConfigurations for RouteAdvertisements %s", ra)
 
 	// delete FRRConfigurations that should not exist
 	for _, obsoleteFRRConfigs := range existing {
