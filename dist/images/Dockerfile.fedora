@@ -35,9 +35,11 @@ FROM quay.io/fedora/fedora:42 AS ovnbuilder
 USER root
 
 ENV PYTHONDONTWRITEBYTECODE yes
+ARG OVN_BUILD_CFLAGS=""
+ARG OVN_EXTRA_PACKAGES=""
 
 # Install tools that are required for building ovs/ovn.
-RUN INSTALL_PKGS="git rpm-build dnf-plugins-core" && \
+RUN INSTALL_PKGS="git rpm-build dnf-plugins-core ${OVN_EXTRA_PACKAGES}" && \
     dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS
 
 # Clone OVN Source Code.
@@ -69,11 +71,27 @@ RUN OVS_OVN_GITREF=$(cd ovn && git submodule status ovs|cut -c 2-|cut -d ' ' -f 
 
 # Build OVS rpms.
 WORKDIR /root/ovs
+RUN if [ -n "${OVN_BUILD_CFLAGS}" ]; then \
+        awk -v flags="${OVN_BUILD_CFLAGS}" '\
+            { print } \
+            $0 == "%build" { \
+                print "export CFLAGS=\"%{build_cflags} " flags "\""; \
+            }' rhel/openvswitch-fedora.spec.in > rhel/openvswitch-fedora.spec.in.new && \
+        mv rhel/openvswitch-fedora.spec.in.new rhel/openvswitch-fedora.spec.in; \
+    fi
 RUN sed -e 's/@VERSION@/0.0.1/' rhel/openvswitch-fedora.spec.in > /tmp/ovs.spec
+RUN if [ -n "${OVN_BUILD_CFLAGS}" ]; then \
+        grep -n 'export CFLAGS=' rhel/openvswitch-fedora.spec.in; \
+    fi
 RUN dnf builddep -y /tmp/ovs.spec
 RUN ./boot.sh
-RUN ./configure
-RUN make -j rpm-fedora
+RUN CFLAGS="${OVN_BUILD_CFLAGS}" ./configure
+RUN set -e; \
+    make -j rpm-fedora || { \
+        rc=$?; \
+        find rpm/rpmbuild/BUILD -path '*/config.log' -print -exec tail -n 200 {} \; ; \
+        exit $rc; \
+    }
 RUN rm rpm/rpmbuild/RPMS/x86_64/*debug*
 RUN rm rpm/rpmbuild/RPMS/x86_64/*devel*
 RUN git log -n 1
@@ -82,11 +100,27 @@ RUN git log -n 1
 # Build OVN rpms.
 WORKDIR /root/ovn/
 RUN ls -la
+RUN if [ -n "${OVN_BUILD_CFLAGS}" ]; then \
+        awk -v flags="${OVN_BUILD_CFLAGS}" '\
+            { print } \
+            $0 == "%build" { \
+                print "export CFLAGS=\"%{build_cflags} " flags "\""; \
+            }' rhel/ovn-fedora.spec.in > rhel/ovn-fedora.spec.in.new && \
+        mv rhel/ovn-fedora.spec.in.new rhel/ovn-fedora.spec.in; \
+    fi
 RUN sed -e 's/@VERSION@/0.0.1/' rhel/ovn-fedora.spec.in > /tmp/ovn.spec
+RUN if [ -n "${OVN_BUILD_CFLAGS}" ]; then \
+        grep -n 'export CFLAGS=' rhel/ovn-fedora.spec.in; \
+    fi
 RUN dnf builddep -y /tmp/ovn.spec
 RUN ./boot.sh
-RUN ./configure --with-ovs-source=/root/ovs/
-RUN make -j rpm-fedora
+RUN CFLAGS="${OVN_BUILD_CFLAGS}" ./configure --with-ovs-source=/root/ovs/
+RUN set -e; \
+    make -j rpm-fedora || { \
+        rc=$?; \
+        find rpm/rpmbuild/BUILD -path '*/config.log' -print -exec tail -n 200 {} \; ; \
+        exit $rc; \
+    }
 RUN rm rpm/rpmbuild/RPMS/x86_64/*debug*
 RUN rm rpm/rpmbuild/RPMS/x86_64/*docker*
 RUN git log -n 1
@@ -132,6 +166,7 @@ COPY --from=kojidownloader /*.rpm /
 FROM ${OVN_FROM}
 
 USER root
+ARG OVN_EXTRA_PACKAGES=""
 
 ARG FEDORA_BASE_DIGEST
 RUN if [ -n "${FEDORA_BASE_DIGEST}" ]; then echo "${FEDORA_BASE_DIGEST}" > /root/fedora_base_image; fi
@@ -145,6 +180,7 @@ RUN INSTALL_PKGS=" \
     ovn ovn-central ovn-host python3-openvswitch tcpdump openvswitch-test python3-pyOpenSSL \
     iptables nftables iproute iputils strace socat \
     libreswan openvswitch-ipsec \
+    ${OVN_EXTRA_PACKAGES} \
     " && \
     dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \
     dnf clean all && rm -rf /var/cache/dnf/*

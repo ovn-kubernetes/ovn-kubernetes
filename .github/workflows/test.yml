@@ -35,9 +35,10 @@ env:
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
-  # To run CI over custom OVN
-  # OVN_REPO: https://github.com/ovn-org/ovn
-  # OVN_GITREF: main
+  # Build OVN from source with ASan/UBSan to debug the northd crash in #6035.
+  OVN_REPO: https://github.com/ovn-org/ovn
+  OVN_GITREF: main
+  OVN_BUILD_CFLAGS: "-O0 -fno-omit-frame-pointer -fno-common -g -fsanitize=undefined,address"
 
 jobs:
   # separate job for parallelism
@@ -86,6 +87,11 @@ jobs:
       continue-on-error: false
       run: |
         set -x
+        if [ -n "${OVN_BUILD_CFLAGS}" ]; then
+            echo "OVN_BUILD_CFLAGS is set; forcing a fresh base image build"
+            exit 0
+        fi
+
         if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}.gz ]; then
             cp ${CI_IMAGE_CACHE}/${CI_IMAGE_BASE_TAR}.gz ${CI_IMAGE_BASE_TAR}.gz
             gunzip ${CI_IMAGE_BASE_TAR}.gz
@@ -135,6 +141,7 @@ jobs:
           IMAGE=ovn-daemonset-fedora:dev \
           OVN_REPO=${{ env.OVN_REPO }} \
           OVN_GITREF=${{ env.OVN_GITREF }} \
+          OVN_BUILD_CFLAGS='${{ env.OVN_BUILD_CFLAGS }}' \
           fedora-image
 
     - name: Cache base image
@@ -221,6 +228,7 @@ jobs:
           make IMAGE=${IMAGE} \
             OVN_REPO=${{ env.OVN_REPO }} \
             OVN_GITREF=${{ env.OVN_GITREF }} \
+            OVN_BUILD_CFLAGS='${{ env.OVN_BUILD_CFLAGS }}' \
             fedora-image
           mkdir _output
           docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
