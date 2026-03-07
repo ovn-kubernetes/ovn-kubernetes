@@ -93,6 +93,9 @@ rules:
           - routeadvertisements/status
           - clusternetworkconnects
           - clusternetworkconnects/status
+          - vteps
+          - vteps/status
+          - vteps/finalizers
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:

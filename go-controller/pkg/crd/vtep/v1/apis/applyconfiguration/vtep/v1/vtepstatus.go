@@ -24,7 +24,8 @@ import (
 // VTEPStatusApplyConfiguration represents a declarative configuration of the VTEPStatus type for use
 // with apply.
 type VTEPStatusApplyConfiguration struct {
-	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	Conditions      []metav1.ConditionApplyConfiguration   `json:"conditions,omitempty"`
+	NodeAllocations []NodeVTEPAllocationApplyConfiguration `json:"nodeAllocations,omitempty"`
 }
 
 // VTEPStatusApplyConfiguration constructs a declarative configuration of the VTEPStatus type for use with
@@ -42,6 +43,19 @@ func (b *VTEPStatusApplyConfiguration) WithConditions(values ...*metav1.Conditio
 			panic("nil value passed to WithConditions")
 		}
 		b.Conditions = append(b.Conditions, *values[i])
+	}
+	return b
+}
+
+// WithNodeAllocations adds the given value to the NodeAllocations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the NodeAllocations field.
+func (b *VTEPStatusApplyConfiguration) WithNodeAllocations(values ...*NodeVTEPAllocationApplyConfiguration) *VTEPStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithNodeAllocations")
+		}
+		b.NodeAllocations = append(b.NodeAllocations, *values[i])
 	}
 	return b
 }

@@ -31,6 +31,8 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=k8s.ovn.org, Version=v1
+	case v1.SchemeGroupVersion.WithKind("NodeVTEPAllocation"):
+		return &vtepv1.NodeVTEPAllocationApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("VTEP"):
 		return &vtepv1.VTEPApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("VTEPSpec"):

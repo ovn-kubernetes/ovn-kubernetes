@@ -40,6 +40,43 @@ var _ = Describe("EVPN: VTEP API validations", feature.RouteAdvertisements, feat
 		},
 		Entry("Valid VTEP configurations", testscenariovtep.Valid),
 	)
+
+	DescribeTable("api-server should reject invalid VTEP updates",
+		func(scenarios []testscenario.UpdateCRScenario) {
+			DeferCleanup(func() {
+				cleanupVTEPUpdateTest(scenarios)
+			})
+			for _, s := range scenarios {
+				By("Creating initial VTEP: " + s.Description)
+				_, err := e2ekubectl.RunKubectlInput("", s.InitialManifest, "apply", "-f", "-")
+				Expect(err).NotTo(HaveOccurred(), "should create initial VTEP CR successfully")
+
+				By("Updating VTEP (should fail): " + s.Description)
+				_, stderr, err := runKubectlInputWithFullOutput("", s.Manifest, "apply", "-f", "-")
+				Expect(err).To(HaveOccurred(), "should fail to update VTEP CR")
+				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
+			}
+		},
+		Entry("Invalid VTEP update configurations", testscenariovtep.InvalidUpdates),
+	)
+
+	DescribeTable("api-server should accept valid VTEP updates",
+		func(scenarios []testscenario.UpdateCRScenario) {
+			DeferCleanup(func() {
+				cleanupVTEPUpdateTest(scenarios)
+			})
+			for _, s := range scenarios {
+				By("Creating initial VTEP: " + s.Description)
+				_, err := e2ekubectl.RunKubectlInput("", s.InitialManifest, "apply", "-f", "-")
+				Expect(err).NotTo(HaveOccurred(), "should create initial VTEP CR successfully")
+
+				By("Updating VTEP (should succeed): " + s.Description)
+				_, err = e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				Expect(err).NotTo(HaveOccurred(), "should update VTEP CR successfully")
+			}
+		},
+		Entry("Valid VTEP update configurations", testscenariovtep.ValidUpdates),
+	)
 })
 
 func cleanupVTEPCRsTest(scenarios []testscenario.ValidateCRScenario) {
@@ -56,4 +93,12 @@ func cleanupVTEPCRsTest(scenarios []testscenario.ValidateCRScenario) {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stdout).To(BeEmpty(), "VTEP %q should have been deleted", s.Name)
 	}
+}
+
+func cleanupVTEPUpdateTest(scenarios []testscenario.UpdateCRScenario) {
+	crScenarios := make([]testscenario.ValidateCRScenario, len(scenarios))
+	for i, s := range scenarios {
+		crScenarios[i] = s.ValidateCRScenario
+	}
+	cleanupVTEPCRsTest(crScenarios)
 }

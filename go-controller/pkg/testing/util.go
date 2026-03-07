@@ -12,6 +12,8 @@ import (
 
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -125,5 +127,65 @@ func AddNetworkConnectApplyReactor(fakeClient *networkconnectfake.Clientset) {
 		_ = fakeClient.Tracker().Update(
 			networkconnectv1.SchemeGroupVersion.WithResource("clusternetworkconnects"), cnc, "")
 		return true, cnc, nil
+	})
+}
+
+// AddVTEPGarbageCollectionReactor simulates API server garbage collection:
+// when a VTEP is updated with no finalizers and a non-zero DeletionTimestamp,
+// it is removed from the tracker as the real API server would do.
+func AddVTEPGarbageCollectionReactor(fakeClient *vtepfake.Clientset) {
+	fakeClient.PrependReactor("update", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		updateAction := action.(ktesting.UpdateAction)
+		vtep := updateAction.GetObject().(*vtepv1.VTEP)
+		if !vtep.DeletionTimestamp.IsZero() && len(vtep.Finalizers) == 0 {
+			_ = fakeClient.Tracker().Delete(
+				vtepv1.SchemeGroupVersion.WithResource("vteps"), "", vtep.Name)
+			return true, vtep, nil
+		}
+		return false, nil, nil
+	})
+}
+
+// AddVTEPApplyReactor adds a reactor to handle Apply (patch) operations on the
+// VTEP fake client. It merges status fields individually so that separate SSA
+// field managers (e.g. one for conditions, one for nodeAllocations) don't
+// overwrite each other's fields.
+func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
+	fakeClient.PrependReactor("patch", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction := action.(ktesting.PatchAction)
+		name := patchAction.GetName()
+
+		existingObj, err := fakeClient.Tracker().Get(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), "", name)
+		if err != nil {
+			return true, nil, err
+		}
+
+		vtep := existingObj.(*vtepv1.VTEP)
+		if patchAction.GetSubresource() == "status" {
+			type statusFields struct {
+				Conditions      *[]metav1.Condition          `json:"conditions,omitempty"`
+				NodeAllocations *[]vtepv1.NodeVTEPAllocation `json:"nodeAllocations,omitempty"`
+			}
+			type statusPatch struct {
+				Status statusFields `json:"status"`
+			}
+
+			var patch statusPatch
+			if err := json.Unmarshal(patchAction.GetPatch(), &patch); err != nil {
+				return true, nil, err
+			}
+
+			if patch.Status.Conditions != nil {
+				vtep.Status.Conditions = *patch.Status.Conditions
+			}
+			if patch.Status.NodeAllocations != nil {
+				vtep.Status.NodeAllocations = *patch.Status.NodeAllocations
+			}
+		}
+
+		_ = fakeClient.Tracker().Update(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), vtep, "")
+		return true, vtep, nil
 	})
 }

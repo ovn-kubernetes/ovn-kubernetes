@@ -45,9 +45,10 @@ type VTEP struct {
 
 // VTEPSpec defines the desired state of VTEP.
 type VTEPSpec struct {
-	// CIDRs is the list of IP ranges from which VTEP IPs are allocated.
-	// Dual-stack clusters may set 2 CIDRs (one for each IP family), otherwise only 1 CIDR is allowed.
-	// The format should match standard CIDR notation (for example, "100.64.0.0/24" or "fd00::/64").
+	// CIDRs is the list of IP ranges from which VTEP IPs are discovered or allocated.
+	// Multiple CIDRs may be specified to expand capacity. Only IPv4 CIDRs are currently supported.
+	// IPv6 VTEP endpoints are not yet supported by FRR for EVPN transport.
+	// The format should match standard CIDR notation (for example, "100.64.0.0/24").
 	// +kubebuilder:validation:Required
 	// +required
 	CIDRs DualStackCIDRs `json:"cidrs"`
@@ -69,8 +70,11 @@ type CIDR string
 
 // DualStackCIDRs is a list of CIDRs that supports dual-stack (IPv4 and IPv6).
 // +kubebuilder:validation:MinItems=1
-// +kubebuilder:validation:MaxItems=2
-// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isCIDR(self[0]) || !isCIDR(self[1]) || cidr(self[0]).ip().family() != cidr(self[1]).ip().family()", message="When 2 CIDRs are set, they must be from different IP families"
+// +kubebuilder:validation:MaxItems=10
+// +kubebuilder:validation:XValidation:rule="self.all(c, isCIDR(c) && cidr(c).ip().family() == 4)", message="Only IPv4 CIDRs are currently supported; IPv6 VTEP endpoints are not yet supported by FRR for EVPN transport"
+// +kubebuilder:validation:XValidation:rule="size(self) >= size(oldSelf)", message="CIDRs cannot be removed; only appending new CIDRs is allowed"
+// +kubebuilder:validation:XValidation:rule="oldSelf.all(i, v, cidr(self[i]).containsIP(cidr(v).ip()) && cidr(self[i]).prefixLength() <= cidr(v).prefixLength())", message="Existing CIDRs must remain at the same position and can only be expanded to a wider mask; shrinking or reordering is not allowed"
+// +kubebuilder:validation:XValidation:rule="self.all(i, x, self.all(j, y, j <= i || !(cidr(x).containsIP(cidr(y).ip()) || cidr(y).containsIP(cidr(x).ip()))))", message="CIDRs must not overlap with each other"
 type DualStackCIDRs []CIDR
 
 // VTEPMode defines the mode of VTEP IP allocation.
@@ -85,6 +89,17 @@ const (
 	VTEPModeUnmanaged VTEPMode = "Unmanaged"
 )
 
+// IP represents an IP address.
+// +kubebuilder:validation:MaxLength=45
+// +kubebuilder:validation:XValidation:rule="isIP(self)", message="IP is invalid"
+type IP string
+
+// DualStackIPs is a list of IP addresses supporting dual-stack (at most one IPv4 and one IPv6).
+// +kubebuilder:validation:MinItems=1
+// +kubebuilder:validation:MaxItems=2
+// +kubebuilder:validation:XValidation:rule="size(self) != 2 || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
+type DualStackIPs []IP
+
 // VTEPStatus contains the observed state of the VTEP.
 type VTEPStatus struct {
 	// Conditions slice of condition objects indicating details about VTEP status.
@@ -92,6 +107,29 @@ type VTEPStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// NodeAllocations is the list of per-node VTEP IP allocations.
+	// Each entry maps a node to its discovered or allocated VTEP IP(s).
+	// +kubebuilder:validation:MaxItems=5000
+	// +listType=map
+	// +listMapKey=nodeName
+	// +optional
+	NodeAllocations []NodeVTEPAllocation `json:"nodeAllocations,omitempty"`
+}
+
+// NodeVTEPAllocation represents the VTEP IP allocation for a specific node.
+type NodeVTEPAllocation struct {
+	// NodeName is the name of the node.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Required
+	// +required
+	NodeName string `json:"nodeName"`
+
+	// VTEPIPs are the VTEP IP addresses assigned to or discovered on this node.
+	// For dual-stack configurations, at most one IPv4 and one IPv6 address may be present.
+	// +kubebuilder:validation:Required
+	// +required
+	VTEPIPs DualStackIPs `json:"vtepIPs"`
 }
 
 // VTEPList contains a list of VTEP.
