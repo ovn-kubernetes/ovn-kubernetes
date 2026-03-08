@@ -857,7 +857,7 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 		if len(hostSubnets) == 0 {
 			return nil, fmt.Errorf("unable to generate MAC address, no subnets provided for network: %s", bnc.GetNetworkName())
 		}
-		macAddress = util.IPAddrToHWAddr(bnc.GetNodeManagementIP(hostSubnets[0]).IP)
+		macAddress = bnc.GetNodeManagementPortMAC(node.Name, hostSubnets[0])
 	}
 
 	var v4Subnet *net.IPNet
