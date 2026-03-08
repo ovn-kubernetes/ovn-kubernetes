@@ -4,10 +4,12 @@
 package managementport
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"time"
 
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/klog/v2"
@@ -17,6 +19,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+var errMgmtPortDeviceNotFound = errors.New("management port PCI device not found")
 
 type managementPortRepresentor struct {
 	cfg        *managementPortConfig
@@ -104,25 +108,45 @@ func (mp *managementPortRepresentor) doReconcile() error {
 }
 
 type managementPortNetdev struct {
-	ifName        string
-	netdevDevName string
-	cfg           *managementPortConfig
-	routeManager  *routemanager.Controller
+	ifName       string
+	deviceID     string
+	cfg          *managementPortConfig
+	routeManager *routemanager.Controller
 }
 
-// newManagementPortNetdev creates a new managementPortNetdev
-func newManagementPortNetdev(netdevDevName string, cfg *managementPortConfig, routeManager *routemanager.Controller) *managementPortNetdev {
+// newManagementPortNetdev creates a new managementPortNetdev.
+// deviceID is the PCI device ID (e.g., "0000:03:00.2") used to identify the VF.
+func newManagementPortNetdev(deviceID string, cfg *managementPortConfig, routeManager *routemanager.Controller) *managementPortNetdev {
 	return &managementPortNetdev{
-		ifName:        types.K8sMgmtIntfName,
-		netdevDevName: netdevDevName,
-		cfg:           cfg,
-		routeManager:  routeManager,
+		ifName:       types.K8sMgmtIntfName,
+		deviceID:     deviceID,
+		cfg:          cfg,
+		routeManager: routeManager,
 	}
 }
 
+// findNetdevByDeviceID resolves the current interface name from the PCI device ID.
+func (mp *managementPortNetdev) findNetdevByDeviceID() (netlink.Link, error) {
+	if mp.deviceID == "" {
+		return nil, fmt.Errorf("no device ID available")
+	}
+
+	netdevName, err := util.GetNetdevNameFromDeviceId(mp.deviceID, nadapi.DeviceInfo{})
+	if err != nil {
+		return nil, fmt.Errorf("%w: device ID %s lookup failed: %v", errMgmtPortDeviceNotFound, mp.deviceID, err)
+	}
+
+	link, err := util.GetNetLinkOps().LinkByName(netdevName)
+	if err != nil {
+		return nil, fmt.Errorf("device ID %s resolved to %s but LinkByName failed: %w", mp.deviceID, netdevName, err)
+	}
+
+	return link, nil
+}
+
 func (mp *managementPortNetdev) create() error {
-	klog.V(5).Infof("Lookup netdevice link and existing management port using '%v'", mp.netdevDevName)
-	link, err := util.GetNetLinkOps().LinkByName(mp.netdevDevName)
+	klog.Infof("Management port netdev create: deviceID=%s, ifName=%s", mp.deviceID, mp.ifName)
+	link, err := mp.findNetdevByDeviceID()
 	if err != nil {
 		return err
 	}
@@ -134,24 +158,20 @@ func (mp *managementPortNetdev) create() error {
 		}
 	}
 
-	// configure management port: name, mac, MTU, iptables
-	// mac addr, derived from the first entry in host subnets using the .2 address as mac with a fixed prefix.
-	klog.V(5).Infof("Setup netdevice management port: %s", link.Attrs().Name)
+	klog.V(5).Infof("Setup netdevice management port: %s (deviceID: %s)", link.Attrs().Name, mp.deviceID)
 	mgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(mp.cfg.hostSubnets[0]).IP)
 	err = bringupManagementPortLink(types.DefaultNetworkName, link, &mgmtPortMac, mp.ifName, config.Default.MTU)
 	if err != nil {
 		return err
 	}
 
-	if mp.netdevDevName != mp.ifName && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
-		// Store original interface name for later use
+	if link.Attrs().Name != mp.ifName && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		if _, stderr, err := util.RunOVSVsctl("set", "Open_vSwitch", ".",
-			"external-ids:ovn-orig-mgmt-port-netdev-name="+mp.netdevDevName); err != nil {
+			"external-ids:ovn-orig-mgmt-port-netdev-name="+link.Attrs().Name); err != nil {
 			return fmt.Errorf("failed to store original mgmt port interface name: %s", stderr)
 		}
 	}
 
-	// Setup Iptable and routes
 	err = createPlatformManagementPort(mp.ifName, mp.cfg, mp.routeManager)
 	if err != nil {
 		return err
@@ -164,5 +184,22 @@ func (mp *managementPortNetdev) reconcilePeriod() time.Duration {
 }
 
 func (mp *managementPortNetdev) doReconcile() error {
-	return createPlatformManagementPort(mp.ifName, mp.cfg, mp.routeManager)
+	if err := createPlatformManagementPort(mp.ifName, mp.cfg, mp.routeManager); err != nil {
+		klog.Warningf("Failed to reconcile management port netdev, attempting to recreate: %v", err)
+		if err := mp.create(); err != nil {
+			if errors.Is(err, errMgmtPortDeviceNotFound) {
+				// The VF's PCI device is no longer present on the bus.
+				// For example, a DPU reboot while the host container is
+				// still running destroys all VFs and recreates them from
+				// scratch — potentially under different PCI addresses
+				// (e.g., after a firmware settings change).
+				// We cannot safely pick a replacement VF at runtime; only a
+				// container restart allows the device plugin to re-allocate
+				// the correct device.
+				klog.Fatalf("Failed to recreate management port netdev, terminating so device plugin can re-allocate the correct VF on restart: %v", err)
+			}
+			return fmt.Errorf("failed to recreate management port: %w", err)
+		}
+	}
+	return nil
 }

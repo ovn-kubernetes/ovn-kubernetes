@@ -90,7 +90,22 @@ func NewManagementPortController(
 		c.ports[ovsPort] = newManagementPortOVS(cfg, routeManager)
 	}
 	if hasNetdev {
-		c.ports[netdevPort] = newManagementPortNetdev(netdevDevName, cfg, routeManager)
+		var deviceID string
+		if cfgs, err := util.ParseNodeManagementPortAnnotation(node); err == nil {
+			if devCfg, ok := cfgs[types.DefaultNetworkName]; ok && devCfg.DeviceId != "" {
+				deviceID = devCfg.DeviceId
+				klog.Infof("Management port PCI device ID: %s (from node annotation)", deviceID)
+			}
+		}
+		if deviceID == "" {
+			var err error
+			deviceID, err = util.GetDeviceIDFromNetdevice(netdevDevName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get PCI device ID for %s: %v", netdevDevName, err)
+			}
+			klog.Infof("Management port PCI device ID: %s (resolved from netdev %s)", deviceID, netdevDevName)
+		}
+		c.ports[netdevPort] = newManagementPortNetdev(deviceID, cfg, routeManager)
 	}
 	if hasRepresentor {
 		ifName := types.K8sMgmtIntfName
