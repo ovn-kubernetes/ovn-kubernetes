@@ -1742,6 +1742,19 @@ func newGateway(
 				return err
 			}
 		}
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			// Add drop rules for the pod subnet. This prevents pod IPs from leaking
+			// externally during the window before EgressIP SNAT rules are programmed
+			// on nodes using a secondary interface.
+			var subnets []*net.IPNet
+			for _, subnet := range config.Default.ClusterSubnets {
+				subnets = append(subnets, subnet.CIDR)
+			}
+			err = insertIptRules(getEgressDropRules(subnets, gwBridge.GetBridgeName()))
+			if err != nil {
+				return fmt.Errorf("failed to add egress drop rules for cluster subnets: %w", err)
+			}
+		}
 		if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect && config.Gateway.Mode != config.GatewayModeDisabled {
 			gw.bridgeEIPAddrManager = egressip.NewBridgeEIPAddrManager(nodeName, gwBridge.GetBridgeName(), linkManager, kube, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
 			gwBridge.SetEIPMarkIPs(gw.bridgeEIPAddrManager.GetCache())
