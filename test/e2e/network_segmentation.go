@@ -904,7 +904,8 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
-				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
+				err = testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
+				Expect(err).NotTo(HaveOccurred())
 			},
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
@@ -939,7 +940,8 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
-				testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
+				err = testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
+				Expect(err).NotTo(HaveOccurred())
 			},
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,

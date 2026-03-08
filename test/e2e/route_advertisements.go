@@ -2714,6 +2714,93 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		},
 		networksToTest,
 	)
+
+	evpnNetworks := []ginkgo.TableEntry{
+		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, layer3IPVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, layer2MACVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, layer2MACVRFIPVRFNetworkSpecGen),
+	}
+
+	ginkgo.DescribeTableSubtree("with multicast feature enabled for namespace",
+		func(networkSpecGen func() *udnv1.NetworkSpec) {
+			var (
+				clientNodeInfo, serverNodeInfo nodeInfo
+			)
+
+			ginkgo.BeforeEach(func() {
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
+				framework.ExpectNoError(err)
+				if len(nodes.Items) < 2 {
+					e2eskipper.Skipf(
+						"Test requires >= 2 Ready nodes, but there are only %v nodes",
+						len(nodes.Items))
+				}
+
+				ips := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
+
+				clientNodeInfo = nodeInfo{
+					name:   nodes.Items[0].Name,
+					nodeIP: ips[0],
+				}
+
+				serverNodeInfo = nodeInfo{
+					name:   nodes.Items[1].Name,
+					nodeIP: ips[1],
+				}
+
+				networkSpec := networkSpecGen()
+				// Match subnets by IP families
+				switch {
+				case networkSpec.Layer3 != nil:
+					networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
+				case networkSpec.Layer2 != nil:
+					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
+				}
+
+				configureNetworkWithInfra(
+					f,
+					ictx,
+					testBaseName,
+					ipFamilySet,
+					testNetworkName,
+					cudnAdvertisedEVPN,
+					networkSpec,
+				)
+
+				ginkgo.By("Enabling multicast for namespace")
+				enableMulticastForNamespace(f)
+			})
+
+			ginkgo.It("should handle multicast UDP traffic correctly", func() {
+				networkSpec := networkSpecGen()
+				isLayer3 := networkSpec.Topology == udnv1.NetworkTopologyLayer3
+
+				ginkgo.By("send multicast UDP traffic between nodes")
+				err := testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
+				if isLayer3 {
+					gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("multicast UDP traffic should fail on %s network", networkSpec.Topology))
+				} else {
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("multicast UDP traffic should work on %s network", networkSpec.Topology))
+				}
+			})
+
+			ginkgo.It("should handle multicast IGMP query correctly", func() {
+				networkSpec := networkSpecGen()
+				isLayer3 := networkSpec.Topology == udnv1.NetworkTopologyLayer3
+
+				ginkgo.By("receive multicast IGMP query")
+				if isLayer3 {
+					err := testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
+					gomega.Expect(err).To(gomega.HaveOccurred(), fmt.Sprintf("multicast IGMP query should fail on %s network", networkSpec.Topology))
+				} else {
+					// TODO: this test is broken, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5309
+					//err := testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
+					//gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("multicast IGMP query should work on %s EVPN network", networkSpec.Topology))
+				}
+			})
+		},
+		evpnNetworks,
+	)
 })
 
 // routeAdvertisementsReadyFunc returns a function that checks for the
