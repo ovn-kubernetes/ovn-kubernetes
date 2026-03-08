@@ -73,11 +73,37 @@ The implementation includes robust error handling for:
 
 ```bash
 --ovnkube-node-mode=dpu-host
+--ovnkube-node-mgmt-port-dp-resource-name=nvidia.com/sriov_rdma
+--gateway-interface=derive-from-mgmt-port
+```
+
+Alternatively, the management port VF can be specified directly by netdev name
+using `--ovnkube-node-mgmt-port-netdev`:
+
+```bash
+--ovnkube-node-mode=dpu-host
 --ovnkube-node-mgmt-port-netdev=pf0vf0
 --gateway-interface=derive-from-mgmt-port
 ```
 
+> **Note:** When both `--ovnkube-node-mgmt-port-dp-resource-name` and
+> `--ovnkube-node-mgmt-port-netdev` are specified,
+> `--ovnkube-node-mgmt-port-dp-resource-name` takes priority and the netdev
+> provided by `--ovnkube-node-mgmt-port-netdev` will be overridden by the
+> device chosen from the SR-IOV resource pool.
+
 ### Helm Configuration
+
+```yaml
+ovnkube-node:
+  mode: dpu-host
+  mgmtPortVFResourceName: nvidia.com/sriov_rdma
+  
+gateway:
+  interface: derive-from-mgmt-port
+```
+
+Or using the netdev name directly:
 
 ```yaml
 ovnkube-node:
@@ -89,6 +115,17 @@ gateway:
 ```
 
 ### Configuration File
+
+```ini
+[OvnKubeNode]
+mode=dpu-host
+mgmt-port-dp-resource-name=nvidia.com/sriov_rdma
+
+[Gateway]
+interface=derive-from-mgmt-port
+```
+
+Or using the netdev name directly:
 
 ```ini
 [OvnKubeNode]
