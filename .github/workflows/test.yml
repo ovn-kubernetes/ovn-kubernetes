@@ -513,7 +513,7 @@ jobs:
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ (matrix.target == 'control-plane' || matrix.target == 'control-plane-helm') && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
-      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
+      OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') || startsWith(matrix.target, 'evpn')}}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' || startsWith(matrix.target, 'bgp') }}"
       OVN_HA: "${{ matrix.ha == 'HA' }}"
       OVN_DISABLE_SNAT_MULTIPLE_GWS: "${{ matrix.disable-snat-multiple-gws == 'noSnatGW' }}"

@@ -2,8 +2,9 @@ package e2e
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -14,13 +15,9 @@ import (
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
-
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,9 +27,6 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
-	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
-	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -624,6 +618,21 @@ func secondToLastIP(ipNet *net.IPNet) net.IP {
 	return result
 }
 
+// getMACVRFAgnhostIPsFromSubnets derives MAC-VRF agnhost IPs from CUDN subnets.
+// For each subnet, it returns an IP with host portion set to the high end address.
+// Example: "10.100.0.0/16" -> "10.100.0.253/16", "fd00:100::/64" -> "fd00:100::ffff:ffff:ffff:fffe"
+func getMACVRFAgnhostIPsFromSubnets(subnets []string) ([]string, error) {
+	var ips []string
+	for _, subnet := range subnets {
+		_, ipNet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			return nil, err
+		}
+		ips = append(ips, secondToLastIP(ipNet).String())
+	}
+	return ips, nil
+}
+
 // setupMACVRFAgnhost creates an agnhost container connected to the EVPN bridge
 // for MAC-VRF (Layer 2) connectivity testing.
 //
@@ -640,38 +649,30 @@ func secondToLastIP(ipNet *net.IPNet) net.IP {
 // direct Layer 2 communication via EVPN Type-2/Type-3 routes.
 //
 // Parameters:
-//   - vid: VLAN ID for the access port on bridgeName (e.g., 100)
+//   - containerName: name of the agnhost container
+//   - networkName: name of the agnhost network
+//   - vid: VLAN ID for the access port on br0 (e.g., 100)
 //   - ipFamilies: Cluster IP family support (e.g., sets.New(utilnet.IPv4, utilnet.IPv6))
 //   - subnets: Subnets for the Docker network matching the CUDN (e.g., "10.100.0.0/16")
-//
-// Returns:
-//   - Agnhost's IP addresses without prefix (e.g., ["10.100.0.253"] for a /24 subnet)
-func setupMACVRFAgnhost(ictx infraapi.Context, vid int, bridgeName string, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) ([]string, error) {
-	networkName := fmt.Sprintf("macvrf-net-%d", vid)
-	containerName := fmt.Sprintf("agnhost-macvrf-%d", vid)
-
-	// Compute the second-to-last IP of each subnet to request at container creation.
-	// Using the high end of the range avoids collisions with both OVN IPAM and
-	// Docker/Podman IPAM, which allocate from the low end.
-	var ipv4, ipv6 string
-	var agnhostIPs []string
-	for _, subnet := range subnets {
-		_, ipNet, err := net.ParseCIDR(subnet)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse subnet %s: %w", subnet, err)
-		}
-		newIP := secondToLastIP(ipNet)
-		if utilnet.IsIPv6CIDRString(subnet) {
-			ipv6 = newIP.String()
-		} else {
-			ipv4 = newIP.String()
-		}
-		agnhostIPs = append(agnhostIPs, newIP.String())
+func setupMACVRFAgnhost(ictx infraapi.Context, containerName, networkName, bridgeName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets []string) error {
+	// Derive agnhost IPs from CUDN subnets
+	agnhostIPs, err := getMACVRFAgnhostIPsFromSubnets(subnets)
+	if err != nil {
+		return fmt.Errorf("Failed to derive MAC-VRF agnhost IPs from subnets: %w", err)
 	}
 
-	info, err := createEVPNAgnhost(ictx, networkName, containerName, ipFamilies, subnets, ipv4, ipv6)
+	var ip4, ip6 string
+	ips4, ips6 := splitIPStringsByIPFamily(agnhostIPs)
+	if len(ips4) > 0 {
+		ip4 = ips4[0]
+	}
+	if len(ips6) > 0 {
+		ip6 = ips6[0]
+	}
+
+	info, err := createEVPNAgnhost(ictx, networkName, containerName, ipFamilies, subnets, ip4, ip6)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Move FRR's interface to bridgeName and configure as access port
@@ -683,7 +684,7 @@ func setupMACVRFAgnhost(ictx infraapi.Context, vid int, bridgeName string, ipFam
 	}
 	for _, cmd := range frrCmds {
 		if _, err = infraprovider.Get().ExecExternalContainerCommand(frr, cmd); err != nil {
-			return nil, fmt.Errorf("failed to configure %s as %s access port for VID %s: %w", info.frrInterface, bridgeName, vidStr, err)
+			return fmt.Errorf("failed to configure %s as %s access port for VID %s: %w", info.frrInterface, bridgeName, vidStr, err)
 		}
 	}
 
@@ -693,12 +694,28 @@ func setupMACVRFAgnhost(ictx infraapi.Context, vid int, bridgeName string, ipFam
 	// - ictx.AttachNetwork() registers network detachment
 
 	framework.Logf("MAC-VRF agnhost setup complete: %s (IPs: %v, VID: %d, FRR interface: %s)", containerName, agnhostIPs, vid, info.frrInterface)
-	return agnhostIPs, nil
+	return nil
 }
 
 // =============================================================================
 // IP-VRF Agnhost Utilities
 // =============================================================================
+
+func getIPVRFAgnhostIPs(containerName, networkName string, ipFamilySet sets.Set[utilnet.IPFamily]) ([]string, error) {
+	network, err := infraprovider.Get().GetNetwork(networkName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get network %s: %w", networkName, err)
+	}
+
+	agnhostNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+		infraapi.ExternalContainer{Name: containerName}, network)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agnhost network interface: %w", err)
+	}
+
+	ipVRFAgnhostIPs := matchIPStringsByIPFamilySet([]string{agnhostNetInf.IPv4, agnhostNetInf.IPv6}, ipFamilySet)
+	return ipVRFAgnhostIPs, nil
+}
 
 // setupIPVRFAgnhost creates an agnhost container connected to the external FRR's VRF
 // for IP-VRF (Layer 3) connectivity testing.
@@ -720,20 +737,18 @@ func setupMACVRFAgnhost(ictx infraapi.Context, vid int, bridgeName string, ipFam
 //   - Container: agnhost-ipvrf-<vid> (e.g., agnhost-ipvrf-202)
 //
 // Parameters:
-//   - vid: VLAN ID used to derive names (should match the VRF's VID)
+//   - containerName: name of the agnhost container
+//   - networkName: name of the agnhost network
 //   - vrfName: Name of the VRF to put FRR's interface in (must match setupIPVRFOnExternalFRR)
 //   - ipFamilies: Cluster IP family support (e.g., sets.New(utilnet.IPv4, utilnet.IPv6))
 //   - subnets: Subnets for the Docker network (e.g., "172.27.102.0/24" for IPv4, or both for dual-stack)
 //
 // Returns:
 //   - Agnhost's IP addresses (IPv4 and/or IPv6 depending on cluster IP family support)
-func setupIPVRFAgnhost(ictx infraapi.Context, vid int, vrfName string, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) ([]string, error) {
-	networkName := fmt.Sprintf("ipvrf-net-%d", vid)
-	containerName := fmt.Sprintf("agnhost-ipvrf-%d", vid)
-
+func setupIPVRFAgnhost(ictx infraapi.Context, containerName, networkName, vrfName string, vid int, ipFamilies sets.Set[utilnet.IPFamily], subnets ...string) error {
 	info, err := createEVPNAgnhost(ictx, networkName, containerName, ipFamilies, subnets, "", "")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Put FRR's interface in the VRF
@@ -747,7 +762,7 @@ func setupIPVRFAgnhost(ictx infraapi.Context, vid int, vrfName string, ipFamilie
 	}
 	for _, cmd := range frrCmds {
 		if _, err = infraprovider.Get().ExecExternalContainerCommand(frr, cmd); err != nil {
-			return nil, fmt.Errorf("failed to assign %s to VRF %s: %w", info.frrInterface, vrfName, err)
+			return fmt.Errorf("failed to assign %s to VRF %s: %w", info.frrInterface, vrfName, err)
 		}
 	}
 
@@ -765,7 +780,7 @@ func setupIPVRFAgnhost(ictx infraapi.Context, vid int, vrfName string, ipFamilie
 	}
 	for _, cmd := range routeCmds {
 		if _, err = infraprovider.Get().ExecExternalContainerCommand(agnhost, cmd); err != nil {
-			return nil, fmt.Errorf("failed to set default routes on agnhost: %w", err)
+			return fmt.Errorf("failed to set default routes on agnhost: %w", err)
 		}
 	}
 
@@ -775,7 +790,7 @@ func setupIPVRFAgnhost(ictx infraapi.Context, vid int, vrfName string, ipFamilie
 	// - ictx.AttachNetwork() registers network detachment
 
 	framework.Logf("IP-VRF agnhost setup complete: %s (IPs: %v, network: %s, VRF: %s)", containerName, info.agnhostIPs, networkName, vrfName)
-	return info.agnhostIPs, nil
+	return nil
 }
 
 // =============================================================================
@@ -842,15 +857,23 @@ func createVTEP(f *framework.Framework, ictx infraapi.Context, name string, cidr
 // EVPN VID Utilities
 // =============================================================================
 
+func randomN(n int) int {
+	r, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		panic(fmt.Sprintf("crypto/rand.Int failed: %v", err))
+	}
+	return int(r.Int64())
+}
+
 // randomVID generates a random VLAN ID in the valid range (2-4094).
 // VIDs 0, 1, and 4095 are reserved and should not be used.
 func randomVID() int {
-	return rand.Intn(4093) + 2 // 2-4094
+	return randomN(4093) + 2 // 2-4094
 }
 
 // randomVNI generates a random VXLAN Network Identifier in the valid 24-bit range (1-16777215).
 func randomVNI() int32 {
-	return int32(rand.Intn(16777215) + 1)
+	return int32(randomN(16777215)) + 1
 }
 
 // randomCUDNSubnets generates random non-overlapping CUDN subnets for parallel test isolation.
@@ -869,9 +892,9 @@ func randomCUDNSubnets() (ipv4, ipv6 string) {
 	// Exclude blocks overlapping known /16 reservations (16 /20 blocks each):
 	//   10.96, 10.132, 10.243, 10.244 = 64 excluded → ~4032 usable
 	for {
-		second := rand.Intn(256)
+		second := randomN(256)
 		// 16 /20-aligned slots per second octet (256/16)
-		third := rand.Intn(16) * 16 // 0, 16, 32, ..., 240
+		third := randomN(16) * 16 // 0, 16, 32, ..., 240
 		switch second {
 		case 96, 132, 243, 244:
 			continue
@@ -879,6 +902,16 @@ func randomCUDNSubnets() (ipv4, ipv6 string) {
 		n := second*16 + third/16
 		return fmt.Sprintf("10.%d.%d.0/20", second, third), fmt.Sprintf("fd00:%x::/52", n)
 	}
+}
+
+func randomL3CUDNSubnets() []udnv1.Layer3Subnet {
+	cudnIPv4, cudnIPv6 := randomCUDNSubnets()
+	return []udnv1.Layer3Subnet{{CIDR: udnv1.CIDR(cudnIPv4)}, {CIDR: udnv1.CIDR(cudnIPv6)}}
+}
+
+func randomL2CUDNSubnets() udnv1.DualStackCIDRs {
+	cudnIPv4, cudnIPv6 := randomCUDNSubnets()
+	return udnv1.DualStackCIDRs{udnv1.CIDR(cudnIPv4), udnv1.CIDR(cudnIPv6)}
 }
 
 // randomIPVRFAgnhostSubnets generates random IP-VRF agnhost subnets for parallel test isolation.
@@ -893,7 +926,7 @@ func randomCUDNSubnets() (ipv4, ipv6 string) {
 // Returns IPv4 (/29) and IPv6 (/112) subnets.
 func randomIPVRFAgnhostSubnets() (ipv4, ipv6 string) {
 	// 8192 possible /29 subnets in 172.27.0.0/16
-	n := rand.Intn(8192)
+	n := randomN(8192)
 	// 32 /29-aligned slots per third octet (256/8), so divide to get octet pair
 	third := n / 32
 	fourth := (n % 32) * 8
@@ -912,14 +945,36 @@ func randomIPVRFAgnhostSubnets() (ipv4, ipv6 string) {
 // Safe second octets: 66-127 (62 values).
 // Returns IPv4 (/24) and IPv6 (/112) subnets.
 func randomVTEPSubnets() (ipv4, ipv6 string) {
-	second := rand.Intn(62) + 66 // 66-127
-	third := rand.Intn(256)      // 0-255
+	second := randomN(62) + 66 // 66-127
+	third := randomN(256)      // 0-255
 	return fmt.Sprintf("100.%d.%d.0/24", second, third), fmt.Sprintf("fd02:%x%02x::/112", second, third)
 }
 
 // =============================================================================
 // FRRConfiguration Utilities
 // =============================================================================
+
+func getExternalFRRIP(ipFamilySet sets.Set[utilnet.IPFamily]) (string, error) {
+	kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+	if err != nil {
+		return "", err
+	}
+	frrNetIf, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: externalFRRContainerName}, kindNetwork)
+	if err != nil {
+		return "", err
+	}
+
+	var externalFRRIP string
+	switch {
+	case ipFamilySet.Has(utilnet.IPv4) && frrNetIf.IPv4 != "":
+		externalFRRIP = frrNetIf.IPv4
+	case ipFamilySet.Has(utilnet.IPv6) && frrNetIf.IPv6 != "":
+		externalFRRIP = frrNetIf.IPv6
+	default:
+		return "", fmt.Errorf("can't find external FRR IP on kind network")
+	}
+	return externalFRRIP, nil
+}
 
 // createFRRConfiguration creates an FRRConfiguration CR for BGP peering with the external FRR.
 // This is used by RouteAdvertisements to determine which neighbors to advertise routes to.
@@ -1026,12 +1081,22 @@ const (
 // This is a temporary workaround until OVN-K implements EVPN natively.
 //
 // REVERT ME: Remove this function once OVN-K EVPN implementation is complete.
-func runClusterEVPNSetupScript(ictx infraapi.Context,
-	networkName, externalFRRIP string,
+func runClusterEVPNSetupScript(
+	ictx infraapi.Context,
+	ipFamilySet sets.Set[utilnet.IPFamily],
+	networkName string,
 	bgpASN int,
-	hasMACVRF bool, macVRFVNI, macVRFVID int,
-	hasIPVRF bool, ipVRFVNI, ipVRFVID int,
-	cudnSubnets []string) error {
+	macVRFVNI,
+	macVRFVID int,
+	ipVRFVNI,
+	ipVRFVID int,
+	cudnSubnets []string,
+) error {
+
+	externalFRRIP, err := getExternalFRRIP(ipFamilySet)
+	if err != nil {
+		return err
+	}
 
 	// Build environment variables - script handles node discovery via kubectl
 	// All vars prefixed with EVPN_ to avoid conflicts with other env vars
@@ -1043,11 +1108,11 @@ func runClusterEVPNSetupScript(ictx infraapi.Context,
 		"EVPN_OVN_NAMESPACE":   deploymentconfig.Get().OVNKubernetesNamespace(),
 		"EVPN_FRR_NAMESPACE":   deploymentconfig.Get().FRRK8sNamespace(),
 	}
-	if hasMACVRF {
+	if macVRFVNI != 0 {
 		env["EVPN_MACVRF_VNI"] = fmt.Sprintf("%d", macVRFVNI)
 		env["EVPN_MACVRF_VID"] = fmt.Sprintf("%d", macVRFVID)
 	}
-	if hasIPVRF {
+	if ipVRFVNI != 0 {
 		env["EVPN_IPVRF_VNI"] = fmt.Sprintf("%d", ipVRFVNI)
 		env["EVPN_IPVRF_VID"] = fmt.Sprintf("%d", ipVRFVID)
 	}
@@ -1109,330 +1174,119 @@ func copyEnvMap(m map[string]string) map[string]string {
 // EVPN Test Helpers
 // =============================================================================
 
-// =============================================================================
-// EVPN Tests
-// =============================================================================
+func runEVPNNetworkAndServers(
+	f *framework.Framework,
+	ictx infraapi.Context,
+	testName string,
+	ipFamilySet sets.Set[utilnet.IPFamily],
+	networkSpec *udnv1.NetworkSpec,
+	ipVRFAgnhostSubnets []string,
+	vtepSubnets []string,
+	bgpASN int,
+	macVRFAgnhostName string,
+	macVRFNetworkName string,
+	ipVRFAgnhostName string,
+	ipVRFNetworkName string,
+) error {
+	// Derive what to setup from networkSpec
+	hasMACVRF := networkSpec.EVPN != nil && networkSpec.EVPN.MACVRF != nil
+	hasIPVRF := networkSpec.EVPN != nil && networkSpec.EVPN.IPVRF != nil
 
-var _ = ginkgo.Describe("EVPN", func() {
-	const baseName = "evpn"
-	f := wrappedTestFramework(baseName)
-	f.SkipNamespaceCreation = true
+	// Derive unique bridge/vxlan names from testBaseName for parallel isolation.
+	// e.g. testBaseName="evpn7a3f" → bridgeName="brevpn7a3f", vxlanName="vxevpn7a3f"
+	// keeping worst-case sviName ("brevpn9999.4094") at exactly 15 chars (Linux limit).
+	bridgeName := "br" + testName
+	vxlanName := "vx" + testName
 
-	// Common test parameters
-	const (
-		// bgpASN is the general BGP ASN matching kind.sh's external FRR setup.
-		// Used for: EVPN control plane, frr-k8s node peering, route-target calculation.
-		bgpASN = 64512
+	ipVRFAgnhostSubnets = matchCIDRStringsByIPFamilySet(ipVRFAgnhostSubnets, ipFamilySet)
+	vtepSubnets = matchCIDRStringsByIPFamilySet(vtepSubnets, ipFamilySet)
 
-		// Connectivity test parameters
-		timeout = 15 * time.Second
-	)
-	netexecPortStr := fmt.Sprintf("%d", agnhostHTTPPort)
+	// Extract subnets from networkSpec for MAC-VRF agnhost IP derivation
+	cudnSubnetsFromSpec := getNetworkSubnetsFromSpec(networkSpec)
 
-	var (
-		ictx infraapi.Context
+	externalFRRIP, err := getExternalFRRIP(ipFamilySet)
+	if err != nil {
+		return err
+	}
 
-		// Test identifiers (set in BeforeEach with unique suffix)
-		testBaseName string
+	// attach BGP peer network to all nodes
+	nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+	nodeIPs := e2enode.CollectAddresses(nodeList, corev1.NodeInternalIP)
 
-		// External FRR IP (discovered in BeforeEach)
-		externalFRRIP string
+	framework.Logf("Setting up EVPN bridge on external FRR")
+	err = setupEVPNBridgeOnExternalFRR(ictx, externalFRRIP, bridgeName, vxlanName)
+	if err != nil {
+		return err
+	}
 
-		// IP families supported by cluster (populated in BeforeEach)
-		ipFamilies sets.Set[utilnet.IPFamily]
-
-		// Subnets (dual-stack aware, populated in BeforeEach based on cluster IP family support)
-		ipVRFAgnhostSubnets []string
-		vtepSubnets         []string
-
-		// Unique bridge and VXLAN device names per test for parallel isolation
-		// (Linux interface names are limited to 15 characters)
-		bridgeName string
-		vxlanName  string
-
-		// Node IPs for BGP neighbors (populated in BeforeEach)
-		nodeIPs []string
-	)
-
-	ginkgo.BeforeEach(func() {
-		if !isLocalGWModeEnabled() {
-			e2eskipper.Skipf("EVPN test cases only supported in Local Gateway mode")
-		}
-		if !isIPv4Supported(f.ClientSet) {
-			// FRR does not support IPv6 underlay for EVPN VXLAN tunnels.
-			// See: https://github.com/FRRouting/frr/issues/5885
-			e2eskipper.Skipf("EVPN test cases require IPv4 for VXLAN underlay (FRR limitation)")
-		}
-		// Initialize infrastructure context (cleanup is automatic via ginkgo.DeferCleanup)
-		ictx = infraprovider.Get().NewTestContext()
-
-		// Generate unique test name with suffix
-		testBaseName = baseName + framework.RandomSuffix()
-
-		// Derive unique bridge/vxlan names from testBaseName for parallel isolation.
-		// e.g. testBaseName="evpn7a3f" → bridgeName="brevpn7a3f", vxlanName="vxevpn7a3f"
-		// keeping worst-case sviName ("brevpn9999.4094") at exactly 15 chars (Linux limit).
-		bridgeName = "br" + testBaseName
-		vxlanName = "vx" + testBaseName
-
-		// Discover cluster IP family support
-		ipFamilies = sets.New(getSupportedIPFamiliesSlice(f.ClientSet)...)
-
-		// Reset slices for each test
-		ipVRFAgnhostSubnets = nil
-		vtepSubnets = nil
-		nodeIPs = nil
-
-		// Generate random subnets for parallel test isolation
-		ipVRFAgnhostIPv4, ipVRFAgnhostIPv6 := randomIPVRFAgnhostSubnets()
-		vtepIPv4, vtepIPv6 := randomVTEPSubnets()
-
-		// Configure subnets based on cluster IP family support
-		if ipFamilies.Has(utilnet.IPv4) {
-			ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostIPv4)
-			vtepSubnets = append(vtepSubnets, vtepIPv4)
-		}
-		if ipFamilies.Has(utilnet.IPv6) {
-			ipVRFAgnhostSubnets = append(ipVRFAgnhostSubnets, ipVRFAgnhostIPv6)
-			vtepSubnets = append(vtepSubnets, vtepIPv6)
+	if hasMACVRF {
+		macVRFVID := randomVID()
+		framework.Logf("Generated random VIDs for external FRR: MAC-VRF VID=%d", macVRFVID)
+		framework.Logf("Setting up MAC-VRF on external FRR")
+		err = setupMACVRFOnExternalFRR(int(networkSpec.EVPN.MACVRF.VNI), macVRFVID, bridgeName, vxlanName)
+		if err != nil {
+			return err
 		}
 
-		// Discover external FRR IP
-		kindNetwork, err := infraprovider.Get().GetNetwork("kind")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		frrNetIf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-			infraapi.ExternalContainer{Name: externalFRRContainerName}, kindNetwork)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		// Use IPv4 or IPv6 based on cluster support (prefer IPv4 if both available)
-		if isIPv4Supported(f.ClientSet) && frrNetIf.IPv4 != "" {
-			externalFRRIP = frrNetIf.IPv4
-		} else if isIPv6Supported(f.ClientSet) && frrNetIf.IPv6 != "" {
-			externalFRRIP = frrNetIf.IPv6
-		}
-		gomega.Expect(externalFRRIP).NotTo(gomega.BeEmpty(), "External FRR must have an IP on kind network")
-		framework.Logf("External FRR IP: %s", externalFRRIP)
-
-		// Collect node IPs for BGP neighbors
-		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		for _, node := range nodes.Items {
-			if ipFamilies.Has(utilnet.IPv4) {
-				addrs := e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv4Protocol)
-				nodeIPs = append(nodeIPs, addrs...)
-			}
-			if ipFamilies.Has(utilnet.IPv6) {
-				addrs := e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv6Protocol)
-				nodeIPs = append(nodeIPs, addrs...)
-			}
-		}
-		framework.Logf("Node IPs for BGP: %v", nodeIPs)
-	})
-
-	// Helper to test connectivity from pod to external server (handles both IPv4 and IPv6)
-	testPodToServers := func(pod *corev1.Pod, serverIPs []string) {
-		ginkgo.GinkgoHelper()
-		for _, serverIP := range serverIPs {
-			// Strip prefix length if present (e.g., "10.100.0.250/16" -> "10.100.0.250")
-			ip := strings.Split(serverIP, "/")[0]
-			url := fmt.Sprintf("http://%s/hostname", net.JoinHostPort(ip, netexecPortStr))
-			framework.Logf("Testing connectivity to %s", url)
-			_, err := e2epodoutput.RunHostCmdWithRetries(
-				pod.Namespace,
-				pod.Name,
-				fmt.Sprintf("curl --max-time 1 -g -q -s %s", url),
-				framework.Poll,
-				timeout,
-			)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Failed to connect to %s", serverIP)
+		framework.Logf("Creating MAC-VRF agnhost")
+		err = setupMACVRFAgnhost(ictx, macVRFAgnhostName, macVRFNetworkName, bridgeName, macVRFVID, ipFamilySet, cudnSubnetsFromSpec)
+		if err != nil {
+			return err
 		}
 	}
 
-	// Note: Cleanup is automatic via ginkgo.DeferCleanup registered in NewTestContext()
-	// All functions using ictx.AddCleanUpFn() will be cleaned up in LIFO order
+	framework.Logf("Setting up EVPN BGP on external FRR")
+	err = setupEVPNBGPOnExternalFRR(ictx, bgpASN, nodeIPs)
+	if err != nil {
+		return err
+	}
 
-	ginkgo.DescribeTable("EVPN connectivity", feature.RouteAdvertisements, feature.EVPN,
-		func(networkSpec *udnv1.NetworkSpec) {
-			// Derive what to setup from networkSpec
-			hasMACVRF := networkSpec.EVPN != nil && networkSpec.EVPN.MACVRF != nil
-			hasIPVRF := networkSpec.EVPN != nil && networkSpec.EVPN.IPVRF != nil
+	if hasIPVRF {
+		// Derive VRF name from VNI (unique per IP-VRF)
+		ipVRFName := fmt.Sprintf("vrf%d", networkSpec.EVPN.IPVRF.VNI)
+		ipVRFVID := randomVID()
+		framework.Logf("Generated random VIDs for external FRR: IP-VRF VID=%d", ipVRFVID)
+		framework.Logf("Setting up IP-VRF on external FRR")
+		err = setupIPVRFOnExternalFRR(ictx, ipVRFName, int(networkSpec.EVPN.IPVRF.VNI), ipVRFVID, bridgeName, vxlanName)
+		if err != nil {
+			return err
+		}
 
-			// Filter networkSpec subnets based on cluster IP family support
-			if networkSpec.Layer2 != nil {
-				networkSpec.Layer2.Subnets = filterDualStackCIDRs(f.ClientSet, networkSpec.Layer2.Subnets)
-			}
-			if networkSpec.Layer3 != nil {
-				networkSpec.Layer3.Subnets = filterL3Subnets(f.ClientSet, networkSpec.Layer3.Subnets)
-			}
+		// Derive names from VID
+		framework.Logf("Creating IP-VRF agnhost")
+		err = setupIPVRFAgnhost(ictx, ipVRFAgnhostName, ipVRFNetworkName, ipVRFName, ipVRFVID, ipFamilySet, ipVRFAgnhostSubnets...)
+		if err != nil {
+			return err
+		}
 
-			// Extract subnets from networkSpec for MAC-VRF agnhost IP derivation
-			var cudnSubnetsFromSpec []string
-			if networkSpec.Layer2 != nil {
-				for _, cidr := range networkSpec.Layer2.Subnets {
-					cudnSubnetsFromSpec = append(cudnSubnetsFromSpec, string(cidr))
-				}
-			} else if networkSpec.Layer3 != nil {
-				for _, subnet := range networkSpec.Layer3.Subnets {
-					cudnSubnetsFromSpec = append(cudnSubnetsFromSpec, string(subnet.CIDR))
-				}
-			}
+		// Configure BGP AFTER agnhost so FRR's interface is in the VRF
+		// and has a connected route for the subnet we want to advertise
+		framework.Logf("Setting up IP-VRF BGP on external FRR")
+		err = setupIPVRFBGPOnExternalFRR(ictx, ipVRFName, bgpASN, int(networkSpec.EVPN.IPVRF.VNI), ipFamilySet, ipVRFAgnhostSubnets)
+		if err != nil {
+			return err
+		}
+	}
 
-			ginkgo.By("Setting up EVPN bridge on external FRR")
-			gomega.Expect(setupEVPNBridgeOnExternalFRR(ictx, externalFRRIP, bridgeName, vxlanName)).To(gomega.Succeed())
+	testVTEPName := testName + "-vtep"
+	framework.Logf("Creating VTEP CR")
+	err = createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeManaged)
+	if err != nil {
+		return err
+	}
 
-			var macVRFAgnhostIPs []string
-			if hasMACVRF {
-				// Generate random VIDs for external FRR side.
-				// VID is local to each side - only VNI needs to match for EVPN connectivity.
-				frrMACVRFVID := randomVID()
-				framework.Logf("Generated random VIDs for external FRR: MAC-VRF VID=%d", frrMACVRFVID)
-				ginkgo.By("Setting up MAC-VRF on external FRR")
-				gomega.Expect(setupMACVRFOnExternalFRR(int(networkSpec.EVPN.MACVRF.VNI), frrMACVRFVID, bridgeName, vxlanName)).To(gomega.Succeed())
+	// Update VTEP name in network spec
+	networkSpec.EVPN.VTEP = testVTEPName
 
-				ginkgo.By("Creating MAC-VRF agnhost")
-				var err error
-				macVRFAgnhostIPs, err = setupMACVRFAgnhost(ictx, frrMACVRFVID, bridgeName, ipFamilies, cudnSubnetsFromSpec...)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(macVRFAgnhostIPs).NotTo(gomega.BeEmpty())
-			}
-			ginkgo.By("Setting up EVPN BGP on external FRR")
-			gomega.Expect(setupEVPNBGPOnExternalFRR(ictx, bgpASN, nodeIPs)).To(gomega.Succeed())
+	framework.Logf("Creating FRRConfiguration for EVPN")
+	frrConfigLabels := map[string]string{"network": testName}
+	err = createFRRConfiguration(ictx, testName, deploymentconfig.Get().FRRK8sNamespace(), bgpASN, externalFRRIP, frrConfigLabels)
+	if err != nil {
+		return err
+	}
 
-			var ipVRFAgnhostIPs []string
-			if hasIPVRF {
-				// Derive VRF name from VNI (unique per IP-VRF)
-				ipVRFName := fmt.Sprintf("vrf%d", networkSpec.EVPN.IPVRF.VNI)
-				frrIPVRFVID := randomVID()
-				framework.Logf("Generated random VIDs for external FRR: IP-VRF VID=%d", frrIPVRFVID)
-				ginkgo.By("Setting up IP-VRF on external FRR")
-				gomega.Expect(setupIPVRFOnExternalFRR(ictx, ipVRFName, int(networkSpec.EVPN.IPVRF.VNI), frrIPVRFVID, bridgeName, vxlanName)).To(gomega.Succeed())
-				ginkgo.By("Creating IP-VRF agnhost")
-				var err error
-				ipVRFAgnhostIPs, err = setupIPVRFAgnhost(ictx, frrIPVRFVID, ipVRFName, ipFamilies, ipVRFAgnhostSubnets...)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(ipVRFAgnhostIPs).NotTo(gomega.BeEmpty())
-				// Configure BGP AFTER agnhost so FRR's interface is in the VRF
-				// and has a connected route for the subnet we want to advertise
-				ginkgo.By("Setting up IP-VRF BGP on external FRR")
-				gomega.Expect(setupIPVRFBGPOnExternalFRR(ictx, ipVRFName, bgpASN, int(networkSpec.EVPN.IPVRF.VNI), ipFamilies, ipVRFAgnhostSubnets)).To(gomega.Succeed())
-			}
-
-			ginkgo.By("Creating VTEP CR")
-			testVTEPName := testBaseName + "-vtep"
-			err := createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeManaged)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			// Update VTEP name in network spec
-			networkSpec.EVPN.VTEP = testVTEPName
-
-			ginkgo.By("Creating FRRConfiguration for EVPN")
-			frrConfigLabels := map[string]string{"network": testBaseName}
-			err = createFRRConfiguration(ictx, testBaseName, deploymentconfig.Get().FRRK8sNamespace(), bgpASN, externalFRRIP, frrConfigLabels)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			ginkgo.By("Creating namespace, CUDN, and RouteAdvertisements")
-			testNamespace, err := createNamespaceWithPrimaryNetworkOfType(f, ictx, baseName, testBaseName, cudnAdvertisedEVPN, networkSpec)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			f.Namespace = testNamespace
-
-			// REVERT ME: Temporary cluster-side EVPN setup until OVN-K implements it natively
-			// Generate random VIDs for cluster-side EVPN setup (OVN-K side).
-			// VID is local to each side - these don't need to match the FRR side VIDs.
-			clusterMACVRFVID := randomVID()
-			clusterIPVRFVID := randomVID()
-			framework.Logf("Generated random VIDs for cluster side: MAC-VRF VID=%d, IP-VRF VID=%d", clusterMACVRFVID, clusterIPVRFVID)
-			ginkgo.By("Running cluster-side EVPN setup script (REVERT ME)")
-			var macVRFVNI, ipVRFVNI int
-			if hasMACVRF {
-				macVRFVNI = int(networkSpec.EVPN.MACVRF.VNI)
-			}
-			if hasIPVRF {
-				ipVRFVNI = int(networkSpec.EVPN.IPVRF.VNI)
-			}
-			err = runClusterEVPNSetupScript(ictx,
-				testBaseName, externalFRRIP, bgpASN,
-				hasMACVRF, macVRFVNI, clusterMACVRFVID,
-				hasIPVRF, ipVRFVNI, clusterIPVRFVID,
-				cudnSubnetsFromSpec)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			ginkgo.By("Creating test pod on CUDN")
-			testPod := e2epod.CreateExecPodOrFail(
-				context.Background(),
-				f.ClientSet,
-				f.Namespace.Name,
-				f.Namespace.Name+"-netexec-pod",
-				func(p *corev1.Pod) {
-					p.Spec.Containers[0].Args = []string{"netexec"}
-				},
-			)
-
-			// Test connectivity to external servers
-			if hasMACVRF {
-				framework.Logf("Testing L2 connectivity to MAC-VRF agnhost IPs: %v", macVRFAgnhostIPs)
-				testPodToServers(testPod, macVRFAgnhostIPs)
-			}
-			if hasIPVRF {
-				framework.Logf("Testing L3 connectivity to IP-VRF agnhost IPs: %v", ipVRFAgnhostIPs)
-				testPodToServers(testPod, ipVRFAgnhostIPs)
-			}
-		},
-		// Layer2 with MAC-VRF only - L2 broadcast domain extended via EVPN
-		ginkgo.Entry("Layer2 network with MAC-VRF", func() *udnv1.NetworkSpec {
-			cudnIPv4, cudnIPv6 := randomCUDNSubnets()
-			return &udnv1.NetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer2,
-				Layer2: &udnv1.Layer2Config{
-					Role:    udnv1.NetworkRolePrimary,
-					Subnets: udnv1.DualStackCIDRs{udnv1.CIDR(cudnIPv4), udnv1.CIDR(cudnIPv6)},
-				},
-				Transport: udnv1.TransportOptionEVPN,
-				EVPN: &udnv1.EVPNConfig{
-					MACVRF: &udnv1.VRFConfig{
-						VNI: randomVNI(),
-					},
-				},
-			}
-		}()),
-		// Layer2 with MAC-VRF + IP-VRF - L2 domain with L3 routing to external
-		ginkgo.Entry("Layer2 network with MAC-VRF and IP-VRF", func() *udnv1.NetworkSpec {
-			cudnIPv4, cudnIPv6 := randomCUDNSubnets()
-			return &udnv1.NetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer2,
-				Layer2: &udnv1.Layer2Config{
-					Role:    udnv1.NetworkRolePrimary,
-					Subnets: udnv1.DualStackCIDRs{udnv1.CIDR(cudnIPv4), udnv1.CIDR(cudnIPv6)},
-				},
-				Transport: udnv1.TransportOptionEVPN,
-				EVPN: &udnv1.EVPNConfig{
-					MACVRF: &udnv1.VRFConfig{
-						VNI: randomVNI(),
-					},
-					IPVRF: &udnv1.VRFConfig{
-						VNI: randomVNI(),
-					},
-				},
-			}
-		}()),
-		// Layer3 with IP-VRF only - L3 routing via EVPN Type-5 routes
-		ginkgo.Entry("Layer3 network with IP-VRF", func() *udnv1.NetworkSpec {
-			cudnIPv4, cudnIPv6 := randomCUDNSubnets()
-			return &udnv1.NetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer3,
-				Layer3: &udnv1.Layer3Config{
-					Role: udnv1.NetworkRolePrimary,
-					Subnets: []udnv1.Layer3Subnet{
-						{CIDR: udnv1.CIDR(cudnIPv4)},
-						{CIDR: udnv1.CIDR(cudnIPv6)},
-					},
-				},
-				Transport: udnv1.TransportOptionEVPN,
-				EVPN: &udnv1.EVPNConfig{
-					IPVRF: &udnv1.VRFConfig{
-						VNI: randomVNI(),
-					},
-				},
-			}
-		}()),
-	)
-})
+	return nil
+}

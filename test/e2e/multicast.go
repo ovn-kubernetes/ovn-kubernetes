@@ -59,15 +59,17 @@ var _ = ginkgo.Describe("Multicast", feature.Multicast, func() {
 		})
 
 		ginkgo.It("should be able to send multicast UDP traffic between nodes", func() {
-			testMulticastUDPTraffic(fr, clientNodeInfo, serverNodeInfo, defaultPodInterface)
+			err := testMulticastUDPTraffic(fr, clientNodeInfo, serverNodeInfo, defaultPodInterface)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("should be able to receive multicast IGMP query", func() {
-			testMulticastIGMPQuery(fr, clientNodeInfo, serverNodeInfo)
+			err := testMulticastIGMPQuery(fr, clientNodeInfo, serverNodeInfo)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 	})
 })
 
-func testMulticastUDPTraffic(fr *framework.Framework, clientNodeInfo, serverNodeInfo nodeInfo, iface string) {
+func testMulticastUDPTraffic(fr *framework.Framework, clientNodeInfo, serverNodeInfo nodeInfo, iface string) error {
 	ginkgo.GinkgoHelper()
 	const (
 		mcastSource  = "pod-client"
@@ -138,10 +140,16 @@ func testMulticastUDPTraffic(fr *framework.Framework, clientNodeInfo, serverNode
 	e2epod.NewPodClient(fr).CreateSync(context.TODO(), mcastServerPod3)
 
 	ginkgo.By("checking if pod server1 received multicast traffic")
-	gomega.Eventually(func() (string, error) {
-		return e2epod.GetPodLogs(context.TODO(), fr.ClientSet, ns, mcastServer1, mcastServer1)
-	},
-		30*time.Second, 1*time.Second).Should(gomega.ContainSubstring("connected"))
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
+		logs, err := e2epod.GetPodLogs(context.TODO(), fr.ClientSet, ns, mcastServer1, mcastServer1)
+		if err != nil {
+			return false, fmt.Errorf("failed to get pod logs for %s: %w", mcastServer1, err)
+		}
+		return strings.Contains(logs, "connected"), nil
+	})
+	if err != nil {
+		return fmt.Errorf("server1 did not receive multicast traffic: %w", err)
+	}
 
 	ginkgo.By("checking if pod server2 does not received multicast traffic")
 	gomega.Eventually(func() (string, error) {
@@ -150,14 +158,21 @@ func testMulticastUDPTraffic(fr *framework.Framework, clientNodeInfo, serverNode
 		30*time.Second, 1*time.Second).ShouldNot(gomega.ContainSubstring("connected"))
 
 	ginkgo.By("checking if pod server3 received multicast traffic")
-	gomega.Eventually(func() (string, error) {
-		return e2epod.GetPodLogs(context.TODO(), fr.ClientSet, ns, mcastServer3, mcastServer3)
-	},
-		30*time.Second, 1*time.Second).Should(gomega.ContainSubstring("connected"))
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, true, func(context.Context) (bool, error) {
+		logs, err := e2epod.GetPodLogs(context.TODO(), fr.ClientSet, ns, mcastServer3, mcastServer3)
+		if err != nil {
+			return false, fmt.Errorf("failed to get pod logs for %s: %w", mcastServer3, err)
+		}
+		return strings.Contains(logs, "connected"), nil
+	})
+	if err != nil {
+		return fmt.Errorf("server3 did not receive multicast traffic: %w", err)
+	}
 
+	return nil
 }
 
-func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeInfo nodeInfo) {
+func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeInfo nodeInfo) error {
 	ginkgo.GinkgoHelper()
 	const (
 		mcastGroup           string = "224.1.1.1"
@@ -197,23 +212,29 @@ func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeIn
 	err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true /*immediate*/, func(context.Context) (bool, error) {
 		kubectlOut, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", multicastListenerPod, "--", "/bin/bash", "-c", "ls")
 		if err != nil {
-			framework.Failf("failed to retrieve multicast IGMP query: %v", err.Error())
+			return false, fmt.Errorf("failed to retrieve multicast IGMP query: %w", err)
 		}
-		if !strings.Contains(kubectlOut, tcpdumpFileName) {
-			return false, nil
-		}
-		return true, nil
+		return strings.Contains(kubectlOut, tcpdumpFileName), nil
 	})
 	if err != nil {
-		framework.Failf("failed to retrieve multicast IGMP query: %v", err.Error())
+		return fmt.Errorf("failed to retrieve multicast IGMP query within the expected time: %w", err)
 	}
 
 	ginkgo.By("verifying that the IGMP query has been received")
 	// ovn-k leaves both mcast_idle_timeout and mcast_query_interval to default which means that
 	// ovn-controller will send IGMP queries every 150 seconds.
-	gomega.Eventually(func() (string, error) {
-		return e2ekubectl.RunKubectl(f.Namespace.Name, "exec", multicastListenerPod, "--", "/bin/bash", "-c", fmt.Sprintf("grep igmp %s", tcpdumpFileName))
-	}, 2*150*time.Second, 5*time.Second).Should(gomega.ContainSubstring("igmp"), "Failed to retrieve multicast IGMP query within the expected time")
+	err = wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 2*150*time.Second, true, func(context.Context) (bool, error) {
+		output, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", multicastListenerPod, "--", "/bin/bash", "-c", fmt.Sprintf("grep igmp %s", tcpdumpFileName))
+		if err != nil {
+			return false, fmt.Errorf("failed to receive multicast IGMP query: %w", err)
+		}
+		return strings.Contains(output, "igmp"), nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to receive multicast IGMP query within the expected time: %w", err)
+	}
+
+	return nil
 }
 
 func enableMulticastForNamespace(fr *framework.Framework) {

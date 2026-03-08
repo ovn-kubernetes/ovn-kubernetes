@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubectl/pkg/util/podutils"
@@ -903,7 +904,8 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
-				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
+				err = testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
+				Expect(err).NotTo(HaveOccurred())
 			},
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
@@ -938,7 +940,8 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
-				testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
+				err = testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
+				Expect(err).NotTo(HaveOccurred())
 			},
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
@@ -2406,6 +2409,24 @@ func filterL3Subnets(cs clientset.Interface, l3Subnets []udnv1.Layer3Subnet) []u
 	return filteredL3Subnets
 }
 
+func matchL3SubnetsByIPFamilies(families sets.Set[utilnet.IPFamily], in ...udnv1.Layer3Subnet) (out []udnv1.Layer3Subnet) {
+	for _, subnet := range in {
+		if families.Has(utilnet.IPFamilyOfCIDRString(string(subnet.CIDR))) {
+			out = append(out, subnet)
+		}
+	}
+	return
+}
+
+func matchL2SubnetsByIPFamilies(families sets.Set[utilnet.IPFamily], in ...udnv1.CIDR) (out []udnv1.CIDR) {
+	for _, subnet := range in {
+		if families.Has(utilnet.IPFamilyOfCIDRString(string(subnet))) {
+			out = append(out, subnet)
+		}
+	}
+	return
+}
+
 func generateCIDRforClusterUDN(cs clientset.Interface, v4, v6 string) string {
 	cidr := `[{cidr: ` + v4 + `}]`
 	if isIPv6Supported(cs) && isIPv4Supported(cs) {
@@ -2549,4 +2570,21 @@ func unmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[strin
 		}
 	}
 	return podNetworks, nil
+}
+
+func getNetworkSubnetsFromSpec(networkSpec *udnv1.NetworkSpec) []string {
+	var subnets []string
+	switch {
+	case networkSpec.Layer2 != nil:
+		for _, cidr := range networkSpec.Layer2.Subnets {
+			subnets = append(subnets, string(cidr))
+		}
+	case networkSpec.Layer3 != nil:
+		for _, subnet := range networkSpec.Layer3.Subnets {
+			subnets = append(subnets, string(subnet.CIDR))
+		}
+	default:
+		panic("unsupported network type")
+	}
+	return subnets
 }
