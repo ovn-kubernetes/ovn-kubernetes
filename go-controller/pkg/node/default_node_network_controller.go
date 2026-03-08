@@ -135,6 +135,8 @@ type DefaultNodeNetworkController struct {
 
 	udnHostIsolationManager *UDNHostIsolationManager
 
+	masqReconciler *masqueradeReconciler
+
 	nodeAddress net.IP
 	sbZone      string
 
@@ -159,7 +161,23 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
 			cnnci.watchFactory.PodCoreInformer(), cnnci.name, cnnci.recorder)
 	}
-	c.linkManager = linkmanager.NewController(cnnci.name, config.IPv4Mode, config.IPv6Mode, c.updateGatewayMAC)
+	c.masqReconciler = &masqueradeReconciler{
+		routeManager: routeManager,
+		gwIface:      config.Gateway.Interface,
+		nodeName:     cnnci.name,
+		watchFactory: cnnci.watchFactory,
+	}
+	c.linkManager = linkmanager.NewController(cnnci.name, config.IPv4Mode, config.IPv6Mode, func(link netlink.Link) error {
+		if err := c.updateGatewayMAC(link); err != nil {
+			return err
+		}
+		if c.Gateway != nil && c.masqReconciler.gwIface != "" && link.Attrs().Name == c.masqReconciler.gwIface {
+			if err := c.masqReconciler.ensure(); err != nil {
+				klog.Errorf("Masquerade reconciler on link event: %v", err)
+			}
+		}
+		return nil
+	})
 	return c
 }
 
@@ -964,6 +982,22 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	start := time.Now()
 	if err := waiter.Wait(); err != nil {
 		return err
+	}
+	// Set masquerade IP reconciliation callback for all modes except DPU.
+	// DPU mode does not configure masquerade resources.
+	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+		gw, ok := nc.Gateway.(*gateway)
+		if !ok {
+			return fmt.Errorf("unexpected gateway type %T, expected *gateway", nc.Gateway)
+		}
+		if gw.nodeIPManager == nil {
+			return fmt.Errorf("node IP manager not initialized for gateway")
+		}
+		gw.nodeIPManager.OnMasqueradeIPChanged = func() {
+			if err := nc.masqReconciler.ensure(); err != nil {
+				klog.Errorf("Masquerade reconciler on masquerade IP change: %v", err)
+			}
+		}
 	}
 	err = nc.Gateway.Start()
 	if err != nil {

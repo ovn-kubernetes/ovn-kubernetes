@@ -41,7 +41,13 @@ type addressManager struct {
 	nodePrimaryAddr net.IP
 	gatewayBridge   *bridgeconfig.BridgeConfiguration
 
-	OnChanged func()
+	OnChanged             func()
+	OnMasqueradeIPChanged func()
+	// gatewayIfIndex caches the link index of config.Gateway.Interface.
+	// Used in DPUHost mode to filter address events to only the gateway
+	// interface. Refreshed in sync() every 30s; all access is from the
+	// runInternal goroutine so no synchronization is needed.
+	gatewayIfIndex int
 	sync.Mutex
 }
 
@@ -55,14 +61,15 @@ func newAddressManager(nodeName string, k kube.Interface, mgmtPort managementpor
 // reproducibility of unit tests.
 func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtPort managementport.Interface, watchFactory factory.NodeWatchFactory, gwBridge *bridgeconfig.BridgeConfiguration, useNetlink bool) *addressManager {
 	mgr := &addressManager{
-		nodeName:      nodeName,
-		watchFactory:  watchFactory,
-		cidrs:         sets.New[string](),
-		mgmtPort:      mgmtPort,
-		gatewayBridge: gwBridge,
-		OnChanged:     func() {},
-		useNetlink:    useNetlink,
-		syncPeriod:    30 * time.Second,
+		nodeName:              nodeName,
+		watchFactory:          watchFactory,
+		cidrs:                 sets.New[string](),
+		mgmtPort:              mgmtPort,
+		gatewayBridge:         gwBridge,
+		OnChanged:             func() {},
+		OnMasqueradeIPChanged: func() {},
+		useNetlink:            useNetlink,
+		syncPeriod:            30 * time.Second,
 	}
 	mgr.nodeAnnotator = kube.NewNodeAnnotator(k, nodeName)
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
@@ -135,7 +142,9 @@ func (c *addressManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) {
 		return
 	}
 
-	c.addHandlerForAddrChange()
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+		c.addHandlerForAddrChange()
+	}
 	doneWg.Add(1)
 	go func() {
 		c.runInternal(stopChan, c.getNetlinkAddrSubFunc(stopChan))
@@ -166,6 +175,16 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 			if !ok {
 				if subscribed, addrChan, err = subscribe(); err != nil {
 					klog.Errorf("Error during netlink re-subscribe due to channel closing for IP Manager: %v", err)
+				}
+				continue
+			}
+			if a.LinkAddress.IP != nil && util.IsAddressReservedForInternalUse(a.LinkAddress.IP) {
+				c.reconcileMasqueradeResources()
+				continue
+			}
+			if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+				if c.gatewayIfIndex != 0 && a.LinkIndex == c.gatewayIfIndex {
+					c.reconcileMasqueradeResources()
 				}
 				continue
 			}
@@ -474,8 +493,30 @@ func (c *addressManager) isValidNodeIP(addr net.IP, linkIndex int) bool {
 	return true
 }
 
+func (c *addressManager) reconcileMasqueradeResources() {
+	c.OnMasqueradeIPChanged()
+	c.refreshGatewayIfIndex()
+}
+
+func (c *addressManager) refreshGatewayIfIndex() {
+	if config.Gateway.Interface == "" {
+		return
+	}
+	link, err := util.GetNetLinkOps().LinkByName(config.Gateway.Interface)
+	if err != nil {
+		klog.V(5).Infof("Gateway interface %s not found, resetting cached index: %v", config.Gateway.Interface, err)
+		c.gatewayIfIndex = 0
+		return
+	}
+	c.gatewayIfIndex = link.Attrs().Index
+}
+
 func (c *addressManager) sync() {
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		return
+	}
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		c.reconcileMasqueradeResources()
 		return
 	}
 
@@ -517,6 +558,8 @@ func (c *addressManager) sync() {
 		}
 		c.OnChanged()
 	}
+	c.OnMasqueradeIPChanged()
+	c.refreshGatewayIfIndex()
 }
 
 // getSecondaryHostEgressIPs returns the set of egress IPs that are assigned to standard linux interfaces (non ovs type). The
