@@ -12,12 +12,12 @@ require (
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	github.com/pkg/errors v0.9.1
-	golang.org/x/sync v0.17.0
+	golang.org/x/sync v0.18.0
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
 	k8s.io/klog v1.0.0
-	k8s.io/kubernetes v1.34.1
+	k8s.io/kubernetes v1.34.2
 	k8s.io/pod-security-admission v0.34.1
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 )
@@ -120,13 +120,13 @@ require (
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.43.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
-	golang.org/x/net v0.46.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/term v0.36.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/term v0.37.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250303144028-a0af3efb3deb // indirect
@@ -160,7 +160,7 @@ require (
 require (
 	github.com/containernetworking/plugins v1.2.0
 	github.com/coreos/butane v0.18.0
-	github.com/docker/docker v26.1.5+incompatible
+	github.com/docker/docker v28.0.0+incompatible
 	github.com/google/goexpect v0.0.0-20210430020637-ab937bf7fd6f
 	github.com/onsi/ginkgo v1.16.5
 	github.com/openshift-kni/k8sreporter v1.0.6
