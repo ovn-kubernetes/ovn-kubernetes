@@ -29,6 +29,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const PmdPrefix string = "pmd"
+
 // These variables are meant to be used in unit tests
 var tickDuration time.Duration = 1 * time.Second
 var getOvsVSwitchdPIDFn func() (string, error) = util.GetOvsVSwitchdPID
@@ -179,7 +181,7 @@ func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet) error {
 	}
 
 	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity", ovsVSwitchdPID)
-	return setProcessCPUAffinity(ovsVSwitchdPID, set)
+	return setProcessCPUAffinity(ovsVSwitchdPID, set, true)
 }
 
 func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
@@ -190,7 +192,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 	}
 
 	klog.V(5).Infof("Managing ovsdb-server[%s] daemon CPU affinity", ovsDBserverPID)
-	return setProcessCPUAffinity(ovsDBserverPID, set)
+	return setProcessCPUAffinity(ovsDBserverPID, set, false)
 }
 
 // setProcessCPUAffinity sets the CPU affinity of a target process and all its threads
@@ -205,6 +207,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 // Parameters:
 //   - targetPIDStr: string representation of the target process ID
 //   - set: pointer to the desired CPU set; if empty, current process affinity is used
+//   - skipPmds: whether to try to skip PMD threads from affinity setting or not
 //
 // Returns:
 //   - error: any error encountered during PID conversion, affinity retrieval, or setting
@@ -212,7 +215,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 // The function skips setting affinity if the target process already has the desired
 // CPU affinity. Individual thread affinity setting failures are logged as warnings
 // but don't stop the overall operation.
-func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
+func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet, skipPmds bool) error {
 
 	targetPID, err := strconv.Atoi(targetPIDStr)
 	if err != nil {
@@ -247,6 +250,9 @@ func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
 
 	klog.Infof("Setting CPU affinity of PID(%d) (ntasks=%d) to %s, was %s", targetPID, len(taskIDs), printCPUSet(desiredProcessCPUs), printCPUSet(targetProcessCPUs))
 	for _, taskID := range taskIDs {
+		if skipPmds && isPmdThread(taskID) {
+			continue
+		}
 		err = unix.SchedSetaffinity(taskID, &desiredProcessCPUs)
 		if err != nil {
 			// The task may have been stopped, don't break the loop and continue setting CPU affinity on other tasks.
@@ -301,6 +307,15 @@ func printCPUSet(cpus unix.CPUSet) string {
 		result.WriteString(",")
 	}
 	return strings.TrimRight(result.String(), ",")
+}
+
+func isPmdThread(tid int) bool {
+	threadName, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", tid))
+	if err != nil {
+		klog.Errorf("Unable to get name of task ID %d", tid)
+		return false
+	}
+	return strings.HasPrefix(string(threadName), PmdPrefix)
 }
 
 // getThreadsOfProcess returns the list of thread IDs of the given process
