@@ -35,6 +35,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -103,6 +104,13 @@ func getBaseNFTRules(mgmtPort string) string {
 
 func getBaseLGWNFTablesRules(mgmtPort string) string {
 	return getBaseNFTRules(mgmtPort) + baseLGWNFTablesRules
+}
+
+func getGatewayBridge(gw *gateway) *bridgeconfig.BridgeConfiguration {
+	if gw == nil || gw.openflowManager == nil {
+		return nil
+	}
+	return gw.openflowManager.defaultBridge
 }
 
 func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
@@ -829,6 +837,11 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Expect(err).NotTo(HaveOccurred())
 			err = sharedGw.Init(stop, wg)
 			Expect(err).NotTo(HaveOccurred())
+
+			// check that the representor port is set correctly
+			gatewayBridge := getGatewayBridge(sharedGw)
+			Expect(gatewayBridge).NotTo(BeNil())
+			Expect(gatewayBridge.GetGatewayIfaceRep()).To(Equal(hostRep))
 
 			err = nodeAnnotator.Run()
 			Expect(err).NotTo(HaveOccurred())
