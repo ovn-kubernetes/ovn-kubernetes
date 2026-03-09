@@ -409,7 +409,7 @@ func (b *BridgeConfiguration) ConfigureBridgePorts() error {
 		if err != nil {
 			return err
 		}
-
+		b.gwIfaceRep = hostRep
 		b.ofPortHost, stderr, err = util.RunOVSVsctl("get", "interface", hostRep, "ofport")
 		if err != nil {
 			return fmt.Errorf("failed to get ofport of host interface %s, stderr: %q, error: %v",
