@@ -23,6 +23,7 @@ import (
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -1950,10 +1951,18 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			vtepSubnets := []string{kindV4Subnet}
 			framework.Logf("Networks used for EVPN VTEPs: %v", vtepSubnets)
-			macVRFAgnhostName := networkName + "-macvrf-agnhost"
-			macVRFNetworkName := macVRFAgnhostName
-			ipVRFAgnhostName := networkName + "-ipvrf-agnhost"
-			ipVRFNetworkName := ipVRFAgnhostName
+			macVRFContainer := infraapi.ExternalContainer{
+				Name:    networkName + "-macvrf-agnhost",
+				Image:   images.AgnHost(),
+				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
+			}
+			macVRFNetworkName := macVRFContainer.Name
+			ipVRFContainer := infraapi.ExternalContainer{
+				Name:    networkName + "-ipvrf-agnhost",
+				Image:   images.AgnHost(),
+				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", agnhostHTTPPort)},
+			}
+			ipVRFNetworkName := ipVRFContainer.Name
 			gomega.Expect(
 				runEVPNNetworkAndServers(
 					f,
@@ -1964,17 +1973,18 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					ipVRFAgnhostSubnets,
 					vtepSubnets,
 					bgpASN,
-					macVRFAgnhostName,
+					vtepv1.VTEPModeManaged,
+					&macVRFContainer,
 					macVRFNetworkName,
-					ipVRFAgnhostName,
+					&ipVRFContainer,
 					ipVRFNetworkName,
 				),
 			).To(gomega.Succeed())
 			if networkSpec.EVPN.MACVRF != nil {
-				servers = append(servers, macVRFAgnhostName)
+				servers = append(servers, macVRFContainer.Name)
 			}
 			if networkSpec.EVPN.IPVRF != nil {
-				servers = append(servers, ipVRFAgnhostName)
+				servers = append(servers, ipVRFContainer.Name)
 			}
 		}
 
