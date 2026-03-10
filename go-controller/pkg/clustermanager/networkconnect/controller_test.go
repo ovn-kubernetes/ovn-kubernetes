@@ -685,8 +685,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(nsName + "/" + nadName)
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[nsName] = mutableNetInfo
 				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
+				fakeNM.Unlock()
 
 				// Ensure namespace and NAD are visible in informer caches before CNC creation.
 				gomega.Eventually(func() bool {
@@ -697,8 +699,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					_, err := controller.nadLister.NetworkAttachmentDefinitions(nsName).Get(nadName)
 					return err == nil
 				}).WithTimeout(2 * time.Second).Should(gomega.BeTrue())
+
+				fakeNM.Lock()
 				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
-				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
+				fakeNM.Unlock()
 
 				// Create CNC with Primary UDN selector
 				cnc := testCNC(cncName, []apitypes.NetworkSelector{
@@ -759,8 +763,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo1 := util.NewMutableNetInfo(netInfo1)
 				mutableNetInfo1.AddNADs("frontend-a/primary-udn")
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks["frontend-a"] = mutableNetInfo1
 				fakeNM.NADNetworks["frontend-a/primary-udn"] = netInfo1
+				fakeNM.Unlock()
 
 				// Create second namespace and UDN
 				ns2 := &corev1.Namespace{
@@ -786,8 +792,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo2 := util.NewMutableNetInfo(netInfo2)
 				mutableNetInfo2.AddNADs("frontend-b/primary-udn")
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks["frontend-b"] = mutableNetInfo2
 				fakeNM.NADNetworks["frontend-b/primary-udn"] = netInfo2
+				fakeNM.Unlock()
 
 				// Create a non-matching namespace
 				ns3 := &corev1.Namespace{
@@ -881,8 +889,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(nsName + "/" + nadName)
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[nsName] = mutableNetInfo
 				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
+				fakeNM.Unlock()
 
 				// Ensure namespace and NAD are visible in informer caches before CNC creation.
 				gomega.Eventually(func() bool {
@@ -956,8 +966,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(nsName + "/" + nadName)
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[nsName] = mutableNetInfo
 				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
+				fakeNM.Unlock()
 
 				// Ensure namespace and NAD are visible in informer caches before CNC creation.
 				gomega.Eventually(func() bool {
@@ -1727,8 +1739,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo1 := util.NewMutableNetInfo(netInfo1)
 				mutableNetInfo1.AddNADs("pudn1-ns/primary-udn")
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks["pudn1-ns"] = mutableNetInfo1
 				fakeNM.NADNetworks["pudn1-ns/primary-udn"] = netInfo1
+				fakeNM.Unlock()
 
 				ns2 := newTestNamespace("pudn2-ns", map[string]string{
 					"cnc1-pudn":                     "true",
@@ -1748,8 +1762,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo2 := util.NewMutableNetInfo(netInfo2)
 				mutableNetInfo2.AddNADs("pudn2-ns/primary-udn")
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks["pudn2-ns"] = mutableNetInfo2
 				fakeNM.NADNetworks["pudn2-ns/primary-udn"] = netInfo2
+				fakeNM.Unlock()
 
 				// ============================================================
 				// Create NADs for CNC2 (1 CUDN + 1 P-UDN)
@@ -1777,8 +1793,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo3 := util.NewMutableNetInfo(netInfo3)
 				mutableNetInfo3.AddNADs("pudn3-ns/primary-udn")
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks["pudn3-ns"] = mutableNetInfo3
 				fakeNM.NADNetworks["pudn3-ns/primary-udn"] = netInfo3
+				fakeNM.Unlock()
 
 				// ============================================================
 				// Create CNCs

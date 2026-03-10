@@ -111,6 +111,7 @@ nav:
       - AdminPolicyBasedExternalRoutes: api-reference/admin-epbr-api-spec.md
       - UserDefinedNetwork: api-reference/userdefinednetwork-api-spec.md
       - RouteAdvertisements: api-reference/routeadvertisements-api-spec.md
+      - ClusterNetworkConnect: api-reference/clusternetworkconnect-api-spec.md
   - Features:
     - Universal Connectivity:
       - UserDefinedNetwork: features/user-defined-networks/user-defined-networks.md

@@ -244,6 +244,10 @@ spec:
           value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
         - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
           value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: {{ hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false | quote }}
+        - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
+          value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
         - name: OVN_NO_OVERLAY_ENABLE
           value: {{ default "false" .Values.global.enableNoOverlay | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE

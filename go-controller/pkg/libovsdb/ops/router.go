@@ -1012,7 +1012,8 @@ func RemoveLoadBalancersFromLogicalRouterOps(nbClient libovsdbclient.Client, ops
 
 func getNATMutableFields(nat *nbdb.NAT) []interface{} {
 	return []interface{}{&nat.Type, &nat.ExternalIP, &nat.LogicalIP, &nat.LogicalPort, &nat.ExternalMAC,
-		&nat.ExternalIDs, &nat.Match, &nat.Options, &nat.ExternalPortRange, &nat.GatewayPort, &nat.Priority}
+		&nat.ExternalIDs, &nat.Match, &nat.Options, &nat.ExternalPortRange, &nat.GatewayPort, &nat.Priority,
+		&nat.ExemptedExtIPs}
 }
 
 func buildNAT(
@@ -1076,6 +1077,22 @@ func BuildSNATWithMatch(
 		logicalIPStr = logicalIP.String()
 	}
 	return buildNAT(nbdb.NATTypeSNAT, externalIPStr, logicalIPStr, logicalPort, "", externalIDs, match)
+}
+
+// BuildSNATWithExemptedExtIPs builds a logical router SNAT with exempted external IPs
+func BuildSNATWithExemptedExtIPs(
+	externalIP *net.IP,
+	logicalIP *net.IPNet,
+	logicalPort string,
+	externalIDs map[string]string,
+	match string,
+	exemptedExtIPs string,
+) *nbdb.NAT {
+	nat := BuildSNATWithMatch(externalIP, logicalIP, logicalPort, externalIDs, match)
+	if exemptedExtIPs != "" {
+		nat.ExemptedExtIPs = &exemptedExtIPs
+	}
+	return nat
 }
 
 // BuildDNATAndSNAT builds a logical router DNAT/SNAT

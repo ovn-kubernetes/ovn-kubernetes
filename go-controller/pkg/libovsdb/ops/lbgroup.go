@@ -29,6 +29,16 @@ func CreateOrUpdateLoadBalancerGroupOps(nbClient libovsdbclient.Client, ops []ov
 	return ops, nil
 }
 
+// CreateOrUpdateLoadBalancerGroup creates or updates the provided load balancer group
+func CreateOrUpdateLoadBalancerGroup(nbClient libovsdbclient.Client, group *nbdb.LoadBalancerGroup) error {
+	ops, err := CreateOrUpdateLoadBalancerGroupOps(nbClient, nil, group)
+	if err != nil {
+		return err
+	}
+	_, err = TransactAndCheck(nbClient, ops)
+	return err
+}
+
 // DeleteLoadBalancerGroupsOps DeleteLoadBalncerGroupOps creates the operations for deleting load balancer groups
 func DeleteLoadBalancerGroupsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, groups ...*nbdb.LoadBalancerGroup) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(groups))
@@ -104,6 +114,25 @@ func RemoveLoadBalancersFromGroupOps(nbClient libovsdbclient.Client, ops []ovsdb
 }
 
 type loadBalancerGroupPredicate func(*nbdb.LoadBalancerGroup) bool
+
+// GetLoadBalancerGroup looks up a load balancer group from the cache by name (indexed lookup).
+func GetLoadBalancerGroup(nbClient libovsdbclient.Client, lbg *nbdb.LoadBalancerGroup) (*nbdb.LoadBalancerGroup, error) {
+	found := []*nbdb.LoadBalancerGroup{}
+	opModel := operationModel{
+		Model:          lbg,
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(nbClient)
+	err := m.Lookup(opModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
 
 // FindLoadBalancerGroupsWithPredicate looks up load balancer groups from the
 // cache based on a given predicate

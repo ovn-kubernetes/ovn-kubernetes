@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -183,10 +184,33 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				}
 			}
 
-			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
-			podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
-			framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
-			framework.Logf("Client pod IP address v4=%s, v6=%s", podv4IP, podv6IP)
+			var expectedV4IP, expectedV6IP string
+			snatEnabled := isNoOverlayOutboundSNATEnabled(f)
+			
+			if snatEnabled {
+				ginkgo.By("queries to the external server are SNATed (uses node IP)")
+				// Get the node where the client pod is running
+				clientPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPodNodeName, metav1.GetOptions{})
+				framework.ExpectNoError(err, fmt.Sprintf("Getting node %s failed: %v", clientPodNodeName, err))
+				
+				// Get node IPs
+				nodeV4Addrs := e2enode.GetAddressesByTypeAndFamily(clientPodNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
+				nodeV6Addrs := e2enode.GetAddressesByTypeAndFamily(clientPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
+				if len(nodeV4Addrs) > 0 {
+					expectedV4IP = nodeV4Addrs[0]
+				}
+				if len(nodeV6Addrs) > 0 {
+					expectedV6IP = nodeV6Addrs[0]
+				}
+				framework.Logf("Client pod node IP address v4=%s, v6=%s", expectedV4IP, expectedV6IP)
+			} else {
+				ginkgo.By("queries to the external server are not SNATed (uses podIP)")
+				podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
+				framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
+				expectedV4IP = podv4IP
+				expectedV6IP = podv6IP
+				framework.Logf("Client pod IP address v4=%s, v6=%s", expectedV4IP, expectedV6IP)
+			}
 			for _, serverContainerIP := range serverContainerIPs {
 				ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
 					"and expecting to receive the same payload", serverContainerIP))
@@ -201,16 +225,16 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 					framework.Poll,
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
-				expectedPodIP := podv4IP
+				expectedIP := expectedV4IP
 				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
-					expectedPodIP = podv6IP
+					expectedIP = expectedV6IP
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
-					gomega.Expect(outputIP).To(gomega.Equal(expectedPodIP),
+					gomega.Expect(outputIP).To(gomega.Equal(expectedIP),
 						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
 				} else {
 					// Original IPv4 handling
-					gomega.Expect(strings.Split(stdout, ":")[0]).To(gomega.Equal(expectedPodIP),
+					gomega.Expect(strings.Split(stdout, ":")[0]).To(gomega.Equal(expectedIP),
 						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
 				}
 			}
@@ -381,7 +405,18 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}
 			framework.Logf("hostNetworkedPodNodeIPs: %v", hostNetworkedPodNodeIPs)
 
-			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
+			// When SNAT is enabled, external traffic uses node IPs even when advertised
+			snatEnabled := isNoOverlayOutboundSNATEnabled(f)
+			expectedExternalSourceIPs := clientPodIPs
+			if snatEnabled {
+				expectedExternalSourceIPs = clientPodNodeIPs
+			}
+
+			if snatEnabled {
+				ginkgo.By("With default network being advertised, queries to the external server are SNATed (uses nodeIP)")
+			} else {
+				ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
+			}
 			gomega.Eventually(func() error {
 				for _, serverIP := range serverContainerIPs {
 					if serverIP == "" {
@@ -389,9 +424,9 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 					}
 					isV6 := utilnet.IsIPv6String(serverIP)
 					var expectedIP string
-					for _, podIP := range clientPodIPs {
-						if podIP != "" && utilnet.IsIPv6String(podIP) == isV6 {
-							expectedIP = podIP
+					for _, srcIP := range expectedExternalSourceIPs {
+						if srcIP != "" && utilnet.IsIPv6String(srcIP) == isV6 {
+							expectedIP = srcIP
 							break
 						}
 					}
@@ -480,7 +515,11 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				}
 
 				// repeat pod to external and pod to second node tests
-				ginkgo.By("With default network being advertised again, queries to the external server are not SNATed (uses podIP)")
+				if snatEnabled {
+					ginkgo.By("With default network being advertised again, queries to the external server are SNATed (uses nodeIP)")
+				} else {
+					ginkgo.By("With default network being advertised again, queries to the external server are not SNATed (uses podIP)")
+				}
 				gomega.Eventually(func() error {
 					for _, serverIP := range serverContainerIPs {
 						if serverIP == "" {
@@ -488,9 +527,9 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 						}
 						isV6 := utilnet.IsIPv6String(serverIP)
 						var expectedIP string
-						for _, podIP := range clientPodIPs {
-							if podIP != "" && utilnet.IsIPv6String(podIP) == isV6 {
-								expectedIP = podIP
+						for _, srcIP := range expectedExternalSourceIPs {
+							if srcIP != "" && utilnet.IsIPv6String(srcIP) == isV6 {
+								expectedIP = srcIP
 								break
 							}
 						}
@@ -3027,6 +3066,18 @@ func getBGPServerContainerIPs(f *framework.Framework) (serverContainerIPs []stri
 		serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
 	}
 	return
+}
+
+// isNoOverlayOutboundSNATEnabled reads the ovnkube-config configmap to determine
+// whether outbound SNAT is enabled in no-overlay mode.
+func isNoOverlayOutboundSNATEnabled(f *framework.Framework) bool {
+	cm, err := f.ClientSet.CoreV1().ConfigMaps(deploymentconfig.Get().OVNKubernetesNamespace()).Get(
+		context.TODO(), "ovnkube-config", metav1.GetOptions{})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "must get ovnkube-config configmap")
+	conf, ok := cm.Data["ovnkube.conf"]
+	gomega.Expect(ok).To(gomega.BeTrue(), "ovnkube.conf key must be present in ovnkube-config configmap")
+	re := regexp.MustCompile(`(?m)^\s*outbound-snat\s*=\s*enabled\s*$`)
+	return re.MatchString(conf)
 }
 
 // checkL3NodePodRoute checks that the BGP route for the given node's pod subnet is present in the FRR router.

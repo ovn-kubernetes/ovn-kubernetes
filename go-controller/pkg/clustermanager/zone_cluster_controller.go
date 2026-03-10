@@ -107,7 +107,7 @@ func (zcc *zoneClusterController) initRetryFramework() {
 		},
 	}
 
-	zcc.retryNodes = objretry.NewRetryFramework(zcc.stopChan, zcc.wg, zcc.watchFactory, resourceHandler)
+	zcc.retryNodes = objretry.NewRetryFramework("zoneClusterController", zcc.stopChan, zcc.wg, zcc.watchFactory, resourceHandler)
 }
 
 // Start starts the zone cluster controller to watch the kubernetes nodes

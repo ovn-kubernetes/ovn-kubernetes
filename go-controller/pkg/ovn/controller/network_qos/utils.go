@@ -75,10 +75,3 @@ func addressSetToMatchString(addrset addressset.AddressSet, dir trafficDirection
 	}
 	return output
 }
-
-func getNamespaceAddressSet(addressSetFactory addressset.AddressSetFactory, controllerName, namespace string) (addressset.AddressSet, error) {
-	dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, controllerName, map[libovsdbops.ExternalIDKey]string{
-		libovsdbops.ObjectNameKey: namespace,
-	})
-	return addressSetFactory.EnsureAddressSet(dbIDs)
-}

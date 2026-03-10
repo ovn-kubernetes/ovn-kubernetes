@@ -311,6 +311,7 @@ func (c *contextKind) deleteExternalContainer(container api.ExternalContainer) e
 			return false, fmt.Errorf("failed to check if external container (%s) is deleted: %v (%s)", container, err, stdOut)
 		}
 		if string(stdOut) != "" {
+			framework.Logf("Waiting for external container %s to be deleted", container.Name)
 			return false, nil
 		}
 		return true, nil
@@ -585,12 +586,14 @@ func (c *contextKind) cleanUp() error {
 	c.cleanUpFns = nil
 	// detach network(s) from nodes
 	for _, na := range c.cleanUpNetworkAttachments.List {
+		framework.Logf("Detaching network %s from %s", na.Network.Name(), na.Instance)
 		if err := c.detachNetwork(na.Network, na.Instance); err != nil && !errors.Is(err, api.NotFound) {
 			errs = append(errs, err)
 		}
 	}
 	// remove containers
 	for _, container := range c.cleanUpContainers {
+		framework.Logf("Deleting external container %s", container.Name)
 		if err := c.deleteExternalContainer(container); err != nil && !errors.Is(err, api.NotFound) {
 			errs = append(errs, err)
 		}
@@ -598,6 +601,7 @@ func (c *contextKind) cleanUp() error {
 	c.cleanUpContainers = nil
 	// delete secondary networks
 	for _, network := range c.cleanUpNetworks.List {
+		framework.Logf("Deleting network %s", network.Name())
 		if err := c.deleteNetwork(network); err != nil && !errors.Is(err, api.NotFound) {
 			errs = append(errs, err)
 		}

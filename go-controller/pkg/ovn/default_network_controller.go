@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	anpcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	apbroutecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	efcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressfirewall"
@@ -150,10 +151,11 @@ func NewDefaultNetworkController(
 	routeImportManager routeimport.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 ) (*DefaultNetworkController, error) {
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, routeImportManager, observManager, eIPController, portCache)
+	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, routeImportManager, observManager, eIPController, portCache, addressSetManager)
 }
 
 func newDefaultNetworkControllerCommon(
@@ -166,6 +168,7 @@ func newDefaultNetworkControllerCommon(
 	observManager *observability.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 ) (*DefaultNetworkController, error) {
 	defaultNetInfo := &util.DefaultNetInfo{}
 
@@ -220,7 +223,6 @@ func newDefaultNetworkControllerCommon(
 			addressSetFactory:           addressSetFactory,
 			networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 			sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-			podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 			stopChan:                    defaultStopChan,
 			wg:                          defaultWg,
 			localZoneNodes:              &sync.Map{},
@@ -229,6 +231,7 @@ func newDefaultNetworkControllerCommon(
 			observManager:               observManager,
 			networkManager:              networkManager,
 			routeImportManager:          routeImportManager,
+			addressSetManager:           addressSetManager,
 		},
 		externalGatewayRouteInfo:   apbExternalRouteController.ExternalGWRouteInfoCache,
 		eIPC:                       eIPController,
@@ -288,6 +291,7 @@ func (oc *DefaultNetworkController) newRetryFramework(
 		EventHandler:           eventHandler,
 	}
 	r := retry.NewRetryFramework(
+		oc.GetNetworkName()+"/networkController",
 		oc.stopChan,
 		oc.wg,
 		oc.watchFactory,
@@ -299,11 +303,6 @@ func (oc *DefaultNetworkController) newRetryFramework(
 func (oc *DefaultNetworkController) syncDb() error {
 	var err error
 	// sync shared resources
-	// pod selector address sets
-	err = oc.cleanupPodSelectorAddressSets()
-	if err != nil {
-		return fmt.Errorf("cleaning up stale pod selector address sets for network %v failed : %w", oc.GetNetworkName(), err)
-	}
 	// LRP syncer must only be run once and because default controller always runs, it can perform LRP updates.
 	lrpSyncer := logical_router_policy.NewLRPSyncer(oc.nbClient, oc.controllerName)
 	if err = lrpSyncer.Sync(); err != nil {

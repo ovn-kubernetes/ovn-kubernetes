@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	svccontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
@@ -347,6 +348,7 @@ func NewLayer3UserDefinedNetworkController(
 	routeImportManager routeimport.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 ) (*Layer3UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -367,13 +369,13 @@ func NewLayer3UserDefinedNetworkController(
 				addressSetFactory:           addressSetFactory,
 				networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 				sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-				podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 				stopChan:                    stopChan,
 				wg:                          &sync.WaitGroup{},
 				localZoneNodes:              &sync.Map{},
 				cancelableCtx:               util.NewCancelableContext(),
 				networkManager:              networkManager,
 				routeImportManager:          routeImportManager,
+				addressSetManager:           addressSetManager,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -385,6 +387,7 @@ func NewLayer3UserDefinedNetworkController(
 		gatewayManagers:             sync.Map{},
 		eIPController:               eIPController,
 	}
+
 	if oc.IsPrimaryNetwork() && oc.eIPController != nil {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
 			oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
@@ -465,6 +468,7 @@ func (oc *Layer3UserDefinedNetworkController) newRetryFramework(
 		EventHandler:           eventHandler,
 	}
 	return retry.NewRetryFramework(
+		oc.GetNetworkName()+"/networkController",
 		oc.stopChan,
 		oc.wg,
 		oc.watchFactory,
@@ -593,6 +597,21 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	if config.OVNKubernetesFeature.EnableInterconnect {
 		if err = oc.zoneICHandler.Cleanup(); err != nil {
 			return fmt.Errorf("failed to delete interconnect transit switch of network %s: %v", netName, err)
+		}
+	}
+
+	// Delete all load balancers owned by this network to prevent orphaned LBs.
+	// When network is deleted, all switches and routers are also deleted, but load balancers are not.
+	// Load_Balancer is a root table in OVSDB, so rows are never auto-deleted
+	// when the switch or LB group referencing them is removed.
+	lbs, err := libovsdbops.FindLoadBalancersWithPredicate(oc.nbClient, func(lb *nbdb.LoadBalancer) bool {
+		return lb.ExternalIDs[types.NetworkExternalID] == netName
+	})
+	if err != nil {
+		klog.Errorf("Failed to find load balancers for network %q: %v", netName, err)
+	} else if len(lbs) > 0 {
+		if err := libovsdbops.DeleteLoadBalancers(oc.nbClient, lbs); err != nil {
+			klog.Errorf("Failed to delete load balancers on network %q: %v", netName, err)
 		}
 	}
 

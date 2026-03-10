@@ -464,7 +464,7 @@ func (c *Controller) syncService(key string) error {
 	}
 
 	// Build the abstract LB configs for this service
-	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices, c.nodeInfos, c.useLBGroups, c.useTemplates)
+	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices, c.nodeInfos, c.useLBGroups, c.useTemplates, c.netInfo)
 	klog.V(5).Infof("Built service %s LB cluster-wide configs for network=%s: %#v", key, c.netInfo.GetNetworkName(), clusterConfigs)
 	klog.V(5).Infof("Built service %s LB per-node configs for network=%s:  %#v", key, c.netInfo.GetNetworkName(), perNodeConfigs)
 	klog.V(5).Infof("Built service %s LB template configs for network=%s: %#v", key, c.netInfo.GetNetworkName(), templateConfigs)
@@ -602,10 +602,11 @@ func (c *Controller) skipService(name, namespace string) bool {
 	if util.IsNetworkSegmentationSupportEnabled() {
 		serviceNAD, err := c.networkManager.GetPrimaryNADForNamespace(namespace)
 		if err != nil {
-			// If the namespace requires a UDN that hasn't been processed yet, the default controller
-			// should skip this service; the UDN controller will handle it once ready.
+			// If the namespace's primary NAD state is unknown (e.g., NAD deleted during
+			// network recreation), all controllers must skip. The correct controller
+			// will process the service once the NAD is re-established and triggers a re-sync.
 			if util.IsInvalidPrimaryNetworkError(err) {
-				return c.netInfo.IsDefault()
+				return true
 			}
 			utilruntime.HandleError(fmt.Errorf("failed to retrieve network for service %s/%s: %w",
 				namespace, name, err))

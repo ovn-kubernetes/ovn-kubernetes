@@ -28,6 +28,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	svccontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
@@ -344,6 +345,7 @@ func NewLayer2UserDefinedNetworkController(
 	routeImportManager routeimport.Manager,
 	portCache *PortCache,
 	eIPController *EgressIPController,
+	addressSetManager *addresssetmanager.AddressSetManager,
 ) (*Layer2UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -381,13 +383,13 @@ func NewLayer2UserDefinedNetworkController(
 					addressSetFactory:           addressSetFactory,
 					networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 					sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-					podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 					stopChan:                    stopChan,
 					wg:                          &sync.WaitGroup{},
 					localZoneNodes:              &sync.Map{},
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
 					routeImportManager:          routeImportManager,
+					addressSetManager:           addressSetManager,
 				},
 			},
 		},
@@ -544,6 +546,21 @@ func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 		}
 	}
 
+	// Delete all load balancers owned by this network to prevent orphaned LBs
+	// When network is deleted, all switches and routers are also deleted, but load balancers are not.
+	// Load_Balancer is a root table in OVSDB, so rows are never auto-deleted
+	// when the switch or LB group referencing them is removed.
+	lbs, err := libovsdbops.FindLoadBalancersWithPredicate(oc.nbClient, func(lb *nbdb.LoadBalancer) bool {
+		return lb.ExternalIDs[types.NetworkExternalID] == networkName
+	})
+	if err != nil {
+		klog.Errorf("Failed to find load balancers for network %q: %v", networkName, err)
+	} else if len(lbs) > 0 {
+		if err := libovsdbops.DeleteLoadBalancers(oc.nbClient, lbs); err != nil {
+			klog.Errorf("Failed to delete load balancers on network %q: %v", networkName, err)
+		}
+	}
+
 	// remove load balancer groups
 	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
 		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
@@ -653,6 +670,7 @@ func (oc *Layer2UserDefinedNetworkController) newRetryFramework(
 		EventHandler:           eventHandler,
 	}
 	return retry.NewRetryFramework(
+		oc.GetNetworkName()+"/networkController",
 		oc.stopChan,
 		oc.wg,
 		oc.watchFactory,

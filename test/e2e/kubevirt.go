@@ -1210,11 +1210,12 @@ passwd:
 		}
 
 		iperfServerScript = `
-#!/bin/bash -xe
-iface=$(ifconfig  |grep flags |grep -v "eth0\|lo" | sed "s/: .*//")
+#!/bin/bash
+set -xe
+iface=$(ip -o link show | awk -F': ' '{print $2}' | grep -v "eth0\|lo" | head -1| sed "s#@.*##")
 iface=${iface:-eth0}
 
-ipv4=$(ifconfig $iface | grep "inet "|awk '{print $2}'| sed "s#/.*##")
+ipv4=$(ip -4 addr show dev $iface | awk '/inet / {print $2}' | sed "s#/.*##")
 if [ "$ipv4" != "" ]; then
 	iperf3 -s -D --bind $ipv4 --logfile /tmp/test_${ipv4}_iperf3.log
 	sleep 1
@@ -1226,7 +1227,7 @@ fi
 
 cnt=0
 while [ "$ipv6" == "" -a $cnt -lt 10 ]; do
-	ipv6=$(ifconfig $iface | grep inet6 |grep -v fe80 |awk '{print $2}'| sed "s#/.*##")
+	ipv6=$(ip -6 addr show dev $iface | awk '/inet6/ && !/fe80/ {print $2}' | sed "s#/.*##")
 	sleep 1
 	cnt=$((cnt+1))
 done
@@ -1273,7 +1274,7 @@ fi
 					if nse != nil {
 						pod.Annotations = networkSelectionElements(*nse)
 					}
-					pod.Spec.Containers[0].Image = images.IPerf3()
+					pod.Spec.Containers[0].Image = images.Netshoot()
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
 				})
 				if err != nil {
@@ -1854,9 +1855,9 @@ write_files:
 				externalContainerName := namespace + "-iperf"
 				externalContainerSpec := infraapi.ExternalContainer{
 					Name:    externalContainerName,
-					Image:   images.IPerf3(),
+					Image:   images.Netshoot(),
 					Network: providerNetwork,
-					CmdArgs: []string{"sleep infinity"},
+					CmdArgs: []string{"sleep", "infinity"},
 					ExtPort: externalContainerPort,
 				}
 				externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
@@ -1881,7 +1882,6 @@ write_files:
 
 				output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", fmt.Sprintf(`
 set -xe
-dnf install -y iproute
 ip route add %[1]s via %[2]s
 ip route add %[3]s via %[4]s
 `, cidrIPv4, frrExternalContainerInterface.GetIPv4(), cidrIPv6, frrExternalContainerInterface.GetIPv6())})

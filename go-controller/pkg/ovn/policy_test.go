@@ -17,7 +17,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	apimachinerytypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	utilnet "k8s.io/utils/net"
 
@@ -28,6 +27,7 @@ import (
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -43,35 +43,6 @@ func getFakeController(controllerName string) *DefaultNetworkController {
 		},
 	}
 	return controller
-}
-
-func newNetworkPolicy(name, namespace string, podSelector metav1.LabelSelector, ingress []knet.NetworkPolicyIngressRule,
-	egress []knet.NetworkPolicyEgressRule, policyTypes ...knet.PolicyType) *knet.NetworkPolicy {
-	policy := &knet.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			UID:       apimachinerytypes.UID(namespace),
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"name": name,
-			},
-		},
-		Spec: knet.NetworkPolicySpec{
-			PodSelector: podSelector,
-			PolicyTypes: policyTypes,
-			Ingress:     ingress,
-			Egress:      egress,
-		},
-	}
-	if policyTypes == nil {
-		if len(ingress) > 0 {
-			policy.Spec.PolicyTypes = append(policy.Spec.PolicyTypes, knet.PolicyTypeIngress)
-		}
-		if len(egress) > 0 {
-			policy.Spec.PolicyTypes = append(policy.Spec.PolicyTypes, knet.PolicyTypeEgress)
-		}
-	}
-	return policy
 }
 
 func getFakeBaseController(netInfo util.NetInfo) *BaseNetworkController {
@@ -303,7 +274,7 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 				// nil pod selector is equivalent to empty pod selector, which selects all
 				podSelector = &metav1.LabelSelector{}
 			}
-			peerIndex := getPodSelectorAddrSetDbIDs(getPodSelectorKey(podSelector, peer.NamespaceSelector, namespace), controllerName)
+			peerIndex := addresssetmanager.GetPodSelectorAddrSetDbIDs(podSelector, peer.NamespaceSelector, namespace, controllerName)
 			asv4, _ := addressset.GetHashNamesForAS(peerIndex)
 			hashedASNames = append(hashedASNames, asv4)
 		}
@@ -568,44 +539,9 @@ func getHairpinningACLsV4AndPortGroupForNetwork(netInfo util.NetInfo, ports []st
 	return []libovsdbtest.TestData{egressACL, ingressACL, clusterPortGroup}
 }
 
-func getMatchLabelsNetworkPolicy(policyName, netpolNamespace, peerNamespace, peerPodName string, ingress, egress bool) *knet.NetworkPolicy {
-	netPolPeer := knet.NetworkPolicyPeer{}
-	if peerPodName != "" {
-		netPolPeer.PodSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"name": peerPodName,
-			},
-		}
-	}
-	if peerNamespace != "" {
-		netPolPeer.NamespaceSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"name": peerNamespace,
-			},
-		}
-	}
-	var ingressRules []knet.NetworkPolicyIngressRule
-	if ingress {
-		ingressRules = []knet.NetworkPolicyIngressRule{
-			{
-				From: []knet.NetworkPolicyPeer{netPolPeer},
-			},
-		}
-	}
-	var egressRules []knet.NetworkPolicyEgressRule
-	if egress {
-		egressRules = []knet.NetworkPolicyEgressRule{
-			{
-				To: []knet.NetworkPolicyPeer{netPolPeer},
-			},
-		}
-	}
-	return newNetworkPolicy(policyName, netpolNamespace, metav1.LabelSelector{}, ingressRules, egressRules)
-}
-
 func getPortNetworkPolicy(policyName, namespace, labelName, labelVal string, tcpPort int32) *knet.NetworkPolicy {
 	tcpProtocol := corev1.ProtocolTCP
-	return newNetworkPolicy(policyName, namespace,
+	return ovntest.NewTestNetworkPolicy(policyName, namespace,
 		metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				labelName: labelVal,
@@ -627,8 +563,7 @@ func getPortNetworkPolicy(policyName, namespace, labelName, labelVal string, tcp
 
 // buildNetworkPolicyPeerAddressSet builds the addresssets for the networkpolicy peer provided
 func buildNetworkPolicyPeerAddressSets(namespaceName string, peer knet.NetworkPolicyPeer, ips ...string) (*nbdb.AddressSet, *nbdb.AddressSet) {
-	asName := getPodSelectorKey(peer.PodSelector, peer.NamespaceSelector, namespaceName)
-	dbIDs := getPodSelectorAddrSetDbIDs(asName, DefaultNetworkControllerName)
+	dbIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(peer.PodSelector, peer.NamespaceSelector, namespaceName, DefaultNetworkControllerName)
 	return addressset.GetTestDbAddrSets(dbIDs, ips)
 }
 
@@ -732,7 +667,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		pods []testPod, podLabels map[string]string, hostNetPods bool) {
 		var podsList []corev1.Pod
 		for _, testPod := range pods {
-			knetPod := newPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
+			knetPod := ovntest.NewPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
 			if len(podLabels) > 0 {
 				knetPod.Labels = podLabels
 			}
@@ -769,6 +704,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			err = fakeOvn.controller.WatchPods()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
+		//gomega.Expect(fakeOvn.controller.addressSetManager.Start()).To(gomega.Succeed())
 		err = fakeOvn.controller.WatchNetworkPolicy()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
@@ -808,12 +744,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("deletes stale port groups", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				// network policy with peer selector
-				networkPolicy1 := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy1 := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					"", "podName", true, true)
 				// network policy with ipBlock (won't have any address sets)
-				networkPolicy2 := newNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy2 := ovntest.NewTestNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{{
 						From: []knet.NetworkPolicyPeer{{
 							IPBlock: &knet.IPBlock{
@@ -848,14 +784,14 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			func(allowICMPNetworkPolicy bool) {
 				app.Action = func(*cli.Context) error {
 					config.OVNKubernetesFeature.AllowICMPNetworkPolicy = allowICMPNetworkPolicy
-					namespace1 := *newNamespace(namespaceName1)
-					namespace2 := *newNamespace(namespaceName2)
+					namespace1 := *ovntest.NewNamespace(namespaceName1)
+					namespace2 := *ovntest.NewNamespace(namespaceName2)
 					namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
 					namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
 					// add namespaces to initial Database
 					initialDB.NBData = append(initialDB.NBData, namespace1AddressSetv4, namespace2AddressSetv4)
 
-					networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+					networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 						namespace2.Name, "", true, true)
 					startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
 						nil, nil)
@@ -880,14 +816,14 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("reconciles an ingress networkPolicy updating an existing ACL", func() {
 			app.Action = func(*cli.Context) error {
 
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
 				namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
 				// add namespaces to initial Database
 				initialDB.NBData = append(initialDB.NBData, namespace1AddressSetv4, namespace2AddressSetv4)
 
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					namespace2.Name, "", true, true)
 
 				// network policy without peer namespace
@@ -914,10 +850,10 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles an existing networkPolicy with a pod selector in its own namespace from empty db", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				// network policy with peer pod selector
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					"", nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -943,12 +879,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("reconciles an existing networkPolicy with a pod and namespace selector in another namespace from empty db", func() {
 			app.Action = func(*cli.Context) error {
 
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
 
 				nPodTest := getTestPod(namespace2.Name, nodeName)
 				// network policy with peer pod and namespace selector
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					namespace2.Name, nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -975,7 +911,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles existing networkPolicies with equivalent rules", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
 				peer := knet.NetworkPolicyPeer{
 					IPBlock: &knet.IPBlock{
@@ -983,12 +919,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					},
 				}
 				// equivalent rules in one peer
-				networkPolicy1 := newNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy1 := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{{
 						From: []knet.NetworkPolicyPeer{peer, peer},
 					}}, nil)
 				// equivalent rules in different peers
-				networkPolicy2 := newNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy2 := ovntest.NewTestNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{
 						{
 							From: []knet.NetworkPolicyPeer{peer},
@@ -1007,7 +943,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				initialData = append(initialData, defaultDenyExpectedData...)
 
 				// start with the updated network policy, but previous-version db
-				networkPolicy1Updated := newNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy1Updated := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{{
 						From: []knet.NetworkPolicyPeer{peer},
 					}}, nil)
@@ -1032,7 +968,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles existing networkPolicies with has legacy ipBlock ACLs", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
 				peer := knet.NetworkPolicyPeer{
 					IPBlock: &knet.IPBlock{
@@ -1040,12 +976,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					},
 				}
 				// equivalent rules in one peer
-				networkPolicy1 := newNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy1 := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{{
 						From: []knet.NetworkPolicyPeer{peer, peer},
 					}}, nil)
 				// equivalent rules in different peers
-				networkPolicy2 := newNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy2 := ovntest.NewTestNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{
 						{
 							From: []knet.NetworkPolicyPeer{peer},
@@ -1177,12 +1113,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 	ginkgo.Context("during execution", func() {
 		ginkgo.DescribeTable("correctly uses namespace and shared peer selector address sets",
 			func(peer knet.NetworkPolicyPeer, peerNamespaces []string) {
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
 				namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
 
-				netpol := newNetworkPolicy("netpolName", namespace1.Name, metav1.LabelSelector{}, []knet.NetworkPolicyIngressRule{
+				netpol := ovntest.NewTestNetworkPolicy("netpolName", namespace1.Name, metav1.LabelSelector{}, []knet.NetworkPolicyIngressRule{
 					{
 						From: []knet.NetworkPolicyPeer{peer},
 					},
@@ -1251,7 +1187,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("correctly creates and deletes a networkpolicy allowing a port to a local pod", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, []string{nPodTest.podIP})
 				initialDB.NBData = append(initialDB.NBData, namespace1AddressSetv4)
@@ -1312,7 +1248,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("correctly retries creating a network policy allowing a port to a local pod", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy},
@@ -1373,7 +1309,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("correctly retries recreating a network policy with the same name", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy},
@@ -1447,10 +1383,10 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles a deleted namespace referenced by a networkpolicy with a local running pod", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					namespace2.Name, "", true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -1492,9 +1428,9 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles a deleted namespace referenced by a networkpolicy", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					namespace2.Name, "", true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
 					nil, nil)
@@ -1536,9 +1472,9 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles a deleted pod referenced by a networkpolicy in its own namespace", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					"", nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -1578,11 +1514,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles a deleted pod referenced by a networkpolicy in another namespace", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
 
 				nPodTest := getTestPod(namespace2.Name, nodeName)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					nPodTest.namespace, nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -1621,10 +1557,10 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles an updated namespace label", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
-				namespace2 := *newNamespace(namespaceName2)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
+				namespace2 := *ovntest.NewNamespace(namespaceName2)
 				nPodTest := getTestPod(namespace2.Name, nodeName)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					nPodTest.namespace, nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -1662,9 +1598,9 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("reconciles a deleted networkpolicy", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					"", nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -1703,9 +1639,9 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("retries a deleted network policy", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespace1.Name,
 					"", nPodTest.podName, true, true)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
@@ -1770,10 +1706,10 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			// process the egress rules in case an additional policy isolating
 			// for egress is added in the future.
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				tcpProtocol := corev1.Protocol(corev1.ProtocolTCP)
-				networkPolicy := newNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name,
 					metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							labelName: labelVal,
@@ -1828,10 +1764,10 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			// process the ingress rules in case an additional policy isolating
 			// for ingress is added in the future.
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				tcpProtocol := corev1.Protocol(corev1.ProtocolTCP)
-				networkPolicy := newNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name,
 					metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							labelName: labelVal,
@@ -1895,7 +1831,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				// and externalIDs only had defaultDenyPolicyTypeACLExtIdKey: Egress/Ingress.
 				// Now ExternalIDs will always be different, and ACLs won't be equivalent.
 				longNameSpaceName := "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk" // create with 63 characters
-				longNamespace := *newNamespace(longNameSpaceName)
+				longNamespace := *ovntest.NewNamespace(longNameSpaceName)
 				networkPolicy1 := getPortNetworkPolicy(netPolicyName1, longNamespace.Name, labelName, labelVal, portNum)
 
 				startOvn(initialDB, []corev1.Namespace{longNamespace}, []knet.NetworkPolicy{*networkPolicy1},
@@ -1915,7 +1851,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("can handle network policies with equivalent rules", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, nil, nil, nil)
 
 				peer := knet.NetworkPolicyPeer{
@@ -1924,12 +1860,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					},
 				}
 				// equivalent rules in one peer
-				networkPolicy1 := newNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy1 := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{{
 						From: []knet.NetworkPolicyPeer{peer, peer},
 					}}, nil)
 				// equivalent rules in different peers
-				networkPolicy2 := newNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy2 := ovntest.NewTestNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{
 						{
 							From: []knet.NetworkPolicyPeer{peer},
@@ -1967,11 +1903,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("references all namespace address sets for empty namespace selector, even if they don't have pods (HostNetworkNamespace)", func() {
 			app.Action = func(*cli.Context) error {
 				hostNamespaceName := "host-network"
-				hostNamespace := *newNamespace(hostNamespaceName)
+				hostNamespace := *ovntest.NewNamespace(hostNamespaceName)
 
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := newNetworkPolicy(netPolicyName1, namespaceName1, metav1.LabelSelector{}, []knet.NetworkPolicyIngressRule{
+				networkPolicy := ovntest.NewTestNetworkPolicy(netPolicyName1, namespaceName1, metav1.LabelSelector{}, []knet.NetworkPolicyIngressRule{
 					{
 						From: []knet.NetworkPolicyPeer{{
 							NamespaceSelector: &metav1.LabelSelector{},
@@ -2016,9 +1952,9 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.It("cleans up retryFramework resources", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1.Labels = map[string]string{"name": "label1"}
-				networkPolicy := newNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
+				networkPolicy := ovntest.NewTestNetworkPolicy(netPolicyName2, namespace1.Name, metav1.LabelSelector{},
 					[]knet.NetworkPolicyIngressRule{{
 						From: []knet.NetworkPolicyPeer{{
 							NamespaceSelector: &metav1.LabelSelector{
@@ -2059,11 +1995,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("correctly creates networkpolicy targeting hostNetwork pods with non-nil podSelector", func() {
 			// check useNamespaceAddrSet function comments to explain this behaviour
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1.Labels = map[string]string{labelName: labelVal}
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 
-				networkPolicy := newNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name,
 					metav1.LabelSelector{},
 					nil,
 					[]knet.NetworkPolicyEgressRule{{
@@ -2104,11 +2040,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("correctly creates networkpolicy ignoring hostNetwork pods with nil podSelector", func() {
 			// check useNamespaceAddrSet function comments to explain this behaviour
 			app.Action = func(*cli.Context) error {
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				namespace1.Labels = map[string]string{labelName: labelVal}
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 
-				networkPolicy := newNetworkPolicy(netPolicyName1, namespace1.Name,
+				networkPolicy := ovntest.NewTestNetworkPolicy(netPolicyName1, namespace1.Name,
 					metav1.LabelSelector{},
 					nil,
 					[]knet.NetworkPolicyEgressRule{{
@@ -2146,7 +2082,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("correctly creates, updates and deletes network policies", func() {
 			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableStatelessNetPol = true
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				startOvn(initialDB, []corev1.Namespace{namespace1}, nil, nil, nil)
 
 				ginkgo.By("Creating network policy")
@@ -2283,13 +2219,13 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 		ginkgo.BeforeEach(func() {
 			originalACLLogSeverity := fmt.Sprintf(`{ "deny": "%s", "allow": "%s" }`, nbdb.ACLSeverityAlert, nbdb.ACLSeverityNotice)
-			originalNamespace = *newNamespace(namespaceName1)
+			originalNamespace = *ovntest.NewNamespace(namespaceName1)
 			originalNamespace.Annotations = map[string]string{util.AclLoggingAnnotation: originalACLLogSeverity}
 		})
 
 		ginkgo.DescribeTable("ACL logging for network policies reacts to severity updates", func(networkPolicies ...*knet.NetworkPolicy) {
 			ginkgo.By("Provisioning the system with an initial empty policy, we know deterministically the names of the default deny ACLs")
-			initialDenyAllPolicy := newNetworkPolicy("emptyPol", namespaceName1, metav1.LabelSelector{}, nil, nil)
+			initialDenyAllPolicy := ovntest.NewTestNetworkPolicy("emptyPol", namespaceName1, metav1.LabelSelector{}, nil, nil)
 			// originalACLLogSeverity.Deny == nbdb.ACLSeverityAlert
 			initialExpectedData := getDefaultDenyData(newNetpolDataParams(initialDenyAllPolicy).
 				withDenyLogSeverity(nbdb.ACLSeverityAlert))
@@ -2352,12 +2288,12 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 		},
 			ginkgo.Entry("when the namespace features a network policy with a single rule",
-				getMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "", true, false)),
+				ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "", true, false)),
 			ginkgo.Entry("when the namespace features *multiple* network policies with a single rule",
-				getMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "", true, false),
-				getMatchLabelsNetworkPolicy(netPolicyName2, namespaceName1, namespaceName2, "", false, true)),
+				ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "", true, false),
+				ovntest.NewMatchLabelsNetworkPolicy(netPolicyName2, namespaceName1, namespaceName2, "", false, true)),
 			ginkgo.Entry("when the namespace features a network policy with *multiple* rules",
-				getMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "tiny-winy-pod", true, false)))
+				ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "tiny-winy-pod", true, false)))
 
 		ginkgo.It("policies created after namespace logging level updates inherit updated logging level", func() {
 			app.Action = func(*cli.Context) error {
@@ -2368,7 +2304,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					updateNamespaceACLLogSeverity(&originalNamespace, desiredLogSeverity, desiredLogSeverity)).To(gomega.Succeed(),
 					"should have managed to update the ACL logging severity within the namespace")
 
-				newPolicy := getMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "", true, false)
+				newPolicy := ovntest.NewMatchLabelsNetworkPolicy(netPolicyName1, namespaceName1, namespaceName2, "", true, false)
 				ginkgo.By("Creating new network policy")
 				_, err := fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(namespaceName1).
 					Create(context.TODO(), newPolicy, metav1.CreateOptions{})
@@ -2391,7 +2327,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		ginkgo.It("creates stateless OVN ACLs based off of the annotation", func() {
 			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableStatelessNetPol = true
-				namespace1 := *newNamespace(namespaceName1)
+				namespace1 := *ovntest.NewNamespace(namespaceName1)
 				nPodTest := getTestPod(namespace1.Name, nodeName)
 				networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
 				networkPolicy.Annotations = map[string]string{
@@ -2625,7 +2561,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Low-Level Operations", func() {
 		asFactory = addressset.NewFakeAddressSetFactory(controllerName)
 		config.IPv4Mode = true
 		config.IPv6Mode = false
-		asIDs := getPodSelectorAddrSetDbIDs("test_name", DefaultNetworkControllerName)
+		asIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, "nsName", DefaultNetworkControllerName)
 		gp := newGressPolicy(knet.PolicyTypeIngress, 0, "testing", "policy", controllerName,
 			false, &util.DefaultNetInfo{})
 		gp.hasPeerSelector = true

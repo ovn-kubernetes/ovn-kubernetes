@@ -20,6 +20,9 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 	namespace := "ns"
 	defaultNetInfo := util.DefaultNetInfo{}
 	config.IPv4Mode = true
+	defer func() {
+		config.IPv4Mode = false
+	}()
 	UDNNetInfo, err := getSampleUDNNetInfo(namespace, "layer3")
 	require.NoError(t, err)
 	assert.Equal(t,

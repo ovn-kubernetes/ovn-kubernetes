@@ -40,3 +40,4 @@ designed and implemented by OVN-Kubernetes
 * [UserDefinedNetwork](https://ovn-kubernetes.io/api-reference/userdefinednetwork-api-spec/)
 * [RouteAdvertisements](routeadvertisements-api-spec.md)
 * [VTEP](vtep-api-spec.md)
+* [ClusterNetworkConnect](clusternetworkconnect-api-spec.md)

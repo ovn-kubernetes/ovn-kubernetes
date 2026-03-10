@@ -185,6 +185,43 @@ func RemoveLoadBalancersFromLogicalSwitchOps(nbClient libovsdbclient.Client, ops
 	return modelClient.DeleteOps(ops, opModel)
 }
 
+// AddLoadBalancerGroupsToLogicalSwitchOps adds the provided load balancer groups to the
+// provided logical switch and returns the corresponding ops
+func AddLoadBalancerGroupsToLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, sw *nbdb.LogicalSwitch, lbGroups ...*nbdb.LoadBalancerGroup) ([]ovsdb.Operation, error) {
+	sw.LoadBalancerGroup = make([]string, 0, len(lbGroups))
+	for _, lbg := range lbGroups {
+		sw.LoadBalancerGroup = append(sw.LoadBalancerGroup, lbg.UUID)
+	}
+	opModel := operationModel{
+		Model:            sw,
+		OnModelMutations: []interface{}{&sw.LoadBalancerGroup},
+		ErrNotFound:      true,
+		BulkOp:           false,
+	}
+
+	modelClient := newModelClient(nbClient)
+	return modelClient.CreateOrUpdateOps(ops, opModel)
+}
+
+// RemoveLoadBalancerGroupsFromLogicalSwitchOps removes the provided load balancer groups from the
+// provided logical switch and returns the corresponding ops
+func RemoveLoadBalancerGroupsFromLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, sw *nbdb.LogicalSwitch, lbGroups ...*nbdb.LoadBalancerGroup) ([]ovsdb.Operation, error) {
+	sw.LoadBalancerGroup = make([]string, 0, len(lbGroups))
+	for _, lbg := range lbGroups {
+		sw.LoadBalancerGroup = append(sw.LoadBalancerGroup, lbg.UUID)
+	}
+	opModel := operationModel{
+		Model:            sw,
+		OnModelMutations: []interface{}{&sw.LoadBalancerGroup},
+		// if we want to delete load balancer group from the switch that doesn't exist, that is noop
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+
+	modelClient := newModelClient(nbClient)
+	return modelClient.DeleteOps(ops, opModel)
+}
+
 // ACL ops
 
 // AddACLsToLogicalSwitchOps adds the provided ACLs to the provided logical

@@ -290,7 +290,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			if t.podName == "" {
 				return nil
 			}
-			pod := newPod(t.namespace, t.podName, t.nodeName, t.podIP)
+			pod := testing.NewPod(t.namespace, t.podName, t.nodeName, t.podIP)
 			pod.Annotations = t.annotations
 			pod.Labels = t.labels
 			return pod
@@ -724,7 +724,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				fakeOvn.startWithDBSetup(initialDB,
 					&corev1.NamespaceList{
 						Items: []corev1.Namespace{
-							*newNamespace(t.namespace),
+							*testing.NewNamespace(t.namespace),
 						},
 					},
 					&corev1.PodList{

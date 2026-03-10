@@ -1170,7 +1170,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
 			// shared gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
-			perNode, template, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true)
+			perNode, template, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true, &util.DefaultNetInfo{})
 
 			assert.Equal(t, tt.resultSharedGatewayNode, perNode, "SGW per-node configs should be equal")
 			assert.Equal(t, tt.resultSharedGatewayTemplate, template, "SGW template configs should be equal")
@@ -1179,7 +1179,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 			// local gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
 
-			perNode, template, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true)
+			perNode, template, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true, &util.DefaultNetInfo{})
 			if tt.resultsSame {
 				assert.Equal(t, tt.resultSharedGatewayNode, perNode, "LGW per-node configs should be equal")
 				assert.Equal(t, tt.resultSharedGatewayTemplate, template, "LGW template configs should be equal")

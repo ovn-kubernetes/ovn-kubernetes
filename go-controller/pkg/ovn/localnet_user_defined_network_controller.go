@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
@@ -193,6 +194,7 @@ func NewLocalnetUserDefinedNetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
+	addressSetManager *addresssetmanager.AddressSetManager,
 ) *LocalnetUserDefinedNetworkController {
 
 	stopChan := make(chan struct{})
@@ -213,12 +215,12 @@ func NewLocalnetUserDefinedNetworkController(
 					addressSetFactory:           addressSetFactory,
 					networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 					sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-					podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 					stopChan:                    stopChan,
 					wg:                          &sync.WaitGroup{},
 					cancelableCtx:               util.NewCancelableContext(),
 					localZoneNodes:              &sync.Map{},
 					networkManager:              networkManager,
+					addressSetManager:           addressSetManager,
 				},
 			},
 		},
@@ -352,6 +354,7 @@ func (oc *LocalnetUserDefinedNetworkController) newRetryFramework(
 		EventHandler:           eventHandler,
 	}
 	return retry.NewRetryFramework(
+		oc.GetNetworkName()+"/networkController",
 		oc.stopChan,
 		oc.wg,
 		oc.watchFactory,

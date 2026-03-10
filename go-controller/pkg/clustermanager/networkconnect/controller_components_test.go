@@ -769,7 +769,9 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 				for _, n := range nads {
 					mutableNetInfo.AddNADs(fmt.Sprintf("%s/%s", n.Namespace, n.Name))
 				}
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
+				fakeNM.Unlock()
 			}
 			for _, nad := range tt.nads {
 				nadKey := fmt.Sprintf("%s/%s", nad.Namespace, nad.Name)
@@ -931,7 +933,7 @@ func TestCNCNeedsUpdate(t *testing.T) {
 			},
 			newObj: &networkconnectv1.ClusterNetworkConnect{
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{
-					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ClusterIPServiceNetwork},
+					Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.ServiceNetwork},
 				},
 			},
 			wantUpdate: false,
@@ -1789,7 +1791,9 @@ func TestMustProcessCNCForNAD(t *testing.T) {
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.SetNADs(tt.nad.Namespace + "/" + tt.nad.Name)
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[tt.nad.Namespace] = mutableNetInfo
+				fakeNM.Unlock()
 			}
 			if tt.nad != nil {
 				nadKey := fmt.Sprintf("%s/%s", tt.nad.Namespace, tt.nad.Name)
@@ -2499,7 +2503,9 @@ func TestController_reconcileNamespace(t *testing.T) {
 				for _, n := range nads {
 					mutableNetInfo.AddNADs(fmt.Sprintf("%s/%s", n.Namespace, n.Name))
 				}
+				fakeNM.Lock()
 				fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
+				fakeNM.Unlock()
 			}
 			for _, nad := range tt.nads {
 				nadKey := fmt.Sprintf("%s/%s", nad.Namespace, nad.Name)

@@ -222,6 +222,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			c, cancel := context.WithCancel(ctx.Context)
@@ -387,6 +388,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -691,6 +693,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -870,6 +873,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1161,6 +1165,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1369,6 +1374,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1583,6 +1589,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 

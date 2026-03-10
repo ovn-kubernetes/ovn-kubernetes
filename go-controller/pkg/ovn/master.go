@@ -289,6 +289,15 @@ func (oc *DefaultNetworkController) syncNodesPeriodic() {
 	if err := oc.syncChassis(localZoneNodes, remoteZoneNodes); err != nil {
 		klog.Errorf("Failed to sync chassis: error: %v", err)
 	}
+
+	// Cleanup no-overlay SNAT exemption address set if not in no-overlay mode with SNAT enabled.
+	if !util.IsNoOverlaySNATExemptionNeeded(oc) {
+		if err := cleanupNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			// Cleanup may fail if the address set is still referenced by NAT rules that haven't been updated.
+			// This will be retried on the next sync.
+			klog.Warningf("Failed to cleanup no-overlay SNAT exemption address set: %v", err)
+		}
+	}
 }
 
 // We only deal with cleaning up nodes that shouldn't exist here, since
@@ -681,6 +690,21 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		} else if !chassisFailed {
 			// In no-overlay mode, if chassis handler succeeded, clear the failed state
 			oc.syncZoneICFailed.Delete(node.Name)
+		}
+	}
+
+	// Sync no-overlay SNAT exemption address set for no-overlay mode with outbound SNAT enabled in SGW mode.
+	// The address set contains cluster CIDRs + local zone node IPs and is used in SNAT
+	// exemption rules to prevent SNATing pod-to-pod and pod-to-local-node traffic.
+	// In LGW mode, nftables sets are used instead.
+	if util.IsNoOverlaySNATExemptionNeeded(oc) && (nSyncs.syncNode || nSyncs.syncGw) {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err))
+		} else {
+			if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, hostAddrs); err != nil {
+				errs = append(errs, fmt.Errorf("failed to sync no-overlay SNAT exemption address set: %w", err))
+			}
 		}
 	}
 

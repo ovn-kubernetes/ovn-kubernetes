@@ -949,7 +949,7 @@ func (c *Controller) allEndpointsFor(svc *corev1.Service, localOnly bool) (sets.
 			}
 			for _, ip := range ep.Addresses {
 				ipStr := utilnet.ParseIPSloppy(ip).String()
-				if !services.IsHostEndpoint(ipStr) {
+				if !services.IsHostEndpoint(ipStr, &util.DefaultNetInfo{}) {
 					epsToInsert.Insert(ipStr)
 				}
 			}

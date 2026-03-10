@@ -57,6 +57,7 @@ type NetInfo interface {
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
 	Transport() string
+	OutboundSNAT() string
 	EVPNVTEPName() string
 	EVPNMACVRFVNI() int32
 	EVPNMACVRFRouteTarget() string
@@ -665,6 +666,11 @@ func (nInfo *DefaultNetInfo) Transport() string {
 	return config.Default.Transport
 }
 
+// OutboundSNAT() string returns the outbound SNAT configuration for the default network when using no-overlay transport.
+func (nInfo *DefaultNetInfo) OutboundSNAT() string {
+	return config.NoOverlay.OutboundSNAT
+}
+
 // EVPNVTEPName returns empty as EVPN is not supported on the default network
 func (nInfo *DefaultNetInfo) EVPNVTEPName() string {
 	return ""
@@ -868,6 +874,12 @@ func (nInfo *userDefinedNetInfo) PhysicalNetworkName() string {
 // Transport returns the transport protocol for east-west traffic
 func (nInfo *userDefinedNetInfo) Transport() string {
 	return nInfo.transport
+}
+
+// OutboundSNAT() string returns the outbound SNAT configuration for this network when using no-overlay transport.
+func (nInfo *userDefinedNetInfo) OutboundSNAT() string {
+	// TODO: implement per-network no-overlay outbound SNAT configuration
+	return ""
 }
 
 // EVPNVTEPName returns the name of the VTEP CR for EVPN
@@ -1739,10 +1751,6 @@ func getPodNADToNetworkMappingWithPredicate(
 
 		// for multiple NetworkSelectionElements of the same NAD, set its nadName to indexed nadName
 		cnt := nNADs[nadName]
-		if cnt > 0 && nInfo.TopologyType() == types.LocalnetTopology {
-			return false, nil, fmt.Errorf("pod %s/%s cannot have same networkSelectionElement %s of type %s multiple times",
-				pod.Namespace, pod.Name, nadName, types.LocalnetTopology)
-		}
 		nNADs[nadName] = cnt + 1
 		networkSelections[GetIndexedNADKey(nadName, cnt)] = network
 	}

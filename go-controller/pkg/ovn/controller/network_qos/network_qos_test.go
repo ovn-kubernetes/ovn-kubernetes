@@ -644,15 +644,8 @@ var _ = Describe("NetworkQoS Controller", func() {
 					eventuallyAddressSetHas(streamAddrsetFactory, nqosNamespace, "stream-qos", "src", "0", streamControllerName, "10.128.2.3")
 				}
 
-				By("uses namespace's address set as source if pod selector is not provided in source")
+				By("uses NetworkQoS source address set if pod selector is not provided in source")
 				{
-					dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, defaultControllerName, map[libovsdbops.ExternalIDKey]string{
-						libovsdbops.ObjectNameKey: nqosNamespace,
-					})
-					addrset, err := defaultAddrsetFactory.EnsureAddressSet(dbIDs)
-					Expect(err).NotTo(HaveOccurred())
-					err = addrset.AddAddresses([]string{"10.194.188.4"})
-					Expect(err).NotTo(HaveOccurred())
 					nqosWithoutSrcSelector := &nqostype.NetworkQoS{
 						ObjectMeta: metav1.ObjectMeta{
 							Namespace: nqosNamespace,
@@ -684,10 +677,14 @@ var _ = Describe("NetworkQoS Controller", func() {
 							},
 						},
 					}
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosWithoutSrcSelector, metav1.CreateOptions{})
+					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosWithoutSrcSelector, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
 					qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, "no-source-selector", 0)
-					v4HashName, _ := addrset.GetASHashNames()
+					eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
+					sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(sourceAddrSet).NotTo(BeNil())
+					v4HashName, _ := sourceAddrSet.GetASHashNames()
 					Expect(qos.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 128.115.0.0/17 && ip4.dst != {128.115.0.0,123.123.123.123}", v4HashName)))
 				}
 
@@ -725,12 +722,10 @@ var _ = Describe("NetworkQoS Controller", func() {
 					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosWithoutSrcSelector, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
 
-					dbIDs := libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, defaultControllerName, map[libovsdbops.ExternalIDKey]string{
-						libovsdbops.ObjectNameKey: nqosNamespace,
-					})
-					addrset, err := defaultAddrsetFactory.EnsureAddressSet(dbIDs)
+					sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
 					Expect(err).NotTo(HaveOccurred())
-					v4HashName, _ := addrset.GetASHashNames()
+					Expect(sourceAddrSet).NotTo(BeNil())
+					v4HashName, _ := sourceAddrSet.GetASHashNames()
 
 					// Ensure that QoS priority and Bandwidth have been properly changed by OVN
 					var qos *nbdb.QoS

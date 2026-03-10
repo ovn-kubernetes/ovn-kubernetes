@@ -308,8 +308,8 @@ spec:
 OVN-Kubernetes supports attaching a pod to the same non-primary user-defined
 network multiple times, allowing the pod to have multiple interfaces connected
 to the same network. This is useful for workloads that require multiple network
-interfaces on the same network for advanced networking scenarios. Note that only
-layer 2 and layer 3 networks are supported.
+interfaces on the same network for advanced networking scenarios. Note that
+layer 2, layer 3 and localnet networks are all supported.
 
 To request multiple interfaces on the same network, specify the network
 multiple times in the `k8s.v1.cni.cncf.io/networks` annotation:

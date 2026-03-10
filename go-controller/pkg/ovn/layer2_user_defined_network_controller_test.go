@@ -410,7 +410,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				Expect(gwConfig.NextHops).NotTo(BeEmpty())
 				nbZone := &nbdb.NBGlobal{Name: config.Default.Zone, UUID: config.Default.Zone}
 
-				n := newNamespace(ns)
+				n := testing.NewNamespace(ns)
 				if netInfo.isPrimary {
 					n = newUDNNamespace(ns)
 					gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
@@ -580,6 +580,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				fakeOvn.networkManager.Interface(),
 				nil,
 				NewPortCache(ctx.Done()),
+				nil,
 				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -1230,7 +1231,7 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	)
 	Expect(err).NotTo(HaveOccurred())
 
-	n := newNamespace(ns)
+	n := testing.NewNamespace(ns)
 	if netInfo.isPrimary {
 		n = newUDNNamespace(ns)
 	}

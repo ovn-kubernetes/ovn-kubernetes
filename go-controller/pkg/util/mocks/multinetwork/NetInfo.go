@@ -812,6 +812,24 @@ func (_m *NetInfo) MTU() int {
 	return r0
 }
 
+// OutboundSNAT provides a mock function with no fields
+func (_m *NetInfo) OutboundSNAT() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for OutboundSNAT")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // PhysicalNetworkName provides a mock function with no fields
 func (_m *NetInfo) PhysicalNetworkName() string {
 	ret := _m.Called()
