@@ -382,8 +382,8 @@ func (oc *Layer3UserDefinedNetworkController) Stop() {
 	}
 }
 
-// Cleanup cleans up logical entities for the given network, called from net-attach-def routine
-// could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
+// Cleanup cleans up logical entities for the given network, called from the
+// net-attach-def routine or stale network cleanup.
 func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	// cleans up related OVN logical entities
 	var ops []ovsdb.Operation
@@ -488,6 +488,11 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	// remove load balancer groups
 	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
 		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
+
+	// Cleanup noOverlay SNAT exemption address set
+	if err := cleanupNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+		klog.Warningf("Failed to cleanup noOverlay SNAT exemption address set for network %s: %v", netName, err)
+	}
 
 	return nil
 }
@@ -755,6 +760,16 @@ func (oc *Layer3UserDefinedNetworkController) init() error {
 		oc.switchLoadBalancerGroupUUID = switchLBGroupUUID
 		oc.routerLoadBalancerGroupUUID = routerLBGroupUUID
 	}
+
+	// Initialize noOverlay SNAT exemption address set when using noOverlay transport with outboundSNAT enabled
+	// This is needed for both local and shared gateway modes
+	if oc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay &&
+		oc.GetNetInfo().OutboundSNAT() == types.NoOverlaySNATEnabled {
+		if _, err := initNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			return fmt.Errorf("failed to initialize noOverlay SNAT exemption address set for network %s: %w", oc.GetNetworkName(), err)
+		}
+	}
+
 	return nil
 }
 
@@ -823,6 +838,21 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 	if nSyncs.syncNode { // do this only if it is a new node add
 		errors := oc.addAllPodsOnNode(node.Name)
 		errs = append(errs, errors...)
+	}
+
+	// Sync noOverlay SNAT exemption address set BEFORE gateway initialization
+	// This must happen before the gateway creates SNAT rules that reference the address set
+	if oc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay &&
+		oc.GetNetInfo().OutboundSNAT() == types.NoOverlaySNATEnabled &&
+		(nSyncs.syncNode || nSyncs.syncGw) {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err))
+		} else {
+			if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, hostAddrs); err != nil {
+				errs = append(errs, fmt.Errorf("failed to sync noOverlay SNAT exemption address set: %w", err))
+			}
+		}
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {

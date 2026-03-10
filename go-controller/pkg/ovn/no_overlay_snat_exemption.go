@@ -85,6 +85,10 @@ func cleanupNoOverlaySNATExemptionAddressSet(
 	netInfo util.NetInfo,
 	controllerName string,
 ) error {
+	if addressSetFactory == nil {
+		return nil
+	}
+
 	dbIDs := libovsdbops.NewDbObjectIDs(
 		libovsdbops.AddressSetNoOverlaySNATExemption,
 		controllerName,
