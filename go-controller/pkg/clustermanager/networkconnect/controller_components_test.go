@@ -374,6 +374,7 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 			expectSelectedNADs:     []string{},
 			expectSelectedNetworks: []string{},
 			expectCacheEntryExists: true,
+			wantErr:                true,
 		},
 		{
 			name:                    "deletes cache entry when CNC is deleted",

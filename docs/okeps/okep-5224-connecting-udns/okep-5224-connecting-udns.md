@@ -620,14 +620,15 @@ on validation results.
 
 **Condition Types**
 
-* The `Accepted` type condition will be done from the cluster-manager
-  which indicates whether the validation checks passed.
-* The `Ready-In-Zone-<nodename>` type condition will be done from
-  each node's ovnkube-controller which indicates if all the corresponding
-  OVN objects were created correctly.
-* Based on whether `status` of the above two types of conditions is
+* The `ResourceAllocationSucceeded` type condition will be done from the cluster-manager
+  which indicates whether the validation checks passed and resources were allocated successfully.
+* Based on whether `status` of the above condition is
   `True` or `False`, the final string `status` will be marked `Success` or
   `Failure`
+
+Per-node errors are less likely to happen because the validation and resource allocation happens in 
+cluster manager. Therefore, we will only emit events from the ovnkube-controller when CNC-related errors
+occur.
 
 **Valid Scenario**
 
@@ -640,19 +641,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "True"
-    reason: "ValidationSucceeded"
+    reason: "ResourceAllocationSucceeded"
     message: "All validation checks passed successfully"
     lastTransitionTime: "2023-10-01T09:59:00Z"
-  - type: "Ready-In-Zone-ovn-worker"
-    status: "True"
-    reason: "OVNSetupSucceeded"
-    message: "Connect router and all ports created successfully"
-    lastTransitionTime: "2023-10-01T10:00:00Z"
-  - type: "Ready-In-Zone-ovn-worker2"
-    status: "True"
-    reason: "OVNSetupSucceeded"
-    message: "Connect router and all ports created successfully"
-    lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
 **Invalid Scenarios**
@@ -666,8 +657,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "ConnectSubnetExhausted"
-    message: "Insufficient IP addresses in connect subnet 192.168.0.0/16.
+    reason: "ResourceAllocationFailed"
+    message: "failed to allocate subnets for CNC test-cnc: failed to allocate Layer3 subnet for network frontend-b_primary-udn: 
+    Layer3 allocation failed for layer3_2: no subnets available"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -677,9 +669,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "OverlappingNetworkSubnets"
-    message: "Cannot connect networks 'blue-network' and 'green-network': overlapping
-    pod subnets 10.1.0.0/16 detected."
+    reason: "ResourceAllocationFailed"
+    message: "validation failed for CNC test-cnc: can not connect selected networks: selected networks have overlapping subnets: 
+    network frontend-b_primary-udn with subnets [103.103.1.0/24] and network frontend-a_primary-udn with subnets [103.103.0.0/16]"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -689,9 +681,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "ConnectSubnetConflict"
-    message: "Connect subnet 192.168.0.0/16 conflicts with pod subnet 192.168.1.0/24
-    of network 'blue-network'"
+    reason: "ResourceAllocationFailed"
+    message: "validation failed for CNC test-cnc: selected networks overlap with cluster network connect subnets: 
+    network frontend-a_primary-udn with subnets [103.103.0.0/16/24] and ClusterNetworkConnect.connectSubnets with subnets [103.103.0.0/16]"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -701,11 +693,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "ConnectSubnetOverlap"
-    message: "Connect subnet 192.168.0.0/16 overlaps with ClusterNetworkConnect
-    'enterprise-connect' which also selects network 'blue-network'.
-    Each ClusterNetworkConnect selecting the same network must use non-overlapping
-    connect subnets"
+    reason: "ResourceAllocationFailed"
+    message: "validation failed for CNC test-cnc: cluster subnets overlap with cluster network connect subnets: 
+    service subnet with subnets [10.96.0.0/24] and ClusterNetworkConnect.connectSubnets with subnets [10.96.0.0/16]"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -715,9 +705,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "IPFamilyMismatch"
-    message: "Cannot connect single-stack IPv4 network 'ipv4-network' with
-    single-stack IPv6 network 'ipv6-network'. Networks must use the same IP family"
+    reason: "ResourceAllocationFailed"
+    message: "cross-validation failed for CNC test-cnc2: 
+    connectSubnets overlap detected between CNC test-cnc2 and CNC test-cnc which both select networks [frontend-a_primary-udn frontend-b_primary-udn]"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -727,8 +717,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "InsufficientNetworks"
-    message: "Only 1 network selected, minimum 2 networks required for connection"
+    reason: "ResourceAllocationFailed"
+    message: "validation failed for CNC test-cnc: IP family conflict: 
+    connected network frontend-a_primary-udn is ipv4-only but connectSubnets do not contain an ipv4 subnet"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -738,8 +729,9 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "UnsupportedNetworkType"
-    message: "Network 'blue-network' has role 'Secondary'. Only 'Primary' role networks are supported"
+    reason: "ResourceAllocationFailed"
+    message: "failed to discover selected networks for CNC test-cnc: network frontend-a_primary-udn has role 'Secondary'. 
+    Only 'Primary' role networks are supported"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
@@ -749,59 +741,48 @@ status:
   conditions:
   - type: "Accepted"
     status: "False"
-    reason: "UnsupportedNetworkType"
-    message: "Network 'localnet-network' has type 'localnet'. Localnet networks are not supported"
+    reason: "ResourceAllocationFailed"
+    message: "failed to discover selected networks for CNC test-cnc: 
+    [network frontend-a_primary-udn has transport type no-overlay that is not supported for networkConnect, 
+    network frontend-b_primary-udn has transport type evpn that is not supported for networkConnect]"
     lastTransitionTime: "2023-10-01T10:00:00Z"
 ```
 
+**OVN Setup Failures: (Per Zone events)**
 ```yaml
-status:
-  status: "Failure"
-  conditions:
-  - type: "Accepted"
-    status: "False"
-    reason: "UnsupportedNetworkType"
-    message: "Network connect feature is not supported when overlay tunneling is disabled"
-    lastTransitionTime: "2023-10-01T10:00:00Z"
-```
-
-**OVN Setup Failures: (Per Zone)**
-```yaml
-status:
-  status: "Failure"
-  conditions:
-  - type: "Accepted"
-    status: "True"
-    reason: "ValidationSucceeded"
-    message: "All validation checks passed successfully"
-    lastTransitionTime: "2023-10-01T09:59:00Z"
-  - type: "Ready-In-Zone-ovn-worker"
-    status: "False"
-    reason: "OVNSetupFailed"
-    message: "Failed to create connect router ports: tunnel key allocation failed"
-    lastTransitionTime: "2023-10-01T10:00:00Z"
-  - type: "Ready-In-Zone-ovn-worker2"
-    status: "False"
-    reason: "OVNSetupFailed"
-    message: "Failed to install routing policies for network 'blue-network'"
-    lastTransitionTime: "2023-10-01T10:00:00Z"
+- apiVersion: v1
+  count: 9
+  eventTime: null
+  firstTimestamp: "2026-03-10T10:18:27Z"
+  involvedObject:
+    apiVersion: k8s.ovn.org/v1
+    kind: ClusterNetworkConnect
+    name: color-1-jkl6s
+    resourceVersion: "103756"
+    uid: 3bd49415-ee4a-4f29-a322-277270979055
+  kind: Event
+  lastTimestamp: "2026-03-10T10:18:28Z"
+  message: 'Failed in zone ovn-worker: failed to parse subnet annotation for CNC color-1-jkl6s:
+    failed to parse IPv6 subnet fd00:10::/1270 for owner layer2_11: invalid CIDR address:
+    fd00:10::/1270'
+  metadata:
+    creationTimestamp: "2026-03-10T10:18:27Z"
+    name: color-1-jkl6s.189b7388482e6877
+    namespace: default
+    resourceVersion: "103783"
+    uid: 815f3c57-434e-4193-804d-9f6cfbecd32c
+  reason: ErrorReconcilingCNC
+  reportingComponent: ovnk-controlplane
+  reportingInstance: ""
+  source:
+    component: ovnk-controlplane
+  type: Warning
 ```
 
 **Accepted Condition Reasons (from cluster-manager):**
 
-- **`ValidationSucceeded`** - All validation checks passed successfully
-- **`ConnectSubnetExhausted`** - Not enough IPs in connect subnet for all network-node combinations
-- **`OverlappingNetworkSubnets`** - Selected networks have overlapping pod subnets (not supported)
-- **`ConnectSubnetConflict`** - Connect subnet conflicts with existing network subnets, service CIDR, etc.
-- **`ConnectSubnetOverlap`** - Connect subnet overlaps with another ClusterNetworkConnect selecting the same network
-- **`IPFamilyMismatch`** - Attempting to connect networks with different IP families
-- **`InsufficientNetworks`** - Less than 2 networks selected for connection
-- **`UnsupportedNetworkType`** - Network has unsupported role (Secondary) or type (localnet) or no-overlay mode enabled
-
-**Ready-In-Zone Condition Reasons (from ovnkube-controller):**
-
-- **`OVNSetupSucceeded`** - OVN topology setup completed successfully
-- **`OVNSetupFailed`** - OVN topology setup failed
+- **`ResourceAllocationSucceeded`** - All validation checks passed successfully
+- **`ResourceAllocationFailed`** - Validation failed or error occurred during resource allocation. The message field will contain details about the failure.
 
 NOTE: The actual messages and name types may vary in implementation
 subject to reviews. These snippets only represent some potential examples.

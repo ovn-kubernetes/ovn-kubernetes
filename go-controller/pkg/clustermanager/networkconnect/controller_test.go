@@ -64,8 +64,12 @@ func newTestUDNNAD(name, namespace, network string, networkID string) *nadv1.Net
 	return newTestUDNNADWithSubnetsAndTransport(name, namespace, network, networkID, fmt.Sprintf("10.%s.0.0/16/24", networkID), "")
 }
 
-// newTestUDNNAD creates a test NAD owned by a UserDefinedNetwork.
 func newTestUDNNADWithSubnetsAndTransport(name, namespace, network string, networkID, subnets, transport string) *nadv1.NetworkAttachmentDefinition {
+	return newTestUDNNADWithSubnetsTransportAndRole(name, namespace, network, networkID, subnets, transport, types.NetworkRolePrimary)
+}
+
+// newTestUDNNAD creates a test NAD owned by a UserDefinedNetwork.
+func newTestUDNNADWithSubnetsTransportAndRole(name, namespace, network string, networkID, subnets, transport, role string) *nadv1.NetworkAttachmentDefinition {
 	return &nadv1.NetworkAttachmentDefinition{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -78,11 +82,12 @@ func newTestUDNNADWithSubnetsAndTransport(name, namespace, network string, netwo
 		},
 		Spec: nadv1.NetworkAttachmentDefinitionSpec{
 			Config: fmt.Sprintf(
-				`{"cniVersion": "1.1.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "%s", "transport": "%s"}`,
+				`{"cniVersion": "1.1.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "%s", "subnets": "%s", "transport": "%s"}`,
 				network,
 				config.CNI.Plugin,
 				namespace,
 				name,
+				role,
 				subnets,
 				transport,
 			),
@@ -90,8 +95,8 @@ func newTestUDNNADWithSubnetsAndTransport(name, namespace, network string, netwo
 	}
 }
 
-func newTestCUDNNADWithSubnetsAndTransport(name, namespace, network string, labels map[string]string, networkID, subnets, transport string) *nadv1.NetworkAttachmentDefinition {
-	nad := newTestUDNNADWithSubnetsAndTransport(name, namespace, network, networkID, subnets, transport)
+func newTestCUDNNADWithSubnetsTransportAndRole(name, namespace, network string, labels map[string]string, networkID, subnets, transport, role string) *nadv1.NetworkAttachmentDefinition {
+	nad := newTestUDNNADWithSubnetsTransportAndRole(name, namespace, network, networkID, subnets, transport, role)
 	nad.Labels = labels
 	nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef(network)}
 	return nad
@@ -99,7 +104,7 @@ func newTestCUDNNADWithSubnetsAndTransport(name, namespace, network string, labe
 
 // newTestCUDNNAD creates a test NAD owned by a ClusterUserDefinedNetwork.
 func newTestCUDNNAD(name, namespace, network string, labels map[string]string, networkID string) *nadv1.NetworkAttachmentDefinition {
-	return newTestCUDNNADWithSubnetsAndTransport(name, namespace, network, labels, networkID, fmt.Sprintf("10.%s.0.0/16/24", networkID), "")
+	return newTestCUDNNADWithSubnetsTransportAndRole(name, namespace, network, labels, networkID, fmt.Sprintf("10.%s.0.0/16/24", networkID), "", types.NetworkRolePrimary)
 }
 
 // newTestNamespace creates a test namespace with the given name and labels.
@@ -1315,7 +1320,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 			}).WithTimeout(5 * time.Second).Should(gomega.Succeed())
 		}
 
-		createPrimaryUDNOrCUDN := func(namespace, udnName, networkID, subnets, transport string, cudn bool) {
+		createUDNWithNAD := func(namespace, udnName string, nad *nadv1.NetworkAttachmentDefinition) {
 			ns1 := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: namespace,
@@ -1328,13 +1333,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				context.Background(), ns1, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			network := util.GenerateUDNNetworkName(namespace, udnName)
-			var nad *nadv1.NetworkAttachmentDefinition
-			if cudn {
-				nad = newTestCUDNNADWithSubnetsAndTransport(udnName, namespace, network, nil, networkID, subnets, transport)
-			} else {
-				nad = newTestUDNNADWithSubnetsAndTransport(udnName, namespace, network, networkID, subnets, transport)
-			}
 			_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(
 				context.Background(), nad, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1350,7 +1348,15 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 		}
 
 		createPrimaryUDN := func(namespace, udnName, networkID, subnets string) {
-			createPrimaryUDNOrCUDN(namespace, udnName, networkID, subnets, "", false)
+			network := util.GenerateUDNNetworkName(namespace, udnName)
+			nad := newTestUDNNADWithSubnetsAndTransport(udnName, namespace, network, networkID, subnets, "")
+			createUDNWithNAD(namespace, udnName, nad)
+		}
+
+		createPrimaryCUDN := func(namespace, cudnName, networkID, subnets, transport string) {
+			network := util.GenerateCUDNNetworkName(cudnName)
+			nad := newTestCUDNNADWithSubnetsTransportAndRole(cudnName, namespace, network, nil, networkID, subnets, transport, types.NetworkRolePrimary)
+			createUDNWithNAD(namespace, cudnName, nad)
 		}
 
 		ginkgo.It("sets Accepted=True condition on successful reconciliation", func() {
@@ -1575,7 +1581,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// check error is set
 				// full message is pre-defined because only CNC2 has the error
-				checkAcceptedConditionEventually(cncName2, "cross-validation failed for CNC test-cnc2: connectSubnets overlap detected between CNC test-cnc2 and CNC test-cnc1 which both select networks [layer3_1]")
+				checkAcceptedConditionEventually(cncName2, "cross-validation failed for CNC test-cnc2: connectSubnets overlap detected between CNC test-cnc2 and CNC test-cnc1 which both select networks [frontend-a_primary-udn]")
 				// check that first CNC has no errors
 				gomega.Consistently(func() error {
 					if err := checkAcceptedCondition(cncName1, ""); err != nil {
@@ -1600,7 +1606,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					if err = checkExpectedAnnotation(); err != nil {
 						return err
 					}
-					if err := checkAcceptedCondition(cncName2, "cross-validation failed for CNC test-cnc2: connectSubnets overlap detected between CNC test-cnc2 and CNC test-cnc1 which both select networks [layer3_1]"); err != nil {
+					if err := checkAcceptedCondition(cncName2, "cross-validation failed for CNC test-cnc2: connectSubnets overlap detected between CNC test-cnc2 and CNC test-cnc1 which both select networks [frontend-a_primary-udn]"); err != nil {
 						return err
 					}
 					return nil
@@ -1780,10 +1786,10 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				cncName := "test-cnc"
 				start()
 
-				createPrimaryUDNOrCUDN("frontend-a", "primary-udn", "1", "103.103.0.0/16/24", types.NetworkTransportNoOverlay, true)
-				createPrimaryUDNOrCUDN("frontend-b", "primary-udn", "2", "103.104.0.0/16/24", types.NetworkTransportEVPN, true)
+				createPrimaryCUDN("frontend-a", "primary-cudn1", "1", "103.103.0.0/16/24", types.NetworkTransportNoOverlay)
+				createPrimaryCUDN("frontend-b", "primary-cudn2", "2", "103.104.0.0/16/24", types.NetworkTransportEVPN)
 				// add one valid CUDN will get allocated subnets
-				createPrimaryUDNOrCUDN("frontend-c", "primary-udn", "3", "103.105.0.0/16/24", "", true)
+				createPrimaryCUDN("frontend-c", "primary-cudn3", "3", "103.105.0.0/16/24", "")
 
 				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
 					{
@@ -1803,6 +1809,45 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Verify status condition updated by controller
 				checkAcceptedConditionEventually(cncName, "has transport type no-overlay that is not supported for networkConnect")
+				// Verify the correct CUDN has subnets allocated
+				gomega.Eventually(func() int {
+					return getSubnetAnnotationNetworkCount(cncName)
+				}).WithTimeout(5 * time.Second).Should(gomega.Equal(1))
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+		ginkgo.It("sets Accepted=False condition and ignores selected secondary CUDN", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc"
+				start()
+				// create secondary CUDN
+				network := util.GenerateCUDNNetworkName("primary-cudn1")
+				nad := newTestCUDNNADWithSubnetsTransportAndRole("primary-cudn1", "frontend-a", network, nil, "1", "103.103.0.0/16/24", "", types.NetworkRoleSecondary)
+				createUDNWithNAD("frontend-a", "primary-cudn1", nad)
+
+				// add one valid CUDN will get allocated subnets
+				createPrimaryCUDN("frontend-c", "primary-cudn3", "3", "103.105.0.0/16/24", "")
+
+				cnc := newTestCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{
+					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+				})
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify status condition updated by controller
+				checkAcceptedConditionEventually(cncName, "has role 'Secondary'. Only 'Primary' role networks are supported")
 				// Verify the correct CUDN has subnets allocated
 				gomega.Eventually(func() int {
 					return getSubnetAnnotationNetworkCount(cncName)
