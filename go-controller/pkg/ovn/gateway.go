@@ -893,7 +893,13 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 		if util.IsNoOverlaySNATExemptionNeeded(gw.netInfo) {
 			// Get the no-overlay SNAT exemption address set UUIDs
 			addressSetFactory := addressset.NewOvnAddressSetFactory(gw.nbClient, config.IPv4Mode, config.IPv6Mode)
-			v4UUID, v6UUID, err = getNoOverlaySNATExemptionAsUUID(addressSetFactory, gw.netInfo, types.DefaultNetworkControllerName)
+			// Use the correct controller name: default-network-controller for default network,
+			// <networkName>-network-controller for user-defined networks
+			controllerName := types.DefaultNetworkControllerName
+			if gw.netInfo.IsUserDefinedNetwork() {
+				controllerName = getNetworkControllerName(gw.netInfo.GetNetworkName())
+			}
+			v4UUID, v6UUID, err = getNoOverlaySNATExemptionAsUUID(addressSetFactory, gw.netInfo, controllerName)
 			if err != nil {
 				return fmt.Errorf("failed to get no-overlay SNAT exemption address set UUID: %w", err)
 			}

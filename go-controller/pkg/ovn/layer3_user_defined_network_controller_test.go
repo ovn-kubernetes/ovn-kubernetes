@@ -1414,6 +1414,161 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 		Expect(app.Run([]string{app.Name})).To(Succeed())
 	})
 
+	// Test 2: Verify SNAT with exempted_ext_ips is created on GR_<node> in SHARED gateway mode
+	It("creates SNAT with exempted address set in shared gateway mode on gateway router", func() {
+		// Step 1: Set config.Gateway.Mode = config.GatewayModeShared
+		config.Gateway.Mode = config.GatewayModeShared
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableInterconnect = true
+		config.Default.Zone = testICZone
+		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16" // Broader subnet to accommodate network ID 2
+
+		app := cli.NewApp()
+		app.Name = "test"
+		app.Flags = config.Flags
+
+		// Step 2: Create a Layer3 CUDN with no-overlay transport and outboundSNAT enabled
+		cudnNetInfo := userDefinedNetInfo{
+			netName:        userDefinedNetworkName,
+			nadName:        namespacedName(ns, nadName),
+			topology:       types.Layer3Topology,
+			clustersubnets: "10.100.0.0/16",
+			hostsubnets:    "10.100.1.0/24",
+			isPrimary:      true,
+			transport:      types.NetworkTransportNoOverlay,
+			outboundSNAT:   string(types.NoOverlaySNATEnabled),
+		}
+
+		app.Action = func(*cli.Context) error {
+			// Create NAD with no-overlay transport and outboundSNAT enabled
+			netConf := cudnNetInfo.netconf()
+
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			n := newUDNNamespace(ns)
+			const nodeIPv4CIDR = "192.168.126.202/24"
+			testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, cudnNetInfo)
+			Expect(err).NotTo(HaveOccurred())
+
+			podInfo := dummyTestPod(ns, cudnNetInfo)
+
+			fakeOvn.startWithDBSetup(
+				libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.LogicalSwitch{Name: nodeName},
+					},
+				},
+				&corev1.NamespaceList{Items: []corev1.Namespace{*n}},
+				&corev1.NodeList{Items: []corev1.Node{}}, // Empty - will add node after watch starts
+				&corev1.PodList{Items: []corev1.Pod{*newMultiHomedPod(podInfo, cudnNetInfo)}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+			podInfo.populateLogicalSwitchCache(fakeOvn)
+
+			// Step 3: Initialize the CUDN controller
+			fexec := util.GetExec().(*testing.FakeExec)
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovn-nbctl --timeout=15 --columns=_uuid list Load_Balancer_Group",
+			})
+			fullL3UDNController := fakeOvn.fullL3UDNControllers[userDefinedNetworkName]
+			Expect(fullL3UDNController).ToNot(BeNil())
+			Expect(fullL3UDNController.init()).To(Succeed())
+
+			userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
+			Expect(ok).To(BeTrue())
+
+			userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+			podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
+
+			// Step 4: Create and advertise a pod on the CUDN to trigger gateway SNAT creation
+			By("Starting node watch on L3 UDN controller for shared gateway mode")
+			Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
+			Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
+
+			By("Adding node to trigger gateway creation with SNAT+exemption")
+			// Add the node AFTER starting the watch so the watch catches the ADD event
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), testNode, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			By("Node created, gateway should be initialized")
+
+			// Wait for pod and gateway processing to complete
+			Eventually(func() error {
+				// Step 5: Query the OVN NB database to find NAT entries on GR_<nodeName>
+				gwRouterName := userDefinedNetController.bnc.GetNetInfo().GetNetworkScopedGWRouterName(nodeName)
+				lr := &nbdb.LogicalRouter{Name: gwRouterName}
+				lr, err = libovsdbops.GetLogicalRouter(fakeOvn.nbClient, lr)
+				if err != nil {
+					return fmt.Errorf("failed to get gateway router %s: %v", gwRouterName, err)
+				}
+
+				if len(lr.Nat) == 0 {
+					return fmt.Errorf("no NAT entries found on gateway router %s", gwRouterName)
+				}
+
+				// Step 6: Verify NAT entries have exempted_ext_ips set
+				foundSNATWithExemption := false
+				for _, natUUID := range lr.Nat {
+					nat := &nbdb.NAT{UUID: natUUID}
+					nat, err = libovsdbops.GetNAT(fakeOvn.nbClient, nat)
+					if err != nil {
+						continue
+					}
+
+					if nat.Type == nbdb.NATTypeSNAT && nat.ExemptedExtIPs != nil && *nat.ExemptedExtIPs != "" {
+						foundSNATWithExemption = true
+
+						// Get the address set to verify UUID and contents
+						dbIDs := libovsdbops.NewDbObjectIDs(
+							libovsdbops.AddressSetNoOverlaySNATExemption,
+							userDefinedNetController.bnc.controllerName,
+							map[libovsdbops.ExternalIDKey]string{
+								libovsdbops.ObjectNameKey: "no-overlay-snat-exemption",
+								libovsdbops.NetworkKey:    userDefinedNetController.bnc.GetNetworkName(),
+							},
+						)
+						as, err := fakeOvn.controller.addressSetFactory.GetAddressSet(dbIDs)
+						if err != nil {
+							return fmt.Errorf("failed to get address set: %v", err)
+						}
+
+						// Verify the NAT's ExemptedExtIPs field contains the actual address set UUID
+						v4UUID, v6UUID := as.GetASUUID()
+						expectedUUID := v4UUID // For IPv4 mode
+						if config.IPv6Mode && !config.IPv4Mode {
+							expectedUUID = v6UUID
+						}
+						if *nat.ExemptedExtIPs != expectedUUID {
+							return fmt.Errorf("NAT ExemptedExtIPs (%s) does not match address set UUID (%s)",
+								*nat.ExemptedExtIPs, expectedUUID)
+						}
+
+						// Verify the address set contains both cluster subnet and node host IP
+						ipv4Addrs, ipv6Addrs := as.GetAddresses()
+						allAddrs := append(ipv4Addrs, ipv6Addrs...)
+						expectedAddrs := []string{"10.100.0.0/16", "192.168.126.202"}
+						for _, expectedAddr := range expectedAddrs {
+							if !slices.Contains(allAddrs, expectedAddr) {
+								return fmt.Errorf("address set does not contain %s, has: %v", expectedAddr, allAddrs)
+							}
+						}
+						break
+					}
+				}
+
+				if !foundSNATWithExemption {
+					return fmt.Errorf("no SNAT with ExemptedExtIPs found on gateway router %s", gwRouterName)
+				}
+
+				return nil
+			}).WithTimeout(10 * time.Second).WithPolling(200 * time.Millisecond).Should(Succeed())
+
+			return nil
+		}
+
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	})
 })
 
 func newPodWithPrimaryUDN(
