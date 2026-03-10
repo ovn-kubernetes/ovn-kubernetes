@@ -36,6 +36,7 @@ type SpecGetter interface {
 	GetLocalnet() *userdefinednetworkv1.LocalnetConfig
 	GetTransport() userdefinednetworkv1.TransportOption
 	GetEVPN() *userdefinednetworkv1.EVPNConfig
+	GetNoOverlay() *userdefinednetworkv1.NoOverlayConfig
 }
 
 func RenderNetAttachDefManifest(obj client.Object, targetNamespace string, opts ...RenderOption) (*netv1.NetworkAttachmentDefinition, error) {
@@ -206,6 +207,14 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 		netConfSpec.EVPN = renderEVPNConfig(spec, opts)
 	}
 
+	if spec.GetTransport() == userdefinednetworkv1.TransportOptionNoOverlay {
+		noOverlayCfg := spec.GetNoOverlay()
+		if noOverlayCfg != nil {
+			// Convert CRD SNATOption enum ("Enabled"/"Disabled") to internal format ("enabled"/"disabled")
+			netConfSpec.OutboundSNAT = strings.ToLower(string(noOverlayCfg.OutboundSNAT))
+		}
+	}
+
 	if netConfSpec.AllowPersistentIPs && !config.OVNKubernetesFeature.EnablePersistentIPs {
 		return nil, fmt.Errorf("allowPersistentIPs is set but persistentIPs is Disabled")
 	}
@@ -271,6 +280,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 
 	if netConfSpec.Transport != "" {
 		cniNetConf["transport"] = netConfSpec.Transport
+	}
+	if netConfSpec.OutboundSNAT != "" {
+		cniNetConf["outboundSNAT"] = netConfSpec.OutboundSNAT
 	}
 	if netConfSpec.EVPN != nil {
 		cniNetConf["evpn"] = netConfSpec.EVPN

@@ -140,6 +140,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		AllowPersistentIPs    bool        `json:"allowPersistentIPs,omitempty"`
 		PhysicalNetworkName   string      `json:"physicalNetworkName,omitempty"`
 		Transport             string      `json:"transport,omitempty"`
+		OutboundSNAT          string      `json:"outboundSNAT,omitempty"`
 		EVPN                  *EVPNConfig `json:"evpn,omitempty"`
 		DeviceID              string      `json:"deviceID,omitempty"`
 		LogFile               string      `json:"logFile,omitempty"`
@@ -168,6 +169,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		AllowPersistentIPs:    n.AllowPersistentIPs,
 		PhysicalNetworkName:   n.PhysicalNetworkName,
 		Transport:             n.Transport,
+		OutboundSNAT:          n.OutboundSNAT,
 		EVPN:                  n.EVPN,
 		DeviceID:              n.DeviceID,
 		LogFile:               n.LogFile,
