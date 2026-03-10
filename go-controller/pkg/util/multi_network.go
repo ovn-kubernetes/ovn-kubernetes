@@ -742,8 +742,9 @@ type userDefinedNetInfo struct {
 	defaultGatewayIPs   []net.IP
 	managementIPs       []net.IP
 
-	transport string
-	evpn      *ovncnitypes.EVPNConfig
+	transport    string
+	evpn         *ovncnitypes.EVPNConfig
+	outboundSNAT string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -881,8 +882,7 @@ func (nInfo *userDefinedNetInfo) Transport() string {
 
 // OutboundSNAT() string returns the outbound SNAT configuration for this network when using no-overlay transport.
 func (nInfo *userDefinedNetInfo) OutboundSNAT() string {
-	// TODO: implement per-network no-overlay outbound SNAT configuration
-	return ""
+	return nInfo.outboundSNAT
 }
 
 // EVPNVTEPName returns the name of the VTEP CR for EVPN
@@ -1072,6 +1072,9 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.EVPNIPVRFRouteTarget() != other.EVPNIPVRFRouteTarget() {
 		return false
 	}
+	if nInfo.OutboundSNAT() != other.OutboundSNAT() {
+		return false
+	}
 
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.subnets, other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
@@ -1116,6 +1119,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		managementIPs:         nInfo.managementIPs,
 		transport:             nInfo.transport,
 		evpn:                  nInfo.evpn,
+		outboundSNAT:          nInfo.outboundSNAT,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1141,6 +1145,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		mtu:            netconf.MTU,
 		transport:      netconf.Transport,
 		evpn:           netconf.EVPN,
+		outboundSNAT:   netconf.OutboundSNAT,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},

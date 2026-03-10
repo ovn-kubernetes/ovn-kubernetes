@@ -89,6 +89,12 @@ type NetConf struct {
 	// When omitted, the default OVN overlay transport is used.
 	Transport string `json:"transport,omitempty"`
 
+	// OutboundSNAT configures SNAT behavior for outbound traffic from pods
+	// on user-defined networks in no-overlay mode.
+	// Valid values are "enabled" and "disabled".
+	// Only valid when Transport is "no-overlay".
+	OutboundSNAT string `json:"outboundSNAT,omitempty"`
+
 	// EVPNConfig contains configuration for EVPN mode.
 	// Only valid when Transport is "evpn".
 	EVPN *EVPNConfig `json:"evpn,omitempty"`
@@ -140,6 +146,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		AllowPersistentIPs    bool        `json:"allowPersistentIPs,omitempty"`
 		PhysicalNetworkName   string      `json:"physicalNetworkName,omitempty"`
 		Transport             string      `json:"transport,omitempty"`
+		OutboundSNAT          string      `json:"outboundSNAT,omitempty"`
 		EVPN                  *EVPNConfig `json:"evpn,omitempty"`
 		DeviceID              string      `json:"deviceID,omitempty"`
 		LogFile               string      `json:"logFile,omitempty"`
@@ -168,6 +175,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		AllowPersistentIPs:    n.AllowPersistentIPs,
 		PhysicalNetworkName:   n.PhysicalNetworkName,
 		Transport:             n.Transport,
+		OutboundSNAT:          n.OutboundSNAT,
 		EVPN:                  n.EVPN,
 		DeviceID:              n.DeviceID,
 		LogFile:               n.LogFile,
