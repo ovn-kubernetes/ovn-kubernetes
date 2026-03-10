@@ -502,6 +502,11 @@ func (oc *Layer3UserDefinedNetworkController) Cleanup() error {
 	cleanupLoadBalancerGroups(oc.nbClient, oc.GetNetInfo(),
 		oc.switchLoadBalancerGroupUUID, oc.clusterLoadBalancerGroupUUID, oc.routerLoadBalancerGroupUUID)
 
+	// Cleanup noOverlay SNAT exemption address set
+	if err := cleanupNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+		klog.Warningf("Failed to cleanup noOverlay SNAT exemption address set for network %s: %v", netName, err)
+	}
+
 	return nil
 }
 
@@ -765,6 +770,16 @@ func (oc *Layer3UserDefinedNetworkController) init() error {
 		oc.switchLoadBalancerGroupUUID = switchLBGroupUUID
 		oc.routerLoadBalancerGroupUUID = routerLBGroupUUID
 	}
+
+	// Initialize noOverlay SNAT exemption address set when using noOverlay transport with outboundSNAT enabled
+	// This is needed for both local and shared gateway modes
+	if oc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay &&
+		oc.GetNetInfo().OutboundSNAT() == types.NoOverlaySNATEnabled {
+		if _, err := initNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			return fmt.Errorf("failed to initialize noOverlay SNAT exemption address set for network %s: %w", oc.GetNetworkName(), err)
+		}
+	}
+
 	return nil
 }
 
@@ -835,6 +850,16 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		errs = append(errs, errors...)
 	}
 
+	// Sync noOverlay SNAT exemption address set BEFORE gateway initialization
+	// This must happen before the gateway creates SNAT rules that reference the address set
+	if oc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay &&
+		oc.GetNetInfo().OutboundSNAT() == types.NoOverlaySNATEnabled &&
+		(nSyncs.syncNode || nSyncs.syncGw) {
+		if err := oc.syncNoOverlaySNATExemptionAddressSetForLocalZoneNodes(node); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
 		if nSyncs.syncGw {
 			gwManager := oc.gatewayManagerForNode(node.Name)
@@ -902,6 +927,44 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		oc.recordNodeErrorEvent(node, err)
 	}
 	return err
+}
+
+func (oc *Layer3UserDefinedNetworkController) syncNoOverlaySNATExemptionAddressSetForLocalZoneNodes(currentNode *corev1.Node) error {
+	if oc.GetNetInfo().Transport() != types.NetworkTransportNoOverlay ||
+		oc.GetNetInfo().OutboundSNAT() != types.NoOverlaySNATEnabled {
+		return nil
+	}
+
+	localNodesByName := map[string]*corev1.Node{}
+	if currentNode != nil {
+		if _, local := oc.localZoneNodes.Load(currentNode.Name); local {
+			localNodesByName[currentNode.Name] = currentNode
+		}
+	}
+
+	nodes, err := oc.watchFactory.GetNodes()
+	if err != nil {
+		return fmt.Errorf("failed to list nodes while syncing no-overlay SNAT exemption address set: %w", err)
+	}
+	for _, node := range nodes {
+		if _, local := oc.localZoneNodes.Load(node.Name); local {
+			localNodesByName[node.Name] = node
+		}
+	}
+
+	localNodeIPs := sets.New[string]()
+	for _, node := range localNodesByName {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			return fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err)
+		}
+		localNodeIPs.Insert(hostAddrs...)
+	}
+
+	if err := syncNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName, localNodeIPs.UnsortedList()); err != nil {
+		return fmt.Errorf("failed to sync no-overlay SNAT exemption address set: %w", err)
+	}
+	return nil
 }
 
 func (oc *Layer3UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, syncZoneIc bool) error {
@@ -995,7 +1058,8 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 	klog.V(5).Infof("Deleting Node %q for network %s. Removing the node from "+
 		"various caches", node.Name, oc.GetNetworkName())
 
-	if _, local := oc.localZoneNodes.Load(node.Name); local {
+	_, nodeWasLocal := oc.localZoneNodes.Load(node.Name)
+	if nodeWasLocal {
 		if err := oc.deleteNode(node.Name); err != nil {
 			return err
 		}
@@ -1024,6 +1088,11 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 	}
 	oc.syncZoneICFailed.Delete(node.Name)
 	oc.localZoneNodes.Delete(node.Name)
+	if nodeWasLocal {
+		if err := oc.syncNoOverlaySNATExemptionAddressSetForLocalZoneNodes(nil); err != nil {
+			return err
+		}
+	}
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 	return nil
 }
