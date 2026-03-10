@@ -494,6 +494,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		if err = observabilityManager.Init(); err != nil {
 			return fmt.Errorf("failed to init observability manager: %w", err)
 		}
+		observabilityManager.StartWatching(cm.watchFactory.ObservabilityConfigInformer(), cm.watchFactory, zone, cm.stopChan)
 	} else {
 		err = observability.Cleanup(cm.nbClient)
 		if err != nil {

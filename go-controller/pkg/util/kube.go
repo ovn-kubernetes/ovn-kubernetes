@@ -52,6 +52,7 @@ import (
 	egressqosclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned"
 	egressserviceclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned"
 	networkqosclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
+	observabilityconfigclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/clientset/versioned"
 	routeadvertisementsclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	userdefinednetworkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	vtepclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
@@ -76,6 +77,7 @@ type OVNClientset struct {
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	FRRClient                 frrclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	ObservabilityConfigClient observabilityconfigclientset.Interface
 	VTEPClient                vtepclientset.Interface
 }
 
@@ -97,6 +99,7 @@ type OVNMasterClientset struct {
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	FRRClient                 frrclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	ObservabilityConfigClient observabilityconfigclientset.Interface
 	VTEPClient                vtepclientset.Interface
 }
 
@@ -116,6 +119,7 @@ type OVNKubeControllerClientset struct {
 	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	ObservabilityConfigClient observabilityconfigclientset.Interface
 	NetworkConnectClient      networkconnectclientset.Interface
 }
 
@@ -146,6 +150,7 @@ type OVNClusterManagerClientset struct {
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	FRRClient                 frrclientset.Interface
 	NetworkQoSClient          networkqosclientset.Interface
+	ObservabilityConfigClient observabilityconfigclientset.Interface
 	VTEPClient                vtepclientset.Interface
 }
 
@@ -177,6 +182,7 @@ func (cs *OVNClientset) GetMasterClientset() *OVNMasterClientset {
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		FRRClient:                 cs.FRRClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		ObservabilityConfigClient: cs.ObservabilityConfigClient,
 		VTEPClient:                cs.VTEPClient,
 	}
 }
@@ -197,6 +203,7 @@ func (cs *OVNMasterClientset) GetOVNKubeControllerClientset() *OVNKubeController
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		ObservabilityConfigClient: cs.ObservabilityConfigClient,
 	}
 }
 
@@ -216,6 +223,7 @@ func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClient
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		ObservabilityConfigClient: cs.ObservabilityConfigClient,
 		NetworkConnectClient:      cs.NetworkConnectClient,
 	}
 }
@@ -238,6 +246,7 @@ func (cs *OVNClientset) GetClusterManagerClientset() *OVNClusterManagerClientset
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		FRRClient:                 cs.FRRClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
+		ObservabilityConfigClient: cs.ObservabilityConfigClient,
 		VTEPClient:                cs.VTEPClient,
 	}
 }
@@ -553,6 +562,11 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 		return nil, err
 	}
 
+	observabilityConfigClientset, err := observabilityconfigclientset.NewForConfig(kconfig)
+	if err != nil {
+		return nil, err
+	}
+
 	vtepClientset, err := vtepclientset.NewForConfig(kconfig)
 	if err != nil {
 		return nil, err
@@ -576,6 +590,7 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 		RouteAdvertisementsClient: routeAdvertisementsClientset,
 		FRRClient:                 frrClientset,
 		NetworkQoSClient:          networkqosClientset,
+		ObservabilityConfigClient: observabilityConfigClientset,
 		VTEPClient:                vtepClientset,
 	}, nil
 }

@@ -35,6 +35,8 @@ import (
 	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
 	networkqos "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
+	observabilityconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1"
+	observabilityconfigfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/clientset/versioned/fake"
 	routeadvertisements "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	routeadvertisementsfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
@@ -52,6 +54,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 	apbExternalRouteObjects := []runtime.Object{}
 	anpObjects := []runtime.Object{}
 	networkQoSObjects := []runtime.Object{}
+	observabilityConfigObjects := []runtime.Object{}
 	v1Objects := []runtime.Object{}
 	nads := []runtime.Object{}
 	cloudObjects := []runtime.Object{}
@@ -91,6 +94,8 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 			frrObjects = append(frrObjects, object)
 		case *networkqos.NetworkQoS:
 			networkQoSObjects = append(networkQoSObjects, object)
+		case *observabilityconfig.ObservabilityConfig:
+			observabilityConfigObjects = append(observabilityConfigObjects, object)
 		case *networkconnect.ClusterNetworkConnect:
 			networkConnectObjects = append(networkConnectObjects, object)
 		case *vtepv1.VTEP:
@@ -123,6 +128,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 		RouteAdvertisementsClient: routeadvertisementsfake.NewSimpleClientset(raObjects...),
 		FRRClient:                 frrfake.NewSimpleClientset(frrObjects...),
 		NetworkQoSClient:          networkqosfake.NewSimpleClientset(networkQoSObjects...),
+		ObservabilityConfigClient: observabilityconfigfake.NewSimpleClientset(observabilityConfigObjects...),
 		NetworkConnectClient:      networkconnectfake.NewSimpleClientset(networkConnectObjects...),
 		VTEPClient:                vtepfake.NewSimpleClientset(vtepObjects...),
 	}
