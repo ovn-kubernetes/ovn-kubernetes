@@ -25,6 +25,7 @@ import (
 	anpovn "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -80,7 +81,7 @@ func getACLsForBANPRules(banp *anpapi.BaselineAdminNetworkPolicy) []*nbdb.ACL {
 
 func buildBANPAddressSets(banp *anpapi.BaselineAdminNetworkPolicy, index int32, ips []string, gressPrefix libovsdbutil.ACLDirection) (*nbdb.AddressSet, *nbdb.AddressSet) {
 	asIndex := anpovn.GetANPPeerAddrSetDbIDs(banp.Name, string(gressPrefix),
-		fmt.Sprintf("%d", index), DefaultNetworkControllerName, true)
+		fmt.Sprintf("%d", index), types.DefaultNetworkControllerName, true)
 	return addressset.GetTestDbAddrSets(asIndex, ips)
 }
 

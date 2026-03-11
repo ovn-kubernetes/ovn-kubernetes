@@ -80,7 +80,7 @@ func getDefaultPGForANPSubject(anpName string, portUUIDs []string, acls []*nbdb.
 	for _, uuid := range portUUIDs {
 		lsps = append(lsps, &nbdb.LogicalSwitchPort{UUID: uuid})
 	}
-	pgDbIDs := anpovn.GetANPPortGroupDbIDs(anpName, banp, DefaultNetworkControllerName)
+	pgDbIDs := anpovn.GetANPPortGroupDbIDs(anpName, banp, types.DefaultNetworkControllerName)
 
 	pg := libovsdbutil.BuildPortGroup(
 		pgDbIDs,
@@ -107,24 +107,24 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		acl.Tier = types.DefaultBANPACLTier
 	}
 	acl.ExternalIDs = map[string]string{
-		libovsdbops.OwnerControllerKey.String():    DefaultNetworkControllerName,
+		libovsdbops.OwnerControllerKey.String():    types.DefaultNetworkControllerName,
 		libovsdbops.ObjectNameKey.String():         anpName,
 		libovsdbops.GressIdxKey.String():           fmt.Sprintf("%d", ruleIndex),
 		libovsdbops.PolicyDirectionKey.String():    direction,
 		libovsdbops.PortPolicyProtocolKey.String(): "None",
 		libovsdbops.OwnerTypeKey.String():          "AdminNetworkPolicy",
-		libovsdbops.PrimaryIDKey.String():          fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:None", DefaultNetworkControllerName, anpName, direction, ruleIndex),
+		libovsdbops.PrimaryIDKey.String():          fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:None", types.DefaultNetworkControllerName, anpName, direction, ruleIndex),
 	}
 	acl.Name = ptr.To(fmt.Sprintf("ANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
 	if banp {
 		acl.ExternalIDs[libovsdbops.OwnerTypeKey.String()] = "BaselineAdminNetworkPolicy"
 		acl.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:None",
-			DefaultNetworkControllerName, anpName, direction, ruleIndex)
+			types.DefaultNetworkControllerName, anpName, direction, ruleIndex)
 		acl.Name = ptr.To(fmt.Sprintf("BANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
 	}
 	acl.UUID = fmt.Sprintf("%s_%s_%d-%f-UUID", anpName, direction, ruleIndex, rand.Float64())
 	// determine ACL match
-	pgName := libovsdbutil.GetPortGroupName(anpovn.GetANPPortGroupDbIDs(anpName, banp, DefaultNetworkControllerName))
+	pgName := libovsdbutil.GetPortGroupName(anpovn.GetANPPortGroupDbIDs(anpName, banp, types.DefaultNetworkControllerName))
 	var lPortMatch, l3Match, matchDirection, match string
 	if direction == string(libovsdbutil.ACLIngress) {
 		acl.Direction = nbdb.ACLDirectionToLport
@@ -139,7 +139,7 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		matchDirection = "dst"
 	}
 	asIndex := anpovn.GetANPPeerAddrSetDbIDs(anpName, direction, fmt.Sprintf("%d", ruleIndex),
-		DefaultNetworkControllerName, banp)
+		types.DefaultNetworkControllerName, banp)
 	asv4, asv6 := addressset.GetHashNamesForAS(asIndex)
 	if config.IPv4Mode && config.IPv6Mode {
 		l3Match = fmt.Sprintf("((ip4.%s == $%s || ip6.%s == $%s))", matchDirection, asv4, matchDirection, asv6)
@@ -182,10 +182,10 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		aclCopy.ExternalIDs[libovsdbops.PortPolicyProtocolKey.String()] = protocol
 		aclCopy.Match = match
 		aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:%s",
-			DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
+			types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
 		if banp {
 			aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:%s",
-				DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
+				types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
 		}
 		aclCopy.UUID = fmt.Sprintf("%s_%s_%d.%s-%f-UUID", anpName, direction, ruleIndex, protocol, rand.Float64())
 		retACLs = append(retACLs, &aclCopy)
@@ -205,10 +205,10 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		aclCopy.ExternalIDs[libovsdbops.PortPolicyProtocolKey.String()] = protocol + "-namedPort"
 		aclCopy.Match = match
 		aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:%s",
-			DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
+			types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
 		if banp {
 			aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:%s",
-				DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
+				types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
 		}
 		retACLs = append(retACLs, &aclCopy)
 	}
@@ -253,7 +253,7 @@ func getACLsForANPRules(anp *anpapi.AdminNetworkPolicy) []*nbdb.ACL {
 
 func buildANPAddressSets(anp *anpapi.AdminNetworkPolicy, index int32, ips []string, gressPrefix libovsdbutil.ACLDirection) (*nbdb.AddressSet, *nbdb.AddressSet) {
 	asIndex := anpovn.GetANPPeerAddrSetDbIDs(anp.Name, string(gressPrefix),
-		fmt.Sprintf("%d", index), DefaultNetworkControllerName, false)
+		fmt.Sprintf("%d", index), types.DefaultNetworkControllerName, false)
 	return addressset.GetTestDbAddrSets(asIndex, ips)
 }
 

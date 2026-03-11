@@ -4,10 +4,11 @@ import "time"
 
 const (
 	// Default network name
-	DefaultNetworkName    = "default"
-	K8sPrefix             = "k8s-"
-	HybridOverlayPrefix   = "int-"
-	HybridOverlayGRSubfix = "-gr"
+	DefaultNetworkName           = "default"
+	DefaultNetworkControllerName = "default-network-controller"
+	K8sPrefix                    = "k8s-"
+	HybridOverlayPrefix          = "int-"
+	HybridOverlayGRSubfix        = "-gr"
 
 	// K8sMgmtIntfNamePrefix name to be used as an OVS internal port on the node as prefix for networs
 	K8sMgmtIntfNamePrefix = "ovn-k8s-mp"

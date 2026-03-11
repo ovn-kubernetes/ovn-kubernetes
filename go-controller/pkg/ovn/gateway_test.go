@@ -46,7 +46,7 @@ func generateAdvertisedUDNIsolationExpectedNB(testData []libovsdbtest.TestData, 
 
 	}
 	passACL := libovsdbutil.BuildACLWithDefaultTier(
-		GetAdvertisedNetworkSubnetsPassACLdbIDs(DefaultNetworkControllerName, networkName, networkID),
+		GetAdvertisedNetworkSubnetsPassACLdbIDs(types.DefaultNetworkControllerName, networkName, networkID),
 		types.AdvertisedNetworkPassPriority,
 		strings.Join(passMatches, " || "),
 		nbdb.ACLActionPass,
@@ -349,7 +349,7 @@ func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbte
 	testData = append(testData, expectedOVNClusterRouter)
 
 	if len(nodeMgmtPortIP) != 0 {
-		nodeACL := getAllowFromNodeExpectedACL(nodeName, nodeMgmtPortIP, nil, DefaultNetworkControllerName)
+		nodeACL := getAllowFromNodeExpectedACL(nodeName, nodeMgmtPortIP, nil, types.DefaultNetworkControllerName)
 		testData = append(testData, nodeACL)
 
 		expectedNodeSwitch.ACLs = append(expectedNodeSwitch.ACLs, nodeACL.UUID)
@@ -2206,7 +2206,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 				ginkgo.BeforeEach(func() {
 					config.Gateway.Mode = config.GatewayModeLocal
 					addressSetFactory = addressset.NewOvnAddressSetFactory(fakeOvn.nbClient, config.IPv4Mode, config.IPv6Mode)
-					dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+					dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 					as, err := addressSetFactory.EnsureAddressSet(dbIDs)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = as.AddAddresses([]string{"10.0.0.1"})
@@ -2217,7 +2217,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 					netInfo.topology = types.Layer3Topology
 					match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+					as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName))
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					v4Hash, _ := as.GetASHashNames()
 					expectedMatch := fmt.Sprintf("ip4.dst == $%s", v4Hash)
@@ -2229,7 +2229,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 		ginkgo.Context("when outbound SNAT is disabled", func() {
 			ginkgo.BeforeEach(func() {
 				addressSetFactory = addressset.NewOvnAddressSetFactory(fakeOvn.nbClient, config.IPv4Mode, config.IPv6Mode)
-				dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+				dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 				as, err := addressSetFactory.EnsureAddressSet(dbIDs)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = as.AddAddresses([]string{"10.0.0.1"})
@@ -2240,7 +2240,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 				netInfo.topology = types.Layer3Topology
 				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				v4Hash, _ := as.GetASHashNames()
 				expectedMatch := fmt.Sprintf("ip4.dst == $%s", v4Hash)
@@ -2254,7 +2254,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 				netInfo.topology = types.Layer2Topology
 				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				v4Hash, _ := as.GetASHashNames()
 				expectedMatch := fmt.Sprintf("ip4.dst == $%s", v4Hash)
@@ -2268,7 +2268,7 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 				netInfo.topology = types.Layer2Topology
 				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				v4Hash, _ := as.GetASHashNames()
 				expectedMatch := fmt.Sprintf("outport == %q && ip4.dst == $%s", types.GWRouterToExtSwitchPrefix+netInfo.GetNetworkScopedGWRouterName(nodeName), v4Hash)
@@ -2329,7 +2329,7 @@ var _ = ginkgo.Describe("AddPodSNATOps", func() {
 		controller = fakeOvn.controller
 
 		// Create address set for node IPs (required for SNAT match)
-		dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+		dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 		nodeIPAddrSet, asErr := controller.addressSetFactory.EnsureAddressSet(dbIDs)
 		gomega.Expect(asErr).NotTo(gomega.HaveOccurred())
 		asErr = nodeIPAddrSet.AddAddresses([]string{nodeIP, nodeIPv6})

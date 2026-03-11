@@ -563,7 +563,7 @@ func getPortNetworkPolicy(policyName, namespace, labelName, labelVal string, tcp
 
 // buildNetworkPolicyPeerAddressSet builds the addresssets for the networkpolicy peer provided
 func buildNetworkPolicyPeerAddressSets(namespaceName string, peer knet.NetworkPolicyPeer, ips ...string) (*nbdb.AddressSet, *nbdb.AddressSet) {
-	dbIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(peer.PodSelector, peer.NamespaceSelector, namespaceName, DefaultNetworkControllerName)
+	dbIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(peer.PodSelector, peer.NamespaceSelector, namespaceName, types.DefaultNetworkControllerName)
 	return addressset.GetTestDbAddrSets(dbIDs, ips)
 }
 
@@ -2418,11 +2418,11 @@ var _ = ginkgo.Describe("OVN AllowFromNode ACL low-level operations", func() {
 		nodeName       = "node1"
 		ipv4MgmtIP     = "192.168.10.10"
 		ipv6MgmtIP     = "fd01::1234"
-		controllerName = DefaultNetworkControllerName
+		controllerName = types.DefaultNetworkControllerName
 	)
 
 	getFakeController := func(nbClient libovsdbclient.Client) *DefaultNetworkController {
-		controller := getFakeController(DefaultNetworkControllerName)
+		controller := getFakeController(types.DefaultNetworkControllerName)
 		controller.nbClient = nbClient
 		return controller
 	}
@@ -2554,14 +2554,14 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Low-Level Operations", func() {
 	ginkgo.It("computes match strings from address sets correctly", func() {
 		const (
 			pgName         string = "pg-name"
-			controllerName        = DefaultNetworkControllerName
+			controllerName        = types.DefaultNetworkControllerName
 		)
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		asFactory = addressset.NewFakeAddressSetFactory(controllerName)
 		config.IPv4Mode = true
 		config.IPv6Mode = false
-		asIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, "nsName", DefaultNetworkControllerName)
+		asIDs := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, "nsName", types.DefaultNetworkControllerName)
 		gp := newGressPolicy(knet.PolicyTypeIngress, 0, "testing", "policy", controllerName,
 			false, &util.DefaultNetInfo{})
 		gp.hasPeerSelector = true

@@ -490,7 +490,7 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 		createDefaultNodeRouteToExternal = libovsdbutil.CreateDefaultRouteToExternal
 	}
 
-	return egresssvc_zone.NewController(oc.GetNetInfo(), DefaultNetworkControllerName, oc.client, oc.nbClient, oc.addressSetFactory,
+	return egresssvc_zone.NewController(oc.GetNetInfo(), ovntypes.DefaultNetworkControllerName, oc.client, oc.nbClient, oc.addressSetFactory,
 		initClusterEgressPolicies, ensureNodeNoReroutePolicies,
 		createDefaultNodeRouteToExternal,
 		oc.stopChan, oc.watchFactory.EgressServiceInformer(), oc.watchFactory.ServiceCoreInformer(),
@@ -501,7 +501,7 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 func (oc *DefaultNetworkController) newANPController() error {
 	var err error
 	oc.anpController, err = anpcontroller.NewController(
-		DefaultNetworkControllerName,
+		ovntypes.DefaultNetworkControllerName,
 		oc.nbClient,
 		oc.kube.ANPClient,
 		oc.watchFactory.ANPInformer(),

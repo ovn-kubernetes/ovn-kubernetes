@@ -130,7 +130,7 @@ type FakeOVN struct {
 func NewFakeOVN(useFakeAddressSet bool) *FakeOVN {
 	var asf *addressset.FakeAddressSetFactory
 	if useFakeAddressSet {
-		asf = addressset.NewFakeAddressSetFactory(DefaultNetworkControllerName)
+		asf = addressset.NewFakeAddressSetFactory(types.DefaultNetworkControllerName)
 	}
 	return &FakeOVN{
 		asf:          asf,
@@ -281,7 +281,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		config.IPv4Mode,
 		config.IPv6Mode,
 		"",
-		DefaultNetworkControllerName,
+		types.DefaultNetworkControllerName,
 	)
 	o.addressSetManager = addresssetmanager.NewAddressSetManager(o.watcher.PodCoreInformer(),
 		o.watcher.NamespaceInformer(), o.nbClient, o.networkManager.Interface().GetNetworkNameForNADKey)

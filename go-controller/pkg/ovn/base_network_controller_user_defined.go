@@ -955,7 +955,7 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 		// contains the node IPs in the cluster. Given that egressIP feature
 		// already has an address set containing these nodeIPs owned by the
 		// default network controller, let's re-use it.
-		nodeIPsASIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+		nodeIPsASIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 		nodeIPsAS, err = bsnc.addressSetFactory.GetAddressSet(nodeIPsASIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get address set with IDs %v: %w", nodeIPsASIDs, err)

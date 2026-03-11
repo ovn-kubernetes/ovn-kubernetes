@@ -440,7 +440,7 @@ func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, 
 	}
 	if namespacedPortGroup != "" {
 		// namespace port group is created
-		pgIDs := getNamespacePortGroupDbIDs(namespacedPortGroup, DefaultNetworkControllerName)
+		pgIDs := getNamespacePortGroupDbIDs(namespacedPortGroup, ovntypes.DefaultNetworkControllerName)
 		pg := libovsdbutil.BuildPortGroup(pgIDs, logicalSwitchPorts, nil)
 		pg.UUID = pg.Name + "-UUID"
 		data = append(data, pg)

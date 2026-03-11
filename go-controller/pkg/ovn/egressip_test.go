@@ -2779,7 +2779,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					expectedNatLogicalPort := "k8s-node1"
-					primarySNAT := getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP, expectedNatLogicalPort, DefaultNetworkControllerName)
+					primarySNAT := getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP, expectedNatLogicalPort, types.DefaultNetworkControllerName)
 					primarySNAT.UUID = "egressip-nat1-UUID"
 					egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
 					servedPodIPs := []string{podV4IP}
@@ -2942,7 +2942,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
 
 					expectedNatLogicalPort = "k8s-node2"
-					eipSNAT := getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP, expectedNatLogicalPort, DefaultNetworkControllerName)
+					eipSNAT := getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP, expectedNatLogicalPort, types.DefaultNetworkControllerName)
 					egressSVCServedPodsASv4, _ = buildEgressServiceAddressSets(nil)
 					egressIPServedPodsASv4, _ = buildEgressIPServedPodsAddressSets([]string{podV4IP}, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
 					ip, _, _ := net.ParseCIDR(node2IPv4)
@@ -3494,7 +3494,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", nodeLogicalRouterIPv4,
 						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4,
 							types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-					getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP.String(), "k8s-node1", DefaultNetworkControllerName),
+					getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP.String(), "k8s-node1", types.DefaultNetworkControllerName),
 					&nbdb.LogicalRouter{
 						Name:     types.OVNClusterRouter,
 						UUID:     types.OVNClusterRouter + "-UUID",
@@ -3742,7 +3742,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						getReRoutePolicy(egressPod.Status.PodIP, "6", "reroute-UUID", node2LogicalRouterIPv6,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6,
 								types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, DefaultNetworkControllerName),
+						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, types.DefaultNetworkControllerName),
 						&nbdb.LogicalRouter{
 							Name:     types.OVNClusterRouter,
 							UUID:     types.OVNClusterRouter + "-UUID",
@@ -4015,7 +4015,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					expectedDatabaseState := []libovsdbtest.TestData{
 						getReRoutePolicy(egressPod.Status.PodIP, "6", "reroute-UUID", node2LogicalRouterIPv6,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, DefaultNetworkControllerName),
+						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, types.DefaultNetworkControllerName),
 						&nbdb.LogicalRouter{
 							Name:     types.OVNClusterRouter,
 							UUID:     types.OVNClusterRouter + "-UUID",
@@ -4622,7 +4622,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					expectedDatabaseState := []libovsdbtest.TestData{
 						getReRoutePolicy(podV6IP, "6", "reroute-UUID", node2LogicalRouterIPv6,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, DefaultNetworkControllerName),
+						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, types.DefaultNetworkControllerName),
 						&nbdb.LogicalRouter{
 							Name:     types.OVNClusterRouter,
 							UUID:     types.OVNClusterRouter + "-UUID",
@@ -4868,7 +4868,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					expectedDatabaseState := []libovsdbtest.TestData{
 						getReRoutePolicy(egressPod.Status.PodIP, "6", "reroute-UUID", node2LogicalRouterIPv6,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, DefaultNetworkControllerName),
+						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, types.DefaultNetworkControllerName),
 						&nbdb.LogicalRouter{
 							Name:     types.OVNClusterRouter,
 							UUID:     types.OVNClusterRouter + "-UUID",
@@ -5124,7 +5124,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					expectedDatabaseState := []libovsdbtest.TestData{
 						getReRoutePolicy(egressPod.Status.PodIP, "6", "reroute-UUID", nodeLogicalRouterIPv6,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
-						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, DefaultNetworkControllerName),
+						getEIPSNAT(podV6IP, egressPod.Namespace, egressPod.Name, egressIP.String(), expectedNatLogicalPort, types.DefaultNetworkControllerName),
 						&nbdb.LogicalRouter{
 							Name:     types.OVNClusterRouter,
 							UUID:     types.OVNClusterRouter + "-UUID",
@@ -5250,7 +5250,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					node1.Annotations["k8s.ovn.org/zone-name"] = podZone
 					_, node1Subnet, _ := net.ParseCIDR(v6Node1Subnet)
 					_, node2Subnet, _ := net.ParseCIDR(v6Node2Subnet)
-					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(nil, types.DefaultNetworkName, DefaultNetworkControllerName)
+					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(nil, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 					dynamicNeighRouters := "true"
 					if config.OVNKubernetesFeature.EnableInterconnect {
 						dynamicNeighRouters = "false"
@@ -6105,7 +6105,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				egressNamespace := ovntest.NewNamespaceWithLabels(eipNamespace, egressPodLabel)
 				_, node1Subnet, _ := net.ParseCIDR(v6Node1Subnet)
 				_, node2Subnet, _ := net.ParseCIDR(v6Node2Subnet)
-				egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(nil, types.DefaultNetworkName, DefaultNetworkControllerName)
+				egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(nil, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 				dynamicNeighRouters := "true"
 				if config.OVNKubernetesFeature.EnableInterconnect {
 					dynamicNeighRouters = "false"
@@ -8062,7 +8062,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					finalDatabaseStatewithPod = expectedDatabaseStatewithPod
 					finalDatabaseStatewithPod = append(expectedDatabaseStatewithPod, podLSP)
 					podEIPSNAT.ExternalIP = egressIP3
-					podEIPSNAT.ExternalIDs = getEgressIPNATDbIDs(egressIP2Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs()
+					podEIPSNAT.ExternalIDs = getEgressIPNATDbIDs(egressIP2Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs()
 					podReRoutePolicy.ExternalIDs = getEgressIPLRPReRouteDbIDs(egressIP2Name, egressPod1.Namespace, egressPod1.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()
 					if assginedNodeForEIPObj2 == node2.Name {
 						podEIPSNAT.LogicalPort = ptr.To("k8s-node2")
@@ -9190,11 +9190,11 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								Match:       "ip4.src == 10.128.0.0/14 && ip4.dst == 10.128.0.0/14",
 								Priority:    types.DefaultNoRereoutePriority,
 								Action:      nbdb.LogicalRouterPolicyActionAllow,
-								ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs(),
 							},
 							&nbdb.LogicalRouterPolicy{
 								UUID:        "remove-me-UUID",
-								ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressNamespace.Name, "doesnt-exist-pod", IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPLRPReRouteDbIDs(eIP.Name, egressNamespace.Name, "doesnt-exist-pod", IPFamilyValueV4, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Match:       "ip.src == 10.128.3.8",
 								Priority:    types.EgressIPReroutePriority,
 								Action:      nbdb.LogicalRouterPolicyActionReroute,
@@ -9213,7 +9213,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								UUID:        "egressip-nat-UUID",
 								LogicalIP:   podV4IP,
 								ExternalIP:  egressIP1,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, eipNamespace, podName, IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, eipNamespace, podName, IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: &expectedNatLogicalPort,
 								Options: map[string]string{
@@ -9240,7 +9240,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								Name:     node1Name,
 								QOSRules: []string{"default-QoS-UUID"},
 							},
-							getDefaultQoSRule(false, types.DefaultNetworkName, DefaultNetworkControllerName),
+							getDefaultQoSRule(false, types.DefaultNetworkName, types.DefaultNetworkControllerName),
 						},
 					},
 					&egressipv1.EgressIPList{
@@ -9417,7 +9417,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								UUID:        "egressip-nat-UUID2",
 								LogicalIP:   podV4IP,
 								ExternalIP:  egressIP,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, eipNamespace, podName, IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, eipNamespace, podName, IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: ptr.To("k8s-node2"),
 								Options: map[string]string{
@@ -9478,7 +9478,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				gomega.Expect(nodes[0]).To(gomega.Equal(node1.Name))
 				gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
 
-				podEIPSNAT := getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP, "k8s-node1", DefaultNetworkControllerName)
+				podEIPSNAT := getEIPSNAT(podV4IP, egressPod.Namespace, egressPod.Name, egressIP, "k8s-node1", types.DefaultNetworkControllerName)
 				podReRoutePolicy := getReRoutePolicy(egressPodIP[0].String(), "4", "reroute-UUID", nodeLogicalRouterIPv4,
 					getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs())
 				node1GR.Nat = []string{"egressip-nat-UUID"}
@@ -11730,14 +11730,14 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 									Match:       fmt.Sprintf("ip4.src == %s", node2IPv4),
 									Action:      nbdb.LogicalRouterPolicyActionReroute,
 									Nexthops:    []string{"100.64.0.2"},
-									ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, eipNamespace, "egress-pod2", IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs(),
+									ExternalIDs: getEgressIPLRPReRouteDbIDs(egressIPName, eipNamespace, "egress-pod2", IPFamilyValueV4, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs(),
 									UUID:        "hostnet-pod-reroute-UUID1",
 								},
 								&nbdb.NAT{
 									UUID:        "hostnet-pod-egressip-nat-UUID1",
 									LogicalIP:   node2IPv4,
 									ExternalIP:  egressIP1,
-									ExternalIDs: getEgressIPNATDbIDs(egressIPName, eipNamespace, "egress-pod2", IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+									ExternalIDs: getEgressIPNATDbIDs(egressIPName, eipNamespace, "egress-pod2", IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 									Type:        nbdb.NATTypeSNAT,
 									LogicalPort: &expectedNatLogicalPort1,
 									Options: map[string]string{
@@ -14473,14 +14473,14 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							// LRPs to support EIP assigned to local and a remote node
 							getReRoutePolicy(podIP, getSupportedOVNIPFamily(), "stale-reroute-UUID",
 								staleHops, getEgressIPLRPReRouteDbIDs(eIPObj.Name, egressPod.Namespace, egressPod.Name,
-									getSupportedIPFamilyForDBID(), types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									getSupportedIPFamilyForDBID(), types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							// stale NAT to support EIP that was previously assigned to the local node but OVN DB config persists
 							&nbdb.NAT{
 								UUID:       "stale-nat-UUID",
 								LogicalIP:  podIP,
 								ExternalIP: eipIP1,
 								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, getSupportedIPFamilyForDBID(),
-									DefaultNetworkControllerName).GetExternalIDs(),
+									types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: getNodeLogicalPortName(node1.Name),
 								Options: map[string]string{
@@ -14688,18 +14688,18 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							// Valid LRP for IPv4 egress node. IPv4 egress Node is local. IPv6 egress node is remote and deleted but ovn config remains
 							getReRoutePolicy(podV4IP, "4", "valid-reroute-ipv4-UUID",
 								nodeLogicalRouterIPv4, getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name,
-									IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									IPFamilyValueV4, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							// invalid LRP for IPv6 because remove node is deleted
 							getReRoutePolicy(podV6IP, "6", "invalid-reroute-ipv6-UUID",
 								[]string{node2TranSwitchIPv6}, getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name,
-									IPFamilyValueV6, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									IPFamilyValueV6, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							// NATs to support EIP assigned to the local node
 							// valid NAT
 							&nbdb.NAT{
 								UUID:        "valid-nat-ipv4-UUID",
 								LogicalIP:   podV4IP,
 								ExternalIP:  eipIPv4,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: &node1NatLogicalPortName,
 								Options: map[string]string{
@@ -14711,7 +14711,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								UUID:        "invalid-nat-ipv4-UUID",
 								LogicalIP:   deletedPodIPv4,
 								ExternalIP:  eipIPv4,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressNamespace.Namespace, "deletedpod", IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressNamespace.Namespace, "deletedpod", IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: &node1NatLogicalPortName,
 								Options: map[string]string{
@@ -14784,7 +14784,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				expectedDatabaseState := []libovsdbtest.TestData{
 					getReRoutePolicy(podV4IP, "4", "valid-reroute-ipv4-UUID",
 						nodeLogicalRouterIPv4, getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name,
-							IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+							IPFamilyValueV4, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 					&nbdb.NAT{
 						UUID:        "valid-egressip-nat-UUID",
 						LogicalIP:   podV4IP,
@@ -14947,24 +14947,24 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 							// valid LRP for IPv4/IPv6. IPv4 Egress Node is local, IPv6 is remote
 							getReRoutePolicy(podV4IP, "4", "valid-reroute-ipv4-UUID",
 								nodeLogicalRouterIPv4, getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name,
-									IPFamilyValueV4, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									IPFamilyValueV4, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							getReRoutePolicy(podV6IP, "6", "valid-reroute-ipv6-UUID",
 								[]string{node2TranSwitchIPv6}, getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name,
-									IPFamilyValueV6, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									IPFamilyValueV6, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							// invalid lrps to redirect to the remote egress node for deleted pods
 							getReRoutePolicy(deletedPodIPv6, "6", "invalid-reroute-ipv6-UUID",
 								[]string{node2TranSwitchIPv6}, getEgressIPLRPReRouteDbIDs(eIP.Name, "UNKNOWN", "UNKNOWN",
-									IPFamilyValueV6, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									IPFamilyValueV6, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							getReRoutePolicy(deletedPod2IPv6, "6", "invalid-reroute2-ipv6-UUID",
 								[]string{node2TranSwitchIPv6}, getEgressIPLRPReRouteDbIDs(eIP.Name, "UNKNOWN", "UNKNOWN",
-									IPFamilyValueV6, types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+									IPFamilyValueV6, types.DefaultNetworkName, types.DefaultNetworkControllerName).GetExternalIDs()),
 							// NATs to support EIP assigned to the local node
 							// valid NAT
 							&nbdb.NAT{
 								UUID:        "valid-nat-ipv4-UUID",
 								LogicalIP:   podV4IP,
 								ExternalIP:  eipIPv4,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: &node1NatLogicalPortName,
 								Options: map[string]string{
@@ -14976,7 +14976,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								UUID:        "invalid-nat-ipv4-UUID",
 								LogicalIP:   deletedPodIPv4,
 								ExternalIP:  eipIPv4,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, "UNKNOWN", "UNKNOWN", IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, "UNKNOWN", "UNKNOWN", IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: &node1NatLogicalPortName,
 								Options: map[string]string{
@@ -14987,7 +14987,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 								UUID:        "invalid-nat2-ipv4-UUID",
 								LogicalIP:   deletedPod2IPv4,
 								ExternalIP:  eipIPv4,
-								ExternalIDs: getEgressIPNATDbIDs(egressIPName, "UNKNOWN", "UNKNOWN", IPFamilyValueV4, DefaultNetworkControllerName).GetExternalIDs(),
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, "UNKNOWN", "UNKNOWN", IPFamilyValueV4, types.DefaultNetworkControllerName).GetExternalIDs(),
 								Type:        nbdb.NATTypeSNAT,
 								LogicalPort: &node1NatLogicalPortName,
 								Options: map[string]string{
@@ -15724,7 +15724,7 @@ func getSwitchManagementPortIP(node *corev1.Node) (net.IP, error) {
 
 // returns the address set with externalID "k8s.ovn.org/name": "egresssvc-served-pods"
 func buildEgressServiceAddressSets(ips []string) (*nbdb.AddressSet, *nbdb.AddressSet) {
-	dbIDs := egresssvc.GetEgressServiceAddrSetDbIDs(DefaultNetworkControllerName)
+	dbIDs := egresssvc.GetEgressServiceAddrSetDbIDs(types.DefaultNetworkControllerName)
 	return addressset.GetTestDbAddrSets(dbIDs, ips)
 }
 
@@ -15737,6 +15737,6 @@ func buildEgressIPServedPodsAddressSets(ips []string, network, controller string
 
 // returns the address set with externalID "k8s.ovn.org/name": "node-ips"
 func buildEgressIPNodeAddressSets(ips []string) (*nbdb.AddressSet, *nbdb.AddressSet) {
-	dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+	dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 	return addressset.GetTestDbAddrSets(dbIDs, ips)
 }

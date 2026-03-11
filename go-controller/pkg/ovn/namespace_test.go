@@ -67,7 +67,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		namespaceName         = "namespace1"
 		clusterIPNet   string = "10.1.0.0"
 		clusterCIDR    string = clusterIPNet + "/16"
-		controllerName        = DefaultNetworkControllerName
+		controllerName        = ovntypes.DefaultNetworkControllerName
 	)
 	var (
 		fakeOvn *FakeOVN
@@ -92,15 +92,15 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		ginkgo.It("only cleans up address sets owned by namespace", func() {
 			namespace1 := ovntest.NewNamespace(namespaceName)
 			// namespace-owned address set for existing namespace, should stay
-			ns1 := getNamespaceAddrSetDbIDs(namespaceName, DefaultNetworkControllerName)
+			ns1 := getNamespaceAddrSetDbIDs(namespaceName, ovntypes.DefaultNetworkControllerName)
 			_, err := fakeOvn.asf.NewAddressSet(ns1, []string{"1.1.1.1"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// namespace-owned address set for stale namespace, should be deleted
-			ns2 := getNamespaceAddrSetDbIDs("namespace2", DefaultNetworkControllerName)
+			ns2 := getNamespaceAddrSetDbIDs("namespace2", ovntypes.DefaultNetworkControllerName)
 			_, err = fakeOvn.asf.NewAddressSet(ns2, []string{"1.1.1.2"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// netpol peer address set for existing netpol, should stay
-			netpol := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, "nsName", DefaultNetworkControllerName)
+			netpol := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, "nsName", ovntypes.DefaultNetworkControllerName)
 			_, err = fakeOvn.asf.NewAddressSet(netpol, []string{"1.1.1.3"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// egressQoS-owned address set, should stay
@@ -108,7 +108,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			_, err = fakeOvn.asf.NewAddressSet(qos, []string{"1.1.1.4"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// hybridNode-owned address set, should stay
-			hybridNode := apbroute.GetHybridRouteAddrSetDbIDs("node", DefaultNetworkControllerName)
+			hybridNode := apbroute.GetHybridRouteAddrSetDbIDs("node", ovntypes.DefaultNetworkControllerName)
 			_, err = fakeOvn.asf.NewAddressSet(hybridNode, []string{"1.1.1.5"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// egress firewall-owned address set, should stay
@@ -173,7 +173,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(namespaceName, []string{tP.podIP})
 
 			// port group is empty, because it will be filled by pod add logic
-			pgIDs := getNamespacePortGroupDbIDs(namespaceName, DefaultNetworkControllerName)
+			pgIDs := getNamespacePortGroupDbIDs(namespaceName, ovntypes.DefaultNetworkControllerName)
 			pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
 			pg.UUID = pg.Name + "-UUID"
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{pg}))
@@ -195,7 +195,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 
 			fakeOvn.asf.ExpectEmptyAddressSet(namespaceName)
 
-			pgIDs := getNamespacePortGroupDbIDs(namespaceName, DefaultNetworkControllerName)
+			pgIDs := getNamespacePortGroupDbIDs(namespaceName, ovntypes.DefaultNetworkControllerName)
 			pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
 			pg.UUID = pg.Name + "-UUID"
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{pg}))
@@ -340,7 +340,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			// this flag will create namespaced port group
 			config.OVNKubernetesFeature.EnableEgressFirewall = true
 			namespaceT := *ovntest.NewNamespace(namespaceName)
-			pgIDs := getNamespacePortGroupDbIDs(namespaceName, DefaultNetworkControllerName)
+			pgIDs := getNamespacePortGroupDbIDs(namespaceName, ovntypes.DefaultNetworkControllerName)
 			pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
 			pg.UUID = pg.Name + "-UUID"
 			initialData := []libovsdb.TestData{pg}
@@ -366,7 +366,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		})
 		ginkgo.It("deletes an existing namespace port group when egress firewall and multicast are disabled", func() {
 			namespaceT := *ovntest.NewNamespace(namespaceName)
-			pgIDs := getNamespacePortGroupDbIDs(namespaceName, DefaultNetworkControllerName)
+			pgIDs := getNamespacePortGroupDbIDs(namespaceName, ovntypes.DefaultNetworkControllerName)
 			pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
 			pg.UUID = pg.Name + "-UUID"
 			initialData := []libovsdb.TestData{pg}
@@ -391,7 +391,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		ginkgo.It("deletes an existing namespace port group when there are no namespaces", func() {
 			// this flag will create namespaced port group
 			config.OVNKubernetesFeature.EnableEgressFirewall = true
-			pgIDs := getNamespacePortGroupDbIDs(namespaceName, DefaultNetworkControllerName)
+			pgIDs := getNamespacePortGroupDbIDs(namespaceName, ovntypes.DefaultNetworkControllerName)
 			pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
 			pg.UUID = pg.Name + "-UUID"
 			initialData := []libovsdb.TestData{pg}

@@ -47,7 +47,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 		node2transitIPv6 string = "fd97::3"
 		vipIPv4          string = "192.168.126.10"
 		vipIPv6          string = "fc00:f853:ccd:e793::10"
-		controllerName          = DefaultNetworkControllerName
+		controllerName          = ovntypes.DefaultNetworkControllerName
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -1500,7 +1500,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				fakeOVN.asf.ExpectAddressSetWithAddresses(egresssvc.GetEgressServiceAddrSetDbIDs(controllerName), expectedEgressSvcAddrSet)
 
 				ginkgo.By("updating the second node host cidr the node ip no re-route address set will be updated")
-				nodeIPsASdbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, ovntypes.DefaultNetworkName, DefaultNetworkControllerName)
+				nodeIPsASdbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName)
 				fakeOVN.asf.EventuallyExpectAddressSetWithAddresses(nodeIPsASdbIDs, []string{node1IPv4, node2IPv4, node1IPv6, node2IPv6})
 
 				node2.ObjectMeta.Annotations[util.OVNNodeHostCIDRs] = fmt.Sprintf("[\"%s\", \"%s\", \"%s\", \"%s\"]", node2IPv4+"/24", node2IPv6+"/64", vipIPv4+"/24", vipIPv6+"/64")

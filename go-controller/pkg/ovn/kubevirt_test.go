@@ -310,7 +310,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			GinkgoHelper()
 			dhcpOptions := kubevirt.ComposeDHCPv4Options(
 				t.cidr,
-				DefaultNetworkControllerName,
+				ovntypes.DefaultNetworkControllerName,
 				ktypes.NamespacedName{
 					Namespace: namespace,
 					Name:      t.hostname,
@@ -327,7 +327,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		ComposeDHCPv6Options = func(uuid, namespace string, t *testDHCPOptions) *nbdb.DHCPOptions {
 			dhcpOptions := kubevirt.ComposeDHCPv6Options(
 				t.cidr,
-				DefaultNetworkControllerName,
+				ovntypes.DefaultNetworkControllerName,
 				ktypes.NamespacedName{
 					Namespace: namespace,
 					Name:      t.hostname,

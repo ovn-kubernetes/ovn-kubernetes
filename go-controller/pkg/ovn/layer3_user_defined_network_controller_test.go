@@ -213,7 +213,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					Expect(gwConfig.NextHops).NotTo(BeEmpty())
 					if testConfig.configToOverride != nil && testConfig.configToOverride.EnableEgressFirewall {
 						defaultNetExpectations = append(defaultNetExpectations,
-							buildNamespacedPortGroup(podInfo.namespace, DefaultNetworkControllerName))
+							buildNamespacedPortGroup(podInfo.namespace, types.DefaultNetworkControllerName))
 						secNetPG := buildNamespacedPortGroup(podInfo.namespace, userDefinedNetController.bnc.controllerName)
 						portName := util.GetUserDefinedNetworkLogicalPortName(podInfo.namespace, podInfo.podName, netInfo.nadName) + "-UUID"
 						secNetPG.Ports = []string{portName}
@@ -372,7 +372,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					)
 					if testConfig.configToOverride != nil && testConfig.configToOverride.EnableEgressFirewall {
 						defaultNetExpectations = append(defaultNetExpectations,
-							buildNamespacedPortGroup(podInfo.namespace, DefaultNetworkControllerName))
+							buildNamespacedPortGroup(podInfo.namespace, types.DefaultNetworkControllerName))
 					}
 				}
 

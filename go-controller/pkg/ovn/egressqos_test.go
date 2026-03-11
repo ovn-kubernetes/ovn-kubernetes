@@ -43,7 +43,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	var (
 		app            *cli.App
 		fakeOVN        *FakeOVN
-		controllerName = DefaultNetworkControllerName
+		controllerName = types.DefaultNetworkControllerName
 	)
 
 	namespaceT := *testing.NewNamespace("namespace1")

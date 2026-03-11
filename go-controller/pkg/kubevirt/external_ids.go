@@ -6,6 +6,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func extractVMFromExternalIDs(externalIDs map[string]string) *ktypes.NamespacedName {
@@ -60,12 +61,11 @@ func ownsItAndIsOrphanOrWrongZone(externalIDs map[string]string, vms map[ktypes.
 		return false
 	}
 
-	const DefaultNetworkControllerName = "default-network-controller"
 	// Only consider resources owned by this controller. Resources created by
 	// other controllers (e.g. UDN controllers) must not be deleted here.
 	owner := externalIDs[string(libovsdbops.OwnerControllerKey)]
 	if owner == "" {
-		owner = DefaultNetworkControllerName
+		owner = types.DefaultNetworkControllerName
 	}
 	if owner != controllerName {
 		return false

@@ -102,7 +102,7 @@ func getEFExpectedDb(initialData []libovsdb.TestData, fakeOVN *FakeOVN, nsName s
 	acl.UUID = "acl-UUID"
 
 	// new ACL will be added to the port group
-	pgIDs := getNamespacePortGroupDbIDs(nsName, DefaultNetworkControllerName)
+	pgIDs := getNamespacePortGroupDbIDs(nsName, t.DefaultNetworkControllerName)
 	namespacePortGroup := libovsdbutil.BuildPortGroup(pgIDs, nil, []*nbdb.ACL{acl})
 	namespacePortGroup.UUID = pgName + "-UUID"
 	return append(initialData, acl, namespacePortGroup)
@@ -138,7 +138,7 @@ func getEFExpectedDbUDN(initialData []libovsdb.TestData, fakeOVN *FakeOVN, nsNam
 	namespacePortGroup := libovsdbutil.BuildPortGroup(pgIDs, nil, []*nbdb.ACL{acl})
 	namespacePortGroup.UUID = libovsdbutil.GetPortGroupName(pgIDs) + "-UUID"
 
-	defaultPGIDs := getNamespacePortGroupDbIDs(nsName, DefaultNetworkControllerName)
+	defaultPGIDs := getNamespacePortGroupDbIDs(nsName, t.DefaultNetworkControllerName)
 	namespaceDefaultPortGroup := libovsdbutil.BuildPortGroup(defaultPGIDs, nil, nil)
 	namespaceDefaultPortGroup.UUID = libovsdbutil.GetPortGroupName(defaultPGIDs) + "-UUID"
 	return append(initialData, namespaceDefaultPortGroup, acl, namespacePortGroup)
@@ -343,7 +343,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				config.Gateway.Mode = gwMode
 				app.Action = func(*cli.Context) error {
 					// owned by non-existing namespace
-					fakeController := getFakeController(DefaultNetworkControllerName)
+					fakeController := getFakeController(t.DefaultNetworkControllerName)
 					purgeIDs := fakeController.efController.GetEgressFirewallACLDbIDs("none", 0)
 					purgeACL := libovsdbops.BuildACL(
 						"purgeACL1",
@@ -450,7 +450,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					// check severity was reset from default to nil
 					updateACL.Severity = nil
 					// match shouldn't have cluster exclusion
-					pgIDs := getNamespacePortGroupDbIDs(namespace1.Name, DefaultNetworkControllerName)
+					pgIDs := getNamespacePortGroupDbIDs(namespace1.Name, t.DefaultNetworkControllerName)
 					namespacePG := libovsdbutil.BuildPortGroup(pgIDs, nil, []*nbdb.ACL{updateACL})
 					namespacePG.UUID = namespacePG.Name + "-UUID"
 					updateACL.Match = "(ip4.dst == 1.2.3.4/23) && inport == @" + namespacePG.Name
@@ -537,7 +537,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				config.Gateway.Mode = gwMode
 				app.Action = func(*cli.Context) error {
 
-					fakeController := getFakeController(DefaultNetworkControllerName)
+					fakeController := getFakeController(t.DefaultNetworkControllerName)
 					fakeOVN.controller = fakeController
 
 					namespace1 := *ovntest.NewNamespace("namespace1")
@@ -570,7 +570,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					namespace1 := *ovntest.NewNamespace("namespace1")
 					dnsName := util.LowerCaseFQDN("www.example.com")
 
-					fakeController := getFakeController(DefaultNetworkControllerName)
+					fakeController := getFakeController(t.DefaultNetworkControllerName)
 					fakeOVN.controller = fakeController
 
 					// add dns address set along with the acl and pg to the initial db.
