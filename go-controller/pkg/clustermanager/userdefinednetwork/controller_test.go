@@ -993,7 +993,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					Type:    "NetworkCreated",
 					Status:  "False",
 					Reason:  "NetworkAttachmentDefinitionSyncError",
-					Message: "failed to allocate EVPN VIDs: failed to allocate VID for MAC-VRF: failed to allocate the id for the resource evpn-exhaust-cudn/macvrf",
+					Message: "failed to allocate EVPN IDs: failed to allocate VID for MAC-VRF: failed to allocate the id for the resource evpn-exhaust-cudn/macvrf",
 				}}), "should report VID allocation failure in status")
 
 				// Verify NAD was not created

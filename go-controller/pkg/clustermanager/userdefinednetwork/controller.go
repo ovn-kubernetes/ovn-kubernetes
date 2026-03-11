@@ -287,7 +287,7 @@ func (c *Controller) initializeController() error {
 		// Recovery failures are logged and the affected CUDNs are enqueued for reconciliation,
 		// but don't block startup - this prevents a DoS where a malicious NAD could
 		// crash the entire cluster-manager.
-		c.recoverEVPNVIDs(cudnNADs)
+		c.recoverEVPNIDs(cudnNADs)
 	}
 
 	return nil
@@ -351,7 +351,7 @@ func (c *Controller) initializeNamespaceTracker(cudnNADs cudnToNADs) {
 	}
 }
 
-// recoverEVPNVIDs recovers VID allocations from existing EVPN CUDNs using
+// recoverEVPNIDs recovers VID allocations and VNI reservations from existing EVPN CUDNs using
 // NetworkManager's cached NetInfo. NetworkManager has already processed all NADs
 // by the time this function is called (it starts before UDN controller).
 //
@@ -362,7 +362,7 @@ func (c *Controller) initializeNamespaceTracker(cudnNADs cudnToNADs) {
 //
 // If VID recovery fails for a CUDN (e.g., NetworkManager couldn't parse the NAD),
 // this logs an error and enqueues the CUDN for reconciliation.
-func (c *Controller) recoverEVPNVIDs(cudnNADs cudnToNADs) {
+func (c *Controller) recoverEVPNIDs(cudnNADs cudnToNADs) {
 	// Extract EVPN CUDNs with NADs into a slice for deterministic ordering.
 	evpnCUDNs := make([]*cudnWithNADs, 0, len(cudnNADs))
 	for _, entry := range cudnNADs {
@@ -390,7 +390,7 @@ func (c *Controller) recoverEVPNVIDs(cudnNADs cudnToNADs) {
 	})
 
 	for _, entry := range evpnCUDNs {
-		if err := c.recoverEVPNVIDsForCUDN(entry.cudn.Name); err != nil {
+		if err := c.recoverEVPNIDsForCUDN(entry.cudn.Name); err != nil {
 			klog.Errorf("VID recovery failed for EVPN CUDN %s: %v. "+
 				"The CUDN will be reconciled and existing NAD VIDs will be preserved if possible.",
 				entry.cudn.Name, err)
@@ -399,10 +399,10 @@ func (c *Controller) recoverEVPNVIDs(cudnNADs cudnToNADs) {
 	}
 }
 
-// recoverEVPNVIDsForCUDN attempts to recover VIDs for a single CUDN using NetworkManager's cache.
+// recoverEVPNIDsForCUDN attempts to recover VIDs and VNI reservations for a single CUDN using NetworkManager's cache.
 // Returns nil if VIDs were successfully recovered or if no VIDs are allocated yet.
 // Returns error if VID reservation fails (e.g., conflict with another network).
-func (c *Controller) recoverEVPNVIDsForCUDN(cudnName string) error {
+func (c *Controller) recoverEVPNIDsForCUDN(cudnName string) error {
 	networkName := util.GenerateCUDNNetworkName(cudnName)
 
 	// Use NetworkManager's cached NetInfo - it has already parsed the NAD
@@ -462,7 +462,7 @@ func (c *Controller) reserveRecoveredVIDs(networkName string, macVRFVID, ipVRFVI
 	return errors.Join(errs...)
 }
 
-// releaseVIDForNetwork releases the VIDs allocated for a network's VRFs.
+// releaseEVPNIDsForNetwork releases the VIDs and VNI reservations for a network's VRFs.
 //
 // NOTE: VID release is not synchronized with node-side dataplane cleanup.
 // In theory, a rapidly created new network could get the same VID while nodes
@@ -472,7 +472,7 @@ func (c *Controller) reserveRecoveredVIDs(networkName string, macVRFVID, ipVRFVI
 // The actual mitigation is on the node-side: nodes should check for VID conflicts
 // and refuse to configure a VID already in use by a different network, waiting
 // until the old network is cleaned up.
-func (c *Controller) releaseVIDForNetwork(networkName string) {
+func (c *Controller) releaseEVPNIDsForNetwork(networkName string) {
 	macVID := c.vidAllocator.ReleaseID(macVRFKey(networkName))
 	ipVID := c.vidAllocator.ReleaseID(ipVRFKey(networkName))
 	if macVID >= 0 || ipVID >= 0 {
@@ -951,7 +951,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			delete(c.namespaceTracker, cudnName)
 			metrics.DecrementCUDNCount(role, topology)
 			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
-			c.releaseVIDForNetwork(cudnName)
+			c.releaseEVPNIDsForNetwork(cudnName)
 		}
 
 		return nil, nil
