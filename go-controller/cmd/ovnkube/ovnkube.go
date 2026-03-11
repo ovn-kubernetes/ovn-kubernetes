@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -444,7 +445,7 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset, eventRecorder record.EventRecorder) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("recovering from a panic in runOvnKube: %v", r)
+			err = formatRecoveredPanic("runOvnKube", r)
 		}
 	}()
 	startTime := time.Now()
@@ -470,6 +471,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		go func() {
 			defer cancel()
 			defer wg.Done()
+			defer recoverComponentPanic("cluster manager", &managerErr)
 
 			clusterManager, err := clustermanager.NewClusterManager(
 				ovnClientset.GetClusterManagerClientset(),
@@ -510,6 +512,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		go func() {
 			defer cancel()
 			defer wg.Done()
+			defer recoverComponentPanic("ovnkube controller", &controllerErr)
 
 			libovsdbOvnNBClient, err := libovsdb.NewNBClient(ctx.Done())
 			if err != nil {
@@ -565,6 +568,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		go func() {
 			defer cancel()
 			defer wg.Done()
+			defer recoverComponentPanic("node network controller", &nodeErr)
 
 			if config.Kubernetes.Token == "" {
 				nodeErr = fmt.Errorf("cannot initialize node without service account 'token'. Please provide one with --k8s-token argument")
@@ -684,6 +688,16 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	}
 
 	return nil
+}
+
+func recoverComponentPanic(component string, errp *error) {
+	if r := recover(); r != nil {
+		*errp = formatRecoveredPanic(component, r)
+	}
+}
+
+func formatRecoveredPanic(component string, recovered interface{}) error {
+	return fmt.Errorf("panic in %s: %v\n%s", component, recovered, debug.Stack())
 }
 
 // newWatchFactory returns the proper watch factory to use depending on the run
