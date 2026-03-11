@@ -59,7 +59,7 @@ func setupInitTestEnv(
 		node.Annotations[util.OvnNodeManagementPort] = string(annotationBytes)
 	}
 
-	fakeClient := fake.NewSimpleClientset(
+	fakeClient := fake.NewSimpleClientset( //nolint:staticcheck
 		&corev1.NodeList{Items: []corev1.Node{*node}})
 	fakeNodeClient := &util.OVNNodeClientset{KubeClient: fakeClient}
 	wf, err := factory.NewNodeWatchFactory(fakeNodeClient, testNodeName)

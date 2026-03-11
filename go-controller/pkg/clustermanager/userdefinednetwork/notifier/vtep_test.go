@@ -33,7 +33,7 @@ var _ = Describe("VTEPNotifier", func() {
 	)
 
 	BeforeEach(func() {
-		vtepClient = vtepv1fake.NewSimpleClientset()
+		vtepClient = vtepv1fake.NewSimpleClientset() //nolint:staticcheck
 
 		// enable features to make watch-factory start the VTEP informer
 		Expect(config.PrepareTestConfig()).To(Succeed())
@@ -46,8 +46,8 @@ var _ = Describe("VTEPNotifier", func() {
 		fakeClient := &util.OVNClusterManagerClientset{
 			KubeClient:                fake.NewClientset(),
 			NetworkAttchDefClient:     netv1fake.NewSimpleClientset(),
-			UserDefinedNetworkClient:  udnv1fake.NewSimpleClientset(),
-			RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+			UserDefinedNetworkClient:  udnv1fake.NewSimpleClientset(), //nolint:staticcheck
+			RouteAdvertisementsClient: rafake.NewSimpleClientset(),    //nolint:staticcheck
 			FRRClient:                 frrfake.NewSimpleClientset(),
 			VTEPClient:                vtepClient,
 		}

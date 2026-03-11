@@ -64,8 +64,8 @@ func (o *FakeOVNNode) Start(ctx *cli.Context, objects ...runtime.Object) {
 
 	o.fakeClient = &util.OVNNodeClientset{
 		KubeClient:             fake.NewClientset(v1Objects...),
-		EgressServiceClient:    egressservicefake.NewSimpleClientset(egressServiceObjects...),
-		AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+		EgressServiceClient:    egressservicefake.NewSimpleClientset(egressServiceObjects...), //nolint:staticcheck
+		AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),              //nolint:staticcheck
 		NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 	}
 	o.init(ctx.Context) // initializes the node

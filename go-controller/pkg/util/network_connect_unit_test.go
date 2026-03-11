@@ -103,7 +103,7 @@ func TestUpdateNetworkConnectSubnetAnnotation(t *testing.T) {
 			}
 
 			// Create fake client with Apply reactor
-			fakeClient := networkconnectfake.NewSimpleClientset(cnc)
+			fakeClient := networkconnectfake.NewSimpleClientset(cnc) //nolint:staticcheck
 			ovntest.AddNetworkConnectApplyReactor(fakeClient)
 
 			// Call the function under test
@@ -199,7 +199,7 @@ func TestUpdateNetworkConnectRouterTunnelKeyAnnotation(t *testing.T) {
 				},
 				Spec: networkconnectv1.ClusterNetworkConnectSpec{},
 			}
-			fakeClient := networkconnectfake.NewSimpleClientset(cnc)
+			fakeClient := networkconnectfake.NewSimpleClientset(cnc) //nolint:staticcheck
 			ovntest.AddNetworkConnectApplyReactor(fakeClient)
 
 			err := UpdateNetworkConnectRouterTunnelKeyAnnotation(tt.cncName, fakeClient, tt.tunnelID)
@@ -241,7 +241,7 @@ func TestBothAnnotationsCanCoexist(t *testing.T) {
 	}
 
 	// Create fake client with Apply reactor
-	fakeClient := networkconnectfake.NewSimpleClientset(cnc)
+	fakeClient := networkconnectfake.NewSimpleClientset(cnc) //nolint:staticcheck
 	ovntest.AddNetworkConnectApplyReactor(fakeClient)
 
 	// First, set the subnet annotation
@@ -297,7 +297,7 @@ func TestUpdateNetworkConnectSubnetAnnotation_PreservesExistingAnnotations(t *te
 	}
 
 	// Create fake client with Apply reactor
-	fakeClient := networkconnectfake.NewSimpleClientset(cnc)
+	fakeClient := networkconnectfake.NewSimpleClientset(cnc) //nolint:staticcheck
 	ovntest.AddNetworkConnectApplyReactor(fakeClient)
 
 	// Set the subnet annotation

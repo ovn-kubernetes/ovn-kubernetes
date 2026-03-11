@@ -40,8 +40,8 @@ var _ = Describe("NamespaceNotifier", func() {
 		fakeClient := &util.OVNClusterManagerClientset{
 			KubeClient:               kubeClient,
 			NetworkAttchDefClient:    netv1fake.NewSimpleClientset(),
-			UserDefinedNetworkClient: udnv1fake.NewSimpleClientset(),
-			VTEPClient:               vtepv1fake.NewSimpleClientset(),
+			UserDefinedNetworkClient: udnv1fake.NewSimpleClientset(),  //nolint:staticcheck
+			VTEPClient:               vtepv1fake.NewSimpleClientset(), //nolint:staticcheck
 		}
 		var err error
 		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)

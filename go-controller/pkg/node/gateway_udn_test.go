@@ -598,7 +598,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
-			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
+			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(), //nolint:staticcheck
 		}
 
 		stop := make(chan struct{})
@@ -830,7 +830,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
-			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
+			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(), //nolint:staticcheck
 		}
 
 		stop := make(chan struct{})
@@ -1031,7 +1031,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
-			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
+			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(), //nolint:staticcheck
 		}
 
 		stop := make(chan struct{})
@@ -1267,8 +1267,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:                kubeFakeClient,
 			NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-			UserDefinedNetworkClient:  udnfakeclient.NewSimpleClientset(),
-			RouteAdvertisementsClient: rafakeclient.NewSimpleClientset(),
+			UserDefinedNetworkClient:  udnfakeclient.NewSimpleClientset(), //nolint:staticcheck
+			RouteAdvertisementsClient: rafakeclient.NewSimpleClientset(),  //nolint:staticcheck
 		}
 
 		stop := make(chan struct{})

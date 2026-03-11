@@ -796,7 +796,7 @@ var _ = Describe("Node", func() {
 					})
 					fakeClient := &util.OVNNodeClientset{
 						KubeClient:             kubeFakeClient,
-						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 					}
 
@@ -907,7 +907,7 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					})
 					fakeClient := &util.OVNNodeClientset{
 						KubeClient:             kubeFakeClient,
-						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 					}
 
@@ -1060,7 +1060,7 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					})
 					fakeClient := &util.OVNNodeClientset{
 						KubeClient:             kubeFakeClient,
-						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 					}
 
@@ -1170,7 +1170,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					})
 					fakeClient := &util.OVNNodeClientset{
 						KubeClient:             kubeFakeClient,
-						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 					}
 
@@ -1331,7 +1331,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					})
 					fakeClient := &util.OVNNodeClientset{
 						KubeClient:             kubeFakeClient,
-						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 					}
 
@@ -1452,7 +1452,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					})
 					fakeClient := &util.OVNNodeClientset{
 						KubeClient:             kubeFakeClient,
-						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 					}
 

@@ -115,7 +115,7 @@ var _ = Describe("Node DPU tests", func() {
 		Expect(routeManager).NotTo(BeNil())
 
 		kubeMock = kubemocks.Interface{}
-		apbExternalRouteClient := adminpolicybasedrouteclient.NewSimpleClientset()
+		apbExternalRouteClient := adminpolicybasedrouteclient.NewSimpleClientset() //nolint:staticcheck
 		factoryMock = factorymocks.NodeWatchFactory{}
 		cnnci := newCommonNodeNetworkControllerInfo(nil, &kubeMock, apbExternalRouteClient, &factoryMock, nil, "", routeManager)
 		dnnc = newDefaultNodeNetworkController(cnnci, nil, nil, routeManager, nil, nil)

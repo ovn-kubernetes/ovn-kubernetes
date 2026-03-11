@@ -308,7 +308,7 @@ func TestCNIServerStatusNotReady(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	socketPath := filepath.Join(tmpDir, serverSocketName)
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewSimpleClientset() //nolint:staticcheck
 	err = config.PrepareTestConfig()
 	if err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)

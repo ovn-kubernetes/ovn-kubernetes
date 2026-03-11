@@ -233,9 +233,9 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		fakeClient = &util.OVNNodeClientset{
 			KubeClient: fake.NewClientset(),
 		}
-		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset()
+		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset() //nolint:staticcheck
 		fakeClient.NetworkAttchDefClient = nadfake.NewSimpleClientset()
-		fakeClient.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+		fakeClient.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset() //nolint:staticcheck
 
 		watcher, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
 		Expect(err).NotTo(HaveOccurred())
@@ -354,11 +354,11 @@ var _ = Describe("SyncServices", func() {
 		_ = nodenft.SetFakeNFTablesHelper()
 
 		fakeClient = &util.OVNNodeClientset{
-			KubeClient: fake.NewSimpleClientset(),
+			KubeClient: fake.NewSimpleClientset(), //nolint:staticcheck
 		}
-		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset()
+		fakeClient.AdminPolicyRouteClient = adminpolicybasedrouteclient.NewSimpleClientset() //nolint:staticcheck
 		fakeClient.NetworkAttchDefClient = nadfake.NewSimpleClientset()
-		fakeClient.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset()
+		fakeClient.UserDefinedNetworkClient = udnfakeclient.NewSimpleClientset() //nolint:staticcheck
 
 		watcher, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
 		Expect(err).NotTo(HaveOccurred())

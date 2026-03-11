@@ -63,8 +63,8 @@ func (o *FakeClusterManager) start(objects ...runtime.Object) {
 	}
 	o.fakeClient = &util.OVNClusterManagerClientset{
 		KubeClient:          fake.NewClientset(v1Objects...),
-		EgressIPClient:      egressipfake.NewSimpleClientset(egressIPObjects...),
-		EgressServiceClient: egresssvcfake.NewSimpleClientset(egressSvcObjects...),
+		EgressIPClient:      egressipfake.NewSimpleClientset(egressIPObjects...),   //nolint:staticcheck
+		EgressServiceClient: egresssvcfake.NewSimpleClientset(egressSvcObjects...), //nolint:staticcheck
 		CloudNetworkClient:  cloudservicefake.NewSimpleClientset(cloudObjects...),
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {

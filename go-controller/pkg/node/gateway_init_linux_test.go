@@ -912,7 +912,7 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 		})
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:             kubeFakeClient,
-			AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+			AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(), //nolint:staticcheck
 			NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
 		}
 
@@ -1264,7 +1264,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
-			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
+			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(), //nolint:staticcheck
 		}
 
 		stop := make(chan struct{})

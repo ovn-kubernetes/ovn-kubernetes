@@ -312,7 +312,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
-			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
+			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(), //nolint:staticcheck
 		}
 
 		nodeAnnotatorMock := &kubemocks.Annotator{}

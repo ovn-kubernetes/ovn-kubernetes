@@ -86,9 +86,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 	ginkgo.Context("Controller creation", func() {
 		ginkgo.It("should create controller when transport is no-overlay", func() {
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
@@ -104,9 +104,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 		ginkgo.It("should have empty last validation error on creation", func() {
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
@@ -121,9 +121,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 	ginkgo.DescribeTable("Validation logic",
 		func(ras []*testRA, expectError bool, expectErrorSubstring string) {
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 
@@ -243,9 +243,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 
 		ginkgo.BeforeEach(func() {
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 
@@ -354,9 +354,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			localRecorder := record.NewFakeRecorder(100)
 
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
@@ -388,9 +388,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			localRecorder := record.NewFakeRecorder(100)
 
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
@@ -414,9 +414,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			localRecorder := record.NewFakeRecorder(100)
 
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
@@ -479,9 +479,9 @@ var _ = ginkgo.Describe("No-Overlay Controller", func() {
 			}
 
 			fakeClient := &util.OVNClusterManagerClientset{
-				KubeClient:                fake.NewSimpleClientset(),
+				KubeClient:                fake.NewSimpleClientset(), //nolint:staticcheck
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: rafake.NewSimpleClientset(ra.RouteAdvertisements()),
+				RouteAdvertisementsClient: rafake.NewSimpleClientset(ra.RouteAdvertisements()), //nolint:staticcheck
 				FRRClient:                 frrfake.NewSimpleClientset(),
 			}
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)

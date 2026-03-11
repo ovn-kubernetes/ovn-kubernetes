@@ -254,7 +254,7 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 
 	kubeClient := fake.NewClientset(&corev1.NodeList{Items: []corev1.Node{getNodeObj(node, createEIPAnnot)}},
 		&corev1.NamespaceList{Items: namespaces}, &corev1.PodList{Items: pods})
-	egressIPClient := egressipfake.NewSimpleClientset(&egressipv1.EgressIPList{Items: egressIPs})
+	egressIPClient := egressipfake.NewSimpleClientset(&egressipv1.EgressIPList{Items: egressIPs}) //nolint:staticcheck
 	nadClient := nadfake.NewSimpleClientset()
 	ovnNodeClient := &util.OVNNodeClientset{KubeClient: kubeClient, EgressIPClient: egressIPClient, NetworkAttchDefClient: nadClient}
 	rm := routemanager.NewController()

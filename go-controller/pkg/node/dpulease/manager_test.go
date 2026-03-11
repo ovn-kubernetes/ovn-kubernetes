@@ -20,7 +20,7 @@ import (
 
 func TestEnsureLeaseCreatesObject(t *testing.T) {
 	g := gomega.NewWithT(t)
-	client := fake.NewSimpleClientset()
+	client := fake.NewSimpleClientset() //nolint:staticcheck
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
 	mgr := NewManager(client, "ovn-kubernetes", node, 10*time.Second, 40*time.Second)
 
@@ -45,7 +45,7 @@ func TestEnsureLeaseCreatesObject(t *testing.T) {
 
 func TestRenewUpdatesTimestamp(t *testing.T) {
 	g := gomega.NewWithT(t)
-	client := fake.NewSimpleClientset()
+	client := fake.NewSimpleClientset() //nolint:staticcheck
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
 	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 20*time.Second)
 
@@ -76,7 +76,7 @@ func TestCheckStatusDetectsExpiry(t *testing.T) {
 			RenewTime:            &oldTime,
 		},
 	}
-	client := fake.NewSimpleClientset(lease)
+	client := fake.NewSimpleClientset(lease) //nolint:staticcheck
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
 	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 10*time.Second)
 
@@ -101,7 +101,7 @@ func TestCheckStatusHealthy(t *testing.T) {
 			RenewTime:            &now,
 		},
 	}
-	client := fake.NewSimpleClientset(lease)
+	client := fake.NewSimpleClientset(lease) //nolint:staticcheck
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
 	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 30*time.Second)
 
@@ -113,7 +113,7 @@ func TestCheckStatusHealthy(t *testing.T) {
 
 func TestEnsureLeaseRetriesOnAlreadyExists(t *testing.T) {
 	g := gomega.NewWithT(t)
-	client := fake.NewSimpleClientset()
+	client := fake.NewSimpleClientset() //nolint:staticcheck
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
 	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 20*time.Second)
 

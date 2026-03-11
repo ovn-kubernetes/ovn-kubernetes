@@ -128,7 +128,7 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 	var nbZoneFailed bool
 	stopChan = make(chan struct{})
 	fakeClient = fake.NewClientset(append(k8sObjects, node)...)
-	fakeRouteClient = adminpolicybasedrouteclient.NewSimpleClientset(routePolicyObjects...)
+	fakeRouteClient = adminpolicybasedrouteclient.NewSimpleClientset(routePolicyObjects...) //nolint:staticcheck
 	iFactory, err = factory.NewMasterWatchFactory(&util.OVNMasterClientset{
 		KubeClient:             fakeClient,
 		AdminPolicyRouteClient: fakeRouteClient,

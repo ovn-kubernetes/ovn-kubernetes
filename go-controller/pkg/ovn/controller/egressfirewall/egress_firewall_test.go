@@ -84,7 +84,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 		kubeInterface := &kube.KubeOVN{Kube: kube.Kube{KClient: fakeClient}, ANPClient: anpfake.NewSimpleClientset(),
-			EIPClient: egressipv1fake.NewSimpleClientset(), EgressFirewallClient: &egressfirewallfake.Clientset{},
+			EIPClient: egressipv1fake.NewSimpleClientset(), EgressFirewallClient: &egressfirewallfake.Clientset{}, //nolint:staticcheck
 			EgressServiceClient: &egressservicefake.Clientset{}, NetworkQoSClient: &networkqosfake.Clientset{}}
 
 		var err error

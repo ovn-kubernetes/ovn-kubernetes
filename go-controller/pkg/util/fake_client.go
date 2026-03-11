@@ -110,21 +110,21 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 	return &OVNClientset{
 		KubeClient:                fake.NewClientset(v1Objects...),
 		ANPClient:                 anpfake.NewSimpleClientset(anpObjects...),
-		EgressIPClient:            egressipfake.NewSimpleClientset(egressIPObjects...),
-		EgressFirewallClient:      egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),
+		EgressIPClient:            egressipfake.NewSimpleClientset(egressIPObjects...),             //nolint:staticcheck
+		EgressFirewallClient:      egressfirewallfake.NewSimpleClientset(egressFirewallObjects...), //nolint:staticcheck
 		CloudNetworkClient:        cloudservicefake.NewSimpleClientset(cloudObjects...),
-		EgressQoSClient:           egressqosfake.NewSimpleClientset(egressQoSObjects...),
+		EgressQoSClient:           egressqosfake.NewSimpleClientset(egressQoSObjects...), //nolint:staticcheck
 		NetworkAttchDefClient:     nadClient,
 		MultiNetworkPolicyClient:  mnpfake.NewSimpleClientset(multiNetworkPolicyObjects...),
-		EgressServiceClient:       egressservicefake.NewSimpleClientset(egressServiceObjects...),
-		AdminPolicyRouteClient:    adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...),
+		EgressServiceClient:       egressservicefake.NewSimpleClientset(egressServiceObjects...),            //nolint:staticcheck
+		AdminPolicyRouteClient:    adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...), //nolint:staticcheck
 		OCPNetworkClient:          ocpnetworkclientfake.NewSimpleClientset(dnsNameResolverObjects...),
-		UserDefinedNetworkClient:  udnfake.NewSimpleClientset(udnObjects...),
-		RouteAdvertisementsClient: routeadvertisementsfake.NewSimpleClientset(raObjects...),
+		UserDefinedNetworkClient:  udnfake.NewSimpleClientset(udnObjects...),                //nolint:staticcheck
+		RouteAdvertisementsClient: routeadvertisementsfake.NewSimpleClientset(raObjects...), //nolint:staticcheck
 		FRRClient:                 frrfake.NewSimpleClientset(frrObjects...),
-		NetworkQoSClient:          networkqosfake.NewSimpleClientset(networkQoSObjects...),
-		NetworkConnectClient:      networkconnectfake.NewSimpleClientset(networkConnectObjects...),
-		VTEPClient:                vtepfake.NewSimpleClientset(vtepObjects...),
+		NetworkQoSClient:          networkqosfake.NewSimpleClientset(networkQoSObjects...),         //nolint:staticcheck
+		NetworkConnectClient:      networkconnectfake.NewSimpleClientset(networkConnectObjects...), //nolint:staticcheck
+		VTEPClient:                vtepfake.NewSimpleClientset(vtepObjects...),                     //nolint:staticcheck
 	}
 }
 

@@ -1991,14 +1991,15 @@ func TestGetNodeManagementIP(t *testing.T) {
 			result := netInfo.GetNodeManagementIP(hostSubnet)
 			if result == nil {
 				t.Fatalf("GetNodeManagementIP returned nil")
-			}
+			} else {
 
-			if !result.IP.Equal(tc.expectedIP.IP) {
-				t.Errorf("Expected IP %s, got %s", tc.expectedIP.IP.String(), result.IP.String())
-			}
+				if !result.IP.Equal(tc.expectedIP.IP) {
+					t.Errorf("Expected IP %s, got %s", tc.expectedIP.IP.String(), result.IP.String())
+				}
 
-			if result.Mask.String() != tc.expectedIP.Mask.String() {
-				t.Errorf("Expected mask %s, got %s", tc.expectedIP.Mask.String(), result.Mask.String())
+				if result.Mask.String() != tc.expectedIP.Mask.String() {
+					t.Errorf("Expected mask %s, got %s", tc.expectedIP.Mask.String(), result.Mask.String())
+				}
 			}
 		})
 	}
@@ -2400,14 +2401,15 @@ func TestGetNodeGatewayIP(t *testing.T) {
 			result := netInfo.GetNodeGatewayIP(hostSubnet)
 			if result == nil {
 				t.Fatalf("GetNodeGatewayIP returned nil")
-			}
+			} else {
 
-			if !result.IP.Equal(tc.expectedIP.IP) {
-				t.Errorf("Expected IP %s, got %s", tc.expectedIP.IP.String(), result.IP.String())
-			}
+				if !result.IP.Equal(tc.expectedIP.IP) {
+					t.Errorf("Expected IP %s, got %s", tc.expectedIP.IP.String(), result.IP.String())
+				}
 
-			if result.Mask.String() != tc.expectedIP.Mask.String() {
-				t.Errorf("Expected mask %s, got %s", tc.expectedIP.Mask.String(), result.Mask.String())
+				if result.Mask.String() != tc.expectedIP.Mask.String() {
+					t.Errorf("Expected mask %s, got %s", tc.expectedIP.Mask.String(), result.Mask.String())
+				}
 			}
 		})
 	}

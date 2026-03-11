@@ -199,17 +199,17 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 	o.fakeClient = &util.OVNMasterClientset{
 		KubeClient:               fake.NewClientset(v1Objects...),
 		ANPClient:                anpfake.NewSimpleClientset(anpObjects...),
-		EgressIPClient:           egressipfake.NewSimpleClientset(egressIPObjects...),
-		EgressFirewallClient:     egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),
+		EgressIPClient:           egressipfake.NewSimpleClientset(egressIPObjects...),             //nolint:staticcheck
+		EgressFirewallClient:     egressfirewallfake.NewSimpleClientset(egressFirewallObjects...), //nolint:staticcheck
 		OCPNetworkClient:         ocpnetworkfake.NewSimpleClientset(dnsNameResolverObjects...),
-		EgressQoSClient:          egressqosfake.NewSimpleClientset(egressQoSObjects...),
+		EgressQoSClient:          egressqosfake.NewSimpleClientset(egressQoSObjects...), //nolint:staticcheck
 		MultiNetworkPolicyClient: mnpfake.NewSimpleClientset(multiNetworkPolicyObjects...),
-		EgressServiceClient:      egressservicefake.NewSimpleClientset(egressServiceObjects...),
-		AdminPolicyRouteClient:   adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...),
+		EgressServiceClient:      egressservicefake.NewSimpleClientset(egressServiceObjects...),            //nolint:staticcheck
+		AdminPolicyRouteClient:   adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...), //nolint:staticcheck
 		IPAMClaimsClient:         fakeipamclaimclient.NewSimpleClientset(ipamClaimObjects...),
 		NetworkAttchDefClient:    nadClient,
-		UserDefinedNetworkClient: udnclientfake.NewSimpleClientset(),
-		VTEPClient:               vtepfake.NewSimpleClientset(),
+		UserDefinedNetworkClient: udnclientfake.NewSimpleClientset(), //nolint:staticcheck
+		VTEPClient:               vtepfake.NewSimpleClientset(),      //nolint:staticcheck
 	}
 	o.init(nads)
 }
