@@ -977,10 +977,11 @@ clone_frr() {
     # https://github.com/FRRouting/frr/pull/15714).
     #
     # Bump to 10.4.1 for upstream demo was posted here: https://github.com/metallb/frr-k8s/pull/404
-    # We bump further to 10.4.2 to include additional fixes for EVPN:
+    # We bump further to 10.4.3 to include additional fixes for EVPN:
     # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3907335193
     # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3898408592
-    sed -i 's|quay.io/frrouting/frr:9.1.0|quay.io/frrouting/frr:10.4.2|g' hack/demo/demo.sh
+    # https://github.com/FRRouting/frr/pull/20496
+    sed -i 's|quay.io/frrouting/frr:[0-9.]*|quay.io/frrouting/frr:10.4.3|g' hack/demo/demo.sh
 
     popd
 
@@ -1175,6 +1176,11 @@ install_frr_k8s() {
       exit 1
     }
   fi
+
+  # Bump frr in frr-k8s to 10.4.3 to consume the following fix
+  # https://github.com/FRRouting/frr/pull/20496
+  sed -i 's|quay.io/frrouting/frr:[0-9.]*|quay.io/frrouting/frr:10.4.3|g' \
+    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
 }
 
