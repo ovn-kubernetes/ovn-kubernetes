@@ -35,18 +35,25 @@ type BridgeUDNConfiguration struct {
 	NodeSubnets   []*net.IPNet
 	Advertised    atomic.Bool
 	ManagementIPs []*net.IPNet
+	// Transport mode for this network ("no-overlay", "evpn", or "" for default network)
+	Transport string
+	// OutboundSNAT setting for this network ("enabled", "disabled", or "")
+	OutboundSNAT string
 }
 
 func (netConfig *BridgeUDNConfiguration) ShallowCopy() *BridgeUDNConfiguration {
 	copy := &BridgeUDNConfiguration{
-		PatchPort:   netConfig.PatchPort,
-		OfPortPatch: netConfig.OfPortPatch,
-		MasqCTMark:  netConfig.MasqCTMark,
-		PktMark:     netConfig.PktMark,
-		V4MasqIPs:   netConfig.V4MasqIPs,
-		V6MasqIPs:   netConfig.V6MasqIPs,
-		Subnets:     netConfig.Subnets,
-		NodeSubnets: netConfig.NodeSubnets,
+		PatchPort:     netConfig.PatchPort,
+		OfPortPatch:   netConfig.OfPortPatch,
+		MasqCTMark:    netConfig.MasqCTMark,
+		PktMark:       netConfig.PktMark,
+		V4MasqIPs:     netConfig.V4MasqIPs,
+		V6MasqIPs:     netConfig.V6MasqIPs,
+		Subnets:       netConfig.Subnets,
+		NodeSubnets:   netConfig.NodeSubnets,
+		ManagementIPs: netConfig.ManagementIPs,
+		Transport:     netConfig.Transport,
+		OutboundSNAT:  netConfig.OutboundSNAT,
 	}
 	copy.Advertised.Store(netConfig.Advertised.Load())
 	return copy
@@ -325,6 +332,8 @@ func (b *BridgeConfiguration) AddNetworkConfig(nInfo util.NetInfo, nodeSubnets, 
 			ManagementIPs: mgmtIPs,
 			Subnets:       nInfo.Subnets(),
 			NodeSubnets:   nodeSubnets,
+			Transport:     nInfo.Transport(),
+			OutboundSNAT:  nInfo.OutboundSNAT(),
 		}
 		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 

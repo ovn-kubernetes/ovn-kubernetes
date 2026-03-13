@@ -605,6 +605,18 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 		if ofPortPhys != "" {
 			for _, netConfig := range b.patchedNetConfigs() {
+				// table0, for UDN no-overlay networks, handle cross-node traffic
+				// that has already been SNATed to node IP by the gateway router.
+				if !netConfig.IsDefaultNetwork() && netConfig.Transport == types.NetworkTransportNoOverlay && config.Gateway.Mode == config.GatewayModeShared {
+					// In shared gateway mode, commit to conntrack and send directly to physical port.
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=99, in_port=%s, dl_src=%s, %s, nw_src=%s, "+
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4,
+							physicalIP.IP, config.Default.ConntrackZone,
+							netConfig.MasqCTMark, ofPortPhys))
+				}
+
 				// table0, packets coming from egressIP pods that have mark 1008 on them
 				// will be SNAT-ed a final time into nodeIP to maintain consistency in traffic even if the GR
 				// SNATs these into egressIP prior to reaching external bridge.
@@ -706,6 +718,18 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 		if ofPortPhys != "" {
 			for _, netConfig := range b.patchedNetConfigs() {
+				// table0, for UDN no-overlay networks, handle cross-node traffic
+				// that has already been SNATed to node IP by the gateway router.
+				if !netConfig.IsDefaultNetwork() && netConfig.Transport == types.NetworkTransportNoOverlay && config.Gateway.Mode == config.GatewayModeShared {
+					// In shared gateway mode, commit to conntrack and send directly to physical port.
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=99, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6,
+							protoPrefixV6, physicalIP.IP, config.Default.ConntrackZone,
+							netConfig.MasqCTMark, ofPortPhys))
+				}
+
 				// table0, packets coming from egressIP pods that have mark 1008 on them
 				// will be DNAT-ed a final time into nodeIP to maintain consistency in traffic even if the GR
 				// DNATs these into egressIP prior to reaching external bridge.
