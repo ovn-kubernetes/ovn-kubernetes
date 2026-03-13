@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,7 +32,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -1612,7 +1615,577 @@ spec:
 			}
 		})
 	})
+
+	// This test verifies that a ClusterIP service remains reachable during a
+	// rolling update that changes the container's target port. During the
+	// rolling update, endpoint slices will contain endpoints with different
+	// target port numbers for the same named port. OVN-K must program LB
+	// rules for all distinct target ports so that both old and new pods
+	// remain reachable.
+	//
+	// The test pauses the rollout once both target ports are observed in the
+	// endpoint slices. While paused, no pods are being terminated, so every
+	// request must succeed -- any failure indicates that OVN-K failed to
+	// program LB rules for both target ports (the SDN-3551 bug).
+	ginkgo.It("Maintains service connectivity during rolling update when target port changes", func() {
+		namespace := f.Namespace.Name
+		ctx := context.TODO()
+
+		const (
+			deploymentName = "rolling-update-backend"
+			svcName        = "rolling-update-svc"
+			portName       = "http"
+			svcPort        = int32(80)
+			oldTargetPort  = int32(8080)
+			newTargetPort  = int32(9090)
+		)
+		replicas := int32(4)
+
+		ginkgo.By(fmt.Sprintf("Creating a deployment with %d replicas listening on port %d", replicas, oldTargetPort))
+		labels := map[string]string{"app": "rolling-update-test"}
+		maxUnavailable := intstr.FromInt(0)
+		maxSurge := intstr.FromInt(1)
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      deploymentName,
+				Namespace: namespace,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+				Strategy: appsv1.DeploymentStrategy{
+					Type: appsv1.RollingUpdateDeploymentStrategyType,
+					RollingUpdate: &appsv1.RollingUpdateDeployment{
+						MaxUnavailable: &maxUnavailable,
+						MaxSurge:       &maxSurge,
+					},
+				},
+				Template: v1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: labels,
+					},
+					Spec: v1.PodSpec{
+						Containers: []v1.Container{
+							{
+								Name:    "agnhost",
+								Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+								Command: []string{"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", oldTargetPort)},
+								Ports: []v1.ContainerPort{
+									{
+										Name:          portName,
+										ContainerPort: oldTargetPort,
+										Protocol:      v1.ProtocolTCP,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		_, err := cs.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for deployment to become ready")
+		err = wait.PollImmediate(framework.Poll, 2*time.Minute, func() (bool, error) {
+			dp, err := cs.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			return dp.Status.ReadyReplicas == replicas, nil
+		})
+		framework.ExpectNoError(err, "deployment did not become ready in time")
+
+		ginkgo.By("Creating a ClusterIP service with named target port")
+		svc := &v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      svcName,
+				Namespace: namespace,
+			},
+			Spec: v1.ServiceSpec{
+				Selector: labels,
+				Type:     v1.ServiceTypeClusterIP,
+				Ports: []v1.ServicePort{
+					{
+						Name:       portName,
+						Protocol:   v1.ProtocolTCP,
+						Port:       svcPort,
+						TargetPort: intstr.FromString(portName),
+					},
+				},
+			},
+		}
+		svc, err = cs.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Creating an exec pod for connectivity checks")
+		execPod := e2epod.CreateExecPodOrFail(ctx, cs, namespace, "exec-pod-rolling-update", nil)
+
+		serviceAddr := net.JoinHostPort(svc.Spec.ClusterIP, fmt.Sprintf("%d", svcPort))
+		curlCmd := fmt.Sprintf("curl -q -s --connect-timeout 3 http://%s/", serviceAddr)
+
+		ginkgo.By("Verifying initial service connectivity")
+		gomega.Eventually(func() error {
+			stdout, err := e2epodoutput.RunHostCmd(namespace, execPod.Name, curlCmd)
+			if err != nil {
+				return fmt.Errorf("connection failed: %v", err)
+			}
+			if strings.TrimSpace(stdout) == "" {
+				return fmt.Errorf("empty response from service")
+			}
+			framework.Logf("Initial connectivity check succeeded, got response: %s", strings.TrimSpace(stdout))
+			return nil
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed())
+
+		ginkgo.By(fmt.Sprintf("Triggering rolling update: changing target port from %d to %d", oldTargetPort, newTargetPort))
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			deployment, err = cs.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			deployment.Spec.Template.Spec.Containers[0].Command = []string{
+				"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", newTargetPort),
+			}
+			deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = newTargetPort
+			_, err = cs.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for endpoint slices to contain both old and new target ports")
+		err = wait.PollImmediate(time.Second, 2*time.Minute, func() (bool, error) {
+			ports, err := getReadyEndpointSlicePorts(cs, namespace, svcName)
+			if err != nil {
+				framework.Logf("Transient error listing endpoint slices: %v", err)
+				return false, nil
+			}
+			if ports.Has(oldTargetPort) && ports.Has(newTargetPort) {
+				framework.Logf("Detected both target ports in endpoint slices: %v", ports.UnsortedList())
+				return true, nil
+			}
+			framework.Logf("Current target ports in endpoint slices: %v (waiting for both %d and %d)",
+				ports.UnsortedList(), oldTargetPort, newTargetPort)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "timed out waiting for both target ports to appear in endpoint slices")
+
+		ginkgo.By("Pausing the rolling update to freeze the multi-port state")
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			deployment, err = cs.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			deployment.Spec.Paused = true
+			_, err = cs.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for all backend pods to be running and ready (no in-flight terminations)")
+		err = wait.PollImmediate(framework.Poll, 1*time.Minute, func() (bool, error) {
+			pods, err := cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=rolling-update-test",
+			})
+			if err != nil {
+				return false, err
+			}
+			for _, pod := range pods.Items {
+				if pod.DeletionTimestamp != nil {
+					framework.Logf("Pod %s is still terminating", pod.Name)
+					return false, nil
+				}
+				if pod.Status.Phase != v1.PodRunning {
+					framework.Logf("Pod %s is in phase %s", pod.Name, pod.Status.Phase)
+					return false, nil
+				}
+				ready := false
+				for _, cond := range pod.Status.Conditions {
+					if cond.Type == v1.PodReady && cond.Status == v1.ConditionTrue {
+						ready = true
+						break
+					}
+				}
+				if !ready {
+					framework.Logf("Pod %s is not ready", pod.Name)
+					return false, nil
+				}
+			}
+			framework.Logf("All %d backend pods are running and ready", len(pods.Items))
+			return true, nil
+		})
+		framework.ExpectNoError(err, "timed out waiting for all pods to be running and ready after pause")
+
+		ginkgo.By("Verifying endpoint slices still contain both target ports while paused")
+		var portNumbers sets.Set[int32]
+		gomega.Eventually(func() error {
+			var err error
+			portNumbers, err = getReadyEndpointSlicePorts(cs, namespace, svcName)
+			return err
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed())
+		framework.Logf("Target ports in endpoint slices while paused: %v", portNumbers.UnsortedList())
+		gomega.Expect(portNumbers.Has(oldTargetPort) && portNumbers.Has(newTargetPort)).To(gomega.BeTrue(),
+			"expected both target ports %d and %d in endpoint slices while paused, got: %v",
+			oldTargetPort, newTargetPort, portNumbers.UnsortedList())
+
+		ginkgo.By("Waiting for OVN-K to program LB rules for both target ports")
+		gomega.Eventually(func() error {
+			stdout, err := e2epodoutput.RunHostCmd(namespace, execPod.Name, curlCmd)
+			if err != nil {
+				return fmt.Errorf("connection failed: %v", err)
+			}
+			if strings.TrimSpace(stdout) == "" {
+				return fmt.Errorf("empty response from service")
+			}
+			return nil
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed(),
+			"service should become reachable after OVN-K programs LB rules")
+
+		ginkgo.By("Verifying service connectivity while rollout is paused with both target ports active")
+		// With the rollout paused, no pods are being terminated. Both old
+		// (port 8080) and new (port 9090) pods are stable and serving.
+		// Without the SDN-3551 fix, OVN-K maps all endpoint IPs to one
+		// target port, causing requests to pods on the other port to fail.
+		// Every request must succeed here.
+		for i := 0; i < 20; i++ {
+			stdout, err := e2epodoutput.RunHostCmd(namespace, execPod.Name, curlCmd)
+			framework.ExpectNoError(err, "request %d/20 failed while rollout is paused with both target ports active", i+1)
+			gomega.Expect(strings.TrimSpace(stdout)).ToNot(gomega.BeEmpty(),
+				"request %d/20 returned empty response while rollout is paused", i+1)
+			framework.Logf("Request %d/20 succeeded, got response: %s", i+1, strings.TrimSpace(stdout))
+		}
+
+		ginkgo.By("Resuming the rolling update")
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			deployment, err = cs.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			deployment.Spec.Paused = false
+			_, err = cs.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for the rolling update to complete")
+		err = wait.PollImmediate(framework.Poll, 3*time.Minute, func() (bool, error) {
+			dp, err := cs.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			return dp.Status.UpdatedReplicas == replicas &&
+				dp.Status.ReadyReplicas == replicas &&
+				dp.Status.AvailableReplicas == replicas, nil
+		})
+		framework.ExpectNoError(err, "rolling update did not complete in time")
+
+		ginkgo.By("Verifying service connectivity after the rolling update completes")
+		gomega.Eventually(func() error {
+			stdout, err := e2epodoutput.RunHostCmd(namespace, execPod.Name, curlCmd)
+			if err != nil {
+				return fmt.Errorf("connection failed: %v", err)
+			}
+			if strings.TrimSpace(stdout) == "" {
+				return fmt.Errorf("empty response from service")
+			}
+			framework.Logf("Post-rollout connectivity check succeeded, got response: %s", strings.TrimSpace(stdout))
+			return nil
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed())
+
+		ginkgo.By("Verifying all endpoint slices with ready endpoints now use only the new target port")
+		gomega.Eventually(func() error {
+			ports, err := getReadyEndpointSlicePorts(cs, namespace, svcName)
+			if err != nil {
+				return fmt.Errorf("listing endpoint slices: %v", err)
+			}
+			if ports.Has(oldTargetPort) {
+				return fmt.Errorf("old target port %d still present in endpoint slices: %v", oldTargetPort, ports.UnsortedList())
+			}
+			if !ports.Has(newTargetPort) {
+				return fmt.Errorf("new target port %d not found in endpoint slices: %v", newTargetPort, ports.UnsortedList())
+			}
+			return nil
+		}, 2*time.Minute, framework.Poll).Should(gomega.Succeed(),
+			"after rolling update completes, all endpoint slices should use the new target port")
+	})
+
+	// This test verifies that ETP=Local NodePort services with host-networked
+	// backends remain reachable during a rolling update that changes the target
+	// port. The node-side OpenFlow DNAT rules must be generated for each
+	// coexisting target port.
+	ginkgo.It("Maintains host-network ETP=Local NodePort connectivity during rolling update when target port changes", func() {
+		namespace := f.Namespace.Name
+		ctx := context.TODO()
+
+		const (
+			deploymentName = "etp-hostnet-backend"
+			svcName        = "etp-hostnet-svc"
+			portName       = "http"
+		)
+
+		oldTargetPort := int32(infraprovider.Get().GetK8HostPort())
+		newTargetPort := int32(infraprovider.Get().GetK8HostPort())
+		gomega.Expect(oldTargetPort).ToNot(gomega.Equal(newTargetPort),
+			"old and new target ports must differ to exercise the target port rolling update")
+
+		ginkgo.By("Selecting 2 schedulable nodes")
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+		framework.ExpectNoError(err)
+		gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">=", 2))
+		serverNodeName := nodes.Items[0].Name
+		clientNodeName := nodes.Items[1].Name
+
+		serverNodeIPs := e2enode.GetAddresses(&nodes.Items[0], v1.NodeInternalIP)
+		gomega.Expect(len(serverNodeIPs)).To(gomega.BeNumerically(">", 0))
+
+		ginkgo.By(fmt.Sprintf("Creating a host-network deployment with 1 replica on %s listening on port %d", serverNodeName, oldTargetPort))
+		labels := map[string]string{"app": "etp-hostnet-test"}
+		replicas := int32(1)
+		maxUnavailable := intstr.FromInt(0)
+		maxSurge := intstr.FromInt(1)
+		deployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      deploymentName,
+				Namespace: namespace,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+				Strategy: appsv1.DeploymentStrategy{
+					Type: appsv1.RollingUpdateDeploymentStrategyType,
+					RollingUpdate: &appsv1.RollingUpdateDeployment{
+						MaxUnavailable: &maxUnavailable,
+						MaxSurge:       &maxSurge,
+					},
+				},
+				Template: v1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: labels,
+					},
+					Spec: v1.PodSpec{
+						HostNetwork: true,
+						NodeName:    serverNodeName,
+						Containers: []v1.Container{
+							{
+								Name:    "agnhost",
+								Image:   images.AgnHost(),
+								Command: []string{"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", oldTargetPort)},
+								Ports: []v1.ContainerPort{
+									{
+										Name:          portName,
+										ContainerPort: oldTargetPort,
+										Protocol:      v1.ProtocolTCP,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		deployment, err = cs.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for all replicas to be ready")
+		err = e2edeployment.WaitForDeploymentComplete(cs, deployment)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Creating a NodePort service with ETP=Local")
+		svc := &v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      svcName,
+				Namespace: namespace,
+			},
+			Spec: v1.ServiceSpec{
+				Type:                  v1.ServiceTypeNodePort,
+				ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyLocal,
+				Selector:              labels,
+				Ports: []v1.ServicePort{
+					{
+						Name:       portName,
+						Port:       int32(80),
+						TargetPort: intstr.FromString(portName),
+						Protocol:   v1.ProtocolTCP,
+					},
+				},
+			},
+		}
+		svc, err = cs.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		nodePort := svc.Spec.Ports[0].NodePort
+
+		ginkgo.By(fmt.Sprintf("Creating a host-network client pod on node %s", clientNodeName))
+		clientPod := e2epod.NewAgnhostPod(namespace, "etp-hostnet-client", nil, nil, nil)
+		clientPod.Spec.NodeName = clientNodeName
+		clientPod.Spec.HostNetwork = true
+		for k := range clientPod.Spec.Containers {
+			if clientPod.Spec.Containers[k].Name == "agnhost-container" {
+				clientPod.Spec.Containers[k].Command = []string{"sleep", "infinity"}
+			}
+		}
+		e2epod.NewPodClient(f).CreateSync(ctx, clientPod)
+
+		ginkgo.By("Verifying initial connectivity via NodePort")
+		serverNodeIP := serverNodeIPs[0]
+		gomega.Eventually(func() error {
+			cmd := fmt.Sprintf("curl -s --connect-timeout 2 http://%s",
+				net.JoinHostPort(serverNodeIP, fmt.Sprintf("%d", nodePort)))
+			stdout, err := e2epodoutput.RunHostCmd(namespace, clientPod.Name, cmd)
+			if err != nil {
+				return fmt.Errorf("curl failed: %v", err)
+			}
+			if strings.TrimSpace(stdout) == "" {
+				return fmt.Errorf("empty response from service")
+			}
+			framework.Logf("Initial connectivity check succeeded: %s", strings.TrimSpace(stdout))
+			return nil
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed())
+
+		ginkgo.By(fmt.Sprintf("Triggering rolling update: changing target port from %d to %d and setting minReadySeconds=60", oldTargetPort, newTargetPort))
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			deployment, err = cs.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			// minReadySeconds=60 delays the old pod's termination until 60s after the
+			// new pod becomes Ready, guaranteeing a window where both the old and new
+			// target ports coexist on the same host-networked node. This lets us verify
+			// that OVN-K correctly programs LB/OpenFlow rules for both ports simultaneously.
+			deployment.Spec.MinReadySeconds = 60
+			deployment.Spec.Template.Spec.Containers[0].Command = []string{
+				"/agnhost", "serve-hostname", fmt.Sprintf("--port=%d", newTargetPort),
+			}
+			deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = newTargetPort
+			_, err = cs.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+			return err
+		})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for endpoint slices to contain both old and new target ports (minReadySeconds=60 keeps both pods alive)")
+		err = wait.PollImmediate(time.Second, 2*time.Minute, func() (bool, error) {
+			ports, err := getReadyEndpointSlicePorts(cs, namespace, svcName)
+			if err != nil {
+				framework.Logf("Transient error listing endpoint slices: %v", err)
+				return false, nil
+			}
+			if ports.Has(oldTargetPort) && ports.Has(newTargetPort) {
+				framework.Logf("Detected both target ports in endpoint slices: %v", ports.UnsortedList())
+				return true, nil
+			}
+			framework.Logf("Current target ports in endpoint slices: %v (waiting for both %d and %d)",
+				ports.UnsortedList(), oldTargetPort, newTargetPort)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "timed out waiting for both target ports to appear in endpoint slices")
+
+		ginkgo.By("Verifying service connectivity via NodePort while both target ports coexist")
+		gomega.Eventually(func() error {
+			cmd := fmt.Sprintf("curl -s --connect-timeout 2 http://%s",
+				net.JoinHostPort(serverNodeIP, fmt.Sprintf("%d", nodePort)))
+			stdout, err := e2epodoutput.RunHostCmd(namespace, clientPod.Name, cmd)
+			if err != nil {
+				return fmt.Errorf("curl failed: %v", err)
+			}
+			if strings.TrimSpace(stdout) == "" {
+				return fmt.Errorf("empty response from service")
+			}
+			framework.Logf("Connectivity check succeeded during multi-port state: %s", strings.TrimSpace(stdout))
+			return nil
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed())
+
+		ginkgo.By("Running strict connectivity checks while both ports coexist")
+		for i := 0; i < 10; i++ {
+			cmd := fmt.Sprintf("curl -s --connect-timeout 2 http://%s",
+				net.JoinHostPort(serverNodeIP, fmt.Sprintf("%d", nodePort)))
+			stdout, err := e2epodoutput.RunHostCmd(namespace, clientPod.Name, cmd)
+			framework.ExpectNoError(err, "connectivity check %d/10 failed", i+1)
+			gomega.Expect(strings.TrimSpace(stdout)).ToNot(gomega.BeEmpty(), "connectivity check %d/10 returned empty", i+1)
+			framework.Logf("Strict connectivity check %d/10 succeeded: %s", i+1, strings.TrimSpace(stdout))
+		}
+
+		ginkgo.By("Confirming endpoint slices still have 2 target ports after connectivity checks")
+		var ports sets.Set[int32]
+		gomega.Eventually(func() error {
+			var err error
+			ports, err = getReadyEndpointSlicePorts(cs, namespace, svcName)
+			return err
+		}, 30*time.Second, framework.Poll).Should(gomega.Succeed())
+		gomega.Expect(ports.Has(oldTargetPort) && ports.Has(newTargetPort)).To(gomega.BeTrue(),
+			fmt.Sprintf("expected both %d and %d still present, got %v", oldTargetPort, newTargetPort, ports.UnsortedList()))
+
+		ginkgo.By("Waiting for the rolling update to complete")
+		err = e2edeployment.WaitForDeploymentComplete(cs, deployment)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Confirming endpoint slices have only the new target port")
+		gomega.Eventually(func() error {
+			ports, err := getReadyEndpointSlicePorts(cs, namespace, svcName)
+			if err != nil {
+				return fmt.Errorf("listing endpoint slices: %v", err)
+			}
+			if ports.Has(oldTargetPort) {
+				return fmt.Errorf("old target port %d still present in endpoint slices: %v", oldTargetPort, ports.UnsortedList())
+			}
+			if !ports.Has(newTargetPort) {
+				return fmt.Errorf("new target port %d not found in endpoint slices: %v", newTargetPort, ports.UnsortedList())
+			}
+			framework.Logf("Endpoint slices have only the new target port: %v", ports.UnsortedList())
+			return nil
+		}, 2*time.Minute, framework.Poll).Should(gomega.Succeed())
+
+		ginkgo.By("Verifying connectivity after rolling update completes with only new target port")
+		for i := 0; i < 5; i++ {
+			cmd := fmt.Sprintf("curl -s --connect-timeout 2 http://%s",
+				net.JoinHostPort(serverNodeIP, fmt.Sprintf("%d", nodePort)))
+			stdout, err := e2epodoutput.RunHostCmd(namespace, clientPod.Name, cmd)
+			framework.ExpectNoError(err, "post-rollout connectivity check %d/5 failed", i+1)
+			gomega.Expect(strings.TrimSpace(stdout)).ToNot(gomega.BeEmpty(), "post-rollout check %d/5 returned empty", i+1)
+			framework.Logf("Post-rollout connectivity check %d/5 succeeded: %s", i+1, strings.TrimSpace(stdout))
+		}
+	})
 })
+
+// getReadyEndpointSlicePorts returns the set of target port numbers from endpoint
+// slices that have at least one ready endpoint. Slices with no endpoints or no
+// ready endpoints are excluded.
+func getReadyEndpointSlicePorts(cs clientset.Interface, namespace, svcName string) (sets.Set[int32], error) {
+	slices, err := cs.DiscoveryV1().EndpointSlices(namespace).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+	})
+	if err != nil {
+		return nil, err
+	}
+	ports := sets.New[int32]()
+	for _, slice := range slices.Items {
+		if len(slice.Endpoints) == 0 {
+			continue
+		}
+		hasReady := false
+		for _, ep := range slice.Endpoints {
+			cond := ep.Conditions
+			ready := cond.Ready == nil || *cond.Ready
+			serving := cond.Serving == nil || *cond.Serving
+			terminating := cond.Terminating != nil && *cond.Terminating
+			if ready && serving && !terminating {
+				hasReady = true
+				break
+			}
+		}
+		if !hasReady {
+			continue
+		}
+		for _, port := range slice.Ports {
+			if port.Port != nil {
+				ports.Insert(*port.Port)
+			}
+		}
+	}
+	return ports, nil
+}
 
 func getServiceBackendsFromPod(execPod *v1.Pod, serviceIP string, servicePort int) []string {
 	connectionAttempts := 15
