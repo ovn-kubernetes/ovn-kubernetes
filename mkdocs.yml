@@ -68,28 +68,28 @@ markdown_extensions:
       permalink: true
 nav:
   - Overview:
-    - Introduction: index.md
-    - Architecture: design/architecture.md
-    - Network Topology: design/topology.md
-    - Gateway Modes: design/gateway-modes.md
-    - Traffic Flows: design/traffic-flows.md
-    - Pod Creation Workflow: design/pod-creation-workflow.md
-    - Service Creation Workflow: design/service-creation-workflow.md
-    - Service Traffic Policy: design/service-traffic-policy.md
-    - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
-    - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
-    - Internal Subnets: design/ovn-kubernetes-subnets.md
-    - Kubevirt VM Live Migration: features/live-migration.md
+      - Introduction: index.md
+      - Architecture: design/architecture.md
+      - Network Topology: design/topology.md
+      - Gateway Modes: design/gateway-modes.md
+      - Traffic Flows: design/traffic-flows.md
+      - Pod Creation Workflow: design/pod-creation-workflow.md
+      - Service Creation Workflow: design/service-creation-workflow.md
+      - Service Traffic Policy: design/service-traffic-policy.md
+      - Host To NodePort Hairpin: design/host-to-node-port-hairpin-trafficflow.md
+      - ExternalIPs/LoadBalancerIngress: design/external-ip-and-loadbalancer-ingress.md
+      - Internal Subnets: design/ovn-kubernetes-subnets.md
+      - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
-    - Launching OVN-Kubernetes: installation/launching-ovn-kubernetes-on-kind.md
-    - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
-    - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
-    - Configuration Guide: getting-started/configuration.md
-    - Requirements: features/requirements.md
-    - CLI Guide: getting-started/cli-guide.md
-    - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md
-    - Deploying Services on OVN-Kubernetes cluster: getting-started/example-service-creation.md
-    - Setup and Building: getting-started/building-ovn-kubernetes.md
+      - Launching OVN-Kubernetes: installation/launching-ovn-kubernetes-on-kind.md
+      - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
+      - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
+      - Configuration Guide: getting-started/configuration.md
+      - Requirements: features/requirements.md
+      - CLI Guide: getting-started/cli-guide.md
+      - Deploying Workloads on OVN-Kubernetes cluster: getting-started/example-pod-creation.md
+      - Deploying Services on OVN-Kubernetes cluster: getting-started/example-service-creation.md
+      - Setup and Building: getting-started/building-ovn-kubernetes.md
   - Developer Guide:
       - Contributing Guide: governance/CONTRIBUTING.md
       - Reviewing Guide: governance/REVIEWING.md
@@ -111,56 +111,57 @@ nav:
       - RouteAdvertisements: api-reference/routeadvertisements-api-spec.md
       - ClusterNetworkConnect: api-reference/clusternetworkconnect-api-spec.md
   - Features:
-    - Universal Connectivity:
-      - UserDefinedNetwork: features/user-defined-networks/user-defined-networks.md
-    - NetworkSecurityControls:
-      - AdminNetworkPolicy: features/network-security-controls/admin-network-policy.md
-      - NetworkPolicy: features/network-security-controls/network-policy.md
-      - EgressFirewall: features/network-security-controls/egress-firewall.md
-    - ClusterEgressControls:
-      - EgressIP: features/cluster-egress-controls/egress-ip.md
-      - EgressService: features/cluster-egress-controls/egress-service.md
-      - EgressQoS: features/cluster-egress-controls/egress-qos.md
-      - EgressGateway: features/cluster-egress-controls/egress-gateway.md
-    - InfrastructureSecurityControls:
-      - NodeIdentity: features/infrastructure-security-controls/node-identity.md
-    - MultiNetworking:
-      - Multihoming: features/multiple-networks/multi-homing.md
-      - MultiNetworkPolicies: features/multiple-networks/multi-network-policies.md
-      - MultiNetworkRails: features/multiple-networks/multi-vtep.md
-    - Multicast: features/multicast.md
-    - NetworkQoS:
-        - Overview: features/network-qos.md
-        - Usage Guide: features/network-qos-guide.md
-    - LiveMigration: features/live-migration.md
-    - HybridOverlay: features/hybrid-overlay.md
-    - OVS Dynamic CPU Affinity: features/ovs-dynamic-cpu-affinity.md
-    - Hardware Acceleration:
-      - OVS Acceleration with kernel datapath: features/hardware-offload/ovs-kernel.md
-      - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
-    - BGP Integration:
-      - Route Advertisements: features/bgp-integration/route-advertisements.md
+      - Universal Connectivity:
+          - UserDefinedNetwork: features/user-defined-networks/user-defined-networks.md
+      - NetworkSecurityControls:
+          - AdminNetworkPolicy: features/network-security-controls/admin-network-policy.md
+          - NetworkPolicy: features/network-security-controls/network-policy.md
+          - EgressFirewall: features/network-security-controls/egress-firewall.md
+      - ClusterEgressControls:
+          - EgressIP: features/cluster-egress-controls/egress-ip.md
+          - EgressService: features/cluster-egress-controls/egress-service.md
+          - EgressQoS: features/cluster-egress-controls/egress-qos.md
+          - EgressGateway: features/cluster-egress-controls/egress-gateway.md
+      - InfrastructureSecurityControls:
+          - NodeIdentity: features/infrastructure-security-controls/node-identity.md
+      - MultiNetworking:
+          - Multihoming: features/multiple-networks/multi-homing.md
+          - MultiNetworkPolicies: features/multiple-networks/multi-network-policies.md
+          - MultiNetworkRails: features/multiple-networks/multi-vtep.md
+      - Multicast: features/multicast.md
+      - NetworkQoS:
+          - Overview: features/network-qos.md
+          - Usage Guide: features/network-qos-guide.md
+      - LiveMigration: features/live-migration.md
+      - HybridOverlay: features/hybrid-overlay.md
+      - OVS Dynamic CPU Affinity: features/ovs-dynamic-cpu-affinity.md
+      - Hardware Acceleration:
+          - DPU Support: features/hardware-offload/dpu-support.md
+          - OVS Acceleration with kernel datapath: features/hardware-offload/ovs-kernel.md
+          - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
+      - BGP Integration:
+          - Route Advertisements: features/bgp-integration/route-advertisements.md
   - Troubleshooting:
-    - Introduction: troubleshooting/debugging.md
-    - OVNKube Trace: troubleshooting/ovnkube-trace.md
-    - Logging: troubleshooting/logging.md
+      - Introduction: troubleshooting/debugging.md
+      - OVNKube Trace: troubleshooting/ovnkube-trace.md
+      - Logging: troubleshooting/logging.md
   - Observability:
-    - Metrics: observability/metrics.md
-    - SDN Dashboard: observability/sdn-dashboard.md
-    - OVN observability: observability/ovn-observability.md
+      - Metrics: observability/metrics.md
+      - SDN Dashboard: observability/sdn-dashboard.md
+      - OVN observability: observability/ovn-observability.md
   - Enhancement Proposals:
-    # - FeatureName: okeps/<filename.md>
-    - Localnet API: okeps/okep-5085-localnet-api.md
-    - Network QoS: okeps/okep-4380-network-qos.md
-    - User Defined Networks: okeps/okep-5193-user-defined-networks.md
-    - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
-    - BGP: okeps/okep-5296-bgp.md
-    - Layer2TransitRouter: okeps/okep-5094-layer2-transit-router.md
-    - MCP for Troubleshooting: okeps/okep-5494-ovn-kubernetes-mcp-server.md
-    - Dynamic UDN Node Allocation: okeps/okep-5552-dynamic-udn-node-allocation.md
-    - Connecting User Defined Networks: okeps/okep-5224-connecting-udns/okep-5224-connecting-udns.md
-    - No-Overlay Mode: okeps/okep-5259-no-overlay.md
-    - EVPN: okeps/okep-5088-evpn.md
-    - DPU Healthcheck: okeps/okep-5674-dpu-healthcheck.md
+      # - FeatureName: okeps/<filename.md>
+      - Localnet API: okeps/okep-5085-localnet-api.md
+      - Network QoS: okeps/okep-4380-network-qos.md
+      - User Defined Networks: okeps/okep-5193-user-defined-networks.md
+      - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
+      - BGP: okeps/okep-5296-bgp.md
+      - Layer2TransitRouter: okeps/okep-5094-layer2-transit-router.md
+      - MCP for Troubleshooting: okeps/okep-5494-ovn-kubernetes-mcp-server.md
+      - Dynamic UDN Node Allocation: okeps/okep-5552-dynamic-udn-node-allocation.md
+      - Connecting User Defined Networks: okeps/okep-5224-connecting-udns/okep-5224-connecting-udns.md
+      - No-Overlay Mode: okeps/okep-5259-no-overlay.md
+      - EVPN: okeps/okep-5088-evpn.md
+      - DPU Healthcheck: okeps/okep-5674-dpu-healthcheck.md
   - Blog:
-    - blog/index.md
+      - blog/index.md
