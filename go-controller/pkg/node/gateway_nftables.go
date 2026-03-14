@@ -609,7 +609,7 @@ const (
 
 // initExternalBridgeServiceForwardingRules is called when config.Gateway.DisableForwarding is
 // true, to set up allowed forwarding and deny other forwarding.
-func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
+func initExternalBridgeServiceForwardingRules() error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("could not configure bridge forwarding: %w", err)
@@ -626,6 +626,12 @@ func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
 	tx.Flush(&knftables.Chain{
 		Name: gatewayForwardChain,
 	})
+
+	var cidrs []*net.IPNet
+	for _, subnet := range config.Default.ClusterSubnets {
+		cidrs = append(cidrs, subnet.CIDR)
+	}
+	cidrs = append(cidrs, config.Kubernetes.ServiceCIDRs...)
 
 	v4CIDRset := sets.New[string]()
 	v6CIDRset := sets.New[string]()

@@ -77,13 +77,8 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 
 	// Add or delete nftables rules based on DisableForwarding. This is
 	// to imitate addition or deletion of rules done in newNodePortWatcher().
-	var subnets []*net.IPNet
-	for _, subnet := range config.Default.ClusterSubnets {
-		subnets = append(subnets, subnet.CIDR)
-	}
-	subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
 	if config.Gateway.DisableForwarding {
-		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+		if err := initExternalBridgeServiceForwardingRules(); err != nil {
 			return fmt.Errorf("failed to add nftables forwarding rules for bridge %s: err %v", linkName, err)
 		}
 	} else {

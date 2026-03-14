@@ -1847,13 +1847,8 @@ func newNodePortWatcher(
 			}
 		}
 
-		var subnets []*net.IPNet
-		for _, subnet := range config.Default.ClusterSubnets {
-			subnets = append(subnets, subnet.CIDR)
-		}
-		subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
 		if config.Gateway.DisableForwarding {
-			if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+			if err := initExternalBridgeServiceForwardingRules(); err != nil {
 				return nil, fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
 			}
 		} else {
