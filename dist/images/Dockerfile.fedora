@@ -146,10 +146,10 @@ ENV PYTHONDONTWRITEBYTECODE yes
 # TODO: Sync kubernetes-client with the Kubernetes version in go-controller/go.mod,
 # as is done for kubectl in the Ubuntu image.
 RUN INSTALL_PKGS=" \
-    python3-pip python3-pyyaml bind-utils procps-ng openssl numactl-libs firewalld-filesystem \
+    python3-pyyaml bind-utils procps-ng openssl numactl-libs \
     libpcap hostname kubernetes-client util-linux \
     ovn ovn-central ovn-host python3-openvswitch tcpdump openvswitch-test python3-pyOpenSSL \
-    iptables nftables iproute iputils ndisc6 libndp strace socat \
+    iptables nftables iproute iputils ndisc6 libndp \
     libreswan openvswitch-ipsec \
     " && \
     dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \
