@@ -5,9 +5,9 @@
 package v1beta1
 
 import (
-	"context"
+	context "context"
 
-	v1beta1 "github.com/metallb/frr-k8s/api/v1beta1"
+	apiv1beta1 "github.com/metallb/frr-k8s/api/v1beta1"
 	scheme "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/scheme"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -23,33 +23,34 @@ type FRRConfigurationsGetter interface {
 
 // FRRConfigurationInterface has methods to work with FRRConfiguration resources.
 type FRRConfigurationInterface interface {
-	Create(ctx context.Context, fRRConfiguration *v1beta1.FRRConfiguration, opts v1.CreateOptions) (*v1beta1.FRRConfiguration, error)
-	Update(ctx context.Context, fRRConfiguration *v1beta1.FRRConfiguration, opts v1.UpdateOptions) (*v1beta1.FRRConfiguration, error)
+	Create(ctx context.Context, fRRConfiguration *apiv1beta1.FRRConfiguration, opts v1.CreateOptions) (*apiv1beta1.FRRConfiguration, error)
+	Update(ctx context.Context, fRRConfiguration *apiv1beta1.FRRConfiguration, opts v1.UpdateOptions) (*apiv1beta1.FRRConfiguration, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, fRRConfiguration *v1beta1.FRRConfiguration, opts v1.UpdateOptions) (*v1beta1.FRRConfiguration, error)
+	UpdateStatus(ctx context.Context, fRRConfiguration *apiv1beta1.FRRConfiguration, opts v1.UpdateOptions) (*apiv1beta1.FRRConfiguration, error)
 	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
-	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1beta1.FRRConfiguration, error)
-	List(ctx context.Context, opts v1.ListOptions) (*v1beta1.FRRConfigurationList, error)
+	Get(ctx context.Context, name string, opts v1.GetOptions) (*apiv1beta1.FRRConfiguration, error)
+	List(ctx context.Context, opts v1.ListOptions) (*apiv1beta1.FRRConfigurationList, error)
 	Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.FRRConfiguration, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *apiv1beta1.FRRConfiguration, err error)
 	FRRConfigurationExpansion
 }
 
 // fRRConfigurations implements FRRConfigurationInterface
 type fRRConfigurations struct {
-	*gentype.ClientWithList[*v1beta1.FRRConfiguration, *v1beta1.FRRConfigurationList]
+	*gentype.ClientWithList[*apiv1beta1.FRRConfiguration, *apiv1beta1.FRRConfigurationList]
 }
 
 // newFRRConfigurations returns a FRRConfigurations
 func newFRRConfigurations(c *ApiV1beta1Client, namespace string) *fRRConfigurations {
 	return &fRRConfigurations{
-		gentype.NewClientWithList[*v1beta1.FRRConfiguration, *v1beta1.FRRConfigurationList](
+		gentype.NewClientWithList[*apiv1beta1.FRRConfiguration, *apiv1beta1.FRRConfigurationList](
 			"frrconfigurations",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *v1beta1.FRRConfiguration { return &v1beta1.FRRConfiguration{} },
-			func() *v1beta1.FRRConfigurationList { return &v1beta1.FRRConfigurationList{} }),
+			func() *apiv1beta1.FRRConfiguration { return &apiv1beta1.FRRConfiguration{} },
+			func() *apiv1beta1.FRRConfigurationList { return &apiv1beta1.FRRConfigurationList{} },
+		),
 	}
 }

@@ -5,16 +5,17 @@
 package v1beta1
 
 import (
-	"net/http"
+	http "net/http"
 
-	v1beta1 "github.com/metallb/frr-k8s/api/v1beta1"
-	"github.com/metallb/frr-k8s/pkg/client/clientset/versioned/scheme"
+	apiv1beta1 "github.com/metallb/frr-k8s/api/v1beta1"
+	scheme "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 )
 
 type ApiV1beta1Interface interface {
 	RESTClient() rest.Interface
 	FRRConfigurationsGetter
+	FRRK8sConfigurationsGetter
 }
 
 // ApiV1beta1Client is used to interact with features provided by the api group.
@@ -26,14 +27,16 @@ func (c *ApiV1beta1Client) FRRConfigurations(namespace string) FRRConfigurationI
 	return newFRRConfigurations(c, namespace)
 }
 
+func (c *ApiV1beta1Client) FRRK8sConfigurations(namespace string) FRRK8sConfigurationInterface {
+	return newFRRK8sConfigurations(c, namespace)
+}
+
 // NewForConfig creates a new ApiV1beta1Client for the given config.
 // NewForConfig is equivalent to NewForConfigAndClient(c, httpClient),
 // where httpClient was generated with rest.HTTPClientFor(c).
 func NewForConfig(c *rest.Config) (*ApiV1beta1Client, error) {
 	config := *c
-	if err := setConfigDefaults(&config); err != nil {
-		return nil, err
-	}
+	setConfigDefaults(&config)
 	httpClient, err := rest.HTTPClientFor(&config)
 	if err != nil {
 		return nil, err
@@ -45,9 +48,7 @@ func NewForConfig(c *rest.Config) (*ApiV1beta1Client, error) {
 // Note the http client provided takes precedence over the configured transport values.
 func NewForConfigAndClient(c *rest.Config, h *http.Client) (*ApiV1beta1Client, error) {
 	config := *c
-	if err := setConfigDefaults(&config); err != nil {
-		return nil, err
-	}
+	setConfigDefaults(&config)
 	client, err := rest.RESTClientForConfigAndClient(&config, h)
 	if err != nil {
 		return nil, err
@@ -70,17 +71,15 @@ func New(c rest.Interface) *ApiV1beta1Client {
 	return &ApiV1beta1Client{c}
 }
 
-func setConfigDefaults(config *rest.Config) error {
-	gv := v1beta1.SchemeGroupVersion
+func setConfigDefaults(config *rest.Config) {
+	gv := apiv1beta1.SchemeGroupVersion
 	config.GroupVersion = &gv
 	config.APIPath = "/apis"
-	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	config.NegotiatedSerializer = rest.CodecFactoryForGeneratedClient(scheme.Scheme, scheme.Codecs).WithoutConversion()
 
 	if config.UserAgent == "" {
 		config.UserAgent = rest.DefaultKubernetesUserAgent()
 	}
-
-	return nil
 }
 
 // RESTClient returns a RESTClient that is used to communicate

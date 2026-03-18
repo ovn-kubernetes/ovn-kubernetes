@@ -15,7 +15,11 @@ type FakeApiV1beta1 struct {
 }
 
 func (c *FakeApiV1beta1) FRRConfigurations(namespace string) v1beta1.FRRConfigurationInterface {
-	return &FakeFRRConfigurations{c, namespace}
+	return newFakeFRRConfigurations(c, namespace)
+}
+
+func (c *FakeApiV1beta1) FRRK8sConfigurations(namespace string) v1beta1.FRRK8sConfigurationInterface {
+	return newFakeFRRK8sConfigurations(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

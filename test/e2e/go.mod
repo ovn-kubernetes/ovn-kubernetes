@@ -179,3 +179,5 @@ replace (
 	github.com/ovn-kubernetes/ovn-kubernetes/go-controller => ../../go-controller
 	go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
 )
+
+replace github.com/metallb/frr-k8s => github.com/jcaamano/frr-k8s v0.0.0-20260318173150-fa0c8af63672

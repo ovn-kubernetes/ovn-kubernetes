@@ -950,14 +950,15 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.21
+readonly FRR_K8S_REPO=https://github.com/jcaamano/frr-k8s
+readonly FRR_K8S_BRANCH=evpn-plan
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
   [ -d "$FRR_TMP_DIR" ] || {
     mkdir -p "$FRR_TMP_DIR" && trap 'rm -rf $FRR_TMP_DIR' EXIT
     pushd "$FRR_TMP_DIR" || exit 1
-    git clone --depth 1 --branch $FRR_K8S_VERSION https://github.com/metallb/frr-k8s
+    git clone --depth 1 --branch $FRR_K8S_BRANCH $FRR_K8S_REPO frr-k8s
 
     # Download the patches
     curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp-v0.0.21.tar.gz | tar xzvf - frr-k8s-ovnk-bgp-v0.0.21/patches --strip-components 1
@@ -1145,22 +1146,14 @@ install_frr_k8s() {
   echo "Installing frr-k8s ..."
   clone_frr
 
-  # apply frr-k8s
-  # The all-in-one manifest is only consumed here (deploy_frr_external_container
-  # uses CRDs and the demo scripts, not this manifest), so the fix lives here
-  # rather than in clone_frr. This covers both kind.sh and kind-helm.sh since
-  # both call install_frr_k8s.
-  #
-  # gcr.io/kubebuilder/kube-rbac-proxy is unavailable after Google's Container
-  # Registry shutdown (https://cloud.google.com/container-registry/docs/deprecations/container-registry-deprecation).
-  # Upstream bug: https://github.com/metallb/metallb/issues/2619
-  # Use the same image from the Kubernetes community registry instead.
-  # REVERT ME: when https://github.com/metallb/metallb/issues/2619 is fixed
-  sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
-    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
-  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+  # Build and deploy frr-k8s from source using its Makefile deploy target.
+  # This builds the controller image from the branch, loads it into kind,
+  # and deploys via kustomize.
+  pushd "${FRR_TMP_DIR}"/frr-k8s || exit 1
+  make docker-build
+  kind load docker-image quay.io/metallb/frr-k8s:main -n "${KIND_CLUSTER_NAME}"
+  make deploy-controller KUBECTL=kubectl KUBECONFIG_PATH="${KUBECONFIG}"
+  popd || exit 1
 
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes

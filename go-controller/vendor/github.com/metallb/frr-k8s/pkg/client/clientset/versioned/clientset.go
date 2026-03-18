@@ -5,8 +5,8 @@
 package versioned
 
 import (
-	"fmt"
-	"net/http"
+	fmt "fmt"
+	http "net/http"
 
 	apiv1beta1 "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/typed/api/v1beta1"
 	discovery "k8s.io/client-go/discovery"

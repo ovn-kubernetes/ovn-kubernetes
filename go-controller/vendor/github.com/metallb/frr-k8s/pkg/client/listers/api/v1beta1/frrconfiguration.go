@@ -5,10 +5,10 @@
 package v1beta1
 
 import (
-	v1beta1 "github.com/metallb/frr-k8s/api/v1beta1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	apiv1beta1 "github.com/metallb/frr-k8s/api/v1beta1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // FRRConfigurationLister helps list FRRConfigurations.
@@ -16,7 +16,7 @@ import (
 type FRRConfigurationLister interface {
 	// List lists all FRRConfigurations in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1beta1.FRRConfiguration, err error)
+	List(selector labels.Selector) (ret []*apiv1beta1.FRRConfiguration, err error)
 	// FRRConfigurations returns an object that can list and get FRRConfigurations.
 	FRRConfigurations(namespace string) FRRConfigurationNamespaceLister
 	FRRConfigurationListerExpansion
@@ -24,17 +24,17 @@ type FRRConfigurationLister interface {
 
 // fRRConfigurationLister implements the FRRConfigurationLister interface.
 type fRRConfigurationLister struct {
-	listers.ResourceIndexer[*v1beta1.FRRConfiguration]
+	listers.ResourceIndexer[*apiv1beta1.FRRConfiguration]
 }
 
 // NewFRRConfigurationLister returns a new FRRConfigurationLister.
 func NewFRRConfigurationLister(indexer cache.Indexer) FRRConfigurationLister {
-	return &fRRConfigurationLister{listers.New[*v1beta1.FRRConfiguration](indexer, v1beta1.Resource("frrconfiguration"))}
+	return &fRRConfigurationLister{listers.New[*apiv1beta1.FRRConfiguration](indexer, apiv1beta1.Resource("frrconfiguration"))}
 }
 
 // FRRConfigurations returns an object that can list and get FRRConfigurations.
 func (s *fRRConfigurationLister) FRRConfigurations(namespace string) FRRConfigurationNamespaceLister {
-	return fRRConfigurationNamespaceLister{listers.NewNamespaced[*v1beta1.FRRConfiguration](s.ResourceIndexer, namespace)}
+	return fRRConfigurationNamespaceLister{listers.NewNamespaced[*apiv1beta1.FRRConfiguration](s.ResourceIndexer, namespace)}
 }
 
 // FRRConfigurationNamespaceLister helps list and get FRRConfigurations.
@@ -42,15 +42,15 @@ func (s *fRRConfigurationLister) FRRConfigurations(namespace string) FRRConfigur
 type FRRConfigurationNamespaceLister interface {
 	// List lists all FRRConfigurations in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1beta1.FRRConfiguration, err error)
+	List(selector labels.Selector) (ret []*apiv1beta1.FRRConfiguration, err error)
 	// Get retrieves the FRRConfiguration from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1beta1.FRRConfiguration, error)
+	Get(name string) (*apiv1beta1.FRRConfiguration, error)
 	FRRConfigurationNamespaceListerExpansion
 }
 
 // fRRConfigurationNamespaceLister implements the FRRConfigurationNamespaceLister
 // interface.
 type fRRConfigurationNamespaceLister struct {
-	listers.ResourceIndexer[*v1beta1.FRRConfiguration]
+	listers.ResourceIndexer[*apiv1beta1.FRRConfiguration]
 }

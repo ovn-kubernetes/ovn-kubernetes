@@ -242,6 +242,8 @@ github.com/ianlancetaylor/demangle v0.0.0-20200824232613-28f6c0f3b639/go.mod h1:
 github.com/imdario/mergo v0.3.5/go.mod h1:2EnlNZ0deacrJVfApfmtdGgDfMuh/nq6Ok1EcJh5FfA=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
+github.com/jcaamano/frr-k8s v0.0.0-20260318173150-fa0c8af63672 h1:roJXUxw+iK9MpYKTpGLHE9PVpfXjWvsDfwrNNXO7pts=
+github.com/jcaamano/frr-k8s v0.0.0-20260318173150-fa0c8af63672/go.mod h1:VMnCZUVXYy7k0Fsa2L3XKwISFs3Thv0Uord7rSZPQZw=
 github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
 github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8HmY=
@@ -294,8 +296,6 @@ github.com/mdlayher/packet v1.0.0 h1:InhZJbdShQYt6XV2GPj5XHxChzOfhJJOMbvnGAmOfQ8
 github.com/mdlayher/packet v1.0.0/go.mod h1:eE7/ctqDhoiRhQ44ko5JZU2zxB88g+JH/6jmnjzPjOU=
 github.com/mdlayher/socket v0.2.1 h1:F2aaOwb53VsBE+ebRS9bLd7yPOfYUMC8lOODdCBDY6w=
 github.com/mdlayher/socket v0.2.1/go.mod h1:QLlNPkFR88mRUNQIzRBMfXxwKal8H7u1h3bL1CV+f0E=
-github.com/metallb/frr-k8s v0.0.21 h1:JLlCeXVlW5BLVdPy2u5sS9UCVlnK9x2vzWbIkxb8Atk=
-github.com/metallb/frr-k8s v0.0.21/go.mod h1:VMnCZUVXYy7k0Fsa2L3XKwISFs3Thv0Uord7rSZPQZw=
 github.com/metallb/metallb v0.14.9 h1:rjhftr7b0vv56c8pXm7UDo7ad61EwKT6lbGGocrN/VM=
 github.com/metallb/metallb v0.14.9/go.mod h1:qUh1zVwYAfp3JLxhZrDH20j55QvYwCkI37QU4gUG3ns=
 github.com/miekg/dns v1.1.43 h1:JKfpVSCB84vrAmHzyrsxB5NAr5kLoMXZArPSw7Qlgyg=

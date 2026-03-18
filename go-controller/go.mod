@@ -167,3 +167,5 @@ replace (
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 	github.com/j-keck/arping => github.com/JacobTanenbaum/arping v0.0.0-20240209152419-3987db83bd51
 )
+
+replace github.com/metallb/frr-k8s => github.com/jcaamano/frr-k8s v0.0.0-20260318173150-fa0c8af63672

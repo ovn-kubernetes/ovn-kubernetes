@@ -5,3 +5,5 @@
 package v1beta1
 
 type FRRConfigurationExpansion interface{}
+
+type FRRK8sConfigurationExpansion interface{}

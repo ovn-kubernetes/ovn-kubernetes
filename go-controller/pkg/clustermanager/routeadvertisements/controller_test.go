@@ -156,11 +156,12 @@ type testPrefixSelector struct {
 }
 
 type testNeighbor struct {
-	ASN       uint32
-	Address   string
-	DisableMP *bool
-	Advertise []string
-	Receive   []testPrefixSelector
+	ASN             uint32
+	Address         string
+	DisableMP       *bool
+	Advertise       []string
+	Receive         []testPrefixSelector
+	AddressFamilies []frrapi.AddressFamily
 }
 
 func (tn testNeighbor) Neighbor() frrapi.Neighbor {
@@ -168,15 +169,25 @@ func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 		ASN:       tn.ASN,
 		Address:   tn.Address,
 		DisableMP: true,
-		ToAdvertise: frrapi.Advertise{
+	}
+	// Only set ToAdvertise for neighbors that have unicast address family (or default)
+	evpnOnly := len(tn.AddressFamilies) == 1 && tn.AddressFamilies[0] == frrapi.AddressFamilyEVPN
+	if !evpnOnly {
+		n.ToAdvertise = frrapi.Advertise{
 			Allowed: frrapi.AllowedOutPrefixes{
 				Mode:     frrapi.AllowRestricted,
 				Prefixes: tn.Advertise,
 			},
-		},
+		}
 	}
 	if tn.DisableMP != nil {
-		n.DisableMP = *tn.DisableMP
+		n.DisableMP = *tn.DisableMP //nolint:staticcheck
+	}
+	if len(tn.AddressFamilies) > 0 {
+		n.AddressFamilies = tn.AddressFamilies
+	} else if len(tn.Advertise) > 0 {
+		// Neighbors going through the unicast path get explicit [unicast]
+		n.AddressFamilies = []frrapi.AddressFamily{frrapi.AddressFamilyUnicast}
 	}
 	if len(tn.Receive) > 0 {
 		prefixSelectors := make([]frrapi.PrefixSelector, 0, len(tn.Receive))
@@ -198,12 +209,20 @@ func (tn testNeighbor) Neighbor() frrapi.Neighbor {
 	return n
 }
 
+type testVNI struct {
+	VNI         uint32
+	RouteTarget string
+}
+
 type testRouter struct {
-	ASN       uint32
-	VRF       string
-	Prefixes  []string
-	Neighbors []*testNeighbor
-	Imports   []string
+	ASN              uint32
+	VRF              string
+	Prefixes         []string
+	Neighbors        []*testNeighbor
+	Imports          []string
+	EVPNAdvertiseAll bool
+	EVPNL2VNIs       []testVNI
+	EVPNL3VNI        *testVNI
 }
 
 func (tr testRouter) Router() frrapi.Router {
@@ -217,6 +236,31 @@ func (tr testRouter) Router() frrapi.Router {
 	}
 	for _, vrf := range tr.Imports {
 		r.Imports = append(r.Imports, frrapi.Import{VRF: vrf})
+	}
+	if tr.EVPNAdvertiseAll || len(tr.EVPNL2VNIs) > 0 || tr.EVPNL3VNI != nil {
+		r.EVPN = &frrapi.EVPNConfig{}
+	}
+	if tr.EVPNAdvertiseAll {
+		advertiseAll := frrapi.VNIAdvertisementAll
+		r.EVPN.AdvertiseVNIs = &advertiseAll
+	}
+	for _, l2 := range tr.EVPNL2VNIs {
+		vni := frrapi.L2VNI{VNI: frrapi.VNI{VNI: l2.VNI}}
+		if l2.RouteTarget != "" {
+			vni.ImportRTs = []frrapi.ImportRouteTarget{frrapi.ImportRouteTarget(l2.RouteTarget)}
+			vni.ExportRTs = []frrapi.ExportRouteTarget{frrapi.ExportRouteTarget(l2.RouteTarget)}
+		}
+		r.EVPN.L2VNIs = append(r.EVPN.L2VNIs, vni)
+	}
+	if tr.EVPNL3VNI != nil {
+		r.EVPN.L3VNI = &frrapi.L3VNI{
+			VNI:               frrapi.VNI{VNI: tr.EVPNL3VNI.VNI},
+			AdvertisePrefixes: []frrapi.AdvertisePrefixType{frrapi.AdvertisePrefixUnicast},
+		}
+		if tr.EVPNL3VNI.RouteTarget != "" {
+			r.EVPN.L3VNI.ImportRTs = []frrapi.ImportRouteTarget{frrapi.ImportRouteTarget(tr.EVPNL3VNI.RouteTarget)}
+			r.EVPN.L3VNI.ExportRTs = []frrapi.ExportRouteTarget{frrapi.ExportRouteTarget(tr.EVPNL3VNI.RouteTarget)}
+		}
 	}
 	return r
 }
@@ -1080,22 +1124,15 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionTrue,
 			expectFRRConfigs: []*testFRRConfig{
 				{
-					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
-					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
-					RawConfigPriority: 10,
-					RawConfig: `router bgp 65000
- address-family l2vpn evpn
-  neighbor 192.168.1.1 activate
-  advertise-all-vni
-  vni 1000
-   route-target import 65000:1000
-   route-target export 65000:1000
-  exit-vni
- exit-address-family
-exit
-!
-`,
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1",
+								AddressFamilies: []frrapi.AddressFamily{frrapi.AddressFamilyEVPN}},
+						}, EVPNAdvertiseAll: true, EVPNL2VNIs: []testVNI{{VNI: 1000, RouteTarget: "65000:1000"}}},
+					},
 				},
 			},
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
@@ -1124,32 +1161,16 @@ exit
 			expectAcceptedStatus: metav1.ConditionTrue,
 			expectFRRConfigs: []*testFRRConfig{
 				{
-					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
-					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
-					RawConfigPriority: 10,
-					RawConfig: `router bgp 65000
- address-family l2vpn evpn
-  neighbor 192.168.1.1 activate
-  advertise-all-vni
- exit-address-family
-exit
-!
-vrf blue
- vni 2000
-exit-vrf
-!
-router bgp 65000 vrf blue
- address-family l2vpn evpn
-  advertise ipv4 unicast
-  route-target import 65000:2000
-  route-target export 65000:2000
- exit-address-family
-exit
-!
-`,
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
 					Routers: []*testRouter{
-						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1",
+								AddressFamilies: []frrapi.AddressFamily{frrapi.AddressFamilyEVPN}},
+						}, EVPNAdvertiseAll: true},
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"},
+							EVPNL3VNI: &testVNI{VNI: 2000, RouteTarget: "65000:2000"}},
 					},
 				},
 			},
@@ -1186,48 +1207,23 @@ exit
 			expectAcceptedStatus: metav1.ConditionTrue,
 			expectFRRConfigs: []*testFRRConfig{
 				{
-					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigGlobal/node"},
-					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
-					RawConfigPriority: 10,
-					RawConfig: `router bgp 65000
- address-family l2vpn evpn
-  neighbor 192.168.1.1 activate
-  advertise-all-vni
- exit-address-family
-exit
-!
-vrf blue
- vni 2000
-exit-vrf
-!
-`,
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigGlobal/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
 					Routers: []*testRouter{
 						{ASN: 65000, Prefixes: []string{"1.1.0.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"1.1.0.0/24"}},
-						}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"1.1.0.0/24"},
+								AddressFamilies: []frrapi.AddressFamily{frrapi.AddressFamilyEVPN, frrapi.AddressFamilyUnicast}},
+						}, EVPNAdvertiseAll: true},
 					},
 				},
 				{
-					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node"},
-					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
-					RawConfigPriority: 10,
-					RawConfig: `vrf blue
- vni 2000
-exit-vrf
-!
-router bgp 65100 vrf blue
- address-family l2vpn evpn
-  advertise ipv4 unicast
-  route-target import 65000:2000
-  route-target export 65000:2000
- exit-address-family
-exit
-!
-`,
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
 					Routers: []*testRouter{
-						{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.1.0/24"},
+							EVPNL3VNI: &testVNI{VNI: 2000, RouteTarget: "65000:2000"}},
 					},
 				},
 			},
@@ -1335,22 +1331,15 @@ exit
 			expectAcceptedStatus: metav1.ConditionTrue,
 			expectFRRConfigs: []*testFRRConfig{
 				{
-					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
-					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigGlobal/node"},
-					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
-					RawConfigPriority: 10,
-					RawConfig: `router bgp 65000
- address-family l2vpn evpn
-  neighbor 192.168.1.1 activate
-  advertise-all-vni
-  vni 1000
-   route-target import 65000:1000
-   route-target export 65000:1000
-  exit-vni
- exit-address-family
-exit
-!
-`,
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigGlobal/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1",
+								AddressFamilies: []frrapi.AddressFamily{frrapi.AddressFamilyEVPN}},
+						}, EVPNAdvertiseAll: true, EVPNL2VNIs: []testVNI{{VNI: 1000, RouteTarget: "65000:1000"}}},
+					},
 				},
 				{
 					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
