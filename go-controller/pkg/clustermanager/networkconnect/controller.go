@@ -11,7 +11,6 @@ import (
 	"time"
 
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -80,14 +79,14 @@ type Controller struct {
 	nadLister       nadlisters.NetworkAttachmentDefinitionLister
 	//clientset
 	cncClient networkconnectclientset.Interface
-	nadClient nadclientset.Interface
 	// Controller for managing cluster-network-connect events
 	cncController controllerutil.Controller
-	// Controller for managing NetworkAttachmentDefinition events
-	nadController controllerutil.Controller
 	// Controller for managing Namespace events
 	namespaceController controllerutil.Controller
 	networkManager      networkmanager.Interface
+	// Reconciler for managing NetworkAttachmentDefinition events
+	nadReconciler   networkmanager.NADReconciler
+	nadReconcilerID uint64
 
 	// Single global lock protecting all controller state
 	// We can improve this later by using a more fine-grained lock based on performance testing
@@ -109,7 +108,6 @@ func NewController(
 	c := &Controller{
 		wf:                  wf,
 		cncClient:           ovnClient.NetworkConnectClient,
-		nadClient:           ovnClient.NetworkAttchDefClient,
 		cncLister:           cncLister,
 		nadLister:           nadLister,
 		namespaceLister:     namespaceLister,
@@ -131,17 +129,15 @@ func NewController(
 		cncCfg,
 	)
 
-	nadCfg := &controllerutil.ControllerConfig[nadv1.NetworkAttachmentDefinition]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Informer:       wf.NADInformer().Informer(),
-		Lister:         nadLister.List,
-		Reconcile:      c.reconcileNAD,
-		ObjNeedsUpdate: nadNeedsUpdate,
-		Threadiness:    1,
+	nadReconcilerCfg := &controllerutil.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   c.reconcileNAD,
+		Threadiness: 1,
+		MaxAttempts: controllerutil.InfiniteAttempts,
 	}
-	c.nadController = controllerutil.NewController(
+	c.nadReconciler = controllerutil.NewReconciler(
 		"clustermanager-network-connect-network-attachment-definition-controller",
-		nadCfg,
+		nadReconcilerCfg,
 	)
 
 	namespaceCfg := &controllerutil.ControllerConfig[corev1.Namespace]{
@@ -162,10 +158,16 @@ func NewController(
 
 func (c *Controller) Start() error {
 	defer klog.Infof("Cluster manager network connect controllers started")
+
+	id, err := c.networkManager.RegisterNADReconciler(c.nadReconciler)
+	if err != nil {
+		return err
+	}
+	c.nadReconcilerID = id
 	return controllerutil.StartWithInitialSync(
 		c.initialSync,
 		c.cncController,
-		c.nadController,
+		c.nadReconciler,
 		c.namespaceController,
 	)
 }
@@ -266,11 +268,18 @@ func (c *Controller) initialSync() error {
 }
 
 func (c *Controller) Stop() {
+	if c.nadReconcilerID != 0 {
+		if err := c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID); err != nil {
+			klog.Warningf("clustermanager-network-connect: failed to deregister NAD reconciler: %v", err)
+		}
+	}
 	controllerutil.Stop(
 		c.cncController,
-		c.nadController,
+		c.nadReconciler,
 		c.namespaceController,
 	)
+	c.nadReconciler = nil
+	c.nadReconcilerID = 0
 	klog.Infof("Cluster manager network connect controllers stopped")
 }
 
@@ -287,52 +296,6 @@ func cncNeedsUpdate(oldObj, newObj *networkconnectv1.ClusterNetworkConnect) bool
 	// from cluster manager.
 	// connectSubnet is immutable so that can't change after creation.
 	return !reflect.DeepEqual(oldObj.Spec.NetworkSelectors, newObj.Spec.NetworkSelectors)
-}
-
-func nadNeedsUpdate(oldObj, newObj *nadv1.NetworkAttachmentDefinition) bool {
-	nadSupported := func(nad *nadv1.NetworkAttachmentDefinition) bool {
-		if nad == nil {
-			return false
-		}
-		// we don't support direct NADs anymore. CNC is only supported for CUDNs and UDNs
-		controller := metav1.GetControllerOfNoCopy(nad)
-		isCUDN := controller != nil && controller.Kind == cudnGVK.Kind && controller.APIVersion == cudnGVK.GroupVersion().String()
-		isUDN := controller != nil && controller.Kind == udnGVK.Kind && controller.APIVersion == udnGVK.GroupVersion().String()
-		if !isCUDN && !isUDN {
-			return false
-		}
-		network, err := util.ParseNADInfo(nad)
-		if err != nil {
-			// cannot parse NAD info, so we take this as unsupported NAD error
-			return false
-		}
-		if network.IsPrimaryNetwork() {
-			// only layer3 and layer2 topology are supported
-			// but since primary network is always layer3 or layer2,
-			// we can ignored the need to check the topology
-			return true
-		}
-		return false // we don't support secondary networks, so we can ignore it
-	}
-	// ignore if we don't support this NAD
-	if !nadSupported(oldObj) && !nadSupported(newObj) {
-		return false
-	}
-	// CASE1: NAD is being deleted (UDN or CUDN is being deleted)
-	// CASE2: NAD is being created (UDN or CUDN is being created)
-	if oldObj == nil || newObj == nil {
-		return true
-	}
-	oldNADLabels := labels.Set(oldObj.Labels)
-	newNADLabels := labels.Set(newObj.Labels)
-	labelsChanged := !labels.Equals(oldNADLabels, newNADLabels)
-	// safe spot check for ovn network id annotation add happening as update to NADs
-	annotationsChanged := oldObj.Annotations[ovntypes.OvnNetworkIDAnnotation] != newObj.Annotations[ovntypes.OvnNetworkIDAnnotation]
-
-	// CASE3: NAD is being updated (UDN or CUDN is being updated)
-	//  3.1: NAD network id annotation changed
-	//  3.2: NAD labels changed (only relevant for CUDNs->NADs)
-	return labelsChanged || annotationsChanged
 }
 
 func (c *Controller) reconcileNAD(key string) error {
@@ -354,6 +317,36 @@ func (c *Controller) reconcileNAD(key string) error {
 	nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get NAD %s: %w", key, err)
+	}
+
+	nadSupported := func(nad *nadv1.NetworkAttachmentDefinition) bool {
+		if nad == nil {
+			return true
+		}
+		// we don't support direct NADs anymore. CNC is only supported for CUDNs and UDNs
+		controller := metav1.GetControllerOfNoCopy(nad)
+		isCUDN := controller != nil && controller.Kind == cudnGVK.Kind && controller.APIVersion == cudnGVK.GroupVersion().String()
+		isUDN := controller != nil && controller.Kind == udnGVK.Kind && controller.APIVersion == udnGVK.GroupVersion().String()
+		if !isCUDN && !isUDN {
+			return false
+		}
+		network := c.networkManager.GetNetInfoForNADKey(key)
+		if network == nil {
+			// this should never happen, because we get NAD events from networkManager
+			klog.Warningf("CNC controller failed to get network info for NAD %s", key)
+			return true
+		}
+		if network.IsPrimaryNetwork() {
+			// only layer3 and layer2 topology are supported
+			// but since primary network is always layer3 or layer2,
+			// we can ignored the need to check the topology
+			return true
+		}
+		return false // we don't support secondary networks, so we can ignore it
+	}
+	// ignore if we don't support this NAD
+	if !nadSupported(nad) {
+		return nil
 	}
 
 	existingCNCs, err := c.cncLister.List(labels.Everything())
@@ -461,12 +454,11 @@ func (c *Controller) mustProcessCNCForNAD(nad *nadv1.NetworkAttachmentDefinition
 }
 
 func namespaceNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
-	// Case 1: namespace is being deleted
-	// Case 2: namespace is being created
-	// for both these cases, we don't care because
-	// we only care about UDNs being created or deleted
-	// in those namespaces which is already handled by the NAD controller
-	if oldObj == nil || newObj == nil {
+	// When searching for primary UDNs matching CNC selector, we list namespaces.
+	// Very rarely a NAD event can be handled, while namespace informer doesn't have
+	// that namespace yet. That is why we may need to reconcile on namespace creation.
+	if newObj == nil {
+		// we don't care about deletes for namespace, because NAD delete events are handled independently
 		return false
 	}
 	namespaceSupported := func(namespace *corev1.Namespace) bool {
@@ -477,10 +469,14 @@ func namespaceNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
 		_, ok := namespace.Labels[ovntypes.RequiredUDNNamespaceLabel]
 		return ok
 	}
+	if oldObj == nil {
+		// reconcile supported namespaces on create
+		return namespaceSupported(newObj)
+	}
 	if !namespaceSupported(oldObj) && !namespaceSupported(newObj) {
 		return false
 	}
-	// Case 3: namespace is being updated (we only care about labels changes)
+	// Namespace is being updated (we only care about labels changes)
 	oldNamespaceLabels := labels.Set(oldObj.Labels)
 	newNamespaceLabels := labels.Set(newObj.Labels)
 	labelsChanged := !labels.Equals(oldNamespaceLabels, newNamespaceLabels)
@@ -509,7 +505,7 @@ func (c *Controller) reconcileNamespace(key string) error {
 		return fmt.Errorf("failed to get namespace %s: %w", key, err)
 	}
 
-	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, key, c.nadLister)
+	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, key)
 	if err != nil {
 		klog.Errorf("Failed to get primary NAD for namespace %s: %v", key, err)
 		// best effort, usually if a NAD then gets created/deleted in this namespace,

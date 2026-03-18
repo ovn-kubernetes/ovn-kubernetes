@@ -78,6 +78,7 @@ func newTestUDNNADWithSubnetsAndTransport(name, namespace, network string, netwo
 				types.OvnNetworkIDAnnotation:   networkID,
 			},
 			OwnerReferences: []metav1.OwnerReference{makeUDNOwnerRef(name)},
+			ResourceVersion: "1",
 		},
 		Spec: nadv1.NetworkAttachmentDefinitionSpec{
 			Config: fmt.Sprintf(
@@ -97,6 +98,7 @@ func newTestCUDNNADWithSubnetsAndTransport(name, namespace, network string, labe
 	nad := newTestUDNNADWithSubnetsAndTransport(name, namespace, network, networkID, subnets, transport)
 	nad.Labels = labels
 	nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef(network)}
+	nad.ResourceVersion = "1"
 	return nad
 }
 
@@ -117,11 +119,11 @@ func newTestNamespace(name string, labels map[string]string) *corev1.Namespace {
 
 var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Tests", func() {
 	var (
-		app           *cli.App
-		controller    *Controller
-		fakeClientset *util.OVNClusterManagerClientset
-		fakeNM        *networkmanager.FakeNetworkManager
-		wf            *factory.WatchFactory
+		app            *cli.App
+		controller     *Controller
+		fakeClientset  *util.OVNClusterManagerClientset
+		networkManager networkmanager.Controller
+		wf             *factory.WatchFactory
 	)
 
 	// start initializes the controller with pre-populated objects (standard k8s objects only)
@@ -132,17 +134,15 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 		var err error
 		wf, err = factory.NewClusterManagerWatchFactory(fakeClientset)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		fakeNM = &networkmanager.FakeNetworkManager{
-			PrimaryNetworks: make(map[string]util.NetInfo),
-			NADNetworks:     make(map[string]util.NetInfo),
-		}
-
 		tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
-		controller = NewController(wf, fakeClientset, fakeNM.Interface(), tunnelKeysAllocator)
+
+		networkManager, err = networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, fakeClientset, nil, tunnelKeysAllocator)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		controller = NewController(wf, fakeClientset, networkManager.Interface(), tunnelKeysAllocator)
 
 		err = wf.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(networkManager.Start()).To(gomega.Succeed())
 
 		err = controller.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -224,6 +224,9 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 	ginkgo.AfterEach(func() {
 		if controller != nil {
 			controller.Stop()
+		}
+		if networkManager != nil {
+			networkManager.Stop()
 		}
 		if wf != nil {
 			wf.Shutdown()
@@ -516,6 +519,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					context.Background(), "cudn-label", metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				updatedNAD.Labels = matchingLabel
+				updatedNAD.ResourceVersion = "2"
 				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("label-ns").Update(
 					context.Background(), updatedNAD, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -570,6 +574,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					context.Background(), "cudn-unlabel", metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				updatedNAD.Labels = map[string]string{"test-label": "false"}
+				updatedNAD.ResourceVersion = "2"
 				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("unlabel-ns").Update(
 					context.Background(), updatedNAD, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -689,10 +694,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(nsName + "/" + nadName)
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks[nsName] = mutableNetInfo
-				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
-				fakeNM.Unlock()
 
 				// Ensure namespace and NAD are visible in informer caches before CNC creation.
 				gomega.Eventually(func() bool {
@@ -703,10 +704,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					_, err := controller.nadLister.NetworkAttachmentDefinitions(nsName).Get(nadName)
 					return err == nil
 				}).WithTimeout(2 * time.Second).Should(gomega.BeTrue())
-
-				fakeNM.Lock()
-				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
-				fakeNM.Unlock()
 
 				// Create CNC with Primary UDN selector
 				cnc := testCNC(cncName, []apitypes.NetworkSelector{
@@ -767,10 +764,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo1 := util.NewMutableNetInfo(netInfo1)
 				mutableNetInfo1.AddNADs("frontend-a/primary-udn")
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks["frontend-a"] = mutableNetInfo1
-				fakeNM.NADNetworks["frontend-a/primary-udn"] = netInfo1
-				fakeNM.Unlock()
 
 				// Create second namespace and UDN
 				ns2 := &corev1.Namespace{
@@ -796,10 +789,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo2 := util.NewMutableNetInfo(netInfo2)
 				mutableNetInfo2.AddNADs("frontend-b/primary-udn")
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks["frontend-b"] = mutableNetInfo2
-				fakeNM.NADNetworks["frontend-b/primary-udn"] = netInfo2
-				fakeNM.Unlock()
 
 				// Create a non-matching namespace
 				ns3 := &corev1.Namespace{
@@ -893,10 +882,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(nsName + "/" + nadName)
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks[nsName] = mutableNetInfo
-				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
-				fakeNM.Unlock()
 
 				// Ensure namespace and NAD are visible in informer caches before CNC creation.
 				gomega.Eventually(func() bool {
@@ -970,10 +955,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo := util.NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(nsName + "/" + nadName)
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks[nsName] = mutableNetInfo
-				fakeNM.NADNetworks[nsName+"/"+nadName] = netInfo
-				fakeNM.Unlock()
 
 				// Ensure namespace and NAD are visible in informer caches before CNC creation.
 				gomega.Eventually(func() bool {
@@ -1346,10 +1327,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
 			mutableNetInfo.AddNADs(namespace + "/" + udnName)
-			fakeNM.Lock()
-			fakeNM.PrimaryNetworks[namespace] = mutableNetInfo
-			fakeNM.NADNetworks[namespace+"/"+udnName] = netInfo
-			fakeNM.Unlock()
 		}
 
 		createPrimaryUDN := func(namespace, udnName, networkID, subnets string) {
@@ -1502,7 +1479,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				controller.Stop()
 
 				tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
-				controller = NewController(wf, fakeClientset, fakeNM.Interface(), tunnelKeysAllocator)
+				controller = NewController(wf, fakeClientset, networkManager.Interface(), tunnelKeysAllocator)
 				gomega.Expect(controller.Start()).To(gomega.Succeed())
 				checkAcceptedConditionEventually(cncName, "selected networks have overlapping subnets")
 				gomega.Consistently(func() error {
@@ -1593,7 +1570,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				// now restart the controller and check that the same subnet is still allocated (allocation preserved across restarts)
 				controller.Stop()
 				tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
-				controller = NewController(wf, fakeClientset, fakeNM.Interface(), tunnelKeysAllocator)
+				controller = NewController(wf, fakeClientset, networkManager.Interface(), tunnelKeysAllocator)
 				gomega.Expect(controller.Start()).To(gomega.Succeed())
 				// check status and subnets are the same
 				gomega.Consistently(func() error {
@@ -1701,6 +1678,9 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 					context.Background(), cnc, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// Wait for the first CNC to report success
+				gomega.Eventually(func() int {
+					return getSubnetAnnotationNetworkCount(cncName)
+				}).WithTimeout(5 * time.Second).Should(gomega.Equal(2))
 				checkAcceptedConditionEventually(cncName, "")
 
 				// create second CNC selecting the same networks
@@ -1860,17 +1840,15 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 
 				wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				fakeNM := &networkmanager.FakeNetworkManager{
-					PrimaryNetworks: make(map[string]util.NetInfo),
-					NADNetworks:     make(map[string]util.NetInfo),
-				}
-
 				tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
-				controller := NewController(wf, fakeClientset, fakeNM.Interface(), tunnelKeysAllocator)
+
+				networkManager, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, fakeClientset, nil, tunnelKeysAllocator)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				controller := NewController(wf, fakeClientset, networkManager.Interface(), tunnelKeysAllocator)
 
 				err = wf.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(networkManager.Start()).To(gomega.Succeed())
 
 				err = controller.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1909,10 +1887,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo1 := util.NewMutableNetInfo(netInfo1)
 				mutableNetInfo1.AddNADs("pudn1-ns/primary-udn")
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks["pudn1-ns"] = mutableNetInfo1
-				fakeNM.NADNetworks["pudn1-ns/primary-udn"] = netInfo1
-				fakeNM.Unlock()
 
 				ns2 := newTestNamespace("pudn2-ns", map[string]string{
 					"cnc1-pudn":                     "true",
@@ -1932,10 +1906,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo2 := util.NewMutableNetInfo(netInfo2)
 				mutableNetInfo2.AddNADs("pudn2-ns/primary-udn")
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks["pudn2-ns"] = mutableNetInfo2
-				fakeNM.NADNetworks["pudn2-ns/primary-udn"] = netInfo2
-				fakeNM.Unlock()
 
 				// ============================================================
 				// Create NADs for CNC2 (1 CUDN + 1 P-UDN)
@@ -1963,10 +1933,6 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				mutableNetInfo3 := util.NewMutableNetInfo(netInfo3)
 				mutableNetInfo3.AddNADs("pudn3-ns/primary-udn")
-				fakeNM.Lock()
-				fakeNM.PrimaryNetworks["pudn3-ns"] = mutableNetInfo3
-				fakeNM.NADNetworks["pudn3-ns/primary-udn"] = netInfo3
-				fakeNM.Unlock()
 
 				// ============================================================
 				// Create CNCs
@@ -2082,6 +2048,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				// PHASE 3: Stop the controller
 				// ============================================================
 				controller.Stop()
+				networkManager.Stop()
 				wf.Shutdown()
 
 				// ============================================================
@@ -2090,25 +2057,16 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				// Create new watch factory and controller with same clientset (keeps objects)
 				wf2, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				// Create new FakeNetworkManager with same primary networks config
-				fakeNM2 := &networkmanager.FakeNetworkManager{
-					PrimaryNetworks: make(map[string]util.NetInfo),
-					NADNetworks:     make(map[string]util.NetInfo),
-				}
-				// Re-setup primary networks (in real deployment this comes from network manager cache)
-				fakeNM2.PrimaryNetworks["pudn1-ns"] = mutableNetInfo1
-				fakeNM2.NADNetworks["pudn1-ns/primary-udn"] = netInfo1
-				fakeNM2.PrimaryNetworks["pudn2-ns"] = mutableNetInfo2
-				fakeNM2.NADNetworks["pudn2-ns/primary-udn"] = netInfo2
-				fakeNM2.PrimaryNetworks["pudn3-ns"] = mutableNetInfo3
-				fakeNM2.NADNetworks["pudn3-ns/primary-udn"] = netInfo3
-
 				tunnelKeysAllocator2 := id.NewTunnelKeyAllocator("TunnelKeys")
-				controller2 := NewController(wf2, fakeClientset, fakeNM2.Interface(), tunnelKeysAllocator2)
+
+				networkManager2, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf2, fakeClientset, nil, tunnelKeysAllocator2)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				controller2 := NewController(wf2, fakeClientset, networkManager2.Interface(), tunnelKeysAllocator2)
 
 				err = wf2.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(networkManager2.Start()).To(gomega.Succeed())
 
 				err = controller2.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2200,6 +2158,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 
 				// Cleanup
 				controller2.Stop()
+				networkManager2.Stop()
 				wf2.Shutdown()
 
 				return nil

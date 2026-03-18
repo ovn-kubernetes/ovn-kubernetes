@@ -12,11 +12,10 @@ import (
 	"slices"
 	"time"
 
-	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	metaapply "k8s.io/client-go/applyconfigurations/meta/v1"
@@ -46,7 +45,7 @@ var (
 //
 // If the namespace uses the default network (no primary UDN), returns ("", nil, nil).
 // Callers should check for empty nadKey to determine if namespace has a primary UDN.
-func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string, nadLister nadlisters.NetworkAttachmentDefinitionLister) (nadKey string, network util.NetInfo, err error) {
+func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string) (nadKey string, network util.NetInfo, err error) {
 	namespacePrimaryNetwork, err := networkMgr.GetActiveNetworkForNamespace(namespaceName)
 	if err != nil {
 		if util.IsInvalidPrimaryNetworkError(err) {
@@ -71,23 +70,6 @@ func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceNam
 	}
 	if primaryNADKey == ovntypes.DefaultNetworkName {
 		return "", nil, nil
-	}
-	// There is a race condition where NAD is already deleted from kapi
-	// but network manager is too slow to update the network manager cache.
-	// In this case, the primary NAD key may still be cached even though it is deleted.
-	// So let's fetch the NAD again from the kapi to double confirm it exists
-	// before returning it.
-	nadNamespace, nadName, err := cache.SplitMetaNamespaceKey(primaryNADKey)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to split NAD key %s: %w", primaryNADKey, err)
-	}
-	_, err = nadLister.NetworkAttachmentDefinitions(nadNamespace).Get(nadName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			klog.Warningf("NAD %s not found in kapi, returning empty network info even if network manager cache says it exists", primaryNADKey)
-			return "", nil, nil
-		}
-		return "", nil, err
 	}
 	return primaryNADKey, namespacePrimaryNetwork, nil
 }
@@ -395,9 +377,10 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				if !isCUDN {
 					continue
 				}
-				network, err := util.ParseNADInfo(nad)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to parse NAD %s/%s: %w", nad.Namespace, nad.Name, err))
+				network := c.networkManager.GetNetInfoForNADKey(types.NamespacedName{Namespace: nad.Namespace, Name: nad.Name}.String())
+				if network == nil {
+					// if network doesn't exist in networkmanager, we will get an update later
+					klog.V(5).Infof("Failed to find NetInfo for NAD %s/%s", nad.Namespace, nad.Name)
 					continue
 				}
 				if !network.IsPrimaryNetwork() {
@@ -425,7 +408,7 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				continue
 			}
 			for _, ns := range namespaces {
-				nadKey, namespacePrimaryNetwork, err := getPrimaryNADForNamespace(c.networkManager, ns.Name, c.nadLister)
+				nadKey, namespacePrimaryNetwork, err := getPrimaryNADForNamespace(c.networkManager, ns.Name)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("failed to get active network for namespace %s: %w", ns.Name, err))
 					continue
