@@ -352,10 +352,7 @@ func pokeEndpointViaPod(f *framework.Framework, namespace, podName, targetHost s
 	return stdOut
 }
 
-// pokeEndpointViaNode leverages a k8 node running the netexec command to send a "request" to a target running
-// netexec on the given target host / protocol / port.
-// Returns the response based on the provided "request".
-func pokeEndpointViaNode(nodeName, protocol, targetHost string, localPort, targetPort uint16, request string) string {
+func tryPokeEndpointViaNode(nodeName, protocol, targetHost string, localPort, targetPort uint16, request string) (string, error) {
 	ipPort := net.JoinHostPort("localhost", fmt.Sprintf("%d", localPort))
 	// we leverage the dial command from netexec, that is already supporting multiple protocols
 	curlCommand := []string{"curl", "-g", "-q", "-s", fmt.Sprintf("http://%s/dial?request=%s&protocol=%s&host=%s&port=%d&tries=1",
@@ -365,14 +362,23 @@ func pokeEndpointViaNode(nodeName, protocol, targetHost string, localPort, targe
 		targetHost,
 		targetPort)}
 	res, err := infraprovider.Get().ExecK8NodeCommand(nodeName, curlCommand)
-	framework.ExpectNoError(err, "failed to run command within pod")
+	if err != nil {
+		return "", err
+	}
 	response, err := parseNetexecResponse(res)
 	if err != nil {
 		framework.Logf("FAILED Command was %s", curlCommand)
 		framework.Logf("FAILED Response was %v", res)
-		return ""
 	}
-	framework.ExpectNoError(err)
+	return response, err
+}
+
+// pokeEndpointViaNode leverages a k8 node running the netexec command to send a "request" to a target running
+// netexec on the given target host / protocol / port.
+// Returns the response based on the provided "request".
+func pokeEndpointViaNode(nodeName, protocol, targetHost string, localPort, targetPort uint16, request string) string {
+	response, err := tryPokeEndpointViaNode(nodeName, protocol, targetHost, localPort, targetPort, request)
+	framework.ExpectNoError(err, "failed to run command on node %q", nodeName)
 	return response
 }
 
