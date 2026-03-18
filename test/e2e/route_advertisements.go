@@ -805,6 +805,12 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				}
 			}
 
+			ginkgo.By("ensure CUDN gateway SNAT is updated to conditional match before testing external traffic")
+			waitForCUDNSNATConditionalMatch(cUDN.Name, clientPod)
+
+			ginkgo.By("dumping diagnostic state before testing pod to external traffic")
+			dumpCUDNGatewayDiagnostics(f, cUDN.Name, clientPod, nodes)
+
 			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
 			for _, serverContainerIP := range serverContainerIPs {
 				podIP, err := getPodAnnotationIPsForAttachmentByIndex(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 0)
@@ -824,6 +830,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					cmd,
 					framework.Poll,
 					60*time.Second)
+				if err != nil {
+					framework.Logf("curl failed, dumping diagnostic state after failure")
+					dumpCUDNGatewayDiagnostics(f, cUDN.Name, clientPod, nodes)
+				}
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
 					if isIPv4Supported(f.ClientSet) && isIPv6Supported(f.ClientSet) {
@@ -3328,4 +3338,210 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		framework.Logf("Routes in FRR for %s: %s", podCIDR, routes)
 		return strings.Contains(routes, nodeIP[0])
 	}, 30*time.Second).Should(gomega.BeTrue(), "route for %s via %s not found on %s", podCIDR, nodeIP[0], routerContainerName)
+}
+
+// dumpCUDNGatewayDiagnostics logs diagnostic information for debugging CUDN
+// pod-to-external connectivity failures. It dumps:
+// 1. OVN GR NAT rules (to check if SNAT match is correctly conditional)
+// 2. OVN GR static routes (to check if external routes are imported)
+// 3. Node IP rules (to check if VRF subnet rules exist for return traffic)
+// 4. NAD annotation (to check if RouteAdvertisements is linked)
+func dumpCUDNGatewayDiagnostics(f *framework.Framework, cudnName string, clientPod *corev1.Pod, nodes *corev1.NodeList) {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	clientNodeName := clientPod.Spec.NodeName
+
+	// Find the ovnkube-node pod on the client pod's node
+	ovnkubeNodePodName, err := e2ekubectl.RunKubectl(ovnKubeNamespace, "get", "pods",
+		"-l", "app=ovnkube-node",
+		"--field-selector", fmt.Sprintf("spec.nodeName=%s", clientNodeName),
+		"-o=jsonpath={.items[0].metadata.name}")
+	if err != nil {
+		framework.Logf("[DIAG] failed to get ovnkube-node pod on %s: %v", clientNodeName, err)
+		return
+	}
+	ovnkubeNodePodName = strings.Trim(ovnkubeNodePodName, "'")
+	if ovnkubeNodePodName == "" {
+		framework.Logf("[DIAG] no ovnkube-node pod found on %s", clientNodeName)
+		return
+	}
+
+	// Dump NAT rules for every node's CUDN GR
+	for _, node := range nodes.Items {
+		// Find ovnkube-node pod on this node
+		nodePodName, err := e2ekubectl.RunKubectl(ovnKubeNamespace, "get", "pods",
+			"-l", "app=ovnkube-node",
+			"--field-selector", fmt.Sprintf("spec.nodeName=%s", node.Name),
+			"-o=jsonpath={.items[0].metadata.name}")
+		if err != nil {
+			framework.Logf("[DIAG] failed to get ovnkube-node pod on %s: %v", node.Name, err)
+			continue
+		}
+		nodePodName = strings.Trim(nodePodName, "'")
+		if nodePodName == "" {
+			continue
+		}
+
+		// List all logical routers to find the CUDN GR name
+		// lr-list output format: "uuid (name)" per line
+		// CUDN GR names use dots instead of dashes, e.g. "GR_cluster_udn_bgp.udn.layer3.networkXXX_ovn-worker"
+		// so we normalize the cudnName for matching by replacing dashes with dots
+		cudnNameNormalized := strings.ReplaceAll(cudnName, "-", ".")
+		grList, err := e2ekubectl.RunKubectl(ovnKubeNamespace,
+			"exec", nodePodName, "--",
+			"ovn-nbctl", "--no-leader-only", "lr-list")
+		if err != nil {
+			framework.Logf("[DIAG] failed to list logical routers on %s: %v", node.Name, err)
+		} else {
+			// Filter to only CUDN routers
+			var cudnRouters []string
+			for _, line := range strings.Split(grList, "\n") {
+				if strings.Contains(line, cudnNameNormalized) {
+					cudnRouters = append(cudnRouters, strings.TrimSpace(line))
+				}
+			}
+			framework.Logf("[DIAG] CUDN logical routers on %s: %v", node.Name, cudnRouters)
+		}
+
+		// Extract router names from lr-list and dump NATs/routes for CUDN GRs
+		for _, line := range strings.Split(grList, "\n") {
+			// lr-list format: "<uuid> (<name>)"
+			start := strings.Index(line, "(")
+			end := strings.Index(line, ")")
+			if start < 0 || end < 0 || end <= start {
+				continue
+			}
+			grName := line[start+1 : end]
+			if !strings.HasPrefix(grName, types.GWRouterPrefix) || !strings.Contains(grName, cudnNameNormalized) || !strings.HasSuffix(grName, node.Name) {
+				continue
+			}
+
+			// Dump NAT rules on the GR
+			nats, err := e2ekubectl.RunKubectl(ovnKubeNamespace,
+				"exec", nodePodName, "--",
+				"ovn-nbctl", "--no-leader-only", "lr-nat-list", grName)
+			if err != nil {
+				framework.Logf("[DIAG] failed to list NATs on %s: %v", grName, err)
+			} else {
+				framework.Logf("[DIAG] NAT rules on %s:\n%s", grName, nats)
+			}
+
+			// Dump static routes on the GR
+			routes, err := e2ekubectl.RunKubectl(ovnKubeNamespace,
+				"exec", nodePodName, "--",
+				"ovn-nbctl", "--no-leader-only", "lr-route-list", grName)
+			if err != nil {
+				framework.Logf("[DIAG] failed to list routes on %s: %v", grName, err)
+			} else {
+				framework.Logf("[DIAG] Static routes on %s:\n%s", grName, routes)
+			}
+		}
+	}
+
+	// Dump IP rules on the client pod's node (to check VRF subnet rules)
+	ipRules, err := infraprovider.Get().ExecK8NodeCommand(clientNodeName, []string{"ip", "rule", "show"})
+	if err != nil {
+		framework.Logf("[DIAG] failed to get ip rules on %s: %v", clientNodeName, err)
+	} else {
+		framework.Logf("[DIAG] IP rules on %s:\n%s", clientNodeName, ipRules)
+	}
+
+	// Dump the VRF routing table on the client pod's node
+	ipRouteVRF, err := infraprovider.Get().ExecK8NodeCommand(clientNodeName, []string{"ip", "vrf", "show"})
+	if err != nil {
+		framework.Logf("[DIAG] failed to get VRFs on %s: %v", clientNodeName, err)
+	} else {
+		framework.Logf("[DIAG] VRFs on %s:\n%s", clientNodeName, ipRouteVRF)
+	}
+
+	// Check NAD annotation for RouteAdvertisements linkage
+	nadList, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "net-attach-def",
+		"-o=jsonpath={range .items[*]}{.metadata.name}: {.metadata.annotations.k8s\\.ovn\\.org/route-advertisements}{\"\\n\"}{end}")
+	if err != nil {
+		framework.Logf("[DIAG] failed to get NAD annotations: %v", err)
+	} else {
+		framework.Logf("[DIAG] NAD RouteAdvertisements annotations in namespace %s:\n%s", f.Namespace.Name, nadList)
+	}
+
+	// Dump the external FRR router's full routing table to check return path
+	frrContainer := infraapi.ExternalContainer{Name: routerContainerName}
+	for _, ipVer := range []string{"", " -6"} {
+		routeCmd := strings.Split(fmt.Sprintf("ip%s route show", ipVer), " ")
+		frrRoutes, err := infraprovider.Get().ExecExternalContainerCommand(frrContainer, routeCmd)
+		if err != nil {
+			framework.Logf("[DIAG] failed to get routes from FRR router (ip%s): %v", ipVer, err)
+		} else {
+			framework.Logf("[DIAG] FRR router routes (ip%s route show):\n%s", ipVer, frrRoutes)
+		}
+	}
+}
+
+// waitForCUDNSNATConditionalMatch waits for the CUDN gateway router SNAT rules
+// on the client pod's node to be updated from an unconditional match (which
+// SNATs all traffic to the unroutable masquerade IP) to a conditional match
+// (which only SNATs traffic destined to cluster node IPs). Without this wait,
+// a race between the RouteAdvertisements reconciliation and the curl attempt
+// can cause the curl to fail because the pod's traffic is SNATed to the
+// masquerade IP before the reconciliation completes.
+func waitForCUDNSNATConditionalMatch(cudnName string, clientPod *corev1.Pod) {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	cudnNameNormalized := strings.ReplaceAll(cudnName, "-", ".")
+	clientNodeName := clientPod.Spec.NodeName
+
+	ovnkubeNodePodName, err := e2ekubectl.RunKubectl(ovnKubeNamespace, "get", "pods",
+		"-l", "app=ovnkube-node",
+		"--field-selector", fmt.Sprintf("spec.nodeName=%s", clientNodeName),
+		"-o=jsonpath={.items[0].metadata.name}")
+	framework.ExpectNoError(err, "failed to get ovnkube-node pod on %s", clientNodeName)
+	ovnkubeNodePodName = strings.Trim(ovnkubeNodePodName, "'")
+	gomega.Expect(ovnkubeNodePodName).NotTo(gomega.BeEmpty(), "no ovnkube-node pod found on %s", clientNodeName)
+
+	// Find the CUDN GR on the client pod's node
+	grList, err := e2ekubectl.RunKubectl(ovnKubeNamespace,
+		"exec", ovnkubeNodePodName, "--",
+		"ovn-nbctl", "--no-leader-only", "lr-list")
+	framework.ExpectNoError(err, "failed to list logical routers on %s", clientNodeName)
+
+	var grName string
+	for _, line := range strings.Split(grList, "\n") {
+		start := strings.Index(line, "(")
+		end := strings.Index(line, ")")
+		if start < 0 || end <= start {
+			continue
+		}
+		name := line[start+1 : end]
+		if strings.HasPrefix(name, types.GWRouterPrefix) &&
+			strings.Contains(name, cudnNameNormalized) &&
+			strings.HasSuffix(name, clientNodeName) {
+			grName = name
+			break
+		}
+	}
+	gomega.Expect(grName).NotTo(gomega.BeEmpty(),
+		"CUDN gateway router for %s not found on %s", cudnName, clientNodeName)
+	framework.Logf("Waiting for SNAT conditional match on %s", grName)
+
+	// Wait for any SNAT rule on the CUDN GR to have a conditional match
+	// (i.e. contains "dst" in the match column). Before the RouteAdvertisements
+	// reconciliation completes, all SNAT rules have an empty match which causes
+	// all pod traffic to be SNATed to the unroutable masquerade IP. After
+	// reconciliation, the pod subnet SNAT gets a conditional match like
+	// "ip4.dst == $nodeIPs" so only traffic to node IPs is SNATed.
+	gomega.Eventually(func() bool {
+		nats, err := e2ekubectl.RunKubectl(ovnKubeNamespace,
+			"exec", ovnkubeNodePodName, "--",
+			"ovn-nbctl", "--no-leader-only", "lr-nat-list", grName)
+		if err != nil {
+			framework.Logf("failed to list NATs on %s: %v", grName, err)
+			return false
+		}
+		for _, line := range strings.Split(nats, "\n") {
+			if strings.Contains(line, "snat") && strings.Contains(line, ".dst") {
+				framework.Logf("SNAT conditional match found: %s", strings.TrimSpace(line))
+				return true
+			}
+		}
+		framework.Logf("SNAT on %s still unconditional, waiting...", grName)
+		return false
+	}, 30*time.Second, time.Second).Should(gomega.BeTrue(),
+		"CUDN gateway router %s SNAT was not updated to conditional match", grName)
 }
