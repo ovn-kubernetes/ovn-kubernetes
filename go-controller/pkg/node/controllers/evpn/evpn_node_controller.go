@@ -40,7 +40,6 @@ import (
 )
 
 const (
-	vxlanPort = 4789
 	// externalIDEVPNVTEP is the external-id key used to tag OVS ports with their VTEP name
 	externalIDEVPNVTEP = "evpn-vtep"
 	ovsBridgeInt       = "br-int"
@@ -303,6 +302,11 @@ func (c *Controller) reconcile(key string) error {
 	if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
 		klog.Warningf("VTEP %s uses unsupported %s mode, cleaning up devices", vtep.Name, vtepv1.VTEPModeManaged)
 		return c.deleteVTEPDevices(key)
+	}
+
+	if config.HybridOverlay.Enabled && config.HybridOverlay.VXLANPort == config.DefaultVXLANPort {
+		return fmt.Errorf("hybrid overlay is enabled with VXLAN port %d which conflicts with EVPN VXLAN; "+
+			"configure a different hybrid-overlay-vxlan-port to avoid the conflict", config.DefaultVXLANPort)
 	}
 
 	node, err := c.watchFactory.GetNode(c.nodeName)
@@ -644,7 +648,7 @@ func (c *Controller) ensureVXLAN(vxlanName string, bridgeName string, srcIP net.
 	err := c.ndm.EnsureLink(netlinkdevicemanager.DeviceConfig{
 		Link: &netlink.Vxlan{
 			LinkAttrs: netlink.LinkAttrs{Name: vxlanName, MTU: config.Default.MTU},
-			Port:      vxlanPort,
+			Port:      config.DefaultVXLANPort,
 			SrcAddr:   srcIP,
 			FlowBased: true,
 			VniFilter: true,

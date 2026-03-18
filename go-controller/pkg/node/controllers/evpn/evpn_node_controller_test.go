@@ -70,6 +70,7 @@ var _ = Describe("EVPN node controller", func() {
 		)
 
 		BeforeEach(func() {
+			Expect(config.PrepareTestConfig()).To(Succeed())
 			ovsClient, ovsCleanup = newTestOVSClient()
 		})
 
@@ -331,6 +332,58 @@ var _ = Describe("EVPN node controller", func() {
 			Expect(ctrl.reconcile(vtepName)).To(Succeed())
 			ndm.AssertCalled(GinkgoT(), "DeleteLink", sviName)
 			ndm.AssertExpectations(GinkgoT())
+		})
+
+		It("fails reconciliation when hybrid overlay is enabled with conflicting VXLAN port", func() {
+			vtep := &vtepv1.VTEP{
+				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+				Spec: vtepv1.VTEPSpec{
+					CIDRs: vtepv1.DualStackCIDRs{"100.64.0.0/24"},
+					Mode:  vtepv1.VTEPModeUnmanaged,
+				},
+			}
+
+			lister := &vteplistmocks.VTEPLister{}
+			informer := &vtepinfmocks.VTEPInformer{}
+			informer.On("Lister").Return(lister)
+			wf := &factorymocks.NodeWatchFactory{}
+			wf.On("VTEPInformer").Return(informer)
+			lister.On("Get", vtepName).Return(vtep, nil)
+
+			ctrl := &Controller{
+				nodeName:     nodeName,
+				watchFactory: wf,
+				ovsClient:    ovsClient,
+				nadVTEPInfo:  make(map[string]string),
+				svisByBridge: make(map[string]sets.Set[string]),
+				stopChan:     make(chan struct{}),
+			}
+
+			By("enabling hybrid overlay with the default VXLAN port")
+			config.HybridOverlay.Enabled = true
+			config.HybridOverlay.VXLANPort = config.DefaultVXLANPort
+
+			err := ctrl.reconcile(vtepName)
+			Expect(err).To(HaveOccurred())
+
+			By("using a different VXLAN port for hybrid overlay, reconciliation proceeds")
+			config.HybridOverlay.VXLANPort = 4790
+
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        nodeName,
+					Annotations: map[string]string{util.OVNNodeHostCIDRs: `["100.64.0.1/24"]`},
+				},
+			}
+			wf.On("GetNode", nodeName).Return(node, nil)
+
+			ndm := &ndmmocks.Interface{}
+			ndm.On("EnsureLink", mock.Anything).Return(nil)
+			ndm.On("DeleteLink", mock.Anything).Return(nil)
+			ctrl.ndm = ndm
+			ctrl.networkMgr = &networkmanager.FakeNetworkManager{}
+
+			Expect(ctrl.reconcile(vtepName)).To(Succeed())
 		})
 
 		It("cleans up stale OVS ports for a VTEP", func() {
