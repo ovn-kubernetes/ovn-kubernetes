@@ -435,7 +435,7 @@ jobs:
         set -x
         pushd go-controller
            make gofmt
-           make verify-go-mod-vendor
+           make verify-go-mod
            make verify-third-party-licenses
            make
            make windows
