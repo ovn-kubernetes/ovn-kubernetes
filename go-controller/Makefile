@@ -88,7 +88,7 @@ clean:
 	rm -f ./pkg/sbdb/ovn-sb.ovsschema
 	rm -f ./pkg/vswitchd/vswitch.ovsschema
 
-.PHONY: lint gofmt verify-go-mod-vendor
+.PHONY: lint gofmt verify-go-mod
 
 lint:
 ifeq ($(CONTAINER_RUNNABLE), 0)
@@ -115,11 +115,11 @@ else
 	@./hack/verify-gofmt.sh
 endif
 
-verify-go-mod-vendor:
+verify-go-mod:
 ifeq ($(CONTAINER_RUNNABLE), 0)
-	@GOPATH=${GOPATH} ./hack/verify-go-mod-vendor.sh
+	@GOPATH=${GOPATH} ./hack/verify-go-mod.sh
 else
-	@./hack/verify-go-mod-vendor.sh
+	@./hack/verify-go-mod.sh
 endif
 
 pkg/nbdb/ovn-nb.ovsschema:

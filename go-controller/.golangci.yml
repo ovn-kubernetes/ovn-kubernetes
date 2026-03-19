@@ -63,7 +63,6 @@ linters:
       - legacy
       - std-error-handling
     paths:
-      - vendor
       - pkg/crd
       - third_party$
       - builtin$
@@ -92,7 +91,6 @@ formatters:
   exclusions:
     generated: lax
     paths:
-      - vendor
       - pkg/crd
       - third_party$
       - builtin$
