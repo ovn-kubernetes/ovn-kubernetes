@@ -175,6 +175,13 @@ func (m *AddressSetManager) Stop() {
 	controller.Stop(m.podController, m.nsController, m.nodeController, m.addressSetReconciler)
 }
 
+// initialSync will clean up all address sets that don't have ACL reference
+// Since addressset manager is started before its users, the cleanup for not-anymore-existing objects will be done
+// after this function returns, so we technically clean up address sets that are not used anymore on the next restart only.
+// There is no good way to know at this point which address sets will become unused after all the users finish their cleanup.
+// Address sets don't have an informer, so we won't run reconcile for every address set, only when someone requests
+// it through EnsureAddressSet, so if you look in the db directly some address sets may have stale IPs, but that only means
+// that they are not used anymore.
 func (m *AddressSetManager) initialSync() error {
 	return libovsdbutil.DeleteAddrSetsWithoutACLRefAnyController(libovsdbops.AddressSetPodSelector, m.nbClient)
 }
@@ -238,11 +245,11 @@ func (m *AddressSetManager) EnsureAddressSet(podSelector, namespaceSelector, nod
 			var addrSet addressset.AddressSet
 			switch {
 			case ipv4Mode && !ipv6Mode:
-				addrSet, err = m.addressSetFactoryV4.NewAddressSet(addrSetDbIDs, nil)
+				addrSet, err = m.addressSetFactoryV4.EnsureAddressSet(addrSetDbIDs)
 			case !ipv4Mode && ipv6Mode:
-				addrSet, err = m.addressSetFactoryV6.NewAddressSet(addrSetDbIDs, nil)
+				addrSet, err = m.addressSetFactoryV6.EnsureAddressSet(addrSetDbIDs)
 			case ipv4Mode && ipv6Mode:
-				addrSet, err = m.addressSetFactoryDualstack.NewAddressSet(addrSetDbIDs, nil)
+				addrSet, err = m.addressSetFactoryDualstack.EnsureAddressSet(addrSetDbIDs)
 			}
 			// if the first step of creating address set fails, return error since there is nothing to cleanup
 			if err != nil {
