@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -283,6 +284,198 @@ var _ = Describe("Network Segmentation: Localnet", feature.NetworkSegmentation, 
 		Expect(err).NotTo(HaveOccurred())
 		_, hasAnnotation := pod.Annotations["k8s.ovn.org/pod-networks"]
 		Expect(hasAnnotation).To(BeTrue(), "pod should still have network annotation")
+	})
+
+	It("should preserve LSPs for IPAM-less localnet pods with multiple NADs after simulated upgrade", func() {
+		const (
+			vlan    = 203
+			numNADs = 4
+		)
+		var (
+			ovsBrName           = "ovsbr-upgrade"
+			networkName         = uniqueMetaName("localnet-upgrade")
+			physicalNetworkName = uniqueMetaName("physnet-upgrade")
+		)
+
+		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
+		Expect(err).NotTo(HaveOccurred())
+
+		By("setup the localnet underlay")
+		Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+			BridgeName:         ovsBrName,
+			LogicalNetworkName: physicalNetworkName,
+			VlanID:             vlan,
+		})).To(Succeed())
+
+		By("create test namespace")
+		namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+			"e2e-framework": f.BaseName,
+		})
+		f.Namespace = namespace
+		Expect(err).NotTo(HaveOccurred())
+		nsName := namespace.Name
+
+		By(fmt.Sprintf("create %d IPAM-less localnet NADs sharing network %s", numNADs, networkName))
+		type podInfo struct {
+			nadName string
+			podName string
+		}
+		var pods []podInfo
+		for i := 0; i < numNADs; i++ {
+			nadName := fmt.Sprintf("vm%d", i)
+			nad := generateNetAttachDef(nsName, nadName, fmt.Sprintf(`
+{
+	"cniVersion": "0.3.1",
+	"name": %q,
+	"type": "ovn-k8s-cni-overlay",
+	"topology": "localnet",
+	"physicalNetworkName": %q,
+	"netAttachDefName": "%s/%s",
+	"vlanID": %d,
+	"role": "secondary"
+}`, networkName, physicalNetworkName, nsName, nadName, vlan))
+			_, err := nadClient.NetworkAttachmentDefinitions(nsName).Create(context.Background(), nad, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			pods = append(pods, podInfo{nadName: nadName, podName: fmt.Sprintf("pod-%d", i)})
+		}
+		DeferCleanup(func() {
+			for _, p := range pods {
+				_ = nadClient.NetworkAttachmentDefinitions(nsName).Delete(context.Background(), p.nadName, metav1.DeleteOptions{})
+			}
+		})
+
+		By("pick a target worker node")
+		workerNodes, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		var nodeName string
+		for _, node := range workerNodes.Items {
+			if _, isCP := node.Labels["node-role.kubernetes.io/control-plane"]; !isCP {
+				nodeName = node.Name
+				break
+			}
+		}
+		if nodeName == "" {
+			// schedulable control plane (e.g. 3-node cluster)
+			nodeName = workerNodes.Items[0].Name
+		}
+		framework.Logf("Target node: %s", nodeName)
+
+		By("create pods pinned to the target node")
+		for _, p := range pods {
+			podCfg := podConfiguration{
+				name:         p.podName,
+				namespace:    nsName,
+				attachments:  []nadapi.NetworkSelectionElement{{Name: p.nadName}},
+				nodeSelector: map[string]string{"kubernetes.io/hostname": nodeName},
+			}
+			_, err := f.ClientSet.CoreV1().Pods(nsName).Create(context.Background(), generatePodSpec(podCfg), metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		By("wait for all pods to be running")
+		for _, p := range pods {
+			Expect(e2epod.WaitForPodNameRunningInNamespace(context.Background(), f.ClientSet, p.podName, nsName)).To(Succeed())
+		}
+
+		ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+
+		By("verify all localnet LSPs exist before simulated upgrade")
+		ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), metav1.ListOptions{
+			LabelSelector: "app=ovnkube-node",
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeName),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ovnkubeNodePods.Items).NotTo(BeEmpty())
+		ovnkubeNodePod := ovnkubeNodePods.Items[0]
+
+		for _, p := range pods {
+			nadFullName := fmt.Sprintf("%s/%s", nsName, p.nadName)
+			nadNameWithDots := strings.ReplaceAll(strings.ReplaceAll(nadFullName, "-", "."), "/", ".")
+			lspName := fmt.Sprintf("%s_%s_%s", nadNameWithDots, nsName, p.podName)
+			stdout, stderr, err := ExecCommandInContainerWithFullOutput(f, ovnNamespace, ovnkubeNodePod.Name, "nb-ovsdb",
+				"ovn-nbctl", "get", "logical-switch-port", lspName, "_uuid")
+			Expect(err).ToNot(HaveOccurred(), "LSP %s should exist before upgrade simulation, stderr: %s", lspName, stderr)
+			Expect(stdout).ToNot(BeEmpty())
+			framework.Logf("Found LSP %s for pod %s", lspName, p.podName)
+		}
+
+		By("simulate upgrade: scale down ovnkube-control-plane")
+		cpDeploy, err := f.ClientSet.AppsV1().Deployments(ovnNamespace).Get(context.Background(), "ovnkube-control-plane", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		originalReplicas := *cpDeploy.Spec.Replicas
+		zero := int32(0)
+		cpDeploy.Spec.Replicas = &zero
+		_, err = f.ClientSet.AppsV1().Deployments(ovnNamespace).Update(context.Background(), cpDeploy, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			By("restore ovnkube-control-plane replicas")
+			cpDeploy, err := f.ClientSet.AppsV1().Deployments(ovnNamespace).Get(context.Background(), "ovnkube-control-plane", metav1.GetOptions{})
+			if err == nil {
+				cpDeploy.Spec.Replicas = &originalReplicas
+				_, _ = f.ClientSet.AppsV1().Deployments(ovnNamespace).Update(context.Background(), cpDeploy, metav1.UpdateOptions{})
+			}
+		})
+
+		By("wait for control plane pods to terminate")
+		Eventually(func() int {
+			cpPods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), metav1.ListOptions{
+				LabelSelector: "app=ovnkube-control-plane",
+			})
+			if err != nil {
+				return -1
+			}
+			return len(cpPods.Items)
+		}).WithTimeout(60*time.Second).WithPolling(2*time.Second).Should(Equal(0), "control plane pods should be gone")
+
+		By("remove network-id and network-name annotations from NADs (simulates pre-upgrade state)")
+		for _, p := range pods {
+			nad, err := nadClient.NetworkAttachmentDefinitions(nsName).Get(context.Background(), p.nadName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			delete(nad.Annotations, "k8s.ovn.org/network-id")
+			delete(nad.Annotations, "k8s.ovn.org/network-name")
+			_, err = nadClient.NetworkAttachmentDefinitions(nsName).Update(context.Background(), nad, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		By("restart ovnkube-node on target node (without control plane)")
+		err = restartOVNKubeNodePod(f.ClientSet, ovnNamespace, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("wait for ovnkube-node to start and hit the deferral path")
+		time.Sleep(30 * time.Second)
+
+		By("scale control plane back up (triggers network ID allocation and controller start)")
+		cpDeploy, err = f.ClientSet.AppsV1().Deployments(ovnNamespace).Get(context.Background(), "ovnkube-control-plane", metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		cpDeploy.Spec.Replicas = &originalReplicas
+		_, err = f.ClientSet.AppsV1().Deployments(ovnNamespace).Update(context.Background(), cpDeploy, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("wait for control plane and localnet controller to settle")
+		time.Sleep(60 * time.Second)
+
+		By("find new ovnkube-node pod")
+		ovnkubeNodePods, err = f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.Background(), metav1.ListOptions{
+			LabelSelector: "app=ovnkube-node",
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeName),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ovnkubeNodePods.Items).NotTo(BeEmpty())
+		ovnkubeNodePod = ovnkubeNodePods.Items[0]
+
+		By("verify ALL localnet LSPs still exist after simulated upgrade")
+		for _, p := range pods {
+			nadFullName := fmt.Sprintf("%s/%s", nsName, p.nadName)
+			nadNameWithDots := strings.ReplaceAll(strings.ReplaceAll(nadFullName, "-", "."), "/", ".")
+			lspName := fmt.Sprintf("%s_%s_%s", nadNameWithDots, nsName, p.podName)
+			framework.Logf("Checking LSP %s for pod %s (NAD %s)", lspName, p.podName, p.nadName)
+			stdout, stderr, err := ExecCommandInContainerWithFullOutput(f, ovnNamespace, ovnkubeNodePod.Name, "nb-ovsdb",
+				"ovn-nbctl", "get", "logical-switch-port", lspName, "_uuid")
+			Expect(err).ToNot(HaveOccurred(),
+				"LSP %s for pod %s (NAD %s) should be preserved after simulated upgrade, stderr: %s",
+				lspName, p.podName, p.nadName, stderr)
+			Expect(stdout).ToNot(BeEmpty())
+		}
 	})
 })
 

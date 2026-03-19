@@ -656,12 +656,17 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 			bsnc.networkManager.GetNetworkNameForNADKey,
 			bsnc.networkManager.GetPrimaryNADForNamespace,
 		)
-		if err != nil || !on {
-			if err != nil {
-				bsnc.recordPodErrorEvent(pod, err)
-				klog.Errorf("Failed to determine if pod %s/%s needs to be plumb interface on network %s: %v",
-					pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
-			}
+		if err != nil {
+			bsnc.recordPodErrorEvent(pod, err)
+			klog.Errorf("Failed to determine if pod %s/%s needs to be plumb interface on network %s: %v",
+				pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
+			continue
+		}
+		if !on {
+			// Pod's NADs may not be registered with this controller yet (race during startup
+			// when multiple NADs map to the same network). Check the NAD informer cache directly
+			// to avoid deleting LSPs for pods whose NADs haven't been synced yet.
+			bsnc.trackPodsWithUnregisteredNADs(pod, expectedLogicalPorts)
 			continue
 		}
 
@@ -704,6 +709,55 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 	bsnc.trackPodsReleasedBeforeStartup(annotatedLocalPods)
 
 	return bsnc.deleteStaleLogicalSwitchPorts(expectedLogicalPorts)
+}
+
+// trackPodsWithUnregisteredNADs checks if a pod references a NAD that belongs to this
+// network but hasn't been registered with the controller yet. This happens during startup
+// when multiple NADs map to the same network and they arrive at different times.
+// If the pod's NAD is found in the informer cache and maps to this network, the pod's
+// expected LSP name is added to expectedLogicalPorts to prevent deletion.
+func (bsnc *BaseUserDefinedNetworkController) trackPodsWithUnregisteredNADs(pod *corev1.Pod, expectedLogicalPorts map[string]bool) {
+	if !util.PodScheduled(pod) || util.PodWantsHostNetwork(pod) {
+		return
+	}
+	networks, err := util.GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return
+	}
+	for _, network := range networks {
+		nadNamespace := network.Namespace
+		if nadNamespace == "" {
+			nadNamespace = pod.Namespace
+		}
+		nadName := util.GetNADName(nadNamespace, network.Name)
+		if bsnc.networkManager.GetNetworkNameForNADKey(nadName) != "" {
+			// Already registered, would have been handled by the normal path
+			continue
+		}
+		nad, err := bsnc.watchFactory.GetNAD(nadNamespace, network.Name)
+		if err != nil {
+			continue
+		}
+		// Check if the NAD belongs to this network. First try the annotation
+		// (set by cluster manager), then fall back to parsing the NAD config
+		// (needed during upgrades when the annotation hasn't been set yet).
+		nadNetworkName := util.GetAnnotatedNetworkName(nad)
+		if nadNetworkName == "" {
+			nadInfo, err := util.ParseNADInfo(nad)
+			if err == nil {
+				nadNetworkName = nadInfo.GetNetworkName()
+			}
+		}
+		if nadNetworkName != bsnc.GetNetworkName() {
+			continue
+		}
+		// This pod references a NAD that belongs to our network but isn't registered yet.
+		// Track its LSP to prevent deletion during sync.
+		portName := bsnc.GetLogicalPortName(pod, nadName)
+		expectedLogicalPorts[portName] = true
+		klog.Infof("Preserving LSP %s for pod %s/%s: NAD %s belongs to network %s but is not yet registered",
+			portName, pod.Namespace, pod.Name, nadName, bsnc.GetNetworkName())
+	}
 }
 
 // addPodToNamespaceForUserDefinedNetwork returns the ops needed to add pod's IP to the namespace's address set.
