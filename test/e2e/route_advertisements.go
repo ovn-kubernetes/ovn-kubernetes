@@ -22,6 +22,7 @@ import (
 	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
 	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
@@ -2698,6 +2699,177 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			})
 		},
 		networksToTest,
+	)
+
+	evpnNetworks := []ginkgo.TableEntry{
+		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, layer3IPVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, layer2MACVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, layer2MACVRFIPVRFNetworkSpecGen),
+	}
+
+	ginkgo.DescribeTableSubtree("Verify larger MTU over EVPN fabric",
+		func(networkSpecGen func() *udnv1.NetworkSpec) {
+			var (
+				testNamespace *corev1.Namespace
+				testPod       = make([]*corev1.Pod, 2)
+				podMTU        int
+				networkSpec   *udnv1.NetworkSpec
+			)
+			ginkgo.BeforeEach(func() {
+				networkSpec = networkSpecGen()
+				// Match subnets by IP families
+				switch {
+				case networkSpec.Layer3 != nil:
+					networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
+				case networkSpec.Layer2 != nil:
+					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
+				}
+
+				testNamespace, _ = configureNetworkWithInfra(
+					f,
+					ictx,
+					testBaseName,
+					ipFamilySet,
+					testNetworkName,
+					cudnAdvertisedEVPN,
+					networkSpec,
+				)
+
+				ginkgo.By("Create two pods within the different nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">=", 2), "need at least 2 nodes")
+				for i := range 2 {
+					var err error
+					testPod[i], err = createPod(f,
+						fmt.Sprintf("%s-netexec-pod-%d", testNamespace.Name, i),
+						nodes.Items[i].Name,
+						testNamespace.Name,
+						[]string{"sh", "-c", "sleep infinity"},
+						map[string]string{"app": "netexec-pod"},
+						func(p *corev1.Pod) {
+							p.Spec.Containers[0].Image = images.Netshoot()
+						},
+					)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+
+				ginkgo.By("Get pod interface MTU")
+				podIfaceOutput, err := e2epodoutput.RunHostCmd(testPod[0].Namespace, testPod[0].Name, "ip -j link show ovn-udn1")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				podMTU, err = getMTUByInterfaceName(podIfaceOutput, "ovn-udn1")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				framework.Logf("Pod interface MTU: %d", podMTU)
+			})
+
+			ginkgo.DescribeTable("should have correct MTU configuration and larger MTU packets can be received",
+				func(family utilnet.IPFamily) {
+					if !ipFamilySet.Has(family) {
+						e2eskipper.Skipf("IP family %v not supported", family)
+					}
+
+					// Calculate VXLAN overhead based on IP family
+					// IPv4: 8 (VXLAN) + 8 (UDP) + 20 (IPv4) + 14 (Ethernet) = 50 bytes
+					// IPv6: 8 (VXLAN) + 8 (UDP) + 40 (IPv6) + 14 (Ethernet) = 70 bytes
+					vxlanOverhead := 50
+					if family == utilnet.IPv6 {
+						vxlanOverhead = 70
+					}
+
+					// Compute the VXLAN device name for this EVPN network's VTEP and IP family
+					vtepName := networkSpec.EVPN.VTEP
+					vxlanName := evpn.GetEVPNVXLANName(vtepName, family)
+
+					ginkgo.By("Verify node VXLAN and underlay interface MTU")
+					nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					for _, node := range nodeList.Items {
+						vxlanLinkOutput, err := infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "-j", "link", "show", vxlanName})
+						gomega.Expect(err).NotTo(gomega.HaveOccurred(), "VXLAN device %s not found on node %s", vxlanName, node.Name)
+
+						vxlanMTU, err := getMTUByInterfaceName(vxlanLinkOutput, vxlanName)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred())
+						framework.Logf("Node %s VXLAN device %s MTU: %d", node.Name, vxlanName, vxlanMTU)
+
+						// Verify underlay interface MTU
+						// TODO: change interface name if running on non-kind clusters
+						underlayIfName := "breth0"
+						underlayLinkOutput, err := infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "-j", "link", "show", underlayIfName})
+						gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+						underlayMTU, err := getMTUByInterfaceName(underlayLinkOutput, underlayIfName)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred())
+						framework.Logf("Node %s underlay interface %s MTU: %d", node.Name, underlayIfName, underlayMTU)
+
+						// Verify MTU boundary relationships:
+						// podMTU <= vxlanMTU <= (underlayMTU - vxlanOverhead)
+						ginkgo.By(fmt.Sprintf("Verify MTU relationship on node %s: podMTU(%d) <= vxlanMTU(%d) <= underlayMTU(%d) - overhead(%d)",
+							node.Name, podMTU, vxlanMTU, underlayMTU, vxlanOverhead))
+
+						maxVxlanMTU := underlayMTU - vxlanOverhead
+						gomega.Expect(vxlanMTU).To(gomega.BeNumerically("<=", maxVxlanMTU),
+							fmt.Sprintf("VXLAN MTU (%d) should not exceed underlay MTU (%d) minus VXLAN overhead (%d bytes)",
+								vxlanMTU, underlayMTU, vxlanOverhead))
+						gomega.Expect(podMTU).To(gomega.BeNumerically("<=", vxlanMTU),
+							fmt.Sprintf("Pod MTU (%d) should not exceed VXLAN MTU (%d)", podMTU, vxlanMTU))
+					}
+
+					ginkgo.By("Verify larger MTU packets can be received across nodes")
+					otherPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+						f.ClientSet,
+						testPod[1].Namespace,
+						testPod[1].Name,
+						testNetworkName,
+						family,
+					)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(otherPodIP).NotTo(gomega.BeEmpty())
+
+					// ping -s sets payload size; total packet = payload + IP header + ICMP header
+					// IPv4: payload + 20 (IPv4) + 8 (ICMP)   = payload + 28
+					// IPv6: payload + 40 (IPv6) + 8 (ICMPv6) = payload + 48
+					pingBin := "ping"
+					ipHeaderOverhead := 28
+					if family == utilnet.IPv6 {
+						pingBin = "ping6"
+						ipHeaderOverhead = 48
+					}
+
+					// Maximum payload that fits within the pod MTU without fragmentation
+					maxPayload := podMTU - ipHeaderOverhead
+
+					ginkgo.By(fmt.Sprintf("Send packet at MTU limit (payload %d + overhead %d = podMTU %d) - should pass",
+						maxPayload, ipHeaderOverhead, podMTU))
+					// Use -M do (Don't Fragment) to ensure no silent fragmentation
+					pingCmd := fmt.Sprintf("%s -M do -c 3 -W 5 -s %d %s", pingBin, maxPayload, otherPodIP)
+					_, err = e2epodoutput.RunHostCmdWithRetries(
+						testPod[0].Namespace,
+						testPod[0].Name,
+						pingCmd,
+						polling,
+						timeout,
+					)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(),
+						"Ping at MTU limit should succeed (payload %d, total %d)", maxPayload, podMTU)
+
+					ginkgo.By(fmt.Sprintf("Send packet over MTU limit (payload %d + overhead %d = %d > podMTU %d) - should fail",
+						maxPayload+1, ipHeaderOverhead, podMTU+1, podMTU))
+					pingCmd = fmt.Sprintf("%s -M do -c 3 -W 5 -s %d %s", pingBin, maxPayload+1, otherPodIP)
+					_, err = e2epodoutput.RunHostCmd(
+						testPod[0].Namespace,
+						testPod[0].Name,
+						pingCmd,
+					)
+					gomega.Expect(err).To(gomega.HaveOccurred(),
+						"Ping over MTU limit should fail with DF bit set (payload %d, total %d)", maxPayload+1, podMTU+1)
+				},
+				ginkgo.Entry("When the networks are IPv4", utilnet.IPv4),
+				ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
+			)
+		},
+		evpnNetworks,
 	)
 })
 
