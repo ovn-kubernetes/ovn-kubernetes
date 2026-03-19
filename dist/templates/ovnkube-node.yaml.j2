@@ -27,7 +27,7 @@ spec:
         type: infra
         kubernetes.io/os: "linux"
     spec:
-      priorityClassName: "system-cluster-critical"
+      priorityClassName: "system-node-critical"
       serviceAccountName: ovnkube-node
       hostNetwork: true
       dnsPolicy: Default
