@@ -38,6 +38,35 @@ if_error_exit() {
     fi
 }
 
+replace_in_file_or_exit() {
+  local file="$1"
+  local needle="$2"
+  local replacement="$3"
+  local escaped_needle escaped_replacement
+
+  escaped_needle=$(escape_sed_replacement "$needle")
+  escaped_replacement=$(escape_sed_replacement "$replacement")
+
+  if ! grep -Fq -- "$needle" "$file"; then
+    echo "Expected to replace pattern in ${file}, but it was not found: ${needle}" >&2
+    exit 1
+  fi
+
+  if ! sed -i "s|${escaped_needle}|${escaped_replacement}|g" "$file"; then
+    echo "Failed to update ${file}" >&2
+    exit 1
+  fi
+
+  if grep -Fq -- "$needle" "$file"; then
+    echo "Pattern still present in ${file} after replacement: ${needle}" >&2
+    exit 1
+  fi
+}
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed 's/[\\|&]/\\&/g'
+}
+
 set_common_default_params() {
   # KIND/cluster params
   KIND_CREATE=${KIND_CREATE:-true}
@@ -562,7 +591,10 @@ install_metallb() {
   # when using 'kind load' command however metallb builds and uses older
   # incompatible kind version patch it so that it uses our own kind install
   # instead of their build
-  sed -i 's|kind_path = os.path.join(build_path, "kind")|kind_path = "kind"|' tasks.py
+  replace_in_file_or_exit \
+    tasks.py \
+    'kind_path = os.path.join(build_path, "kind")' \
+    'kind_path = "kind"'
 
   pip install -r dev-env/requirements.txt
 
@@ -1127,7 +1159,10 @@ clone_frr() {
     # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3907335193
     # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3898408592
     # https://github.com/FRRouting/frr/pull/20496
-    sed -i 's|quay.io/frrouting/frr:[0-9.]*|quay.io/frrouting/frr:10.4.3|g' hack/demo/demo.sh
+    replace_in_file_or_exit \
+      hack/demo/demo.sh \
+      'quay.io/frrouting/frr:10.4.1' \
+      'quay.io/frrouting/frr:10.4.3'
 
     popd
 
