@@ -30,13 +30,17 @@ ARG KUBECTL_MINOR
 
 USER root
 
-# Install bootstrap packages, add the official Kubernetes apt repo, then
-# install runtime dependencies and kubectl in one layer.
+# Install bootstrap packages, verify the Kubernetes repo signing key
+# fingerprint, then install runtime dependencies and kubectl in one layer.
 RUN apt-get update && apt-get install -y \
     ca-certificates curl gpg iproute2 software-properties-common util-linux nftables && \
     mkdir -p -m 755 /etc/apt/keyrings && \
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/Release.key | \
-        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg && \
+    kubectl_apt_signing_fingerprint=DE15B14486CD377B9E876E1A234654DA9A296436 && \
+    kubectl_key=/tmp/kubernetes-apt-keyring.asc && \
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/Release.key -o "${kubectl_key}" && \
+    test "$(gpg --show-keys --with-colons "${kubectl_key}" | awk -F: '/^fpr:/ {print $10; exit}')" = "${kubectl_apt_signing_fingerprint}" && \
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg "${kubectl_key}" && \
+    rm -f "${kubectl_key}" && \
     chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${KUBECTL_MINOR}/deb/ /" > /etc/apt/sources.list.d/kubernetes.list && \
     chmod 644 /etc/apt/sources.list.d/kubernetes.list && \
