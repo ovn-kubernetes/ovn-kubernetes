@@ -819,7 +819,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "delete",
 						cidr, "dev", deploymentconfig.Get().ExternalBridgeName()})
 					if err != nil && !(strings.Contains(err.Error(),
-						"RTNETLINK answers: Cannot assign requested address") || !strings.Contains(err.Error(), "Address not found")) {
+						"RTNETLINK answers: Cannot assign requested address") || strings.Contains(err.Error(), "Address not found")) {
 						framework.Failf("failed to remove ip address %s from node %s, err: %q", ip, nodeName, err)
 					}
 				}
