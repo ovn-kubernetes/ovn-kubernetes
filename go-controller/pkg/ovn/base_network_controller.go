@@ -27,6 +27,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
@@ -38,6 +39,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	nqoscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
@@ -64,9 +66,6 @@ type CommonNetworkControllerInfo struct {
 
 	// libovsdb southbound client interface
 	sbClient libovsdbclient.Client
-
-	// has SCTP support
-	SCTPSupport bool
 
 	// has multicast support; set to false for secondary networks.
 	// TBD: Changes need to be made to support multicast for secondary networks
@@ -104,6 +103,13 @@ type BaseNetworkController struct {
 	retryMultiNetworkPolicies *ovnretry.RetryFramework
 	// retry framework for IPAMClaims
 	retryIPAMClaims *ovnretry.RetryFramework
+
+	// nodeReconciler is the shared UDN node controller. It is optional and will
+	// be nil for controllers that do not use the shared node path, such as the
+	// default network controller.
+	nodeReconciler *nodecontroller.NodeController
+	// node annotation cache for shared node controllers (optional)
+	nodeAnnotationCache *nodecontroller.NodeAnnotationCache
 
 	// pod events factory handler
 	podHandler *factory.Handler
@@ -152,7 +158,7 @@ type BaseNetworkController struct {
 	// make sure to keep this order to avoid deadlocks
 	sharedNetpolPortGroups *syncmap.SyncMap[*defaultDenyPortGroups]
 
-	podSelectorAddressSets *syncmap.SyncMap[*PodSelectorAddressSet]
+	addressSetManager *addresssetmanager.AddressSetManager
 
 	// stopChan per controller
 	stopChan chan struct{}
@@ -225,9 +231,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
-	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
-
-	return nil
+	return oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
 }
 
 func (oc *BaseNetworkController) updateNADKeysChanged(nadKeys []string) bool {
@@ -246,7 +250,12 @@ func (oc *BaseNetworkController) updateNADKeysChanged(nadKeys []string) bool {
 // instead since once the controller NetInfo has been updated there is no point in retrying.
 func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPods bool,
 	reconcileNodes []string, setNodeFailed func(string), reconcileNamespaces []string,
-) {
+) error {
+	// UDNs have moved to node level-driven reconciliation
+	if !oc.IsDefault() && oc.nodeReconciler == nil {
+		return fmt.Errorf("shared node reconciler is required for UDN network %s", oc.GetNetworkName())
+	}
+
 	if reconcileRoutes {
 		err := oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
 		if err != nil {
@@ -256,6 +265,10 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 
 	for _, nodeName := range reconcileNodes {
 		setNodeFailed(nodeName)
+		if !oc.IsDefault() {
+			oc.nodeReconciler.ReconcileNetwork(nodeName, oc.GetNetworkName())
+			continue
+		}
 		node, err := oc.watchFactory.GetNode(nodeName)
 		if err != nil {
 			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
@@ -268,7 +281,8 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 		}
 	}
 
-	if len(reconcileNodes) > 0 {
+	// only default network still uses retry framework for now
+	if len(reconcileNodes) > 0 && oc.IsDefault() {
 		oc.retryNodes.RequestRetryObjs()
 	}
 
@@ -299,6 +313,12 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 	if namespaceAdded {
 		oc.retryNamespaces.RequestRetryObjs()
 	}
+	return nil
+}
+
+// DeregisterNodeHandler removes this controller from the shared node controller.
+func (oc *BaseNetworkController) DeregisterNodeHandler() {
+	oc.nodeReconciler.DeregisterNetworkController(oc.GetNetworkName())
 }
 
 // BaseUserDefinedNetworkController structure holds per-network fields and network specific
@@ -367,7 +387,7 @@ func (bnc *BaseNetworkController) getNetworkNameForNADKeyFunc() func(nadKey stri
 // NewCommonNetworkControllerInfo creates CommonNetworkControllerInfo shared by controllers
 func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeOVN, wf *factory.WatchFactory,
 	recorder record.EventRecorder, nbClient libovsdbclient.Client, sbClient libovsdbclient.Client,
-	podRecorder *metrics.PodRecorder, SCTPSupport, multicastSupport, svcTemplateSupport bool,
+	podRecorder *metrics.PodRecorder, multicastSupport, svcTemplateSupport bool,
 ) (*CommonNetworkControllerInfo, error) {
 	zone, err := libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
@@ -381,7 +401,6 @@ func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeO
 		nbClient:           nbClient,
 		sbClient:           sbClient,
 		podRecorder:        podRecorder,
-		SCTPSupport:        SCTPSupport,
 		multicastSupport:   multicastSupport,
 		svcTemplateSupport: svcTemplateSupport,
 		zone:               zone,
@@ -950,6 +969,12 @@ func (bnc *BaseNetworkController) WatchNodes() error {
 	if bnc.nodeHandler != nil {
 		return nil
 	}
+	if !bnc.IsDefault() {
+		panic(fmt.Errorf("WatchNodes cannot be called on a non-default network %s", bnc.GetNetworkName()))
+	}
+	if bnc.retryNodes == nil {
+		return fmt.Errorf("node retry framework is not initialized for network %s", bnc.GetNetworkName())
+	}
 
 	handler, err := bnc.retryNodes.WatchResource()
 	if err == nil {
@@ -1076,6 +1101,10 @@ func (bnc *BaseNetworkController) isLayer2WithInterconnectTransport() bool {
 
 // HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.
 func (bnc *BaseNetworkController) HandleNetworkRefChange(nodeName string, active bool) {
+	if !bnc.IsDefault() {
+		bnc.nodeReconciler.ReconcileNetwork(nodeName, bnc.GetNetworkName())
+		return
+	}
 	if bnc.retryNodes == nil || bnc.watchFactory == nil {
 		return
 	}

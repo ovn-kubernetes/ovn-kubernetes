@@ -23,11 +23,21 @@ import (
 
 // DynamicHopApplyConfiguration represents a declarative configuration of the DynamicHop type for use
 // with apply.
+//
+// DynamicHop defines the configuration for a dynamic external gateway interface.
+// These interfaces are wrapped around a pod object that resides inside the cluster.
+// The field NetworkAttachmentName captures the name of the multus network name to use when retrieving the gateway IP to use.
+// The PodSelector and the NamespaceSelector are mandatory fields.
 type DynamicHopApplyConfiguration struct {
-	PodSelector           *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
-	NamespaceSelector     *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
-	NetworkAttachmentName *string                                 `json:"networkAttachmentName,omitempty"`
-	BFDEnabled            *bool                                   `json:"bfdEnabled,omitempty"`
+	// PodSelector defines the selector to filter the pods that are external gateways.
+	PodSelector *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// NamespaceSelector defines a selector to filter the namespaces where the pod gateways are located.
+	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
+	// NetworkAttachmentName determines the multus network name to use when retrieving the pod IPs that will be used as the gateway IP.
+	// When this field is empty, the logic assumes that the pod is configured with HostNetwork and is using the node's IP as gateway.
+	NetworkAttachmentName *string `json:"networkAttachmentName,omitempty"`
+	// BFDEnabled determines if the interface implements the Bidirectional Forward Detection protocol. Defaults to false.
+	BFDEnabled *bool `json:"bfdEnabled,omitempty"`
 }
 
 // DynamicHopApplyConfiguration constructs a declarative configuration of the DynamicHop type for use with

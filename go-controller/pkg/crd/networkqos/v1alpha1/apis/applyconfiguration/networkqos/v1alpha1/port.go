@@ -19,9 +19,14 @@ package v1alpha1
 
 // PortApplyConfiguration represents a declarative configuration of the Port type for use
 // with apply.
+//
+// Port specifies destination protocol and port on which NetworkQoS
+// rule is applied
 type PortApplyConfiguration struct {
+	// protocol (tcp, udp, sctp) that the traffic must match.
 	Protocol *string `json:"protocol,omitempty"`
-	Port     *int32  `json:"port,omitempty"`
+	// port that the traffic must match
+	Port *int32 `json:"port,omitempty"`
 }
 
 // PortApplyConfiguration constructs a declarative configuration of the Port type for use with

@@ -196,7 +196,7 @@ func (c *Controller) computeNodeInfo() ([]*corev1.Node, sets.Set[string], error)
 // to steer traffic to the connect router for other connected networks.
 // STEP5: If PodNetworkConnect is enabled, add static routes to connect router towards
 // each of the connected networks.
-// STEP6: If ClusterIPServiceNetwork connectivity if enabled, add load balancers of connected networks
+// STEP6: If ServiceNetwork connectivity is enabled, add load balancers of connected networks
 // to all other connected networks' switches.
 func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetworkConnect, allocatedSubnets map[string][]*net.IPNet) error {
 	cncName := cnc.Name
@@ -224,7 +224,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 
 	serviceConnectivityDesired := serviceConnectivityEnabled(cnc)
 	podConnectivityDesired := podConnectivityEnabled(cnc)
-	partialConnectivityWasEnabled := cncState.clusterIPServiceNetworkEnabled && !cncState.podNetworkConnectEnabled
+	partialConnectivityWasEnabled := cncState.serviceNetworkConnectEnabled && !cncState.podNetworkConnectEnabled
 	partialConnectivityDesired := serviceConnectivityDesired && !podConnectivityDesired
 	var errs []error
 
@@ -333,7 +333,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			}
 		}
 
-		// If ClusterIPServiceNetwork is enabled, add this network's LBs to the CNC's LBG
+		// If ServiceNetwork is enabled, add this network's LBs to the CNC's LBG
 		// and attach the LBG to this network's switch (only if the switch exists locally).
 		// LBs are always added to the LBG (so every zone's local DB knows about all
 		// networks' service LBs), but the LBG-to-switch attachment is skipped when the
@@ -510,7 +510,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			continue
 		}
 
-		// If ClusterIPServiceNetwork is enabled, cleanup LB attachments for this network.
+		// If ServiceNetwork is enabled, cleanup LB attachments for this network.
 		// With LBG: remove the disconnected network's LBs from the CNC's LBG,
 		// and remove the LBG from the disconnected network's switch.
 		if serviceConnectivityDesired {
@@ -541,9 +541,9 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		cncState.connectedNetworks.Delete(owner)
 	}
 
-	// If ClusterIPServiceNetwork was enabled but now disabled, cleanup all cross-network LB attachments
-	if !serviceConnectivityDesired && cncState.clusterIPServiceNetworkEnabled {
-		klog.V(4).Infof("CNC %s: ClusterIPServiceNetwork disabled, cleaning up cross-network LB attachments", cncName)
+	// If ServiceNetwork was enabled but now disabled, cleanup all cross-network LB attachments
+	if !serviceConnectivityDesired && cncState.serviceNetworkConnectEnabled {
+		klog.V(4).Infof("CNC %s: ServiceNetwork disabled, cleaning up cross-network LB attachments", cncName)
 		if err := c.cleanupServiceConnectivity(cncName); err != nil {
 			errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup service connectivity: %w", cncName, err))
 		}
@@ -567,7 +567,7 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 	// say affects only service connectivity but not partial connectivity. It's not
 	// worth the overhead to track failures separately.
 	if len(errs) == 0 {
-		cncState.clusterIPServiceNetworkEnabled = serviceConnectivityDesired
+		cncState.serviceNetworkConnectEnabled = serviceConnectivityDesired
 		cncState.podNetworkConnectEnabled = podConnectivityDesired
 	}
 
@@ -576,12 +576,12 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 
 // cleanupNetworkConnections removes all network connections for a CNC.
 // This is called when a CNC is being deleted.
-// 1. If ClusterIPServiceNetwork was enabled, cleanup cross-network LB attachments for this CNC
+// 1. If ServiceNetwork was enabled, cleanup cross-network LB attachments for this CNC
 // 2. If partial connectivity was enabled (service && !pod), cleanup ACLs and address sets
 // 3. Then delete network router ports from the network routers for this CNC
 // 4. Then delete routing policies on the network routers for this CNC
 func (c *Controller) cleanupNetworkConnections(cncName string, serviceConnectivityWasEnabled, podConnectivityWasEnabled bool) error {
-	// Cleanup cross-network LB attachments if ClusterIPServiceNetwork was enabled
+	// Cleanup cross-network LB attachments if ServiceNetwork was enabled
 	if serviceConnectivityWasEnabled {
 		if err := c.cleanupServiceConnectivity(cncName); err != nil {
 			return fmt.Errorf("failed to cleanup service connectivity for CNC %s: %v", cncName, err)
@@ -1345,7 +1345,7 @@ func (c *Controller) ensureLoadBalancerGroupOps(ops []ovsdb.Operation,
 }
 
 // cleanupServiceConnectivity removes all cross-network LB attachments for a CNC.
-// Called when ClusterIPServiceNetwork is disabled on the CNC or when CNC is deleted.
+// Called when ServiceNetwork is disabled on the CNC or when CNC is deleted.
 // With the LBG approach, this removes the CNC's LBG from all switches that reference it
 // (LogicalSwitch.load_balancer_group is a strong reference, so we must remove
 // all references before deleting the LBG), then deletes the LBG itself.
@@ -1407,7 +1407,7 @@ func (c *Controller) cleanupServiceConnectivity(cncName string) error {
 }
 
 // cleanupLoadBalancerGroupOps creates ops to cleanup cross-network LB attachments
-// when a network is disconnected from a CNC with ClusterIPServiceNetwork enabled.
+// when a network is disconnected from a CNC with ServiceNetwork enabled.
 // With the LBG approach, this:
 // 1. Removes the disconnected network's LBs from the CNC's LoadBalancerGroup
 // 2. Removes the CNC's LBG from the disconnected network's switch
@@ -1706,7 +1706,7 @@ func (c *Controller) buildSharedPartialConnectivityACLs(cncName, addressSetNameV
 // buildPassSameNetworkACL builds an ACL that passes traffic within the same network.
 // This ACL has priority 475, sitting between pass-service (500) and drop-pod (450).
 // It prevents the drop ACL from blocking intra-network communication when only
-// ClusterIPServiceNetwork connectivity is requested (without PodNetwork).
+// ServiceNetwork connectivity is requested (without PodNetwork).
 func (c *Controller) buildPassSameNetworkACL(cncName string, networkID int, subnets []string) *nbdb.ACL {
 	// Separate subnets by IP family
 	var v4Subnets, v6Subnets []string

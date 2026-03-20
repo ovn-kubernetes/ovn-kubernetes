@@ -22,3 +22,5 @@ that pod will no longer work correctly until it has been killed and restarted.
 This is not handled automatically.
 
 It is recommended the hybrid overlay feature be enabled at cluster install time.
+
+Always check the dependencies on the [Requirements page](requirements.md)

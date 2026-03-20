@@ -26,6 +26,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	anpovn "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -79,7 +80,7 @@ func getDefaultPGForANPSubject(anpName string, portUUIDs []string, acls []*nbdb.
 	for _, uuid := range portUUIDs {
 		lsps = append(lsps, &nbdb.LogicalSwitchPort{UUID: uuid})
 	}
-	pgDbIDs := anpovn.GetANPPortGroupDbIDs(anpName, banp, DefaultNetworkControllerName)
+	pgDbIDs := anpovn.GetANPPortGroupDbIDs(anpName, banp, types.DefaultNetworkControllerName)
 
 	pg := libovsdbutil.BuildPortGroup(
 		pgDbIDs,
@@ -106,24 +107,24 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		acl.Tier = types.DefaultBANPACLTier
 	}
 	acl.ExternalIDs = map[string]string{
-		libovsdbops.OwnerControllerKey.String():    DefaultNetworkControllerName,
+		libovsdbops.OwnerControllerKey.String():    types.DefaultNetworkControllerName,
 		libovsdbops.ObjectNameKey.String():         anpName,
 		libovsdbops.GressIdxKey.String():           fmt.Sprintf("%d", ruleIndex),
 		libovsdbops.PolicyDirectionKey.String():    direction,
 		libovsdbops.PortPolicyProtocolKey.String(): "None",
 		libovsdbops.OwnerTypeKey.String():          "AdminNetworkPolicy",
-		libovsdbops.PrimaryIDKey.String():          fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:None", DefaultNetworkControllerName, anpName, direction, ruleIndex),
+		libovsdbops.PrimaryIDKey.String():          fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:None", types.DefaultNetworkControllerName, anpName, direction, ruleIndex),
 	}
 	acl.Name = ptr.To(fmt.Sprintf("ANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
 	if banp {
 		acl.ExternalIDs[libovsdbops.OwnerTypeKey.String()] = "BaselineAdminNetworkPolicy"
 		acl.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:None",
-			DefaultNetworkControllerName, anpName, direction, ruleIndex)
+			types.DefaultNetworkControllerName, anpName, direction, ruleIndex)
 		acl.Name = ptr.To(fmt.Sprintf("BANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
 	}
 	acl.UUID = fmt.Sprintf("%s_%s_%d-%f-UUID", anpName, direction, ruleIndex, rand.Float64())
 	// determine ACL match
-	pgName := libovsdbutil.GetPortGroupName(anpovn.GetANPPortGroupDbIDs(anpName, banp, DefaultNetworkControllerName))
+	pgName := libovsdbutil.GetPortGroupName(anpovn.GetANPPortGroupDbIDs(anpName, banp, types.DefaultNetworkControllerName))
 	var lPortMatch, l3Match, matchDirection, match string
 	if direction == string(libovsdbutil.ACLIngress) {
 		acl.Direction = nbdb.ACLDirectionToLport
@@ -138,7 +139,7 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		matchDirection = "dst"
 	}
 	asIndex := anpovn.GetANPPeerAddrSetDbIDs(anpName, direction, fmt.Sprintf("%d", ruleIndex),
-		DefaultNetworkControllerName, banp)
+		types.DefaultNetworkControllerName, banp)
 	asv4, asv6 := addressset.GetHashNamesForAS(asIndex)
 	if config.IPv4Mode && config.IPv6Mode {
 		l3Match = fmt.Sprintf("((ip4.%s == $%s || ip6.%s == $%s))", matchDirection, asv4, matchDirection, asv6)
@@ -181,10 +182,10 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		aclCopy.ExternalIDs[libovsdbops.PortPolicyProtocolKey.String()] = protocol
 		aclCopy.Match = match
 		aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:%s",
-			DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
+			types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
 		if banp {
 			aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:%s",
-				DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
+				types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol)
 		}
 		aclCopy.UUID = fmt.Sprintf("%s_%s_%d.%s-%f-UUID", anpName, direction, ruleIndex, protocol, rand.Float64())
 		retACLs = append(retACLs, &aclCopy)
@@ -204,10 +205,10 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		aclCopy.ExternalIDs[libovsdbops.PortPolicyProtocolKey.String()] = protocol + "-namedPort"
 		aclCopy.Match = match
 		aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:%s",
-			DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
+			types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
 		if banp {
 			aclCopy.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:%s",
-				DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
+				types.DefaultNetworkControllerName, anpName, direction, ruleIndex, protocol+"-namedPort")
 		}
 		retACLs = append(retACLs, &aclCopy)
 	}
@@ -252,7 +253,7 @@ func getACLsForANPRules(anp *anpapi.AdminNetworkPolicy) []*nbdb.ACL {
 
 func buildANPAddressSets(anp *anpapi.AdminNetworkPolicy, index int32, ips []string, gressPrefix libovsdbutil.ACLDirection) (*nbdb.AddressSet, *nbdb.AddressSet) {
 	asIndex := anpovn.GetANPPeerAddrSetDbIDs(anp.Name, string(gressPrefix),
-		fmt.Sprintf("%d", index), DefaultNetworkControllerName, false)
+		fmt.Sprintf("%d", index), types.DefaultNetworkControllerName, false)
 	return addressset.GetTestDbAddrSets(asIndex, ips)
 }
 
@@ -310,8 +311,8 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 	ginkgo.Context("On admin network policy changes", func() {
 		ginkgo.It("should create/update/delete address-sets, acls, port-groups correctly", func() {
 			app.Action = func(*cli.Context) error {
-				anpNamespaceSubject := *newNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
-				anpNamespacePeer := *newNamespaceWithLabels(anpPeerNamespaceName, peerDenyLabel)
+				anpNamespaceSubject := *testing.NewNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
+				anpNamespacePeer := *testing.NewNamespaceWithLabels(anpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, "100.100.100.0", "fc00:f853:ccd:e793::1", "10.128.1.0/24", "fe00:10:128:1::/64", "", "")
@@ -394,7 +395,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				)
 				t.portName = util.GetLogicalPortName(t.namespace, t.podName)
 				t.populateLogicalSwitchCache(fakeOVN)
-				anpSubjectPod := *newPod(anpSubjectNamespaceName, anpSubjectPodName, node1Name, anpPodV4IP)
+				anpSubjectPod := *testing.NewPod(anpSubjectNamespaceName, anpSubjectPodName, node1Name, anpPodV4IP)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpSubjectPod.Namespace).Create(context.TODO(), &anpSubjectPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -457,7 +458,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
 				t2.populateLogicalSwitchCache(fakeOVN)
-				anpPeerPod := *newPod(anpPeerNamespaceName, anpPeerPodName, node1Name, anpPodV4IP2)
+				anpPeerPod := *testing.NewPod(anpPeerNamespaceName, anpPeerPodName, node1Name, anpPodV4IP2)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpPeerPod.Namespace).Create(context.TODO(), &anpPeerPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -829,7 +830,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 
 				ginkgo.By("16. delete the subject and peer selected namespaces; check if port group and address-set's are updated")
 				// create a new pod in subject and peer namespaces so that we can check namespace deletion properly
-				anpSubjectPod = *newPodWithLabels(anpSubjectNamespaceName, anpSubjectPodName, node1Name, "10.128.1.5", peerDenyLabel)
+				anpSubjectPod = *testing.NewPodWithLabels(anpSubjectNamespaceName, anpSubjectPodName, node1Name, "10.128.1.5", peerDenyLabel)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpSubjectPod.Namespace).Create(context.TODO(), &anpSubjectPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -856,7 +857,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				expectedDatabaseState = append(expectedDatabaseState, []libovsdbtest.TestData{peerASIngressRule0v4, peerASIngressRule0v6, peerASIngressRule1v4,
 					peerASIngressRule1v6, peerASEgressRule0v4, peerASEgressRule0v6, peerASEgressRule1v4, peerASEgressRule1v6}...)
 				gomega.Eventually(fakeOVN.nbClient, "3s").Should(libovsdbtest.HaveData(expectedDatabaseState))
-				anpPeerPod = *newPodWithLabels(anpPeerNamespaceName, anpPeerPodName, node1Name, "10.128.1.6", peerAllowLabel)
+				anpPeerPod = *testing.NewPodWithLabels(anpPeerNamespaceName, anpPeerPodName, node1Name, "10.128.1.6", peerAllowLabel)
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpPeerPod.Namespace).Create(context.TODO(), &anpPeerPod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// The pod takes some time to get created so the first add pod event for ANP does nothing as it waits for LSP to be created - this triggers a retry.
@@ -1084,9 +1085,9 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
-				anpSubjectNamespace := *newNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
-				anpNamespacePeer := *newNamespaceWithLabels(anpPeerNamespaceName, peerPassLabel)
-				anpNamespacePeer2 := *newNamespaceWithLabels(anpPeerNamespaceName+"2", peerDenyLabel)
+				anpSubjectNamespace := *testing.NewNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
+				anpNamespacePeer := *testing.NewNamespaceWithLabels(anpPeerNamespaceName, peerPassLabel)
+				anpNamespacePeer2 := *testing.NewNamespaceWithLabels(anpPeerNamespaceName+"2", peerDenyLabel)
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node1Switch := &nbdb.LogicalSwitch{
 					Name: node1Name,
@@ -1102,7 +1103,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					anpPodMAC2,
 					anpPeerNamespaceName,
 				)
-				anpPeerPod := *newPod(anpPeerNamespaceName, anpPeerPodName, node1Name, t1.podIP)
+				anpPeerPod := *testing.NewPod(anpPeerNamespaceName, anpPeerPodName, node1Name, t1.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				anpPeerPod.Annotations = map[string]string{}
 				anpPeerPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.4/24","fe00:10:128:1::4/64"],` +
@@ -1136,7 +1137,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					anpPodMAC,
 					anpSubjectNamespaceName,
 				)
-				anpSubjectPod := *newPod(anpSubjectNamespaceName, anpSubjectPodName, node1Name, t2.podIP)
+				anpSubjectPod := *testing.NewPod(anpSubjectNamespaceName, anpSubjectPodName, node1Name, t2.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				anpSubjectPod.Annotations = map[string]string{}
 				anpSubjectPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24","fe00:10:128:1::3/64"],` +
@@ -1630,8 +1631,8 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 		})
 		ginkgo.It("egress node+network peers: should create/update/delete address-sets, acls, port-groups correctly", func() {
 			app.Action = func(*cli.Context) error {
-				anpNamespaceSubject := *newNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
-				anpNamespacePeer := *newNamespaceWithLabels(anpPeerNamespaceName, peerDenyLabel)
+				anpNamespaceSubject := *testing.NewNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
+				anpNamespacePeer := *testing.NewNamespaceWithLabels(anpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
@@ -1649,7 +1650,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					anpPodMAC,
 					anpSubjectNamespaceName,
 				)
-				anpSubjectPod := *newPod(anpSubjectNamespaceName, anpSubjectPodName, node1Name, t.podIP)
+				anpSubjectPod := *testing.NewPod(anpSubjectNamespaceName, anpSubjectPodName, node1Name, t.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				anpSubjectPod.Annotations = map[string]string{}
 				anpSubjectPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24","fe00:10:128:1::3/64"],` +
@@ -1665,7 +1666,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					anpPodMAC2,
 					anpPeerNamespaceName,
 				)
-				anpPeerPod := *newPod(anpPeerNamespaceName, anpPeerPodName, node1Name, t2.podIP)
+				anpPeerPod := *testing.NewPod(anpPeerNamespaceName, anpPeerPodName, node1Name, t2.podIP)
 				// pinning annotations because between subject and peer pods IPAM isunpredictable
 				anpPeerPod.Annotations = map[string]string{}
 				anpPeerPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.4/24","fe00:10:128:1::4/64"],` +

@@ -13,11 +13,20 @@ import (
 
 // DNSNameResolverApplyConfiguration represents a declarative configuration of the DNSNameResolver type for use
 // with apply.
+//
+// DNSNameResolver stores the DNS name resolution information of a DNS name. It can be enabled by the TechPreviewNoUpgrade feature set.
+// It can also be enabled by the feature gate DNSNameResolver when using CustomNoUpgrade feature set.
+//
+// Compatibility level 4: No compatibility is provided, the API can change at any point for any reason. These capabilities should not be used by applications needing long term support.
 type DNSNameResolverApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration `json:",inline"`
+	// metadata is the standard object's metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
-	Spec                             *DNSNameResolverSpecApplyConfiguration   `json:"spec,omitempty"`
-	Status                           *DNSNameResolverStatusApplyConfiguration `json:"status,omitempty"`
+	// spec is the specification of the desired behavior of the DNSNameResolver.
+	Spec *DNSNameResolverSpecApplyConfiguration `json:"spec,omitempty"`
+	// status is the most recently observed status of the DNSNameResolver.
+	Status *DNSNameResolverStatusApplyConfiguration `json:"status,omitempty"`
 }
 
 // DNSNameResolver constructs a declarative configuration of the DNSNameResolver type for use with
@@ -31,29 +40,14 @@ func DNSNameResolver(name, namespace string) *DNSNameResolverApplyConfiguration 
 	return b
 }
 
-// ExtractDNSNameResolver extracts the applied configuration owned by fieldManager from
-// dNSNameResolver. If no managedFields are found in dNSNameResolver for fieldManager, a
-// DNSNameResolverApplyConfiguration is returned with only the Name, Namespace (if applicable),
-// APIVersion and Kind populated. It is possible that no managed fields were found for because other
-// field managers have taken ownership of all the fields previously owned by fieldManager, or because
-// the fieldManager never owned fields any fields.
+// ExtractDNSNameResolverFrom extracts the applied configuration owned by fieldManager from
+// dNSNameResolver for the specified subresource. Pass an empty string for subresource to extract
+// the main resource. Common subresources include "status", "scale", etc.
 // dNSNameResolver must be a unmodified DNSNameResolver API object that was retrieved from the Kubernetes API.
-// ExtractDNSNameResolver provides a way to perform a extract/modify-in-place/apply workflow.
+// ExtractDNSNameResolverFrom provides a way to perform a extract/modify-in-place/apply workflow.
 // Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
 // applied if another fieldManager has updated or force applied any of the previously applied fields.
-// Experimental!
-func ExtractDNSNameResolver(dNSNameResolver *networkv1alpha1.DNSNameResolver, fieldManager string) (*DNSNameResolverApplyConfiguration, error) {
-	return extractDNSNameResolver(dNSNameResolver, fieldManager, "")
-}
-
-// ExtractDNSNameResolverStatus is the same as ExtractDNSNameResolver except
-// that it extracts the status subresource applied configuration.
-// Experimental!
-func ExtractDNSNameResolverStatus(dNSNameResolver *networkv1alpha1.DNSNameResolver, fieldManager string) (*DNSNameResolverApplyConfiguration, error) {
-	return extractDNSNameResolver(dNSNameResolver, fieldManager, "status")
-}
-
-func extractDNSNameResolver(dNSNameResolver *networkv1alpha1.DNSNameResolver, fieldManager string, subresource string) (*DNSNameResolverApplyConfiguration, error) {
+func ExtractDNSNameResolverFrom(dNSNameResolver *networkv1alpha1.DNSNameResolver, fieldManager string, subresource string) (*DNSNameResolverApplyConfiguration, error) {
 	b := &DNSNameResolverApplyConfiguration{}
 	err := managedfields.ExtractInto(dNSNameResolver, internal.Parser().Type("com.github.openshift.api.network.v1alpha1.DNSNameResolver"), fieldManager, b, subresource)
 	if err != nil {
@@ -66,6 +60,27 @@ func extractDNSNameResolver(dNSNameResolver *networkv1alpha1.DNSNameResolver, fi
 	b.WithAPIVersion("network.openshift.io/v1alpha1")
 	return b, nil
 }
+
+// ExtractDNSNameResolver extracts the applied configuration owned by fieldManager from
+// dNSNameResolver. If no managedFields are found in dNSNameResolver for fieldManager, a
+// DNSNameResolverApplyConfiguration is returned with only the Name, Namespace (if applicable),
+// APIVersion and Kind populated. It is possible that no managed fields were found for because other
+// field managers have taken ownership of all the fields previously owned by fieldManager, or because
+// the fieldManager never owned fields any fields.
+// dNSNameResolver must be a unmodified DNSNameResolver API object that was retrieved from the Kubernetes API.
+// ExtractDNSNameResolver provides a way to perform a extract/modify-in-place/apply workflow.
+// Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
+// applied if another fieldManager has updated or force applied any of the previously applied fields.
+func ExtractDNSNameResolver(dNSNameResolver *networkv1alpha1.DNSNameResolver, fieldManager string) (*DNSNameResolverApplyConfiguration, error) {
+	return ExtractDNSNameResolverFrom(dNSNameResolver, fieldManager, "")
+}
+
+// ExtractDNSNameResolverStatus extracts the applied configuration owned by fieldManager from
+// dNSNameResolver for the status subresource.
+func ExtractDNSNameResolverStatus(dNSNameResolver *networkv1alpha1.DNSNameResolver, fieldManager string) (*DNSNameResolverApplyConfiguration, error) {
+	return ExtractDNSNameResolverFrom(dNSNameResolver, fieldManager, "status")
+}
+
 func (b DNSNameResolverApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

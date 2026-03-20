@@ -200,7 +200,12 @@ func (m *Manager) setStatus(reason string, ready bool) {
 	m.statusMu.Lock()
 	defer m.statusMu.Unlock()
 
-	if m.ready != ready || m.reason != reason {
+	prevReady := m.ready
+	prevReason := m.reason
+	if prevReady != ready || prevReason != reason {
+		if ready && !prevReady && prevReason != "" {
+			klog.V(4).Infof("DPU lease %s marked healthy", m.leaseName())
+		}
 		m.ready = ready
 		m.reason = reason
 	}
@@ -222,7 +227,7 @@ func (m *Manager) newLease(now metav1.MicroTime) *coordinationv1.Lease {
 					Name:               m.nodeName,
 					UID:                m.nodeUID,
 					Controller:         boolPtr(true),
-					BlockOwnerDeletion: boolPtr(true),
+					BlockOwnerDeletion: boolPtr(false),
 				},
 			},
 		},
@@ -259,28 +264,31 @@ func (m *Manager) updateLeaseSpec(lease *coordinationv1.Lease, now metav1.MicroT
 		}
 	}
 
-	if !m.hasOwnerRef(lease.OwnerReferences) {
+	ownerRefFound := false
+	for i := range lease.OwnerReferences {
+		ref := &lease.OwnerReferences[i]
+		if ref.Kind == "Node" && ref.Name == m.nodeName && ref.UID == m.nodeUID {
+			ownerRefFound = true
+			if ref.BlockOwnerDeletion == nil || *ref.BlockOwnerDeletion {
+				ref.BlockOwnerDeletion = boolPtr(false)
+				changed = true
+			}
+			break
+		}
+	}
+	if !ownerRefFound {
 		lease.OwnerReferences = append(lease.OwnerReferences, metav1.OwnerReference{
 			APIVersion:         "v1",
 			Kind:               "Node",
 			Name:               m.nodeName,
 			UID:                m.nodeUID,
 			Controller:         boolPtr(true),
-			BlockOwnerDeletion: boolPtr(true),
+			BlockOwnerDeletion: boolPtr(false),
 		})
 		changed = true
 	}
 
 	return changed
-}
-
-func (m *Manager) hasOwnerRef(refs []metav1.OwnerReference) bool {
-	for _, ref := range refs {
-		if ref.Kind == "Node" && ref.Name == m.nodeName && ref.UID == m.nodeUID {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Manager) isExpired(lease *coordinationv1.Lease) (bool, string) {

@@ -19,7 +19,10 @@ package v1
 
 // EgressFirewallSpecApplyConfiguration represents a declarative configuration of the EgressFirewallSpec type for use
 // with apply.
+//
+// EgressFirewallSpec is a desired state description of EgressFirewall.
 type EgressFirewallSpecApplyConfiguration struct {
+	// a collection of egress firewall rule objects
 	Egress []EgressFirewallRuleApplyConfiguration `json:"egress,omitempty"`
 }
 

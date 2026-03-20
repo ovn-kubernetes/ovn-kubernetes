@@ -19,7 +19,11 @@ package v1
 
 // EgressServiceStatusApplyConfiguration represents a declarative configuration of the EgressServiceStatus type for use
 // with apply.
+//
+// EgressServiceStatus defines the observed state of EgressService
 type EgressServiceStatusApplyConfiguration struct {
+	// The name of the node selected to handle the service's traffic.
+	// In case sourceIPBy=Network the field will be set to "ALL".
 	Host *string `json:"host,omitempty"`
 }
 

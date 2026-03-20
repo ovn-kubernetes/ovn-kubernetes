@@ -20,7 +20,7 @@ var _ = Describe("UDN Isolation", func() {
 	It("ACLs should be updated to the Primary tier ", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		fakeController := getFakeController(DefaultNetworkControllerName)
+		fakeController := getFakeController(types.DefaultNetworkControllerName)
 
 		// build port group with one ACL that has default tier
 		pgIDs := fakeController.getSecondaryPodsPortGroupDbIDs()
@@ -54,7 +54,7 @@ var _ = Describe("UDN Isolation", func() {
 	It("Should handle syncing legacy DBIDs", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		fakeController := getFakeController(DefaultNetworkControllerName)
+		fakeController := getFakeController(types.DefaultNetworkControllerName)
 
 		By("initializing the database with legacy secondary IDs")
 		pgIDs := fakeController.getSecondaryPodsPortGroupDbIDs()

@@ -12,7 +12,6 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
@@ -68,8 +67,8 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 	tests := []struct {
 		name        string
 		ctx         context.Context
-		oldObj      runtime.Object
-		newObj      runtime.Object
+		oldObj      *corev1.Node
+		newObj      *corev1.Node
 		expectedErr error
 	}{
 		{
@@ -408,8 +407,8 @@ func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
 	tests := []struct {
 		name        string
 		ctx         context.Context
-		oldObj      runtime.Object
-		newObj      runtime.Object
+		oldObj      *corev1.Node
+		newObj      *corev1.Node
 		expectedErr error
 	}{
 		{

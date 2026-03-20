@@ -373,7 +373,9 @@ func (bnc *BaseNetworkController) waitForNodeLogicalSwitch(switchName string) (*
 	ls := &nbdb.LogicalSwitch{Name: switchName}
 	if err := wait.PollUntilContextTimeout(context.Background(), 30*time.Millisecond, 30*time.Second, true, func(_ context.Context) (bool, error) {
 		if subnets := bnc.lsManager.GetSwitchSubnets(switchName); subnets == nil {
-			return false, fmt.Errorf("error getting logical switch %s: %s", switchName, "switch not in logical switch cache")
+			// A cache miss is expected while node topology reconciliation is still creating the switch.
+			// Keep polling until it appears or the overall wait times out.
+			return false, nil
 		}
 		return true, nil
 	}); err != nil {
@@ -752,23 +754,44 @@ func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, podIfAddrs [
 	return ops, nil
 }
 
-// isPodScheduledinLocalZone returns true if
-//   - bnc.localZoneNodes map is nil or
-//   - if the pod.Spec.NodeName is in the bnc.localZoneNodes map
-//
-// false otherwise.
+// isPodScheduledinLocalZone returns true when the pod is scheduled on a node
+// that belongs to this controller's local zone.
+// When localZoneNodes is configured, the node set is used as the primary cache.
+// On cache miss, it falls back to the node informer to avoid stale "remote"
+// classification while node state is still converging.
 func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) bool {
-	isLocalZonePod := true
-
-	if bnc.localZoneNodes != nil {
-		if util.PodScheduled(pod) {
-			_, isLocalZonePod = bnc.localZoneNodes.Load(pod.Spec.NodeName)
-		} else {
-			isLocalZonePod = false
-		}
+	if bnc.localZoneNodes == nil {
+		return true
 	}
 
-	return isLocalZonePod
+	if !util.PodScheduled(pod) {
+		return false
+	}
+
+	if _, isLocalZonePod := bnc.localZoneNodes.Load(pod.Spec.NodeName); isLocalZonePod {
+		return true
+	}
+
+	if bnc.watchFactory == nil {
+		return false
+	}
+
+	// TODO(trozet): refactor this function to have proper error handling and not rely on
+	// on node controller cache anymore
+	node, err := bnc.watchFactory.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return false
+	}
+
+	// With interconnect enabled, only trust informer fallback when zone
+	// information is explicit. Missing zone annotation defaults to "local" and
+	// can misclassify remote pods.
+	if config.OVNKubernetesFeature.EnableInterconnect {
+		if _, ok := node.Annotations[util.OvnNodeZoneName]; !ok {
+			return false
+		}
+	}
+	return bnc.isLocalZoneNode(node)
 }
 
 // WatchPods starts the watching of the Pod resource and calls back the appropriate handler logic

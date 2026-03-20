@@ -20,6 +20,8 @@ When configured with `--gateway-interface=derive-from-mgmt-port`, OVN-Kubernetes
 
 ## Configuration
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ### Command Line Options
 
 ```bash

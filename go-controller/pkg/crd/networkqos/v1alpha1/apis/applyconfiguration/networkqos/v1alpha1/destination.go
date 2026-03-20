@@ -24,10 +24,27 @@ import (
 
 // DestinationApplyConfiguration represents a declarative configuration of the Destination type for use
 // with apply.
+//
+// Destination describes a peer to apply NetworkQoS configuration for the outgoing traffic.
+// Only certain combinations of fields are allowed.
 type DestinationApplyConfiguration struct {
-	PodSelector       *v1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// podSelector is a label selector which selects pods. This field follows standard label
+	// selector semantics; if present but empty, it selects all pods.
+	//
+	// If namespaceSelector is also set, then the NetworkQoS as a whole selects
+	// the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+	// Otherwise it selects the pods matching podSelector in the NetworkQoS's own namespace.
+	PodSelector *v1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+	// standard label selector semantics; if present but empty, it selects all namespaces.
+	//
+	// If podSelector is also set, then the NetworkQoS as a whole selects
+	// the pods matching podSelector in the namespaces selected by namespaceSelector.
+	// Otherwise it selects all pods in the namespaces selected by namespaceSelector.
 	NamespaceSelector *v1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
-	IPBlock           *networkingv1.IPBlock               `json:"ipBlock,omitempty"`
+	// ipBlock defines policy on a particular IPBlock. If this field is set then
+	// neither of the other fields can be.
+	IPBlock *networkingv1.IPBlock `json:"ipBlock,omitempty"`
 }
 
 // DestinationApplyConfiguration constructs a declarative configuration of the Destination type for use with

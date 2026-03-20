@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -140,6 +141,62 @@ func (k *kind) GetK8HostPort() uint16 {
 
 func (k *kind) GetDefaultTimeoutContext() *framework.TimeoutContext {
 	return framework.NewTimeoutContext()
+}
+
+func (k *kind) PreloadImages(imgs []string) {
+	clusterName := kindClusterName()
+	if clusterName == "" {
+		framework.Logf("Warning: could not determine KIND cluster name, skipping image preload")
+		return
+	}
+	ce := containerengine.Get()
+	pullBackoff := wait.Backoff{Duration: 5 * time.Second, Factor: 2, Steps: 5}
+	for _, img := range imgs {
+		framework.Logf("Preloading image %s into KIND cluster %s", img, clusterName)
+		var out []byte
+		err := wait.ExponentialBackoff(pullBackoff, func() (bool, error) {
+			var pullErr error
+			out, pullErr = exec.Command(ce.String(), "pull", img).CombinedOutput()
+			if pullErr != nil {
+				framework.Logf("Retrying pull for image %s: %v (%s)", img, pullErr, out)
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			framework.Logf("Warning: failed to pull image %s after retries: %v (%s)", img, err, out)
+			continue
+		}
+		if ce == containerengine.Podman {
+			os.Remove("/tmp/image.tar")
+			out, err = exec.Command(ce.String(), "save", "-o", "/tmp/image.tar", img).CombinedOutput()
+			if err != nil {
+				framework.Logf("Warning: failed to save image %s: %v (%s)", img, err, out)
+				continue
+			}
+			out, err = exec.Command("kind", "load", "image-archive", "/tmp/image.tar", "--name", clusterName).CombinedOutput()
+		} else {
+			out, err = exec.Command("kind", "load", "docker-image", img, "--name", clusterName).CombinedOutput()
+		}
+		if err != nil {
+			framework.Logf("Warning: failed to load image %s into KIND cluster %s: %v (%s)", img, clusterName, err, out)
+			continue
+		}
+		framework.Logf("Preloaded image %s into KIND cluster %s", img, clusterName)
+	}
+}
+
+func kindClusterName() string {
+	currentCtx, err := exec.Command("kubectl", "config", "current-context").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	ctx := strings.TrimSpace(string(currentCtx))
+	// KIND contexts are named "kind-<cluster-name>"
+	if strings.HasPrefix(ctx, "kind-") {
+		return strings.TrimPrefix(ctx, "kind-")
+	}
+	return ""
 }
 
 // getContainerState returns the state of a container by name

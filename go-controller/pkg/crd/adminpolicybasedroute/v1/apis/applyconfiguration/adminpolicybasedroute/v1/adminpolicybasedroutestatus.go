@@ -24,10 +24,15 @@ import (
 
 // AdminPolicyBasedRouteStatusApplyConfiguration represents a declarative configuration of the AdminPolicyBasedRouteStatus type for use
 // with apply.
+//
+// AdminPolicyBasedRouteStatus contains the observed status of the AdminPolicyBased route types.
 type AdminPolicyBasedRouteStatusApplyConfiguration struct {
-	LastTransitionTime *metav1.Time                        `json:"lastTransitionTime,omitempty"`
-	Messages           []string                            `json:"messages,omitempty"`
-	Status             *adminpolicybasedroutev1.StatusType `json:"status,omitempty"`
+	// Captures the time when the last change was applied.
+	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+	// An array of Human-readable messages indicating details about the status of the object.
+	Messages []string `json:"messages,omitempty"`
+	// A concise indication of whether the AdminPolicyBasedRoute resource is applied with success
+	Status *adminpolicybasedroutev1.StatusType `json:"status,omitempty"`
 }
 
 // AdminPolicyBasedRouteStatusApplyConfiguration constructs a declarative configuration of the AdminPolicyBasedRouteStatus type for use with

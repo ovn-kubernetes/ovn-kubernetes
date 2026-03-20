@@ -85,6 +85,16 @@ func SetRetryObjWithNoBackoff(key string, r *RetryFramework) {
 	})
 }
 
+func GetBackoffFromRetryObj(key string, r *RetryFramework) time.Duration {
+	r.retryEntries.LockKey(key)
+	defer r.retryEntries.UnlockKey(key)
+	obj, exists := r.getRetryObj(key)
+	if exists && obj != nil {
+		return obj.backoff
+	}
+	return -1
+}
+
 func InitRetryObjWithAdd(obj interface{}, key string, r *RetryFramework) {
 	r.DoWithLock(key, func(key string) {
 		r.initRetryObjWithAdd(obj, key)

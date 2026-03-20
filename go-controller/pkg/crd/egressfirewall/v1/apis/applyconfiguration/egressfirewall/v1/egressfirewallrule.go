@@ -23,10 +23,15 @@ import (
 
 // EgressFirewallRuleApplyConfiguration represents a declarative configuration of the EgressFirewallRule type for use
 // with apply.
+//
+// EgressFirewallRule is a single egressfirewall rule object
 type EgressFirewallRuleApplyConfiguration struct {
-	Type  *egressfirewallv1.EgressFirewallRuleType     `json:"type,omitempty"`
-	Ports []EgressFirewallPortApplyConfiguration       `json:"ports,omitempty"`
-	To    *EgressFirewallDestinationApplyConfiguration `json:"to,omitempty"`
+	// type marks this as an "Allow" or "Deny" rule
+	Type *egressfirewallv1.EgressFirewallRuleType `json:"type,omitempty"`
+	// ports specify what ports and protocols the rule applies to
+	Ports []EgressFirewallPortApplyConfiguration `json:"ports,omitempty"`
+	// to is the target that traffic is allowed/denied to
+	To *EgressFirewallDestinationApplyConfiguration `json:"to,omitempty"`
 }
 
 // EgressFirewallRuleApplyConfiguration constructs a declarative configuration of the EgressFirewallRule type for use with

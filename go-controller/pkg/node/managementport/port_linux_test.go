@@ -426,7 +426,26 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		mgtPortMAC string = "0a:58:0a:01:01:02"
 		mgtPort    string = types.K8sMgmtIntfName
 		mtu        int    = 1400
+		deviceID   string = "0000:03:00.0"
 	)
+
+	origFsOps := util.GetFileSystemOps()
+	defer util.SetFileSystemOps(origFsOps)
+	mockFsOps := &utilMocks.FileSystemOps{}
+	mockFsOps.On("Readlink", mock.AnythingOfType("string")).Return("../../"+deviceID, nil)
+	util.SetFileSystemOps(mockFsOps)
+
+	origSriovOps := util.GetSriovnetOps()
+	defer util.SetSriovnetOpsInst(origSriovOps)
+	sriovMock := &utilMocks.SriovnetOps{}
+	sriovMock.On("GetNetDevicesFromPci", deviceID).Return([]string{"pf0vf0"}, nil)
+	util.SetSriovnetOpsInst(sriovMock)
+
+	origVdpaOps := util.GetVdpaOps()
+	defer util.SetVdpaOpsInst(origVdpaOps)
+	vdpaMock := &utilMocks.VdpaOps{}
+	vdpaMock.On("GetVdpaDeviceByPci", deviceID).Return(nil, fmt.Errorf("no vdpa"))
+	util.SetVdpaOpsInst(vdpaMock)
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1171,8 +1190,18 @@ var _ = Describe("Management Port tests", func() {
 	})
 
 	Context("NewManagementPortController creates a controller according to config.OvnKubeNode.Mode", func() {
+		var origFsOps util.FileSystemOps
+
 		BeforeEach(func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
+			origFsOps = util.GetFileSystemOps()
+			mockFsOps := &utilMocks.FileSystemOps{}
+			mockFsOps.On("Readlink", mock.AnythingOfType("string")).Return("../../0000:03:00.2", nil)
+			util.SetFileSystemOps(mockFsOps)
+		})
+
+		AfterEach(func() {
+			util.SetFileSystemOps(origFsOps)
 		})
 
 		node := &corev1.Node{
@@ -1208,7 +1237,18 @@ var _ = Describe("Management Port tests", func() {
 			repImpl := mgmtPortImpl.ports[representorPort].(*managementPortRepresentor)
 			Expect(repImpl.repDevName).To(Equal(rep))
 		})
-		It("Creates managementPortNetdev for Ovnkube Node mode dpu-host", func() {
+		It("Creates managementPortNetdev for dpu-host using device ID from node annotation", func() {
+			config.OvnKubeNode.Mode = types.NodeModeDPUHost
+			nodeWithAnnotation := node.DeepCopy()
+			nodeWithAnnotation.Annotations[util.OvnNodeManagementPort] = `{"default":{"DeviceId":"0000:05:00.7","PfId":1,"FuncId":3}}`
+			mgmtPort, err := NewManagementPortController(nodeWithAnnotation, hostSubnets, netdevName, rep, nil, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			mgmtPortImpl := mgmtPort.(*managementPortController)
+			Expect(mgmtPortImpl.ports[netdevPort]).ToNot(BeNil())
+			netdevImpl := mgmtPortImpl.ports[netdevPort].(*managementPortNetdev)
+			Expect(netdevImpl.deviceID).To(Equal("0000:05:00.7"))
+		})
+		It("Creates managementPortNetdev for dpu-host falling back to sysfs when annotation is missing", func() {
 			config.OvnKubeNode.Mode = types.NodeModeDPUHost
 			mgmtPort, err := NewManagementPortController(node, hostSubnets, netdevName, rep, nil, netInfo)
 			Expect(err).NotTo(HaveOccurred())
@@ -1217,9 +1257,35 @@ var _ = Describe("Management Port tests", func() {
 			Expect(mgmtPortImpl.ports[netdevPort]).ToNot(BeNil())
 			Expect(mgmtPortImpl.ports[representorPort]).To(BeNil())
 			netdevImpl := mgmtPortImpl.ports[netdevPort].(*managementPortNetdev)
-			Expect(netdevImpl.netdevDevName).To(Equal(netdevName))
+			Expect(netdevImpl.deviceID).To(Equal("0000:03:00.2"))
 		})
-		It("Creates managementPortNetdev and managementPortRepresentor for Ovnkube Node mode full", func() {
+		It("Fails to create managementPortNetdev when PCI resolution fails and annotation is missing", func() {
+			config.OvnKubeNode.Mode = types.NodeModeDPUHost
+			util.SetFileSystemOps(origFsOps)
+			mockFsOpsFail := &utilMocks.FileSystemOps{}
+			mockFsOpsFail.On("Readlink", mock.AnythingOfType("string")).Return("", fmt.Errorf("no such file"))
+			util.SetFileSystemOps(mockFsOpsFail)
+
+			_, err := NewManagementPortController(node, hostSubnets, netdevName, rep, nil, netInfo)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get PCI device ID"))
+		})
+		It("Creates managementPortNetdev and managementPortRepresentor for full mode using annotation", func() {
+			config.OvnKubeNode.MgmtPortNetdev = netdevName
+			nodeWithAnnotation := node.DeepCopy()
+			nodeWithAnnotation.Annotations[util.OvnNodeManagementPort] = `{"default":{"DeviceId":"0000:05:00.7","PfId":1,"FuncId":3}}`
+			mgmtPort, err := NewManagementPortController(nodeWithAnnotation, hostSubnets, netdevName, rep, nil, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			mgmtPortImpl := mgmtPort.(*managementPortController)
+			Expect(mgmtPortImpl.ports[ovsPort]).To(BeNil())
+			Expect(mgmtPortImpl.ports[netdevPort]).ToNot(BeNil())
+			Expect(mgmtPortImpl.ports[representorPort]).ToNot(BeNil())
+			netdevImpl := mgmtPortImpl.ports[netdevPort].(*managementPortNetdev)
+			Expect(netdevImpl.deviceID).To(Equal("0000:05:00.7"))
+			repImpl := mgmtPortImpl.ports[representorPort].(*managementPortRepresentor)
+			Expect(repImpl.repDevName).To(Equal(rep))
+		})
+		It("Creates managementPortNetdev and managementPortRepresentor for full mode falling back to sysfs", func() {
 			config.OvnKubeNode.MgmtPortNetdev = netdevName
 			mgmtPort, err := NewManagementPortController(node, hostSubnets, netdevName, rep, nil, netInfo)
 			Expect(err).NotTo(HaveOccurred())
@@ -1228,7 +1294,7 @@ var _ = Describe("Management Port tests", func() {
 			Expect(mgmtPortImpl.ports[netdevPort]).ToNot(BeNil())
 			Expect(mgmtPortImpl.ports[representorPort]).ToNot(BeNil())
 			netdevImpl := mgmtPortImpl.ports[netdevPort].(*managementPortNetdev)
-			Expect(netdevImpl.netdevDevName).To(Equal(netdevName))
+			Expect(netdevImpl.deviceID).To(Equal("0000:03:00.2"))
 			repImpl := mgmtPortImpl.ports[representorPort].(*managementPortRepresentor)
 			Expect(repImpl.repDevName).To(Equal(rep))
 		})

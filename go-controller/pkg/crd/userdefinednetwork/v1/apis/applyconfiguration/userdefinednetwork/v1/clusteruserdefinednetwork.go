@@ -25,6 +25,8 @@ import (
 
 // ClusterUserDefinedNetworkApplyConfiguration represents a declarative configuration of the ClusterUserDefinedNetwork type for use
 // with apply.
+//
+// ClusterUserDefinedNetwork describe network request for a shared network across namespaces.
 type ClusterUserDefinedNetworkApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -41,6 +43,7 @@ func ClusterUserDefinedNetwork(name string) *ClusterUserDefinedNetworkApplyConfi
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b ClusterUserDefinedNetworkApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

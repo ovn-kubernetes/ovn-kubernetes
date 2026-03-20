@@ -315,19 +315,71 @@ kind: VTEP
 metadata:
   name: evpn-vtep
 spec:
-  cidr: 100.64.0.0/24
+  cidrs:
+  - 100.64.0.0/24
   mode: managed
 ```
 
-The cidr field is mandatory. If the mode is "managed", then OVN-Kubernetes will handle allocating and assigning
-VTEP IPs per node. If the mode is not provided, or is "unmanaged", then it is left to some other provider to handle
-adding the IP address to each node from the subnet provided. In unmanaged mode, OVN-Kubernetes will find an interface on
-the node which has an IP address in the cidr, and use that IP address. Unmanaged mode may be preferred where a provider
-handles assigning VTEP IPs within its EVPN fabric. In this case OVN-Kubernetes cluster is integrating into an already
-configured EVPN fabric. Therefore VTEP IP provisioning may be done by the provider and configured for each node.
+The `cidrs` field is mandatory and accepts a list of CIDR blocks (up to 20) from which VTEP IPs are
+discovered or allocated. Multiple CIDRs allow capacity expansion over time without recreating the VTEP.
+Each CIDR can also be expanded by changing their mask but there might be cases where continuous blocks
+are not available for expansion.
 
-The IP address assigned or found by OVN-Kubernetes will be annotated to the node as `k8s.ovn.org/<vtep name>: <ip>`.
-If all nodes do not have an IP address annotated for this VTEP, the VTEP CR will go into error state.
+The following CEL validation rules are enforced on the `cidrs` list:
+
+- **Minimum 1, maximum 20 entries**: At least one CIDR must be provided.
+- **Append-only** (managed mode only): CIDRs cannot be removed from the list once added
+  (`size(self) >= size(oldSelf)`). This restriction only applies to managed mode because
+  ovnkube-cluster-manager tracks allocations per CIDR and removing a CIDR would complicate invalidating existing
+  assignments. In unmanaged mode the user controls IP assignment, so CIDRs can be freely added or removed and
+  when they are removed, we don't guarantee any SLAs around downtime.
+- **No reordering or shrinking** (managed mode only): Existing CIDRs must remain at the same position and
+  can only be expanded to a wider mask (e.g., `/24` can become `/16`, but not `/28`). Shrinking or
+  reordering is not allowed, as it would disrupt sequential allocation tracking. This restriction does not
+  apply to unmanaged mode.
+- **No intra-VTEP overlap**: CIDRs within the same VTEP must not overlap with each other.
+
+Cross-VTEP CIDR overlap validation is performed by the VTEP controller at runtime (not via CEL) since it
+requires inspecting other VTEP objects. If two VTEP CRs have overlapping CIDRs, both are set to `Accepted=False`
+with reason `CIDROverlap`. This is done so that we don't end up in confusion situations where we have
+two VTEPs with same CIDR ranges or overlapping CIDR ranges where for the first tunnel's nodeA get's an
+IPA from the first VTEP v/s for second tunnel nodeB gets an IPB from the second VTEP and now we advertise
+both of these out.
+
+The vtep controller will also add an internal validation to ensure only IPV4 CIDRs are accepted
+for VTEPs used by EVPN CUDNs. This restriction will be removed when FRR supports IPV6 VTEPs for EVPN.
+
+The default mode is "managed". If the mode is "managed", then OVN-Kubernetes will handle allocating and assigning
+VTEP IPs per node. When multiple CIDRs are specified, IPs are allocated sequentially from a CIDR in the order
+they appear in the spec; once a CIDR is exhausted, allocation continues from the next one. This is also why
+reordering of CIDRs is not allowed.
+If the mode is "unmanaged", then it is left to some other provider to handle adding the IP address to each node from the
+subnet provided. In unmanaged mode, OVN-Kubernetes will find an interface on the node which has an IP address in any of the VTEP
+CIDRs, and use that IP address. Unmanaged mode may be preferred where a provider handles assigning VTEP IPs within its
+EVPN fabric. In this case OVN-Kubernetes cluster is integrating into an already configured EVPN fabric. Therefore VTEP IP
+provisioning may be done by the provider and configured for each node.
+
+The IP address assigned (managed) or discovered (unmanaged) by OVN-Kubernetes will be annotated to the node as
+`k8s.ovn.org/vteps: {"vtep-name1": {"ips": ["ipv4", "ipv6"]}, "vtep-name2": {"ips": ["ipv4", "ipv6"]}}`.
+For managed mode, ovnkube-cluster-manager allocates IPs and writes the annotation. For unmanaged mode,
+ovnkube-node discovers IPs on the node that fall within the VTEP CIDRs and writes the annotation back.
+Even though the user or external automation (e.g. a loopback IP for EVPN) originally configured the IP on the
+interface, annotating it to the node object provides a central view through the Kubernetes API so that operators
+can inspect every node's VTEP IPs without SSH access. This is especially important for future use cases like
+multi VTEP Geneve tunnels where the VTEP IP may be DHCP-assigned and not known to the user ahead of time.
+ovnkube-cluster-manager then reads the annotation to validate all nodes have VTEP IPs.
+If any node does not have a matching IP, the VTEP CR will be set to `Accepted=False` with reason `AllocationFailed`.
+
+VTEP Status Conditions will have one type `Accepted` with the following reasons:
+
+- `Allocated` (`Accepted=True`): All nodes have a valid VTEP IP within the configured CIDRs.
+- `AllocationFailed` (`Accepted=False`): One or more nodes have no matching IP, ambiguous matches, or are missing the `vteps` annotation.
+- `CIDROverlap` (`Accepted=False`): The VTEP's CIDRs overlap with another VTEP's CIDRs. Both conflicting VTEPs are set to `Accepted=False`.
+
+The allocated VTEPIPs will not be included in the status. So the user has no way to know what went wrong when
+its `AllocationFailed` and which node to check to fix the situation from the status alone. The node side
+controller will add events in case something goes wrong with the allocation (in managed mode, if the VTEP IP
+could not be added to the loopback interface and in unmanaged mode, if discovery failed) to provide input to the user.
 
 ### CUDN CRD changes for EVPN
 
@@ -403,23 +455,34 @@ There are no foreseen changes required to the RA CRD.
 
 #### VTEP
 
-When a VTEP CR is created in managed mode, ovnkube-cluster-manager will handle
-assigning an VTEP IP to each node. If the cidr range includes the Kubernetes node IP for a node, then the node IP will be
-used for VTEP IP. Note, using the node IP should be avoided in most cases, as that IP will already be tied to a specific
-interface on the node. This prevents proper Layer 3 failure handling. While the node IP on a dedicated link could use
-bonding to prevent Layer 2 failover, if something goes wrong on the Layer 3 interface, or the leaf connected to that
-link goes down, then there is no failover.
-With EVPN, it is advantageous to assign the VTEP IP to a loopback interface, so that multihoming
-and failover handling can occur. If a link goes down to one leaf, BFD will fire, and there will be a mass withdrawal of
+When a VTEP CR is created in managed mode, ovnkube-cluster-manager will handle assigning a VTEP IP to each node and it
+will also handle annotating the node with the allocated IP address. Note that in managed mode, it is expected for the
+user to pick up a range of subnets for VTEPs that is solely for OVN-Kubernetes to provision and this can't be overlapping
+with IPs of other features like EgressIPs, ExternalIPs, KeepAlived VIPs etc. So if a user ends up adding an IP from the
+VTEP CIDRs ranges to the nodes and during allocation ovnkube-cluster-manager also allocates a VTEP IP that ends up in an
+ambiguous multiple VTEP IPs from same CIDR range situation. Moreover the user added IP could actually be an IP allocated
+to another node as the VTEP IP. So it is best practice to provide a non-overlapping range for managed VTEP CIDRs since
+such scenarios will not be handled gracefully. For managed mode, we will add an overlap check with the nodeCIDR range to
+ensure VTEP CIDR doesn't match or overlap with node IP ranges in the cluster.
+
+If the user wants to use their nodeIPs as the VTEP IPs, then they should use unmanaged mode. If the CIDR range in
+unmanaged VTEP includes the Kubernetes node IP for a node, then the node IP will be used for VTEP IP. Note, using the
+node IP should be avoided in most cases, as that IP will already be tied to a specific interface on the node. This
+prevents proper Layer 3 failure handling. While the node IP on a dedicated link could use bonding to prevent Layer 2
+failover, if something goes wrong on the Layer 3 interface, or the leaf connected to that link goes down, then there is
+no failover. With EVPN, it is advantageous to assign the VTEP IP to a loopback interface, so that multihoming and
+failover handling can occur. If a link goes down to one leaf, BFD will fire, and there will be a mass withdrawal of
 routes, moving all traffic to a second leaf.
 
-ovnkube-cluster-manager will handle annotating the node with the assigned IP address. If the VTEP is in unmanaged mode,
-then ovnkube-cluster-manager will only handle checking that all nodes have an IP address annotated for this VTEP. If a
-node is missing the IP, the VTEP will be updated with a failure status condition. Even if a single node fails, the other
-healthy nodes with assigned VTEPs will be configured for EVPN correctly.
+If the VTEP is in unmanaged mode, ovnkube-node discovers IPs on each node that fall within the VTEP CIDRs and writes
+the `k8s.ovn.org/vteps` annotation. ovnkube-cluster-manager then reads this annotation to validate that every node
+has a valid VTEP IP. If a node does not have a matching IP, or has ambiguous matches (multiple IPs of the same address
+family within the VTEP CIDRs), the VTEP is set to `Accepted=False` with reason `AllocationFailed`. The
+RouteAdvertisements controller reads the same `k8s.ovn.org/vteps` annotation when generating FRR configurations to
+advertise the VTEP.
 
-For unmanaged, the ovnkube-node component will handle detecting the IP address on the Linux node and setting the node
-annotation.
+A finalizer (`k8s.ovn.org/vtep-protection`) is added to the VTEP to prevent deletion while it is referenced
+by any CUDN. The VTEP controller re-evaluates the finalizer on CUDN delete events.
 
 #### EVPN
 
@@ -884,6 +947,24 @@ manage. The Linux interfaces on the host must be moved to this other namespace a
 
 For OVN-Kubernetes, the cost of implementing the code to manage the netdevs, and configure FRR-K8S outweighs the
 drawbacks listed above, and therefore OpenPERouter is not a viable alternative.
+
+### VTEP Design
+
+#### Unmanaged Mode: Discover from host-cidrs Instead of a Dedicated Annotation
+
+Another design for unmanaged VTEP mode had ovnkube-cluster-manager discover VTEP IPs by reading
+the existing `k8s.ovn.org/host-cidrs` node annotation and matching those IPs against the VTEP CIDRs.
+This avoided introducing a new annotation, since `host-cidrs` already contains all IPs configured on
+the node (and will be extended to include loopback interface IPs). The RouteAdvertisements controller
+would independently perform the same discovery when generating FRR configurations.
+
+This approach was rejected primarily because users would have no way to know which IP was selected as
+the VTEP IP for a given node without inspecting the `host-cidrs` annotation and mentally replaying
+the matching logic. Surfacing the allocated IPs in `VTEP.Status.NodeAllocations` was considered, but
+at scale (e.g. 5000 nodes) persisting per-node IP mappings in the status of every VTEP object was
+deemed too expensive. So on hand we say for unmanaged mode things are upto the user but on the other
+hand we wanted to provide insight into the VTEP IPs through another a new annotation which isn't the
+best API.
 
 ## References
 

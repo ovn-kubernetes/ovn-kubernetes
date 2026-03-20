@@ -76,7 +76,7 @@ func getEgressQosAddrSetDbIDs(namespace, priority, controller string) *libovsdbo
 }
 
 func getEgressQoSRuleDbIDs(namespace string, rulePriority int) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.QoSEgressQoS, DefaultNetworkControllerName, map[libovsdbops.ExternalIDKey]string{
+	return libovsdbops.NewDbObjectIDs(libovsdbops.QoSEgressQoS, types.DefaultNetworkControllerName, map[libovsdbops.ExternalIDKey]string{
 		libovsdbops.ObjectNameKey: namespace,
 		libovsdbops.PriorityKey:   fmt.Sprintf("%d", rulePriority),
 	})

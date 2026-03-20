@@ -55,7 +55,7 @@ func NewEgressIPInformer(client versioned.Interface, resyncPeriod time.Duration,
 // one. This reduces memory footprint and number of connections to the server.
 func NewFilteredEgressIPInformer(client versioned.Interface, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
@@ -80,7 +80,7 @@ func NewFilteredEgressIPInformer(client versioned.Interface, resyncPeriod time.D
 				}
 				return client.K8sV1().EgressIPs().Watch(ctx, options)
 			},
-		},
+		}, client),
 		&crdegressipv1.EgressIP{},
 		resyncPeriod,
 		indexers,

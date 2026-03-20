@@ -25,6 +25,9 @@ import (
 
 // AdminPolicyBasedExternalRouteApplyConfiguration represents a declarative configuration of the AdminPolicyBasedExternalRoute type for use
 // with apply.
+//
+// AdminPolicyBasedExternalRoute is a CRD allowing the cluster administrators to configure policies for external gateway IPs to be applied to all the pods contained in selected namespaces.
+// Egress traffic from the pods that belong to the selected namespaces to outside the cluster is routed through these external gateway IPs.
 type AdminPolicyBasedExternalRouteApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -41,6 +44,7 @@ func AdminPolicyBasedExternalRoute(name string) *AdminPolicyBasedExternalRouteAp
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b AdminPolicyBasedExternalRouteApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

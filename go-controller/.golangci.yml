@@ -68,6 +68,12 @@ linters:
       - third_party$
       - builtin$
       - examples$
+    rules:
+      # Ignore SA1019 in k8s v1.35 rebase
+      # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6102
+      - linters:
+          - staticcheck
+        text: "SA1019.*NewSimpleClientset"
 formatters:
   enable:
     - gci

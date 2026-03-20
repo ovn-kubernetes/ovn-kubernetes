@@ -548,17 +548,28 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		Expect(err).NotTo(HaveOccurred())
 
 		// check that masquerade subnet annotation got updated
-		node, err := wf.GetNode(nodeName)
-		Expect(err).NotTo(HaveOccurred())
-		subnets, err := util.ParseNodeMasqueradeSubnet(node)
-		Expect(err).NotTo(HaveOccurred())
-		for _, subnet := range subnets {
-			if utilnet.IsIPv4CIDR(subnet) {
-				Expect(subnet.String()).To(Equal(config.Gateway.V4MasqueradeSubnet))
-			} else if utilnet.IsIPv6CIDR(subnet) {
-				Expect(subnet.String()).To(Equal(config.Gateway.V6MasqueradeSubnet))
+		Eventually(func() error {
+			node, err := kubeFakeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+			if err != nil {
+				return err
 			}
-		}
+			subnets, err := util.ParseNodeMasqueradeSubnet(node)
+			if err != nil {
+				return err
+			}
+			for _, subnet := range subnets {
+				if utilnet.IsIPv4CIDR(subnet) {
+					if subnet.String() != config.Gateway.V4MasqueradeSubnet {
+						return fmt.Errorf("unexpected IPv4 masquerade subnet: got %s, want %s", subnet, config.Gateway.V4MasqueradeSubnet)
+					}
+				} else if utilnet.IsIPv6CIDR(subnet) {
+					if subnet.String() != config.Gateway.V6MasqueradeSubnet {
+						return fmt.Errorf("unexpected IPv6 masquerade subnet: got %s, want %s", subnet, config.Gateway.V6MasqueradeSubnet)
+					}
+				}
+			}
+			return nil
+		}, 5).ShouldNot(HaveOccurred())
 
 		return nil
 	}

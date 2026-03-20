@@ -131,15 +131,13 @@ const (
 	// default network and other layer3 secondary networks by cluster manager.
 	OvnNetworkIDs = "k8s.ovn.org/network-ids"
 
-	// ovnUDNLayer2NodeGRLRPTunnelIDs is the constant string representing the tunnel id allocated for the
+	// types.UDNLayer2NodeGRLRPTunnelIDAnnotation is the constant string representing the tunnel id allocated for the
 	// UDN L2 network for this node's GR LRP by cluster manager. This is used to create the remote tunnel
 	// ports for each node.
 	// "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{
 	//		"l2-network-a":"5",
 	//		"l2-network-b":"10"}
 	// }",
-	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
-
 	Layer2TopologyVersion    = "k8s.ovn.org/layer2-topology-version"
 	TransitRouterTopoVersion = "2.0"
 
@@ -505,7 +503,7 @@ func ParseNodeManagementPortMACAddresses(node *corev1.Node, netName string) (net
 
 func HasUDNLayer2NodeGRLRPTunnelID(node *corev1.Node, netName string) bool {
 	var nodeTunMap map[string]json.RawMessage
-	annotation, ok := node.Annotations[ovnUDNLayer2NodeGRLRPTunnelIDs]
+	annotation, ok := node.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation]
 	if !ok {
 		return false
 	}
@@ -519,29 +517,29 @@ func HasUDNLayer2NodeGRLRPTunnelID(node *corev1.Node, netName string) bool {
 	return false
 }
 
-// ParseUDNLayer2NodeGRLRPTunnelIDs parses the 'ovnUDNLayer2NodeGRLRPTunnelIDs' annotation
+// ParseUDNLayer2NodeGRLRPTunnelIDs parses the UDN L2 node GR LRP tunnel ID annotation
 // for the specified network in 'netName' and returns the tunnelID.
 func ParseUDNLayer2NodeGRLRPTunnelIDs(node *corev1.Node, netName string) (int, error) {
-	tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, ovnUDNLayer2NodeGRLRPTunnelIDs)
+	tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, types.UDNLayer2NodeGRLRPTunnelIDAnnotation)
 	if err != nil {
 		return types.InvalidID, err
 	}
 
 	tunnelID, ok := tunnelIDsMap[netName]
 	if !ok {
-		return types.InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnUDNLayer2NodeGRLRPTunnelIDs, netName)
+		return types.InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, types.UDNLayer2NodeGRLRPTunnelIDAnnotation, netName)
 	}
 
 	return strconv.Atoi(tunnelID)
 }
 
-// UpdateUDNLayer2NodeGRLRPTunnelIDs updates the ovnUDNLayer2NodeGRLRPTunnelIDs annotation for the network name 'netName' with the tunnel id 'tunnelID'.
+// UpdateUDNLayer2NodeGRLRPTunnelIDs updates the UDN L2 node GR LRP tunnel ID annotation for the network name 'netName' with the tunnel id 'tunnelID'.
 // If 'tunnelID' is invalid tunnel ID (-1), then it deletes that network from the tunnel ids annotation.
 func UpdateUDNLayer2NodeGRLRPTunnelIDs(annotations map[string]string, netName string, tunnelID int) (map[string]string, error) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	if err := updateNetworkAnnotation(annotations, netName, tunnelID, ovnUDNLayer2NodeGRLRPTunnelIDs); err != nil {
+	if err := updateNetworkAnnotation(annotations, netName, tunnelID, types.UDNLayer2NodeGRLRPTunnelIDAnnotation); err != nil {
 		return nil, err
 	}
 	return annotations, nil
@@ -1171,7 +1169,13 @@ func parseNetworkMapAnnotation(nodeAnnotations map[string]string, annotationName
 	if !ok {
 		return nil, newAnnotationNotSetError("could not find %q annotation", annotationName)
 	}
+	return parseNetworkMapAnnotationValue(annotationName, annotation)
+}
 
+// parseNetworkMapAnnotationValue decodes annotation as a JSON object of
+// `networkName -> string value` pairs and returns it as a Go map.
+// It returns an error when JSON decoding fails or when the parsed map is empty.
+func parseNetworkMapAnnotationValue(annotationName, annotation string) (map[string]string, error) {
 	idsStrMap := map[string]string{}
 	ids := make(map[string]string)
 	if err := json.Unmarshal([]byte(annotation), &ids); err != nil {
@@ -1181,11 +1185,9 @@ func parseNetworkMapAnnotation(nodeAnnotations map[string]string, annotationName
 	for netName, v := range ids {
 		idsStrMap[netName] = v
 	}
-
 	if len(idsStrMap) == 0 {
 		return nil, fmt.Errorf("unexpected empty %s annotation", annotationName)
 	}
-
 	return idsStrMap, nil
 }
 

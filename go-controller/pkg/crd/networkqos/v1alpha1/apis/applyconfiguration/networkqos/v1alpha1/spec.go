@@ -24,11 +24,25 @@ import (
 
 // SpecApplyConfiguration represents a declarative configuration of the Spec type for use
 // with apply.
+//
+// Spec defines the desired state of NetworkQoS
 type SpecApplyConfiguration struct {
-	NetworkSelectors *types.NetworkSelectors             `json:"networkSelectors,omitempty"`
-	PodSelector      *v1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
-	Priority         *int                                `json:"priority,omitempty"`
-	Egress           []RuleApplyConfiguration            `json:"egress,omitempty"`
+	// networkSelector selects the networks on which the pod IPs need to be added to the source address set.
+	// NetworkQoS controller currently supports `NetworkAttachmentDefinitions` type only.
+	NetworkSelectors *types.NetworkSelectors `json:"networkSelectors,omitempty"`
+	// podSelector applies the NetworkQoS rule only to the pods in the namespace whose label
+	// matches this definition. This field is optional, and in case it is not set
+	// results in the rule being applied to all pods in the namespace.
+	PodSelector *v1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// priority is a value from 0 to 100 and represents the NetworkQoS' priority.
+	// QoSes with numerically higher priority takes precedence over those with lower.
+	Priority *int `json:"priority,omitempty"`
+	// egress a collection of Egress NetworkQoS rule objects. A total of 20 rules will
+	// be allowed in each NetworkQoS instance. The relative precedence of egress rules
+	// within a single NetworkQos object (all of which share the priority) will be
+	// determined by the order in which the rule is written. Thus, a rule that appears
+	// first in the list of egress rules would take the lower precedence.
+	Egress []RuleApplyConfiguration `json:"egress,omitempty"`
 }
 
 // SpecApplyConfiguration constructs a declarative configuration of the Spec type for use with

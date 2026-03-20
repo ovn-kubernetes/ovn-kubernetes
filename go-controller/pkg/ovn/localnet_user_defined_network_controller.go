@@ -13,12 +13,14 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	lsm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
@@ -98,16 +100,7 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) IsResourceScheduled(o
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, _ bool) error {
-	switch h.objType {
-	case factory.NodeType:
-		node, ok := obj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to Node", obj)
-		}
-		return h.oc.addUpdateNodeEvent(node)
-	default:
-		return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
-	}
+	return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 }
 
 // UpdateResource updates the specified object in the cluster to its version in newObj according to its
@@ -115,32 +108,14 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj inter
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
-	switch h.objType {
-	case factory.NodeType:
-		node, ok := newObj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to Node", newObj)
-		}
-		return h.oc.addUpdateNodeEvent(node)
-	default:
-		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
-	}
+	return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 }
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
-	switch h.objType {
-	case factory.NodeType:
-		node, ok := obj.(*corev1.Node)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to Node", obj)
-		}
-		return h.oc.deleteNodeEvent(node)
-	default:
-		return h.oc.DeleteUserDefinedNetworkResourceCommon(h.objType, obj, cachedObj)
-	}
+	return h.oc.DeleteUserDefinedNetworkResourceCommon(h.objType, obj, cachedObj)
 }
 
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {
@@ -151,9 +126,6 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(objs []inter
 		syncFunc = h.syncFunc
 	} else {
 		switch h.objType {
-		case factory.NodeType:
-			syncFunc = h.oc.syncNodes
-
 		case factory.PodType:
 			syncFunc = h.oc.syncPodsForUserDefinedNetwork
 
@@ -193,9 +165,15 @@ func NewLocalnetUserDefinedNetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
+	addressSetManager *addresssetmanager.AddressSetManager,
+	nodeReconciler *nodecontroller.NodeController,
 ) *LocalnetUserDefinedNetworkController {
 
 	stopChan := make(chan struct{})
+	nodeAnnotationCache := nodecontroller.NewNodeAnnotationCache()
+	if nodeReconciler != nil {
+		nodeAnnotationCache = nodeReconciler.AnnotationCache()
+	}
 
 	ipv4Mode, ipv6Mode := netInfo.IPMode()
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cnci.nbClient, ipv4Mode, ipv6Mode)
@@ -213,12 +191,14 @@ func NewLocalnetUserDefinedNetworkController(
 					addressSetFactory:           addressSetFactory,
 					networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
 					sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-					podSelectorAddressSets:      syncmap.NewSyncMap[*PodSelectorAddressSet](),
 					stopChan:                    stopChan,
 					wg:                          &sync.WaitGroup{},
 					cancelableCtx:               util.NewCancelableContext(),
 					localZoneNodes:              &sync.Map{},
 					networkManager:              networkManager,
+					addressSetManager:           addressSetManager,
+					nodeReconciler:              nodeReconciler,
+					nodeAnnotationCache:         nodeAnnotationCache,
 				},
 			},
 		},
@@ -262,8 +242,14 @@ func (oc *LocalnetUserDefinedNetworkController) Start(_ context.Context) error {
 	if err := oc.init(); err != nil {
 		return err
 	}
-
-	return oc.run()
+	if err := oc.RegisterNodeHandler(); err != nil {
+		return err
+	}
+	if err := oc.run(); err != nil {
+		oc.DeregisterNodeHandler()
+		return err
+	}
+	return nil
 }
 
 func (oc *LocalnetUserDefinedNetworkController) run() error {
@@ -319,8 +305,27 @@ func (oc *LocalnetUserDefinedNetworkController) Reconcile(netInfo util.NetInfo) 
 	)
 }
 
+func (oc *LocalnetUserDefinedNetworkController) RegisterNodeHandler() error {
+	return oc.nodeReconciler.RegisterNetworkController(oc)
+}
+
+// ReconcileNode reconciles a node for a localnet UDN controller.
+func (oc *LocalnetUserDefinedNetworkController) ReconcileNode(oldNode *corev1.Node, newNode *corev1.Node, _ *nodecontroller.NodeAnnotationState, _ *nodecontroller.NodeAnnotationState) error {
+	if newNode == nil {
+		if oldNode == nil {
+			return fmt.Errorf("nil node received for network %s", oc.GetNetworkName())
+		}
+		return oc.deleteNodeEvent(oldNode)
+	}
+	return oc.addUpdateNodeEvent(newNode)
+}
+
+// SyncNodes runs the node sync for a localnet UDN controller.
+func (oc *LocalnetUserDefinedNetworkController) SyncNodes(nodes []*corev1.Node) error {
+	return oc.syncNodes(nodesToInterfaces(nodes))
+}
+
 func (oc *LocalnetUserDefinedNetworkController) initRetryFramework() {
-	oc.retryNodes = oc.newRetryFramework(factory.NodeType)
 	oc.retryPods = oc.newRetryFramework(factory.PodType)
 	if oc.allocatesPodAnnotation() && oc.AllowsPersistentIPs() {
 		oc.retryIPAMClaims = oc.newRetryFramework(factory.IPAMClaimsType)

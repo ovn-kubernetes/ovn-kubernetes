@@ -167,7 +167,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				reservedCIDRs: "172.16.0.10/30",
 			},
 			expectedError: ContainSubstring(
-				"Invalid value: \"object\": reservedSubnets must be a masked network address (no host bits set)",
+				"Invalid value: reservedSubnets must be a masked network address (no host bits set)",
 			),
 		}),
 		Entry("Layer2 with unmasked IPv6 reserved subnets", invalidAPITestConfig{
@@ -179,7 +179,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				reservedCIDRs: "2014:100:200::88/122",
 			},
 			expectedError: ContainSubstring(
-				"Invalid value: \"object\": reservedSubnets must be a masked network address (no host bits set)",
+				"Invalid value: reservedSubnets must be a masked network address (no host bits set)",
 			),
 		}),
 		Entry("Layer2 with unmasked IPv4 infrastructure subnets", invalidAPITestConfig{
@@ -191,7 +191,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				infrastructureCIDRs: "172.16.0.10/30",
 			},
 			expectedError: ContainSubstring(
-				"Invalid value: \"object\": infrastructureSubnets must be a masked network address (no host bits set)",
+				"Invalid value: infrastructureSubnets must be a masked network address (no host bits set)",
 			),
 		}),
 		Entry("Layer2 with unmasked IPv6 infrastructure subnets", invalidAPITestConfig{
@@ -203,7 +203,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				infrastructureCIDRs: "2014:100:200::88/122",
 			},
 			expectedError: ContainSubstring(
-				"Invalid value: \"object\": infrastructureSubnets must be a masked network address (no host bits set)",
+				"Invalid value: infrastructureSubnets must be a masked network address (no host bits set)",
 			),
 		}),
 	)

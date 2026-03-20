@@ -26,7 +26,8 @@ type userDefinedNetworkClusterManager struct {
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
 
-	errorReporter NetworkStatusReporter
+	errorReporter  NetworkStatusReporter
+	nodeReconciler *clusterManagerNodeController
 }
 
 func newUserDefinedNetworkClusterManager(
@@ -34,6 +35,7 @@ func newUserDefinedNetworkClusterManager(
 	wf *factory.WatchFactory,
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
+	nodeReconciler *clusterManagerNodeController,
 ) (*userDefinedNetworkClusterManager, error) {
 	klog.Infof("Creating user-defined network cluster manager")
 	sncm := &userDefinedNetworkClusterManager{
@@ -41,6 +43,7 @@ func newUserDefinedNetworkClusterManager(
 		watchFactory:   wf,
 		networkManager: networkManager,
 		recorder:       recorder,
+		nodeReconciler: nodeReconciler,
 	}
 	return sncm, nil
 }
@@ -69,6 +72,7 @@ func (sncm *userDefinedNetworkClusterManager) NewNetworkController(nInfo util.Ne
 		sncm.recorder,
 		sncm.networkManager,
 		sncm.errorReporter,
+		sncm.nodeReconciler,
 	)
 	return sncc, nil
 }
@@ -156,6 +160,7 @@ func (sncm *userDefinedNetworkClusterManager) newDummyLayer3NetworkController(ne
 		sncm.recorder,
 		sncm.networkManager,
 		nil,
+		sncm.nodeReconciler,
 	)
 	err := nc.init()
 	return nc, err

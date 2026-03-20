@@ -4,7 +4,11 @@ package v1alpha1
 
 // DNSNameResolverStatusApplyConfiguration represents a declarative configuration of the DNSNameResolverStatus type for use
 // with apply.
+//
+// DNSNameResolverStatus defines the observed status of DNSNameResolver.
 type DNSNameResolverStatusApplyConfiguration struct {
+	// resolvedNames contains a list of matching DNS names and their corresponding IP addresses
+	// along with their TTL and last DNS lookup times.
 	ResolvedNames []DNSNameResolverResolvedNameApplyConfiguration `json:"resolvedNames,omitempty"`
 }
 

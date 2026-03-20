@@ -23,9 +23,13 @@ import (
 
 // ClusterUserDefinedNetworkSpecApplyConfiguration represents a declarative configuration of the ClusterUserDefinedNetworkSpec type for use
 // with apply.
+//
+// ClusterUserDefinedNetworkSpec defines the desired state of ClusterUserDefinedNetwork.
 type ClusterUserDefinedNetworkSpecApplyConfiguration struct {
+	// NamespaceSelector Label selector for which namespace network should be available for.
 	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
-	Network           *NetworkSpecApplyConfiguration          `json:"network,omitempty"`
+	// Network is the user-defined-network spec
+	Network *NetworkSpecApplyConfiguration `json:"network,omitempty"`
 }
 
 // ClusterUserDefinedNetworkSpecApplyConfiguration constructs a declarative configuration of the ClusterUserDefinedNetworkSpec type for use with

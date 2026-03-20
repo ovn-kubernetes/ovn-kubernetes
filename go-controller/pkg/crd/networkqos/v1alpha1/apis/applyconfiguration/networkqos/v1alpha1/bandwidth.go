@@ -19,8 +19,15 @@ package v1alpha1
 
 // BandwidthApplyConfiguration represents a declarative configuration of the Bandwidth type for use
 // with apply.
+//
+// Bandwidth controls the maximum of rate traffic that can be sent
+// or received on the matching packets.
 type BandwidthApplyConfiguration struct {
-	Rate  *uint32 `json:"rate,omitempty"`
+	// rate The value of rate limit in kbps. Traffic over the limit
+	// will be dropped.
+	Rate *uint32 `json:"rate,omitempty"`
+	// burst The value of burst rate limit in kilobits.
+	// This also needs rate to be specified.
 	Burst *uint32 `json:"burst,omitempty"`
 }
 

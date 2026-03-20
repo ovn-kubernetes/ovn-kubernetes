@@ -25,6 +25,12 @@ import (
 
 // EgressQoSApplyConfiguration represents a declarative configuration of the EgressQoS type for use
 // with apply.
+//
+// EgressQoS is a CRD that allows the user to define a DSCP value
+// for pods egress traffic on its namespace to specified CIDRs.
+// Traffic from these pods will be checked against each EgressQoSRule in
+// the namespace's EgressQoS, and if there is a match the traffic is marked
+// with the relevant DSCP value.
 type EgressQoSApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -42,6 +48,7 @@ func EgressQoS(name, namespace string) *EgressQoSApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b EgressQoSApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

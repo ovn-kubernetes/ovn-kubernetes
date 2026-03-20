@@ -5,8 +5,10 @@ package node
 
 import (
 	"fmt"
+	"net"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -21,9 +23,12 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -477,5 +482,94 @@ var _ = Describe("SyncServices", func() {
 			verifyIPTablesRule(iptV4, "10.96.0.40", 80, 30093, true,
 				"iptables rule should be created when UDN is active on this node")
 		})
+	})
+})
+
+var _ = Describe("masqueradeReconciler", func() {
+	var (
+		netlinkMock *utilMocks.NetLinkOps
+		rm          *routemanager.Controller
+		wf          factory.NodeWatchFactory
+	)
+
+	BeforeEach(func() {
+		netlinkMock = new(utilMocks.NetLinkOps)
+		util.SetNetLinkOpMockInst(netlinkMock)
+		rm = routemanager.NewController()
+		fakeClient := fake.NewSimpleClientset()
+		var err error
+		wf, err = factory.NewNodeWatchFactory(&util.OVNNodeClientset{KubeClient: fakeClient}, "node1")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		util.ResetNetLinkOpMockInst()
+		wf.Shutdown()
+	})
+
+	It("skips reconciliation when interface name is empty", func() {
+		config.Gateway.Interface = ""
+		r := &masqueradeReconciler{nodeName: "node1", routeManager: rm, watchFactory: wf}
+		err := r.ensure()
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("returns error when interface does not exist", func() {
+		config.Gateway.Interface = "nonexistent0"
+		r := &masqueradeReconciler{nodeName: "node1", routeManager: rm, watchFactory: wf}
+		netlinkMock.On("LinkByName", "nonexistent0").Return(nil, fmt.Errorf("no such network interface"))
+		err := r.ensure()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("interface nonexistent0 not found"))
+	})
+
+	It("skips reconciliation when mutex is already held", func() {
+		config.Gateway.Interface = "breth0"
+		r := &masqueradeReconciler{nodeName: "node1", routeManager: rm, watchFactory: wf}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		err := r.ensure()
+		Expect(err).NotTo(HaveOccurred())
+		netlinkMock.AssertNotCalled(GinkgoT(), "LinkByName")
+	})
+
+	It("reads config.Gateway.Interface at call time, not at construction", func() {
+		config.Gateway.Interface = "placeholder"
+		r := &masqueradeReconciler{nodeName: "node1", routeManager: rm, watchFactory: wf}
+
+		netlinkMock.On("LinkByName", "placeholder").Return(nil, fmt.Errorf("no such device"))
+		netlinkMock.On("LinkByName", "resolved0").Return(nil, fmt.Errorf("no such device"))
+
+		err := r.ensure()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("interface placeholder not found"))
+
+		config.Gateway.Interface = "resolved0"
+		err = r.ensure()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("interface resolved0 not found"))
+	})
+
+	It("takes fast path when link index matches and masquerade IP is present", func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+		config.Gateway.Interface = "breth0"
+
+		linkMock := new(netlink_mocks.Link)
+		linkMock.On("Attrs").Return(&netlink.LinkAttrs{Index: 10, Name: "breth0"})
+
+		_, masqSubnet, _ := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+		masqSubnet.IP = config.Gateway.MasqueradeIPs.V4HostMasqueradeIP
+		netlinkMock.On("LinkByName", "breth0").Return(linkMock, nil)
+		netlinkMock.On("AddrList", linkMock, netlink.FAMILY_V4).Return([]netlink.Addr{
+			{IPNet: masqSubnet},
+		}, nil)
+
+		r := &masqueradeReconciler{nodeName: "node1", routeManager: rm, watchFactory: wf, lastLinkIndex: 10}
+		err := r.ensure()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.lastLinkIndex).To(Equal(10))
 	})
 })

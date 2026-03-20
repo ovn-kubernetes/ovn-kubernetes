@@ -2,6 +2,7 @@ package networkmanager
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -401,4 +402,51 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 	err = nm.syncNetwork(networkName)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(followupCalls).To(gomega.Equal(0))
+}
+
+func TestNetworkControllerStopsNetworkOnStartFailure(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+		raiseErrorWhenStartingController: fmt.Errorf("start failed"),
+	}
+	nm := newNetworkController("", "", "", tcm, nil)
+
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+	networkName := mutableNetInfo.GetNetworkName()
+	nm.setNetwork(networkName, mutableNetInfo)
+
+	err = nm.syncNetwork(networkName)
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("failed to start network"))
+
+	tcm.Lock()
+	defer tcm.Unlock()
+	expectedNetworkKey := testNetworkKey(netInfo)
+	g.Expect(tcm.started).To(gomega.Equal([]string{expectedNetworkKey}))
+	g.Expect(tcm.stopped).To(gomega.Equal([]string{expectedNetworkKey}))
 }

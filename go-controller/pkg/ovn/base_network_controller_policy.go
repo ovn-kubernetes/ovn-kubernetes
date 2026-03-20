@@ -3,13 +3,13 @@ package ovn
 import (
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -164,6 +164,10 @@ type networkPolicy struct {
 
 	// network policy owns only 1 local pod handler
 	localPodHandler *factory.Handler
+	// localPodSelector mirrors the selector used by the local pod watcher.
+	localPodSelector labels.Selector
+	// retry framework for this policy's local pod selector watcher
+	localPodRetry *retry.RetryFramework
 	// peer namespace reconcilers
 	reconcilePeerNamespaces []*peerNamespacesRetry
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
@@ -914,7 +918,41 @@ func (bnc *BaseNetworkController) addLocalPodHandler(policy *knet.NetworkPolicy,
 	}
 
 	np.localPodHandler = podHandler
+	np.localPodSelector = sel
+	np.localPodRetry = retryLocalPods
 	return nil
+}
+
+// requestLocalPodPolicyRetriesForPod requests immediate retries for local pod
+// selector handlers that currently have a failed retry entry for this pod.
+func (bnc *BaseNetworkController) requestLocalPodPolicyRetriesForPod(pod *corev1.Pod, reason string) {
+	if bnc.networkPolicies == nil || pod == nil {
+		return
+	}
+	for _, npKey := range bnc.networkPolicies.GetKeys() {
+		np, ok := bnc.networkPolicies.Load(npKey)
+		if !ok || np == nil || np.namespace != pod.Namespace {
+			continue
+		}
+		np.RLock()
+		localPodSelector := np.localPodSelector
+		retryLocalPods := np.localPodRetry
+		deleted := np.deleted
+		np.RUnlock()
+		if deleted || retryLocalPods == nil || localPodSelector == nil || !localPodSelector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		requested, err := retryLocalPods.RequestRetryObjWithNoBackoff(pod)
+		if err != nil {
+			klog.Warningf("Failed to request immediate localPodSelector retry for network policy %s, pod %s/%s: %v",
+				npKey, pod.Namespace, pod.Name, err)
+			continue
+		}
+		if requested {
+			klog.V(5).Infof("Requested immediate localPodSelector retry for network policy %s, pod %s/%s due to %s",
+				npKey, pod.Namespace, pod.Name, reason)
+		}
+	}
 }
 
 func (bnc *BaseNetworkController) getNetworkPolicyPortGroupDbIDs(namespace, name string) *libovsdbops.DbObjectIDs {
@@ -1170,8 +1208,8 @@ func (bnc *BaseNetworkController) setupGressPolicy(np *networkPolicy, gp *gressP
 		podSelector = &metav1.LabelSelector{}
 	}
 	// np.namespace will be used when fromJSON.NamespaceSelector = nil
-	asKey, ipv4as, ipv6as, err := bnc.EnsurePodSelectorAddressSet(
-		podSelector, peer.NamespaceSelector, np.namespace, np.getKeyWithKind())
+	asKey, ipv4as, ipv6as, err := bnc.addressSetManager.EnsureAddressSet(
+		podSelector, peer.NamespaceSelector, np.namespace, np.getKeyWithKind(), bnc.controllerName, bnc.GetNetInfo())
 	// even if GetPodSelectorAddressSet failed, add key for future cleanup or retry.
 	np.peerAddressSets = append(np.peerAddressSets, asKey)
 	if err != nil {
@@ -1373,7 +1411,7 @@ func (bnc *BaseNetworkController) cleanupNetworkPolicy(np *networkPolicy) error 
 	// delete from peer address set, this may cause address set deletion, so we need to
 	// do that after ACLs are deleted to avoid ovn-controller errors
 	for i, asKey := range np.peerAddressSets {
-		if err := bnc.DeletePodSelectorAddressSet(asKey, np.getKeyWithKind()); err != nil {
+		if err := bnc.addressSetManager.DeleteAddressSet(asKey, np.getKeyWithKind()); err != nil {
 			// remove deleted address sets from the list
 			np.peerAddressSets = np.peerAddressSets[i:]
 			return fmt.Errorf("failed to delete network policy from peer address set %s: %v", asKey, err)
@@ -1603,6 +1641,8 @@ func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
 	if np.localPodHandler != nil {
 		bnc.watchFactory.RemovePodHandler(np.localPodHandler)
 		np.localPodHandler = nil
+		np.localPodSelector = nil
+		np.localPodRetry = nil
 	}
 	for _, retry := range np.reconcilePeerNamespaces {
 		bnc.watchFactory.RemoveNamespaceHandler(retry.handler)
@@ -1634,17 +1674,6 @@ func PortGroupHasPorts(nbClient libovsdbclient.Client, pgName string, portUUIDs 
 	}
 
 	return sets.NewString(pg.Ports...).HasAll(portUUIDs...)
-}
-
-// getStaleNetpolAddrSetDbIDs returns the ids for address sets that were owned by network policy before we
-// switched to shared address sets with PodSelectorAddressSet. Should only be used for sync and testing.
-func getStaleNetpolAddrSetDbIDs(policyNamespace, policyName, policyType, idx, controller string) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNetworkPolicy, controller, map[libovsdbops.ExternalIDKey]string{
-		libovsdbops.ObjectNameKey: policyNamespace + "_" + policyName,
-		// direction and idx uniquely identify address set (= gress policy rule)
-		libovsdbops.PolicyDirectionKey: strings.ToLower(policyType),
-		libovsdbops.GressIdxKey:        idx,
-	})
 }
 
 func (bnc *BaseNetworkController) getNetpolDefaultACLDbIDs(direction string) *libovsdbops.DbObjectIDs {

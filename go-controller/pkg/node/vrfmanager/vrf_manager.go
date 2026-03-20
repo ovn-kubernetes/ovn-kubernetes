@@ -217,11 +217,11 @@ func (vrfm *Controller) sync(vrf vrf) error {
 		}
 	}
 	if len(vrf.managedSlave) > 0 {
-		existingSlaves, err := getSlaveInterfaceNamesForVRF(vrfLink)
+		alreadyEnslaved, err := isInterfaceSlaveOfVRF(vrf.managedSlave, vrfLink.Attrs().Index)
 		if err != nil {
-			return fmt.Errorf("failed to get existing slaves for VRF device %s, err: %v", vrfLink.Attrs().Name, err)
+			return fmt.Errorf("failed to check if %s is slave of VRF device %s, err: %v", vrf.managedSlave, vrfLink.Attrs().Name, err)
 		}
-		if !existingSlaves.Has(vrf.managedSlave) {
+		if !alreadyEnslaved {
 			if err = enslaveInterfaceToVRF(vrf.name, vrf.managedSlave); err != nil {
 				return fmt.Errorf("failed to enslave interface %s into VRF device: %s, err: %v", vrf.managedSlave, vrf.name, err)
 			}
@@ -425,18 +425,16 @@ func (vrfm *Controller) deleteVRF(link netlink.Link) error {
 	return util.GetNetLinkOps().LinkDelete(link)
 }
 
-func getSlaveInterfaceNamesForVRF(vrfLink netlink.Link) (sets.Set[string], error) {
-	links, err := util.GetNetLinkOps().LinkList()
+// isInterfaceSlaveOfVRF checks if a specific interface is enslaved to a VRF
+func isInterfaceSlaveOfVRF(ifName string, vrfIndex int) (bool, error) {
+	link, err := util.GetNetLinkOps().LinkByName(ifName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list links on the node, err: %v", err)
-	}
-	enslavedInterfaces := make(sets.Set[string])
-	for _, link := range links {
-		if link.Attrs().MasterIndex == vrfLink.Attrs().Index {
-			enslavedInterfaces.Insert(link.Attrs().Name)
+		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+			return false, nil
 		}
+		return false, fmt.Errorf("failed to get link %s, err: %v", ifName, err)
 	}
-	return enslavedInterfaces, nil
+	return link.Attrs().MasterIndex == vrfIndex, nil
 }
 
 func enslaveInterfaceToVRF(vrfName, ifName string) error {

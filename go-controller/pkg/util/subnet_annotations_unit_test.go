@@ -28,7 +28,7 @@ func TestCreateSubnetAnnotation(t *testing.T) {
 	}{
 		{
 			desc:              "non-zero length annotation name and subnet list size of ONE provided as input",
-			inpAnnotName:      ovnNodeSubnets,
+			inpAnnotName:      types.NodeSubnetsAnnotation,
 			inpDefaultSubnets: []string{"192.168.1.12/24"},
 		},
 		{
@@ -38,12 +38,12 @@ func TestCreateSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:              "non-zero length annotation name and subnet list size greater than ONE provided as input",
-			inpAnnotName:      ovnNodeSubnets,
+			inpAnnotName:      types.NodeSubnetsAnnotation,
 			inpDefaultSubnets: []string{"192.168.1.12/24", "fd02:0:0:2::2895/64"},
 		},
 		{
 			desc:              "subnet list of size 0 provided as input",
-			inpAnnotName:      ovnNodeSubnets,
+			inpAnnotName:      types.NodeSubnetsAnnotation,
 			inpDefaultSubnets: []string{},
 		},
 	}
@@ -82,7 +82,7 @@ func TestSetSubnetAnnotation(t *testing.T) {
 		{
 			desc:             "tests function coverage, success path",
 			inpNodeAnnotator: testAnnotator,
-			inpAnnotName:     ovnNodeSubnets,
+			inpAnnotName:     types.NodeSubnetsAnnotation,
 			inpDefSubnetIps:  ovntest.MustParseIPNets("192.168.1.12/24"),
 		},
 	}
@@ -119,7 +119,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:    "correct annotation with one subnet",
-			annName: ovnNodeSubnets,
+			annName: types.NodeSubnetsAnnotation,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
@@ -131,7 +131,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:    "parse as dual-stack",
-			annName: ovnNodeSubnets,
+			annName: types.NodeSubnetsAnnotation,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
@@ -143,7 +143,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:        "error:cannot parse as single or dual stack",
-			annName:     ovnNodeSubnets,
+			annName:     types.NodeSubnetsAnnotation,
 			errExpected: true,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -156,7 +156,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:        "error: annotation has no default network",
-			annName:     ovnNodeSubnets,
+			annName:     types.NodeSubnetsAnnotation,
 			errExpected: true,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -348,6 +348,18 @@ func TestParseNodeHostSubnetAnnotation(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			desc: "rejects empty subnet entry",
+			inpNode: corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "testNode",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-subnets": "{\"default\":[]}",
+					},
+				},
+			},
+			errExp: true,
 		},
 	}
 	for i, tc := range tests {

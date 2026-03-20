@@ -6,6 +6,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func extractVMFromExternalIDs(externalIDs map[string]string) *ktypes.NamespacedName {
@@ -49,11 +50,24 @@ func externalIDsContainsVM(externalIDs map[string]string, vm *ktypes.NamespacedN
 // OwnsItAndIsOrphanOrWrongZone return true if kubevirt owns this OVN NB
 // resource by checking if it has the VM name in external_ids and also checks
 // if the expected ovn zone corresponds with the one it created via the
-// OvnZoneExternalIDKey
-func ownsItAndIsOrphanOrWrongZone(externalIDs map[string]string, vms map[ktypes.NamespacedName]bool) bool {
+// OvnZoneExternalIDKey.
+// The controllerName parameter ensures that only resources owned by the
+// specified controller are considered for deletion, preventing cross-controller
+// interference (e.g. default network controller deleting UDN DHCP options).
+func ownsItAndIsOrphanOrWrongZone(externalIDs map[string]string, vms map[ktypes.NamespacedName]bool, controllerName string) bool {
 	// FIXME: VM IDs have no DB IDs and therefore may clash with other LRPs that do contain DB IBs. They will always have ObjectNameKey
 	// set therefore we now depend on the following key to be present. Remove this when DB IDs are implemented.
 	if _, ok := externalIDs[OvnZoneExternalIDKey]; !ok {
+		return false
+	}
+
+	// Only consider resources owned by this controller. Resources created by
+	// other controllers (e.g. UDN controllers) must not be deleted here.
+	owner := externalIDs[string(libovsdbops.OwnerControllerKey)]
+	if owner == "" {
+		owner = types.DefaultNetworkControllerName
+	}
+	if owner != controllerName {
 		return false
 	}
 	vm := extractVMFromExternalIDs(externalIDs)

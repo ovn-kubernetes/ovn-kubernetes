@@ -850,10 +850,8 @@ func serviceUpdateNotNeeded(old, new *corev1.Service) bool {
 		reflect.DeepEqual(new.Spec.Type, old.Spec.Type) &&
 		reflect.DeepEqual(new.Status.LoadBalancer.Ingress, old.Status.LoadBalancer.Ingress) &&
 		reflect.DeepEqual(new.Spec.ExternalTrafficPolicy, old.Spec.ExternalTrafficPolicy) &&
-		(new.Spec.InternalTrafficPolicy != nil && old.Spec.InternalTrafficPolicy != nil &&
-			reflect.DeepEqual(*new.Spec.InternalTrafficPolicy, *old.Spec.InternalTrafficPolicy)) &&
-		(new.Spec.AllocateLoadBalancerNodePorts != nil && old.Spec.AllocateLoadBalancerNodePorts != nil &&
-			reflect.DeepEqual(*new.Spec.AllocateLoadBalancerNodePorts, *old.Spec.AllocateLoadBalancerNodePorts))
+		reflect.DeepEqual(new.Spec.InternalTrafficPolicy, old.Spec.InternalTrafficPolicy) &&
+		reflect.DeepEqual(new.Spec.AllocateLoadBalancerNodePorts, old.Spec.AllocateLoadBalancerNodePorts)
 }
 
 // AddService handles configuring shared gateway bridge flows to steer External IP, Node Port, Ingress LB traffic into OVN
@@ -1795,7 +1793,6 @@ func newGateway(
 			}
 			gw.openflowManager.requestFlowSync()
 		}
-
 		if config.Gateway.NodeportEnable {
 			klog.Info("Creating Gateway Node Port Watcher")
 			gw.nodePortWatcher, err = newNodePortWatcher(gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, networkManager)
@@ -2099,6 +2096,96 @@ func setNodeMasqueradeIPOnExtBridge(extBridgeName string) error {
 		}
 	}
 
+	return nil
+}
+
+// masqueradeIPConfigured checks if the masquerade IPv4/IPv6 addresses are
+// present on the given link.
+func masqueradeIPConfigured(link netlink.Link) bool {
+	if config.IPv4Mode {
+		_, masqIPNet, _ := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+		masqIPNet.IP = config.Gateway.MasqueradeIPs.V4HostMasqueradeIP
+		if exists, err := util.LinkAddrExist(link, masqIPNet); err != nil || !exists {
+			return false
+		}
+	}
+	if config.IPv6Mode {
+		_, masqIPNet, _ := net.ParseCIDR(config.Gateway.V6MasqueradeSubnet)
+		masqIPNet.IP = config.Gateway.MasqueradeIPs.V6HostMasqueradeIP
+		if exists, err := util.LinkAddrExist(link, masqIPNet); err != nil || !exists {
+			return false
+		}
+	}
+	return true
+}
+
+// masqueradeReconciler ensures that all masquerade-related resources
+// (IP addresses, routes, and MAC bindings) are configured on the gateway interface.
+// It is idempotent and safe to call concurrently from multiple event sources
+// (linkManager, addressManager). A mutex serializes concurrent calls.
+//
+// A fast path checks if the masquerade IP is present and the interface has not changed
+// (same LinkIndex as last successful run). This makes frequent calls cheap (~2 netlink reads).
+// The slow path restores all resources in dependency order: masquerade IP first (routes
+// depend on it for gateway reachability), then routes, then MAC bindings.
+type masqueradeReconciler struct {
+	mu            sync.Mutex
+	lastLinkIndex int
+	routeManager  *routemanager.Controller
+	nodeName      string
+	watchFactory  factory.NodeWatchFactory
+}
+
+func (r *masqueradeReconciler) ensure() error {
+	if r.routeManager == nil || r.watchFactory == nil {
+		return fmt.Errorf("masquerade reconciler not fully initialized (routeManager=%v, watchFactory=%v)", r.routeManager, r.watchFactory)
+	}
+	gwIface := config.Gateway.Interface
+	if gwIface == "" || gwIface == types.DeriveFromMgmtPort {
+		return nil
+	}
+	if !r.mu.TryLock() {
+		return nil
+	}
+	defer r.mu.Unlock()
+
+	link, err := util.GetNetLinkOps().LinkByName(gwIface)
+	if err != nil {
+		return fmt.Errorf("interface %s not found: %w", gwIface, err)
+	}
+
+	// Fast path: same interface (LinkIndex) and masquerade IP present — resources are healthy.
+	if link.Attrs().Index == r.lastLinkIndex && masqueradeIPConfigured(link) {
+		return nil
+	}
+
+	klog.Infof("Ensuring masquerade resources on %s (ifindex=%d, lastSuccessful=%d)",
+		gwIface, link.Attrs().Index, r.lastLinkIndex)
+
+	// Verify interface has a primary (non-link-local, non-masquerade) IP before adding
+	// any resources. Prevents adding masquerade IP before DHCP completes.
+	ifAddrs, err := nodeutil.GetNetworkInterfaceIPAddresses(gwIface)
+	if err != nil {
+		return fmt.Errorf("failed to get IP addresses for interface %s: %w", gwIface, err)
+	}
+	// 1. Masquerade IP first — routes depend on it for gateway reachability.
+	if err := setNodeMasqueradeIPOnExtBridge(gwIface); err != nil {
+		return fmt.Errorf("failed to set masquerade IP: %w", err)
+	}
+	// 2. Routes with the current LinkIndex (interface may have been recreated).
+	if err := addMasqueradeRoute(r.routeManager, gwIface, r.nodeName, ifAddrs, r.watchFactory); err != nil {
+		return fmt.Errorf("failed to add masquerade route: %w", err)
+	}
+	if err := configureSvcRouteViaInterface(r.routeManager, gwIface, DummyNextHopIPs()); err != nil {
+		return fmt.Errorf("failed to configure service route: %w", err)
+	}
+	// 3. ARP/ND entries for masquerade IPs.
+	if err := addHostMACBindings(gwIface); err != nil {
+		return fmt.Errorf("failed to add MAC bindings: %w", err)
+	}
+
+	r.lastLinkIndex = link.Attrs().Index
+	klog.Infof("Masquerade resources ensured on %s (ifindex=%d)", gwIface, r.lastLinkIndex)
 	return nil
 }
 

@@ -15,6 +15,7 @@ import (
 	houtil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	sharednode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -210,6 +211,33 @@ func (na *NodeAllocator) NeedsNodeAllocation(node *corev1.Node) bool {
 
 	return false
 
+}
+
+// NeedsNodeAllocationWithState determines if the annotations assigned by
+// NodeAllocator are missing on a node using pre-parsed node annotation state.
+func (na *NodeAllocator) NeedsNodeAllocationWithState(node *corev1.Node, state *sharednode.NodeAnnotationState) bool {
+	if util.NoHostSubnet(node) {
+		if na.hasHybridOverlayAllocation() {
+			if _, ok := node.Annotations[hotypes.HybridOverlayNodeSubnet]; !ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	if na.hasNodeSubnetAllocation() {
+		if _, err := state.Subnets(na.netInfo.GetNetworkName()); err != nil {
+			return true
+		}
+	}
+
+	if na.HasNodeTunnelIDAllocation() {
+		if _, err := state.TunnelID(na.netInfo.GetNetworkName()); err != nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // HandleAddUpdateNodeEvent handles the add or update node event
@@ -595,6 +623,16 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 func (na *NodeAllocator) hasNodeSubnetAllocation() bool {
 	// we only allocate subnets for L3 secondary network or default network
 	return na.netInfo.TopologyType() == types.Layer3Topology || !na.netInfo.IsUserDefinedNetwork()
+}
+
+func (na *NodeAllocator) HasNodeSubnetAllocation() bool {
+	return na.hasNodeSubnetAllocation()
+}
+
+func (na *NodeAllocator) HasNodeTunnelIDAllocation() bool {
+	return util.IsNetworkSegmentationSupportEnabled() &&
+		na.netInfo.IsPrimaryNetwork() &&
+		util.DoesNetworkRequireTunnelIDs(na.netInfo)
 }
 
 func (na *NodeAllocator) markAllocatedNetworksForUnmanagedHONode(node *corev1.Node) error {

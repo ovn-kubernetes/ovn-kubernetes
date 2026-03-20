@@ -22,6 +22,7 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -33,6 +34,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -51,8 +53,6 @@ type ControllerManager struct {
 	nbClient libovsdbclient.Client
 	// libovsdb southbound client interface
 	sbClient libovsdbclient.Client
-	// has SCTP support
-	SCTPSupport bool
 	// Supports multicast?
 	multicastSupport bool
 	// Supports OVN Template Load Balancers?
@@ -66,9 +66,12 @@ type ControllerManager struct {
 	// networkManager creates and deletes network controllers
 	networkManager     networkmanager.Controller
 	routeImportManager routeimport.Controller
+	udnNodeController  *nodecontroller.NodeController
 
 	// eIPController programs OVN to support EgressIP
 	eIPController *ovn.EgressIPController
+
+	addressSetManager *addresssetmanager.AddressSetManager
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -81,13 +84,23 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
-			cm.eIPController, cm.portCache)
+		oc, err := ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
+			cm.eIPController, cm.portCache, cm.addressSetManager, cm.udnNodeController)
+		if err != nil {
+			return nil, err
+		}
+		return oc, nil
 	case ovntypes.Layer2Topology:
-		return ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
-			cm.portCache, cm.eIPController)
+		oc, err := ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager,
+			cm.portCache, cm.eIPController, cm.addressSetManager, cm.udnNodeController)
+		if err != nil {
+			return nil, err
+		}
+		return oc, nil
 	case ovntypes.LocalnetTopology:
-		return ovn.NewLocalnetUserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface()), nil
+		oc := ovn.NewLocalnetUserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.addressSetManager,
+			cm.udnNodeController)
+		return oc, nil
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }
@@ -105,11 +118,13 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName, role s
 	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType, Role: role})
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
+		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager,
+			cm.eIPController, cm.portCache, cm.addressSetManager, nil)
 	case ovntypes.Layer2Topology:
-		return ovn.NewLayer2UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController)
+		return ovn.NewLayer2UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager,
+			cm.portCache, cm.eIPController, cm.addressSetManager, nil)
 	case ovntypes.LocalnetTopology:
-		return ovn.NewLocalnetUserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface()), nil
+		return ovn.NewLocalnetUserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.addressSetManager, nil), nil
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }
@@ -282,6 +297,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		if err != nil {
 			return nil, err
 		}
+		cm.udnNodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface())
 	}
 
 	if util.IsRouteAdvertisementsEnabled() {
@@ -290,23 +306,10 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		}
 		cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient)
 	}
+	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),
+		cm.watchFactory.NamespaceInformer(), cm.nbClient, cm.networkManager.Interface().GetNetworkNameForNADKey)
 
 	return cm, nil
-}
-
-func (cm *ControllerManager) configureSCTPSupport() error {
-	hasSCTPSupport, err := util.DetectSCTPSupport()
-	if err != nil {
-		return err
-	}
-
-	if !hasSCTPSupport {
-		klog.Warningf("SCTP unsupported by this version of OVN. Kubernetes service creation with SCTP will not work ")
-	} else {
-		klog.Info("SCTP support detected in OVN")
-	}
-	cm.SCTPSupport = hasSCTPSupport
-	return nil
 }
 
 func (cm *ControllerManager) configureSvcTemplateSupport() {
@@ -361,7 +364,7 @@ func (cm *ControllerManager) createACLLoggingMeter() error {
 // newCommonNetworkControllerInfo creates and returns the common networkController info
 func (cm *ControllerManager) newCommonNetworkControllerInfo(wf *factory.WatchFactory) (*ovn.CommonNetworkControllerInfo, error) {
 	return ovn.NewCommonNetworkControllerInfo(cm.client, cm.kube, wf, cm.recorder, cm.nbClient,
-		cm.sbClient, cm.podRecorder, cm.SCTPSupport, cm.multicastSupport, cm.svcTemplateSupport)
+		cm.sbClient, cm.podRecorder, cm.multicastSupport, cm.svcTemplateSupport)
 }
 
 // initDefaultNetworkController creates the controller for default network
@@ -370,7 +373,7 @@ func (cm *ControllerManager) initDefaultNetworkController(observManager *observa
 	if err != nil {
 		return fmt.Errorf("failed to create common network controller info: %w", err)
 	}
-	defaultController, err := ovn.NewDefaultNetworkController(cnci, observManager, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
+	defaultController, err := ovn.NewDefaultNetworkController(cnci, observManager, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache, cm.addressSetManager)
 	if err != nil {
 		return err
 	}
@@ -450,11 +453,6 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	cm.configureMetrics(cm.stopChan)
 
-	err = cm.configureSCTPSupport()
-	if err != nil {
-		return err
-	}
-
 	cm.configureSvcTemplateSupport()
 
 	err = cm.createACLLoggingMeter()
@@ -470,9 +468,13 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 	cm.podRecorder.Run(cm.sbClient, cm.stopChan)
 
+	if err := cm.addressSetManager.Start(); err != nil {
+		return fmt.Errorf("failed to start address set manager: %w", err)
+	}
+
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		cm.eIPController = ovn.NewEIPController(cm.nbClient, cm.kube, cm.watchFactory, cm.recorder, cm.portCache, cm.networkManager.Interface(),
-			addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode), config.IPv4Mode, config.IPv6Mode, zone, ovn.DefaultNetworkControllerName)
+			addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode), config.IPv4Mode, config.IPv6Mode, zone, ovntypes.DefaultNetworkControllerName)
 		// FIXME(martinkennelly): remove when EIP controller is fully extracted from from DNC and started here. Ensure SyncLocalNodeZonesCache is re-enabled in EIP controller.
 		if err = cm.eIPController.SyncLocalNodeZonesCache(); err != nil {
 			klog.Warningf("Failed to sync EgressIP controllers local node node cache: %v", err)
@@ -514,6 +516,11 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 
 	if cm.networkManager != nil {
+		if cm.udnNodeController != nil {
+			if err = cm.udnNodeController.Start(); err != nil {
+				return fmt.Errorf("failed to start UDN node topology controller: %v", err)
+			}
+		}
 		if err = cm.networkManager.Start(); err != nil {
 			return fmt.Errorf("failed to start NAD Controller :%v", err)
 		}
@@ -546,11 +553,18 @@ func (cm *ControllerManager) Stop() {
 
 	// stop the NAD controller
 	if cm.networkManager != nil {
+		if cm.udnNodeController != nil {
+			cm.udnNodeController.Stop()
+		}
 		cm.networkManager.Stop()
 	}
 
 	if cm.routeImportManager != nil {
 		cm.routeImportManager.Stop()
+	}
+
+	if cm.addressSetManager != nil {
+		cm.addressSetManager.Stop()
 	}
 }
 

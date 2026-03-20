@@ -13,7 +13,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listersv1 "k8s.io/client-go/listers/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -46,8 +45,8 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 		name        string
 		node        *corev1.Node
 		ctx         context.Context
-		oldObj      runtime.Object
-		newObj      runtime.Object
+		oldObj      *corev1.Pod
+		newObj      *corev1.Pod
 		expectedErr error
 	}{
 		{
@@ -449,8 +448,8 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 		name        string
 		node        *corev1.Node
 		ctx         context.Context
-		oldObj      runtime.Object
-		newObj      runtime.Object
+		oldObj      *corev1.Pod
+		newObj      *corev1.Pod
 		expectedErr error
 	}{
 		{

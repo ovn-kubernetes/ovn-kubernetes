@@ -264,14 +264,14 @@ const advertisedNetworkSubnetsKey = "advertised-network-subnets"
 
 // GetAdvertisedNetworkSubnetsAddressSetDBIDs returns the DB IDs for the advertised network subnets addressset
 func GetAdvertisedNetworkSubnetsAddressSetDBIDs() *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetAdvertisedNetwork, DefaultNetworkControllerName, map[libovsdbops.ExternalIDKey]string{
+	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetAdvertisedNetwork, types.DefaultNetworkControllerName, map[libovsdbops.ExternalIDKey]string{
 		libovsdbops.ObjectNameKey: advertisedNetworkSubnetsKey,
 	})
 }
 
 // GetAdvertisedNetworkSubnetsDropACLdbIDs returns the DB IDs for the advertised network subnets drop ACL
 func GetAdvertisedNetworkSubnetsDropACLdbIDs() *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLAdvertisedNetwork, DefaultNetworkControllerName,
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLAdvertisedNetwork, types.DefaultNetworkControllerName,
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: advertisedNetworkSubnetsKey,
 			libovsdbops.NetworkKey:    "",

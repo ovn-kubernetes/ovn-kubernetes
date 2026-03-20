@@ -24,10 +24,25 @@ import (
 
 // EgressServiceSpecApplyConfiguration represents a declarative configuration of the EgressServiceSpec type for use
 // with apply.
+//
+// EgressServiceSpec defines the desired state of EgressService
 type EgressServiceSpecApplyConfiguration struct {
-	SourceIPBy   *egressservicev1.SourceIPMode           `json:"sourceIPBy,omitempty"`
+	// Determines the source IP of egress traffic originating from the pods backing the LoadBalancer Service.
+	// When `LoadBalancerIP` the source IP is set to its LoadBalancer ingress IP.
+	// When `Network` the source IP is set according to the interface of the Network,
+	// leveraging the masquerade rules that are already in place.
+	// Typically these rules specify SNAT to the IP of the outgoing interface,
+	// which means the packet will typically leave with the IP of the node.
+	SourceIPBy *egressservicev1.SourceIPMode `json:"sourceIPBy,omitempty"`
+	// Allows limiting the nodes that can be selected to handle the service's traffic when sourceIPBy=LoadBalancerIP.
+	// When present only a node whose labels match the specified selectors can be selected
+	// for handling the service's traffic.
+	// When it is not specified any node in the cluster can be chosen to manage the service's traffic.
 	NodeSelector *metav1.LabelSelectorApplyConfiguration `json:"nodeSelector,omitempty"`
-	Network      *string                                 `json:"network,omitempty"`
+	// The network which this service should send egress and corresponding ingress replies to.
+	// This is typically implemented as VRF mapping, representing a numeric id or string name
+	// of a routing table which by omission uses the default host routing.
+	Network *string `json:"network,omitempty"`
 }
 
 // EgressServiceSpecApplyConfiguration constructs a declarative configuration of the EgressServiceSpec type for use with

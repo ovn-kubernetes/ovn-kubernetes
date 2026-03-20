@@ -34,7 +34,7 @@ ifeq ($(strip $(OVN_EXTRA_PACKAGES)),)
 OVN_EXTRA_PACKAGES = libasan libubsan
 endif
 endif
-GO_VERSION ?= 1.24
+GO_VERSION ?= 1.25
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 
 OCI_BIN ?= docker
@@ -53,7 +53,7 @@ ubuntu-shared-gw-deployment: ubuntu-image
 	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 
-FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:42
+FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:43
 
 fedora-image:
 	${OCI_BIN} pull --platform=linux/${ARCH} ${FEDORA_BASE_IMAGE} 2>/dev/null || true; \

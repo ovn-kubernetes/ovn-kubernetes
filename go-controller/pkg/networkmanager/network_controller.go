@@ -470,6 +470,7 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 
 	err = nc.Start(context.Background())
 	if err != nil {
+		nc.Stop()
 		return fmt.Errorf("failed to start network %s: %w", networkName, err)
 	}
 	c.setNetworkState(network.GetNetworkName(), &networkControllerState{controller: nc})

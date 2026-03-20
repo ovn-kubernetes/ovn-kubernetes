@@ -20,7 +20,12 @@ package v1alpha1
 // RuleApplyConfiguration represents a declarative configuration of the Rule type for use
 // with apply.
 type RuleApplyConfiguration struct {
-	DSCP       *int                          `json:"dscp,omitempty"`
+	// dscp marking value for matching pods' traffic.
+	DSCP *int `json:"dscp,omitempty"`
+	// classifier The classifier on which packets should match
+	// to apply the NetworkQoS Rule.
+	// This field is optional, and in case it is not set the rule is applied
+	// to all egress traffic regardless of the destination.
 	Classifier *ClassifierApplyConfiguration `json:"classifier,omitempty"`
 	Bandwidth  *BandwidthApplyConfiguration  `json:"bandwidth,omitempty"`
 }

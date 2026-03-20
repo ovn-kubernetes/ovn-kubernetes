@@ -25,6 +25,13 @@ import (
 
 // NetworkQoSApplyConfiguration represents a declarative configuration of the NetworkQoS type for use
 // with apply.
+//
+// NetworkQoS is a CRD that allows the user to define a DSCP marking and metering
+// for pods ingress/egress traffic on its namespace to specified CIDRs,
+// protocol and port. Traffic belong these pods will be checked against
+// each Rule in the namespace's NetworkQoS, and if there is a match the traffic
+// is marked with relevant DSCP value and enforcing specified policing
+// parameters.
 type NetworkQoSApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -42,6 +49,7 @@ func NetworkQoS(name, namespace string) *NetworkQoSApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1alpha1")
 	return b
 }
+
 func (b NetworkQoSApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

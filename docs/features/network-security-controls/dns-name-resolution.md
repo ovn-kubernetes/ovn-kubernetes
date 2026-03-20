@@ -21,6 +21,8 @@ the CR.
 
 ## Configuring DNS name resolover in a cluster
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 The DNS name resolver should be configured in the following components for it to work
 in a cluster:
 

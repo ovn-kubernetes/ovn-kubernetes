@@ -32,6 +32,8 @@ This feature is always enabled, it get triggered when a VM is annotated with
 - KubeVirt >= v1.0.0
 - DHCP aware guest image (fedora family is well tested, https://quay.io/organization/containerdisks)
 
+Always check the dependencies on the [Requirements page](requirements.md)
+
 ### Example: live migrating a fedora guest image
 
 Install KubeVirt following the guide [here](https://kubevirt.io/user-guide/operations/installation/)

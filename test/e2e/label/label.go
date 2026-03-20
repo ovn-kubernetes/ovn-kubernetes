@@ -40,11 +40,3 @@ func processOverrides(s string) string {
 	}
 	return overRide
 }
-
-// Extended returns a label used to label extended feature tests. This label
-// might be used to label feature tests that are considered not to be testing
-// the core functionality of a feature and that might be filtered out for
-// various reasons like for example to keep selected job run times down.
-func Extended() ginkgo.Labels {
-	return ginkgo.Label("EXTENDED")
-}

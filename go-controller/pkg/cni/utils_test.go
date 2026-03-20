@@ -145,8 +145,6 @@ var _ = Describe("CNI Utils tests", func() {
 		It("Returns Pod annotation if annotation condition is met", func() {
 			podAnnot := map[string]string{"foo": "bar"}
 			pod.Annotations = podAnnot
-			ctx, cancelFunc := context.WithTimeout(context.Background(), 20*time.Millisecond)
-			defer cancelFunc()
 
 			cond := func(pod *corev1.Pod, _ string) (*util.PodAnnotation, bool, error) {
 				if _, ok := pod.Annotations["foo"]; ok {
@@ -156,7 +154,8 @@ var _ = Describe("CNI Utils tests", func() {
 			}
 
 			clientset := newFakeClientSet(pod, &podNamespaceLister)
-
+			ctx, cancelFunc := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancelFunc()
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(pod, nil)
 			returnedPod, annot, _, err := GetPodWithAnnotations(ctx, clientset, namespace, podName, ovntypes.DefaultNetworkName, cond)
 			Expect(err).ToNot(HaveOccurred())

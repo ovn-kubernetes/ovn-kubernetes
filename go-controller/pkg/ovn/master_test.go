@@ -546,111 +546,6 @@ var _ = ginkgo.Describe("Master Operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
-	ginkgo.It("works without SCTP support", func() {
-		const (
-			clusterIPNet string = "10.1.0.0"
-			clusterCIDR  string = clusterIPNet + "/16"
-		)
-
-		app.Action = func(ctx *cli.Context) error {
-			const (
-				nodeName    string = "sctp-test-node"
-				nodeSubnet  string = "10.1.0.0/24"
-				clusterCIDR string = "10.1.0.0/16"
-				nextHop     string = "10.1.0.2"
-				mgmtMAC     string = "01:02:03:04:05:06"
-				hybMAC      string = "02:03:04:05:06:07"
-				hybIP       string = "10.1.0.3"
-			)
-
-			fexec, tcpLBUUID, udpLBUUID, _ := defaultFakeExec(nodeSubnet, nodeName, false)
-			cleanupGateway(fexec, nodeName, nodeSubnet, clusterCIDR, nextHop)
-
-			testNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
-				Name: nodeName,
-			}}
-
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{testNode},
-			})
-			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
-			crdFakeClient := &apiextensionsfake.Clientset{}
-			egressIPFakeClient := &egressipfake.Clientset{}
-			fakeClient := &util.OVNClientset{
-				KubeClient:           kubeFakeClient,
-				EgressIPClient:       egressIPFakeClient,
-				EgressFirewallClient: egressFirewallFakeClient,
-				APIExtensionsClient:  crdFakeClient,
-			}
-
-			err := util.SetExec(fexec)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			_, err = config.InitConfig(ctx, fexec, nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			mockOVNNBClient := ovntest.NewMockOVNClient(goovn.DBNB)
-			mockOVNSBClient := ovntest.NewMockOVNClient(goovn.DBSB)
-			lsp := "int-" + nodeName
-			populatePortAddresses(nodeName, lsp, hybMAC, hybIP, mockOVNNBClient)
-			nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{kubeFakeClient, egressIPFakeClient, egressFirewallFakeClient}, testNode.Name)
-			err = util.SetL3GatewayConfig(nodeAnnotator, &util.L3GatewayConfig{Mode: config.GatewayModeDisabled})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = util.SetNodeManagementPortMACAddress(nodeAnnotator, ovntest.MustParseMAC(mgmtMAC))
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = nodeAnnotator.Run()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			f, err = factory.NewMasterWatchFactory(fakeClient)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = f.Start()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			oc := NewOvnController(fakeClient, f, stopChan,
-				newFakeAddressSetFactory(), mockOVNNBClient,
-				mockOVNSBClient, record.NewFakeRecorder(0))
-
-			gomega.Expect(oc).NotTo(gomega.BeNil())
-			oc.TCPLoadBalancerUUID = tcpLBUUID
-			oc.UDPLoadBalancerUUID = udpLBUUID
-			oc.SCTPLoadBalancerUUID = ""
-
-			err = oc.StartClusterMaster("master")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			oc.WatchNodes()
-
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				oc.hoMaster.Run(stopChan)
-			}()
-
-			gomega.Eventually(fexec.CalledMatchesExpected, 2).Should(gomega.BeTrue(), fexec.ErrorDesc)
-			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			subnetsFromAnnotation, err := util.ParseNodeHostSubnetAnnotation(updatedNode, types.DefaultNetworkName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(subnetsFromAnnotation[0].String()).To(gomega.Equal(nodeSubnet))
-
-			macFromAnnotation, err := util.ParseNodeManagementPortMACAddress(updatedNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(macFromAnnotation.String()).To(gomega.Equal(mgmtMAC))
-
-			gomega.Eventually(fexec.CalledMatchesExpected, 2).Should(gomega.BeTrue(), fexec.ErrorDesc)
-			return nil
-		}
-
-		err := app.Run([]string{
-			app.Name,
-			"-cluster-subnets=" + clusterCIDR,
-			"-enable-multicast",
-			"-enable-hybrid-overlay",
-		})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
 	ginkgo.It("does not allocate a hostsubnet for a node that already has one", func() {
 		const (
 			clusterIPNet string = "10.1.0.0"
@@ -879,7 +774,6 @@ subnet=%s
 			oc.TCPLoadBalancerUUID = tcpLBUUID
 			oc.UDPLoadBalancerUUID = udpLBUUID
 			oc.SCTPLoadBalancerUUID = sctpLBUUID
-			oc.SCTPSupport = true
 			oc.joinSwIPManager, _ = newJoinLogicalSwitchIPManager()
 			_, _ = oc.joinSwIPManager.ensureJoinLRPIPs(types.OVNClusterRouter)
 
@@ -1088,6 +982,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			wg,
 			nil,
 			NewPortCache(stopChan),
+			nil,
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(oc).NotTo(gomega.BeNil())
@@ -1110,7 +1005,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			}
 		}()
 
-		oc.SCTPSupport = true
 	})
 
 	ginkgo.AfterEach(func() {
@@ -1274,8 +1168,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// create a pod on this node
-				ns := newNamespace("namespace-1")
-				pod := *newPodWithLabels(ns.Name, podName, node1.Name, "10.0.0.3", egressPodLabel)
+				ns := ovntest.NewNamespace("namespace-1")
+				pod := *ovntest.NewPodWithLabels(ns.Name, podName, node1.Name, "10.0.0.3", egressPodLabel)
 				_, err = fakeClient.KubeClient.CoreV1().Pods(ns.Name).Create(context.TODO(), &pod, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1885,7 +1779,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			// after the namespace is created successfully
 			fakeOvn.startWithDBSetup(dbSetup,
 				&corev1.NamespaceList{
-					Items: []corev1.Namespace{*newNamespace(config.Kubernetes.HostNetworkNamespace)},
+					Items: []corev1.Namespace{*ovntest.NewNamespace(config.Kubernetes.HostNetworkNamespace)},
 				},
 				&corev1.NodeList{
 					Items: []corev1.Node{},
@@ -2201,6 +2095,7 @@ func TestController_syncNodes(t *testing.T) {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			err = controller.syncNodes([]interface{}{&testNode})
@@ -2306,6 +2201,7 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 				wg,
 				nil,
 				NewPortCache(stopChan),
+				nil,
 			)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 

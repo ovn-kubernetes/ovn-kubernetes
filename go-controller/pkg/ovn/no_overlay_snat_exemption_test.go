@@ -9,6 +9,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
@@ -16,7 +17,7 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 		fakeOvn           *FakeOVN
 		addressSetFactory addressset.AddressSetFactory
 		netInfo           *testNetInfo
-		controllerName    = DefaultNetworkControllerName
+		controllerName    = types.DefaultNetworkControllerName
 	)
 
 	ginkgo.BeforeEach(func() {

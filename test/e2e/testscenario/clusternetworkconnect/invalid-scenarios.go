@@ -263,7 +263,7 @@ spec:
   connectSubnets:
     - cidr: "192.168.0.0/16"
       networkPrefix: 24
-  connectivity: ["PodNetwork", "ClusterIPServiceNetwork", "PodNetwork"]
+  connectivity: ["PodNetwork", "ServiceNetwork", "PodNetwork"]
 `,
 	},
 

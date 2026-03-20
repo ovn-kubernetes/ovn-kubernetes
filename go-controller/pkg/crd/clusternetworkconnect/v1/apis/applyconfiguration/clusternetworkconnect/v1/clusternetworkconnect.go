@@ -25,6 +25,9 @@ import (
 
 // ClusterNetworkConnectApplyConfiguration represents a declarative configuration of the ClusterNetworkConnect type for use
 // with apply.
+//
+// ClusterNetworkConnect enables connecting multiple User Defined Networks
+// and/or Cluster User Defined Networks together.
 type ClusterNetworkConnectApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -41,6 +44,7 @@ func ClusterNetworkConnect(name string) *ClusterNetworkConnectApplyConfiguration
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b ClusterNetworkConnectApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

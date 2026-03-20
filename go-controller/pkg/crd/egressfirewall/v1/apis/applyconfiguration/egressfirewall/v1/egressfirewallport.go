@@ -19,9 +19,13 @@ package v1
 
 // EgressFirewallPortApplyConfiguration represents a declarative configuration of the EgressFirewallPort type for use
 // with apply.
+//
+// EgressFirewallPort specifies the port to allow or deny traffic to
 type EgressFirewallPortApplyConfiguration struct {
+	// protocol (tcp, udp, sctp) that the traffic must match.
 	Protocol *string `json:"protocol,omitempty"`
-	Port     *int32  `json:"port,omitempty"`
+	// port that the traffic must match
+	Port *int32 `json:"port,omitempty"`
 }
 
 // EgressFirewallPortApplyConfiguration constructs a declarative configuration of the EgressFirewallPort type for use with

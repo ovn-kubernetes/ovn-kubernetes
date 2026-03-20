@@ -162,6 +162,74 @@ func TestEnsureLeaseRetriesOnAlreadyExists(t *testing.T) {
 	g.Expect(*fetched.Spec.LeaseDurationSeconds).To(gomega.Equal(int32(20)))
 }
 
+func TestSetStatusTransitions(t *testing.T) {
+	g := gomega.NewWithT(t)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
+	client := fake.NewSimpleClientset()
+	mgr := NewManager(client, "ovn-kubernetes", node, time.Second, 30*time.Second)
+
+	// After construction, manager should be ready (NewManager calls setStatus("", true))
+	ready, reason := mgr.Ready()
+	g.Expect(ready).To(gomega.BeTrue())
+	g.Expect(reason).To(gomega.BeEmpty())
+
+	// Transition to unhealthy
+	mgr.setStatus("lease expired", false)
+	ready, reason = mgr.Ready()
+	g.Expect(ready).To(gomega.BeFalse())
+	g.Expect(reason).To(gomega.Equal("lease expired"))
+
+	// Transition back to healthy (recovery)
+	mgr.setStatus("", true)
+	ready, reason = mgr.Ready()
+	g.Expect(ready).To(gomega.BeTrue())
+	g.Expect(reason).To(gomega.BeEmpty())
+
+	// Idempotent: setting same status again doesn't change anything
+	mgr.setStatus("", true)
+	ready, reason = mgr.Ready()
+	g.Expect(ready).To(gomega.BeTrue())
+	g.Expect(reason).To(gomega.BeEmpty())
+}
+
+func TestUpdateLeaseFixesBlockOwnerDeletion(t *testing.T) {
+	g := gomega.NewWithT(t)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker", UID: types.UID("nodeuid")}}
+
+	// Simulate a lease created by old code with BlockOwnerDeletion: true
+	oldLease := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ovn-dpu-worker",
+			Namespace: "ovn-kubernetes",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         "v1",
+					Kind:               "Node",
+					Name:               "worker",
+					UID:                types.UID("nodeuid"),
+					Controller:         boolPtr(true),
+					BlockOwnerDeletion: boolPtr(true),
+				},
+			},
+		},
+		Spec: coordinationv1.LeaseSpec{
+			HolderIdentity:       ptrToString(HolderIdentity),
+			LeaseDurationSeconds: ptrToInt32(40),
+		},
+	}
+	client := fake.NewSimpleClientset(oldLease)
+	mgr := NewManager(client, "ovn-kubernetes", node, 10*time.Second, 40*time.Second)
+
+	lease, err := mgr.EnsureLease(context.Background())
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(lease).NotTo(gomega.BeNil())
+
+	// Verify BlockOwnerDeletion was corrected to false
+	g.Expect(lease.OwnerReferences).To(gomega.HaveLen(1))
+	g.Expect(lease.OwnerReferences[0].UID).To(gomega.Equal(node.UID))
+	g.Expect(*lease.OwnerReferences[0].BlockOwnerDeletion).To(gomega.BeFalse())
+}
+
 func ptrToString(val string) *string {
 	return &val
 }

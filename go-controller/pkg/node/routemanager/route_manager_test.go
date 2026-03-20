@@ -359,17 +359,19 @@ var _ = ginkgo.Describe("Route Manager", func() {
 var _ = ginkgo.Describe("Route Manager", func() {
 	ginkgo.It("partially compares expected routes with installed routes", func() {
 		values := map[string]any{
-			"int":           1,
-			"Scope":         uint8(1),
-			"IPNet":         ovntest.MustParseIPNet("10.0.0.0/16"),
-			"IP":            ovntest.MustParseIP("10.0.0.0"),
-			"NexthopInfo":   []*netlink.NexthopInfo{{LinkIndex: 1}},
-			"RouteProtocol": 1,
-			"*int":          ptr.To(1),
-			"Destination":   &netlink.Via{Addr: ovntest.MustParseIP("10.0.0.0")},
-			"Encap":         &netlink.IP6tnlEncap{Src: ovntest.MustParseIP("10.0.0.0")},
-			"string":        "test",
-			"bool":          true,
+			"int":             1,
+			"Scope":           uint8(1),
+			"IPNet":           ovntest.MustParseIPNet("10.0.0.0/16"),
+			"IP":              ovntest.MustParseIP("10.0.0.0"),
+			"NexthopInfo":     []*netlink.NexthopInfo{{LinkIndex: 1}},
+			"RouteProtocol":   1,
+			"*int":            ptr.To(1),
+			"Destination":     &netlink.Via{Addr: ovntest.MustParseIP("10.0.0.0")},
+			"Encap":           &netlink.IP6tnlEncap{Src: ovntest.MustParseIP("10.0.0.0")},
+			"string":          "test",
+			"bool":            true,
+			"*RouteCacheInfo": &netlink.RouteCacheInfo{Expires: 1},
+			"uint32":          uint32(1),
 		}
 		keys := map[string]bool{
 			"Dst":      true,

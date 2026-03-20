@@ -23,7 +23,10 @@ import (
 
 // VTEPStatusApplyConfiguration represents a declarative configuration of the VTEPStatus type for use
 // with apply.
+//
+// VTEPStatus contains the observed state of the VTEP.
 type VTEPStatusApplyConfiguration struct {
+	// Conditions slice of condition objects indicating details about VTEP status.
 	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 

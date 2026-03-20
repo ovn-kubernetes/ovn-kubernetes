@@ -23,10 +23,23 @@ import (
 
 // EgressIPSpecApplyConfiguration represents a declarative configuration of the EgressIPSpec type for use
 // with apply.
+//
+// EgressIPSpec is a desired state description of EgressIP.
 type EgressIPSpecApplyConfiguration struct {
-	EgressIPs         []string                                `json:"egressIPs,omitempty"`
+	// EgressIPs is the list of egress IP addresses requested. Can be IPv4 and/or IPv6.
+	// This field is mandatory.
+	EgressIPs []string `json:"egressIPs,omitempty"`
+	// NamespaceSelector applies the egress IP only to the namespace(s) whose label
+	// matches this definition. This field is mandatory.
 	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
-	PodSelector       *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	// PodSelector applies the egress IP only to the pods whose label
+	// matches this definition. This field is optional, and in case it is not set:
+	// results in the egress IP being applied to all pods in the namespace(s)
+	// matched by the NamespaceSelector. In case it is set: is intersected with
+	// the NamespaceSelector, thus applying the egress IP to the pods
+	// (in the namespace(s) already matched by the NamespaceSelector) which
+	// match this pod selector.
+	PodSelector *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
 }
 
 // EgressIPSpecApplyConfiguration constructs a declarative configuration of the EgressIPSpec type for use with

@@ -172,6 +172,9 @@ func (tnc *testNetworkController) Start(context.Context) error {
 	defer tnc.tcm.Unlock()
 	fmt.Printf("starting network: %s\n", testNetworkKey(tnc))
 	tnc.tcm.started = append(tnc.tcm.started, testNetworkKey(tnc))
+	if tnc.tcm.raiseErrorWhenStartingController != nil {
+		return tnc.tcm.raiseErrorWhenStartingController
+	}
 	return nil
 }
 
@@ -322,6 +325,7 @@ type testControllerManager struct {
 	cleaned []string
 
 	raiseErrorWhenCreatingController error
+	raiseErrorWhenStartingController error
 
 	valid []util.NetInfo
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -196,7 +197,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 		ginkgo.It("Should generate a NeedPods event when backends were added and then removed", func() {
 			be := createBackend(f, serviceName, namespace, node, jig.Labels, port)
 			e2epod.NewPodClient(f).DeleteSync(context.TODO(), be.Name, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
-			err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 0, time.Second, wait.ForeverTestTimeout)
+			err := e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 0)
 			framework.ExpectNoError(err)
 
 			gomega.Eventually(func() serviceStatus {
@@ -312,7 +313,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 		ginkgo.It("Should not generate a NeedPods event when backends were added and then removed", func() {
 			be := createBackend(f, serviceName, namespace, node, jig.Labels, port)
 			e2epod.NewPodClient(f).DeleteSync(context.TODO(), be.Name, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
-			err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 0, time.Second, wait.ForeverTestTimeout)
+			err := e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 0)
 			framework.ExpectNoError(err)
 
 			gomega.Eventually(func() serviceStatus {
@@ -334,7 +335,7 @@ func createBackend(f *framework.Framework, serviceName, namespace, node string, 
 	serverPod.Labels = labels
 	serverPod.Spec.NodeName = node
 	pod := e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
-	err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 1, time.Second, wait.ForeverTestTimeout)
+	err := e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 1)
 	framework.ExpectNoError(err)
 	return pod
 }

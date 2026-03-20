@@ -291,6 +291,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// Restore global default values before each testcase
 		err := config.PrepareTestConfig()
 		Expect(err).NotTo(HaveOccurred())
+		// Ensure gateway tests never rely on host iptables binaries.
+		util.SetFakeIPTablesHelpers()
 
 		// Set dual-stack service CIDRs directly after PrepareTestConfig
 		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("172.16.1.0/24", "fd02::/112")

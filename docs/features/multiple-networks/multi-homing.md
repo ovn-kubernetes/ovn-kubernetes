@@ -23,6 +23,8 @@ the [Kubernetes Network Custom Resource Definition De-facto Standard](https://gi
 ## Prerequisites
 - [multus-cni](https://github.com/k8snetworkplumbingwg/multus-cni)
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Motivation
 Multihoming is essential when you need more than one network interface on your pods. This can be useful for various
 use cases, such as virtual network functions (VNFs), firewalls, or virtualization (virt) where the default

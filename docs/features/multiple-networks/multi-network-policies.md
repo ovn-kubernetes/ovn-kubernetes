@@ -35,6 +35,8 @@ my namespace. This will secure my namespace’s network traffic.
 The `multi-network-policies` feature must be enabled in the OVN-Kubernetes configuration.
 Please use the `Feature Config` option `enable-multi-network` under `OVNKubernetesFeatureConfig` config to enable it.
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Workflow Description
 To configure pod isolation, the user must:
 - provision a `network-attachment-definition`.

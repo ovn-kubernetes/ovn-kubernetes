@@ -11,6 +11,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
@@ -39,6 +40,10 @@ func handleFlags() {
 var _ = ginkgo.BeforeSuite(func() {
 	// Make sure the framework's kubeconfig is set.
 	gomega.Expect(framework.TestContext.KubeConfig).NotTo(gomega.Equal(""), fmt.Sprintf("%s env var not set", clientcmd.RecommendedConfigPathEnvVar))
+
+	// Preload e2e test images into the cluster to avoid runtime pull
+	// failures and timeouts during test execution.
+	infraprovider.Get().PreloadImages(images.Required())
 
 	_, err := framework.LoadClientset()
 	framework.ExpectNoError(err)

@@ -9,11 +9,31 @@ import (
 
 // DNSNameResolverResolvedNameApplyConfiguration represents a declarative configuration of the DNSNameResolverResolvedName type for use
 // with apply.
+//
+// DNSNameResolverResolvedName describes the details of a resolved DNS name.
 type DNSNameResolverResolvedNameApplyConfiguration struct {
-	Conditions         []v1.ConditionApplyConfiguration                   `json:"conditions,omitempty"`
-	DNSName            *networkv1alpha1.DNSName                           `json:"dnsName,omitempty"`
-	ResolvedAddresses  []DNSNameResolverResolvedAddressApplyConfiguration `json:"resolvedAddresses,omitempty"`
-	ResolutionFailures *int32                                             `json:"resolutionFailures,omitempty"`
+	// conditions provide information about the state of the DNS name.
+	// Known .status.conditions.type is: "Degraded".
+	// "Degraded" is true when the last resolution failed for the DNS name,
+	// and false otherwise.
+	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	// dnsName is the resolved DNS name matching the name field of DNSNameResolverSpec. This field can
+	// store both regular and wildcard DNS names which match the spec.name field. When the spec.name
+	// field contains a regular DNS name, this field will store the same regular DNS name after it is
+	// successfully resolved. When the spec.name field contains a wildcard DNS name, each resolvedName.dnsName
+	// will store the regular DNS names which match the wildcard DNS name and have been successfully resolved.
+	// If the wildcard DNS name can also be successfully resolved, then this field will store the wildcard
+	// DNS name as well.
+	DNSName *networkv1alpha1.DNSName `json:"dnsName,omitempty"`
+	// resolvedAddresses gives the list of associated IP addresses and their corresponding TTLs and last
+	// lookup times for the dnsName.
+	ResolvedAddresses []DNSNameResolverResolvedAddressApplyConfiguration `json:"resolvedAddresses,omitempty"`
+	// resolutionFailures keeps the count of how many consecutive times the DNS resolution failed
+	// for the dnsName. If the DNS resolution succeeds then the field will be set to zero. Upon
+	// every failure, the value of the field will be incremented by one. The details about the DNS
+	// name will be removed, if the value of resolutionFailures reaches 5 and the TTL of all the
+	// associated IP addresses have expired.
+	ResolutionFailures *int32 `json:"resolutionFailures,omitempty"`
 }
 
 // DNSNameResolverResolvedNameApplyConfiguration constructs a declarative configuration of the DNSNameResolverResolvedName type for use with

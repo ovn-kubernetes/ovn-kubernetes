@@ -160,7 +160,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 			}
 		}
 	}
-	if err := kubevirt.SyncVirtualMachines(oc.nbClient, vms); err != nil {
+	if err := kubevirt.SyncVirtualMachines(oc.nbClient, vms, types.DefaultNetworkControllerName); err != nil {
 		return fmt.Errorf("failed syncing running virtual machines: %v", err)
 	}
 

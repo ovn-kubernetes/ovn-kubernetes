@@ -24,7 +24,21 @@ import (
 // IPAMConfigApplyConfiguration represents a declarative configuration of the IPAMConfig type for use
 // with apply.
 type IPAMConfigApplyConfiguration struct {
-	Mode      *userdefinednetworkv1.IPAMMode             `json:"mode,omitempty"`
+	// Mode controls how much of the IP configuration will be managed by OVN.
+	// `Enabled` means OVN-Kubernetes will apply IP configuration to the SDN infrastructure and it will also assign IPs
+	// from the selected subnet to the individual pods.
+	// `Disabled` means OVN-Kubernetes will only assign MAC addresses and provide layer 2 communication, letting users
+	// configure IP addresses for the pods.
+	// `Disabled` is only available for Secondary networks.
+	// By disabling IPAM, any Kubernetes features that rely on selecting pods by IP will no longer function
+	// (such as network policy, services, etc). Additionally, IP port security will also be disabled for interfaces attached to this network.
+	// Defaults to `Enabled`.
+	Mode *userdefinednetworkv1.IPAMMode `json:"mode,omitempty"`
+	// Lifecycle controls IP addresses management lifecycle.
+	//
+	// The only allowed value is Persistent. When set, the IP addresses assigned by OVN-Kubernetes will be persisted in an
+	// `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
+	// Only supported when mode is `Enabled`.
 	Lifecycle *userdefinednetworkv1.NetworkIPAMLifecycle `json:"lifecycle,omitempty"`
 }
 

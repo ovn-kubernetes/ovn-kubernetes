@@ -25,6 +25,8 @@ import (
 
 // RouteAdvertisementsApplyConfiguration represents a declarative configuration of the RouteAdvertisements type for use
 // with apply.
+//
+// RouteAdvertisements is the Schema for the routeadvertisements API
 type RouteAdvertisementsApplyConfiguration struct {
 	metav1.TypeMetaApplyConfiguration    `json:",inline"`
 	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
@@ -41,6 +43,7 @@ func RouteAdvertisements(name string) *RouteAdvertisementsApplyConfiguration {
 	b.WithAPIVersion("k8s.ovn.org/v1")
 	return b
 }
+
 func (b RouteAdvertisementsApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value

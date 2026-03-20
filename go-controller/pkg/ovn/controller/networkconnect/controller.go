@@ -40,7 +40,7 @@ const (
 // - ports connecting each selected (C)UDN network routers to connect-router
 // - logical router policies on each selected (C)UDN's network router steering traffic to the connect-router
 // - logical router static routes on the connect-router routing traffic to the corresponding selected (C)UDNs
-// - load balancer attachments for ClusterIPServiceNetwork connectivity enabled CNCs
+// - load balancer attachments for ServiceNetwork connectivity enabled CNCs
 type Controller struct {
 	// zone is the name of the zone that this controller manages
 	zone string
@@ -72,7 +72,7 @@ type Controller struct {
 	// nadReconciler handles NAD-triggered CNC requeues
 	nadReconciler   networkmanager.NADReconciler
 	nadReconcilerID uint64
-	// serviceController handles Service events (for ClusterIPServiceNetwork connectivity)
+	// serviceController handles Service events (for ServiceNetwork connectivity)
 	serviceController controllerutil.Controller
 
 	// Single global lock protecting all controller state
@@ -96,10 +96,10 @@ type networkConnectState struct {
 	// connectedNetworks is the set of owner keys (e.g., "layer3_1", "layer2_2") for networks
 	// connected by this CNC. Used to track OVN resources created and detect NAD matching changes.
 	connectedNetworks sets.Set[string]
-	// clusterIPServiceNetworkEnabled tracks whether ClusterIPServiceNetwork connectivity is enabled
+	// serviceNetworkEnabled tracks whether ServiceNetwork connectivity is enabled
 	// Used for cleanup when the connectivity type is removed from the CNC spec.
-	clusterIPServiceNetworkEnabled bool
-	// podNetworkConnectEnabled tracks whether PodNetworkConnect connectivity is enabled
+	serviceNetworkConnectEnabled bool
+	// podNetworkConnectEnabled tracks whether PodNetwork connectivity is enabled
 	// Used to determine if partial connectivity (service without pod) was active.
 	podNetworkConnectEnabled bool
 }
@@ -324,7 +324,7 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 }
 
 // serviceNeedsUpdate determines if a service change requires reconciliation.
-// We care about service CREATE and protocol-set changes for ClusterIPServiceNetwork.
+// We care about service CREATE and protocol-set changes for ServiceNetwork.
 // Service deletes don't need processing because:
 //   - LoadBalancerGroup.load_balancer is a weak reference with min=0 and refType=weak
 //   - When the LB is deleted by services controller, OVSDB automatically
@@ -416,9 +416,9 @@ func (c *Controller) reconcileNode(key string) error {
 	return c.requeueAllCNCs()
 }
 
-// reconcileService reconciles service changes for ClusterIPServiceNetwork connectivity.
+// reconcileService reconciles service changes for ServiceNetwork connectivity.
 // When a service is created/deleted, we check if its network is connected by any CNC
-// with ClusterIPServiceNetwork enabled and requeue those CNCs.
+// with ServiceNetwork enabled and requeue those CNCs.
 // This follows the same pattern as reconcileNAD in cluster manager.
 func (c *Controller) reconcileService(key string) error {
 	c.RLock()
@@ -498,13 +498,13 @@ func (c *Controller) getNetworkOwnerKeyForNamespace(namespace string) (string, e
 
 // mustProcessCNCForService checks if:
 // 1. the service's network is currently in the CNC's connectedNetworks AND
-// 2. the CNC has ClusterIPServiceNetwork enabled
+// 2. the CNC has ServiceNetwork enabled
 // Returns true if both conditions are met, meaning we need to attach this service's LB
 // to the other connected networks' switches.
 // This function is READ-ONLY and does not update the cache.
 // NOTE: Caller must hold at least RLock.
 func (c *Controller) mustProcessCNCForService(svc *corev1.Service, cnc *networkconnectv1.ClusterNetworkConnect, networkOwnerKey string) bool {
-	// Check if CNC has ClusterIPServiceNetwork enabled - if not, skip entirely
+	// Check if CNC has ServiceNetwork enabled - if not, skip entirely
 	if !serviceConnectivityEnabled(cnc) {
 		return false
 	}
@@ -523,17 +523,17 @@ func (c *Controller) mustProcessCNCForService(svc *corev1.Service, cnc *networkc
 	isConnected := cncState.connectedNetworks.Has(networkOwnerKey)
 
 	if isConnected {
-		klog.V(5).Infof("Service %s/%s network %s is connected by CNC %s with ClusterIPServiceNetwork",
+		klog.V(5).Infof("Service %s/%s network %s is connected by CNC %s with ServiceNetwork",
 			svc.Namespace, svc.Name, networkOwnerKey, cnc.Name)
 	}
 
 	return isConnected
 }
 
-// serviceConnectivityEnabled checks if the CNC has ClusterIPServiceNetwork in its connectivity spec.
+// serviceConnectivityEnabled checks if the CNC has ServiceNetwork in its connectivity spec.
 func serviceConnectivityEnabled(cnc *networkconnectv1.ClusterNetworkConnect) bool {
 	for _, ct := range cnc.Spec.Connectivity {
-		if ct == networkconnectv1.ClusterIPServiceNetwork {
+		if ct == networkconnectv1.ServiceNetwork {
 			return true
 		}
 	}
@@ -618,7 +618,7 @@ func (c *Controller) cleanupCNC(cncName string) error {
 	}
 
 	// Cleanup network connections (includes service connectivity, partial connectivity ACLs, ports, and policies)
-	if err := c.cleanupNetworkConnections(cncName, cncState.clusterIPServiceNetworkEnabled, cncState.podNetworkConnectEnabled); err != nil {
+	if err := c.cleanupNetworkConnections(cncName, cncState.serviceNetworkConnectEnabled, cncState.podNetworkConnectEnabled); err != nil {
 		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
 	}
 

@@ -12,6 +12,8 @@ The feature is supported fully by "Local" gateway mode and almost entirely by "S
 
 Announcing the service externally (for ingress traffic) is handled by a LoadBalancer provider (like MetalLB) and not by OVN-Kubernetes as explained later.
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ## Details - Modifying the source IP of the egress packets
 
 Only SNATing a pod's IP to the LoadBalancer service ingress IP that it is backing is problematic, as usually the ingress IP is exposed via multiple nodes by the LoadBalancer provider. This means we can't just add an SNAT to the regular traffic flow of a pod before it exits its node because we don't have a guarantee that the reply will come back to the pod's node (where the traffic originated).

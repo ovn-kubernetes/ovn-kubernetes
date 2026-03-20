@@ -57,7 +57,6 @@ const (
 	aclChangePGBatchSize = 80000
 	// defaultControllerOwner is the DB Owner for all EF ACLs (UDN or CDN) and CDN namespaced port group.
 	// This is due to legacy reasons and left alone for now to avoid upgrade issues. May be updated in the future.
-	defaultControllerOwner         = "default-network-controller"
 	EgressFirewallAppliedCorrectly = "EgressFirewall Rules applied"
 	egressFirewallName             = "default"
 )
@@ -261,7 +260,7 @@ func (oc *EFController) initialSync() error {
 	}
 
 	// find all existing egress firewall ACLs
-	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, defaultControllerOwner, nil)
+	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, types.DefaultNetworkControllerName, nil)
 	aclP := libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil)
 	efACLs, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, aclP)
 	if err != nil {
@@ -856,7 +855,7 @@ func (oc *EFController) addEgressFirewallRules(ef *egressFirewall, pgName string
 func (oc *EFController) moveACLsToNamespacedPortGroups(existingEFNamespaces map[string]bool, efACLs []*nbdb.ACL) error {
 	// find stale ACLs attached to a cluster port group, and move them to namespaced port groups
 	clusterPG, err := libovsdbops.GetPortGroup(oc.nbClient, &nbdb.PortGroup{
-		Name: libovsdbutil.GetPortGroupName(libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupCluster, defaultControllerOwner,
+		Name: libovsdbutil.GetPortGroupName(libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupCluster, types.DefaultNetworkControllerName,
 			map[libovsdbops.ExternalIDKey]string{
 				libovsdbops.ObjectNameKey: types.ClusterPortGroupNameBase,
 			})),
@@ -936,14 +935,14 @@ func (oc *EFController) createEgressFirewallACLOps(ops []ovsdb.Operation, egress
 }
 
 func (oc *EFController) GetEgressFirewallACLDbIDsNoRule(namespace string) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, defaultControllerOwner,
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, types.DefaultNetworkControllerName,
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: namespace,
 		})
 }
 
 func (oc *EFController) GetEgressFirewallACLDbIDs(namespace string, ruleIdx int) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, defaultControllerOwner,
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLEgressFirewall, types.DefaultNetworkControllerName,
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: namespace,
 			libovsdbops.RuleIndex:     strconv.Itoa(ruleIdx),

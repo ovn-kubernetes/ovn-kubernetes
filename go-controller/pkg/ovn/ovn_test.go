@@ -28,6 +28,7 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	adminpolicybasedrouteapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	adminpolicybasedroutefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	egressfirewall "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
@@ -47,6 +48,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -100,35 +102,38 @@ func (ni *testNetInfo) OutboundSNAT() string {
 }
 
 type FakeOVN struct {
-	fakeClient     *util.OVNMasterClientset
-	watcher        *factory.WatchFactory
-	controller     *DefaultNetworkController
-	stopChan       chan struct{}
-	wg             *sync.WaitGroup
-	asf            *addressset.FakeAddressSetFactory
-	fakeRecorder   *record.FakeRecorder
-	nbClient       libovsdbclient.Client
-	sbClient       libovsdbclient.Client
-	dbSetup        libovsdbtest.TestSetup
-	nbsbCleanup    *libovsdbtest.Context
-	egressQoSWg    *sync.WaitGroup
-	egressSVCWg    *sync.WaitGroup
-	anpWg          *sync.WaitGroup
-	networkManager networkmanager.Controller
-	eIPController  *EgressIPController
-	portCache      *PortCache
+	fakeClient        *util.OVNMasterClientset
+	watcher           *factory.WatchFactory
+	controller        *DefaultNetworkController
+	stopChan          chan struct{}
+	wg                *sync.WaitGroup
+	asf               *addressset.FakeAddressSetFactory
+	fakeRecorder      *record.FakeRecorder
+	nbClient          libovsdbclient.Client
+	sbClient          libovsdbclient.Client
+	dbSetup           libovsdbtest.TestSetup
+	nbsbCleanup       *libovsdbtest.Context
+	egressQoSWg       *sync.WaitGroup
+	egressSVCWg       *sync.WaitGroup
+	anpWg             *sync.WaitGroup
+	networkManager    networkmanager.Controller
+	eIPController     *EgressIPController
+	addressSetManager *addresssetmanager.AddressSetManager
+	portCache         *PortCache
+	udnNodeController *nodecontroller.NodeController
 
 	// information map of all UDN controllers
 	userDefinedNetworkControllers map[string]userDefinedNetworkControllerInfo
 	fullL2UDNControllers          map[string]*Layer2UserDefinedNetworkController
 	fullL3UDNControllers          map[string]*Layer3UserDefinedNetworkController
+	fullLocalnetUDNControllers    map[string]*LocalnetUserDefinedNetworkController
 }
 
 // NOTE: the FakeAddressSetFactory is no longer needed and should no longer be used. starting to phase out FakeAddressSetFactory
 func NewFakeOVN(useFakeAddressSet bool) *FakeOVN {
 	var asf *addressset.FakeAddressSetFactory
 	if useFakeAddressSet {
-		asf = addressset.NewFakeAddressSetFactory(DefaultNetworkControllerName)
+		asf = addressset.NewFakeAddressSetFactory(types.DefaultNetworkControllerName)
 	}
 	return &FakeOVN{
 		asf:          asf,
@@ -140,6 +145,7 @@ func NewFakeOVN(useFakeAddressSet bool) *FakeOVN {
 		userDefinedNetworkControllers: map[string]userDefinedNetworkControllerInfo{},
 		fullL2UDNControllers:          map[string]*Layer2UserDefinedNetworkController{},
 		fullL3UDNControllers:          map[string]*Layer3UserDefinedNetworkController{},
+		fullLocalnetUDNControllers:    map[string]*LocalnetUserDefinedNetworkController{},
 	}
 }
 
@@ -218,6 +224,9 @@ func (o *FakeOVN) startWithDBSetup(dbSetup libovsdbtest.TestSetup, objects ...ru
 }
 
 func (o *FakeOVN) shutdown() {
+	if o.udnNodeController != nil {
+		o.udnNodeController.Stop()
+	}
 	o.watcher.Shutdown()
 	close(o.stopChan)
 	o.controller.cancelableCtx.Cancel()
@@ -227,6 +236,9 @@ func (o *FakeOVN) shutdown() {
 	o.anpWg.Wait()
 	if o.networkManager != nil {
 		o.networkManager.Stop()
+	}
+	if o.addressSetManager != nil {
+		o.addressSetManager.Stop()
 	}
 	o.nbsbCleanup.Cleanup()
 	for _, ocInfo := range o.userDefinedNetworkControllers {
@@ -276,8 +288,11 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		config.IPv4Mode,
 		config.IPv6Mode,
 		"",
-		DefaultNetworkControllerName,
+		types.DefaultNetworkControllerName,
 	)
+	o.addressSetManager = addresssetmanager.NewAddressSetManager(o.watcher.PodCoreInformer(),
+		o.watcher.NamespaceInformer(), o.nbClient, o.networkManager.Interface().GetNetworkNameForNADKey)
+
 	if o.asf == nil {
 		o.eIPController.addressSetFactory = addressset.NewOvnAddressSetFactory(o.nbClient, config.IPv4Mode, config.IPv6Mode)
 	}
@@ -293,6 +308,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		o.wg,
 		o.eIPController,
 		o.portCache,
+		o.addressSetManager,
 	)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	o.controller.multicastSupport = config.EnableMulticast
@@ -307,6 +323,14 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 
 	err = o.watcher.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	err = o.addressSetManager.Start()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	if o.udnNodeController != nil {
+		err = o.udnNodeController.Start()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
 
 	err = o.networkManager.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -327,7 +351,6 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 			}
 		}
 	}
-
 }
 
 // creates the global entities that should remain after a UDN created and removed
@@ -371,7 +394,6 @@ func generateUDNPostInitDB(testData []libovsdbtest.TestData) []libovsdbtest.Test
 
 func setupClusterController(clusterController *DefaultNetworkController, setupCOPP bool) {
 	var err error
-	clusterController.SCTPSupport = true
 
 	clusterLBGroup := &nbdb.LoadBalancerGroup{Name: types.ClusterLBGroupName}
 	err = clusterController.nbClient.Get(context.Background(), clusterLBGroup)
@@ -424,6 +446,7 @@ func NewOvnController(
 	wg *sync.WaitGroup,
 	eIPController *EgressIPController,
 	portCache *PortCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 ) (*DefaultNetworkController, error) {
 
 	fakeAddr, ok := addressSetFactory.(*addressset.FakeAddressSetFactory)
@@ -460,7 +483,6 @@ func NewOvnController(
 		libovsdbOvnNBClient,
 		libovsdbOvnSBClient,
 		&podRecorder,
-		false, // sctp support
 		false, // multicast support
 		true,  // templates support
 	)
@@ -468,7 +490,7 @@ func NewOvnController(
 		return nil, err
 	}
 
-	dnc, err := newDefaultNetworkControllerCommon(cnci, stopChan, wg, addressSetFactory, networkManager, nil, nil, eIPController, portCache)
+	dnc, err := newDefaultNetworkControllerCommon(cnci, stopChan, wg, addressSetFactory, networkManager, nil, nil, eIPController, portCache, addressSetManager)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	if nbZoneFailed {
@@ -556,6 +578,10 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 	topoType := nInfo.TopologyType()
 	_, ok = o.userDefinedNetworkControllers[netName]
 	if !ok {
+		if o.udnNodeController == nil {
+			o.udnNodeController = nodecontroller.NewNodeController(o.watcher, o.networkManager.Interface())
+		}
+
 		nbZoneFailed := false
 		// Try to get the NBZone.  If there is an error, create NB_Global record.
 		// Otherwise NewCommonNetworkControllerInfo() will return error since it
@@ -585,7 +611,6 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			o.nbClient,
 			o.sbClient,
 			&podRecorder,
-			false, // sctp support
 			false, // multicast support
 			true,  // templates support
 		)
@@ -600,7 +625,8 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 
 		switch topoType {
 		case types.Layer3Topology:
-			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache)
+			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil,
+				o.eIPController, o.portCache, nil, o.udnNodeController)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l3Controller.addressSetFactory = asf
@@ -608,7 +634,8 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			userDefinedNetworkController = &l3Controller.BaseUserDefinedNetworkController
 			o.fullL3UDNControllers[netName] = l3Controller
 		case types.Layer2Topology:
-			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController)
+			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil,
+				o.portCache, o.eIPController, nil, o.udnNodeController)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l2Controller.addressSetFactory = asf
@@ -616,11 +643,13 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			userDefinedNetworkController = &l2Controller.BaseUserDefinedNetworkController
 			o.fullL2UDNControllers[netName] = l2Controller
 		case types.LocalnetTopology:
-			localnetController := NewLocalnetUserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface())
+			localnetController := NewLocalnetUserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil,
+				o.udnNodeController)
 			if o.asf != nil { // use fake asf only when enabled
 				localnetController.addressSetFactory = asf
 			}
 			userDefinedNetworkController = &localnetController.BaseUserDefinedNetworkController
+			o.fullLocalnetUDNControllers[netName] = localnetController
 		default:
 			return fmt.Errorf("topology type %s not supported", topoType)
 		}
@@ -636,6 +665,19 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 	}
 
 	return nil
+}
+
+func (o *FakeOVN) registerUDNNodeHandler(networkName string) error {
+	if c, ok := o.fullL3UDNControllers[networkName]; ok {
+		return c.RegisterNodeHandler()
+	}
+	if c, ok := o.fullL2UDNControllers[networkName]; ok {
+		return c.RegisterNodeHandler()
+	}
+	if c, ok := o.fullLocalnetUDNControllers[networkName]; ok {
+		return c.RegisterNodeHandler()
+	}
+	return fmt.Errorf("no concrete UDN controller found for network %s", networkName)
 }
 
 func (o *FakeOVN) patchEgressIPObj(nodeName, egressIPName, egressIP string) {

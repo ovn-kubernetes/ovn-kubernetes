@@ -3233,7 +3233,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 			})
 
 			// =============================================================================
-			// Context: Service Connectivity (ClusterIPServiceNetwork)
+			// Context: Service Connectivity (ServiceNetwork)
 			// =============================================================================
 			Context("Service Connectivity", func() {
 				const (
@@ -3242,10 +3242,10 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				)
 
 				// Helper: create the CNC and wait until the controller reconciles it.
-				// The CNC always has both PodNetwork + ClusterIPServiceNetwork.
+				// The CNC always has both PodNetwork + ServiceNetwork.
 				createCNCAndWait := func(subnetAnnotation string) {
 					cnc := createTestCNC(svcCNCName, svcTunnelID, defaultConnectSubnets(), subnetAnnotation,
-						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork)
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork)
 					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 						context.Background(), cnc, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3428,7 +3428,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
 				})
 
-				It("should cleanup all service connectivity when ClusterIPServiceNetwork is disabled", func() {
+				It("should cleanup all service connectivity when ServiceNetwork is disabled", func() {
 					subnetAnnotation := startBothNetworks()
 					seedBothNetworkLBs(fakeClientset, nbClient)
 					createCNCAndWait(subnetAnnotation)
@@ -3438,7 +3438,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					verifySwitchLBG(nbClient, redNetwork.SwitchName("node1"), lbg.UUID, true)
 					verifySwitchLBG(nbClient, blueNetwork.SwitchName("node1"), lbg.UUID, true)
 
-					// Disable ClusterIPServiceNetwork: update CNC to have only PodNetwork
+					// Disable ServiceNetwork: update CNC to have only PodNetwork
 					cnc, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
 						context.Background(), svcCNCName, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3472,7 +3472,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					}).WithTimeout(5 * time.Second).Should(Succeed())
 				})
 
-				It("should create LBG and attach LBs when ClusterIPServiceNetwork is enabled on existing CNC", func() {
+				It("should create LBG and attach LBs when ServiceNetwork is enabled on existing CNC", func() {
 					subnetAnnotation := startBothNetworks()
 					seedBothNetworkLBs(fakeClientset, nbClient)
 
@@ -3497,12 +3497,12 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						return err == nil && len(lbgs) == 0
 					}).WithTimeout(2 * time.Second).Should(BeTrue())
 
-					// Now enable ClusterIPServiceNetwork by updating the CNC
+					// Now enable ServiceNetwork by updating the CNC
 					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
 						context.Background(), svcCNCName, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
 					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
-						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork,
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork,
 					}
 					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
 						context.Background(), cnc, metav1.UpdateOptions{})
@@ -3608,7 +3608,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 			})
 
 			// =============================================================================
-			// Context: Partial Connectivity (ClusterIPServiceNetwork only, no PodNetwork)
+			// Context: Partial Connectivity (ServiceNetwork only, no PodNetwork)
 			// =============================================================================
 			Context("Partial Connectivity", func() {
 				const (
@@ -3668,13 +3668,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					return count
 				}
 
-				It("should create ACLs, LBG, and connect router with only ClusterIPServiceNetwork", func() {
+				It("should create ACLs, LBG, and connect router with only ServiceNetwork", func() {
 					subnetAnnotation := startBothNetworks()
 					seedBothNetworkLBs(fakeClientset, nbClient)
 
-					// Create CNC with only ClusterIPServiceNetwork (no PodNetwork)
+					// Create CNC with only ServiceNetwork (no PodNetwork)
 					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
-						networkconnectv1.ClusterIPServiceNetwork)
+						networkconnectv1.ServiceNetwork)
 					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 						context.Background(), cnc, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3699,7 +3699,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 
 					// Start with partial connectivity (service only)
 					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
-						networkconnectv1.ClusterIPServiceNetwork)
+						networkconnectv1.ServiceNetwork)
 					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 						context.Background(), cnc, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3715,7 +3715,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						context.Background(), partialCNCName, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
 					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
-						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork,
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork,
 					}
 					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
 						context.Background(), cnc, metav1.UpdateOptions{})
@@ -3737,7 +3737,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 
 					// Start with full connectivity (pod + service)
 					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
-						networkconnectv1.PodNetwork, networkconnectv1.ClusterIPServiceNetwork)
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork)
 					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 						context.Background(), cnc, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3753,7 +3753,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						context.Background(), partialCNCName, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())
 					cnc.Spec.Connectivity = []networkconnectv1.ConnectivityType{
-						networkconnectv1.ClusterIPServiceNetwork,
+						networkconnectv1.ServiceNetwork,
 					}
 					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
 						context.Background(), cnc, metav1.UpdateOptions{})
@@ -3774,7 +3774,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 
 					// Create CNC with partial connectivity
 					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
-						networkconnectv1.ClusterIPServiceNetwork)
+						networkconnectv1.ServiceNetwork)
 					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 						context.Background(), cnc, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3798,13 +3798,13 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					verifySwitchHasCNCACLs(blueNetwork.SwitchName("node1"), 0)
 				})
 
-				It("should transition from partial to none when ClusterIPServiceNetwork is removed", func() {
+				It("should transition from partial to none when ServiceNetwork is removed", func() {
 					subnetAnnotation := startBothNetworks()
 					seedBothNetworkLBs(fakeClientset, nbClient)
 
 					// Start with partial connectivity
 					cnc := createTestCNC(partialCNCName, partialTunnelID, defaultConnectSubnets(), subnetAnnotation,
-						networkconnectv1.ClusterIPServiceNetwork)
+						networkconnectv1.ServiceNetwork)
 					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 						context.Background(), cnc, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
@@ -3814,7 +3814,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 					verifySwitchHasCNCACLs(redNetwork.SwitchName("node1"), expected)
 					verifyLBGHasLBs(nbClient, partialCNCName, 2)
 
-					// Remove ClusterIPServiceNetwork, add PodNetwork
+					// Remove ServiceNetwork, add PodNetwork
 					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
 						context.Background(), partialCNCName, metav1.GetOptions{})
 					Expect(err).NotTo(HaveOccurred())

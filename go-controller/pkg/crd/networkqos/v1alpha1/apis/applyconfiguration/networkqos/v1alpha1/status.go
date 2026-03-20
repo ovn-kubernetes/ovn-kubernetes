@@ -23,8 +23,12 @@ import (
 
 // StatusApplyConfiguration represents a declarative configuration of the Status type for use
 // with apply.
+//
+// Status defines the observed state of NetworkQoS
 type StatusApplyConfiguration struct {
-	Status     *string                          `json:"status,omitempty"`
+	// A concise indication of whether the NetworkQoS resource is applied with success.
+	Status *string `json:"status,omitempty"`
+	// An array of condition objects indicating details about status of NetworkQoS object.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 

@@ -19,8 +19,12 @@ package v1
 
 // EgressIPStatusItemApplyConfiguration represents a declarative configuration of the EgressIPStatusItem type for use
 // with apply.
+//
+// The per node status, for those egress IPs who have been assigned.
 type EgressIPStatusItemApplyConfiguration struct {
-	Node     *string `json:"node,omitempty"`
+	// Assigned node name
+	Node *string `json:"node,omitempty"`
+	// Assigned egress IP
 	EgressIP *string `json:"egressIP,omitempty"`
 }
 

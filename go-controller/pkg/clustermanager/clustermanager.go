@@ -40,6 +40,7 @@ import (
 type ClusterManager struct {
 	client                      clientset.Interface
 	defaultNetClusterController *networkClusterController
+	nodeController              *clusterManagerNodeController
 	zoneClusterController       *zoneClusterController
 	wf                          *factory.WatchFactory
 	udnClusterManager           *userDefinedNetworkClusterManager
@@ -78,7 +79,8 @@ func NewClusterManager(
 ) (*ClusterManager, error) {
 
 	wf = wf.ShallowClone()
-	defaultNetClusterController := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder)
+	nodeController := newClusterManagerNodeController(wf)
+	defaultNetClusterController := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder, nodeController)
 
 	zoneClusterController, err := newZoneClusterController(ovnClient, wf)
 	if err != nil {
@@ -88,6 +90,7 @@ func NewClusterManager(
 	cm := &ClusterManager{
 		client:                      ovnClient.KubeClient,
 		defaultNetClusterController: defaultNetClusterController,
+		nodeController:              nodeController,
 		zoneClusterController:       zoneClusterController,
 		wf:                          wf,
 		recorder:                    recorder,
@@ -112,7 +115,7 @@ func NewClusterManager(
 			return nil, err
 		}
 
-		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder)
+		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder, nodeController)
 		if err != nil {
 			return nil, err
 		}
@@ -209,6 +212,10 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 
 	// Start networkManager before other controllers
 	if err := cm.networkManager.Start(); err != nil {
+		return err
+	}
+
+	if err := cm.nodeController.Start(); err != nil {
 		return err
 	}
 
@@ -310,6 +317,7 @@ func (cm *ClusterManager) Stop() {
 		cm.noOverlayController.Stop()
 		cm.noOverlayController = nil
 	}
+	cm.nodeController.Stop()
 }
 
 func (cm *ClusterManager) NewNetworkController(netInfo util.NetInfo) (networkmanager.NetworkController, error) {

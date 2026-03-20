@@ -23,8 +23,16 @@ import (
 
 // RouteAdvertisementsStatusApplyConfiguration represents a declarative configuration of the RouteAdvertisementsStatus type for use
 // with apply.
+//
+// RouteAdvertisementsStatus defines the observed state of RouteAdvertisements.
+// It should always be reconstructable from the state of the cluster and/or
+// outside world.
 type RouteAdvertisementsStatusApplyConfiguration struct {
-	Status     *string                              `json:"status,omitempty"`
+	// status is a concise indication of whether the RouteAdvertisements
+	// resource is applied with success.
+	Status *string `json:"status,omitempty"`
+	// conditions is an array of condition objects indicating details about
+	// status of RouteAdvertisements object.
 	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 

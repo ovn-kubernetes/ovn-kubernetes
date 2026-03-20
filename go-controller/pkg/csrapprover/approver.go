@@ -16,7 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/klog/v2"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,7 +107,7 @@ type OVNKubeCSRController struct {
 
 	commonNamePrefixes []string
 	client             crclient.Client
-	recorder           record.EventRecorder
+	recorder           events.EventRecorder
 }
 
 var Predicate = predicate.Funcs{
@@ -128,7 +128,7 @@ func NewController(client crclient.Client,
 	csrAcceptanceConditions []CSRAcceptanceCondition,
 	usages sets.Set[certificatesv1.KeyUsage],
 	maxDuration time.Duration,
-	recorder record.EventRecorder) *OVNKubeCSRController {
+	recorder events.EventRecorder) *OVNKubeCSRController {
 
 	commonNamePrefixes := []string{}
 
@@ -167,10 +167,7 @@ func (c *OVNKubeCSRController) denyCSR(ctx context.Context, csr *certificatesv1.
 		},
 	)
 
-	c.recorder.Eventf(&corev1.ObjectReference{
-		Kind: "CertificateSigningRequest",
-		Name: csr.Name,
-	}, corev1.EventTypeWarning, "CSRDenied", "The CSR %q has been denied: %s", csr.Name, message)
+	c.recorder.Eventf(csr, nil, corev1.EventTypeWarning, "CSRDenied", "Denying", "The CSR %q has been denied: %s", csr.Name, message)
 	return c.client.SubResource("approval").Update(ctx, csr)
 }
 
@@ -183,10 +180,7 @@ func (c *OVNKubeCSRController) approveCSR(ctx context.Context, csr *certificates
 			Message: fmt.Sprintf("Auto-approved CSR %q", csr.Name),
 		})
 
-	c.recorder.Eventf(&corev1.ObjectReference{
-		Kind: "CertificateSigningRequest",
-		Name: csr.Name,
-	}, corev1.EventTypeNormal, "CSRApproved", "CSR %q has been approved", csr.Name)
+	c.recorder.Eventf(csr, nil, corev1.EventTypeNormal, "CSRApproved", "Approving", "CSR %q has been approved", csr.Name)
 	return c.client.SubResource("approval").Update(ctx, csr)
 }
 

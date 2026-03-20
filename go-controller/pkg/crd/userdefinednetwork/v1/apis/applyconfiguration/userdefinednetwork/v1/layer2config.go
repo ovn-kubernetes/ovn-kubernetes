@@ -24,14 +24,55 @@ import (
 // Layer2ConfigApplyConfiguration represents a declarative configuration of the Layer2Config type for use
 // with apply.
 type Layer2ConfigApplyConfiguration struct {
-	Role                  *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
-	MTU                   *int32                               `json:"mtu,omitempty"`
-	Subnets               *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
-	ReservedSubnets       []userdefinednetworkv1.CIDR          `json:"reservedSubnets,omitempty"`
-	InfrastructureSubnets []userdefinednetworkv1.CIDR          `json:"infrastructureSubnets,omitempty"`
-	DefaultGatewayIPs     *userdefinednetworkv1.DualStackIPs   `json:"defaultGatewayIPs,omitempty"`
-	JoinSubnets           *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
-	IPAM                  *IPAMConfigApplyConfiguration        `json:"ipam,omitempty"`
+	// Role describes the network role in the pod.
+	//
+	// Allowed value is "Secondary".
+	// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
+	Role *userdefinednetworkv1.NetworkRole `json:"role,omitempty"`
+	// MTU is the maximum transmission unit for a network.
+	// MTU is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.
+	MTU *int32 `json:"mtu,omitempty"`
+	// Subnets are used for the pod network across the cluster.
+	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+	//
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `ipam.mode` is `Disabled`.
+	Subnets *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
+	// reservedSubnets specifies a list of CIDRs reserved for static IP assignment, excluded from automatic allocation.
+	// reservedSubnets is optional. When omitted, all IP addresses in `subnets` are available for automatic assignment.
+	// IPs from these ranges can still be requested through static IP assignment.
+	// Each item should be in range of the specified CIDR(s) in `subnets`.
+	// The maximum number of entries allowed is 25.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	ReservedSubnets []userdefinednetworkv1.CIDR `json:"reservedSubnets,omitempty"`
+	// infrastructureSubnets specifies a list of internal CIDR ranges that OVN-Kubernetes will reserve for internal network infrastructure.
+	// Any IP addresses within these ranges cannot be assigned to workloads.
+	// When omitted, OVN-Kubernetes will automatically allocate IP addresses from `subnets` for its infrastructure needs.
+	// When there are not enough available IPs in the provided infrastructureSubnets, OVN-Kubernetes will automatically allocate IP addresses from subnets for its infrastructure needs.
+	// When `reservedSubnets` is also specified the CIDRs cannot overlap.
+	// When `defaultGatewayIPs` is also specified, the default gateway IPs must belong to one of the infrastructure subnet CIDRs.
+	// Each item should be in range of the specified CIDR(s) in `subnets`.
+	// The maximum number of entries allowed is 4.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	InfrastructureSubnets []userdefinednetworkv1.CIDR `json:"infrastructureSubnets,omitempty"`
+	// defaultGatewayIPs specifies the default gateway IP used in the internal OVN topology.
+	//
+	// Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
+	// This field is only allowed for "Primary" network.
+	// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+	// When omitted, an IP from the subnets field is used.
+	DefaultGatewayIPs *userdefinednetworkv1.DualStackIPs `json:"defaultGatewayIPs,omitempty"`
+	// JoinSubnets are used inside the OVN network topology.
+	//
+	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+	// This field is only allowed for "Primary" network.
+	// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+	// When omitted, the platform will choose a reasonable default which is subject to change over time.
+	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
+	// IPAM section contains IPAM-related configuration for the network.
+	IPAM *IPAMConfigApplyConfiguration `json:"ipam,omitempty"`
 }
 
 // Layer2ConfigApplyConfiguration constructs a declarative configuration of the Layer2Config type for use with

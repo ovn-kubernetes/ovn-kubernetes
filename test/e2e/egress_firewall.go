@@ -15,6 +15,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
+	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/extensions/table"
@@ -26,7 +27,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -211,13 +211,14 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 			}
 
 			checkExternalContainerConnectivity := func(externalContainer infraapi.ExternalContainer, dstIP string, dstPort int) {
-				_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
-					"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(dstIP, fmt.Sprint(dstPort)),
-				})
-				if err != nil {
-					framework.Failf("Failed to connect from external container %s to %s:%d: %v",
-						externalContainer.GetName(), dstIP, dstPort, err)
-				}
+				gomega.Eventually(func() error {
+					_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
+						"curl", "-s", "--connect-timeout", fmt.Sprint(time.Second), net.JoinHostPort(dstIP, fmt.Sprint(dstPort)),
+					})
+					return err
+				}, time.Duration(2*testTimeout)*time.Second).Should(gomega.Succeed(),
+					fmt.Sprintf("Failed to connect from external container %s to %s:%d",
+						externalContainer.GetName(), dstIP, dstPort))
 			}
 
 			// createSrcPodWithRetry creates a pod that can reach the specified destination with a given number of retries.
@@ -393,7 +394,7 @@ spec:
 				framework.ExpectNoError(err, fmt.Sprintf("unable to create nodePort service, err: %v", err))
 
 				ginkgo.By("Waiting for the endpoints to pop up")
-				err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 1, time.Second, wait.ForeverTestTimeout)
+				err = e2eendpointslice.WaitForEndpointCount(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 1)
 				framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 				// 2. Check connectivity works both ways

@@ -302,6 +302,18 @@ func GetNoOwnerPredicate[T hasExternalIDs]() func(item T) bool {
 	}
 }
 
+// GetAnyControllerPredicate is the only exception when OwnerControllerKey is not required.
+// It should only be used by the new unified controllers that work for all controller/network names during cleanup.
+func GetAnyControllerPredicate[T hasExternalIDs](dbOwnerType *ObjectIDsType, f func(item T) bool) func(item T) bool {
+	return func(item T) bool {
+		dbExternalIDs := item.GetExternalIDs()
+		if dbExternalIDs[OwnerTypeKey.String()] != dbOwnerType.ownerObjectType {
+			return false
+		}
+		return f == nil || f(item)
+	}
+}
+
 // GetPredicate returns a predicate to search for db obj of type nbdbT.
 // Only non-empty ids will be matched (that always includes DbObjectIDs.OwnerTypeKey and DbObjectIDs.ownerControllerName),
 // but the other IDs may be empty and will be ignored in the filtering, additional filter function f may be passed, or set

@@ -1,12 +1,12 @@
 package healthcheck
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
-	"golang.org/x/net/context"
 	"golang.org/x/net/proxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

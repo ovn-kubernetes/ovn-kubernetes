@@ -25,12 +25,23 @@ import (
 
 // RouteAdvertisementsSpecApplyConfiguration represents a declarative configuration of the RouteAdvertisementsSpec type for use
 // with apply.
+//
+// RouteAdvertisementsSpec defines the desired state of RouteAdvertisements
 type RouteAdvertisementsSpecApplyConfiguration struct {
-	TargetVRF                *string                                   `json:"targetVRF,omitempty"`
-	NetworkSelectors         *types.NetworkSelectors                   `json:"networkSelectors,omitempty"`
-	NodeSelector             *metav1.LabelSelectorApplyConfiguration   `json:"nodeSelector,omitempty"`
-	FRRConfigurationSelector *metav1.LabelSelectorApplyConfiguration   `json:"frrConfigurationSelector,omitempty"`
-	Advertisements           []routeadvertisementsv1.AdvertisementType `json:"advertisements,omitempty"`
+	// targetVRF determines which VRF the routes should be advertised in.
+	TargetVRF *string `json:"targetVRF,omitempty"`
+	// networkSelectors determines which network routes should be advertised.
+	// Only ClusterUserDefinedNetworks and the default network can be selected.
+	NetworkSelectors *types.NetworkSelectors `json:"networkSelectors,omitempty"`
+	// nodeSelector limits the advertisements to selected nodes. This field
+	// follows standard label selector semantics.
+	NodeSelector *metav1.LabelSelectorApplyConfiguration `json:"nodeSelector,omitempty"`
+	// frrConfigurationSelector determines which FRRConfigurations will the
+	// OVN-Kubernetes driven FRRConfigurations be based on. This field follows
+	// standard label selector semantics.
+	FRRConfigurationSelector *metav1.LabelSelectorApplyConfiguration `json:"frrConfigurationSelector,omitempty"`
+	// advertisements determines what is advertised.
+	Advertisements []routeadvertisementsv1.AdvertisementType `json:"advertisements,omitempty"`
 }
 
 // RouteAdvertisementsSpecApplyConfiguration constructs a declarative configuration of the RouteAdvertisementsSpec type for use with

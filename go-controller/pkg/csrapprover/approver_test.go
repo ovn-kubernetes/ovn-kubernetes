@@ -15,7 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/certificate/csr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -328,7 +328,7 @@ func TestOVNKubeCSRController(t *testing.T) {
 			}
 
 			client := fake.NewClientBuilder().WithRuntimeObjects(csrObj).Build()
-			recorder := record.NewFakeRecorder(10)
+			recorder := events.NewFakeRecorder(10)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 

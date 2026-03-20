@@ -20,7 +20,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	listers "k8s.io/client-go/listers/core/v1"
@@ -326,9 +325,8 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 
 	webhookMux := http.NewServeMux()
 
-	nodeWebhook := admission.WithCustomValidator(
+	nodeWebhook := admission.WithValidator(
 		scheme.Scheme,
-		&corev1.Node{},
 		ovnwebhook.NewNodeAdmissionWebhook(cliCfg.enableInterconnect, cliCfg.enableHybridOverlay, cliCfg.extraAllowedUsers.Value()...),
 	).WithRecoverPanic(true)
 
@@ -353,9 +351,8 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 		cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced)
 
 		nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
-		podWebhook := admission.WithCustomValidator(
+		podWebhook := admission.WithValidator(
 			scheme.Scheme,
-			&corev1.Pod{},
 			ovnwebhook.NewPodAdmissionWebhook(nodeLister, cliCfg.podAdmissionConditions, cliCfg.extraAllowedUsers.Value()...),
 		).WithRecoverPanic(true)
 		podHandler, err := admission.StandaloneWebhook(
@@ -462,7 +459,7 @@ func runCSRApproverManager(ctx context.Context, leaderID string, restCfg *rest.C
 			cliCfg.csrAcceptanceConditions,
 			csrapprover.Usages,
 			csrapprover.MaxDuration,
-			mgr.GetEventRecorderFor(csrapprover.ControllerName),
+			mgr.GetEventRecorder(csrapprover.ControllerName),
 		))
 	if err != nil {
 		klog.Errorf("Failed to create %s: %v", csrapprover.ControllerName, err)

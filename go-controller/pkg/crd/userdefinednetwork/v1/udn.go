@@ -6,7 +6,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 //
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +kubebuilder:resource:path=userdefinednetworks,scope=Namespaced
+// +kubebuilder:resource:path=userdefinednetworks,scope=Namespaced,shortName=udn
 // +kubebuilder:singular=userdefinednetwork
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

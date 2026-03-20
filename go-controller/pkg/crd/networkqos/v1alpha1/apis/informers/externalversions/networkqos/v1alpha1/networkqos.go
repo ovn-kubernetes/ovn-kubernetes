@@ -56,7 +56,7 @@ func NewNetworkQoSInformer(client versioned.Interface, namespace string, resyncP
 // one. This reduces memory footprint and number of connections to the server.
 func NewFilteredNetworkQoSInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
-		&cache.ListWatch{
+		cache.ToListWatcherWithWatchListSemantics(&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
@@ -81,7 +81,7 @@ func NewFilteredNetworkQoSInformer(client versioned.Interface, namespace string,
 				}
 				return client.K8sV1alpha1().NetworkQoSes(namespace).Watch(ctx, options)
 			},
-		},
+		}, client),
 		&crdnetworkqosv1alpha1.NetworkQoS{},
 		resyncPeriod,
 		indexers,

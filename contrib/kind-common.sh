@@ -40,7 +40,7 @@ set_common_default_params() {
   KIND_CREATE=${KIND_CREATE:-true}
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  K8S_VERSION=${K8S_VERSION:-v1.34.0}
+  K8S_VERSION=${K8S_VERSION:-v1.35.0}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
@@ -850,6 +850,12 @@ install_dnsnameresolver_operator() {
     -e 's/^\(.*--dns-name-resolver-namespace=\).*/\1ovn-kubernetes/' \
     -e 's/^\(.*--coredns-port=\).*/\153/' config/default/manager_auth_proxy_patch.yaml
 
+  # gcr.io Container Registry shutdown issue
+  # See https://github.com/kubernetes-sigs/kubebuilder/discussions/3907#discussioncomment-11477582 for more details.
+  # REVERT ME: when coredns team fixes image in upstream, we can revert this patch.
+  sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
+    config/default/manager_auth_proxy_patch.yaml
+
   make install CONTROLLER_TOOLS_VERSION=v0.19.0
   make deploy IMG=${DNSNAMERESOLVER_OPERATOR} CONTROLLER_TOOLS_VERSION=v0.19.0
   popd
@@ -1140,6 +1146,18 @@ install_frr_k8s() {
   clone_frr
 
   # apply frr-k8s
+  # The all-in-one manifest is only consumed here (deploy_frr_external_container
+  # uses CRDs and the demo scripts, not this manifest), so the fix lives here
+  # rather than in clone_frr. This covers both kind.sh and kind-helm.sh since
+  # both call install_frr_k8s.
+  #
+  # gcr.io/kubebuilder/kube-rbac-proxy is unavailable after Google's Container
+  # Registry shutdown (https://cloud.google.com/container-registry/docs/deprecations/container-registry-deprecation).
+  # Upstream bug: https://github.com/metallb/metallb/issues/2619
+  # Use the same image from the Kubernetes community registry instead.
+  # REVERT ME: when https://github.com/metallb/metallb/issues/2619 is fixed
+  sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
+    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
   kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
   kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
   kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m

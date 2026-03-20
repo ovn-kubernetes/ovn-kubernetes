@@ -46,6 +46,8 @@ The "derive-from-mgmt-port" feature automates the gateway interface discovery pr
 
 ## Technical Implementation
 
+Always check the dependencies on the [Requirements page](../requirements.md)
+
 ### Code Changes
 
 1. **New Constant**: Added `DeriveFromMgmtPort = "derive-from-mgmt-port"` constant in `go-controller/pkg/types/const.go`
@@ -73,11 +75,42 @@ The implementation includes robust error handling for:
 
 ```bash
 --ovnkube-node-mode=dpu-host
+--ovnkube-node-mgmt-port-dp-resource-name=example.com/sriov_pool
+--gateway-interface=derive-from-mgmt-port
+```
+
+Alternatively, the management port VF can be specified directly by netdev name
+using `--ovnkube-node-mgmt-port-netdev`. Note that this approach does **not**
+support network segmentation (UDN); use `--ovnkube-node-mgmt-port-dp-resource-name`
+instead when network segmentation is enabled.
+
+```bash
+--ovnkube-node-mode=dpu-host
 --ovnkube-node-mgmt-port-netdev=pf0vf0
 --gateway-interface=derive-from-mgmt-port
 ```
 
+> **Note:** When both `--ovnkube-node-mgmt-port-dp-resource-name` and
+> `--ovnkube-node-mgmt-port-netdev` are specified,
+> `--ovnkube-node-mgmt-port-dp-resource-name` takes priority and the netdev
+> provided by `--ovnkube-node-mgmt-port-netdev` will be overridden by the
+> device chosen from the SR-IOV resource pool. Additionally, when network
+> segmentation (UDN) is enabled in DPU-host mode,
+> `--ovnkube-node-mgmt-port-dp-resource-name` is **mandatory** and
+> `--ovnkube-node-mgmt-port-netdev` is not supported.
+
 ### Helm Configuration
+
+```yaml
+ovnkube-node:
+  mode: dpu-host
+  mgmtPortVFResourceName: example.com/sriov_pool
+  
+gateway:
+  interface: derive-from-mgmt-port
+```
+
+Or using the netdev name directly (not supported with network segmentation / UDN):
 
 ```yaml
 ovnkube-node:
@@ -89,6 +122,17 @@ gateway:
 ```
 
 ### Configuration File
+
+```ini
+[OvnKubeNode]
+mode=dpu-host
+mgmt-port-dp-resource-name=example.com/sriov_pool
+
+[Gateway]
+interface=derive-from-mgmt-port
+```
+
+Or using the netdev name directly (not supported with network segmentation / UDN):
 
 ```ini
 [OvnKubeNode]
@@ -151,7 +195,7 @@ Potential improvements include:
 
 - [DPU Gateway Interface Configuration](dpu-gateway-interface.md)
 - [DPU Support](dpu-support.md)
-- [Gateway Accelerated Interface Configuration](../design/gateway-accelerated-interface-configuration.md)
+- [Gateway Accelerated Interface Configuration](../../design/gateway-accelerated-interface-configuration.md)
 - [Configuration Guide](../../getting-started/configuration.md)
 
 ## Support

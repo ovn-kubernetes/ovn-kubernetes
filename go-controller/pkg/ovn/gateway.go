@@ -20,6 +20,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -46,6 +47,7 @@ type GatewayManager struct {
 	netInfo                 util.NetInfo
 	watchFactory            *factory.WatchFactory
 	getNetworkNameForNADKey func(nadKey string) string
+	nodeAnnotationCache     *nodecontroller.NodeAnnotationCache
 	// Cluster wide Load_Balancer_Group UUID.
 	// Includes all node switches and node gateway routers.
 	clusterLoadBalancerGroupUUID string
@@ -70,6 +72,7 @@ func NewGatewayManagerForLayer2Topology(
 	nbClient libovsdbclient.Client,
 	netInfo util.NetInfo,
 	watchFactory *factory.WatchFactory,
+	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
 	useTransitRouter bool,
 	opts ...GatewayOption,
 ) *GatewayManager {
@@ -87,6 +90,7 @@ func NewGatewayManagerForLayer2Topology(
 		nbClient,
 		netInfo,
 		watchFactory,
+		nodeAnnotationCache,
 		opts...,
 	)
 }
@@ -98,6 +102,7 @@ func NewGatewayManager(
 	nbClient libovsdbclient.Client,
 	netInfo util.NetInfo,
 	watchFactory *factory.WatchFactory,
+	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
 	opts ...GatewayOption,
 ) *GatewayManager {
 	return newGWManager(
@@ -110,6 +115,7 @@ func NewGatewayManager(
 		nbClient,
 		netInfo,
 		watchFactory,
+		nodeAnnotationCache,
 		opts...,
 	)
 }
@@ -121,18 +127,20 @@ func newGWManager(
 	nbClient libovsdbclient.Client,
 	netInfo util.NetInfo,
 	watchFactory *factory.WatchFactory,
+	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
 	opts ...GatewayOption) *GatewayManager {
 	gwManager := &GatewayManager{
-		nodeName:          nodeName,
-		clusterRouterName: clusterRouterName,
-		gwRouterName:      netInfo.GetNetworkScopedGWRouterName(nodeName),
-		extSwitchName:     extSwitchName,
-		joinSwitchName:    joinSwitchName,
-		coppUUID:          coopUUID,
-		kube:              kube,
-		nbClient:          nbClient,
-		netInfo:           netInfo,
-		watchFactory:      watchFactory,
+		nodeName:            nodeName,
+		clusterRouterName:   clusterRouterName,
+		gwRouterName:        netInfo.GetNetworkScopedGWRouterName(nodeName),
+		extSwitchName:       extSwitchName,
+		joinSwitchName:      joinSwitchName,
+		coppUUID:            coopUUID,
+		kube:                kube,
+		nbClient:            nbClient,
+		netInfo:             netInfo,
+		watchFactory:        watchFactory,
+		nodeAnnotationCache: nodeAnnotationCache,
 	}
 
 	for _, opt := range opts {
@@ -366,7 +374,7 @@ func (gw *GatewayManager) createGWRouterPeerSwitchPort(nodeName string) error {
 		if err != nil {
 			return fmt.Errorf("failed to fetch node %s from watch factory %w", node.Name, err)
 		}
-		tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, gw.netInfo.GetNetworkName())
+		tunnelID, err := gw.nodeAnnotationCache.ParseUDNLayer2NodeGRLRPTunnelIDCached(node, gw.netInfo.GetNetworkName())
 		if err != nil {
 			if util.IsAnnotationNotSetError(err) {
 				// remote node may not have the annotation yet, suppress it
@@ -879,7 +887,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 		if util.IsNoOverlaySNATExemptionNeeded(gw.netInfo) {
 			// Get the no-overlay SNAT exemption address set UUIDs
 			addressSetFactory := addressset.NewOvnAddressSetFactory(gw.nbClient, config.IPv4Mode, config.IPv6Mode)
-			v4UUID, v6UUID, err = getNoOverlaySNATExemptionAsUUID(addressSetFactory, gw.netInfo, DefaultNetworkControllerName)
+			v4UUID, v6UUID, err = getNoOverlaySNATExemptionAsUUID(addressSetFactory, gw.netInfo, types.DefaultNetworkControllerName)
 			if err != nil {
 				return fmt.Errorf("failed to get no-overlay SNAT exemption address set UUID: %w", err)
 			}
@@ -1080,7 +1088,7 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 	}
 
 	// if the network is advertised, we need to ensure that the SNAT exists with the correct conditional destination match
-	dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+	dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
 	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
 	addrSet, err := addressSetFactory.GetAddressSet(dbIDs)
 	if err != nil {

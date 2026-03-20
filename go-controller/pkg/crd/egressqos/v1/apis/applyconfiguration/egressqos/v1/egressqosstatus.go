@@ -23,8 +23,12 @@ import (
 
 // EgressQoSStatusApplyConfiguration represents a declarative configuration of the EgressQoSStatus type for use
 // with apply.
+//
+// EgressQoSStatus defines the observed state of EgressQoS
 type EgressQoSStatusApplyConfiguration struct {
-	Status     *string                              `json:"status,omitempty"`
+	// A concise indication of whether the EgressQoS resource is applied with success.
+	Status *string `json:"status,omitempty"`
+	// An array of condition objects indicating details about status of EgressQoS object.
 	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
