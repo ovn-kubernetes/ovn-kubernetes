@@ -144,28 +144,12 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v6
 
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go-controller/go.mod'
-        # Disabling cache to avoid warnings until these two issues are fixed
-        # https://github.com/actions/setup-go/issues/424
-        # https://github.com/actions/setup-go/issues/403
-        # cache-dependency-path: "**/*.sum"
-        cache: false
-      id: go
-
     - name: Log in to the GH Container registry
       uses: docker/login-action@v3
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-
-    # TODO: this is not hermetic; switch to in-docker build of binaries
-    - name: Build ovnkube-binaries and stage image context
-      run: | 
-        make -C dist/images bld
 
     - name: Set up Docker Buildx
       id: buildx
@@ -182,9 +166,11 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         builder: ${{ steps.buildx.outputs.name }}
-        context: ./dist/images
+        context: .
         file: ./dist/images/Dockerfile.ubuntu
         push: true
+        build-args: |
+          BUILDER_IMAGE=${{ env.BUILDER_IMAGE }}
         platforms: ${{ matrix.platform }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha,scope=ubuntu-${{ env.PLATFORM_PAIR }}
