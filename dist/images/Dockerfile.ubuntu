@@ -25,6 +25,8 @@ RUN cd ovn-kubernetes/dist/images && \
 
 FROM ubuntu:25.10
 
+ARG TARGETARCH
+
 USER root
 
 RUN apt-get update && apt-get install -y iproute2 curl software-properties-common util-linux nftables
@@ -32,7 +34,7 @@ RUN apt-get update && apt-get install -y iproute2 curl software-properties-commo
 # Install OVS and OVN packages.
 RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host
 
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
 RUN mkdir -p /var/run/openvswitch
