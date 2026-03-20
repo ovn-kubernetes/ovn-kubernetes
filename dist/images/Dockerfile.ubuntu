@@ -32,11 +32,13 @@ ARG TARGETARCH
 
 USER root
 
+# Install runtime dependencies and OVS/OVN packages in one layer so a single
+# package index update covers the full install set.
 # Keep socat until ovn-kubernetes#6122 removes the e2e/runtime dependency on it.
-RUN apt-get update && apt-get install -y iproute2 curl software-properties-common util-linux nftables socat ndisc6 libndp-tools
-
-# Install OVS and OVN packages.
-RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host
+RUN apt-get update && apt-get install -y \
+    iproute2 curl software-properties-common util-linux nftables socat ndisc6 libndp-tools \
+    openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
