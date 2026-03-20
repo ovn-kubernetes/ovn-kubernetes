@@ -172,7 +172,7 @@ COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scrip
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
       io.k8s.description="This is a Kubernetes network plugin that provides an overlay network using OVN." \
-      maintainer="Tim Rozet <trozet@redhat.com>"
+      maintainer="ovn-kubernetes@googlegroups.com"
 
 WORKDIR /root
 ENTRYPOINT /root/ovnkube.sh
