@@ -1271,7 +1271,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	}
 	hasEVPN := netInfo.Transport() == ovntypes.NetworkTransportEVPN
 	if !hasEVPN {
-		clusterRouter.Options = map[string]string{libovsdbops.RequestedTnlKey: "16715780"}
+		clusterRouter.Options = udnTransitRouterOptions("16715780")
 	} else {
 		clusterRouter.Options = map[string]string{"always_learn_from_arp_request": "false"}
 	}

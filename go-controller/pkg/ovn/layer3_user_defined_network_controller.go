@@ -1170,17 +1170,17 @@ func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 }
 
 func (oc *Layer3UserDefinedNetworkController) newClusterRouter() (*nbdb.LogicalRouter, error) {
+	routerOptions := map[string]string{
+		libovsdbops.CtCommitAll: "true",
+	}
 	if oc.multicastSupport {
-		return oc.gatewayTopologyFactory.NewClusterRouterWithMulticastSupport(
-			oc.GetNetworkScopedClusterRouterName(),
-			oc.GetNetInfo(),
-			oc.defaultCOPPUUID,
-		)
+		routerOptions["mcast_relay"] = "true"
 	}
 	return oc.gatewayTopologyFactory.NewClusterRouter(
 		oc.GetNetworkScopedClusterRouterName(),
 		oc.GetNetInfo(),
 		oc.defaultCOPPUUID,
+		routerOptions,
 	)
 }
 

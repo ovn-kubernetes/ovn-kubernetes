@@ -1648,7 +1648,7 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		Ports:       []string{rtosLRPUUID},
 		ExternalIDs: clusterRouterExternalIDs,
 		Copp:        ptr.To(string(coppUUID)),
-		Options:     map[string]string{"always_learn_from_arp_request": "false"},
+		Options:     udnClusterRouterOptions(false),
 	}
 
 	expectedEntities := []libovsdbtest.TestData{
@@ -1890,6 +1890,24 @@ func gwRouterOptions(gwConfig util.L3GatewayConfig) map[string]string {
 		"chassis":                       gwConfig.ChassisID,
 		"always_learn_from_arp_request": "false",
 		"dynamic_neigh_routers":         dynamicNeighRouters,
+	}
+}
+
+func udnClusterRouterOptions(multicastSupport bool) map[string]string {
+	options := map[string]string{
+		"always_learn_from_arp_request": "false",
+		libovsdbops.CtCommitAll:         "true",
+	}
+	if multicastSupport {
+		options["mcast_relay"] = "true"
+	}
+	return options
+}
+
+func udnTransitRouterOptions(tunnelKey string) map[string]string {
+	return map[string]string{
+		libovsdbops.RequestedTnlKey: tunnelKey,
+		libovsdbops.CtCommitAll:     "true",
 	}
 }
 

@@ -1185,6 +1185,7 @@ func (oc *Layer2UserDefinedNetworkController) newClusterRouter() (*nbdb.LogicalR
 			oc.GetNetworkScopedClusterRouterName(),
 			oc.GetNetInfo(),
 			oc.defaultCOPPUUID,
+			nil,
 		)
 	}
 

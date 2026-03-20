@@ -65,7 +65,7 @@ var _ = Describe("Topology factory", func() {
 		})
 
 		It("creating a cluster router for a layer3 primary network with multicast disabled", func() {
-			clusterRouter, err := factory.NewClusterRouter(routerName, netInfo, coopUUID)
+			clusterRouter, err := factory.NewClusterRouter(routerName, netInfo, coopUUID, nil)
 			Expect(err).NotTo(HaveOccurred())
 			expectedExternalIDs := map[string]string{
 				ovntypes.NetworkExternalID:  networkName,
@@ -84,7 +84,7 @@ var _ = Describe("Topology factory", func() {
 		})
 
 		It("creating a cluster router for a layer3 primary network with multicast enabled", func() {
-			clusterRouter, err := factory.NewClusterRouterWithMulticastSupport(routerName, netInfo, coopUUID)
+			clusterRouter, err := factory.NewClusterRouter(routerName, netInfo, coopUUID, map[string]string{"mcast_relay": "true"})
 			Expect(err).NotTo(HaveOccurred())
 			expectedExternalIDs := map[string]string{
 				ovntypes.NetworkExternalID:  networkName,
