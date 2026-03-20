@@ -62,6 +62,12 @@ const (
 	netexecPort            = 8080
 )
 
+func init() {
+	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
+		images.Add(images.FRR())
+	}
+}
+
 var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.RouteAdvertisements, func() {
 	var serverContainerIPs []string
 	var frrContainerIPv4, frrContainerIPv6 string
@@ -2761,8 +2767,6 @@ type templateInputFRR struct {
 var ratestdata embed.FS
 var tmplDir = filepath.Join("testdata", "routeadvertisements")
 
-const frrImage = "quay.io/frrouting/frr:10.4.3"
-
 // generateFRRConfiguration to establish a BGP session towards the provided
 // neighbors in the network's VRF configured to advertised the provided
 // networks. Returns a temporary directory where the configuration is generated.
@@ -2916,7 +2920,7 @@ func runBGPNetworkAndServer(
 	ictx.AddCleanUpFn(func() error { return os.RemoveAll(frrConfig) })
 	frr := infraapi.ExternalContainer{
 		Name:        networkName + "-frr",
-		Image:       frrImage,
+		Image:       images.FRR(),
 		Network:     bgpPeerNetwork,
 		RuntimeArgs: []string{"--volume", frrConfig + ":" + filepath.Join(filepath.FromSlash("/"), "etc", "frr")},
 	}

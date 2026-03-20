@@ -23,6 +23,7 @@ var (
 	nginx                 = "nginx:1"
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
+	frr                   = "quay.io/frrouting/frr:10.4.3"
 
 	extraImages []string
 )
@@ -45,6 +46,9 @@ func init() {
 	}
 	if udpServerOverride := os.Getenv("UDP_SERVER_SRCIP_PRINTER_IMAGE"); udpServerOverride != "" {
 		udpServerSrcIPPrinter = udpServerOverride
+	}
+	if frrOverride := os.Getenv("FRR_IMAGE"); frrOverride != "" {
+		frr = frrOverride
 	}
 }
 
@@ -70,6 +74,10 @@ func MetalLBLBService() string {
 
 func UDPServerSrcIPPrinter() string {
 	return udpServerSrcIPPrinter
+}
+
+func FRR() string {
+	return frr
 }
 
 // Add registers images that are needed by a test suite. Call from init()
