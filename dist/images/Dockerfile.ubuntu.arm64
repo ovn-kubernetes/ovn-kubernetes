@@ -11,6 +11,21 @@
 #
 # So this file will change over time.
 
+ARG BUILDER_IMAGE
+ARG OVN_KUBERNETES_DIR=.
+
+FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-builder
+
+ARG OVN_KUBERNETES_DIR
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+RUN dnf install --best --refresh -y make git
+COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
+RUN cd ovn-kubernetes/dist/images && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
+
 FROM ubuntu:26.04
 
 USER root
@@ -25,31 +40,31 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 
 RUN mkdir -p /var/run/openvswitch
 
-# Built in ../../go_controller, then the binaries are copied here.
+# Built in the ovnkube-builder stage, then the binaries are copied here.
 # put things where they are in the pkg
 RUN mkdir -p /usr/libexec/cni/
-COPY ovnkube ovn-kube-util hybrid-overlay-node ovnkube-identity ovnkube-observ /usr/bin/
-COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube /workspace/ovn-kubernetes/dist/images/ovn-kube-util /workspace/ovn-kubernetes/dist/images/hybrid-overlay-node /workspace/ovn-kubernetes/dist/images/ovnkube-identity /workspace/ovn-kubernetes/dist/images/ovnkube-observ /usr/bin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY ovnkube.sh /root/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /root/
 # override the pkg's ovn_k8s.conf with this local copy
-COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 
 # copy git commit number into image
-COPY git_info /root
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/git_info /root
 
 # include checked-in third-party license files in the final image
 COPY LICENSES/ /usr/share/licenses/ovn-kubernetes/
 
 # iptables wrappers
-COPY ./iptables-scripts/iptables /usr/sbin/
-COPY ./iptables-scripts/iptables-save /usr/sbin/
-COPY ./iptables-scripts/iptables-restore /usr/sbin/
-COPY ./iptables-scripts/ip6tables /usr/sbin/
-COPY ./iptables-scripts/ip6tables-save /usr/sbin/
-COPY ./iptables-scripts/ip6tables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
       io.k8s.description="ovnkube ubuntu image" 

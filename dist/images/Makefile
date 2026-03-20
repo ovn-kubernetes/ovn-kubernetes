@@ -36,8 +36,13 @@ GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 OCI_BIN ?= docker
 
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
-ubuntu-image: bld
-	${OCI_BIN} build -t ovn-kube-ubuntu$(IMAGE_ARCH) -f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
+ubuntu-image:
+	${OCI_BIN} build \
+		--build-arg OVN_KUBERNETES_DIR=. \
+		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		--platform=linux/${ARCH} \
+		-t ovn-kube-ubuntu$(IMAGE_ARCH) \
+		-f Dockerfile.ubuntu$(DOCKERFILE_ARCH) ../..
 ifeq ($(ARCH),amd64)
 	${OCI_BIN} tag "ovn-kube-ubuntu$(IMAGE_ARCH):latest" \
               "ovn-kube-ubuntu:latest"
