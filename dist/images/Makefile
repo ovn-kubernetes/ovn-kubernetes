@@ -25,6 +25,7 @@ OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V
 endif
 GO_VERSION ?= 1.25
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
+OVN_KUBERNETES_DIR ?= .
 KUBECTL_MINOR ?= $(shell awk '/^[[:space:]]*k8s.io\/kubernetes v/ {gsub(/^v/, "", $$2); split($$2, version, "."); print version[1] "." version[2]; exit}' ../../go-controller/go.mod)
 UBUNTU_BASE_IMAGE ?= ubuntu:25.10
 FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:43
@@ -38,7 +39,7 @@ OCI_BIN ?= docker
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
 ubuntu-image:
 	${OCI_BIN} build \
-		--build-arg OVN_KUBERNETES_DIR=. \
+		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		--build-arg KUBECTL_MINOR=${KUBECTL_MINOR} \
 		--build-arg UBUNTU_BASE_IMAGE=${UBUNTU_BASE_IMAGE} \
