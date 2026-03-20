@@ -16,10 +16,6 @@ all: ubuntu-image fedora-image
 SLASH = -
 ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
 IMAGE_ARCH = $(SLASH)$(ARCH)
-DOCKERFILE_ARCH =
-ifeq ($(ARCH),arm64)
-        DOCKERFILE_ARCH=.arm64
-endif
 IMAGE ?= ovn-daemonset-fedora
 UBUNTU_IMAGE ?= $(if $(filter ovn-daemonset-fedora,$(IMAGE)),ovn-kube-ubuntu$(IMAGE_ARCH),$(IMAGE))
 UBUNTU_IMAGE_LATEST ?= $(if $(filter ovn-daemonset-fedora,$(IMAGE)),ovn-kube-ubuntu,$(IMAGE))
@@ -44,7 +40,7 @@ ubuntu-image:
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		--platform=linux/${ARCH} \
 		-t ${UBUNTU_IMAGE} \
-		-f Dockerfile.ubuntu$(DOCKERFILE_ARCH) ../..
+		-f Dockerfile.ubuntu ../..
 ifeq ($(ARCH),amd64)
 ifneq ($(UBUNTU_IMAGE),$(UBUNTU_IMAGE_LATEST))
 	${OCI_BIN} tag "${UBUNTU_IMAGE}" \
