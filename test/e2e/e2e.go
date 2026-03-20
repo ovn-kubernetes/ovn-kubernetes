@@ -59,9 +59,49 @@ const (
 	redirectPort         = "13337"
 	defaultPodInterface  = "eth0"
 	udnPodInterface      = "ovn-udn1"
+
+	localNodePortConvergenceTimeout      = 60 * time.Second
+	localNodePortConvergencePollInterval = 1 * time.Second
+	localNodePortStableProbeCount        = 3
 )
 
 type podCondition = func(pod *v1.Pod) (bool, error)
+
+// waitForConsistentLocalNodePortResponse tolerates service programming convergence by requiring
+// several consecutive probes to observe the same expected local backend and preserved client IP.
+func waitForConsistentLocalNodePortResponse(externalContainer infraapi.ExternalContainer, protocol, targetHost string, targetPort int32, expectedResponses sets.String) (sets.String, error) {
+	responses := sets.NewString()
+	var lastErr error
+
+	err := wait.PollUntilContextTimeout(context.Background(), localNodePortConvergencePollInterval, localNodePortConvergenceTimeout, true, func(context.Context) (bool, error) {
+		responses = sets.NewString()
+		lastErr = nil
+
+		for i := 0; i < localNodePortStableProbeCount; i++ {
+			epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, targetHost, targetPort, "hostname")
+			epClientIP := pokeEndpointViaExternalContainer(externalContainer, protocol, targetHost, targetPort, "clientip")
+			epClientIP, _, err := net.SplitHostPort(epClientIP)
+			if err != nil {
+				lastErr = fmt.Errorf("failed to parse client ip %q: %w", epClientIP, err)
+				return false, nil
+			}
+			responses.Insert(epHostname, epClientIP)
+			if !responses.Equal(expectedResponses) {
+				lastErr = fmt.Errorf("observed responses %v", responses)
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
+	if err == nil {
+		return responses, nil
+	}
+	if lastErr != nil {
+		return responses, fmt.Errorf("timed out waiting for local nodeport routing to converge: %w", lastErr)
+	}
+	return responses, err
+}
 
 // setupHostRedirectPod
 func setupHostRedirectPod(f *framework.Framework, externalContainer infraapi.ExternalContainer, nodeName, nodeIP string, isIPv6 bool) error {
@@ -1475,7 +1515,6 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 							continue
 						}
 
-						responses := sets.NewString()
 						// Fill expected responses, it should hit the nodeLocal endpoints and not SNAT packet IP
 						expectedResponses := sets.NewString()
 
@@ -1485,29 +1524,15 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 							expectedResponses.Insert(node.Name+"-ep", externalContainer.GetIPv4())
 						}
 
-						valid := false
 						nodePort := nodeTCPPort
 						if protocol == "udp" {
 							nodePort = nodeUDPPort
 						}
 
 						ginkgo.By("Hitting the nodeport on " + node.Name + " and trying to reach only the local endpoint with protocol " + protocol)
-
-						for i := 0; i < maxTries; i++ {
-							epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "hostname")
-							epClientIP := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "clientip")
-							epClientIP, _, err = net.SplitHostPort(epClientIP)
-							framework.ExpectNoError(err, "failed to parse client ip:port")
-							responses.Insert(epHostname, epClientIP)
-
-							if responses.Equal(expectedResponses) {
-								framework.Logf("Validated local endpoint on node %s with address %s, and packet src IP %s", node.Name, nodeAddress.Address, epClientIP)
-								valid = true
-								break
-							}
-
-						}
-						gomega.Expect(valid).To(gomega.Equal(true), fmt.Sprintf("Validation failed for node %s. Expected Responses=%v, Actual Responses=%v", node.Name, expectedResponses, responses))
+						responses, err := waitForConsistentLocalNodePortResponse(externalContainer, protocol, nodeAddress.Address, nodePort, expectedResponses)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred(), fmt.Sprintf("Validation failed for node %s. Expected Responses=%v, Actual Responses=%v", node.Name, expectedResponses, responses))
+						framework.Logf("Validated local endpoint on node %s with address %s and responses %v", node.Name, nodeAddress.Address, responses)
 					}
 				}
 			}
@@ -1748,7 +1773,6 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 	hostNetEndpointsSelector := map[string]string{"hostNetservicebackend": "true"}
 	var endPoints []*v1.Pod
 	var nodesHostnames sets.String
-	maxTries := 0
 	var nodes *v1.NodeList
 	var providerCtx infraapi.Context
 	var isDualStack bool
@@ -1803,9 +1827,6 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 				framework.ExpectNoError(err)
 				endPoints = append(endPoints, hostNetPod)
 				nodesHostnames.Insert(hostNetPod.Name)
-
-				// this is arbitrary and mutuated from k8s network e2e tests. We aim to hit all the endpoints at least once
-				maxTries = len(endPoints)*len(endPoints) + 30
 			}
 
 			ginkgo.By("Creating an external container to send the traffic from")
@@ -1851,7 +1872,6 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 							continue
 						}
 
-						responses := sets.NewString()
 						// Fill expected responses, it should hit the nodeLocal endpoints and not SNAT packet IP
 						expectedResponses := sets.NewString()
 
@@ -1861,29 +1881,16 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 							expectedResponses.Insert(node.Name, externalContainer.GetIPv4())
 						}
 
-						valid := false
 						nodePort := nodeTCPPort
 						if protocol == "udp" {
 							nodePort = nodeUDPPort
 						}
 
 						ginkgo.By("Hitting the nodeport on " + node.Name + " and trying to reach only the local endpoint with protocol " + protocol)
-						for i := 0; i < maxTries; i++ {
-							epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "hostname")
-							epClientIP := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "clientip")
-							epClientIP, _, err = net.SplitHostPort(epClientIP)
-							framework.ExpectNoError(err, "failed to parse client ip:port")
-							responses.Insert(epHostname, epClientIP)
-
-							if responses.Equal(expectedResponses) {
-								framework.Logf("Validated local endpoint on node %s with address %s, and packet src IP %s ", node.Name, nodeAddress.Address, epClientIP)
-								valid = true
-								break
-							}
-
-						}
-						gomega.Expect(valid).To(gomega.Equal(true),
+						responses, err := waitForConsistentLocalNodePortResponse(externalContainer, protocol, nodeAddress.Address, nodePort, expectedResponses)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred(),
 							fmt.Sprintf("Validation failed for node %s. Expected Responses=%v, Actual Responses=%v", node.Name, expectedResponses, responses))
+						framework.Logf("Validated local endpoint on node %s with address %s and responses %v", node.Name, nodeAddress.Address, responses)
 					}
 				}
 			}
