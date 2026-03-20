@@ -30,7 +30,15 @@ OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V
 endif
 GO_VERSION ?= 1.26
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
-KUBECTL_MINOR ?= 1.35
+KUBECTL_MINOR ?= $(shell awk '/^[[:space:]]*k8s.io\/kubernetes v/ {gsub(/^v/, "", $$2); split($$2, version, "."); print version[1] "." version[2]; exit}' ../../go-controller/go.mod)
+
+ifeq ($(strip $(KUBECTL_MINOR)),)
+$(error failed to derive KUBECTL_MINOR from ../../go-controller/go.mod)
+endif
+
+.PHONY: print-kubectl-minor
+print-kubectl-minor:
+	@printf '%s\n' '$(KUBECTL_MINOR)'
 
 OCI_BIN ?= docker
 

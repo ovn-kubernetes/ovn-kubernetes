@@ -144,6 +144,9 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v6
 
+    - name: Set image build variables
+      run: echo "KUBECTL_MINOR=$(make --silent --no-print-directory -C dist/images print-kubectl-minor)" >> "$GITHUB_ENV"
+
     - name: Log in to the GH Container registry
       uses: docker/login-action@v3
       with:
@@ -171,6 +174,7 @@ jobs:
         push: true
         build-args: |
           BUILDER_IMAGE=${{ env.BUILDER_IMAGE }}
+          KUBECTL_MINOR=${{ env.KUBECTL_MINOR }}
         platforms: ${{ matrix.platform }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha,scope=ubuntu-${{ env.PLATFORM_PAIR }}

@@ -142,6 +142,8 @@ RUN if [ -n "${FEDORA_BASE_DIGEST}" ]; then echo "${FEDORA_BASE_DIGEST}" > /root
 ENV PYTHONDONTWRITEBYTECODE yes
 
 # install needed rpms - openvswitch must be 2.10.4 or higher
+# TODO: Sync kubernetes-client with the Kubernetes version in go-controller/go.mod,
+# as is done for kubectl in the Ubuntu image.
 RUN INSTALL_PKGS=" \
     python3-pip python3-pyyaml bind-utils procps-ng openssl numactl-libs firewalld-filesystem \
     libpcap hostname kubernetes-client util-linux \
