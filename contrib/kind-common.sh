@@ -1133,6 +1133,12 @@ get_kubevirt_release_url() {
 }
 
 readonly FRR_K8S_VERSION=v0.0.21
+readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
+readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.4.3
+# Override to test newer FRR builds in the in-cluster frr-k8s daemonset
+# without changing the pinned frr-k8s release.
+FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
+readonly FRR_EXTERNAL_DEMO_IMAGE=${FRR_DEPLOYED_IMAGE}
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -1161,8 +1167,8 @@ clone_frr() {
     # https://github.com/FRRouting/frr/pull/20496
     replace_in_file_or_exit \
       hack/demo/demo.sh \
-      'quay.io/frrouting/frr:10.4.1' \
-      'quay.io/frrouting/frr:10.4.3'
+      "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+      "${FRR_EXTERNAL_DEMO_IMAGE}"
 
     popd
 
@@ -1343,6 +1349,7 @@ install_frr_k8s() {
   clone_frr
 
   # apply frr-k8s
+
   # The all-in-one manifest is only consumed here (deploy_frr_external_container
   # uses CRDs and the demo scripts, not this manifest), so the fix lives here
   # rather than in clone_frr. This covers both kind.sh and kind-helm.sh since
@@ -1355,10 +1362,12 @@ install_frr_k8s() {
   # REVERT ME: when https://github.com/metallb/metallb/issues/2619 is fixed
   sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  # Bump frr in frr-k8s to 10.4.3 to consume the following fix
-  # https://github.com/FRRouting/frr/pull/20496
-  sed -i 's|quay.io/frrouting/frr:[0-9.]*|quay.io/frrouting/frr:10.4.3|g' \
-    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
+
+  replace_in_file_or_exit \
+    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
+    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${FRR_K8S_FRR_IMAGE}"
+
   if [ "${bgp_port}" -ne 0 ]; then
     local frr_yaml="${FRR_TMP_DIR}/frr-k8s/config/all-in-one/frr-k8s.yaml"
     grep -q 'bgpd_options=.*-p 0' "$frr_yaml" || {
