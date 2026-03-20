@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strings"
 	"time"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
@@ -307,6 +308,187 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			),
 		)
 
+		DescribeTable(
+			"should allow a UDN pod to reach a remote node NodePort when externalTrafficPolicy=Local",
+			func(netConfigParams networkAttachmentConfigParams, ipFamily v1.IPFamily, protocol v1.Protocol) {
+				if isIPv4Supported(cs) && isIPv6Supported(cs) {
+					Skip("disabled on dual-stack clusters due to https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846")
+				}
+				if ipFamily == v1.IPv4Protocol && !isIPv4Supported(cs) {
+					Skip("cluster does not support IPv4")
+				}
+				if ipFamily == v1.IPv6Protocol && !isIPv6Supported(cs) {
+					Skip("cluster does not support IPv6")
+				}
+
+				By("Selecting 2 schedulable nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(nodes.Items)).To(BeNumerically(">", 1))
+
+				serverNode := nodes.Items[0].Name
+				clientNode := nodes.Items[1].Name
+
+				switch ipFamily {
+				case v1.IPv4Protocol:
+					netConfigParams.cidr = userDefinedNetworkIPv4Subnet
+				case v1.IPv6Protocol:
+					netConfigParams.cidr = userDefinedNetworkIPv6Subnet
+				default:
+					framework.Failf("unsupported IP family %q", ipFamily)
+				}
+
+				By("Creating the attachment configuration")
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = f.Namespace.Name
+				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+					context.Background(),
+					generateNAD(netConfig, f.ClientSet),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By(fmt.Sprintf("Creating a UDN backend pod for %s", protocol))
+				var serverPod *v1.Pod
+				switch protocol {
+				case v1.ProtocolUDP:
+					serverPod = e2epod.NewAgnhostPod(
+						f.Namespace.Name, "etp-local-backend", nil, nil,
+						[]v1.ContainerPort{{ContainerPort: serviceTargetPort, Protocol: "UDP"}},
+						"-c",
+						fmt.Sprintf(`
+set -xe
+iface=ovn-udn1
+ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | paste -sd, -)
+./agnhost netexec --udp-port=%d --udp-listen-addresses=$ips
+`, serviceTargetPort))
+					serverPod.Spec.Containers[0].Command = []string{"/bin/bash"}
+				case v1.ProtocolTCP:
+					serverPod = e2epod.NewAgnhostPod(
+						f.Namespace.Name, "etp-local-backend", nil, nil,
+						[]v1.ContainerPort{{ContainerPort: serviceTargetPort, Protocol: "TCP"}},
+						"netexec",
+						fmt.Sprintf("--http-port=%d", serviceTargetPort),
+					)
+				default:
+					framework.Failf("unsupported protocol %q", protocol)
+				}
+				serverPod.Labels = map[string]string{"app": "etp-local-backend"}
+				serverPod.Spec.NodeName = serverNode
+				serverPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
+
+				By("Creating a UDN client pod on a different node")
+				clientPod := e2epod.NewAgnhostPod(f.Namespace.Name, "etp-local-client", nil, nil, nil)
+				clientPod.Spec.NodeName = clientNode
+				clientPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
+
+				By("Creating a UDN NodePort service with externalTrafficPolicy=Local")
+				policy := v1.IPFamilyPolicySingleStack
+				service := &v1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: "etp-local-service"},
+					Spec: v1.ServiceSpec{
+						Ports: []v1.ServicePort{
+							{
+								Name:       "udp",
+								Protocol:   protocol,
+								Port:       servicePort,
+								TargetPort: intstr.FromInt(serviceTargetPort),
+							},
+						},
+						Selector:              serverPod.Labels,
+						Type:                  v1.ServiceTypeNodePort,
+						ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyLocal,
+						IPFamilyPolicy:        &policy,
+						IPFamilies:            []v1.IPFamily{ipFamily},
+					},
+				}
+				service, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.TODO(), service, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the UDN client can reach the remote node NodePort on the backend node")
+				checkConnectionToNodePort(f, clientPod, service, &nodes.Items[0], "server node", serverPod.Name)
+			},
+			Entry(
+				"L3 primary UDN over IPv4 UDP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					role:     "primary",
+				},
+				v1.IPv4Protocol,
+				v1.ProtocolUDP,
+			),
+			Entry(
+				"L3 primary UDN over IPv6 UDP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					role:     "primary",
+				},
+				v1.IPv6Protocol,
+				v1.ProtocolUDP,
+			),
+			Entry(
+				"L2 primary UDN over IPv4 UDP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					role:     "primary",
+				},
+				v1.IPv4Protocol,
+				v1.ProtocolUDP,
+			),
+			Entry(
+				"L2 primary UDN over IPv6 UDP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					role:     "primary",
+				},
+				v1.IPv6Protocol,
+				v1.ProtocolUDP,
+			),
+			Entry(
+				"L3 primary UDN over IPv4 TCP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					role:     "primary",
+				},
+				v1.IPv4Protocol,
+				v1.ProtocolTCP,
+			),
+			Entry(
+				"L3 primary UDN over IPv6 TCP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					role:     "primary",
+				},
+				v1.IPv6Protocol,
+				v1.ProtocolTCP,
+			),
+			Entry(
+				"L2 primary UDN over IPv4 TCP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					role:     "primary",
+				},
+				v1.IPv4Protocol,
+				v1.ProtocolTCP,
+			),
+			Entry(
+				"L2 primary UDN over IPv6 TCP",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					role:     "primary",
+				},
+				v1.IPv6Protocol,
+				v1.ProtocolTCP,
+			),
+		)
 	})
 
 })
@@ -365,6 +547,10 @@ func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expe
 		}
 
 		if err2 != nil {
+			if strings.Contains(cmd, "curl") &&
+				(strings.Contains(err2.Error(), "exit code 7") || strings.Contains(err2.Error(), "exit code 28")) {
+				return false, nil
+			}
 			return false, err2
 		}
 		return stdout == expectedOutput, nil
@@ -383,6 +569,10 @@ func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cm
 		}
 
 		if err2 != nil {
+			if strings.Contains(cmd, "curl") &&
+				(strings.Contains(err2.Error(), "exit code 28") || strings.Contains(err2.Error(), "exit code 7")) {
+				return false, nil
+			}
 			return false, err2
 		}
 		if stdout != "" {
@@ -443,7 +633,8 @@ func checkNoConnectionToNodePort(f *framework.Framework, clientPod *v1.Pod, serv
 
 func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string, shouldConnect bool) {
 	var err error
-	nodePort := service.Spec.Ports[0].NodePort
+	servicePort := service.Spec.Ports[0]
+	nodePort := servicePort.NodePort
 	notStr := ""
 	if !shouldConnect {
 		notStr = "not "
@@ -455,7 +646,7 @@ func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *
 		msg := fmt.Sprintf("Client %s/%s should %sconnect to NodePort service %s/%s on %s:%d (node %s, %s)",
 			clientPod.Namespace, clientPod.Name, notStr, service.Namespace, service.Name, nodeIP, nodePort, node.Name, nodeRoleMsg)
 		By(msg)
-		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, nodeIP, nodePort)
+		cmd := nodePortProbeCommand(servicePort.Protocol, nodeIP, nodePort)
 
 		if shouldConnect {
 			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
@@ -463,6 +654,18 @@ func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *
 			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd)
 		}
 		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
+	}
+}
+
+func nodePortProbeCommand(protocol v1.Protocol, nodeIP string, nodePort int32) string {
+	switch protocol {
+	case v1.ProtocolTCP:
+		return fmt.Sprintf(`/bin/sh -c 'curl -g -q -s --connect-timeout 1 --max-time 2 http://%s/hostname'`, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)))
+	case v1.ProtocolUDP:
+		return fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, nodeIP, nodePort)
+	default:
+		framework.Failf("unsupported protocol %q", protocol)
+		return ""
 	}
 }
 
@@ -500,7 +703,8 @@ func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, client
 func checkConnectionToNodePortFromExternalContainer(externalContainer infraapi.ExternalContainer, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
 	GinkgoHelper()
 	var err error
-	nodePort := service.Spec.Ports[0].NodePort
+	servicePort := service.Spec.Ports[0]
+	nodePort := servicePort.NodePort
 	nodeIPs, err := ParseNodeHostIPDropNetMask(node)
 	Expect(err).NotTo(HaveOccurred())
 
@@ -510,12 +714,24 @@ func checkConnectionToNodePortFromExternalContainer(externalContainer infraapi.E
 		By(msg)
 		Eventually(func() (string, error) {
 			return infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
-				"/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort),
+				"/bin/bash", "-c", externalNodePortProbeCommand(servicePort.Protocol, nodeIP, nodePort),
 			})
 		}).
 			WithTimeout(5*time.Second).
 			WithPolling(200*time.Millisecond).
 			Should(Equal(expectedOutput), "Failed to verify that %s", msg)
+	}
+}
+
+func externalNodePortProbeCommand(protocol v1.Protocol, nodeIP string, nodePort int32) string {
+	switch protocol {
+	case v1.ProtocolTCP:
+		return fmt.Sprintf("curl -g -q -s --connect-timeout 1 --max-time 2 http://%s/hostname", net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)))
+	case v1.ProtocolUDP:
+		return fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)
+	default:
+		framework.Failf("unsupported protocol %q", protocol)
+		return ""
 	}
 }
 
