@@ -11,6 +11,7 @@
 ARG OVN_FROM=koji
 ARG BUILDER_IMAGE
 ARG OVN_KUBERNETES_DIR=.
+ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:43
 
 #############################################
 # Stage to build OVN Kubernetes from Source #
@@ -31,7 +32,7 @@ RUN cd ovn-kubernetes/dist/images && \
 #############################################
 # Stage to get OVN and OVS RPMs from source #
 #############################################
-FROM quay.io/fedora/fedora:43 AS ovnbuilder
+FROM ${FEDORA_BASE_IMAGE} AS ovnbuilder
 USER root
 
 ENV PYTHONDONTWRITEBYTECODE yes
@@ -94,7 +95,7 @@ RUN git log -n 1
 ########################################
 # Stage to download OVN RPMs from koji #
 ########################################
-FROM quay.io/fedora/fedora:43 AS kojidownloader
+FROM ${FEDORA_BASE_IMAGE} AS kojidownloader
 ARG ovnver=ovn-25.09.2-82.fc43
 
 USER root
@@ -115,14 +116,14 @@ RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM" ] ; then 
 ######################################
 # Stage to copy OVN RPMs from source #
 ######################################
-FROM quay.io/fedora/fedora:43 AS source
+FROM ${FEDORA_BASE_IMAGE} AS source
 COPY --from=ovnbuilder /root/ovn/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 COPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 
 ####################################
 # Stage to copy OVN RPMs from koji #
 ####################################
-FROM quay.io/fedora/fedora:43 AS koji
+FROM ${FEDORA_BASE_IMAGE} AS koji
 
 COPY --from=kojidownloader /*.rpm /
 
