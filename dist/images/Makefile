@@ -29,6 +29,8 @@ endif
 GO_VERSION ?= 1.25
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 KUBECTL_MINOR ?= $(shell awk '/^[[:space:]]*k8s.io\/kubernetes v/ {gsub(/^v/, "", $$2); split($$2, version, "."); print version[1] "." version[2]; exit}' ../../go-controller/go.mod)
+UBUNTU_BASE_IMAGE ?= ubuntu:26.04
+FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:43
 
 ifeq ($(strip $(KUBECTL_MINOR)),)
 $(error failed to derive KUBECTL_MINOR from ../../go-controller/go.mod)
@@ -42,6 +44,7 @@ ubuntu-image:
 		--build-arg OVN_KUBERNETES_DIR=. \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		--build-arg KUBECTL_MINOR=${KUBECTL_MINOR} \
+		--build-arg UBUNTU_BASE_IMAGE=${UBUNTU_BASE_IMAGE} \
 		--platform=linux/${ARCH} \
 		-t ovn-kube-ubuntu$(IMAGE_ARCH) \
 		-f Dockerfile.ubuntu ../..
@@ -49,8 +52,6 @@ ifeq ($(ARCH),amd64)
 	${OCI_BIN} tag "ovn-kube-ubuntu$(IMAGE_ARCH):latest" \
               "ovn-kube-ubuntu:latest"
 endif
-
-FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:43
 
 fedora-image:
 	${OCI_BIN} pull --platform=linux/${ARCH} ${FEDORA_BASE_IMAGE} 2>/dev/null || true; \
@@ -61,6 +62,7 @@ fedora-image:
 		--build-arg OVN_GITREF=${OVN_GITSHA} \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		--build-arg FEDORA_BASE_IMAGE=${FEDORA_BASE_IMAGE} \
 		--build-arg FEDORA_BASE_DIGEST=$${FEDORA_BASE_DIGEST} \
 		--platform=linux/${ARCH} \
 		-t ${IMAGE} \
