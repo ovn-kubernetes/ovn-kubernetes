@@ -28,6 +28,7 @@ OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V
 endif
 GO_VERSION ?= 1.25
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
+KUBECTL_MINOR ?= 1.35
 
 OCI_BIN ?= docker
 
@@ -36,6 +37,7 @@ ubuntu-image:
 	${OCI_BIN} build \
 		--build-arg OVN_KUBERNETES_DIR=. \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		--build-arg KUBECTL_MINOR=${KUBECTL_MINOR} \
 		--platform=linux/${ARCH} \
 		-t ovn-kube-ubuntu$(IMAGE_ARCH) \
 		-f Dockerfile.ubuntu ../..
