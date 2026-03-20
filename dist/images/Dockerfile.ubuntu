@@ -39,31 +39,20 @@ RUN apt-get update && apt-get install -y \
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
-RUN mkdir -p /var/run/openvswitch
-
 # Built in the ovnkube-builder stage, then the binaries are copied here.
 # put things where they are in the pkg
-RUN mkdir -p /usr/libexec/cni/
+RUN mkdir -p /var/run/openvswitch /usr/libexec/cni/
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube /workspace/ovn-kubernetes/dist/images/ovn-kube-util /workspace/ovn-kubernetes/dist/images/ovndbchecker /workspace/ovn-kubernetes/dist/images/hybrid-overlay-node /workspace/ovn-kubernetes/dist/images/ovnkube-identity /workspace/ovn-kubernetes/dist/images/ovnkube-observ /usr/bin/
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /root/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovndb-raft-functions.sh /root/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /workspace/ovn-kubernetes/dist/images/ovndb-raft-functions.sh /workspace/ovn-kubernetes/dist/images/git_info /root/
 # override the pkg's ovn_k8s.conf with this local copy
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 
-# copy git commit number into image
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/git_info /root
-
 # iptables wrappers
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
       io.k8s.description="ovnkube ubuntu image" 
