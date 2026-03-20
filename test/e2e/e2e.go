@@ -1698,16 +1698,17 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 				} else {
 					newIP = "172.18.1." + strconv.Itoa(i+1)
 				}
+				newCIDR := newIP + util.GetIPFullMaskString(newIP)
 				// manually add the a secondary IP to each node
-				_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "add", newIP, "dev", deploymentconfig.Get().ExternalBridgeName()})
+				_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "add", newCIDR, "dev", deploymentconfig.Get().ExternalBridgeName()})
 				if err != nil {
 					framework.Failf("failed to add new Addresses to node %s: %v", nodeName, err)
 				}
-				ipToCleanup := newIP
+				cidrToCleanup := newCIDR
 				providerCtx.AddCleanUpFn(func() error {
-					_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "del", ipToCleanup, "dev", deploymentconfig.Get().ExternalBridgeName()})
+					_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "del", cidrToCleanup, "dev", deploymentconfig.Get().ExternalBridgeName()})
 					if err != nil {
-						framework.Logf("failed to delete address %s from node %s: %v", ipToCleanup, nodeName, err)
+						framework.Logf("failed to delete address %s from node %s: %v", cidrToCleanup, nodeName, err)
 					}
 					return nil
 				})
