@@ -922,6 +922,25 @@ func randomCUDNSubnets() (ipv4, ipv6 string) {
 	}
 }
 
+// subnetOffsetIP returns an IP at the given offset from the base of the subnet.
+// For example, subnetOffsetIP("10.199.128.0/20", 101) returns "10.199.128.101".
+func subnetOffsetIP(cidr string, offset int) string {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(fmt.Sprintf("subnetOffsetIP: invalid CIDR %q: %v", cidr, err))
+	}
+	ip = ip.To16()
+	for i := len(ip) - 1; i >= 0 && offset > 0; i-- {
+		sum := int(ip[i]) + offset%256
+		ip[i] = byte(sum % 256)
+		offset = offset/256 + sum/256
+	}
+	if ip.To4() != nil {
+		return ip.To4().String()
+	}
+	return ip.String()
+}
+
 func randomL3CUDNSubnets() []udnv1.Layer3Subnet {
 	cudnIPv4, cudnIPv6 := randomCUDNSubnets()
 	return []udnv1.Layer3Subnet{{CIDR: udnv1.CIDR(cudnIPv4)}, {CIDR: udnv1.CIDR(cudnIPv6)}}

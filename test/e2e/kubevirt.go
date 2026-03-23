@@ -1668,10 +1668,8 @@ passwd:
 			cudn                    *udnv1.ClusterUserDefinedNetwork
 			vm                      *kubevirtv1.VirtualMachine
 			vmi                     *kubevirtv1.VirtualMachineInstance
-			cidrIPv4                = "172.31.0.0/24" // subnet in private range 172.16.0.0/12 (rfc1918)
-			cidrIPv6                = "2010:100:200::0/60"
-			staticIPv4              = "172.31.0.101"
-			staticIPv6              = "2010:100:200::101"
+			cidrIPv4, cidrIPv6      string
+			staticIPv4, staticIPv6  string
 			staticMAC               = "02:00:00:00:00:01"
 			externalMACVRFContainer = infraapi.ExternalContainer{
 				Name:    fmt.Sprintf("iperf3-macvrf-%d", macVRFVNI),
@@ -1885,6 +1883,12 @@ write_files:
 			namespace = fr.Namespace.Name
 
 			networkName := ""
+			// Each entry gets its own random subnet to avoid BGP route
+			// conflicts between entries (prior routed tests create RAs
+			// whose BGP routes may persist in FRR after async cleanup).
+			cidrIPv4, cidrIPv6 = randomCUDNSubnets()
+			staticIPv4 = subnetOffsetIP(cidrIPv4, 101)
+			staticIPv6 = subnetOffsetIP(cidrIPv6, 101)
 			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
 			cudn, networkName = kubevirt.GenerateCUDN(namespace, "net1", td.topology, td.role, dualCIDRs)
 
@@ -2288,13 +2292,6 @@ ip route add %[3]s via %[4]s
 				topology: udnv1.NetworkTopologyLayer2,
 				role:     udnv1.NetworkRolePrimary,
 				ingress:  "routed",
-			}),
-			FEntry(nil, testData{
-				resource: virtualMachineWithUDN,
-				test:     liveMigrate,
-				topology: udnv1.NetworkTopologyLayer2,
-				role:     udnv1.NetworkRolePrimary,
-				ingress:  "routed",
 				evpn: &udnv1.EVPNConfig{
 					MACVRF: &udnv1.VRFConfig{
 						VNI: macVRFVNI,
@@ -2303,6 +2300,13 @@ ip route add %[3]s via %[4]s
 						VNI: ipVRFVNI,
 					},
 				},
+			}),
+			Entry(nil, testData{
+				resource: virtualMachineWithUDN,
+				test:     liveMigrate,
+				topology: udnv1.NetworkTopologyLayer2,
+				role:     udnv1.NetworkRolePrimary,
+				ingress:  "routed",
 			}),
 			Entry(nil, testData{
 				resource: virtualMachineInstance,
