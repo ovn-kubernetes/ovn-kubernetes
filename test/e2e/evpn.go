@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -331,6 +332,15 @@ func setupMACVRFOnExternalFRR(ictx infraapi.Context, vni, vid int, bridgeName, v
 func setupIPVRFOnExternalFRR(ictx infraapi.Context, vrfName string, vni, vid int, bridgeName, vxlanName string) error {
 	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
 	vniStr := fmt.Sprintf("%d", vni)
+
+	// Enable IPv6 forwarding before VRF creation so all interfaces
+	// (including those later moved into the VRF) inherit the setting.
+	// Without this, the kernel drops IPv6 packets transiting the VRF
+	// (e.g. VXLAN/SVI → eth1), breaking EVPN Type-5 IPv6 routes.
+	if _, err := infraprovider.Get().ExecExternalContainerCommand(frr,
+		[]string{"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"}); err != nil {
+		return fmt.Errorf("failed to enable IPv6 forwarding on %s: %w", externalFRRContainerName, err)
+	}
 
 	// Create Linux VRF with routing table = VNI
 	_, err := infraprovider.Get().ExecExternalContainerCommand(frr,
@@ -1314,3 +1324,461 @@ func runEVPNNetworkAndServers(
 
 	return nil
 }
+
+// =============================================================================
+// Dual-Spine BFD Infrastructure
+// =============================================================================
+//
+// These utilities set up a second FRR spine container on a dedicated Docker
+// network, configure BGP + EVPN + BFD on both spines, and inject BFD peers
+// into the FRR-K8s pods running on each cluster node.
+//
+// Topology:
+//
+//   Spine1 (frr)          Spine2 (frr-spine2)
+//   172.18.0.5            172.31.0.2
+//   kind network          spine2-net
+//   BGP+EVPN+BFD          BGP+EVPN+BFD
+//       │                     │
+//       ├── node1 ─────────── ┤
+//       ├── node2 ─────────── ┤
+//       └── node3 ─────────── ┘
+//
+// Link failure is simulated by setting a node's spine2-net interface down,
+// which triggers BFD fast detection (~1s) and BGP route withdrawal.
+
+const (
+	spine2ContainerName = "frr-spine2"
+	spine2NetworkName   = "evpn-spine2-net"
+	spine2SubnetIPv4    = "172.31.0.0/16"
+	spine2SubnetIPv6    = "fd10:abcd::/64"
+	frrK8sDaemonLabel   = "control-plane=frr-k8s"
+	frrK8sContainerName = "frr"
+)
+
+// dualSpineInfo holds the network and addressing information for the dual-spine
+// topology, used by the BFD failover test to bring links down and verify state.
+type dualSpineInfo struct {
+	// spine1IPs are the IPs of the existing FRR container on the kind network
+	// (IPv4 and/or IPv6, filtered by cluster IP family support).
+	spine1IPs []string
+	// spine2IPs are the IPs of the second FRR container on spine2-net
+	// (IPv4 and/or IPv6, filtered by cluster IP family support).
+	spine2IPs []string
+	// spine2Network is the infra network object for spine2-net.
+	spine2Network infraapi.Network
+	// nodeSpine2IPs maps node name -> list of node's IPs on spine2-net (IPv4 and/or IPv6).
+	nodeSpine2IPs map[string][]string
+	// nodeSpine2Ifaces maps node name -> node's interface name on spine2-net.
+	nodeSpine2Ifaces map[string]string
+}
+
+// setupDualSpineEVPN creates a second FRR spine with BGP + EVPN + BFD and
+// connects all cluster nodes to it. It also configures BFD on the existing
+// spine1 (the "frr" container) and injects BFD peers into all FRR-K8s pods.
+//
+// The returned dualSpineInfo contains addressing data needed to simulate
+// link failures and verify BFD state.
+//
+// Cleanup is automatically registered via ictx.
+func setupDualSpineEVPN(
+	f *framework.Framework,
+	ictx infraapi.Context,
+	ipFamilySet sets.Set[utilnet.IPFamily],
+	asn int,
+	frrConfigLabels map[string]string,
+) (*dualSpineInfo, error) {
+	info := &dualSpineInfo{
+		nodeSpine2IPs:    make(map[string][]string),
+		nodeSpine2Ifaces: make(map[string]string),
+	}
+
+	// Remove stale spine2 resources left over from a prior test run whose
+	// cleanup may have failed or timed out.
+	_ = ictx.DeleteExternalContainer(infraapi.ExternalContainer{Name: spine2ContainerName})
+	if staleNet, err := infraprovider.Get().GetNetwork(spine2NetworkName); err == nil {
+		_ = ictx.DeleteNetwork(staleNet)
+	}
+
+	// Get spine1 IPs (existing FRR on kind network) for all supported families
+	kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kind network: %w", err)
+	}
+	spine1NetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+		infraapi.ExternalContainer{Name: externalFRRContainerName}, kindNetwork)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get spine1 network interface: %w", err)
+	}
+	info.spine1IPs = matchIPStringsByIPFamilySet([]string{spine1NetInf.IPv4, spine1NetInf.IPv6}, ipFamilySet)
+
+	// Build spine2 subnet list based on cluster IP family support
+	var spine2Subnets []string
+	if ipFamilySet.Has(utilnet.IPv4) {
+		spine2Subnets = append(spine2Subnets, spine2SubnetIPv4)
+	}
+	if ipFamilySet.Has(utilnet.IPv6) {
+		spine2Subnets = append(spine2Subnets, spine2SubnetIPv6)
+	}
+
+	// Create spine2 Docker network (dual-stack if cluster supports it)
+	info.spine2Network, err = ictx.CreateNetwork(spine2NetworkName, spine2Subnets...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create spine2 network: %w", err)
+	}
+
+	// Create spine2 FRR container
+	spine2 := infraapi.ExternalContainer{
+		Name:    spine2ContainerName,
+		Image:   "quay.io/frrouting/frr:10.4.3",
+		Network: info.spine2Network,
+		RuntimeArgs: []string{
+			"--privileged",
+			"--cap-add=NET_ADMIN",
+			"--cap-add=SYS_ADMIN",
+		},
+	}
+	_, err = ictx.CreateExternalContainer(spine2)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create spine2 container: %w", err)
+	}
+
+	// Start bgpd and bfdd on spine2 (they're disabled by default).
+	// We enable them in the daemons file and then start each daemon
+	// directly rather than using frrinit.sh restart, because restart
+	// kills watchfrr (PID 1) which stops the container.
+	spine2Ref := infraapi.ExternalContainer{Name: spine2ContainerName}
+	for _, daemon := range []string{"bgpd", "bfdd"} {
+		_, err := infraprovider.Get().ExecExternalContainerCommand(spine2Ref,
+			[]string{"sed", "-i", fmt.Sprintf("s/%s=no/%s=yes/g", daemon, daemon), "/etc/frr/daemons"})
+		if err != nil {
+			return nil, fmt.Errorf("failed to enable %s on spine2: %w", daemon, err)
+		}
+	}
+	// Start bgpd and bfdd directly, then add them to watchfrr
+	for _, daemon := range []string{"bgpd", "bfdd"} {
+		_, err := infraprovider.Get().ExecExternalContainerCommand(spine2Ref,
+			[]string{"/usr/lib/frr/" + daemon, "-d", "-A", "127.0.0.1"})
+		if err != nil {
+			return nil, fmt.Errorf("failed to start %s on spine2: %w", daemon, err)
+		}
+	}
+	framework.Logf("bgpd and bfdd started on spine2")
+
+	// Enable IPv6 forwarding on spine2 for dual-stack VRF support
+	if ipFamilySet.Has(utilnet.IPv6) {
+		if _, err := infraprovider.Get().ExecExternalContainerCommand(spine2Ref,
+			[]string{"sysctl", "-w", "net.ipv6.conf.all.forwarding=1"}); err != nil {
+			return nil, fmt.Errorf("failed to enable IPv6 forwarding on spine2: %w", err)
+		}
+	}
+
+	// Connect all cluster nodes to spine2-net
+	nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	var allSpine2NodeIPs []string
+	for _, node := range nodeList.Items {
+		_, err := ictx.AttachNetwork(info.spine2Network, node.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to attach node %s to spine2-net: %w", node.Name, err)
+		}
+		iface, err := infraprovider.Get().GetK8NodeNetworkInterface(node.Name, info.spine2Network)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get spine2 interface for node %s: %w", node.Name, err)
+		}
+		nodeIPs := matchIPStringsByIPFamilySet([]string{iface.IPv4, iface.IPv6}, ipFamilySet)
+		info.nodeSpine2IPs[node.Name] = nodeIPs
+		info.nodeSpine2Ifaces[node.Name] = iface.InfName
+		allSpine2NodeIPs = append(allSpine2NodeIPs, nodeIPs...)
+
+		if ipFamilySet.Has(utilnet.IPv6) {
+			if _, err := infraprovider.Get().ExecK8NodeCommand(node.Name,
+				[]string{"sysctl", "-w", "net.ipv6.conf." + iface.InfName + ".keep_addr_on_down=1"}); err != nil {
+				return nil, fmt.Errorf("failed to set keep_addr_on_down on node %s iface %s: %w", node.Name, iface.InfName, err)
+			}
+		}
+	}
+
+	// Get spine2 IPs
+	spine2NetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(spine2Ref, info.spine2Network)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get spine2 IP: %w", err)
+	}
+	info.spine2IPs = matchIPStringsByIPFamilySet([]string{spine2NetInf.IPv4, spine2NetInf.IPv6}, ipFamilySet)
+
+	// Configure BGP + EVPN on spine2 (handles IPv4/IPv6 neighbor split internally)
+	err = configureSpineBGPEVPN(spine2ContainerName, asn, allSpine2NodeIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure BGP on spine2: %w", err)
+	}
+
+	// Configure BFD on both spines (BFD is IP-version agnostic in FRR)
+	err = configureBFDOnExternalFRR(spine2ContainerName, allSpine2NodeIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure BFD on spine2: %w", err)
+	}
+	nodeKindIPs := e2enode.CollectAddresses(nodeList, corev1.NodeInternalIP)
+	err = configureBFDOnExternalFRR(externalFRRContainerName, nodeKindIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure BFD on spine1: %w", err)
+	}
+
+	// Create FRRConfiguration CR for spine2 so FRR-K8s peers with it.
+	// FRRConfiguration takes a single neighbor address; for dual-stack we use
+	// the IPv4 address (FRR-K8s creates separate sessions per address family
+	// via disableMP). If IPv4 is not available, fall back to IPv6.
+	if len(info.spine2IPs) == 0 {
+		return nil, fmt.Errorf("no spine2 IPs discovered on network %q", spine2NetworkName)
+	}
+	spine2NeighborIP := info.spine2IPs[0]
+	spine2FRRConfigName := frrConfigLabels["network"] + "-spine2"
+	err = createFRRConfiguration(ictx, spine2FRRConfigName,
+		deploymentconfig.Get().FRRK8sNamespace(),
+		asn, spine2NeighborIP, frrConfigLabels)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create FRRConfiguration for spine2: %w", err)
+	}
+
+	// Wait for FRR-K8s to reconcile the new neighbor on all pods before
+	// injecting BFD peers via vtysh.
+	framework.Logf("Waiting for FRR-K8s to reconcile spine2 neighbor before injecting BFD...")
+	err = waitForFRRK8sNeighbor(f.ClientSet, spine2NeighborIP)
+	if err != nil {
+		return nil, fmt.Errorf("FRR-K8s did not reconcile spine2 neighbor: %w", err)
+	}
+
+	// Inject BFD peers for all spine IPs (both families) into FRR-K8s pods.
+	// We use vtysh injection rather than the FRRConfiguration bfdProfile
+	// field because the frr-k8s webhook requires all CRs referencing the
+	// same neighbor to agree on bfdProfile. The ovnk-generated CRs and
+	// the "receive-all" CR also peer with spine1's IP, and we cannot
+	// atomically patch all of them — nor should we, since the ovnk-generated
+	// CRs are operator-managed and would be overwritten on reconciliation.
+	// The vtysh-injected BFD config lives in a separate "bfd" block that
+	// the operator does not render or reconcile, so it persists.
+	var allSpineIPs []string
+	allSpineIPs = append(allSpineIPs, info.spine1IPs...)
+	allSpineIPs = append(allSpineIPs, info.spine2IPs...)
+	err = configureBFDOnFRRK8sPods(f.ClientSet, allSpineIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure BFD on FRR-K8s pods: %w", err)
+	}
+
+	framework.Logf("Dual-spine EVPN setup complete: spine1=%v, spine2=%v, node spine2 IPs=%v",
+		info.spine1IPs, info.spine2IPs, info.nodeSpine2IPs)
+	return info, nil
+}
+
+// configureSpineBGPEVPN sets up BGP + EVPN (route-reflector) on an external
+// FRR container. IPv4 neighbors are activated in the ipv4 unicast AF, IPv6
+// neighbors in the ipv6 unicast AF, and all neighbors in l2vpn evpn.
+func configureSpineBGPEVPN(containerName string, asn int, neighborIPs []string) error {
+	frr := infraapi.ExternalContainer{Name: containerName}
+	args := []string{
+		"configure terminal",
+		fmt.Sprintf("router bgp %d", asn),
+		"no bgp default ipv4-unicast",
+		"no bgp network import-check",
+	}
+	for _, ip := range neighborIPs {
+		args = append(args,
+			fmt.Sprintf("neighbor %s remote-as %d", ip, asn),
+			fmt.Sprintf("neighbor %s bfd", ip),
+		)
+	}
+
+	// Split neighbors by IP family
+	var ipv4Neighbors, ipv6Neighbors []string
+	for _, ip := range neighborIPs {
+		if utilnet.IsIPv4String(ip) {
+			ipv4Neighbors = append(ipv4Neighbors, ip)
+		} else {
+			ipv6Neighbors = append(ipv6Neighbors, ip)
+		}
+	}
+
+	// IPv4 unicast — only IPv4 neighbors
+	if len(ipv4Neighbors) > 0 {
+		args = append(args, "address-family ipv4 unicast")
+		for _, ip := range ipv4Neighbors {
+			args = append(args,
+				fmt.Sprintf("neighbor %s activate", ip),
+				fmt.Sprintf("neighbor %s route-reflector-client", ip),
+				fmt.Sprintf("neighbor %s next-hop-self", ip))
+		}
+		args = append(args, "exit-address-family")
+	}
+
+	// IPv6 unicast — only IPv6 neighbors
+	if len(ipv6Neighbors) > 0 {
+		args = append(args, "address-family ipv6 unicast")
+		for _, ip := range ipv6Neighbors {
+			args = append(args,
+				fmt.Sprintf("neighbor %s activate", ip),
+				fmt.Sprintf("neighbor %s route-reflector-client", ip),
+				fmt.Sprintf("neighbor %s next-hop-self", ip))
+		}
+		args = append(args, "exit-address-family")
+	}
+
+	// l2vpn evpn — all neighbors regardless of IP family
+	args = append(args, "address-family l2vpn evpn")
+	for _, ip := range neighborIPs {
+		args = append(args,
+			fmt.Sprintf("neighbor %s activate", ip),
+			fmt.Sprintf("neighbor %s route-reflector-client", ip))
+	}
+	args = append(args, "advertise-all-vni", "exit-address-family", "exit", "end")
+
+	_, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(args...))
+	if err != nil {
+		return fmt.Errorf("failed to configure BGP+EVPN on %s: %w", containerName, err)
+	}
+	framework.Logf("BGP+EVPN configured on %s (ASN %d, neighbors: %v)", containerName, asn, neighborIPs)
+	return nil
+}
+
+// configureBFDOnExternalFRR adds BFD peers on an external FRR container via
+// vtysh. Unlike setupBFDOnExternalContainer in external_gateways.go which
+// appends to frr.conf and restarts FRR (killing the container), this uses
+// vtysh for live configuration that doesn't require a restart.
+func configureBFDOnExternalFRR(containerName string, peerIPs []string) error {
+	frr := infraapi.ExternalContainer{Name: containerName}
+	args := []string{"configure terminal", "bfd"}
+	for _, ip := range peerIPs {
+		args = append(args, fmt.Sprintf("peer %s", ip), "no shutdown", "exit")
+	}
+	args = append(args, "exit", "end")
+
+	_, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(args...))
+	if err != nil {
+		return fmt.Errorf("failed to configure BFD on %s: %w", containerName, err)
+	}
+	framework.Logf("BFD configured on %s (peers: %v)", containerName, peerIPs)
+	return nil
+}
+
+// configureBFDOnFRRK8sPods injects BFD peer configuration into the FRR daemon
+// running inside each FRR-K8s pod via vtysh exec. The injected config lives in
+// FRR's "bfd" block, which the frr-k8s operator does not render or reconcile
+// (it only generates the "bfd" block when bfdProfiles is set in a CRD), so
+// the injected config persists across operator reconciliation cycles.
+//
+// We use vtysh injection rather than the FRRConfiguration bfdProfile field
+// because the frr-k8s webhook requires all CRs referencing the same neighbor
+// to agree on bfdProfile. The ovnk-generated CRs and the "receive-all" CR
+// also peer with spine1's IP, and we cannot atomically patch all of them.
+func configureBFDOnFRRK8sPods(cs clientset.Interface, spineIPs []string) error {
+	namespace := deploymentconfig.Get().FRRK8sNamespace()
+	pods, err := cs.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
+		LabelSelector: frrK8sDaemonLabel,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list FRR-K8s pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return fmt.Errorf("no FRR-K8s pods matched %q in namespace %q", frrK8sDaemonLabel, namespace)
+	}
+
+	var vtyshArgs []string
+	vtyshArgs = append(vtyshArgs, "configure terminal", "bfd")
+	for _, ip := range spineIPs {
+		vtyshArgs = append(vtyshArgs, fmt.Sprintf("peer %s", ip), "no shutdown", "exit")
+	}
+	vtyshArgs = append(vtyshArgs, "exit", "end")
+	cmd := vtyshCommand(vtyshArgs...)
+
+	for _, pod := range pods.Items {
+		_, err := e2ekubectl.RunKubectl(namespace,
+			append([]string{"exec", pod.Name, "-c", frrK8sContainerName, "--"}, cmd...)...)
+		if err != nil {
+			return fmt.Errorf("failed to configure BFD on pod %s: %w", pod.Name, err)
+		}
+		framework.Logf("BFD peers %v configured on FRR-K8s pod %s", spineIPs, pod.Name)
+	}
+	return nil
+}
+
+// waitForFRRK8sNeighbor polls all FRR-K8s pods until each one shows the given
+// neighbor IP in its BGP running config (via "show bgp summary"). This replaces
+// a static sleep and ensures the FRR-K8s operator has reconciled the
+// FRRConfiguration CR before we inject BFD peers.
+func waitForFRRK8sNeighbor(cs clientset.Interface, neighborIP string) error {
+	namespace := deploymentconfig.Get().FRRK8sNamespace()
+	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			pods, err := cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: frrK8sDaemonLabel,
+			})
+			if err != nil {
+				return false, nil // transient error, retry
+			}
+			if len(pods.Items) == 0 {
+				framework.Logf("No FRR-K8s pods matched %q yet", frrK8sDaemonLabel)
+				return false, nil
+			}
+			for _, pod := range pods.Items {
+				cmd := vtyshCommand("show bgp summary")
+				out, err := e2ekubectl.RunKubectl(namespace,
+					append([]string{"exec", pod.Name, "-c", frrK8sContainerName, "--"}, cmd...)...)
+				if err != nil {
+					framework.Logf("Pod %s: vtysh not ready yet: %v", pod.Name, err)
+					return false, nil
+				}
+				if !strings.Contains(out, neighborIP) {
+					framework.Logf("Pod %s: spine2 neighbor %s not yet in BGP summary", pod.Name, neighborIP)
+					return false, nil
+				}
+			}
+			framework.Logf("All FRR-K8s pods have spine2 neighbor %s in BGP summary", neighborIP)
+			return true, nil
+		})
+}
+
+// verifyBFDState checks that BFD peers on an external FRR container match the
+// expected state (up or down) for the given peer IPs.
+func verifyBFDState(containerName string, peerIPs []string, expectUp bool) error {
+	frr := infraapi.ExternalContainer{Name: containerName}
+	for _, ip := range peerIPs {
+		res, err := infraprovider.Get().ExecExternalContainerCommand(frr,
+			vtyshCommand(fmt.Sprintf("show bfd peer %s", ip)))
+		if err != nil {
+			return fmt.Errorf("failed to check BFD peer %s on %s: %w", ip, containerName, err)
+		}
+		isUp := strings.Contains(res, "Status: up")
+		if expectUp && !isUp {
+			return fmt.Errorf("BFD peer %s on %s: expected up, got down", ip, containerName)
+		}
+		if !expectUp && isUp {
+			return fmt.Errorf("BFD peer %s on %s: expected down, got up", ip, containerName)
+		}
+	}
+	return nil
+}
+
+// bringDownSpineLink sets a node's interface to the given spine network down,
+// simulating a link failure that triggers BFD fast detection.
+func bringDownSpineLink(nodeName, ifaceName string) error {
+	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
+		[]string{"ip", "link", "set", ifaceName, "down"})
+	if err != nil {
+		return fmt.Errorf("failed to bring down %s on %s: %w", ifaceName, nodeName, err)
+	}
+	framework.Logf("Link %s on %s set DOWN", ifaceName, nodeName)
+	return nil
+}
+
+// bringUpSpineLink restores a node's interface to the given spine network.
+func bringUpSpineLink(nodeName, ifaceName string) error {
+	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
+		[]string{"ip", "link", "set", ifaceName, "up"})
+	if err != nil {
+		return fmt.Errorf("failed to bring up %s on %s: %w", ifaceName, nodeName, err)
+	}
+	framework.Logf("Link %s on %s set UP", ifaceName, nodeName)
+	return nil
+}
+

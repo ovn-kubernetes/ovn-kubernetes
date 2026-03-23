@@ -3181,6 +3181,285 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		},
 		networksToTest,
 	)
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// EVPN BFD Failover Tests
+	// ─────────────────────────────────────────────────────────────────────────
+	//
+	// These tests verify that EVPN connectivity survives a single spine failure
+	// when BFD is enabled for fast link detection. A second FRR spine is created
+	// on a dedicated Docker network, and all nodes peer with both spines via
+	// BGP + EVPN + BFD. One spine's links are then brought down, and the test
+	// verifies:
+	//   - BFD detects the failure within ~1 second
+	//   - Intra-VPN connectivity continues without long outage
+	//   - Inter-VPN isolation remains enforced after failover
+
+	evpnBFDNetworks := []ginkgo.TableEntry{
+		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF", feature.EVPN, layer3IPVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF", feature.EVPN, layer2MACVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF", feature.EVPN, layer2MACVRFIPVRFNetworkSpecGen),
+	}
+
+	ginkgo.DescribeTableSubtree("EVPN BFD failover with dual-spine", ginkgo.Serial,
+		func(networkSpecGen func(string, string, allocators.BGPAllocation) *udnv1.NetworkSpec) {
+			var (
+				testNamespace   *corev1.Namespace
+				externalServers []string
+				testPod         = make([]*corev1.Pod, 2)
+				dualSpine       *dualSpineInfo
+			)
+
+			ginkgo.BeforeEach(func() {
+				bgpAlloc, err := allocators.AllocateBGP(f, ictx)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				udnIPv4, udnIPv6 := bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6
+
+				networkSpec := networkSpecGen(udnIPv4, udnIPv6, bgpAlloc)
+				// Match subnets by IP families
+				switch {
+				case networkSpec.Layer3 != nil:
+					networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
+				case networkSpec.Layer2 != nil:
+					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
+				}
+
+				// Set up EVPN network + CUDN + external servers via standard infra
+				testNamespace, externalServers, _ = configureNetworkWithInfra(
+					f,
+					ictx,
+					testBaseName,
+					ipFamilySet,
+					testNetworkName,
+					cudnAdvertisedEVPNUnmanagedSharedVTEP,
+					networkSpec,
+					bgpAlloc,
+				)
+				gomega.Expect(testNamespace).NotTo(gomega.BeNil(), "testNamespace must not be nil")
+
+				// Set up dual-spine with BFD
+				ginkgo.By("Setting up dual-spine EVPN with BFD")
+				frrConfigLabels := map[string]string{"network": testNetworkName}
+				dualSpine, err = setupDualSpineEVPN(f, ictx, ipFamilySet, bgpASN, frrConfigLabels)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create two test pods on different nodes
+				ginkgo.By("Creating test pods on different nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">=", 2), "need at least 2 nodes")
+				for i := range 2 {
+					testPod[i] = e2epod.CreateExecPodOrFail(
+						context.Background(),
+						f.ClientSet,
+						testNamespace.Name,
+						fmt.Sprintf("%s-bfd-pod-%d", testNamespace.Name, i),
+						func(p *corev1.Pod) {
+							p.Spec.Containers[0].Args = []string{"netexec"}
+							p.Spec.NodeName = nodes.Items[i].Name
+							p.Labels = map[string]string{"app": "bfd-test-pod"}
+						},
+					)
+				}
+
+				// Verify BFD sessions are up on both spines for all nodes (not just pod nodes)
+				ginkgo.By("Verifying BFD sessions are up on both spines")
+				allNodes, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				var spine1Peers, spine2Peers []string
+				for _, node := range allNodes.Items {
+					if ipFamilySet.Has(utilnet.IPv4) {
+						spine1Peers = append(spine1Peers,
+							e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv4Protocol)...)
+					}
+					if ipFamilySet.Has(utilnet.IPv6) {
+						spine1Peers = append(spine1Peers,
+							e2enode.GetAddressesByTypeAndFamily(&node, corev1.NodeInternalIP, corev1.IPv6Protocol)...)
+					}
+					spine2Peers = append(spine2Peers, dualSpine.nodeSpine2IPs[node.Name]...)
+				}
+				gomega.Eventually(func() error {
+					if err := verifyBFDState(externalFRRContainerName, spine1Peers, true); err != nil {
+						return fmt.Errorf("BFD link to spine1 was not up: %w", err)
+					}
+					if err := verifyBFDState(spine2ContainerName, spine2Peers, true); err != nil {
+						return fmt.Errorf("BFD link to spine2 was not up: %w", err)
+					}
+					return nil
+				}).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(gomega.Succeed())
+			})
+
+			ginkgo.DescribeTable("Connectivity survives single spine failure",
+				func(family utilnet.IPFamily) {
+					if !ipFamilySet.Has(family) {
+						e2eskipper.Skipf("IP family %v not supported", family)
+					}
+
+					// ── Step 1: Verify connectivity BEFORE failure ──
+					ginkgo.By("Verifying intra-VPN connectivity before failure")
+					pod1IP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+						f.ClientSet, testPod[0].Namespace, testPod[0].Name, testNetworkName, family)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(pod1IP).NotTo(gomega.BeEmpty())
+
+					pod2IP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+						f.ClientSet, testPod[1].Namespace, testPod[1].Name, testNetworkName, family)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(pod2IP).NotTo(gomega.BeEmpty())
+
+					// Intra-VPN: pod can reach another pod on another node
+					testPodToClientIP(testPod[0], pod2IP)
+					testPodToClientIP(testPod[1], pod1IP)
+
+					// Intra-VPN: pod can reach external server on same network
+					reachedExternal := false
+					for _, externalServer := range externalServers {
+						sameNetwork, networkErr := infraprovider.Get().GetNetwork(externalServer)
+						gomega.Expect(networkErr).NotTo(gomega.HaveOccurred())
+						sameIface, ifaceErr := infraprovider.Get().GetExternalContainerNetworkInterface(
+							infraapi.ExternalContainer{Name: externalServer}, sameNetwork)
+						gomega.Expect(ifaceErr).NotTo(gomega.HaveOccurred())
+						sameServerIP := getFirstIPStringOfFamily(family, []string{sameIface.IPv4, sameIface.IPv6})
+						if sameServerIP != "" {
+							testPodToClientIP(testPod[0], sameServerIP)
+							reachedExternal = true
+						}
+					}
+					gomega.Expect(reachedExternal).To(gomega.BeTrue(),
+						"at least one external server should be reachable for the active IP family")
+
+					// Inter-VPN isolation: pods belong to different L3/L2 VPNs cannot reach each other
+					ginkgo.By("Verifying inter-VPN isolation before failure")
+					bgpServerNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+						infraapi.ExternalContainer{Name: serverContainerName}, bgpServerNetwork)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					externalServerIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
+					gomega.Expect(externalServerIP).NotTo(gomega.BeEmpty(),
+						"external server should have an IP for the active IP family")
+					testPodToClientIPNOK(testPod[0], externalServerIP)
+
+					// Verify EVPN routes exist before injecting failure.
+					// We cannot check per-spine because both spines act as
+					// route reflectors and preserve the original next-hop
+					// (the originating node's IP), not the reflector's IP.
+					// BFD sessions with both spines are already verified in
+					// the BeforeEach, so we only need to confirm that the
+					// EVPN route table is populated.
+					ginkgo.By("Verifying EVPN routes are present before failure injection")
+					frrk8sNamespace := deploymentconfig.Get().FRRK8sNamespace()
+					frrk8sPods, err := f.ClientSet.CoreV1().Pods(frrk8sNamespace).List(context.Background(), metav1.ListOptions{
+						LabelSelector: frrK8sDaemonLabel,
+					})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					for _, pod := range frrk8sPods.Items {
+						gomega.Eventually(func() error {
+							cmd := vtyshCommand("show bgp l2vpn evpn")
+							out, execErr := e2ekubectl.RunKubectl(frrk8sNamespace,
+								append([]string{"exec", pod.Name, "-c", frrK8sContainerName, "--"}, cmd...)...)
+							if execErr != nil {
+								return fmt.Errorf("failed to check EVPN routes on pod %s: %w", pod.Name, execErr)
+							}
+							if !strings.Contains(out, "Route Distinguisher") {
+								return fmt.Errorf("no EVPN routes found on pod %s", pod.Name)
+							}
+							return nil
+						}).WithTimeout(30*time.Second).WithPolling(2*time.Second).Should(gomega.Succeed(),
+							fmt.Sprintf("EVPN routes should be present on pod %s before failure injection", pod.Name))
+					}
+
+					// ── Step 2: Bring down spine2 ──
+					ginkgo.By("Bringing down spine2 links on all nodes")
+					nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					// Register cleanup before taking links down so partially-failed
+					// iterations don't leave interfaces stuck in the down state.
+					ictx.AddCleanUpFn(func() error {
+						for _, node := range nodeList.Items {
+							ifaceName := dualSpine.nodeSpine2Ifaces[node.Name]
+							if ifaceName == "" {
+								continue
+							}
+							_ = bringUpSpineLink(node.Name, ifaceName)
+						}
+						return nil
+					})
+					for _, node := range nodeList.Items {
+						ifaceName := dualSpine.nodeSpine2Ifaces[node.Name]
+						gomega.Expect(bringDownSpineLink(node.Name, ifaceName)).To(gomega.Succeed())
+					}
+
+					// Verify BFD detects the failure. The 5s timeout is well under
+					// the BGP hold-timer (default 180s), so if BFD reports peers
+					// down within this window it proves BFD-driven detection rather
+					// than BGP keepalive expiry.
+					ginkgo.By("Verifying BFD detects spine2 failure")
+					var spine2Peers []string
+					for _, node := range nodeList.Items {
+						spine2Peers = append(spine2Peers, dualSpine.nodeSpine2IPs[node.Name]...)
+					}
+					gomega.Eventually(func() error {
+						return verifyBFDState(spine2ContainerName, spine2Peers, false)
+					}).WithTimeout(5 * time.Second).WithPolling(1 * time.Second).Should(gomega.Succeed(),
+						"BFD should detect link failure on spine2 within 5s (well under BGP hold-timer)")
+
+					ginkgo.By("Verifying spine1 BFD remains up")
+					gomega.Consistently(func() error {
+						return verifyBFDState(
+							externalFRRContainerName,
+							e2enode.CollectAddresses(nodeList, corev1.NodeInternalIP),
+							true,
+						)
+					}).WithTimeout(10 * time.Second).WithPolling(2 * time.Second).Should(
+						gomega.Succeed(),
+						"spine1 BFD should remain up while spine2 fails",
+					)
+
+					// ── Step 3: Verify connectivity AFTER failover ──
+					ginkgo.By("Verifying intra-VPN connectivity continues after failover")
+					testPodToClientIP(testPod[0], pod2IP)
+					testPodToClientIP(testPod[1], pod1IP)
+
+					// Intra-VPN: pod can still reach external server on same network
+					reachedExternal = false
+					for _, externalServer := range externalServers {
+						sameNetwork, networkErr := infraprovider.Get().GetNetwork(externalServer)
+						gomega.Expect(networkErr).NotTo(gomega.HaveOccurred())
+						sameIface, ifaceErr := infraprovider.Get().GetExternalContainerNetworkInterface(
+							infraapi.ExternalContainer{Name: externalServer}, sameNetwork)
+						gomega.Expect(ifaceErr).NotTo(gomega.HaveOccurred())
+						sameServerIP := getFirstIPStringOfFamily(family, []string{sameIface.IPv4, sameIface.IPv6})
+						if sameServerIP != "" {
+							testPodToClientIP(testPod[0], sameServerIP)
+							reachedExternal = true
+						}
+					}
+					gomega.Expect(reachedExternal).To(gomega.BeTrue(),
+						"at least one external server should be reachable after failover for the active IP family")
+
+					ginkgo.By("Verifying inter-VPN isolation remains after failover")
+					testPodToClientIPNOK(testPod[0], externalServerIP)
+
+					// ── Step 4: Restore spine2 and verify BFD re-establishes ──
+					ginkgo.By("Restoring spine2 links on all nodes")
+					for _, node := range nodeList.Items {
+						ifaceName := dualSpine.nodeSpine2Ifaces[node.Name]
+						gomega.Expect(bringUpSpineLink(node.Name, ifaceName)).To(gomega.Succeed())
+					}
+
+					ginkgo.By("Verifying BFD re-establishes on spine2 after restore")
+					gomega.Eventually(func() error {
+						return verifyBFDState(spine2ContainerName, spine2Peers, true)
+					}).WithTimeout(60*time.Second).WithPolling(2*time.Second).Should(gomega.Succeed(),
+						"BFD should re-establish on spine2 after links are restored")
+				},
+				ginkgo.Entry("When the networks are IPv4", utilnet.IPv4),
+				ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
+			)
+		},
+		evpnBFDNetworks,
+	)
 })
 
 // routeAdvertisementsReadyFunc returns a function that checks for the
