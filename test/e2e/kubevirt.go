@@ -2289,7 +2289,7 @@ ip route add %[3]s via %[4]s
 				role:     udnv1.NetworkRolePrimary,
 				ingress:  "routed",
 			}),
-			Entry(nil, testData{
+			FEntry(nil, testData{
 				resource: virtualMachineWithUDN,
 				test:     liveMigrate,
 				topology: udnv1.NetworkTopologyLayer2,

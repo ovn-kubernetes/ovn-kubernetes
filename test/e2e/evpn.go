@@ -508,45 +508,59 @@ type evpnExternalContainerInfo struct {
 //   - container.IPv6: Optional IPv6 address to request for the agnhost container (empty = let IPAM decide)
 func createEVPNExternalContainer(ictx infraapi.Context, container infraapi.ExternalContainer, networkName string, ipFamilies sets.Set[utilnet.IPFamily], subnets []string) (*evpnExternalContainerInfo, error) {
 	// Step 1: Create Docker network with specific subnet(s)
+	framework.Logf("createEVPNExternalContainer: step 1 - creating network %s with subnets %v", networkName, subnets)
 	network, err := ictx.CreateNetwork(networkName, subnets...)
 	if err != nil {
+		framework.Logf("createEVPNExternalContainer: step 1 FAILED: %v", err)
 		return nil, fmt.Errorf("failed to create network %s: %w", networkName, err)
 	}
 
 	// Step 2: Create external container on that network
+	framework.Logf("createEVPNExternalContainer: step 2 - creating container %s on network %s", container.Name, networkName)
 	container.Network = network
 	container.RuntimeArgs = append(container.RuntimeArgs, "--cap-add=NET_ADMIN")
 	_, err = ictx.CreateExternalContainer(container)
 	if err != nil {
+		framework.Logf("createEVPNExternalContainer: step 2 FAILED: %v", err)
 		return nil, fmt.Errorf("failed to create external container %s: %w", container.Name, err)
 	}
 
 	// Step 3: Connect FRR to the network
+	framework.Logf("createEVPNExternalContainer: step 3 - connecting FRR to network %s", networkName)
 	_, err = ictx.AttachNetwork(network, externalFRRContainerName)
 	if err != nil {
+		framework.Logf("createEVPNExternalContainer: step 3 FAILED: %v", err)
 		return nil, fmt.Errorf("failed to connect FRR to network %s: %w", networkName, err)
 	}
 
 	// Step 4: Discover assigned IPs and interface names
+	framework.Logf("createEVPNExternalContainer: step 4 - discovering container %s interface on network %s", container.Name, networkName)
 	containerNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
 		infraapi.ExternalContainer{Name: container.Name}, network)
 	if err != nil {
+		framework.Logf("createEVPNExternalContainer: step 4a FAILED (container interface): %v", err)
 		return nil, fmt.Errorf("failed to get container network interface: %w", err)
 	}
+	framework.Logf("createEVPNExternalContainer: step 4a - container interface: name=%q ipv4=%q ipv6=%q", containerNetInf.InfName, containerNetInf.IPv4, containerNetInf.IPv6)
 
+	framework.Logf("createEVPNExternalContainer: step 4b - discovering FRR interface on network %s", networkName)
 	frrNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(
 		infraapi.ExternalContainer{Name: externalFRRContainerName}, network)
 	if err != nil {
+		framework.Logf("createEVPNExternalContainer: step 4b FAILED (FRR interface): %v", err)
 		return nil, fmt.Errorf("failed to get FRR network interface: %w", err)
 	}
+	framework.Logf("createEVPNExternalContainer: step 4b - FRR interface: name=%q ipv4=%q ipv6=%q", frrNetInf.InfName, frrNetInf.IPv4, frrNetInf.IPv6)
 
 	frrInterface := frrNetInf.InfName
 	if frrInterface == "" {
+		framework.Logf("createEVPNExternalContainer: FAILED - FRR interface name is empty for network %s (ipv4=%q ipv6=%q)", networkName, frrNetInf.IPv4, frrNetInf.IPv6)
 		return nil, fmt.Errorf("FRR interface name not found for network %s", networkName)
 	}
 
 	containerInterface := containerNetInf.InfName
 	if containerInterface == "" {
+		framework.Logf("createEVPNExternalContainer: FAILED - container interface name is empty for network %s (ipv4=%q ipv6=%q)", networkName, containerNetInf.IPv4, containerNetInf.IPv6)
 		return nil, fmt.Errorf("container interface name not found for network %s", networkName)
 	}
 
