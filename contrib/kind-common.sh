@@ -91,11 +91,20 @@ set_common_default_params() {
 
   # Image/source code params
   OVN_IMAGE=${OVN_IMAGE:-local}
+  OVN_IMAGE_FAMILY=${OVN_IMAGE_FAMILY:-fedora}
   OVN_REPO=${OVN_REPO:-""}
   OVN_GITREF=${OVN_GITREF:-""}
   # Pods to force-delete on --deploy so they respawn with the kind-loaded image.
   # ovs-node excluded: restarting it under live ovnkube-node pods breaks the cluster.
   OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-control-plane ovnkube-node"}
+  case "${OVN_IMAGE_FAMILY}" in
+    fedora|ubuntu)
+      ;;
+    *)
+      echo "Unsupported OVN image family: ${OVN_IMAGE_FAMILY}"
+      exit 1
+      ;;
+  esac
 
   # Subnet params
   # Input not currently validated. Modify outside script at your own risk.
@@ -262,10 +271,11 @@ set_common_default_params() {
 }
 
 set_ovn_image() {
+  local ovn_image_repo="ovn-daemonset-${OVN_IMAGE_FAMILY}"
   if [ "${KIND_LOCAL_REGISTRY:-false}" == true ]; then
-    OVN_IMAGE="localhost:5000/ovn-daemonset-fedora:latest"
+    OVN_IMAGE="localhost:5000/${ovn_image_repo}:latest"
   else
-    OVN_IMAGE="localhost/ovn-daemonset-fedora:dev"
+    OVN_IMAGE="localhost/${ovn_image_repo}:dev"
   fi
 }
 
@@ -309,6 +319,7 @@ EOF
 }
 
 build_ovn_image() {
+  local build_target="${OVN_IMAGE_FAMILY}-image"
   local push_args=""
   if [ "$OCI_BIN" == "podman" ]; then
     # docker doesn't perform tls check by default only podman does, hence we need to disable it for podman.
@@ -319,7 +330,7 @@ build_ovn_image() {
     set_ovn_image
 
     # Build image
-    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" fedora-image
+    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" "${build_target}"
 
     # store in local registry
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
