@@ -116,6 +116,104 @@ var _ = Describe("Topology factory", func() {
 		})
 	})
 
+	When("creating a cluster router for the default network", func() {
+		var defaultNetInfo util.NetInfo
+
+		BeforeEach(func() {
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Kubernetes.ServiceCIDRs = []*net.IPNet{
+				{IP: net.ParseIP("10.96.0.0"), Mask: net.CIDRMask(12, 32)},
+			}
+
+			initialNBDB := []libovsdbtest.TestData{}
+			initialSBDB := []libovsdbtest.TestData{}
+			dbSetup := libovsdbtest.TestSetup{
+				NBData: initialNBDB,
+				SBData: initialSBDB,
+			}
+			libovsdbNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			Expect(err).NotTo(HaveOccurred())
+			ovnDB = libovsdbCleanup
+			nbClient = libovsdbNBClient
+
+			defaultNetInfo = &util.DefaultNetInfo{}
+			factory = NewGatewayTopologyFactory(libovsdbNBClient)
+		})
+
+		AfterEach(func() {
+			if ovnDB != nil {
+				ovnDB.Cleanup()
+			}
+		})
+
+		It("sets the service CIDR in external-ids for single-stack", func() {
+			config.Kubernetes.ServiceCIDRs = []*net.IPNet{
+				{IP: net.ParseIP("10.96.0.0"), Mask: net.CIDRMask(12, 32)},
+			}
+			clusterRouter, err := factory.NewClusterRouter(routerName, defaultNetInfo, coopUUID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(clusterRouter.ExternalIDs).To(HaveKeyWithValue(
+				ovntypes.ClusterRouterServiceCIDR, "10.96.0.0/12",
+			))
+			Expect(clusterRouter.ExternalIDs).To(HaveKeyWithValue(
+				"k8s-cluster-router", "yes",
+			))
+			Expect(clusterRouter.ExternalIDs).NotTo(HaveKey(ovntypes.NetworkExternalID))
+		})
+
+		It("sets the service CIDR in external-ids for dual-stack", func() {
+			config.Kubernetes.ServiceCIDRs = []*net.IPNet{
+				{IP: net.ParseIP("10.96.0.0"), Mask: net.CIDRMask(12, 32)},
+				{IP: net.ParseIP("fd00:10:96::"), Mask: net.CIDRMask(112, 128)},
+			}
+			clusterRouter, err := factory.NewClusterRouter(routerName, defaultNetInfo, coopUUID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(clusterRouter.ExternalIDs).To(HaveKeyWithValue(
+				ovntypes.ClusterRouterServiceCIDR, "10.96.0.0/12,fd00:10:96::/112",
+			))
+		})
+	})
+
+	When("creating a cluster router for a UDN", func() {
+		BeforeEach(func() {
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			config.Kubernetes.ServiceCIDRs = []*net.IPNet{
+				{IP: net.ParseIP("10.96.0.0"), Mask: net.CIDRMask(12, 32)},
+			}
+
+			initialNBDB := []libovsdbtest.TestData{}
+			initialSBDB := []libovsdbtest.TestData{}
+			dbSetup := libovsdbtest.TestSetup{
+				NBData: initialNBDB,
+				SBData: initialSBDB,
+			}
+			libovsdbNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			Expect(err).NotTo(HaveOccurred())
+			ovnDB = libovsdbCleanup
+			nbClient = libovsdbNBClient
+
+			netInfo, err = util.NewNetInfo(newLayer3PrimaryNetworkConf(networkName, networkSubnets))
+			Expect(err).NotTo(HaveOccurred())
+
+			factory = NewGatewayTopologyFactory(libovsdbNBClient)
+		})
+
+		AfterEach(func() {
+			if ovnDB != nil {
+				ovnDB.Cleanup()
+			}
+		})
+
+		It("does not set the service CIDR in external-ids", func() {
+			clusterRouter, err := factory.NewClusterRouter(routerName, netInfo, coopUUID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(clusterRouter.ExternalIDs).NotTo(HaveKey(ovntypes.ClusterRouterServiceCIDR))
+			Expect(clusterRouter.ExternalIDs).To(HaveKey(ovntypes.NetworkExternalID))
+		})
+	})
+
 	When("a cluster router object is present on the OVN northbound DB", func() {
 		var initialClusterRouter *nbdb.LogicalRouter
 

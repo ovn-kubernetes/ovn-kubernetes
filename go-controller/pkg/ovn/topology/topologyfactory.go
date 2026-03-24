@@ -3,9 +3,11 @@ package topology
 import (
 	"fmt"
 	"net"
+	"strings"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -68,6 +70,14 @@ func (gtf *GatewayTopologyFactory) newClusterRouter(
 	if netInfo.IsUserDefinedNetwork() {
 		logicalRouter.ExternalIDs[types.NetworkExternalID] = netInfo.GetNetworkName()
 		logicalRouter.ExternalIDs[types.TopologyExternalID] = netInfo.TopologyType()
+	}
+
+	if !netInfo.IsUserDefinedNetwork() && len(config.Kubernetes.ServiceCIDRs) > 0 {
+		serviceCIDRs := make([]string, 0, len(config.Kubernetes.ServiceCIDRs))
+		for _, cidr := range config.Kubernetes.ServiceCIDRs {
+			serviceCIDRs = append(serviceCIDRs, cidr.String())
+		}
+		logicalRouter.ExternalIDs[types.ClusterRouterServiceCIDR] = strings.Join(serviceCIDRs, ",")
 	}
 
 	if err := libovsdbops.CreateOrUpdateLogicalRouter(
