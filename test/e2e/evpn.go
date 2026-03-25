@@ -878,7 +878,8 @@ func randomVNI() int32 {
 
 // randomCUDNSubnets generates random non-overlapping CUDN subnets for parallel test isolation.
 // Uses /20 (4096 addresses) instead of /16 to allow randomizing both second and third octets,
-// giving ~4032 possible subnets within 10.0.0.0/8 while avoiding collisions with:
+// giving ~4016 possible subnets within 10.0.0.0/8 while avoiding collisions with:
+//   - 10.88.0.0/16  (podman default network)
 //   - 10.96.0.0/16  (Kubernetes services)
 //   - 10.132.0.0/16 (UDN perf tests)
 //   - 10.243.0.0/16, 10.244.0.0/16 (pod CIDRs)
@@ -890,13 +891,13 @@ func randomVNI() int32 {
 func randomCUDNSubnets() (ipv4, ipv6 string) {
 	// 4096 possible /20 subnets in 10.0.0.0/8 (256 second octets * 16 /20-aligned third octets)
 	// Exclude blocks overlapping known /16 reservations (16 /20 blocks each):
-	//   10.96, 10.132, 10.243, 10.244 = 64 excluded → ~4032 usable
+	//   10.88, 10.96, 10.132, 10.243, 10.244 = 80 excluded → ~4016 usable
 	for {
 		second := randomN(256)
 		// 16 /20-aligned slots per second octet (256/16)
 		third := randomN(16) * 16 // 0, 16, 32, ..., 240
 		switch second {
-		case 96, 132, 243, 244:
+		case 88, 96, 132, 243, 244:
 			continue
 		}
 		n := second*16 + third/16
