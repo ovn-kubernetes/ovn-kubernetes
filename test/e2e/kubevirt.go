@@ -105,7 +105,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 
 func init() {
 	if os.Getenv("KIND_INSTALL_KUBEVIRT") == "true" {
-		images.Add(images.IPerf3())
+		images.Add(images.Netshoot())
 	}
 }
 
