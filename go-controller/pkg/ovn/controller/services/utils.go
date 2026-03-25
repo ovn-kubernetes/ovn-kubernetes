@@ -41,6 +41,10 @@ func getExternalIDsForLoadBalancer(service *corev1.Service, netInfo util.NetInfo
 		types.LoadBalancerKindExternalID:  "Service",
 	}
 
+	if util.ServiceExternalTrafficPolicyLocal(service) {
+		externalIDs[types.LoadBalancerETPExternalID] = "local"
+	}
+
 	if netInfo.IsDefault() {
 		return externalIDs
 	}

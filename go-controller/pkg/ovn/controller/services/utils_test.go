@@ -78,4 +78,59 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 		}, UDNNetInfo),
 	)
 
+	// ETP=Local on default network should set the etp external-id
+	assert.Equal(t,
+		map[string]string{
+			types.LoadBalancerKindExternalID:  "Service",
+			types.LoadBalancerOwnerExternalID: "ns/svc-ab23",
+			types.LoadBalancerETPExternalID:   "local",
+		},
+		getExternalIDsForLoadBalancer(&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+			Spec: corev1.ServiceSpec{
+				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			},
+		}, &defaultNetInfo),
+	)
+
+	// ETP=Cluster on default network should NOT set the etp external-id
+	assert.Equal(t,
+		map[string]string{
+			types.LoadBalancerKindExternalID:  "Service",
+			types.LoadBalancerOwnerExternalID: "ns/svc-ab23",
+		},
+		getExternalIDsForLoadBalancer(&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+			Spec: corev1.ServiceSpec{
+				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyCluster,
+			},
+		}, &defaultNetInfo),
+	)
+
+	// ETP=Local on UDN should set both etp and network external-ids
+	assert.Equal(t,
+		map[string]string{
+			types.LoadBalancerKindExternalID:  "Service",
+			types.LoadBalancerOwnerExternalID: "ns/svc-ab23",
+			types.LoadBalancerETPExternalID:   "local",
+			types.NetworkExternalID:           UDNNetInfo.GetNetworkName(),
+			types.NetworkRoleExternalID:       types.NetworkRolePrimary,
+		},
+		getExternalIDsForLoadBalancer(&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+			Spec: corev1.ServiceSpec{
+				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			},
+		}, UDNNetInfo),
+	)
+
 }

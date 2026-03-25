@@ -1469,6 +1469,83 @@ func TestSyncServices(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:      "upgrade: pre-existing LBs without etp annotation get updated for ETP=Local service",
+			nodeAInfo: nodeAInfo,
+			nodeBInfo: nodeBInfo,
+			slices: []discovery.EndpointSlice{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      serviceName + "ab23",
+						Namespace: ns,
+						Labels:    map[string]string{discovery.LabelServiceName: serviceName},
+					},
+					Ports:       []discovery.EndpointPort{},
+					AddressType: discovery.AddressTypeIPv4,
+					Endpoints:   []discovery.Endpoint{},
+				},
+			},
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+				Spec: corev1.ServiceSpec{
+					Type:                  corev1.ServiceTypeClusterIP,
+					ClusterIP:             serviceClusterIP,
+					ClusterIPs:            []string{serviceClusterIP},
+					Selector:              map[string]string{"foo": "bar"},
+					ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+					Ports: []corev1.ServicePort{{
+						Port:       servicePort,
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromInt32(outPort),
+					}},
+				},
+			},
+			networks: []networkData{
+				{
+					netInfo: &util.DefaultNetInfo{},
+					initialDb: []libovsdbtest.TestData{
+						&nbdb.LoadBalancer{
+							UUID:     loadBalancerClusterWideTCPServiceName(ns, serviceName),
+							Name:     loadBalancerClusterWideTCPServiceName(ns, serviceName),
+							Options:  servicesOptions(),
+							Protocol: &nbdb.LoadBalancerProtocolTCP,
+							Vips: map[string]string{
+								IPAndPort(serviceClusterIP, servicePort): "",
+							},
+							ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(ns, serviceName)),
+						},
+						nodeLogicalSwitch(nodeA, initialLsGroups),
+						nodeLogicalSwitch(nodeB, initialLsGroups),
+						nodeLogicalRouter(nodeA, initialLrGroups),
+						nodeLogicalRouter(nodeB, initialLrGroups),
+						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
+						lbGroup(types.ClusterSwitchLBGroupName),
+						lbGroup(types.ClusterRouterLBGroupName),
+					},
+					expectedDb: []libovsdbtest.TestData{
+						&nbdb.LoadBalancer{
+							UUID:     loadBalancerClusterWideTCPServiceName(ns, serviceName),
+							Name:     loadBalancerClusterWideTCPServiceName(ns, serviceName),
+							Options:  servicesOptions(),
+							Protocol: &nbdb.LoadBalancerProtocolTCP,
+							Vips: map[string]string{
+								IPAndPort(serviceClusterIP, servicePort): "",
+							},
+							ExternalIDs: loadBalancerExternalIDsWithETP(namespacedServiceName(ns, serviceName)),
+						},
+						nodeLogicalSwitch(nodeA, initialLsGroups),
+						nodeLogicalSwitch(nodeB, initialLsGroups),
+						nodeLogicalRouter(nodeA, initialLrGroups),
+						nodeLogicalRouter(nodeB, initialLrGroups),
+						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
+						lbGroup(types.ClusterSwitchLBGroupName),
+						lbGroup(types.ClusterRouterLBGroupName),
+						nodeIPTemplate(nodeAInfo),
+						nodeIPTemplate(nodeBInfo),
+					},
+				},
+			},
+		},
 	}
 
 	for i, tt := range tests {
@@ -1575,6 +1652,178 @@ func TestSyncServices(t *testing.T) {
 		}
 
 	}
+}
+
+func TestSyncServiceETPFlip(t *testing.T) {
+	initialMaxLength := format.MaxLength
+	temporarilyEnableGomegaMaxLengthFormat()
+	t.Cleanup(func() {
+		restoreGomegaMaxLengthFormat(initialMaxLength)
+	})
+
+	const (
+		ns          = "testns"
+		serviceName = "foo"
+	)
+	var (
+		serviceClusterIP = "192.168.1.1"
+		servicePort      = int32(80)
+		outPort          = int32(3456)
+		initialLsGroups  = []string{types.ClusterLBGroupName, types.ClusterSwitchLBGroupName}
+		initialLrGroups  = []string{types.ClusterLBGroupName, types.ClusterRouterLBGroupName}
+	)
+
+	oldGateway := config.Gateway.Mode
+	oldClusterSubnet := config.Default.ClusterSubnets
+	config.Kubernetes.OVNEmptyLbEvents = true
+	config.IPv4Mode = true
+	config.Gateway.Mode = config.GatewayModeShared
+	defer func() {
+		config.Kubernetes.OVNEmptyLbEvents = false
+		config.IPv4Mode = false
+		config.Gateway.Mode = oldGateway
+		config.Default.ClusterSubnets = oldClusterSubnet
+	}()
+	_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: cidr4, HostSubnetLength: 26}}
+
+	nodeAInfo := getNodeInfo(nodeA, []string{"10.0.0.1"}, nil)
+	nodeBInfo := getNodeInfo(nodeB, []string{"10.0.0.2"}, nil)
+
+	g := gomega.NewGomegaWithT(t)
+
+	initialDb := []libovsdbtest.TestData{
+		nodeLogicalSwitch(nodeA, initialLsGroups),
+		nodeLogicalSwitch(nodeB, initialLsGroups),
+		nodeLogicalRouter(nodeA, initialLrGroups),
+		nodeLogicalRouter(nodeB, initialLrGroups),
+		lbGroup(types.ClusterLBGroupName),
+		lbGroup(types.ClusterSwitchLBGroupName),
+		lbGroup(types.ClusterRouterLBGroupName),
+	}
+
+	controller, err := newControllerWithDBSetupForNetwork(libovsdbtest.TestSetup{NBData: initialDb}, &util.DefaultNetInfo{}, ns)
+	if err != nil {
+		t.Fatalf("Error creating controller: %v", err)
+	}
+	defer controller.close()
+
+	controller.nodeTracker.nodes = map[string]nodeInfo{
+		nodeA: *nodeAInfo,
+		nodeB: *nodeBInfo,
+	}
+
+	svcKey := namespacedServiceName(ns, serviceName)
+	lbName := loadBalancerClusterWideTCPServiceName(ns, serviceName)
+
+	slice := discovery.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName + "ab23",
+			Namespace: ns,
+			Labels:    map[string]string{discovery.LabelServiceName: serviceName},
+		},
+		Ports:       []discovery.EndpointPort{},
+		AddressType: discovery.AddressTypeIPv4,
+		Endpoints:   []discovery.Endpoint{},
+	}
+	g.Expect(controller.endpointSliceStore.Add(&slice)).To(gomega.Succeed())
+
+	baseSvc := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+		Spec: corev1.ServiceSpec{
+			Type:       corev1.ServiceTypeClusterIP,
+			ClusterIP:  serviceClusterIP,
+			ClusterIPs: []string{serviceClusterIP},
+			Selector:   map[string]string{"foo": "bar"},
+			Ports: []corev1.ServicePort{{
+				Port:       servicePort,
+				Protocol:   corev1.ProtocolTCP,
+				TargetPort: intstr.FromInt32(outPort),
+			}},
+		},
+	}
+
+	// Step 1: sync with ETP=Local, expect etp=local in external IDs.
+	svcLocal := baseSvc.DeepCopy()
+	svcLocal.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
+	g.Expect(controller.serviceStore.Add(svcLocal)).To(gomega.Succeed())
+
+	controller.RequestFullSync(controller.nodeTracker.getZoneNodes())
+	g.Expect(controller.syncService(svcKey)).To(gomega.Succeed())
+
+	g.Expect(controller.nbClient).To(libovsdbtest.HaveData([]libovsdbtest.TestData{
+		&nbdb.LoadBalancer{
+			UUID:        lbName,
+			Name:        lbName,
+			Options:     servicesOptions(),
+			Protocol:    &nbdb.LoadBalancerProtocolTCP,
+			Vips:        map[string]string{IPAndPort(serviceClusterIP, servicePort): ""},
+			ExternalIDs: loadBalancerExternalIDsWithETP(svcKey),
+		},
+		nodeLogicalSwitch(nodeA, initialLsGroups),
+		nodeLogicalSwitch(nodeB, initialLsGroups),
+		nodeLogicalRouter(nodeA, initialLrGroups),
+		nodeLogicalRouter(nodeB, initialLrGroups),
+		lbGroup(types.ClusterLBGroupName, lbName),
+		lbGroup(types.ClusterSwitchLBGroupName),
+		lbGroup(types.ClusterRouterLBGroupName),
+		nodeIPTemplate(nodeAInfo),
+		nodeIPTemplate(nodeBInfo),
+	}))
+
+	// Step 2: flip to ETP=Cluster, expect etp key removed.
+	svcCluster := baseSvc.DeepCopy()
+	svcCluster.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+	g.Expect(controller.serviceStore.Add(svcCluster)).To(gomega.Succeed())
+
+	g.Expect(controller.syncService(svcKey)).To(gomega.Succeed())
+
+	g.Expect(controller.nbClient).To(libovsdbtest.HaveData([]libovsdbtest.TestData{
+		&nbdb.LoadBalancer{
+			UUID:        lbName,
+			Name:        lbName,
+			Options:     servicesOptions(),
+			Protocol:    &nbdb.LoadBalancerProtocolTCP,
+			Vips:        map[string]string{IPAndPort(serviceClusterIP, servicePort): ""},
+			ExternalIDs: loadBalancerExternalIDs(svcKey),
+		},
+		nodeLogicalSwitch(nodeA, initialLsGroups),
+		nodeLogicalSwitch(nodeB, initialLsGroups),
+		nodeLogicalRouter(nodeA, initialLrGroups),
+		nodeLogicalRouter(nodeB, initialLrGroups),
+		lbGroup(types.ClusterLBGroupName, lbName),
+		lbGroup(types.ClusterSwitchLBGroupName),
+		lbGroup(types.ClusterRouterLBGroupName),
+		nodeIPTemplate(nodeAInfo),
+		nodeIPTemplate(nodeBInfo),
+	}))
+
+	// Step 3: flip back to ETP=Local, expect etp=local restored.
+	svcLocalAgain := baseSvc.DeepCopy()
+	svcLocalAgain.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
+	g.Expect(controller.serviceStore.Add(svcLocalAgain)).To(gomega.Succeed())
+
+	g.Expect(controller.syncService(svcKey)).To(gomega.Succeed())
+
+	g.Expect(controller.nbClient).To(libovsdbtest.HaveData([]libovsdbtest.TestData{
+		&nbdb.LoadBalancer{
+			UUID:        lbName,
+			Name:        lbName,
+			Options:     servicesOptions(),
+			Protocol:    &nbdb.LoadBalancerProtocolTCP,
+			Vips:        map[string]string{IPAndPort(serviceClusterIP, servicePort): ""},
+			ExternalIDs: loadBalancerExternalIDsWithETP(svcKey),
+		},
+		nodeLogicalSwitch(nodeA, initialLsGroups),
+		nodeLogicalSwitch(nodeB, initialLsGroups),
+		nodeLogicalRouter(nodeA, initialLrGroups),
+		nodeLogicalRouter(nodeB, initialLrGroups),
+		lbGroup(types.ClusterLBGroupName, lbName),
+		lbGroup(types.ClusterSwitchLBGroupName),
+		lbGroup(types.ClusterRouterLBGroupName),
+		nodeIPTemplate(nodeAInfo),
+		nodeIPTemplate(nodeBInfo),
+	}))
 }
 
 func nodeLogicalSwitch(nodeName string, lbGroups []string, namespacedServiceNames ...string) *nbdb.LogicalSwitch {
@@ -1753,7 +2002,16 @@ func loadBalancerExternalIDsForNetwork(namespacedServiceName string, network str
 	}
 	maps.Copy(externalIDs, getExternalIDsForNetwork(network))
 	return externalIDs
+}
 
+func loadBalancerExternalIDsWithETP(namespacedServiceName string) map[string]string {
+	return loadBalancerExternalIDsWithETPForNetwork(namespacedServiceName, types.DefaultNetworkName)
+}
+
+func loadBalancerExternalIDsWithETPForNetwork(namespacedServiceName string, network string) map[string]string {
+	externalIDs := loadBalancerExternalIDsForNetwork(namespacedServiceName, network)
+	externalIDs[types.LoadBalancerETPExternalID] = "local"
+	return externalIDs
 }
 
 func nodeIPTemplate(node *nodeInfo) *nbdb.ChassisTemplateVar {

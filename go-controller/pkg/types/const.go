@@ -242,6 +242,8 @@ const (
 	LoadBalancerKindExternalID = OvnK8sPrefix + "/" + "kind"
 	// key for load_balancer service external-id
 	LoadBalancerOwnerExternalID = OvnK8sPrefix + "/" + "owner"
+	// key for load_balancer ExternalTrafficPolicy (set only when "local")
+	LoadBalancerETPExternalID = OvnK8sPrefix + "/" + "etp"
 	// key for UDN enabled services routes
 	UDNEnabledServiceExternalID = OvnK8sPrefix + "/" + "udn-enabled-default-service"
 	// key for management port name, indicating the netdev link name associated with the given management port representor OVS interface
