@@ -18,6 +18,7 @@ import (
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	egressiptrafficv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressiptraffic/v1"
 	egressqoslisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
@@ -111,6 +112,8 @@ type DefaultNetworkController struct {
 
 	// retry framework for egress IP
 	retryEgressIPs *retry.RetryFramework
+	// retry framework for egress IP traffic
+	retryEgressIPTraffics *retry.RetryFramework
 	// retry framework for egress IP Namespaces
 	retryEgressIPNamespaces *retry.RetryFramework
 	// retry framework for egress IP Pods
@@ -261,6 +264,7 @@ func (oc *DefaultNetworkController) initRetryFramework() {
 	oc.retryPods = oc.newRetryFramework(factory.PodType)
 	oc.retryNodes = oc.newRetryFramework(factory.NodeType)
 	oc.retryEgressIPs = oc.newRetryFramework(factory.EgressIPType)
+	oc.retryEgressIPTraffics = oc.newRetryFramework(factory.EgressIPTrafficType)
 	oc.retryEgressIPNamespaces = oc.newRetryFramework(factory.EgressIPNamespaceType)
 	oc.retryEgressIPPods = oc.newRetryFramework(factory.EgressIPPodType)
 	oc.retryEgressNodes = oc.newRetryFramework(factory.EgressNodeType)
@@ -489,6 +493,11 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 			return err
 		}
 		if err := WithSyncDurationMetric("egress ip", oc.WatchEgressIP); err != nil {
+			return err
+		}
+	}
+	if config.OVNKubernetesFeature.EnableEgressIP && config.OVNKubernetesFeature.EnableEgressIPTraffic {
+		if err := WithSyncDurationMetric("egress ip traffic", oc.WatchEgressIPTraffic); err != nil {
 			return err
 		}
 	}
@@ -846,6 +855,10 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		eIP := obj.(*egressipv1.EgressIP)
 		return h.oc.eIPC.reconcileEgressIP(nil, eIP)
 
+	case factory.EgressIPTrafficType:
+		eIPTraffic := obj.(*egressiptrafficv1.EgressIPTraffic)
+		return h.oc.eIPC.reconcileEgressIPTraffic(eIPTraffic)
+
 	case factory.EgressIPNamespaceType:
 		namespace := obj.(*corev1.Namespace)
 		return h.oc.eIPC.reconcileEgressIPNamespace(nil, namespace)
@@ -1059,6 +1072,10 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		newEIP := newObj.(*egressipv1.EgressIP)
 		return h.oc.eIPC.reconcileEgressIP(oldEIP, newEIP)
 
+	case factory.EgressIPTrafficType:
+		newEIPTraffic := newObj.(*egressiptrafficv1.EgressIPTraffic)
+		return h.oc.eIPC.reconcileEgressIPTraffic(newEIPTraffic)
+
 	case factory.EgressIPNamespaceType:
 		oldNamespace := oldObj.(*corev1.Namespace)
 		newNamespace := newObj.(*corev1.Namespace)
@@ -1140,6 +1157,10 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 		eIP := obj.(*egressipv1.EgressIP)
 		return h.oc.eIPC.reconcileEgressIP(eIP, nil)
 
+	case factory.EgressIPTrafficType:
+		eIPTraffic := obj.(*egressiptrafficv1.EgressIPTraffic)
+		return h.oc.eIPC.reconcileEgressIPTraffic(eIPTraffic)
+
 	case factory.EgressIPNamespaceType:
 		namespace := obj.(*corev1.Namespace)
 		return h.oc.eIPC.reconcileEgressIPNamespace(namespace, nil)
@@ -1196,7 +1217,8 @@ func (h *defaultNetworkControllerEventHandler) SyncFunc(objs []interface{}) erro
 			syncFunc = h.oc.eIPC.initClusterEgressPolicies
 
 		case factory.EgressIPNamespaceType,
-			factory.EgressIPType:
+			factory.EgressIPType,
+			factory.EgressIPTrafficType:
 			syncFunc = nil
 
 		case factory.NamespaceType:

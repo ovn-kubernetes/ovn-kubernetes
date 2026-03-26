@@ -81,6 +81,7 @@ rules:
       resources:
           - egressfirewalls
           - egressips
+          - egressiptraffics
           - egressqoses
           - egressservices
           - adminpolicybasedexternalroutes
@@ -111,6 +112,7 @@ rules:
       resources:
           - egressfirewalls/status
           - egressips
+          - egressiptraffics
           - egressqoses
           - networkqoses
           - egressservices/status

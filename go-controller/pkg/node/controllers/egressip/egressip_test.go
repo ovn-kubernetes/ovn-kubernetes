@@ -34,6 +34,7 @@ import (
 	ovnconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
+	egressiptrafficfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressiptraffic/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	ovnkube "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovniptables "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
@@ -255,8 +256,9 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	kubeClient := fake.NewSimpleClientset(&corev1.NodeList{Items: []corev1.Node{getNodeObj(node, createEIPAnnot)}},
 		&corev1.NamespaceList{Items: namespaces}, &corev1.PodList{Items: pods})
 	egressIPClient := egressipfake.NewSimpleClientset(&egressipv1.EgressIPList{Items: egressIPs})
+	egressIPTrafficClient := egressiptrafficfake.NewSimpleClientset()
 	nadClient := nadfake.NewSimpleClientset()
-	ovnNodeClient := &util.OVNNodeClientset{KubeClient: kubeClient, EgressIPClient: egressIPClient, NetworkAttchDefClient: nadClient}
+	ovnNodeClient := &util.OVNNodeClientset{KubeClient: kubeClient, EgressIPClient: egressIPClient, EgressIPTrafficClient: egressIPTrafficClient, NetworkAttchDefClient: nadClient}
 	rm := routemanager.NewController()
 	ovnconfig.OVNKubernetesFeature.EnableMultiNetwork = true // force addition of NAD informer for node watch factory
 	ovnconfig.OVNKubernetesFeature.EnableEgressIP = true
@@ -272,7 +274,8 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	getActiveNetForNsFn := func(string) (util.NetInfo, error) {
 		return &util.DefaultNetInfo{}, nil
 	}
-	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
+	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), watchFactory.EgressIPTrafficInformer(),
+		watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
 		watchFactory.PodCoreInformer(), getActiveNetForNsFn, rm, v4, v6, node1Name, linkManager)
 	if err != nil {
 		return nil, nil, err

@@ -179,6 +179,7 @@ rules:
       resources:
           - egressfirewalls
           - egressips
+          - egressiptraffics
           - egressqoses
           - egressservices
           - adminpolicybasedexternalroutes

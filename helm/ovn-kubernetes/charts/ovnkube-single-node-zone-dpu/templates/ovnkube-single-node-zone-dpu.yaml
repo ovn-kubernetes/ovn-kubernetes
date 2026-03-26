@@ -326,6 +326,8 @@ spec:
           value: {{ default "" .Values.global.enableAdminNetworkPolicy | quote }}
         - name: OVN_EGRESSIP_ENABLE
           value: {{ default "" .Values.global.enableEgressIp | quote }}
+        - name: OVN_EGRESSIPTRAFFIC_ENABLE
+          value: {{ default "" .Values.global.enableEgressIpTraffic | quote }}
         - name: OVN_EGRESSIP_HEALTHCHECK_PORT
           value: {{ default "" .Values.global.egressIpHealthCheckPort | quote }}
         - name: OVN_EGRESSFIREWALL_ENABLE
