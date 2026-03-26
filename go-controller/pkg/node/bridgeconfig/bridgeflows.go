@@ -487,6 +487,7 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				"actions=ct(commit,zone=%d,nat,table=2)",
 				nodetypes.DefaultOpenFlowCookie, protoPrefixV6, config.Default.HostMasqConntrackZone))
 	}
+
 	return dftFlows, nil
 }
 

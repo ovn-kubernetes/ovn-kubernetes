@@ -1026,8 +1026,11 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			// Check if the node moved from local zone to remote zone and if so syncZoneIC should be set to true.
 			// Also check if node subnet changed, so static routes are properly set
 			// Also check if the node is used to be a hybrid overlay node
+			// Also check if host CIDRs changed — floating VIPs moving between nodes
+			// require IC PBR/route updates for multi-homed host IP routing.
 			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged ||
-				switchToOvnNode || nodeEncapIPsChanged || nodePrimaryDPUHostAddrChanged
+				switchToOvnNode || nodeEncapIPsChanged || nodePrimaryDPUHostAddrChanged ||
+				hostCIDRsChanged(oldNode, newNode)
 			if syncZoneIC {
 				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
 					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)

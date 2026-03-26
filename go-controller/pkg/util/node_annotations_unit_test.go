@@ -966,3 +966,71 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeIsMultiHomed(t *testing.T) {
+	nodeWithHostCIDRs := func(cidrs ...string) *corev1.Node {
+		annotation := `[`
+		for i, c := range cidrs {
+			if i > 0 {
+				annotation += ","
+			}
+			annotation += `"` + c + `"`
+		}
+		annotation += `]`
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					OVNNodeHostCIDRs: annotation,
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		desc     string
+		node     *corev1.Node
+		expected bool
+	}{
+		{
+			desc:     "no annotation",
+			node:     &corev1.Node{},
+			expected: false,
+		},
+		{
+			desc:     "single v4 host IP",
+			node:     nodeWithHostCIDRs("10.0.0.1/24"),
+			expected: false,
+		},
+		{
+			desc:     "single v6 host IP",
+			node:     nodeWithHostCIDRs("fd00::1/64"),
+			expected: false,
+		},
+		{
+			desc:     "dual-stack single-homed (1 v4 + 1 v6)",
+			node:     nodeWithHostCIDRs("10.0.0.1/24", "fd00::1/64"),
+			expected: false,
+		},
+		{
+			desc:     "two v4 host IPs (multi-homed)",
+			node:     nodeWithHostCIDRs("10.0.0.1/24", "10.0.1.1/24"),
+			expected: true,
+		},
+		{
+			desc:     "two v6 host IPs (multi-homed)",
+			node:     nodeWithHostCIDRs("fd00::1/64", "fd01::1/64"),
+			expected: true,
+		},
+		{
+			desc:     "two v4 + one v6 (multi-homed)",
+			node:     nodeWithHostCIDRs("10.0.0.1/24", "10.0.1.1/24", "fd00::1/64"),
+			expected: true,
+		},
+	}
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			result := NodeIsMultiHomed(tc.node)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}

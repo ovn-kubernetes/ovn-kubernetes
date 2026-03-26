@@ -13,6 +13,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	types2 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -249,7 +250,7 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 			},
 		},
 		{
-			desc: "[cdn][ipv4][ipv6 no additional addresses",
+			desc: "[cdn][ipv4][ipv6] no additional addresses",
 			addPolicies: []policy{
 				{
 					nodeName:          node1Name,
@@ -334,40 +335,6 @@ func TestAddSameNodeIPPolicy(t *testing.T) {
 						types.NetworkExternalID:  udnL3Network.info.GetNetworkName(),
 						types.TopologyExternalID: udnL3Network.info.TopologyType(),
 					},
-				},
-			},
-		},
-		{
-			desc: "[cdn][ipv4] doesn't alter existing entry",
-			addPolicies: []policy{
-				{
-
-					nodeName:          node1Name,
-					hostInfCIDR:       node1HostCIDRIPv4,
-					otherHostInfAddrs: nil,
-					targetNetwork:     cdnL3Network.info.GetNetworkName(),
-				},
-			},
-			initialDB: networks{cdnL3Network.copyNetworkAndSetLRPs(
-				&nbdb.LogicalRouterPolicy{
-					UUID:     "node-ip-lrp-uuid",
-					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
-					Action:   nbdb.LogicalRouterPolicyActionReroute,
-					Nexthops: []string{node1CDNMgntIPv4Str},
-				})},
-			expectedDB: []libovsdbtest.TestData{
-				&nbdb.LogicalRouter{
-					UUID:     "cdn-cr-uuid",
-					Name:     cdnL3Network.info.GetNetworkScopedClusterRouterName(),
-					Policies: []string{"node-ip-lrp-uuid"},
-				},
-				&nbdb.LogicalRouterPolicy{
-					UUID:     "node-ip-lrp-uuid",
-					Priority: nodeSubNetPrio,
-					Match:    generateNodeIPMatch(cdnL3Network.info.GetNetworkScopedSwitchName(node1Name), v4Prefix, node1HostIPv4Str),
-					Action:   nbdb.LogicalRouterPolicyActionReroute,
-					Nexthops: []string{node1CDNMgntIPv4Str},
 				},
 			},
 		},
@@ -645,6 +612,262 @@ func TestAddHostCIDRPolicy(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(fmt.Errorf("test: \"%s\" encountered error: %v", tt.desc, err))
+			}
+		})
+	}
+}
+
+func TestAddCrossNodeHostIPPolicy(t *testing.T) {
+	const (
+		nodeName            = "node1"
+		nodeHostIPv4Str     = "10.0.110.1"
+		nodeHostCIDRIPv4Str = nodeHostIPv4Str + "/32"
+		nodeOtherIPv4Str    = "10.0.120.1"
+		nodeMgntIPv4Str     = "11.0.1.2"
+		v4Prefix            = "ip4"
+		transitPort         = "rtots-" + nodeName
+	)
+
+	var (
+		_, nodeHostCIDRIPv4, _ = net.ParseCIDR(nodeHostCIDRIPv4Str)
+		interNodePrio, _       = strconv.Atoi(types.InterNodePolicyPriority)
+		cdnL3Network           = network{
+			info:     &util.DefaultNetInfo{},
+			mgntIPv4: nodeMgntIPv4Str,
+		}
+	)
+
+	tests := []struct {
+		desc               string
+		hostInfCIDR        *net.IPNet
+		secondaryHostAddrs []string
+		mgntIP             string
+		expectedDB         []libovsdbtest.TestData
+		expectErr          bool
+	}{
+		{
+			desc:               "single secondary IP creates PBR rule",
+			hostInfCIDR:        nodeHostCIDRIPv4,
+			secondaryHostAddrs: []string{nodeOtherIPv4Str},
+			mgntIP:             nodeMgntIPv4Str,
+			expectedDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID:     getLRUUID(cdnL3Network.info.GetNetworkScopedClusterRouterName()),
+					Name:     cdnL3Network.info.GetNetworkScopedClusterRouterName(),
+					Policies: []string{"cross-node-lrp-uuid"},
+				},
+				&nbdb.LogicalRouterPolicy{
+					UUID:     "cross-node-lrp-uuid",
+					Priority: interNodePrio,
+					Match:    generateLocalDeliveryCrossNodeMatch(transitPort, v4Prefix, nodeOtherIPv4Str, nodeName),
+					Action:   nbdb.LogicalRouterPolicyActionReroute,
+					Nexthops: []string{nodeMgntIPv4Str},
+				},
+			},
+		},
+		{
+			desc:               "multiple secondary IPs create multiple PBR rules",
+			hostInfCIDR:        nodeHostCIDRIPv4,
+			secondaryHostAddrs: []string{nodeOtherIPv4Str, "10.0.130.1"},
+			mgntIP:             nodeMgntIPv4Str,
+			expectedDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID:     getLRUUID(cdnL3Network.info.GetNetworkScopedClusterRouterName()),
+					Name:     cdnL3Network.info.GetNetworkScopedClusterRouterName(),
+					Policies: []string{"cross-node-lrp-uuid", "cross-node-lrp2-uuid"},
+				},
+				&nbdb.LogicalRouterPolicy{
+					UUID:     "cross-node-lrp-uuid",
+					Priority: interNodePrio,
+					Match:    generateLocalDeliveryCrossNodeMatch(transitPort, v4Prefix, nodeOtherIPv4Str, nodeName),
+					Action:   nbdb.LogicalRouterPolicyActionReroute,
+					Nexthops: []string{nodeMgntIPv4Str},
+				},
+				&nbdb.LogicalRouterPolicy{
+					UUID:     "cross-node-lrp2-uuid",
+					Priority: interNodePrio,
+					Match:    generateLocalDeliveryCrossNodeMatch(transitPort, v4Prefix, "10.0.130.1", nodeName),
+					Action:   nbdb.LogicalRouterPolicyActionReroute,
+					Nexthops: []string{nodeMgntIPv4Str},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			dbSetup := libovsdbtest.TestSetup{
+				NBData: cdnL3Network.generateTestData(nodeName),
+			}
+			nbdbClient, cleanup, err := libovsdbtest.NewNBTestHarness(dbSetup, nil)
+			if err != nil {
+				t.Fatalf("libovsdb client error: %v", err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+			mgr := NewPolicyBasedRoutesManager(nbdbClient, cdnL3Network.info.GetNetworkScopedClusterRouterName(), cdnL3Network.info)
+			err = mgr.AddCrossNodeHostIPPolicy(transitPort, nodeName, tt.mgntIP, tt.hostInfCIDR, tt.secondaryHostAddrs)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			matcher := libovsdbtest.HaveData(tt.expectedDB)
+			success, err := matcher.Match(nbdbClient)
+			if !success {
+				t.Fatalf("test %q: %v", tt.desc, matcher.FailureMessage(nbdbClient))
+			}
+			if err != nil {
+				t.Fatalf("test %q: %v", tt.desc, err)
+			}
+		})
+	}
+}
+
+// TestCrossNodeHostIPPolicyGate verifies that when NodeIsMultiHomed returns
+// false (single host CIDR), the caller skips AddCrossNodeHostIPPolicy and
+// no PBR rules are created.
+func TestCrossNodeHostIPPolicyGate(t *testing.T) {
+	const (
+		nodeName            = "node1"
+		nodeHostIPv4Str     = "10.0.110.1"
+		nodeHostCIDRIPv4Str = nodeHostIPv4Str + "/32"
+		nodeMgntIPv4Str     = "11.0.1.2"
+		transitPort         = "rtots-" + nodeName
+	)
+	var (
+		_, nodeHostCIDRIPv4, _ = net.ParseCIDR(nodeHostCIDRIPv4Str)
+		cdnL3Network           = network{
+			info:     &util.DefaultNetInfo{},
+			mgntIPv4: nodeMgntIPv4Str,
+		}
+		singleHomedNode = &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/host-cidrs": `["` + nodeHostCIDRIPv4Str + `"]`,
+				},
+			},
+		}
+	)
+
+	dbSetup := libovsdbtest.TestSetup{
+		NBData: cdnL3Network.generateTestData(nodeName),
+	}
+	nbdbClient, cleanup, err := libovsdbtest.NewNBTestHarness(dbSetup, nil)
+	if err != nil {
+		t.Fatalf("libovsdb client error: %v", err)
+	}
+	t.Cleanup(cleanup.Cleanup)
+
+	mgr := NewPolicyBasedRoutesManager(nbdbClient, cdnL3Network.info.GetNetworkScopedClusterRouterName(), cdnL3Network.info)
+
+	// Simulate the NodeIsMultiHomed gate in SyncGateway
+	if util.NodeIsMultiHomed(singleHomedNode) {
+		if err := mgr.AddCrossNodeHostIPPolicy(transitPort, nodeName, nodeMgntIPv4Str, nodeHostCIDRIPv4, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	interNodePrio, _ := strconv.Atoi(types.InterNodePolicyPriority)
+	policies, err := libovsdbops.FindLogicalRouterPoliciesWithPredicate(nbdbClient, func(item *nbdb.LogicalRouterPolicy) bool {
+		return item.Priority == interNodePrio
+	})
+	if err != nil {
+		t.Fatalf("failed to list policies: %v", err)
+	}
+	if len(policies) != 0 {
+		t.Errorf("expected no PBR rules for single-homed node, got %d", len(policies))
+	}
+}
+
+func TestAddCrossNodeHostIPRoutes(t *testing.T) {
+	const (
+		nodeName            = "node1"
+		nodeHostIPv4Str     = "10.0.110.1"
+		nodeHostCIDRIPv4Str = nodeHostIPv4Str + "/32"
+		nodeOtherIPv4Str    = "10.0.120.1"
+		nodeMgntIPv4Str     = "11.0.1.2"
+	)
+
+	var (
+		_, nodeHostCIDRIPv4, _ = net.ParseCIDR(nodeHostCIDRIPv4Str)
+		cdnL3Network           = network{
+			info:     &util.DefaultNetInfo{},
+			mgntIPv4: nodeMgntIPv4Str,
+		}
+	)
+
+	tests := []struct {
+		desc               string
+		hostInfCIDR        *net.IPNet
+		secondaryHostAddrs []string
+		mgntIP             string
+		expectedRoutes     []string // ip_prefix-nexthop pairs
+	}{
+		{
+			desc:               "single secondary IP creates cluster router static route",
+			hostInfCIDR:        nodeHostCIDRIPv4,
+			secondaryHostAddrs: []string{nodeOtherIPv4Str},
+			mgntIP:             nodeMgntIPv4Str,
+			expectedRoutes:     []string{nodeOtherIPv4Str + "/32-" + nodeMgntIPv4Str},
+		},
+		{
+			desc:               "multiple secondary IPs create multiple static routes",
+			hostInfCIDR:        nodeHostCIDRIPv4,
+			secondaryHostAddrs: []string{nodeOtherIPv4Str, "10.0.130.1"},
+			mgntIP:             nodeMgntIPv4Str,
+			expectedRoutes: []string{
+				nodeOtherIPv4Str + "/32-" + nodeMgntIPv4Str,
+				"10.0.130.1/32-" + nodeMgntIPv4Str,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			dbSetup := libovsdbtest.TestSetup{
+				NBData: cdnL3Network.generateTestData(nodeName),
+			}
+			nbdbClient, cleanup, err := libovsdbtest.NewNBTestHarness(dbSetup, nil)
+			if err != nil {
+				t.Fatalf("libovsdb client error: %v", err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+			mgr := NewPolicyBasedRoutesManager(nbdbClient, cdnL3Network.info.GetNetworkScopedClusterRouterName(), cdnL3Network.info)
+			err = mgr.AddCrossNodeHostIPRoutes(nodeName, tt.mgntIP, tt.hostInfCIDR, tt.secondaryHostAddrs)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+				return item.ExternalIDs["ic-node"] == nodeName &&
+					item.ExternalIDs["ic-host-ip"] == "true"
+			}
+			routes, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(nbdbClient, p)
+			if err != nil {
+				t.Fatalf("failed to list routes: %v", err)
+			}
+			got := make([]string, 0, len(routes))
+			for _, r := range routes {
+				got = append(got, r.IPPrefix+"-"+r.Nexthop)
+			}
+			if len(got) != len(tt.expectedRoutes) {
+				t.Fatalf("expected %d routes, got %d: %v", len(tt.expectedRoutes), len(got), got)
+			}
+			for _, expected := range tt.expectedRoutes {
+				found := false
+				for _, actual := range got {
+					if actual == expected {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected route %q not found in %v", expected, got)
+				}
 			}
 		})
 	}

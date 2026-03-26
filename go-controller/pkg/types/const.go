@@ -125,13 +125,14 @@ const (
 	MGMTPortPolicyPriority                = "1005"
 	NodeSubnetPolicyPriority              = "1004"
 	InterNodePolicyPriority               = "1003"
+	RemoteZoneInterNodePolicyPriority     = "1001"
 	UDNHostCIDRPolicyPriority             = "99"
 	HybridOverlaySubnetPriority           = 1002
 	HybridOverlayReroutePriority          = 501
-	DefaultNoRereoutePriority             = 102
-	EgressSVCReroutePriority              = 101
-	EgressIPReroutePriority               = 100
-	EgressIPRerouteQoSRulePriority        = 103
+	DefaultNoRereoutePriority             = 1102
+	EgressSVCReroutePriority              = 1101
+	EgressIPReroutePriority               = 1100
+	EgressIPRerouteQoSRulePriority        = 1103
 	NetworkConnectPolicyPriority          = 9001
 	// priority of logical router policies on a nodes gateway router
 	EgressIPSNATMarkPriority           = 95

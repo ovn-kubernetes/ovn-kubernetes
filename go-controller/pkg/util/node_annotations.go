@@ -917,6 +917,31 @@ func GetNodeHostAddrs(node *corev1.Node) ([]string, error) {
 	return sets.List(hostAddresses), nil
 }
 
+// NodeIsMultiHomed returns true if the node has 2 or more host IPs in at least
+// one IP family, indicating it is attached to multiple physical networks.
+// On such nodes, cross-zone pod-to-host traffic may not be reachable via the
+// physical uplink alone and requires OVN policy-based routing through the
+// transit switch.
+func NodeIsMultiHomed(node *corev1.Node) bool {
+	hostAddrs, err := GetNodeHostAddrs(node)
+	if err != nil || len(hostAddrs) == 0 {
+		return false
+	}
+	v4, v6 := 0, 0
+	for _, addr := range hostAddrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			v4++
+		} else {
+			v6++
+		}
+	}
+	return v4 >= 2 || v6 >= 2
+}
+
 func ParseNodeHostCIDRsExcludeOVNNetworks(node *corev1.Node) ([]string, error) {
 	networks, err := ParseNodeHostCIDRsList(node)
 	if err != nil {

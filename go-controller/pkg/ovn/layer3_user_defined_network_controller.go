@@ -699,7 +699,8 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 	zoneClusterChanged := oc.nodeZoneClusterChanged(oldNode, newNode)
 	nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, oc.GetNetworkName(), oldState, newState)
 	_, syncZoneIC := oc.syncZoneICFailed.Load(newNode.Name)
-	syncZoneIC = syncZoneIC || oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged
+	syncZoneIC = syncZoneIC || oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged ||
+		hostCIDRsChanged(oldNode, newNode)
 	if syncZoneIC {
 		klog.Infof("Node %s in remote zone %s needs interconnect zone sync up. Zone cluster changed: %v",
 			newNode.Name, util.GetNodeZone(newNode), zoneClusterChanged)
