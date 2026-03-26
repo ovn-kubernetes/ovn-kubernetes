@@ -48,6 +48,10 @@ type EgressIPSpec struct {
 	// EgressIPs is the list of egress IP addresses requested. Can be IPv4 and/or IPv6.
 	// This field is mandatory.
 	EgressIPs []string `json:"egressIPs"`
+	// TrafficSelector applies the egress IP only to the network traffic defined within the selected EgressIPTraffic(s).
+	// If not set, all egress traffic is selected.
+	// +optional
+	TrafficSelector metav1.LabelSelector `json:"trafficSelector,omitempty"`
 	// NamespaceSelector applies the egress IP only to the namespace(s) whose label
 	// matches this definition. This field is mandatory.
 	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector"`

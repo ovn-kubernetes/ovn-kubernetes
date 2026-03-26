@@ -28,7 +28,8 @@ import (
 type EgressIPSpecApplyConfiguration struct {
 	// EgressIPs is the list of egress IP addresses requested. Can be IPv4 and/or IPv6.
 	// This field is mandatory.
-	EgressIPs []string `json:"egressIPs,omitempty"`
+	EgressIPs       []string                                `json:"egressIPs,omitempty"`
+	TrafficSelector *metav1.LabelSelectorApplyConfiguration `json:"trafficSelector,omitempty"`
 	// NamespaceSelector applies the egress IP only to the namespace(s) whose label
 	// matches this definition. This field is mandatory.
 	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
@@ -55,6 +56,14 @@ func (b *EgressIPSpecApplyConfiguration) WithEgressIPs(values ...string) *Egress
 	for i := range values {
 		b.EgressIPs = append(b.EgressIPs, values[i])
 	}
+	return b
+}
+
+// WithTrafficSelector sets the TrafficSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TrafficSelector field is set to the value of the last call.
+func (b *EgressIPSpecApplyConfiguration) WithTrafficSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
+	b.TrafficSelector = value
 	return b
 }
 
