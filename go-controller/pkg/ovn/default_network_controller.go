@@ -1073,7 +1073,16 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		return h.oc.eIPC.reconcileEgressIP(oldEIP, newEIP)
 
 	case factory.EgressIPTrafficType:
+		oldEIPTraffic := oldObj.(*egressiptrafficv1.EgressIPTraffic)
 		newEIPTraffic := newObj.(*egressiptrafficv1.EgressIPTraffic)
+		// Reconcile EgressIPs matching the old labels only when labels changed,
+		// so EgressIPs that stopped matching are notified. When only destinationNetworks
+		// changed (labels unchanged), a single reconcile with the new object suffices.
+		if !reflect.DeepEqual(oldEIPTraffic.Labels, newEIPTraffic.Labels) {
+			if err := h.oc.eIPC.reconcileEgressIPTraffic(oldEIPTraffic); err != nil {
+				return err
+			}
+		}
 		return h.oc.eIPC.reconcileEgressIPTraffic(newEIPTraffic)
 
 	case factory.EgressIPNamespaceType:
