@@ -34,12 +34,14 @@ import (
 	ovnconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
+	egressiptrafficv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressiptraffic/v1"
 	egressiptrafficfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressiptraffic/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	ovnkube "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovniptables "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -141,12 +143,18 @@ const (
 	pod4IPv6Compressed              = "fd46::4"
 	pod4IPv6CIDRCompressed          = pod4IPv6Compressed + "/128"
 	node1OVNNetworkV4               = "11.11.0.0/16"
+	destNetwork1V4                  = "192.168.250.0/24"
+	destNetwork2V4                  = "192.168.251.0/24"
+	trafficGroupLabel1              = "traffic-group-1"
+	egressIPTraffic1Name            = "eipt-1"
+	egressIPTraffic2Name            = "eipt-2"
 )
 
 var (
 	egressPodLabel  = map[string]string{"egress": "needed"}
 	namespace1Label = map[string]string{"prod1": ""}
 	namespace2Label = map[string]string{"prod2": ""}
+	trafficLabel1   = map[string]string{"traffic-group": trafficGroupLabel1}
 )
 
 type cleanupFn func() error
@@ -251,17 +259,18 @@ func createVRFAndEnslaveLink(testNS ns.NetNS, linkName, vrfName string, vrfTable
 	})
 }
 
-func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs []egressipv1.EgressIP, node nodeConfig, v4, v6, createEIPAnnot bool) (*Controller, *egressipfake.Clientset, error) {
+func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs []egressipv1.EgressIP, node nodeConfig, v4, v6, createEIPAnnot bool, egressIPTraffics ...egressiptrafficv1.EgressIPTraffic) (*Controller, *egressipfake.Clientset, error) {
 
 	kubeClient := fake.NewSimpleClientset(&corev1.NodeList{Items: []corev1.Node{getNodeObj(node, createEIPAnnot)}},
 		&corev1.NamespaceList{Items: namespaces}, &corev1.PodList{Items: pods})
 	egressIPClient := egressipfake.NewSimpleClientset(&egressipv1.EgressIPList{Items: egressIPs})
-	egressIPTrafficClient := egressiptrafficfake.NewSimpleClientset()
+	egressIPTrafficClient := egressiptrafficfake.NewSimpleClientset(&egressiptrafficv1.EgressIPTrafficList{Items: egressIPTraffics})
 	nadClient := nadfake.NewSimpleClientset()
 	ovnNodeClient := &util.OVNNodeClientset{KubeClient: kubeClient, EgressIPClient: egressIPClient, EgressIPTrafficClient: egressIPTrafficClient, NetworkAttchDefClient: nadClient}
 	rm := routemanager.NewController()
 	ovnconfig.OVNKubernetesFeature.EnableMultiNetwork = true // force addition of NAD informer for node watch factory
 	ovnconfig.OVNKubernetesFeature.EnableEgressIP = true
+	ovnconfig.OVNKubernetesFeature.EnableEgressIPTraffic = true
 	watchFactory, err := factory.NewNodeWatchFactory(ovnNodeClient, node1Name)
 	if err != nil {
 		return nil, nil, err
@@ -307,20 +316,45 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	if err != nil {
 		return nil, nil, err
 	}
+	if c.eIPTrafficInformer != nil {
+		_, err = c.eIPTrafficInformer.AddEventHandler(
+			cache.ResourceEventHandlerFuncs{
+				AddFunc: c.onEIPTrafficChange,
+				UpdateFunc: func(oldObj, newObj interface{}) {
+					oldEIPT := oldObj.(*egressiptrafficv1.EgressIPTraffic)
+					newEIPT := newObj.(*egressiptrafficv1.EgressIPTraffic)
+					if !reflect.DeepEqual(oldEIPT.Labels, newEIPT.Labels) {
+						c.onEIPTrafficChange(oldObj)
+					}
+					c.onEIPTrafficChange(newObj)
+				},
+				DeleteFunc: c.onEIPTrafficChange,
+			})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	return c, egressIPClient, nil
 }
 
 func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 	ginkgo.GinkgoHelper()
 	stopCh := make(chan struct{})
-	for _, se := range []struct {
+	cacheSyncs := []struct {
 		resourceName string
 		syncFn       cache.InformerSynced
 	}{
 		{"eipeip", c.eIPInformer.HasSynced},
 		{"eipnamespace", c.namespaceInformer.HasSynced},
 		{"eippod", c.podInformer.HasSynced},
-	} {
+	}
+	if c.eIPTrafficInformer != nil {
+		cacheSyncs = append(cacheSyncs, struct {
+			resourceName string
+			syncFn       cache.InformerSynced
+		}{"eiptraffic", c.eIPTrafficInformer.HasSynced})
+	}
+	for _, se := range cacheSyncs {
 		func(resourceName string, syncFn cache.InformerSynced) {
 			if !util.WaitForInformerCacheSyncWithTimeout(resourceName, stopCh, syncFn) {
 				gomega.PanicWith(fmt.Sprintf("timed out waiting for %q caches to sync", resourceName))
@@ -332,7 +366,10 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 	runSubControllers(testNS, c, wg, stopCh)
 
 	err := testNS.Do(func(ns.NetNS) error {
-		return c.ruleManager.OwnPriority(rulePriority)
+		if err := c.ruleManager.OwnPriority(rulePriority); err != nil {
+			return err
+		}
+		return c.ruleManager.OwnPriority(ruleEIPTrafficPriority)
 	})
 	if err != nil {
 		return nil, err
@@ -437,7 +474,7 @@ func runSubControllers(testNS ns.NetNS, c *Controller, wg *sync.WaitGroup, stopC
 // FIXME(mk) - Within GH VM, if I need to create a new NetNs. I see the following error:
 // "failed to create new network namespace: mount --make-rshared /run/user/1001/netns failed: "operation not permitted""
 var _ = ginkgo.DescribeTable("EgressIP selectors",
-	func(expectedEIPConfigs []eipConfig, pods []corev1.Pod, namespaces []corev1.Namespace, nodeConfig nodeConfig) {
+	func(expectedEIPConfigs []eipConfig, pods []corev1.Pod, namespaces []corev1.Namespace, nodeConfig nodeConfig, egressIPTraffics ...egressiptrafficv1.EgressIPTraffic) {
 		defer ginkgo.GinkgoRecover()
 		if ovntest.NoRoot() {
 			ginkgo.Skip("Test requires root privileges")
@@ -461,7 +498,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		// setup "node" environment before controller is started
 		testNS, cleanupNodeFn, err := setupFakeTestNode(nodeConfig)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		c, eIPClient, err := initController(namespaces, pods, egressIPList, nodeConfig, v4, v6, true) //TODO: test for IPV6
+		c, eIPClient, err := initController(namespaces, pods, egressIPList, nodeConfig, v4, v6, true, egressIPTraffics...) //TODO: test for IPV6
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		cleanupControllerFn, err := runController(testNS, c)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -477,7 +514,11 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			// to say they are equal by comparing their length and ensuring we find all expected rules
 			var ruleCount int
 			for _, expectedEIPConfig := range expectedEIPConfigs {
-				ruleCount += len(expectedEIPConfig.podConfigs)
+				for _, pc := range expectedEIPConfig.podConfigs {
+					if len(pc.ipTableRule.Args) > 0 {
+						ruleCount++
+					}
+				}
 			}
 			if ruleCount != len(foundIPTRules) {
 				return fmt.Errorf("expected and found IPTable rule(s) count do not match: expected %d IPtable rule(s) but got %d:\n"+
@@ -485,6 +526,9 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			}
 			for _, expectedEIPConfig := range expectedEIPConfigs {
 				for _, expectedPodConfig := range expectedEIPConfig.podConfigs {
+					if len(expectedPodConfig.ipTableRule.Args) == 0 {
+						continue
+					}
 					var found bool
 					for _, foundIPTRule := range foundIPTRules {
 						if strings.Join(expectedPodConfig.ipTableRule.Args, " ") == strings.Join(foundIPTRule.Args, " ") {
@@ -553,11 +597,15 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 					continue
 				}
 				for _, expectedPodConfig := range expectedEIPConfig.podConfigs {
-					pod := getPod(pods, expectedPodConfig.name)
-					ips, err := util.DefaultNetworkPodIPs(pod)
-					gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-					for _, ip := range ips {
-						expectedRules = append(expectedRules, generateIPRule(ip, utilnet.IsIPv6(ip), getLinkIndex(expectedEIPConfig.inf)))
+					if expectedPodConfig.ipRule != nil {
+						expectedRules = append(expectedRules, *expectedPodConfig.ipRule)
+					} else {
+						pod := getPod(pods, expectedPodConfig.name)
+						ips, err := util.DefaultNetworkPodIPs(pod)
+						gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+						for _, ip := range ips {
+							expectedRules = append(expectedRules, generateIPRule(ip, utilnet.IsIPv6(ip), getLinkIndex(expectedEIPConfig.inf)))
+						}
 					}
 				}
 			}
@@ -581,7 +629,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 						}
 						temp := foundRules[:0]
 						for _, rule := range foundRules {
-							if rule.Priority == rulePriority {
+							if rule.Priority == rulePriority || rule.Priority == ruleEIPTrafficPriority {
 								temp = append(temp, rule)
 							}
 						}
@@ -591,15 +639,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 						for _, expectedRule := range expectedRules {
 							found = false
 							for _, foundRule := range foundRules {
-								if expectedRule.Src.IP.Equal(foundRule.Src.IP) {
-									if expectedRule.Table == foundRule.Table {
-										found = true
-										break
-									}
+								if expectedRule.Src.IP.Equal(foundRule.Src.IP) &&
+									expectedRule.Table == foundRule.Table &&
+									expectedRule.Priority == foundRule.Priority &&
+									reflect.DeepEqual(expectedRule.Dst, foundRule.Dst) {
+									found = true
+									break
 								}
 							}
 							if !found {
-								return fmt.Errorf("failed to find rule %s", expectedRule)
+								return fmt.Errorf("failed to find rule %s in %+v", expectedRule, foundRules)
 							}
 						}
 					}
@@ -678,13 +727,15 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		ginkgo.By("verify IP rules are removed")
 		gomega.Eventually(func() error {
 			return testNS.Do(func(ns.NetNS) error {
-				filter, mask := filterRuleByPriority(rulePriority)
-				foundRules, err := netlink.RuleListFiltered(netlink.FAMILY_ALL, filter, mask)
-				if err != nil {
-					return err
-				}
-				if len(foundRules) > 0 {
-					return fmt.Errorf("expected zero IP rules but found %d: %v", len(foundRules), foundRules)
+				for _, priority := range []int{rulePriority, ruleEIPTrafficPriority} {
+					filter, mask := filterRuleByPriority(priority)
+					foundRules, err := netlink.RuleListFiltered(netlink.FAMILY_ALL, filter, mask)
+					if err != nil {
+						return err
+					}
+					if len(foundRules) > 0 {
+						return fmt.Errorf("expected zero IP rules at priority %d but found %d: %v", priority, len(foundRules), foundRules)
+					}
 				}
 				return nil
 			})
@@ -743,7 +794,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			{
 				newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv4Route(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
 				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -768,7 +819,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				newEgressIP(egressIP1Name, egressIP1IPV6Compressed, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv6Route(getLinkIndex(dummyLink1Name)),
 					getLinkLocalRoute(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
 				getNetlinkAddr(egressIP1IPV6Compressed, egressIPv6Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -793,7 +844,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				newEgressIP(egressIP1Name, egressIP1IPV6Uncompressed, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv6Route(getLinkIndex(dummyLink1Name)),
 					getLinkLocalRoute(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
 				getNetlinkAddr(egressIP1IPV6Compressed, egressIPv6Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -818,7 +869,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			{
 				newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv4Route(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
 				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -851,7 +902,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				newEgressIP(egressIP1Name, egressIP1IPV6Compressed, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv6Route(getLinkIndex(dummyLink1Name)),
 					getLinkLocalRoute(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
 				getNetlinkAddr(egressIP1IPV6Compressed, egressIPv6Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -882,7 +933,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			{
 				newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv4Route(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
 				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -916,7 +967,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				newEgressIP(egressIP1Name, egressIP1IPV6Compressed, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv6Route(getLinkIndex(dummyLink1Name)),
 					getLinkLocalRoute(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
 				getNetlinkAddr(egressIP1IPV6Compressed, egressIPv6Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -948,7 +999,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			{
 				newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv4Route(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
 				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -967,7 +1018,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 			{
 				newEgressIP(egressIP2Name, egressIP2IPV4, node1Name, namespace2Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv4Route(getLinkIndex(dummyLink2Name)),
-					getDstRoute(getLinkIndex(dummyLink2Name), dummy2IPv4CIDRNetwork)},
+					getConnectedRoute(getLinkIndex(dummyLink2Name), dummy2IPv4CIDRNetwork)},
 				getNetlinkAddr(egressIP2IPV4, egressIPv4Mask),
 				dummyLink2Name,
 				[]testPodConfig{
@@ -1003,7 +1054,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				newEgressIP(egressIP1Name, egressIP1IPV6Compressed, node1Name, namespace1Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv6Route(getLinkIndex(dummyLink1Name)),
 					getLinkLocalRoute(getLinkIndex(dummyLink1Name)),
-					getDstRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv6CIDRNetworkCompressed)},
 				getNetlinkAddr(egressIP1IPV6Compressed, egressIPv6Mask),
 				dummyLink1Name,
 				[]testPodConfig{
@@ -1023,7 +1074,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				newEgressIP(egressIP2Name, egressIP2IPV6Compressed, node1Name, namespace2Label, egressPodLabel),
 				[]netlink.Route{getDefaultIPv6Route(getLinkIndex(dummyLink2Name)),
 					getLinkLocalRoute(getLinkIndex(dummyLink2Name)),
-					getDstRoute(getLinkIndex(dummyLink2Name), dummy2IPv6CIDRNetworkCompressed)},
+					getConnectedRoute(getLinkIndex(dummyLink2Name), dummy2IPv6CIDRNetworkCompressed)},
 				getNetlinkAddr(egressIP2IPV6Compressed, egressIPv6Mask),
 				dummyLink2Name,
 				[]testPodConfig{
@@ -1053,7 +1104,340 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				{dummyLink4Name, []address{{dummy4IPv6CIDRCompressed, false}}}},
 		},
 	),
+	ginkgo.Entry("configures one IPv4 EIP with TrafficSelector and per-destination IP rules",
+		[]eipConfig{
+			{
+				newEgressIPWithTrafficSelector(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel, trafficLabel1),
+				// No default route — only destination-specific routes and the connected route
+				[]netlink.Route{
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork),
+					getDestinationRoute(getLinkIndex(dummyLink1Name), destNetwork1V4),
+				},
+				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
+				dummyLink1Name,
+				[]testPodConfig{
+					{
+						pod1Name,
+						// SNAT rule only on the first destination CIDR config
+						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						getRuleWithDst(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name)), destNetwork1V4),
+					},
+				},
+			},
+		},
+		[]corev1.Pod{newPodWithLabels(namespace1, pod1Name, node1Name, pod1IPv4, egressPodLabel)},
+		[]corev1.Namespace{newNamespaceWithLabels(namespace1, namespace1Label)},
+		nodeConfig{
+			linkConfigs: []linkConfig{{dummyLink1Name, []address{{dummy1IPv4CIDR, false}}},
+				{dummyLink2Name, []address{{dummy2IPv4CIDR, false}}}},
+		},
+		newEgressIPTraffic(egressIPTraffic1Name, trafficLabel1, destNetwork1V4),
+	),
+	ginkgo.Entry("configures one IPv4 EIP with TrafficSelector and multiple destination networks",
+		[]eipConfig{
+			{
+				newEgressIPWithTrafficSelector(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel, trafficLabel1),
+				// No default route — destination-specific routes for both networks + connected route
+				[]netlink.Route{
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork),
+					getDestinationRoute(getLinkIndex(dummyLink1Name), destNetwork1V4),
+					getDestinationRoute(getLinkIndex(dummyLink1Name), destNetwork2V4),
+				},
+				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
+				dummyLink1Name,
+				[]testPodConfig{
+					{
+						// First destination CIDR gets the SNAT iptables rule
+						pod1Name,
+						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						getRuleWithDst(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name)), destNetwork1V4),
+					},
+					{
+						// Second destination CIDR has no iptables rule (deduplicated)
+						pod1Name,
+						ovniptables.RuleArg{},
+						getRuleWithDst(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name)), destNetwork2V4),
+					},
+				},
+			},
+		},
+		[]corev1.Pod{newPodWithLabels(namespace1, pod1Name, node1Name, pod1IPv4, egressPodLabel)},
+		[]corev1.Namespace{newNamespaceWithLabels(namespace1, namespace1Label)},
+		nodeConfig{
+			linkConfigs: []linkConfig{{dummyLink1Name, []address{{dummy1IPv4CIDR, false}}},
+				{dummyLink2Name, []address{{dummy2IPv4CIDR, false}}}},
+		},
+		newEgressIPTraffic(egressIPTraffic1Name, trafficLabel1, destNetwork1V4, destNetwork2V4),
+	),
+	ginkgo.Entry("configures non-TrafficSelector EIP with lower priority catch-all rule",
+		[]eipConfig{
+			{
+				newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
+				[]netlink.Route{getDefaultIPv4Route(getLinkIndex(dummyLink1Name)),
+					getConnectedRoute(getLinkIndex(dummyLink1Name), dummy1IPv4CIDRNetwork)},
+				getNetlinkAddr(egressIP1IPV4, egressIPv4Mask),
+				dummyLink1Name,
+				[]testPodConfig{
+					{
+						pod1Name,
+						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						getRule(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
+					},
+				},
+			},
+		},
+		[]corev1.Pod{newPodWithLabels(namespace1, pod1Name, node1Name, pod1IPv4, egressPodLabel)},
+		[]corev1.Namespace{newNamespaceWithLabels(namespace1, namespace1Label)},
+		nodeConfig{
+			linkConfigs: []linkConfig{{dummyLink1Name, []address{{dummy1IPv4CIDR, false}}},
+				{dummyLink2Name, []address{{dummy2IPv4CIDR, false}}}},
+		},
+	),
 )
+
+var _ = ginkgo.Describe("EgressIPTraffic helper functions", func() {
+
+	ginkgo.Context("replaceDefaultRouteWithDestNetworks", func() {
+		ginkgo.It("removes default route and adds destination-specific routes", func() {
+			linkIndex := 10
+			tableID := util.CalculateRouteTableID(linkIndex)
+			inputRoutes := []netlink.Route{
+				{Dst: nil, LinkIndex: linkIndex, Table: tableID},                                                          // default route
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: linkIndex, Table: tableID, Scope: netlink.SCOPE_LINK}, // connected route
+			}
+			destNetworks := []*net.IPNet{mustParseCIDR("192.168.250.0/24")}
+			result := replaceDefaultRouteWithDestNetworks(inputRoutes, linkIndex, destNetworks, false)
+			// Should not contain default route
+			for _, r := range result {
+				gomega.Expect(r.Dst).NotTo(gomega.BeNil(), "default route should be removed")
+			}
+			// Should contain the connected route
+			gomega.Expect(containsRouteDst(result, "192.168.150.0/24")).To(gomega.BeTrue(), "connected route should be preserved")
+			// Should contain the destination-specific route
+			gomega.Expect(containsRouteDst(result, "192.168.250.0/24")).To(gomega.BeTrue(), "destination route should be added")
+		})
+
+		ginkgo.It("preserves gateway from default route", func() {
+			linkIndex := 10
+			tableID := util.CalculateRouteTableID(linkIndex)
+			gw := net.ParseIP("192.168.150.1")
+			inputRoutes := []netlink.Route{
+				{Dst: nil, LinkIndex: linkIndex, Table: tableID, Gw: gw},
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: linkIndex, Table: tableID},
+			}
+			destNetworks := []*net.IPNet{mustParseCIDR("192.168.250.0/24")}
+			result := replaceDefaultRouteWithDestNetworks(inputRoutes, linkIndex, destNetworks, false)
+			found := false
+			for _, r := range result {
+				if r.Dst != nil && r.Dst.String() == "192.168.250.0/24" {
+					found = true
+					gomega.Expect(r.Gw.Equal(gw)).To(gomega.BeTrue(), "gateway should be preserved from default route")
+				}
+			}
+			gomega.Expect(found).To(gomega.BeTrue(), "destination route 192.168.250.0/24 should exist in result")
+		})
+
+		ginkgo.It("filters destination networks by IP family", func() {
+			linkIndex := 10
+			tableID := util.CalculateRouteTableID(linkIndex)
+			inputRoutes := []netlink.Route{
+				{Dst: nil, LinkIndex: linkIndex, Table: tableID},
+			}
+			destNetworks := []*net.IPNet{
+				mustParseCIDR("192.168.250.0/24"),
+				mustParseCIDR("2001:db8::/32"),
+			}
+			// IPv4 mode: should only include the IPv4 destination
+			result := replaceDefaultRouteWithDestNetworks(inputRoutes, linkIndex, destNetworks, false)
+			gomega.Expect(containsRouteDst(result, "192.168.250.0/24")).To(gomega.BeTrue())
+			gomega.Expect(containsRouteDst(result, "2001:db8::/32")).To(gomega.BeFalse(), "IPv6 destination should be filtered in IPv4 mode")
+		})
+
+		ginkgo.It("returns only non-default routes when no destination networks provided", func() {
+			linkIndex := 10
+			tableID := util.CalculateRouteTableID(linkIndex)
+			inputRoutes := []netlink.Route{
+				{Dst: nil, LinkIndex: linkIndex, Table: tableID},
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: linkIndex, Table: tableID},
+			}
+			result := replaceDefaultRouteWithDestNetworks(inputRoutes, linkIndex, nil, false)
+			gomega.Expect(result).To(gomega.HaveLen(1), "only connected route should remain")
+			gomega.Expect(result[0].Dst.String()).To(gomega.Equal("192.168.150.0/24"))
+		})
+
+		ginkgo.It("preserves existing specific route with gateway instead of creating duplicate", func() {
+			linkIndex := 10
+			tableID := util.CalculateRouteTableID(linkIndex)
+			gw := net.ParseIP("192.168.150.1")
+			inputRoutes := []netlink.Route{
+				{Dst: defaultV4AnyCIDR, LinkIndex: linkIndex, Table: tableID},                                                  // synthetic default (no gw)
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: linkIndex, Table: tableID, Scope: netlink.SCOPE_LINK},      // connected route
+				{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: linkIndex, Table: tableID, Gw: gw, Type: unix.RTN_UNICAST}, // specific route with gateway from main table
+			}
+			destNetworks := []*net.IPNet{mustParseCIDR("192.168.250.0/24")}
+			result := replaceDefaultRouteWithDestNetworks(inputRoutes, linkIndex, destNetworks, false)
+			// Should not contain default route
+			for _, r := range result {
+				if r.Dst != nil {
+					ones, _ := r.Dst.Mask.Size()
+					gomega.Expect(r.Dst.IP.IsUnspecified() && ones == 0).To(gomega.BeFalse(), "default route should be removed")
+				}
+			}
+			// Should contain exactly 2 routes: connected + specific with gateway
+			gomega.Expect(result).To(gomega.HaveLen(2))
+			// The specific route should preserve the original gateway
+			for _, r := range result {
+				if r.Dst != nil && r.Dst.String() == "192.168.250.0/24" {
+					gomega.Expect(r.Gw.Equal(gw)).To(gomega.BeTrue(), "existing specific route gateway should be preserved")
+				}
+			}
+		})
+
+		ginkgo.It("creates new route for CIDR not covered by existing routes and preserves existing ones", func() {
+			linkIndex := 10
+			tableID := util.CalculateRouteTableID(linkIndex)
+			gw := net.ParseIP("192.168.150.1")
+			inputRoutes := []netlink.Route{
+				{Dst: defaultV4AnyCIDR, LinkIndex: linkIndex, Table: tableID},                                                  // synthetic default (no gw)
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: linkIndex, Table: tableID, Scope: netlink.SCOPE_LINK},      // connected route
+				{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: linkIndex, Table: tableID, Gw: gw, Type: unix.RTN_UNICAST}, // specific route with gateway
+			}
+			destNetworks := []*net.IPNet{mustParseCIDR("192.168.250.0/24"), mustParseCIDR("192.168.251.0/24")}
+			result := replaceDefaultRouteWithDestNetworks(inputRoutes, linkIndex, destNetworks, false)
+			// Should contain 3 routes: connected + specific_250 (preserved) + new_251
+			gomega.Expect(result).To(gomega.HaveLen(3))
+			gomega.Expect(containsRouteDst(result, "192.168.150.0/24")).To(gomega.BeTrue(), "connected route should be preserved")
+			gomega.Expect(containsRouteDst(result, "192.168.250.0/24")).To(gomega.BeTrue(), "existing specific route should be preserved")
+			gomega.Expect(containsRouteDst(result, "192.168.251.0/24")).To(gomega.BeTrue(), "new destination route should be created")
+			// 192.168.250.0/24 should have the original gateway
+			for _, r := range result {
+				if r.Dst != nil && r.Dst.String() == "192.168.250.0/24" {
+					gomega.Expect(r.Gw.Equal(gw)).To(gomega.BeTrue(), "preserved route should keep its gateway")
+				}
+			}
+			// 192.168.251.0/24 should have no gateway (from synthetic default)
+			for _, r := range result {
+				if r.Dst != nil && r.Dst.String() == "192.168.251.0/24" {
+					gomega.Expect(r.Gw).To(gomega.BeNil(), "new route should use default route gateway (nil)")
+				}
+			}
+		})
+	})
+
+	ginkgo.Context("hasRouteForDst", func() {
+		ginkgo.It("finds matching destination CIDR", func() {
+			routes := []netlink.Route{
+				{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010, Gw: net.ParseIP("192.168.150.1")},
+			}
+			gomega.Expect(hasRouteForDst(routes, mustParseCIDR("192.168.250.0/24"))).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("returns false for different CIDR", func() {
+			routes := []netlink.Route{
+				{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010},
+			}
+			gomega.Expect(hasRouteForDst(routes, mustParseCIDR("192.168.251.0/24"))).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("returns false for same IP but different mask", func() {
+			routes := []netlink.Route{
+				{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010},
+			}
+			gomega.Expect(hasRouteForDst(routes, mustParseCIDR("192.168.250.0/16"))).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("returns false for empty routes", func() {
+			gomega.Expect(hasRouteForDst(nil, mustParseCIDR("192.168.250.0/24"))).To(gomega.BeFalse())
+		})
+	})
+
+	ginkgo.Context("containsRoute", func() {
+		ginkgo.It("finds matching route", func() {
+			routes := []netlink.Route{
+				{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010},
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: 10, Table: 1010},
+			}
+			gomega.Expect(containsRoute(routes, netlink.Route{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010})).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("returns false for non-matching route", func() {
+			routes := []netlink.Route{
+				{Dst: mustParseCIDR("192.168.150.0/24"), LinkIndex: 10, Table: 1010},
+			}
+			gomega.Expect(containsRoute(routes, netlink.Route{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010})).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("returns false for empty routes", func() {
+			gomega.Expect(containsRoute(nil, netlink.Route{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10})).To(gomega.BeFalse())
+		})
+	})
+
+	ginkgo.Context("getRoutesForOtherEIPsOnLink", func() {
+		ginkgo.It("collects routes from other EgressIPs on the same link", func() {
+			c := &Controller{
+				cache: syncmap.NewSyncMap[*state](),
+			}
+			// EgressIP A on link 10
+			stateA := &state{eIPConfig: &eIPConfig{
+				addr:   getNetlinkAddr("5.5.5.50", "32"),
+				routes: []netlink.Route{{Dst: mustParseCIDR("192.168.250.0/24"), LinkIndex: 10, Table: 1010}},
+			}}
+			stateA.eIPConfig.addr.LinkIndex = 10
+			c.cache.Store("eipA", stateA)
+			// EgressIP B on link 10
+			stateB := &state{eIPConfig: &eIPConfig{
+				addr:   getNetlinkAddr("5.5.5.51", "32"),
+				routes: []netlink.Route{{Dst: nil, LinkIndex: 10, Table: 1010}},
+			}}
+			stateB.eIPConfig.addr.LinkIndex = 10
+			c.cache.Store("eipB", stateB)
+			// EgressIP C on different link 20
+			stateC := &state{eIPConfig: &eIPConfig{
+				addr:   getNetlinkAddr("6.6.6.50", "32"),
+				routes: []netlink.Route{{Dst: mustParseCIDR("10.0.0.0/8"), LinkIndex: 20, Table: 1020}},
+			}}
+			stateC.eIPConfig.addr.LinkIndex = 20
+			c.cache.Store("eipC", stateC)
+
+			// Get routes for other EIPs on link 10, excluding eipA
+			routes := c.getRoutesForOtherEIPsOnLink("eipA", 10)
+			gomega.Expect(routes).To(gomega.HaveLen(1), "should only include eipB's route")
+			gomega.Expect(routes[0].Dst).To(gomega.BeNil(), "should be eipB's default route")
+		})
+
+		ginkgo.It("returns empty when no other EgressIPs on link", func() {
+			c := &Controller{
+				cache: syncmap.NewSyncMap[*state](),
+			}
+			stateA := &state{eIPConfig: &eIPConfig{
+				addr:   getNetlinkAddr("5.5.5.50", "32"),
+				routes: []netlink.Route{{Dst: nil, LinkIndex: 10, Table: 1010}},
+			}}
+			stateA.eIPConfig.addr.LinkIndex = 10
+			c.cache.Store("eipA", stateA)
+
+			routes := c.getRoutesForOtherEIPsOnLink("eipA", 10)
+			gomega.Expect(routes).To(gomega.BeEmpty())
+		})
+	})
+})
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, ipNet, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return ipNet
+}
+
+func containsRouteDst(routes []netlink.Route, dst string) bool {
+	for _, r := range routes {
+		if r.Dst != nil && r.Dst.String() == dst {
+			return true
+		}
+	}
+	return false
+}
 
 var _ = ginkgo.Describe("label to annotations migration", func() {
 	// Test using root and a test netns because we want to test between netlink lib
@@ -1550,6 +1934,60 @@ func newEgressIPMeta(name string) metav1.ObjectMeta {
 	}
 }
 
+func newEgressIPTraffic(name string, labels map[string]string, destNetworks ...string) egressiptrafficv1.EgressIPTraffic {
+	cidrs := make([]egressiptrafficv1.CIDR, 0, len(destNetworks))
+	for _, dn := range destNetworks {
+		cidrs = append(cidrs, egressiptrafficv1.CIDR(dn))
+	}
+	return egressiptrafficv1.EgressIPTraffic{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: labels,
+		},
+		Spec: egressiptrafficv1.EgressIPTrafficSpec{
+			DestinationNetworks: cidrs,
+		},
+	}
+}
+
+func newEgressIPWithTrafficSelector(name, ip, node string, namespaceLabels, podLabels, trafficSelectorLabels map[string]string) *egressipv1.EgressIP {
+	eip := newEgressIP(name, ip, node, namespaceLabels, podLabels)
+	eip.Spec.TrafficSelector = metav1.LabelSelector{
+		MatchLabels: trafficSelectorLabels,
+	}
+	return eip
+}
+
+func getRuleWithDst(podIP string, tableID int, dstCIDR string) *netlink.Rule {
+	ipNet, err := util.GetIPNetFullMask(podIP)
+	if err != nil {
+		panic(err.Error())
+	}
+	_, dstIPNet, err := net.ParseCIDR(dstCIDR)
+	if err != nil {
+		panic(err.Error())
+	}
+	return &netlink.Rule{
+		Priority: ruleEIPTrafficPriority,
+		Src:      ipNet,
+		Dst:      dstIPNet,
+		Table:    tableID,
+	}
+}
+
+func getDestinationRoute(linkIndex int, dst string) netlink.Route {
+	_, dstIPNet, err := net.ParseCIDR(dst)
+	if err != nil {
+		panic(err.Error())
+	}
+	return netlink.Route{
+		LinkIndex: linkIndex,
+		Dst:       dstIPNet,
+		Table:     util.CalculateRouteTableID(linkIndex),
+		Type:      unix.RTN_UNICAST,
+	}
+}
+
 func newEgressIP(name, ip, node string, namespaceLabels, podLabels map[string]string) *egressipv1.EgressIP {
 	return &egressipv1.EgressIP{
 		ObjectMeta: newEgressIPMeta(name),
@@ -1659,7 +2097,7 @@ func getDefaultIPv6Route(linkIndex int) netlink.Route {
 	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV6AnyCIDR, Type: unix.RTN_UNICAST, Priority: 1024}
 }
 
-func getDstRoute(linkIndex int, dst string) netlink.Route {
+func getConnectedRoute(linkIndex int, dst string) netlink.Route {
 	if utilnet.IsIPv6CIDRString(dst) {
 		return getV6DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
 	} else {
