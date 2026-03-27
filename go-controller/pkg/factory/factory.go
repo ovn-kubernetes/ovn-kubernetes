@@ -90,6 +90,10 @@ import (
 	networkqosinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/informers/externalversions"
 	networkqosinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/informers/externalversions/networkqos/v1alpha1"
 	networkqoslister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
+	observabilityconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1"
+	observabilityconfigscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/clientset/versioned/scheme"
+	observabilityconfiginformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/informers/externalversions"
+	observabilityconfiginformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/observabilityconfig/v1alpha1/apis/informers/externalversions/observabilityconfig/v1alpha1"
 	routeadvertisementsapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	routeadvertisementsscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/scheme"
 	routeadvertisementsinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions"
@@ -114,25 +118,26 @@ type handlerCounter struct {
 type WatchFactory struct {
 	handlerCounter *handlerCounter
 
-	iFactory             informerfactory.SharedInformerFactory
-	anpFactory           anpinformerfactory.SharedInformerFactory
-	eipFactory           egressipinformerfactory.SharedInformerFactory
-	efFactory            egressfirewallinformerfactory.SharedInformerFactory
-	dnsFactory           ocpnetworkinformerfactory.SharedInformerFactory
-	cpipcFactory         ocpcloudnetworkinformerfactory.SharedInformerFactory
-	egressQoSFactory     egressqosinformerfactory.SharedInformerFactory
-	mnpFactory           mnpinformerfactory.SharedInformerFactory
-	egressServiceFactory egressserviceinformerfactory.SharedInformerFactory
-	apbRouteFactory      adminbasedpolicyinformerfactory.SharedInformerFactory
-	ipamClaimsFactory    ipamclaimsfactory.SharedInformerFactory
-	nadFactory           nadinformerfactory.SharedInformerFactory
-	udnFactory           userdefinednetworkapiinformerfactory.SharedInformerFactory
-	cncFactory           networkconnectinformerfactory.SharedInformerFactory
-	raFactory            routeadvertisementsinformerfactory.SharedInformerFactory
-	frrFactory           frrinformerfactory.SharedInformerFactory
-	networkQoSFactory    networkqosinformerfactory.SharedInformerFactory
-	vtepFactory          vtepinformerfactory.SharedInformerFactory
-	informers            map[reflect.Type]*informer
+	iFactory                   informerfactory.SharedInformerFactory
+	anpFactory                 anpinformerfactory.SharedInformerFactory
+	eipFactory                 egressipinformerfactory.SharedInformerFactory
+	efFactory                  egressfirewallinformerfactory.SharedInformerFactory
+	dnsFactory                 ocpnetworkinformerfactory.SharedInformerFactory
+	cpipcFactory               ocpcloudnetworkinformerfactory.SharedInformerFactory
+	egressQoSFactory           egressqosinformerfactory.SharedInformerFactory
+	mnpFactory                 mnpinformerfactory.SharedInformerFactory
+	egressServiceFactory       egressserviceinformerfactory.SharedInformerFactory
+	apbRouteFactory            adminbasedpolicyinformerfactory.SharedInformerFactory
+	ipamClaimsFactory          ipamclaimsfactory.SharedInformerFactory
+	nadFactory                 nadinformerfactory.SharedInformerFactory
+	udnFactory                 userdefinednetworkapiinformerfactory.SharedInformerFactory
+	cncFactory                 networkconnectinformerfactory.SharedInformerFactory
+	raFactory                  routeadvertisementsinformerfactory.SharedInformerFactory
+	frrFactory                 frrinformerfactory.SharedInformerFactory
+	networkQoSFactory          networkqosinformerfactory.SharedInformerFactory
+	observabilityConfigFactory observabilityconfiginformerfactory.SharedInformerFactory
+	vtepFactory                vtepinformerfactory.SharedInformerFactory
+	informers                  map[reflect.Type]*informer
 
 	stopChan chan struct{}
 
@@ -143,27 +148,28 @@ type WatchFactory struct {
 
 func (wf *WatchFactory) ShallowClone() *WatchFactory {
 	return &WatchFactory{
-		handlerCounter:       wf.handlerCounter,
-		iFactory:             wf.iFactory,
-		anpFactory:           wf.anpFactory,
-		eipFactory:           wf.eipFactory,
-		efFactory:            wf.efFactory,
-		dnsFactory:           wf.dnsFactory,
-		cpipcFactory:         wf.cpipcFactory,
-		egressQoSFactory:     wf.egressQoSFactory,
-		mnpFactory:           wf.mnpFactory,
-		egressServiceFactory: wf.egressServiceFactory,
-		apbRouteFactory:      wf.apbRouteFactory,
-		ipamClaimsFactory:    wf.ipamClaimsFactory,
-		nadFactory:           wf.nadFactory,
-		udnFactory:           wf.udnFactory,
-		cncFactory:           wf.cncFactory,
-		raFactory:            wf.raFactory,
-		frrFactory:           wf.frrFactory,
-		networkQoSFactory:    wf.networkQoSFactory,
-		vtepFactory:          wf.vtepFactory,
-		informers:            wf.informers,
-		stopChan:             wf.stopChan,
+		handlerCounter:             wf.handlerCounter,
+		iFactory:                   wf.iFactory,
+		anpFactory:                 wf.anpFactory,
+		eipFactory:                 wf.eipFactory,
+		efFactory:                  wf.efFactory,
+		dnsFactory:                 wf.dnsFactory,
+		cpipcFactory:               wf.cpipcFactory,
+		egressQoSFactory:           wf.egressQoSFactory,
+		mnpFactory:                 wf.mnpFactory,
+		egressServiceFactory:       wf.egressServiceFactory,
+		apbRouteFactory:            wf.apbRouteFactory,
+		ipamClaimsFactory:          wf.ipamClaimsFactory,
+		nadFactory:                 wf.nadFactory,
+		udnFactory:                 wf.udnFactory,
+		cncFactory:                 wf.cncFactory,
+		raFactory:                  wf.raFactory,
+		frrFactory:                 wf.frrFactory,
+		networkQoSFactory:          wf.networkQoSFactory,
+		observabilityConfigFactory: wf.observabilityConfigFactory,
+		vtepFactory:                wf.vtepFactory,
+		informers:                  wf.informers,
+		stopChan:                   wf.stopChan,
 
 		// Choose a random internalInformer to use for this clone of the
 		// factory.  Reserve index 0 for default network handlers.
@@ -354,19 +360,20 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	// the downside of making it tight (like 10 minutes) is needless spinning on all resources
 	// However, AddEventHandlerWithResyncPeriod can specify a per handler resync period
 	wf := &WatchFactory{
-		handlerCounter:       &handlerCounter{},
-		iFactory:             informerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.KubeClient, resyncInterval, informerfactory.WithTransform(informerObjectTrim)),
-		anpFactory:           anpinformerfactory.NewSharedInformerFactory(ovnClientset.ANPClient, resyncInterval),
-		eipFactory:           egressipinformerfactory.NewSharedInformerFactory(ovnClientset.EgressIPClient, resyncInterval),
-		efFactory:            egressfirewallinformerfactory.NewSharedInformerFactory(ovnClientset.EgressFirewallClient, resyncInterval),
-		dnsFactory:           ocpnetworkinformerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.OCPNetworkClient, resyncInterval, ocpnetworkinformerfactory.WithNamespace(config.Kubernetes.OVNConfigNamespace)),
-		egressQoSFactory:     egressqosinformerfactory.NewSharedInformerFactory(ovnClientset.EgressQoSClient, resyncInterval),
-		mnpFactory:           mnpinformerfactory.NewSharedInformerFactory(ovnClientset.MultiNetworkPolicyClient, resyncInterval),
-		egressServiceFactory: egressserviceinformerfactory.NewSharedInformerFactory(ovnClientset.EgressServiceClient, resyncInterval),
-		apbRouteFactory:      adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
-		networkQoSFactory:    networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
-		informers:            make(map[reflect.Type]*informer),
-		stopChan:             make(chan struct{}),
+		handlerCounter:             &handlerCounter{},
+		iFactory:                   informerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.KubeClient, resyncInterval, informerfactory.WithTransform(informerObjectTrim)),
+		anpFactory:                 anpinformerfactory.NewSharedInformerFactory(ovnClientset.ANPClient, resyncInterval),
+		eipFactory:                 egressipinformerfactory.NewSharedInformerFactory(ovnClientset.EgressIPClient, resyncInterval),
+		efFactory:                  egressfirewallinformerfactory.NewSharedInformerFactory(ovnClientset.EgressFirewallClient, resyncInterval),
+		dnsFactory:                 ocpnetworkinformerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.OCPNetworkClient, resyncInterval, ocpnetworkinformerfactory.WithNamespace(config.Kubernetes.OVNConfigNamespace)),
+		egressQoSFactory:           egressqosinformerfactory.NewSharedInformerFactory(ovnClientset.EgressQoSClient, resyncInterval),
+		mnpFactory:                 mnpinformerfactory.NewSharedInformerFactory(ovnClientset.MultiNetworkPolicyClient, resyncInterval),
+		egressServiceFactory:       egressserviceinformerfactory.NewSharedInformerFactory(ovnClientset.EgressServiceClient, resyncInterval),
+		apbRouteFactory:            adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
+		networkQoSFactory:          networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
+		observabilityConfigFactory: observabilityconfiginformerfactory.NewSharedInformerFactory(ovnClientset.ObservabilityConfigClient, resyncInterval),
+		informers:                  make(map[reflect.Type]*informer),
+		stopChan:                   make(chan struct{}),
 	}
 
 	if err := anpapi.AddToScheme(anpscheme.Scheme); err != nil {
@@ -411,6 +418,9 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	}
 
 	if err := networkqosapi.AddToScheme(networkqosscheme.Scheme); err != nil {
+		return nil, err
+	}
+	if err := observabilityconfigapi.AddToScheme(observabilityconfigscheme.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -676,6 +686,13 @@ func (wf *WatchFactory) Start() error {
 		}
 	}
 
+	if config.OVNKubernetesFeature.EnableObservability && wf.observabilityConfigFactory != nil {
+		wf.observabilityConfigFactory.Start(wf.stopChan)
+		if err := waitForCacheSyncWithTimeout(wf.observabilityConfigFactory, wf.stopChan); err != nil {
+			return err
+		}
+	}
+
 	if util.IsNetworkSegmentationSupportEnabled() && wf.udnFactory != nil {
 		wf.udnFactory.Start(wf.stopChan)
 		if err := waitForCacheSyncWithTimeout(wf.udnFactory, wf.stopChan); err != nil {
@@ -771,6 +788,9 @@ func (wf *WatchFactory) Stop() {
 
 	if wf.networkQoSFactory != nil {
 		wf.networkQoSFactory.Shutdown()
+	}
+	if wf.observabilityConfigFactory != nil {
+		wf.observabilityConfigFactory.Shutdown()
 	}
 }
 
@@ -949,18 +969,19 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 // mode process.
 func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset) (*WatchFactory, error) {
 	wf := &WatchFactory{
-		handlerCounter:       &handlerCounter{},
-		iFactory:             informerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.KubeClient, resyncInterval, informerfactory.WithTransform(informerObjectTrim)),
-		efFactory:            egressfirewallinformerfactory.NewSharedInformerFactory(ovnClientset.EgressFirewallClient, resyncInterval),
-		eipFactory:           egressipinformerfactory.NewSharedInformerFactory(ovnClientset.EgressIPClient, resyncInterval),
-		cpipcFactory:         ocpcloudnetworkinformerfactory.NewSharedInformerFactory(ovnClientset.CloudNetworkClient, resyncInterval),
-		egressServiceFactory: egressserviceinformerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.EgressServiceClient, resyncInterval),
-		dnsFactory:           ocpnetworkinformerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.OCPNetworkClient, resyncInterval, ocpnetworkinformerfactory.WithNamespace(config.Kubernetes.OVNConfigNamespace)),
-		apbRouteFactory:      adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
-		egressQoSFactory:     egressqosinformerfactory.NewSharedInformerFactory(ovnClientset.EgressQoSClient, resyncInterval),
-		networkQoSFactory:    networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
-		informers:            make(map[reflect.Type]*informer),
-		stopChan:             make(chan struct{}),
+		handlerCounter:             &handlerCounter{},
+		iFactory:                   informerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.KubeClient, resyncInterval, informerfactory.WithTransform(informerObjectTrim)),
+		efFactory:                  egressfirewallinformerfactory.NewSharedInformerFactory(ovnClientset.EgressFirewallClient, resyncInterval),
+		eipFactory:                 egressipinformerfactory.NewSharedInformerFactory(ovnClientset.EgressIPClient, resyncInterval),
+		cpipcFactory:               ocpcloudnetworkinformerfactory.NewSharedInformerFactory(ovnClientset.CloudNetworkClient, resyncInterval),
+		egressServiceFactory:       egressserviceinformerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.EgressServiceClient, resyncInterval),
+		dnsFactory:                 ocpnetworkinformerfactory.NewSharedInformerFactoryWithOptions(ovnClientset.OCPNetworkClient, resyncInterval, ocpnetworkinformerfactory.WithNamespace(config.Kubernetes.OVNConfigNamespace)),
+		apbRouteFactory:            adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
+		egressQoSFactory:           egressqosinformerfactory.NewSharedInformerFactory(ovnClientset.EgressQoSClient, resyncInterval),
+		networkQoSFactory:          networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
+		observabilityConfigFactory: observabilityconfiginformerfactory.NewSharedInformerFactory(ovnClientset.ObservabilityConfigClient, resyncInterval),
+		informers:                  make(map[reflect.Type]*informer),
+		stopChan:                   make(chan struct{}),
 	}
 
 	if err := egressipapi.AddToScheme(egressipscheme.Scheme); err != nil {
@@ -989,6 +1010,9 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		return nil, err
 	}
 	if err := routeadvertisementsapi.AddToScheme(routeadvertisementsscheme.Scheme); err != nil {
+		return nil, err
+	}
+	if err := observabilityconfigapi.AddToScheme(observabilityconfigscheme.Scheme); err != nil {
 		return nil, err
 	}
 	if err := frrapi.AddToScheme(frrscheme.Scheme); err != nil {
@@ -1897,6 +1921,13 @@ func (wf *WatchFactory) FRRConfigurationsInformer() frrinformer.FRRConfiguration
 
 func (wf *WatchFactory) NetworkQoSInformer() networkqosinformer.NetworkQoSInformer {
 	return wf.networkQoSFactory.K8s().V1alpha1().NetworkQoSes()
+}
+
+func (wf *WatchFactory) ObservabilityConfigInformer() observabilityconfiginformer.ObservabilityConfigInformer {
+	if wf.observabilityConfigFactory == nil {
+		return nil
+	}
+	return wf.observabilityConfigFactory.K8s().V1alpha1().ObservabilityConfigs()
 }
 
 // withServiceNameAndNoHeadlessServiceSelector returns a LabelSelector (added to the
