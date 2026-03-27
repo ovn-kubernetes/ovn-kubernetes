@@ -1188,6 +1188,50 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
+			name: "reconciles EVPN MAC-VRF l2 network with auto target VRF",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000, EVPNMACVRFRouteTarget: "65000:1000"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+  vni 1000
+   route-target import 65000:1000
+   route-target export 65000:1000
+  exit-vni
+ exit-address-family
+exit
+!
+`,
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
 			name: "reconciles EVPN IP-VRF network with auto target and creates a router",
 			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
