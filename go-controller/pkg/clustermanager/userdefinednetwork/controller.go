@@ -588,9 +588,15 @@ func (c *Controller) UpdateSubsystemCondition(
 ) error {
 	// try to find udn using network name
 	udnNamespace, udnName := util.ParseNetworkName(networkName)
-	if udnName == "" || udnNamespace == "" {
+	if udnName == "" {
 		return nil
 	}
+
+	// Handle CUDN (cluster-scoped): namespace is empty for CUDNs
+	if udnNamespace == "" {
+		return c.updateCUDNSubsystemCondition(udnName, fieldManager, condition, events...)
+	}
+
 	udn, err := c.udnLister.UserDefinedNetworks(udnNamespace).Get(udnName)
 	if err != nil {
 		return nil
@@ -629,6 +635,56 @@ func (c *Controller) UpdateSubsystemCondition(
 			return nil
 		}
 		return fmt.Errorf("failed to update UserDefinedNetwork %s/%s status: %w", udnNamespace, udnName, err)
+	}
+	return nil
+}
+
+func (c *Controller) updateCUDNSubsystemCondition(
+	cudnName string,
+	fieldManager string,
+	condition *metav1.Condition,
+	events ...*util.EventDetails,
+) error {
+	cudn, err := c.cudnLister.Get(cudnName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %s from cache: %w", cudnName, err)
+	}
+
+	cudnRef, err := reference.GetReference(userdefinednetworkscheme.Scheme, cudn)
+	if err != nil {
+		return fmt.Errorf("failed to get object reference for ClusterUserDefinedNetwork %s: %w", cudnName, err)
+	}
+	for _, event := range events {
+		c.eventRecorder.Event(cudnRef, event.EventType, event.Reason, event.Note)
+	}
+
+	if condition == nil {
+		return nil
+	}
+
+	applyCondition := &metaapplyv1.ConditionApplyConfiguration{
+		Type:               &condition.Type,
+		Status:             &condition.Status,
+		LastTransitionTime: &condition.LastTransitionTime,
+		Reason:             &condition.Reason,
+		Message:            &condition.Message,
+	}
+
+	applyConf := udnapplyconfkv1.ClusterUserDefinedNetwork(cudnName).
+		WithStatus(udnapplyconfkv1.ClusterUserDefinedNetworkStatus().WithConditions(applyCondition))
+	opts := metav1.ApplyOptions{
+		FieldManager: fieldManager,
+		Force:        true,
+	}
+	_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(context.Background(), applyConf, opts)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to update ClusterUserDefinedNetwork %s status: %w", cudnName, err)
 	}
 	return nil
 }
