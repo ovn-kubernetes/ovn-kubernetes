@@ -777,7 +777,10 @@ if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
-  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
+  if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+    # Managed routing: frr-k8s manifest was applied pre-OVN; now wait for pods
+    run_bgp_setup wait-frr-k8s
+  else
     # Phase 2: Install frr-k8s and create FRRConfiguration (after OVN is installed)
     run_bgp_setup install-frr-k8s
   fi

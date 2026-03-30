@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // bgp-setup is a standalone program that sets up BGP infrastructure for route advertisement testing.
 // It
 //   - deploys an external FRR container for BGP peering
@@ -140,6 +143,7 @@ const (
 	PhaseDeployFRR        = "deploy-frr"        // Phase 1a: deploy FRR external container only
 	PhaseDeployBGPServer  = "deploy-bgp-server" // Phase 1b: deploy BGP server container only
 	PhaseInstallFRRK8s    = "install-frr-k8s"   // Phase 2: install frr-k8s and create FRRConfiguration for BGP peering
+	PhaseWaitFRRK8s       = "wait-frr-k8s"      // Wait for frr-k8s pods to be ready (used post-OVN for managed routing)
 )
 
 // frrK8sRemoteURL returns the raw GitHub URL for a file in the frr-k8s repo at a specific version
@@ -179,6 +183,7 @@ type Config struct {
 	TestdataPath            string
 	ClusterName             string
 	BGPPort                 int
+	EnableEVPN              bool
 }
 
 func main() {
@@ -191,9 +196,9 @@ func main() {
 	controlPlaneNodeName = deriveControlPlaneNodeName(cfg.ClusterName)
 	fmt.Printf("Using control plane node: %s\n", controlPlaneNodeName)
 
-	// Set container runtime for use by containerRuntime() throughout the program.
+	// Set container engine based on config
 	if cfg.ContainerRuntime != "" {
-		runtimeBin = cfg.ContainerRuntime
+		os.Setenv("CONTAINER_RUNTIME", cfg.ContainerRuntime)
 	}
 	// Get control plane IP for direct API server access
 	// Only enabled when --use-direct-api=true, as it requires Docker bridge network to be routable
@@ -226,7 +231,7 @@ func main() {
 func parseFlags() *Config {
 	cfg := &Config{}
 
-	flag.StringVar(&cfg.Phase, "phase", PhaseAll, "Phase to run: 'all', 'deploy-containers' (FRR + BGP server), 'deploy-frr' (FRR only), 'deploy-bgp-server' (BGP server only), or 'install-frr-k8s' (frr-k8s + FRRConfiguration)")
+	flag.StringVar(&cfg.Phase, "phase", PhaseAll, "Phase to run: 'all', 'deploy-containers', 'deploy-frr', 'deploy-bgp-server', 'install-frr-k8s', or 'wait-frr-k8s'")
 	flag.StringVar(&cfg.ContainerRuntime, "container-runtime", getEnvOrDefault(envContainerRuntime, defaultContainerRuntime), "Container runtime to use (docker/podman)")
 	flag.BoolVar(&cfg.IPv4Enabled, "ipv4", getBoolEnvOrDefault(envIPv4Support, true), "Enable IPv4 support")
 	flag.BoolVar(&cfg.IPv6Enabled, "ipv6", getBoolEnvOrDefault(envIPv6Support, false), "Enable IPv6 support")
@@ -241,6 +246,7 @@ func parseFlags() *Config {
 	flag.StringVar(&cfg.Kubeconfig, "kubeconfig", getEnvOrDefault(envKubeconfig, filepath.Join(os.Getenv("HOME"), ".kube", "config")), "Path to kubeconfig file")
 	flag.StringVar(&cfg.ClusterName, "cluster-name", getEnvOrDefault(envClusterName, defaultClusterName), "Kind cluster name. Used to derive control-plane container name (${cluster-name}-control-plane)")
 	flag.IntVar(&cfg.BGPPort, "bgp-port", 0, "BGP port for frr-k8s daemon (0 = default/disabled, 179 = managed routing)")
+	flag.BoolVar(&cfg.EnableEVPN, "enable-evpn", false, "Enable EVPN (l2vpn evpn) configuration on external FRR container")
 	flag.BoolVar(&cfg.CleanupOnly, "cleanup", false, "Only cleanup existing BGP infrastructure")
 	flag.BoolVar(&cfg.UseDirectAPI, "use-direct-api", false, "Use direct API server address (control plane container IP) instead of kubeconfig server. Only works when Docker bridge network is routable from host.")
 	flag.StringVar(&cfg.TestdataPath, "testdata-path", getEnvOrDefault(envTestdataPath, ""), "Path to the testdata/routeadvertisements directory containing templates. Required when built with -trimpath.")
@@ -295,10 +301,11 @@ func run(cfg *Config) error {
 	runDeployFRR := cfg.Phase == PhaseAll || cfg.Phase == PhaseDeployContainers || cfg.Phase == PhaseDeployFRR
 	runDeployBGPServer := cfg.Phase == PhaseAll || cfg.Phase == PhaseDeployContainers || cfg.Phase == PhaseDeployBGPServer
 	runInstallFRRK8s := cfg.Phase == PhaseAll || cfg.Phase == PhaseInstallFRRK8s
+	runWaitFRRK8s := cfg.Phase == PhaseAll || cfg.Phase == PhaseInstallFRRK8s || cfg.Phase == PhaseWaitFRRK8s
 
-	if !runDeployFRR && !runDeployBGPServer && !runInstallFRRK8s {
-		return fmt.Errorf("invalid phase %q (expected: %s, %s, %s, %s, %s)",
-			cfg.Phase, PhaseAll, PhaseDeployContainers, PhaseDeployFRR, PhaseDeployBGPServer, PhaseInstallFRRK8s)
+	if !runDeployFRR && !runDeployBGPServer && !runInstallFRRK8s && !runWaitFRRK8s {
+		return fmt.Errorf("invalid phase %q (expected: %s, %s, %s, %s, %s, %s)",
+			cfg.Phase, PhaseAll, PhaseDeployContainers, PhaseDeployFRR, PhaseDeployBGPServer, PhaseInstallFRRK8s, PhaseWaitFRRK8s)
 	}
 	// Phase 1a: Deploy FRR external container
 	if runDeployFRR {
@@ -316,28 +323,37 @@ func run(cfg *Config) error {
 		}
 	}
 
-	// Phase 2: Install frr-k8s (install_frr_k8s + create FRRConfiguration)
+	// Phase 2: Install frr-k8s (apply manifest only; wait is deferred when
+	// --bgp-port is set because the CNI may not be ready pre-OVN)
 	if runInstallFRRK8s {
 		fmt.Println("\n====================== Installing frr-k8s ======================")
-		if err := installFRRK8s(cfg); err != nil {
+		skipWait := cfg.BGPPort != 0 && cfg.Phase == PhaseInstallFRRK8s
+		if err := installFRRK8s(cfg, skipWait); err != nil {
 			return fmt.Errorf("failed to install frr-k8s: %w", err)
 		}
+	}
 
-		// In managed routing mode (--bgp-port != 0), frr-k8s handles BGP
-		// internally so we skip FRRConfiguration and pod route setup.
-		if cfg.BGPPort == 0 {
-			// Create FRRConfiguration to establish BGP peering between cluster nodes and the external FRR router.
-			fmt.Println("\n====================== Creating FRRConfiguration for BGP peering ======================")
-			if err := createFRRConfiguration(cfg); err != nil {
-				return fmt.Errorf("failed to create FRRConfiguration: %w", err)
-			}
+	// Wait for frr-k8s pods (separate phase for managed routing, where
+	// install happens pre-OVN but pods only become ready post-OVN)
+	if cfg.Phase == PhaseWaitFRRK8s {
+		fmt.Println("\n====================== Waiting for frr-k8s ======================")
+		if err := waitForFRRK8sReady(); err != nil {
+			return fmt.Errorf("failed waiting for frr-k8s: %w", err)
+		}
+	}
 
-			// Add routes for pod networks if `--advertise-default-network=true`
-			if cfg.AdvertiseDefaultNetwork {
-				fmt.Println("\n====================== Adding routes for pod networks ======================")
-				if err := addPodNetworkRoutes(cfg, clientset); err != nil {
-					fmt.Printf("Warning: failed to add pod network routes: %v\n", err)
-				}
+	// Post frr-k8s install: create FRRConfiguration and add pod routes
+	// (skipped in managed routing mode where frr-k8s handles BGP internally)
+	if runInstallFRRK8s && cfg.BGPPort == 0 {
+		fmt.Println("\n====================== Creating FRRConfiguration for BGP peering ======================")
+		if err := createFRRConfiguration(cfg); err != nil {
+			return fmt.Errorf("failed to create FRRConfiguration: %w", err)
+		}
+
+		if cfg.AdvertiseDefaultNetwork {
+			fmt.Println("\n====================== Adding routes for pod networks ======================")
+			if err := addPodNetworkRoutes(cfg, clientset); err != nil {
+				fmt.Printf("Warning: failed to add pod network routes: %v\n", err)
 			}
 		}
 	}
@@ -404,12 +420,13 @@ func nodeNames(nodes []corev1.Node) []string {
 	return names
 }
 
-// runtimeBin stores the container runtime binary name (docker or podman)
-var runtimeBin = "docker"
-
-// containerRuntime returns the container runtime command
+// containerRuntime returns the container runtime command.
+// Reads CONTAINER_RUNTIME env var (set from --container-runtime flag), defaulting to "docker".
 func containerRuntime() string {
-	return runtimeBin
+	if cr, found := os.LookupEnv("CONTAINER_RUNTIME"); found && cr != "" {
+		return cr
+	}
+	return defaultContainerRuntime
 }
 
 func runCmd(name string, args ...string) error {
@@ -648,6 +665,11 @@ func deployFRRExternalContainer(cfg *Config, nodes []corev1.Node) error {
 		return fmt.Errorf("failed to generate FRR configuration: %w", err)
 	}
 
+	// Minimal vtysh.conf silences "Can't open vtysh.conf" when vtysh starts (EVPN uses vtysh heavily).
+	if err := os.WriteFile(filepath.Join(frrConfigDir, "vtysh.conf"), []byte("!\n"), 0644); err != nil {
+		return fmt.Errorf("failed to write vtysh.conf: %w", err)
+	}
+
 	// Remove existing FRR container if present
 	if containerExists(frrContainerName) {
 		fmt.Println("Removing existing FRR container...")
@@ -656,13 +678,20 @@ func deployFRRExternalContainer(cfg *Config, nodes []corev1.Node) error {
 
 	// Create and run FRR container with config files mounted
 	fmt.Println("Creating FRR container with configuration...")
+	// frr.conf must be writable when EVPN is enabled: configureEVPN runs `write memory`, which
+	// updates /etc/frr/frr.conf.
+	frrConfMountOpt := "ro"
+	if cfg.EnableEVPN {
+		frrConfMountOpt = "rw"
+	}
 	args := []string{
 		"run", "-d", "--privileged",
 		"--name", frrContainerName,
 		"--network", kindNetwork,
 		"--hostname", frrContainerName,
-		"-v", fmt.Sprintf("%s/frr.conf:/etc/frr/frr.conf:ro", frrConfigDir),
+		"-v", fmt.Sprintf("%s/frr.conf:/etc/frr/frr.conf:%s", frrConfigDir, frrConfMountOpt),
 		"-v", fmt.Sprintf("%s/daemons:/etc/frr/daemons:ro", frrConfigDir),
+		"-v", fmt.Sprintf("%s/vtysh.conf:/etc/frr/vtysh.conf:ro", frrConfigDir),
 	}
 	// Enable IPv6 forwarding at container start if needed
 	if cfg.IPv6Enabled {
@@ -681,6 +710,23 @@ func deployFRRExternalContainer(cfg *Config, nodes []corev1.Node) error {
 
 	if err := waitForFRRDaemons(frrContainerName); err != nil {
 		return fmt.Errorf("FRR daemons failed to become ready: %w", err)
+	}
+
+	if cfg.IPv6Enabled {
+		// Preserve IPv6 addresses during VRF enslavement. Without this, IPv6 global
+		// addresses are removed when interfaces are moved to a VRF, causing FRR/zebra
+		// to fail creating FIB nexthop groups.
+		// See: https://docs.kernel.org/networking/vrf.html
+		//      https://github.com/FRRouting/frr/issues/1666
+		if err := runCmd(runtime, "exec", frrContainerName, "sysctl", "-w", "net.ipv6.conf.all.keep_addr_on_down=1"); err != nil {
+			return fmt.Errorf("failed to set keep_addr_on_down sysctl: %w", err)
+		}
+	}
+
+	if cfg.EnableEVPN {
+		if err := configureEVPN(frrContainerName); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println("FRR external container deployed successfully")
@@ -749,19 +795,80 @@ func waitForContainer(name string) error {
 }
 
 // waitForFRRDaemons waits for FRR daemons (zebra and bgpd) to be fully operational
-// by checking if vtysh can successfully query the running configuration.
+// AND for frr.conf to be fully loaded (BGP neighbors appear in bgp summary).
+// This is important because vtysh uses CombinedOutput and may return non-empty output
+// (e.g. "% Can't open vtysh.conf") before bgpd has loaded its frr.conf config.
+// Waiting for "Neighbor" in the BGP summary ensures frr.conf is fully processed
+// before we attempt to apply EVPN configuration on top of it.
 func waitForFRRDaemons(containerName string) error {
 	runtime := containerRuntime()
 	return wait.PollUntilContextTimeout(context.Background(), pollInterval, containerTimeout, true, func(ctx context.Context) (bool, error) {
-		// Check if vtysh can connect and query BGP - this confirms both zebra and bgpd are running
+		// Check if vtysh can connect and bgpd has loaded its frr.conf config.
+		// We look for "Neighbor" in the BGP summary which appears once bgpd has
+		// loaded its configuration and registered BGP peers from frr.conf.
+		// This avoids a false-positive from vtysh warnings (e.g. missing vtysh.conf)
+		// that would appear in CombinedOutput before bgpd is ready.
 		out, err := runCmdOutput(runtime, "exec", containerName, "vtysh", "-c", "show bgp summary")
 		if err != nil {
 			// Daemon not ready yet
 			return false, nil
 		}
-		// If we get any output (even "No BGP neighbors"), the daemons are operational
-		return len(strings.TrimSpace(out)) > 0, nil
+		return strings.Contains(out, "Neighbor"), nil
 	})
+}
+
+// configureEVPN enables l2vpn evpn address-family on the external FRR container,
+// activates all BGP neighbors for EVPN, sets them as route-reflector-clients,
+// and enables advertise-all-vni. This must be called after the FRR container
+// is deployed and BGP neighbors are already configured.
+func configureEVPN(containerName string) error {
+	runtime := containerRuntime()
+
+	fmt.Println("Configuring global EVPN BGP on external FRR (advertise-all-vni + neighbor activation)...")
+
+	output, err := runCmdOutput(runtime, "exec", containerName, "vtysh", "-c", "show running-config")
+	if err != nil {
+		return fmt.Errorf("failed to get FRR running config: %w", err)
+	}
+
+	var neighbors []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "neighbor ") && strings.Contains(trimmed, "remote-as") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				neighbors = append(neighbors, parts[1])
+			}
+		}
+	}
+
+	if len(neighbors) == 0 {
+		return fmt.Errorf("no BGP neighbors found in FRR running config for EVPN activation")
+	}
+
+	fmt.Printf("Activating EVPN for %d BGP neighbors: %v\n", len(neighbors), neighbors)
+
+	vtyshArgs := []string{"exec", containerName, "vtysh",
+		"-c", "configure terminal",
+		"-c", "router bgp 64512",
+		"-c", "address-family l2vpn evpn",
+	}
+	for _, neighbor := range neighbors {
+		vtyshArgs = append(vtyshArgs, "-c", fmt.Sprintf("neighbor %s activate", neighbor))
+		vtyshArgs = append(vtyshArgs, "-c", fmt.Sprintf("neighbor %s route-reflector-client", neighbor))
+	}
+	// "write memory" persists the EVPN config to frr.conf so it survives any
+	// frr.conf reload race and potential FRR restarts. This matches the behavior
+	// of the original bash deploy_frr_external_container() which also ran
+	// "write memory" after configuring EVPN.
+	vtyshArgs = append(vtyshArgs, "-c", "advertise-all-vni", "-c", "exit-address-family", "-c", "end", "-c", "write memory")
+
+	if err := runCmd(runtime, vtyshArgs...); err != nil {
+		return fmt.Errorf("failed to configure EVPN on FRR: %w", err)
+	}
+
+	fmt.Println("Global EVPN BGP config complete on external FRR")
+	return nil
 }
 
 func deployBGPExternalServer(cfg *Config, nodes []corev1.Node) error {
@@ -877,7 +984,7 @@ func deployBGPExternalServer(cfg *Config, nodes []corev1.Node) error {
 	return nil
 }
 
-func installFRRK8s(cfg *Config) error {
+func installFRRK8s(cfg *Config, skipWait bool) error {
 	// Wait for API server to be ready
 	if err := waitForAPIServer(60 * time.Second); err != nil {
 		return fmt.Errorf("API server not ready: %w", err)
@@ -916,25 +1023,33 @@ func installFRRK8s(cfg *Config) error {
 		return fmt.Errorf("failed to apply frr-k8s: %w", err)
 	}
 
-	// Wait for statuscleaner deployment
+	if skipWait {
+		fmt.Println("Skipping frr-k8s readiness wait (will be done post-OVN via wait-frr-k8s phase)")
+		return nil
+	}
+
+	return waitForFRRK8sReady()
+}
+
+// waitForFRRK8sReady waits for the frr-k8s statuscleaner deployment, daemon
+// daemonset, and webhook endpoint to become ready.
+func waitForFRRK8sReady() error {
 	fmt.Println("Waiting for frr-k8s statuscleaner deployment...")
 	if err := runKubectl("wait", "-n", frrK8sNS, "deployment", frrK8sDeploymentName, "--for", "condition=Available", "--timeout", deployTimeout); err != nil {
 		return fmt.Errorf("frr-k8s statuscleaner did not become ready: %w", err)
 	}
 
-	// Wait for daemon rollout
 	fmt.Println("Waiting for frr-k8s daemon rollout...")
 	if err := runKubectl("rollout", "status", "-n", frrK8sNS, "daemonset", frrK8sDaemonsetName, "--timeout", deployTimeout); err != nil {
 		return fmt.Errorf("frr-k8s daemon rollout failed: %w", err)
 	}
 
-	// Wait for frr-k8s webhook endpoint to be actually serving
 	fmt.Println("Probing frr-k8s webhook endpoint...")
 	if err := waitForFRRK8sWebhook(); err != nil {
 		fmt.Printf("Warning: webhook probe failed: %v\n", err)
 	}
 
-	fmt.Println("frr-k8s installed successfully")
+	fmt.Println("frr-k8s is ready")
 	return nil
 }
 

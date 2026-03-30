@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Package frr provides shared FRR (Free Range Routing) configuration utilities
 // for both e2e tests and the bgp-setup tool.
 package frr
