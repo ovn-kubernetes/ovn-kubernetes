@@ -206,7 +206,10 @@ func getTcpdumpOnPhysicalIface(tcpdumpPod *corev1.Pod, clientPod *corev1.Pod, cu
 		framework.Poll,
 		10*time.Second)
 	framework.ExpectNoError(tcpdumpErr, "tcpdump failed to start on interface %s", iface)
-
+	// Give tcpdump time to initialize its capture buffer before sending traffic
+	// Without this sleep, we hit a race where packets match the filter but aren't
+	// captured because tcpdump hasn't fully initialized yet.
+	time.Sleep(500 * time.Millisecond)
 	ginkgo.By("Generating tcp traffic")
 	framework.Logf("Testing connectivity with command %q", curlCmd)
 	curlOutput, curlErr := e2epodoutput.RunHostCmdWithRetries(
