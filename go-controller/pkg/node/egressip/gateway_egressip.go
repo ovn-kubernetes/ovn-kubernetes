@@ -333,16 +333,27 @@ func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 			return fmt.Errorf("failed to sync EgressIP gateway config because failed to add address to link: %v", err)
 		}
 	}
+
+	// Cleanup stale IPs from annotation
+	// Build list of IPs to delete from annotation first, then clean up both bridge and annotation
+	// We should be resilient to bridge deletion failures since stale IPs might not be on the bridge
+	// (e.g., after a node reboot with capacity changes causing IP reassignment)
 	ipsToDel := make([]net.IP, 0)
 	for _, annotIP := range annotIPs {
 		if configs.containsIP(annotIP) {
 			continue
 		}
+		// Try to delete from bridge, but don't fail the sync if it's already gone
+		// This handles cases where the IP was never added or was already cleaned up
 		if err = g.deleteIPBridge(annotIP); err != nil {
-			return fmt.Errorf("failed to delete stale EgressIP IP %s from bridge: %v", annotIP, err)
+			klog.Warningf("Failed to delete stale EgressIP IP %s from bridge %s (may already be removed): %v",
+				annotIP, g.bridgeName, err)
 		}
+		// Always add to deletion list regardless of bridge deletion result
 		ipsToDel = append(ipsToDel, annotIP)
 	}
+
+	// Delete stale IPs from annotation even if some bridge deletions failed
 	if len(ipsToDel) > 0 {
 		klog.V(5).Infof("Deleting stale EgressIP IPs from Node annotation: %v", getIPsStr(ipsToDel...))
 		if err = g.deleteIPsFromAnnotation(ipsToDel...); err != nil {
