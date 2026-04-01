@@ -496,6 +496,17 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 	excludeSubnets := oc.ExcludeSubnets()
 	excludeSubnets = append(excludeSubnets, oc.InfrastructureSubnets()...)
 
+	// Configure cluster port groups and multicast default policies for user defined primary networks.
+	if oc.IsPrimaryNetwork() && util.IsNetworkSegmentationSupportEnabled() {
+		if err := oc.setupClusterPortGroups(); err != nil {
+			return fmt.Errorf("failed to create cluster port groups for network %q: %w", oc.GetNetworkName(), err)
+		}
+
+		if err := oc.syncDefaultMulticastPolicies(); err != nil {
+			return fmt.Errorf("failed to sync default multicast policies for network %q: %w", oc.GetNetworkName(), err)
+		}
+	}
+
 	_, err = oc.initializeLogicalSwitch(
 		oc.GetNetworkScopedSwitchName(types.OVNLayer2Switch),
 		oc.Subnets(),
@@ -508,18 +519,7 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 		return err
 	}
 
-	// Configure cluster port groups and multicast default policies for user defined primary networks.
-	if oc.IsPrimaryNetwork() && util.IsNetworkSegmentationSupportEnabled() {
-		if err := oc.setupClusterPortGroups(); err != nil {
-			return fmt.Errorf("failed to create cluster port groups for network %q: %w", oc.GetNetworkName(), err)
-		}
-
-		if err := oc.syncDefaultMulticastPolicies(); err != nil {
-			return fmt.Errorf("failed to sync default multicast policies for network %q: %w", oc.GetNetworkName(), err)
-		}
-	}
-
-	return err
+	return nil
 }
 
 func (oc *Layer2UserDefinedNetworkController) Stop() {
