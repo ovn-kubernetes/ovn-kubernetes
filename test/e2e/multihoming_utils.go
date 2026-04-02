@@ -9,7 +9,7 @@ import (
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -199,7 +199,7 @@ type podConfiguration struct {
 	nodeSelector           map[string]string
 	isPrivileged           bool
 	labels                 map[string]string
-	annotations                  map[string]string
+	annotations            map[string]string
 	requiresExtraNamespace bool
 	hostNetwork            bool
 	ipRequestFromSubnet    string
@@ -740,7 +740,7 @@ func findInterfaceByIP(targetIP string) (string, error) {
 }
 
 func getNetworkGateway(cli *client.Client, networkName string) (string, error) {
-	network, err := cli.NetworkInspect(context.Background(), networkName, types.NetworkInspectOptions{})
+	network, err := cli.NetworkInspect(context.Background(), networkName, network.InspectOptions{})
 	if err != nil {
 		return "", err
 	}
