@@ -22,8 +22,8 @@ import (
 	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
 	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -2866,7 +2866,8 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						"Ping over MTU limit should fail with DF bit set (payload %d, total %d)", maxPayload+1, podMTU+1)
 				},
 				ginkgo.Entry("When the networks are IPv4", utilnet.IPv4),
-				ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
+				// FRR only supports IPv4 vteps today, so skip IPv6 e2e now
+				//ginkgo.Entry("When the networks are IPv6", utilnet.IPv6),
 			)
 		},
 		evpnNetworks,
