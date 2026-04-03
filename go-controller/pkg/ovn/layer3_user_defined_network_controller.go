@@ -781,6 +781,8 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 	klog.Infof("Adding or Updating local node %q for network %q", node.Name, oc.GetNetworkName())
 	if nSyncs.syncNode {
 		if hostSubnets, err = oc.addNode(node); err != nil {
+			// Evict stale subnet from IPAM to prevent pods from getting IPs from an outdated subnet.
+			oc.lsManager.DeleteSwitch(oc.GetNetworkScopedSwitchName(node.Name))
 			oc.addNodeFailed.Store(node.Name, true)
 			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 			oc.mgmtPortFailed.Store(node.Name, true)
