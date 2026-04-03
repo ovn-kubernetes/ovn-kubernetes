@@ -163,7 +163,7 @@ func (na *NodeAllocator) hybridOverlayNodeEnsureSubnet(node *corev1.Node, annota
 	}
 
 	// Allocate a new host subnet for this node
-	// FIXME: hybrid overlay is only IPv4 for now due to limitations on the Windows side
+	// FIXME: hybrid overlay is only IPv4 for now.
 	hostSubnets, allocatedSubnets, err := na.allocateNodeSubnets(na.hybridOverlaySubnetAllocator, node.Name, existingSubnets, true, false)
 	if err != nil {
 		return nil, fmt.Errorf("error allocating hybrid overlay HostSubnet for node %s: %v", node.Name, err)

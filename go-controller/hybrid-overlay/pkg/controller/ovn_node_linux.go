@@ -186,8 +186,8 @@ func (n *NodeController) hybridOverlayNodeUpdate(node *corev1.Node) error {
 			"IN_PORT",
 			cookie, cidr.String(), drMAC.String(), drMACRaw))
 	// Send all flows for the remote node's assigned subnet to that node via the VXLAN tunnel.
-	// Windows hybrid overlay implementation requires that we set the destination MAC address
-	// to the node's Distributed Router MAC.
+	// Hybrid overlay tunnels require the destination MAC address to match the
+	// remote node's distributed router MAC.
 	flows = append(flows,
 		fmt.Sprintf("cookie=0x%s,table=0,priority=100,ip,nw_dst=%s,"+
 			"actions=load:%d->NXM_NX_TUN_ID[0..31],"+

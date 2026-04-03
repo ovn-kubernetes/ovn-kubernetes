@@ -34,6 +34,10 @@ import (
 const (
 	testMgmtMAC string = "06:05:04:03:02:01"
 
+	hybridOverlayLabelKey   string = "hybrid-overlay"
+	hybridOverlayLabelValue string = "true"
+	hybridOverlayNodeRole   string = "hybrid-overlay"
+
 	thisNodeSubnet string = "1.2.3.0/24"
 	thisNodeDRIP   string = "1.2.3.3"
 	thisNodeDRMAC  string = "22:33:44:55:66:77"
@@ -127,12 +131,18 @@ func addNodeSetupCmds(fexec *ovntest.FakeExec, nodeName string) {
 }
 
 func createNode(name, os, ip string, annotations map[string]string) *corev1.Node {
+	labels := map[string]string{
+		corev1.LabelOSStable: os,
+	}
+	if os == hybridOverlayNodeRole {
+		labels = map[string]string{
+			hybridOverlayLabelKey: hybridOverlayLabelValue,
+		}
+	}
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Labels: map[string]string{
-				corev1.LabelOSStable: os,
-			},
+			Name:        name,
+			Labels:      labels,
 			Annotations: annotations,
 		},
 		Status: corev1.NodeStatus{
@@ -177,7 +187,7 @@ func appRun(app *cli.App) {
 	err := app.Run([]string{
 		app.Name,
 		"-enable-hybrid-overlay",
-		"-no-hostsubnet-nodes=" + corev1.LabelOSStable + "=windows",
+		"-no-hostsubnet-nodes=" + hybridOverlayLabelKey + "=" + hybridOverlayLabelValue,
 		"-cluster-subnets=10.130.0.0/15/24",
 		"-hybrid-overlay-cluster-subnets=10.0.0.1/16/23",
 	})
@@ -637,7 +647,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 		appRun(app)
 	})
 
-	ovntest.OnSupportedPlatformsIt("sets up tunnels for Windows nodes", func() {
+	ovntest.OnSupportedPlatformsIt("sets up tunnels for hybrid overlay nodes", func() {
 		app.Action = func(ctx *cli.Context) error {
 			const (
 				node1Name   string = "node1"
@@ -705,9 +715,9 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
 			}, 2).Should(Succeed())
 
-			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
-			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			hybridOverlayAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
+			hybridOverlayAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, hybridOverlayNodeRole, node1IP, hybridOverlayAnnotation), metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
@@ -731,7 +741,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 		}
 		appRun(app)
 	})
-	ovntest.OnSupportedPlatformsIt("node updates itself, windows tunnel and pod flows when distributed router IP is updated", func() {
+	ovntest.OnSupportedPlatformsIt("node updates itself, hybrid overlay tunnel and pod flows when distributed router IP is updated", func() {
 		app.Action = func(ctx *cli.Context) error {
 			const (
 				node1Name   string = "node1"
@@ -807,10 +817,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
 			}, 2).Should(Succeed())
 
-			// setup windows node
-			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
-			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			// setup hybrid overlay node
+			hybridOverlayAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
+			hybridOverlayAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, hybridOverlayNodeRole, node1IP, hybridOverlayAnnotation), metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
@@ -871,7 +881,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 		}
 		appRun(app)
 	})
-	ovntest.OnSupportedPlatformsIt("node updates itself, windows tunnel and pod flows when distributed router MAC is updated", func() {
+	ovntest.OnSupportedPlatformsIt("node updates itself, hybrid overlay tunnel and pod flows when distributed router MAC is updated", func() {
 		app.Action = func(ctx *cli.Context) error {
 			const (
 				node1Name   string = "node1"
@@ -945,10 +955,10 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
 			}, 2).Should(Succeed())
 
-			// setup windows node
-			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
-			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			// setup hybrid overlay node
+			hybridOverlayAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
+			hybridOverlayAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, hybridOverlayNodeRole, node1IP, hybridOverlayAnnotation), metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
@@ -1075,9 +1085,9 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			}, 2).Should(Succeed())
 
 			// setup hybrid overlay node
-			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
-			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
-			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, "windows", node1IP, windowsAnnotation), metav1.CreateOptions{})
+			hybridOverlayAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
+			hybridOverlayAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
+			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), createNode(node1Name, hybridOverlayNodeRole, node1IP, hybridOverlayAnnotation), metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			// flowsync after AddNode
 			addSyncFlows(fexec)
@@ -1099,7 +1109,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			}, 2).Should(Succeed())
 
 			// node is swiched to ovn node
-			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), createNode(node1Name, "linux", node1IP, windowsAnnotation), metav1.UpdateOptions{})
+			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), createNode(node1Name, "linux", node1IP, hybridOverlayAnnotation), metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func() bool {

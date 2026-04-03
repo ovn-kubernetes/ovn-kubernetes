@@ -63,9 +63,6 @@ type Interface interface {
 	PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error
 	// GetPodsForDBChecker should only be used by legacy DB checker. Use watchFactory instead to get pods.
 	GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([]*corev1.Pod, error)
-	// GetNodeForWindows should only be used for windows hybrid overlay binary and never in linux code
-	GetNodeForWindows(name string) (*corev1.Node, error)
-	GetNodesForWindows() ([]*corev1.Node, error)
 	Events() kv1core.EventInterface
 }
 
@@ -390,25 +387,6 @@ func (k *Kube) GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([
 		return nil
 	})
 	return list, err
-}
-
-// GetNodesForWindows returns the list of all Node objects from kubernetes. Only used by windows binary.
-func (k *Kube) GetNodesForWindows() ([]*corev1.Node, error) {
-	list := []*corev1.Node{}
-	err := pager.New(func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
-		return k.KClient.CoreV1().Nodes().List(ctx, opts)
-	}).EachListItem(context.TODO(), metav1.ListOptions{
-		ResourceVersion: "0",
-	}, func(obj runtime.Object) error {
-		list = append(list, obj.(*corev1.Node))
-		return nil
-	})
-	return list, err
-}
-
-// GetNodeForWindows returns the Node resource from kubernetes apiserver, given its name. Only used by windows binary.
-func (k *Kube) GetNodeForWindows(name string) (*corev1.Node, error) {
-	return k.KClient.CoreV1().Nodes().Get(context.TODO(), name, metav1.GetOptions{})
 }
 
 // Events returns events to use when creating an EventSinkImpl

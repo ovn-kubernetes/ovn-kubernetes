@@ -29,8 +29,6 @@ EOF
 
     # create a local GOPATH in _output
     OVN_KUBE_OUTPUT_BINPATH=${OVN_KUBE_OUTPUT}/go/bin
-    OVN_KUBE_OUTPUT_BINPATH_WINDOWS=${OVN_KUBE_OUTPUT}/go/bin/windows
-
 }
 readonly -f setup_env
 
@@ -51,5 +49,4 @@ function absolute_path() {
     echo ${absolute_path}
 }
 readonly -f absolute_path
-
 

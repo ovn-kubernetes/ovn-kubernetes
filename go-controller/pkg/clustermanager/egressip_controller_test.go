@@ -610,7 +610,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			ginkgo.Entry("Secondary host network", "7.7.7.100"),
 			ginkgo.Entry("Secondary host network", "7.7.8.100"),
 		)
-		ginkgo.It("should assign EgressIPs to a linux node when there are windows nodes in the cluster", func() {
+		ginkgo.It("should assign EgressIPs to a linux node when there are hybrid overlay nodes in the cluster", func() {
 			app.Action = func(*cli.Context) error {
 				node1IPv4OVNManaged := "192.168.126.202/24"
 				node1IPv4NonOVNManaged := "10.10.10.3/24"
@@ -620,7 +620,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 				var err error
 				config.Kubernetes.NoHostSubnetNodes, err = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-					MatchLabels: map[string]string{"kubernetes.io/os": "windows"},
+					MatchLabels: map[string]string{"hybrid-overlay": "true"},
 				})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -653,7 +653,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/hybrid-overlay-node-subnet":                    "10.132.0.0/24",
 						},
 						Labels: map[string]string{
-							"kubernetes.io/os": "windows",
+							"hybrid-overlay": "true",
 						},
 					},
 					Status: corev1.NodeStatus{

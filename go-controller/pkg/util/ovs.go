@@ -8,7 +8,6 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -23,10 +22,6 @@ import (
 )
 
 const (
-	// On Windows we need an increased timeout on OVS commands, because
-	// adding internal ports on a non Hyper-V enabled host will call
-	// external Powershell commandlets.
-	// TODO: Decrease the timeout once port adding is improved on Windows
 	ovsCommandTimeout  = 15
 	ovsVsctlCommand    = "ovs-vsctl"
 	ovsOfctlCommand    = "ovs-ofctl"
@@ -37,14 +32,10 @@ const (
 	ovsdbClientCommand = "ovsdb-client"
 	ovsdbToolCommand   = "ovsdb-tool"
 	ipCommand          = "ip"
-	powershellCommand  = "powershell"
-	netshCommand       = "netsh"
-	routeCommand       = "route"
 	sysctlCommand      = "sysctl"
 	osRelease          = "/etc/os-release"
 	rhel               = "RHEL"
 	ubuntu             = "Ubuntu"
-	windowsOS          = "windows"
 )
 
 const (
@@ -81,9 +72,6 @@ func SetupMockOVSPidFile() error {
 }
 
 func runningPlatform() (string, error) {
-	if runtime.GOOS == windowsOS {
-		return windowsOS, nil
-	}
 	fileContents, err := afero.ReadFile(AppFs, osRelease)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse file %s (%v)", osRelease, err)
@@ -131,9 +119,6 @@ type execHelper struct {
 	ovsdbToolPath   string
 	ovnRunDir       string
 	ipPath          string
-	powershellPath  string
-	netshPath       string
-	routePath       string
 	sysctlPath      string
 }
 
@@ -241,28 +226,13 @@ func SetExecWithoutOVS(exec kexec.Interface) error {
 	var err error
 
 	runner = &execHelper{exec: exec}
-	if runtime.GOOS == windowsOS {
-		runner.powershellPath, err = exec.LookPath(powershellCommand)
-		if err != nil {
-			return err
-		}
-		runner.netshPath, err = exec.LookPath(netshCommand)
-		if err != nil {
-			return err
-		}
-		runner.routePath, err = exec.LookPath(routeCommand)
-		if err != nil {
-			return err
-		}
-	} else {
-		runner.ipPath, err = exec.LookPath(ipCommand)
-		if err != nil {
-			return err
-		}
-		runner.sysctlPath, err = exec.LookPath(sysctlCommand)
-		if err != nil {
-			return err
-		}
+	runner.ipPath, err = exec.LookPath(ipCommand)
+	if err != nil {
+		return err
+	}
+	runner.sysctlPath, err = exec.LookPath(sysctlCommand)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -635,24 +605,6 @@ func RunIP(args ...string) (string, string, error) {
 // RunSysctl runs a command via the procps "sysctl" utility
 func RunSysctl(args ...string) (string, string, error) {
 	stdout, stderr, err := run(runner.sysctlPath, args...)
-	return strings.TrimSpace(stdout.String()), stderr.String(), err
-}
-
-// RunPowershell runs a command via the Windows powershell utility
-func RunPowershell(args ...string) (string, string, error) {
-	stdout, stderr, err := run(runner.powershellPath, args...)
-	return strings.TrimSpace(stdout.String()), stderr.String(), err
-}
-
-// RunNetsh runs a command via the Windows netsh utility
-func RunNetsh(args ...string) (string, string, error) {
-	stdout, stderr, err := run(runner.netshPath, args...)
-	return strings.TrimSpace(stdout.String()), stderr.String(), err
-}
-
-// RunRoute runs a command via the Windows route utility
-func RunRoute(args ...string) (string, string, error) {
-	stdout, stderr, err := run(runner.routePath, args...)
 	return strings.TrimSpace(stdout.String()), stderr.String(), err
 }
 

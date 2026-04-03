@@ -40,6 +40,12 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const (
+	hybridOverlayTestLabelKey   = "hybrid-overlay"
+	hybridOverlayTestLabelValue = "true"
+	hybridOverlayTestNodeRole   = "hybrid-overlay"
+)
+
 func newTestNode(name, os, ovnHostSubnet, hybridHostSubnet, drMAC string) corev1.Node {
 	var err error
 	annotations := make(map[string]string)
@@ -53,10 +59,14 @@ func newTestNode(name, os, ovnHostSubnet, hybridHostSubnet, drMAC string) corev1
 	if drMAC != "" {
 		annotations[hotypes.HybridOverlayDRMAC] = drMAC
 	}
+	labels := map[string]string{corev1.LabelOSStable: os}
+	if os == hybridOverlayTestNodeRole {
+		labels = map[string]string{hybridOverlayTestLabelKey: hybridOverlayTestLabelValue}
+	}
 	return corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
-			Labels:      map[string]string{corev1.LabelOSStable: os},
+			Labels:      labels,
 			Annotations: annotations,
 		},
 	}
@@ -74,7 +84,7 @@ func newTestHONode(name, hybridHostSubnet, drMAC string) corev1.Node {
 	return corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
-			Labels:      map[string]string{corev1.LabelOSStable: "windows"},
+			Labels:      map[string]string{hybridOverlayTestLabelKey: hybridOverlayTestLabelValue},
 			Annotations: annotations,
 		},
 	}
@@ -175,7 +185,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 	const hybridOverlayClusterCIDR string = "11.1.0.0/16/24"
 
-	ginkgo.It("allocates and assigns a hybrid-overlay subnet to a Windows node that doesn't have one", func() {
+	ginkgo.It("allocates and assigns a hybrid-overlay subnet to a no-hostsubnet node that doesn't have one", func() {
 		app.Action = func(ctx *cli.Context) error {
 			const (
 				nodeName   string = "node1"
@@ -188,7 +198,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			dbSetup := libovsdbtest.TestSetup{}
 			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 				Items: []corev1.Node{
-					newTestNode(nodeName, "windows", "", "", ""),
+					newTestNode(nodeName, hybridOverlayTestNodeRole, "", "", ""),
 				},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
@@ -234,7 +244,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			defer clusterManager.Stop()
 			gomega.Expect(clusterController.WatchNodes()).To(gomega.Succeed())
 
-			// Windows node should be allocated a subnet
+			// The no-hostsubnet node should be allocated a subnet
 			gomega.Eventually(func() (map[string]string, error) {
 				updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 				if err != nil {
@@ -254,7 +264,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 			gomega.Eventually(fexec.CalledMatchesExpected, 2).Should(gomega.BeTrue(), fexec.ErrorDesc)
 
-			// nothing should be done in OVN dbs from HO running on windows node
+			// nothing should be done in OVN dbs from HO running on the hybrid overlay node
 			gomega.Eventually(clusterController.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(dbSetup.NBData))
 			gomega.Eventually(clusterController.sbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(dbSetup.SBData))
 
@@ -264,7 +274,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-loglevel=5",
-			"-no-hostsubnet-nodes=" + corev1.LabelOSStable + "=windows",
+			"-no-hostsubnet-nodes=" + hybridOverlayTestLabelKey + "=" + hybridOverlayTestLabelValue,
 			"-enable-hybrid-overlay",
 			"-hybrid-overlay-cluster-subnets=" + hybridOverlayClusterCIDR,
 			"-init-gateways",
@@ -740,11 +750,11 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
-	ginkgo.It("cluster handles a linux node when hybridOverlayClusterCIDR in unset but the HO annotations are available on windows nodes", func() {
+	ginkgo.It("cluster handles a linux node when hybridOverlayClusterCIDR in unset but the HO annotations are available on hybrid overlay nodes", func() {
 		app.Action = func(ctx *cli.Context) error {
 			const (
 				//linNodeName   string = "node-linux"
-				winNodeName string = "node-windows"
+				winNodeName string = "node-ho"
 				//linNodeSubnet string = "10.1.2.0/24"
 				winNodeSubnet string = "10.1.3.0/24"
 				//linNodeHOIP   string = "10.1.2.3"
@@ -780,7 +790,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:   winNodeName,
-							Labels: map[string]string{corev1.LabelOSStable: "windows"},
+							Labels: map[string]string{hybridOverlayTestLabelKey: hybridOverlayTestLabelValue},
 							Annotations: map[string]string{
 								hotypes.HybridOverlayNodeSubnet: winNodeSubnet,
 							},
@@ -1017,7 +1027,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 		}
 		err := app.Run([]string{
 			app.Name,
-			"--no-hostsubnet-nodes=kubernetes.io/os=windows",
+			"--no-hostsubnet-nodes=hybrid-overlay=true",
 			"-cluster-subnets=" + clusterCIDR,
 			"-gateway-mode=shared",
 			"-enable-hybrid-overlay",
@@ -1188,7 +1198,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(clusterController.WatchNodes()).To(gomega.Succeed())
 
 			// switch the node to a HO node
-			testNode2.Labels = map[string]string{corev1.LabelOSStable: "windows"}
+			testNode2.Labels = map[string]string{hybridOverlayTestLabelKey: hybridOverlayTestLabelValue}
 			testNode2.Annotations[hotypes.HybridOverlayNodeSubnet] = hoNodeSubnet
 			testNode2.Annotations[hotypes.HybridOverlayDRMAC] = hoNodeDRMAC
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &testNode2, metav1.UpdateOptions{})
@@ -1249,7 +1259,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 		}
 		err := app.Run([]string{
 			app.Name,
-			"--no-hostsubnet-nodes=kubernetes.io/os=windows",
+			"--no-hostsubnet-nodes=hybrid-overlay=true",
 			"-cluster-subnets=" + clusterCIDR,
 			"-gateway-mode=shared",
 			"-enable-hybrid-overlay",
@@ -1260,7 +1270,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 	ginkgo.It("handles a HO node is switched to a OVN node", func() {
 		app.Action = func(ctx *cli.Context) error {
 			const (
-				hoNodeName   string = "node-windows"
+				hoNodeName   string = "node-ho"
 				hoNodeSubnet string = "10.1.3.0/24"
 				hoNodeDRMAC  string = "00:7f:0e:7f:ed:b5"
 				nodeHOMAC    string = "0a:58:0a:01:01:03"
@@ -1408,7 +1418,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// switch the node to a ovn node
-			ginkgo.By("Removing the windows node label and switching to OVN node")
+			ginkgo.By("Removing the hybrid overlay node label and switching to OVN node")
 			patch := []map[string]string{
 				{"op": "remove", "path": "/metadata/labels"},
 			}
@@ -1423,7 +1433,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterStaticRoute, error) {
 				p := func(item *nbdb.LogicalRouterStaticRoute) bool {
 					if item.ExternalIDs["name"] == "hybrid-subnet-node1-gr" ||
-						item.ExternalIDs["name"] == "hybrid-subnet-node1:node-windows" {
+						item.ExternalIDs["name"] == "hybrid-subnet-node1:node-ho" {
 						return true
 					}
 					return false
@@ -1451,7 +1461,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 		}
 		err := app.Run([]string{
 			app.Name,
-			"--no-hostsubnet-nodes=kubernetes.io/os=windows",
+			"--no-hostsubnet-nodes=hybrid-overlay=true",
 			"-cluster-subnets=" + clusterCIDR,
 			"-gateway-mode=shared",
 			"-enable-hybrid-overlay",

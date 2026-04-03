@@ -74,8 +74,8 @@ The key functionalities and features that OVN-Kubernetes provides include:
     - Provides the ability to restrict egress traffic from cluster workloads
     (Egress Firewall) using OVN Access Control Lists.
 - Advanced Networking Features
-    - Implements Hybrid Networking to provide support for mixed Windows/Linux
-    clusters using VXLAN tunnels.
+    - Implements Hybrid Networking for hybrid-overlay connectivity using VXLAN
+    tunnels.
     - Provides IP Multicast using OVN IGMP snooping and relays.
     - Provides ability to offload networking tasks from CPU to NIC using OVS Hardware
     Offload thus providing increased data-plane performance.
