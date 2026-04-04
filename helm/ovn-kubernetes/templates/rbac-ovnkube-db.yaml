@@ -58,7 +58,7 @@ rules:
     - apiGroups: [""]
       resources:
           - endpoints
-      verbs: [ "get", "create" ]
+      verbs: [ "get", "create", "patch", "update" ]
     - apiGroups: [""]
       resources:
           - pods
