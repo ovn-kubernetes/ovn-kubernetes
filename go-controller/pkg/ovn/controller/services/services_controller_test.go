@@ -1706,6 +1706,7 @@ func servicesOptions() map[string]string {
 		"skip_snat":          "false",
 		"neighbor_responder": "none",
 		"hairpin_snat_ip":    "169.254.169.5 fd69::5",
+		"ct_flush":           "true",
 	}
 }
 

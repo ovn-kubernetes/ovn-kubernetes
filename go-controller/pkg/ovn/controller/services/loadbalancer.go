@@ -359,6 +359,7 @@ func buildLB(lb *LB) *templateLoadBalancer {
 		"skip_snat":          skipSNAT,
 		"neighbor_responder": "none",
 		"hairpin_snat_ip":    fmt.Sprintf("%s %s", config.Gateway.MasqueradeIPs.V4OVNServiceHairpinMasqueradeIP.String(), config.Gateway.MasqueradeIPs.V6OVNServiceHairpinMasqueradeIP.String()),
+		"ct_flush":           "true", // Auto-flush conntrack on backend changes (OVN 23.06+)
 	}
 
 	// Session affinity
