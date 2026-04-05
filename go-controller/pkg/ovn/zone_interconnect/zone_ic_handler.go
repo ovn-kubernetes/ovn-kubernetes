@@ -597,7 +597,7 @@ func (zic *ZoneInterconnectHandler) cleanupNode(nodeName string) error {
 
 	// Cleanup the logical switch port in the transit switch for the node
 	// if it exists.
-	if err := zic.cleanupNodeTransitSwitchPort(nodeName); err != nil {
+	if err := zic.CleanupNodeTransitSwitchPort(nodeName); err != nil {
 		return err
 	}
 
@@ -639,7 +639,7 @@ func (zic *ZoneInterconnectHandler) cleanupNodeClusterRouterPort(nodeName string
 	return nil
 }
 
-func (zic *ZoneInterconnectHandler) cleanupNodeTransitSwitchPort(nodeName string) error {
+func (zic *ZoneInterconnectHandler) CleanupNodeTransitSwitchPort(nodeName string) error {
 	logicalSwitch := &nbdb.LogicalSwitch{
 		Name: zic.networkTransitSwitchName,
 	}

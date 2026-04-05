@@ -1035,9 +1035,15 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
 					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)
 			}
-			// Reprovisioning the DPU (including OVS), which is pinned to a host, will change the system ID but not the node.
-			if config.OvnKubeNode.Mode == types.NodeModeDPU && nodeChassisChanged(oldNode, newNode) {
+			// When a remote node's chassis ID changes (e.g. DPU reprovisioning),
+			// delete the stale SBDB chassis and the NBDB transit switch port.
+			// ovn-northd only binds the port to a chassis on creation, not
+			// when RequestedChassis is updated, so a delete+recreate is needed.
+			if nodeChassisChanged(oldNode, newNode) {
 				if err := h.oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
+					aggregatedErrors = append(aggregatedErrors, err)
+				}
+				if err := h.oc.zoneICHandler.CleanupNodeTransitSwitchPort(newNode.Name); err != nil {
 					aggregatedErrors = append(aggregatedErrors, err)
 				}
 				syncZoneIC = true
