@@ -192,10 +192,17 @@ func createOrUpdateCNCWithConnectivity(cs clientset.Interface, cncName string, c
 		generateConnectSubnets(cs), connectivity)
 }
 
-// createOrUpdateCNCWithSubnetsAndConnectivity creates or updates a CNC with custom connect subnets and connectivity
-func createOrUpdateCNCWithSubnetsAndConnectivity(cncName string, cudnLabelSelector, udnLabelSelector map[string]string, connectSubnets string, connectivity []string) {
+// generateCNCManifest builds a CNC YAML manifest string.
+// annotations is optional; pass nil for no annotations.
+func generateCNCManifest(
+	cncName string,
+	cudnLabelSelector, udnLabelSelector map[string]string,
+	connectSubnets string,
+	connectivity []string,
+	annotations map[string]string,
+) string {
 	Expect(cudnLabelSelector != nil || udnLabelSelector != nil).To(BeTrue(),
-		"createOrUpdateCNCWithSubnetsAndConnectivity requires at least one selector (cudnLabelSelector or udnLabelSelector)")
+		"generateCNCManifest requires at least one selector (cudnLabelSelector or udnLabelSelector)")
 
 	var networkSelectors []string
 
@@ -229,7 +236,6 @@ func createOrUpdateCNCWithSubnetsAndConnectivity(cncName string, cudnLabelSelect
             %s`, udnLabelSelectorStr))
 	}
 
-	// Format connectivity array as YAML
 	connectivityYAML := "["
 	for i, c := range connectivity {
 		if i > 0 {
@@ -239,18 +245,40 @@ func createOrUpdateCNCWithSubnetsAndConnectivity(cncName string, cudnLabelSelect
 	}
 	connectivityYAML += "]"
 
-	manifest := fmt.Sprintf(`
+	annotationsBlock := ""
+	if len(annotations) > 0 {
+		lines := "  annotations:\n"
+		for k, v := range annotations {
+			lines += fmt.Sprintf("    %s: '%s'\n", k, v)
+		}
+		annotationsBlock = lines
+	}
+
+	return fmt.Sprintf(`
 apiVersion: k8s.ovn.org/v1
 kind: ClusterNetworkConnect
 metadata:
   name: %s
-spec:
+%sspec:
   networkSelectors:
 %s
   connectSubnets:
 %s
   connectivity: %s
-`, cncName, strings.Join(networkSelectors, "\n"), connectSubnets, connectivityYAML)
+`, cncName, annotationsBlock, strings.Join(networkSelectors, "\n"), connectSubnets, connectivityYAML)
+}
+
+// createOrUpdateCNCWithSubnetsAndConnectivity creates or updates a CNC with custom connect subnets and connectivity
+func createOrUpdateCNCWithSubnetsAndConnectivity(
+	cncName string,
+	cudnLabelSelector, udnLabelSelector map[string]string,
+	connectSubnets string,
+	connectivity []string,
+) {
+	manifest := generateCNCManifest(
+		cncName, cudnLabelSelector, udnLabelSelector,
+		connectSubnets, connectivity, nil,
+	)
 	_, err := e2ekubectl.RunKubectlInput("", manifest, "apply", "-f", "-")
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -2167,6 +2195,199 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 		By("verifying CNC status reports selected networks subnet overlap")
 		verifyCNCAcceptedConditionFailed(cncName, "selected networks have overlapping subnets")
+	})
+
+})
+
+// ============================================================================
+// CNC Annotation ValidatingAdmissionPolicy Testing
+// ============================================================================
+var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.NetworkConnect, func() {
+	f := wrappedTestFramework("cnc-vap")
+	f.SkipNamespaceCreation = true
+
+	var (
+		cs clientset.Interface
+	)
+
+	BeforeEach(func() {
+		cs = f.ClientSet
+	})
+
+	It("should reject CREATE with managed annotations pre-set", func() {
+		cncName := generateCNCName()
+		noMatchSelector := map[string]string{"nonexistent": "label"}
+		connectSubnets := generateConnectSubnets(cs)
+
+		By("attempting to create CNC with network-connect-subnet annotation")
+		manifest := generateCNCManifest(
+			cncName, noMatchSelector, nil, connectSubnets, []string{"PodNetwork"},
+			map[string]string{ovnNetworkConnectSubnetAnnotation: `{"test": {"ipv4": "1.2.3.4/24"}}`},
+		)
+		_, err := e2ekubectl.RunKubectlInput("", manifest, "create", "-f", "-")
+		Expect(err).To(HaveOccurred(), "CREATE should be rejected when network-connect-subnet annotation is present")
+		Expect(err).To(MatchError(ContainSubstring(
+			`ClusterNetworkConnect resources cannot be created with the` +
+				` "k8s.ovn.org/network-connect-subnet" or "k8s.ovn.org/connect-router-tunnel-key"` +
+				` annotations. These annotations are managed by the system.`)))
+
+		By("attempting to create CNC with connect-router-tunnel-key annotation")
+		manifest = generateCNCManifest(
+			cncName, noMatchSelector, nil, connectSubnets, []string{"PodNetwork"},
+			map[string]string{ovnConnectRouterTunnelKeyAnnotation: "42"},
+		)
+		_, err = e2ekubectl.RunKubectlInput("", manifest, "create", "-f", "-")
+		Expect(err).To(HaveOccurred(), "CREATE should be rejected when connect-router-tunnel-key annotation is present")
+		Expect(err).To(MatchError(ContainSubstring(
+			`ClusterNetworkConnect resources cannot be created with the` +
+				` "k8s.ovn.org/network-connect-subnet" or "k8s.ovn.org/connect-router-tunnel-key"` +
+				` annotations. These annotations are managed by the system.`)))
+
+		By("attempting to create CNC with both annotations")
+		manifest = generateCNCManifest(
+			cncName, noMatchSelector, nil, connectSubnets, []string{"PodNetwork"},
+			map[string]string{
+				ovnNetworkConnectSubnetAnnotation:   `{"test": {"ipv4": "1.2.3.4/24"}}`,
+				ovnConnectRouterTunnelKeyAnnotation: "42",
+			},
+		)
+		_, err = e2ekubectl.RunKubectlInput("", manifest, "create", "-f", "-")
+		Expect(err).To(HaveOccurred(), "CREATE should be rejected when both managed annotations are present")
+		Expect(err).To(MatchError(ContainSubstring(
+			`ClusterNetworkConnect resources cannot be created with the` +
+				` "k8s.ovn.org/network-connect-subnet" or "k8s.ovn.org/connect-router-tunnel-key"` +
+				` annotations. These annotations are managed by the system.`)))
+	})
+
+	It("should allow CREATE with unmanaged annotations", func() {
+		cncName := generateCNCName()
+		DeferCleanup(func() {
+			deleteCNC(cncName)
+		})
+
+		By("creating CNC with an unmanaged annotation")
+		manifest := generateCNCManifest(
+			cncName, map[string]string{"nonexistent": "label"}, nil,
+			generateConnectSubnets(cs), []string{"PodNetwork"},
+			map[string]string{"custom-annotation": "some-value"},
+		)
+		_, err := e2ekubectl.RunKubectlInput("", manifest, "create", "-f", "-")
+		Expect(err).NotTo(HaveOccurred(), "CREATE should succeed with unmanaged annotations")
+	})
+
+	It("should reject regular admin adding network-connect-subnet annotation", func() {
+		cncName := generateCNCName()
+		DeferCleanup(func() {
+			deleteCNC(cncName)
+		})
+
+		By("creating a CNC with no matching networks")
+		createOrUpdateCNC(cs, cncName, map[string]string{"nonexistent": "label"}, nil)
+
+		By("waiting for cluster-manager to set tunnel-key annotation")
+		verifyCNCHasOnlyTunnelIDAnnotation(cncName)
+
+		By("attempting to add network-connect-subnet annotation as regular admin")
+		_, err := e2ekubectl.RunKubectl("", "annotate", "--overwrite", "clusternetworkconnect", cncName,
+			fmt.Sprintf("%s={\"test\":{\"ipv4\":\"1.2.3.4/24\"}}", ovnNetworkConnectSubnetAnnotation))
+		Expect(err).To(HaveOccurred(), "regular admin should not be able to add network-connect-subnet annotation")
+		Expect(err).To(MatchError(ContainSubstring(
+			`A regular user must not add, modify, or remove the` +
+				` "k8s.ovn.org/network-connect-subnet" annotation on a` +
+				` ClusterNetworkConnect custom resource.`)))
+	})
+
+	// Note: Rule 2 also prohibits non-CM users from *adding* connect-router-tunnel-key,
+	// but the cluster-manager sets it immediately after CNC creation so there is no
+	// reliable e2e window to test that branch. Rule 1 (CREATE rejection) and the
+	// modify/remove tests below provide sufficient coverage.
+	It("should reject modifying or removing connect-router-tunnel-key once set", func() {
+		cncName := generateCNCName()
+		cncLabel := map[string]string{"test-vap-tunnel-key": "true"}
+		nextSubnets := newTestNetworkSubnetsAllocator()
+
+		ns := createUDNNamespace(cs, "test-vap-tunnel-ns", nil)
+		cudnName := fmt.Sprintf("vap-tunnel-cudn-%s", rand.String(5))
+
+		DeferCleanup(func() {
+			deleteCNC(cncName)
+			deleteCUDN(cudnName)
+			cs.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
+		})
+
+		By("creating a CUDN and CNC so cluster-manager sets both annotations")
+		v4, v6 := nextSubnets()
+		createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
+		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+
+		createOrUpdateCNC(cs, cncName, cncLabel, nil)
+		verifyCNCHasBothAnnotations(cncName)
+
+		By("reading current tunnel-key value")
+		tunnelID := getCNCTunnelID(cncName)
+		Expect(tunnelID).NotTo(BeEmpty())
+
+		newValue := "99999"
+		if tunnelID == newValue {
+			newValue = "99998"
+		}
+
+		By("attempting to modify connect-router-tunnel-key annotation")
+		_, err := e2ekubectl.RunKubectl("", "annotate", "--overwrite", "clusternetworkconnect", cncName,
+			fmt.Sprintf("%s=%s", ovnConnectRouterTunnelKeyAnnotation, newValue))
+		Expect(err).To(HaveOccurred(), "connect-router-tunnel-key should be immutable once set")
+		Expect(err).To(MatchError(ContainSubstring(
+			`The "k8s.ovn.org/connect-router-tunnel-key" annotation is immutable` +
+				` once set and can only be added by the cluster-manager service account.`)))
+
+		By("attempting to remove connect-router-tunnel-key annotation")
+		_, err = e2ekubectl.RunKubectl("", "annotate", "--overwrite", "clusternetworkconnect", cncName,
+			fmt.Sprintf("%s-", ovnConnectRouterTunnelKeyAnnotation))
+		Expect(err).To(HaveOccurred(), "connect-router-tunnel-key should not be removable once set")
+		Expect(err).To(MatchError(ContainSubstring(
+			`The "k8s.ovn.org/connect-router-tunnel-key" annotation is immutable` +
+				` once set and can only be added by the cluster-manager service account.`)))
+	})
+
+	It("should reject regular user modifying or removing network-connect-subnet annotation", func() {
+		cncName := generateCNCName()
+		cncLabel := map[string]string{"test-vap-subnet": "true"}
+		nextSubnets := newTestNetworkSubnetsAllocator()
+
+		ns := createUDNNamespace(cs, "test-vap-subnet-ns", nil)
+		cudnName := fmt.Sprintf("vap-subnet-cudn-%s", rand.String(5))
+
+		DeferCleanup(func() {
+			deleteCNC(cncName)
+			deleteCUDN(cudnName)
+			cs.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
+		})
+
+		By("creating a CUDN and CNC so cluster-manager sets both annotations")
+		v4, v6 := nextSubnets()
+		createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
+		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+
+		createOrUpdateCNC(cs, cncName, cncLabel, nil)
+		verifyCNCHasBothAnnotations(cncName)
+
+		By("attempting to modify network-connect-subnet annotation")
+		_, err := e2ekubectl.RunKubectl("", "annotate", "--overwrite", "clusternetworkconnect", cncName,
+			fmt.Sprintf(`%s={"bogus":{"ipv4":"9.9.9.0/24"}}`, ovnNetworkConnectSubnetAnnotation))
+		Expect(err).To(HaveOccurred(), "regular user should not be able to modify network-connect-subnet")
+		Expect(err).To(MatchError(ContainSubstring(
+			`A regular user must not add, modify, or remove the` +
+				` "k8s.ovn.org/network-connect-subnet" annotation on a` +
+				` ClusterNetworkConnect custom resource.`)))
+
+		By("attempting to remove network-connect-subnet annotation")
+		_, err = e2ekubectl.RunKubectl("", "annotate", "--overwrite", "clusternetworkconnect", cncName,
+			fmt.Sprintf("%s-", ovnNetworkConnectSubnetAnnotation))
+		Expect(err).To(HaveOccurred(), "regular user should not be able to remove network-connect-subnet")
+		Expect(err).To(MatchError(ContainSubstring(
+			`A regular user must not add, modify, or remove the` +
+				` "k8s.ovn.org/network-connect-subnet" annotation on a` +
+				` ClusterNetworkConnect custom resource.`)))
 	})
 })
 
