@@ -120,6 +120,7 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 			// . No need to trigger update for any other field change.
 			if util.NodeSubnetAnnotationChangedForNetwork(oldObj, newObj, nt.netInfo.GetNetworkName()) ||
 				util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
+				util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||
 				oldObj.Name != newObj.Name ||
 				util.NodeHostCIDRsAnnotationChanged(oldObj, newObj) ||
 				util.NodeZoneAnnotationChanged(oldObj, newObj) ||

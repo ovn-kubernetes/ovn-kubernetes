@@ -604,6 +604,9 @@ func (c *Controller) ResyncAllServices() {
 		return
 	}
 	klog.Infof("Resyncing all services for network=%s", c.netInfo.GetNetworkName())
+	c.alreadyAppliedRWLock.Lock()
+	c.alreadyApplied = make(map[string][]LB)
+	c.alreadyAppliedRWLock.Unlock()
 	services, err := c.serviceLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("Failed to list services for resync (network=%s): %v", c.netInfo.GetNetworkName(), err)
