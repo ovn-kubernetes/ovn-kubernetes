@@ -330,6 +330,40 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 	return &gwRouter, nil
 }
 
+// reconcileGWRouterChassisWithAnnotation ensures options:chassis on the gateway router matches
+// k8s.ovn.org/node-chassis-id. After DPU reprovisioning the NB row can keep an old chassis UUID
+// while the node annotation and local OVS system-id already match; ovn-controller then ignores
+// the GR until options:chassis is corrected.
+func (gw *GatewayManager) reconcileGWRouterChassisWithAnnotation(gwConfig *GatewayConfig) error {
+	desired := gwConfig.annoConfig.ChassisID
+	if desired == "" {
+		return nil
+	}
+	lr, err := libovsdbops.GetLogicalRouter(gw.nbClient, &nbdb.LogicalRouter{Name: gw.gwRouterName})
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("get GR %s for chassis reconcile: %w", gw.gwRouterName, err)
+	}
+	cur := ""
+	if lr.Options != nil {
+		cur = lr.Options["chassis"]
+	}
+	if cur == desired {
+		return nil
+	}
+	klog.Infof("Reconciling gateway router %s options:chassis from %q to %q to match node annotation",
+		gw.gwRouterName, cur, desired)
+	opts := map[string]string{}
+	if lr.Options != nil {
+		maps.Copy(opts, lr.Options)
+	}
+	opts["chassis"] = desired
+	lr.Options = opts
+	return libovsdbops.CreateOrUpdateLogicalRouter(gw.nbClient, lr, &lr.Options)
+}
+
 func (gw *GatewayManager) getGWRouterPeerRouterPortName() string {
 	return types.TransitRouterToRouterPrefix + gw.gwRouterName
 }
@@ -1056,6 +1090,10 @@ func (gw *GatewayManager) gatewayInit(
 	}
 
 	if err = gw.updateGWRouterNAT(nodeName, gwConfig, gwRouterIPs, gwRouter); err != nil {
+		return err
+	}
+
+	if err := gw.reconcileGWRouterChassisWithAnnotation(gwConfig); err != nil {
 		return err
 	}
 

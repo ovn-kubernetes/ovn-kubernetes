@@ -657,7 +657,8 @@ func (oc *Layer3UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 				gatewayChanged(oldNode, newNode) ||
 				nodeSubnetChange ||
 				hostCIDRsChanged(oldNode, newNode) ||
-				nodeGatewayMTUSupportChanged(oldNode, newNode)
+				nodeGatewayMTUSupportChanged(oldNode, newNode) ||
+				nodeChassisChanged(oldNode, newNode)
 			_, failed = oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 			syncReroute := failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
 			nodeParams = &nodeSyncs{

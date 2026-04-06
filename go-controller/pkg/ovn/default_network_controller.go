@@ -983,7 +983,8 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 				mgmtSync := failed || nodeSubnetChange
 				_, failed = h.oc.gatewaysFailed.Load(newNode.Name)
 				gwSync := failed || gatewayChanged(oldNode, newNode) || nodeSubnetChange ||
-					hostCIDRsChanged(oldNode, newNode) || nodeGatewayMTUSupportChanged(oldNode, newNode)
+					hostCIDRsChanged(oldNode, newNode) || nodeGatewayMTUSupportChanged(oldNode, newNode) ||
+					nodeChassisChanged(oldNode, newNode)
 				hoNeedsCleanup := false
 				if !config.HybridOverlay.Enabled {
 					// check if the node has the stale annotations on it to signal that we need to clean up

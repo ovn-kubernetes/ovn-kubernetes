@@ -184,7 +184,6 @@ func (oc *DefaultNetworkController) addNode(node *corev1.Node) ([]*net.IPNet, er
 	if err := oc.SetupMaster(); err != nil {
 		return nil, fmt.Errorf("failed to ensure cluster infrastructure for node %s: %v", node.Name, err)
 	}
-	oc.svcController.ResyncAllServices()
 
 	// delete stale chassis in SBDB if any
 	if err = oc.deleteStaleNodeChassis(node); err != nil {
@@ -667,6 +666,10 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		} else {
 			oc.gatewaysFailed.Delete(node.Name)
 		}
+	}
+
+	if nSyncs.syncNode || nSyncs.syncGw {
+		oc.svcController.ResyncAllServices()
 	}
 
 	// ensure pods that already exist on this node have their logical ports created
