@@ -77,7 +77,6 @@ rules:
           - userdefinednetworks
           - clusteruserdefinednetworks
           - vteps
-          - clusternetworkconnects
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
@@ -89,8 +88,6 @@ rules:
           - clusteruserdefinednetworks
           - clusteruserdefinednetworks/status
           - clusteruserdefinednetworks/finalizers
-          - clusternetworkconnects
-          - clusternetworkconnects/status
           - vteps
           - vteps/status
       verbs: [ "patch", "update" ]
@@ -146,6 +143,17 @@ rules:
       resources:
           - frrconfigurations
       verbs: [ "create", "delete", "get", "list", "patch", "update", "watch" ]
+    {{- end }}
+    {{- if eq (hasKey .Values.global "enableNetworkConnect" | ternary .Values.global.enableNetworkConnect false) true }}
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - clusternetworkconnects
+      verbs: [ "get", "list", "watch" ]
+    - apiGroups: ["k8s.ovn.org"]
+      resources:
+          - clusternetworkconnects
+          - clusternetworkconnects/status
+      verbs: [ "patch", "update" ]
     {{- end }}
 
 ---
@@ -260,3 +268,91 @@ metadata:
 spec:
   policyName: egressip-mark-annotation-validation
   validationActions: [Deny]
+
+{{- if eq (hasKey .Values.global "enableNetworkConnect" | ternary .Values.global.enableNetworkConnect false) true }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: cnc-annotation-validation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["k8s.ovn.org"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["clusternetworkconnects"]
+  validations:
+  # Prevent creating ClusterNetworkConnect with either annotation
+  - expression: >-
+      request.operation != "CREATE" ||
+      !has(object.metadata.annotations) ||
+      (!("k8s.ovn.org/network-connect-subnet" in object.metadata.annotations) &&
+      !("k8s.ovn.org/connect-router-tunnel-key" in object.metadata.annotations))
+    message: >-
+      ClusterNetworkConnect resources cannot be created with the
+      "k8s.ovn.org/network-connect-subnet" or "k8s.ovn.org/connect-router-tunnel-key"
+      annotations. These annotations are managed by the system.
+    reason: Invalid
+  # Immutable once set; only cluster-manager can add connect-router-tunnel-key.
+  # Passes when:
+  #   Branch 1 - neither old nor new has the annotation (no change)
+  #   Branch 2 - both have it with the same value (no modification)
+  #   Branch 3 - annotation is being added and user is cluster-manager
+  - expression: >-
+      request.operation != "UPDATE" ||
+      ((!has(oldObject.metadata.annotations) ||
+      !("k8s.ovn.org/connect-router-tunnel-key" in oldObject.metadata.annotations)) &&
+      (!has(object.metadata.annotations) ||
+      !("k8s.ovn.org/connect-router-tunnel-key" in object.metadata.annotations))) ||
+      (has(oldObject.metadata.annotations) &&
+      "k8s.ovn.org/connect-router-tunnel-key" in oldObject.metadata.annotations &&
+      has(object.metadata.annotations) &&
+      "k8s.ovn.org/connect-router-tunnel-key" in object.metadata.annotations &&
+      oldObject.metadata.annotations["k8s.ovn.org/connect-router-tunnel-key"] ==
+      object.metadata.annotations["k8s.ovn.org/connect-router-tunnel-key"]) ||
+      ((!has(oldObject.metadata.annotations) ||
+      !("k8s.ovn.org/connect-router-tunnel-key" in oldObject.metadata.annotations)) &&
+      has(object.metadata.annotations) &&
+      "k8s.ovn.org/connect-router-tunnel-key" in object.metadata.annotations &&
+      request.userInfo.username ==
+      "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager")
+    message: >-
+      The "k8s.ovn.org/connect-router-tunnel-key" annotation is immutable once set
+      and can only be added by the cluster-manager service account.
+    reason: Invalid
+  # Only cluster-manager can add, modify, or remove network-connect-subnet.
+  # Passes when:
+  #   Branch 1 - user is cluster-manager (any mutation allowed)
+  #   Branch 2 - neither old nor new has the annotation (no change)
+  #   Branch 3 - both have it with the same value (no modification)
+  - expression: >-
+      request.operation != "UPDATE" ||
+      request.userInfo.username ==
+      "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager" ||
+      ((!has(oldObject.metadata.annotations) ||
+      !("k8s.ovn.org/network-connect-subnet" in oldObject.metadata.annotations)) &&
+      (!has(object.metadata.annotations) ||
+      !("k8s.ovn.org/network-connect-subnet" in object.metadata.annotations))) ||
+      (has(oldObject.metadata.annotations) &&
+      "k8s.ovn.org/network-connect-subnet" in oldObject.metadata.annotations &&
+      has(object.metadata.annotations) &&
+      "k8s.ovn.org/network-connect-subnet" in object.metadata.annotations &&
+      oldObject.metadata.annotations["k8s.ovn.org/network-connect-subnet"] ==
+      object.metadata.annotations["k8s.ovn.org/network-connect-subnet"])
+    message: >-
+      A regular user must not add, modify, or remove the
+      "k8s.ovn.org/network-connect-subnet" annotation on a
+      ClusterNetworkConnect custom resource.
+    reason: Invalid
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: cnc-annotation-validation-binding
+spec:
+  policyName: cnc-annotation-validation
+  validationActions: [Deny]
+{{- end }}

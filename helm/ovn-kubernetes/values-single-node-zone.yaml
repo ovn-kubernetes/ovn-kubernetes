@@ -75,6 +75,8 @@ global:
   enableMultiNetwork: false
   # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
   enableNetworkSegmentation: false
+  # -- Configure to enable cluster network connect feature with ovn-kubernetes
+  enableNetworkConnect: false
   # -- Configure to use route advertisements feature with ovn-kubernetes
   enableRouteAdvertisements: false
   # -- Configure to use EVPN feature with ovn-kubernetes
