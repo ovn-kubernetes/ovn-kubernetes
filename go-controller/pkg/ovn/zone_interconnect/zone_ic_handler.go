@@ -297,14 +297,14 @@ func (zic *ZoneInterconnectHandler) DeleteNode(node *corev1.Node) error {
 
 // CleanupStaleNodes cleans up the interconnect resources for stale nodes.
 func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error {
-	// Build set of current node names
-	foundNodeNames := sets.New[string]()
+	// Build map of current nodes keyed by name
+	nodesByName := make(map[string]*corev1.Node, len(objs))
 	for _, obj := range objs {
 		node, ok := obj.(*corev1.Node)
 		if !ok {
 			return fmt.Errorf("spurious object in CleanupStaleNodes: %v", obj)
 		}
-		foundNodeNames.Insert(node.Name)
+		nodesByName[node.Name] = node
 	}
 	staleNodeNames := sets.New[string]()
 
@@ -330,8 +330,24 @@ func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error 
 			}
 
 			lportNode := lp.ExternalIDs["node"]
-			if lportNode != "" && !foundNodeNames.Has(lportNode) {
+			if lportNode == "" {
+				continue
+			}
+			node, exists := nodesByName[lportNode]
+			if !exists {
 				staleNodeNames.Insert(lportNode)
+				continue
+			}
+			// Delete remote ports with a stale RequestedChassis so
+			// they are recreated with a fresh SBDB binding during
+			// the subsequent node sync.
+			if lp.Type == lportTypeRemote && lp.Options != nil {
+				chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+				if err == nil && lp.Options[libovsdbops.RequestedChassis] != chassisID {
+					klog.Infof("Transit port %s has stale chassis %s (node %s now %s), deleting",
+						lp.Name, lp.Options[libovsdbops.RequestedChassis], lportNode, chassisID)
+					staleNodeNames.Insert(lportNode)
+				}
 			}
 		}
 	} else if errors.Is(err, libovsdbclient.ErrNotFound) {
@@ -357,7 +373,7 @@ func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error 
 
 		for _, route := range routes {
 			nodeName := route.ExternalIDs["ic-node"]
-			if nodeName != "" && !foundNodeNames.Has(nodeName) {
+			if nodeName != "" && nodesByName[nodeName] == nil {
 				staleNodeNames.Insert(nodeName)
 			}
 		}
@@ -371,7 +387,7 @@ func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error 
 			}
 			// Extract node name from port name (e.g., "rtots-node1" -> "node1")
 			if nodeName, found := strings.CutPrefix(lrp.Name, routerPortPrefix); found {
-				if nodeName != "" && !foundNodeNames.Has(nodeName) {
+				if nodeName != "" && nodesByName[nodeName] == nil {
 					staleNodeNames.Insert(nodeName)
 				}
 			}
