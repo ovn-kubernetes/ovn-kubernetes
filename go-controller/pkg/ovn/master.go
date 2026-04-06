@@ -171,14 +171,20 @@ func (oc *DefaultNetworkController) addNode(node *corev1.Node) ([]*net.IPNet, er
 			node.Name, config.IPv4Mode, haveV4, config.IPv6Mode, haveV6)
 	}
 
-	// Ensure the cluster router and join switch exist. After DPU
-	// reprovisioning the OVSDB may be wiped while the controller is
-	// running, and SetupMaster (which normally creates these) only
-	// runs once during init(). Re-running it here is safe because
-	// all operations are idempotent (CreateOrUpdate).
+	// After DPU reprovisioning the OVSDB may be wiped while the
+	// controller keeps running, leaving stale in-memory LB group
+	// UUIDs. Re-create the LB groups, cluster infrastructure, and
+	// re-sync services so the GR has valid LB groups populated
+	// with service rules. All operations are idempotent.
+	if clusterLBGroupUUID, switchLBGroupUUID, routerLBGroupUUID, lbErr := initLoadBalancerGroups(oc.nbClient, oc.GetNetInfo()); lbErr == nil {
+		oc.clusterLoadBalancerGroupUUID = clusterLBGroupUUID
+		oc.switchLoadBalancerGroupUUID = switchLBGroupUUID
+		oc.routerLoadBalancerGroupUUID = routerLBGroupUUID
+	}
 	if err := oc.SetupMaster(); err != nil {
 		return nil, fmt.Errorf("failed to ensure cluster infrastructure for node %s: %v", node.Name, err)
 	}
+	oc.svcController.ResyncAllServices()
 
 	// delete stale chassis in SBDB if any
 	if err = oc.deleteStaleNodeChassis(node); err != nil {

@@ -594,6 +594,26 @@ func (c *Controller) RequestFullSync(nodeInfos []nodeInfo) {
 	}
 }
 
+// ResyncAllServices re-queues every service so that the services controller
+// rebuilds all load balancer rules. This is needed after a database wipe
+// (e.g. DPU reprovisioning) when the LB groups exist but are empty.
+func (c *Controller) ResyncAllServices() {
+	c.startupDoneLock.RLock()
+	defer c.startupDoneLock.RUnlock()
+	if !c.startupDone {
+		return
+	}
+	klog.Infof("Resyncing all services for network=%s", c.netInfo.GetNetworkName())
+	services, err := c.serviceLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list services for resync (network=%s): %v", c.netInfo.GetNetworkName(), err)
+		return
+	}
+	for _, service := range services {
+		c.onServiceAdd(service)
+	}
+}
+
 // handlers
 
 // skipService is used when UDN is enabled to know which services are to be skipped because they don't
