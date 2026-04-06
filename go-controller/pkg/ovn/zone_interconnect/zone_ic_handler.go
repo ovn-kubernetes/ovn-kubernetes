@@ -549,6 +549,15 @@ func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.N
 		"node": node.Name,
 	}
 
+	// Always delete the remote transit switch port before recreating it.
+	// ovn-northd does not re-bind the SBDB Port_Binding when
+	// RequestedChassis changes on an existing LSP. In IC mode each node
+	// independently reconciles its local NBDB, so a clean delete+create
+	// is the only way to guarantee a correct SBDB binding after a remote
+	// node's chassis changes (e.g. DPU reprovisioning).
+	if err := zic.CleanupNodeTransitSwitchPort(node.Name); err != nil {
+		return err
+	}
 	remotePortName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node.Name)
 	if err := zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs); err != nil {
 		return err
