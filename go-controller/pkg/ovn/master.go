@@ -171,6 +171,15 @@ func (oc *DefaultNetworkController) addNode(node *corev1.Node) ([]*net.IPNet, er
 			node.Name, config.IPv4Mode, haveV4, config.IPv6Mode, haveV6)
 	}
 
+	// Ensure the cluster router and join switch exist. After DPU
+	// reprovisioning the OVSDB may be wiped while the controller is
+	// running, and SetupMaster (which normally creates these) only
+	// runs once during init(). Re-running it here is safe because
+	// all operations are idempotent (CreateOrUpdate).
+	if err := oc.SetupMaster(); err != nil {
+		return nil, fmt.Errorf("failed to ensure cluster infrastructure for node %s: %v", node.Name, err)
+	}
+
 	// delete stale chassis in SBDB if any
 	if err = oc.deleteStaleNodeChassis(node); err != nil {
 		return nil, err

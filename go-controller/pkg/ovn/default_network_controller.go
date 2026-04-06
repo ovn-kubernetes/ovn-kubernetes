@@ -1040,6 +1040,10 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			// ovn-northd only binds the port to a chassis on creation, not
 			// when RequestedChassis is updated, so a delete+recreate is needed.
 			if nodeChassisChanged(oldNode, newNode) {
+				klog.Infof("Node %q chassis changed from %q to %q, re-syncing IC resources",
+					newNode.Name,
+					oldNode.Annotations[util.OvnNodeChassisID],
+					newNode.Annotations[util.OvnNodeChassisID])
 				if err := h.oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
 					aggregatedErrors = append(aggregatedErrors, err)
 				}
