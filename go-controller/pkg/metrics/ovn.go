@@ -10,7 +10,7 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
@@ -255,7 +255,7 @@ var ovnControllerStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 // values (ovn-bridge-remote-probe-interval, ovn-remote-probe-interval, ovn-monitor-all,
 // ovn-encap-ip, ovn-encap-type, ovn-remote) obtained from Open_vSwitch entry updates
 func setOvnControllerConfigurationMetrics(ovsDBClient libovsdbclient.Client) (err error) {
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
 		return fmt.Errorf("failed to get Open_vSwitch entry (%v)", err)
 	}
@@ -315,7 +315,7 @@ func getPortCount(ovsDBClient libovsdbclient.Client, portType string) float64 {
 		return item.Type == portType
 	}
 
-	intfList, err := ovsops.FindInterfacesWithPredicate(ovsDBClient, p)
+	intfList, err := libovsdbops.FindInterfacesWithPredicate(ovsDBClient, p)
 	if err != nil {
 		klog.Errorf("Failed to get %s interface count: %v", portType, err)
 		return 0
