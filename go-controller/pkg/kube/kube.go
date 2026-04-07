@@ -62,6 +62,7 @@ type Interface interface {
 	SetAnnotationsOnNodeWithFieldManager(nodeName string, annotations map[string]interface{}, fieldManager string) error
 	SetAnnotationsOnNamespace(namespaceName string, annotations map[string]interface{}) error
 	SetLabelsOnNode(nodeName string, labels map[string]interface{}) error
+	GetNode(name string) (*corev1.Node, error)
 	PatchNode(old, new *corev1.Node) error
 	UpdateNodeStatus(node *corev1.Node) error
 	PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error
@@ -382,6 +383,11 @@ func (k *Kube) PatchNode(old, new *corev1.Node) error {
 	}
 
 	return nil
+}
+
+// GetNode returns the Node resource from the kubernetes apiserver, given its name.
+func (k *Kube) GetNode(name string) (*corev1.Node, error) {
+	return k.KClient.CoreV1().Nodes().Get(context.TODO(), name, metav1.GetOptions{})
 }
 
 // UpdateNodeStatus takes the node object and sets the provided update status

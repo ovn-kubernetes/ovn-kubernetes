@@ -10,7 +10,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -47,9 +46,12 @@ type NodeAllocator struct {
 
 	// nodeSubnets is a list of node subnets that are managed by the cluster subnet allocator
 	nodeSubnets []*net.IPNet
+
+	// batcher batches annotation updates across all networks for better API server efficiency
+	batcher *NodeAnnotationBatcher
 }
 
-func NewNodeAllocator(networkID int, netInfo util.NetInfo, nodeLister listers.NodeLister, kube kube.Interface, tunnelIDAllocator id.Allocator) *NodeAllocator {
+func NewNodeAllocator(networkID int, netInfo util.NetInfo, nodeLister listers.NodeLister, kube kube.Interface, tunnelIDAllocator id.Allocator, batcher *NodeAnnotationBatcher) *NodeAllocator {
 	na := &NodeAllocator{
 		kube:                         kube,
 		nodeLister:                   nodeLister,
@@ -58,6 +60,7 @@ func NewNodeAllocator(networkID int, netInfo util.NetInfo, nodeLister listers.No
 		clusterSubnetAllocator:       NewSubnetAllocator(),
 		hybridOverlaySubnetAllocator: NewSubnetAllocator(),
 		idAllocator:                  tunnelIDAllocator,
+		batcher:                      batcher,
 	}
 
 	if na.hasNodeSubnetAllocation() {
@@ -523,49 +526,16 @@ func (na *NodeAllocator) Sync(nodes []interface{}) error {
 	return nil
 }
 
-// updateNodeNetworkAnnotationsWithRetry will update the node's subnet annotation and network id annotation
 func (na *NodeAllocator) updateNodeNetworkAnnotationsWithRetry(nodeName string, hostSubnetsMap map[string][]*net.IPNet, networkId, tunnelID int) error {
-	// Retry if it fails because of potential conflict which is transient. Return error in the
-	// case of other errors (say temporary API server down), and it will be taken care of by the
-	// retry mechanism.
-	resultErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		// Informer cache should not be mutated, so get a copy of the object
-		node, err := na.nodeLister.Get(nodeName)
-		if err != nil {
-			return err
-		}
+	if na.batcher == nil {
+		return fmt.Errorf("node annotation batcher is required but was not configured")
+	}
 
-		cnode := node.DeepCopy()
-		for netName, hostSubnets := range hostSubnetsMap {
-			cnode.Annotations, err = util.UpdateNodeHostSubnetAnnotation(cnode.Annotations, hostSubnets, netName)
-			if err != nil {
-				return fmt.Errorf("failed to update node %q annotation subnet %s: %w",
-					node.Name, util.JoinIPNets(hostSubnets, ","), err)
-			}
-		}
-
-		networkName := na.netInfo.GetNetworkName()
-
-		if networkId != types.NoNetworkID {
-			cnode.Annotations, err = util.UpdateNetworkIDAnnotation(cnode.Annotations, networkName, networkId)
-			if err != nil {
-				return fmt.Errorf("failed to update node %q network id annotation %d for network %s: %w",
-					node.Name, networkId, networkName, err)
-			}
-		}
-		if tunnelID != types.NoTunnelID {
-			cnode.Annotations, err = util.UpdateUDNLayer2NodeGRLRPTunnelIDs(cnode.Annotations, networkName, tunnelID)
-			if err != nil {
-				return fmt.Errorf("failed to update node %q tunnel id annotation %d for network %s: %w",
-					node.Name, tunnelID, networkName, err)
-			}
-		}
-		// It is possible to update the node annotations using status subresource
-		// because changes to metadata via status subresource are not restricted for nodes.
-		return na.kube.UpdateNodeStatus(cnode)
-	})
-	if resultErr != nil {
-		return fmt.Errorf("failed to update node %s annotation: %w", nodeName, resultErr)
+	networkName := na.netInfo.GetNetworkName()
+	hostSubnets, hasSubnetUpdate := hostSubnetsMap[networkName]
+	if hasSubnetUpdate || networkId != types.NoNetworkID || tunnelID != types.NoTunnelID {
+		na.batcher.EnqueueUpdate(nodeName, networkName, hostSubnets, networkId, tunnelID)
+		klog.V(5).Infof("Enqueued annotation update for node %s network %s to batcher", nodeName, networkName)
 	}
 	return nil
 }
@@ -588,7 +558,7 @@ func (na *NodeAllocator) Cleanup() error {
 			continue
 		}
 
-		hostSubnetsMap := map[string][]*net.IPNet{networkName: nil}
+		hostSubnetsMap := map[string][]*net.IPNet{networkName: {}}
 		// passing util.InvalidID deletes the network/tunnel id annotation for the network.
 		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, hostSubnetsMap, types.InvalidID, types.InvalidID)
 		if err != nil {
