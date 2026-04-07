@@ -86,6 +86,7 @@ add rule inet ovn-kubernetes ovn-kube-local-gw-masq jump ovn-kube-udn-masq
 `
 
 const baseLGWNFTablesRules = `
+add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip daddr @mgmtport-no-snat-subnets-v4 return
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq ip saddr 169.254.169.1 masquerade
 add chain inet ovn-kubernetes ovn-kube-local-gw-masq { type nat hook postrouting priority 101 ; comment "OVN local gateway masquerade" ; }
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq jump ovn-kube-pod-subnet-masq
