@@ -441,7 +441,7 @@ make
 popd
 
 # Build ovn kube image
-# Find all built executables, but ignore the 'windows' directory if it exists
+# Find all built executables
 find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
 echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
 ~~~
@@ -643,4 +643,3 @@ systemctl restart openvswitch
 systemctl restart NetworkManager
 nmcli conn up ovs-if-${IF2}
 ~~~
-

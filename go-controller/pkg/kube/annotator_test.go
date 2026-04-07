@@ -79,7 +79,7 @@ var _ = Describe("Annotator", func() {
 				err := nodeAnnot.Run()
 				Expect(err).ToNot(HaveOccurred())
 
-				node, err := kube.GetNodeForWindows(nodeName)
+				node, err := kube.KClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				// should contain initial annotations

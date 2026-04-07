@@ -243,8 +243,8 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					},
 					{
 						ObjectMeta: metav1.ObjectMeta{
-							Name:   "winnode",
-							Labels: map[string]string{corev1.LabelOSStable: "windows"},
+							Name:   "honode",
+							Labels: map[string]string{"hybrid-overlay": "true"},
 						},
 					}}
 				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -274,7 +274,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Check that cluster manager has set the subnet annotation for each node.
 				for _, n := range nodes {
-					if n.Name == "winnode" {
+					if n.Name == "honode" {
 						continue
 					}
 
@@ -293,7 +293,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 			err := app.Run([]string{
 				app.Name,
-				"--no-hostsubnet-nodes=kubernetes.io/os=windows",
+				"--no-hostsubnet-nodes=hybrid-overlay=true",
 				"-cluster-subnets=" + clusterCIDR,
 				"-gateway-mode=shared",
 				"-enable-hybrid-overlay",
@@ -308,14 +308,14 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
-							Name:   "winnode1",
-							Labels: map[string]string{corev1.LabelOSStable: "windows"},
+							Name:   "honode1",
+							Labels: map[string]string{"hybrid-overlay": "true"},
 						},
 					},
 					{
 						ObjectMeta: metav1.ObjectMeta{
-							Name:   "winnode2",
-							Labels: map[string]string{corev1.LabelOSStable: "windows"},
+							Name:   "honode2",
+							Labels: map[string]string{"hybrid-overlay": "true"},
 						},
 					},
 				}
@@ -400,7 +400,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 			err := app.Run([]string{
 				app.Name,
-				"--no-hostsubnet-nodes=kubernetes.io/os=windows",
+				"--no-hostsubnet-nodes=hybrid-overlay=true",
 				"-cluster-subnets=" + clusterCIDR,
 				"-gateway-mode=shared",
 				"-enable-hybrid-overlay",

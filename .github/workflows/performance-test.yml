@@ -478,7 +478,6 @@ jobs:
            make gofmt
            make verify-go-mod-vendor
            make
-           make windows
         popd
 
     - name: Build docker image

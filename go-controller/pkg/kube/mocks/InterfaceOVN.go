@@ -181,66 +181,6 @@ func (_m *InterfaceOVN) GetEgressIPs() ([]*egressipv1.EgressIP, error) {
 	return r0, r1
 }
 
-// GetNodeForWindows provides a mock function with given fields: name
-func (_m *InterfaceOVN) GetNodeForWindows(name string) (*apicorev1.Node, error) {
-	ret := _m.Called(name)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetNodeForWindows")
-	}
-
-	var r0 *apicorev1.Node
-	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (*apicorev1.Node, error)); ok {
-		return rf(name)
-	}
-	if rf, ok := ret.Get(0).(func(string) *apicorev1.Node); ok {
-		r0 = rf(name)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*apicorev1.Node)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(name)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// GetNodesForWindows provides a mock function with no fields
-func (_m *InterfaceOVN) GetNodesForWindows() ([]*apicorev1.Node, error) {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetNodesForWindows")
-	}
-
-	var r0 []*apicorev1.Node
-	var r1 error
-	if rf, ok := ret.Get(0).(func() ([]*apicorev1.Node, error)); ok {
-		return rf()
-	}
-	if rf, ok := ret.Get(0).(func() []*apicorev1.Node); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]*apicorev1.Node)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // GetPodsForDBChecker provides a mock function with given fields: namespace, opts
 func (_m *InterfaceOVN) GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([]*apicorev1.Pod, error) {
 	ret := _m.Called(namespace, opts)

@@ -24,7 +24,6 @@ import (
 
 var nodeName string
 
-const windowServiceArgName = "windows-service"
 const appName = "hybrid-overlay-node"
 
 func main() {
@@ -37,18 +36,12 @@ func main() {
 			Name:        "node",
 			Usage:       "The name of this node in the Kubernetes cluster.",
 			Destination: &nodeName,
-		},
-		&cli.BoolFlag{
-			Name:  windowServiceArgName,
-			Usage: "Enables hybrid overlay to run as a Windows service. Ignored on Linux.",
 		}})
 
 	ctx := context.Background()
 
 	c.Action = func(c *cli.Context) error {
-		if err := initForOS(c, ctx); err != nil {
-			klog.Exit(err)
-		}
+		signalHandler(ctx)
 
 		if err := runHybridOverlay(c); err != nil {
 			klog.Exit(err)

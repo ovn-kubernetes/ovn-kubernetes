@@ -86,7 +86,7 @@ func podChanged(old, new interface{}) bool {
 // This controller is designed to be used both by ovnkube-node binary and by the
 // HO binary.
 // When used by ovnkube-node binary, it prepares the OVN nodes for the HO tunnel.
-// When used by the HO binary, it prepares the windows or SDN (SDN <-> OVN
+// When used by the HO binary, it prepares hybrid overlay or SDN (SDN <-> OVN
 // migration) nodes for the HO tunnel. This is flagged by setting isHONode to true.
 
 // TODO(jtanenba) the localPodInformer no longer selects only local pods
