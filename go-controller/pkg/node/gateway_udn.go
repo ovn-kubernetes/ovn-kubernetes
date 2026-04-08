@@ -288,6 +288,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 			return fmt.Errorf("could not add network %s: %v", udng.GetNetworkName(), err)
 		}
 
+		patchWaitStart := time.Now()
 		waiter := newStartupWaiterWithTimeout(waitForPatchPortTimeout)
 		readyFunc := func() (bool, error) {
 			if err := udng.openflowManager.defaultBridge.SetNetworkOfPatchPort(udng.GetNetworkName()); err != nil {
@@ -312,6 +313,9 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		if err := waiter.Wait(); err != nil {
 			return err
 		}
+		patchWaitDuration := time.Since(patchWaitStart)
+		klog.Infof("Network setup step completed: step=node_patch_port_ready network=%s topology=%s wait_ms=%.1f",
+			udng.GetNetworkName(), udng.TopologyType(), float64(patchWaitDuration.Microseconds())/1000.0)
 	} else {
 		if err := udng.gateway.Reconcile(); err != nil {
 			return fmt.Errorf("failed to reconcile flows on bridge for network %s; error: %v", udng.GetNetworkName(), err)

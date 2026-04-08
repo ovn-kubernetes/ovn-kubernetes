@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -561,6 +562,7 @@ func allocatePodAnnotationWithRollback(
 	needsAnnotationUpdate := needsIPOrMAC || needsID
 
 	if needsAnnotationUpdate {
+		tentative.AllocatedAt = time.Now()
 		updatedPod = pod
 		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadKey)
 		podAnnotation = tentative

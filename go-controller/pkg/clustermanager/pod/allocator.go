@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	podallocator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -357,6 +359,8 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nadKey string, network *
 }
 
 func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network *nettypes.NetworkSelectionElement) error {
+	allocStart := time.Now()
+
 	var ipAllocator subnet.NamedAllocator
 	if util.DoesNetworkRequireIPAM(a.netInfo) {
 		ipAllocator = a.ipAllocator.ForSubnet(a.netInfo.GetNetworkName())
@@ -385,7 +389,7 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 		return fmt.Errorf("failed to get node %q: %w", pod.Spec.NodeName, err)
 	}
 
-	updatedPod, podAnnotation, err := a.podAnnotationAllocator.AllocatePodAnnotationWithTunnelID(
+	updatedPod, _, err := a.podAnnotationAllocator.AllocatePodAnnotationWithTunnelID(
 		ipAllocator,
 		idAllocator,
 		node,
@@ -407,14 +411,10 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 	}
 
 	if updatedPod != nil {
-		klog.V(5).Infof("Allocated IP addresses %v, mac address %s, gateways %v, routes %s and tunnel id %d for pod %s/%s on NAD key %s",
-			util.StringSlice(podAnnotation.IPs),
-			podAnnotation.MAC,
-			util.StringSlice(podAnnotation.Gateways),
-			util.StringSlice(podAnnotation.Routes),
-			podAnnotation.TunnelID,
-			pod.Namespace, pod.Name, nadKey,
-		)
+		allocDuration := time.Since(allocStart)
+		klog.Infof("Pod setup step completed: step=cm_annotated pod=%s/%s network=%s topology=%s role=%s elapsed_ms=%.1f",
+			pod.Namespace, pod.Name, a.netInfo.GetNetworkName(), a.netInfo.TopologyType(), networkRole, float64(allocDuration.Microseconds())/1000.0)
+		metrics.RecordPodAllocated(allocDuration, a.netInfo.GetNetworkName(), a.netInfo.TopologyType(), networkRole)
 	}
 
 	return err

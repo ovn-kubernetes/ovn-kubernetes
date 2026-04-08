@@ -551,7 +551,9 @@ func (ncc *networkClusterController) Start(_ context.Context) error {
 		return err
 	}
 
-	klog.Infof("Cluster manager network controller %q initialized. Took: %v", ncc.GetNetworkName(), time.Since(start))
+	initDuration := time.Since(start)
+	klog.Infof("Network setup step completed: step=cm_initialized network=%s topology=%s elapsed_ms=%.1f",
+		ncc.GetNetworkName(), ncc.TopologyType(), float64(initDuration.Microseconds())/1000.0)
 
 	if ncc.hasNodeAllocation() {
 		start = time.Now()
@@ -562,7 +564,9 @@ func (ncc *networkClusterController) Start(_ context.Context) error {
 		if err := ncc.nodeReconciler.RegisterNetworkController(ncc); err != nil {
 			return err
 		}
-		klog.Infof("Cluster manager network controller %q completed shared node registration. Took: %v", ncc.GetNetworkName(), time.Since(start))
+		nodeRegDuration := time.Since(start)
+		klog.Infof("Network setup step completed: step=cm_nodes_registered network=%s topology=%s elapsed_ms=%.1f",
+			ncc.GetNetworkName(), ncc.TopologyType(), float64(nodeRegDuration.Microseconds())/1000.0)
 	}
 
 	if ncc.hasPodAllocation() {

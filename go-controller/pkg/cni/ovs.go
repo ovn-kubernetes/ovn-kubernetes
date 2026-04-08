@@ -276,6 +276,8 @@ func waitForPodInterface(ctx context.Context, ifInfo *PodInterfaceInfo,
 	var ofPort int
 	var err error
 
+	waitStart := time.Now()
+
 	// DPUHost mode can't use OVS external IDs for port-up detection because
 	// there is no ovn-controller running in DPUHost mode to set port-up
 	checkExternalIDs := !ifInfo.IsDPUHostMode
@@ -297,6 +299,9 @@ func waitForPodInterface(ctx context.Context, ifInfo *PodInterfaceInfo,
 			if ctx.Err() == context.Canceled {
 				errDetail = "canceled while"
 			}
+			waitDuration := time.Since(waitStart)
+			klog.Warningf("Pod setup step failed: step=cni_ovn_installed_wait pod=%s/%s network=%s iface=%s wait_ms=%.1f err=%s",
+				namespace, name, ifInfo.NetName, ifaceName, float64(waitDuration.Microseconds())/1000.0, errDetail)
 			return fmt.Errorf("%s waiting for OVS port binding%s for %s %v", errDetail, detail, mac, ifAddrs)
 		default:
 			columns := []string{"external-ids:iface-id"}
@@ -313,13 +318,17 @@ func waitForPodInterface(ctx context.Context, ifInfo *PodInterfaceInfo,
 			}
 			if checkExternalIDs {
 				if err == nil && len(output) == 2 && output[1] == "true" {
-					klog.V(5).Infof("Interface %s has ovn-installed=true", ifaceName)
+					waitDuration := time.Since(waitStart)
+					klog.Infof("Pod setup step completed: step=cni_ovn_installed_wait pod=%s/%s network=%s iface=%s wait_ms=%.1f",
+						namespace, name, ifInfo.NetName, ifaceName, float64(waitDuration.Microseconds())/1000.0)
 					return nil
 				}
 				klog.V(5).Infof("Still waiting for OVS port %s to have ovn-installed=true", ifaceName)
 			} else {
 				if doPodFlowsExist(mac, ifAddrs, ofPort) {
-					// success
+					waitDuration := time.Since(waitStart)
+					klog.Infof("Pod setup step completed: step=cni_ovn_installed_wait pod=%s/%s network=%s iface=%s wait_ms=%.1f",
+						namespace, name, ifInfo.NetName, ifaceName, float64(waitDuration.Microseconds())/1000.0)
 					return nil
 				}
 			}

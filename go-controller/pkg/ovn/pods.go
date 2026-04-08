@@ -379,6 +379,12 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	if newlyCreatedPort {
 		metrics.RecordPodCreated(pod, oc.GetNetInfo())
 	}
+	if podAnnotation != nil && !podAnnotation.AllocatedAt.IsZero() {
+		sinceAlloc := time.Since(podAnnotation.AllocatedAt)
+		klog.Infof("Pod setup step completed: step=ovn_lsp_created pod=%s/%s network=%s topology=%s role=%s since_annotation_ms=%.1f libovsdb_ms=%.1f",
+			pod.Namespace, pod.Name, oc.GetNetworkName(), oc.TopologyType(), podAnnotation.Role,
+			float64(sinceAlloc.Microseconds())/1000.0, float64(libovsdbExecuteTime.Microseconds())/1000.0)
+	}
 	return nil
 }
 

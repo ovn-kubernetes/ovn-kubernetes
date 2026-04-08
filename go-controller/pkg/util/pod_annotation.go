@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
@@ -102,6 +103,11 @@ type PodAnnotation struct {
 	//     is otherwise locked for all intents and purposes.
 	// At a given time a pod can have only 1 network with role:"primary"
 	Role string
+
+	// AllocatedAt is the timestamp when the cluster manager allocated this
+	// pod's network resources (IP, MAC, tunnel ID). It is used to measure
+	// cross-component latency (e.g. time from allocation to CNI pickup).
+	AllocatedAt time.Time
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -127,8 +133,9 @@ type podAnnotation struct {
 	Gateway        string `json:"gateway_ip,omitempty"`
 	GatewayIPv6LLA string `json:"ipv6_lla_gateway_ip,omitempty"`
 
-	TunnelID int    `json:"tunnel_id,omitempty"`
-	Role     string `json:"role,omitempty"`
+	TunnelID    int    `json:"tunnel_id,omitempty"`
+	Role        string `json:"role,omitempty"`
+	AllocatedAt string `json:"allocated_at,omitempty"`
 }
 
 // Internal struct used to marshal PodRoute to the pod annotation
@@ -156,6 +163,9 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		TunnelID: podInfo.TunnelID,
 		MAC:      podInfo.MAC.String(),
 		Role:     podInfo.Role,
+	}
+	if !podInfo.AllocatedAt.IsZero() {
+		pa.AllocatedAt = podInfo.AllocatedAt.Format(time.RFC3339Nano)
 	}
 
 	if len(podInfo.IPs) == 1 {
@@ -237,6 +247,11 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 	podAnnotation := &PodAnnotation{
 		TunnelID: a.TunnelID,
 		Role:     a.Role,
+	}
+	if a.AllocatedAt != "" {
+		if t, err := time.Parse(time.RFC3339Nano, a.AllocatedAt); err == nil {
+			podAnnotation.AllocatedAt = t
+		}
 	}
 	podAnnotation.MAC, err = net.ParseMAC(a.MAC)
 	if err != nil {

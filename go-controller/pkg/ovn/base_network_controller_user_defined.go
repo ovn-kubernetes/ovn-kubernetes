@@ -311,6 +311,11 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 		return nil
 	}
 
+	// Record when this UDN controller first sees the pod for latency tracking
+	if addPort {
+		bsnc.podRecorder.AddPod(pod.UID, bsnc.GetNetInfo())
+	}
+
 	var errs []error
 	for nadKey, network := range networkMap {
 		if err = bsnc.addLogicalPortToNetworkForNAD(pod, nadKey, switchName, network, kubevirtLiveMigrationStatus); err != nil {
@@ -444,6 +449,12 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		bsnc.podRecorder.AddLSP(pod.UID, bsnc.GetNetInfo())
 		if newlyCreated {
 			metrics.RecordPodCreated(pod, bsnc.GetNetInfo())
+		}
+		if podAnnotation != nil && !podAnnotation.AllocatedAt.IsZero() {
+			sinceAlloc := time.Since(podAnnotation.AllocatedAt)
+			klog.Infof("Pod setup step completed: step=ovn_lsp_created pod=%s/%s network=%s topology=%s role=%s since_annotation_ms=%.1f libovsdb_ms=%.1f",
+				pod.Namespace, pod.Name, bsnc.GetNetworkName(), bsnc.TopologyType(), podAnnotation.Role,
+				float64(sinceAlloc.Microseconds())/1000.0, float64(libovsdbExecuteTime.Microseconds())/1000.0)
 		}
 	}
 

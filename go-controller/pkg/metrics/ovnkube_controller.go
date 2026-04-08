@@ -53,13 +53,18 @@ var metricDbTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 
 // metricPodCreationLatency is the time between a pod being scheduled and
 // completing its logical switch port configuration.
-var metricPodCreationLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
+var metricPodCreationLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemController,
 	Name:      "pod_creation_latency_seconds",
 	Help:      "The duration between a pod being scheduled and completing its logical switch port configuration",
-	Buckets:   prometheus.ExponentialBuckets(.1, 2, 15),
-})
+	Buckets:   prometheus.ExponentialBuckets(.1, 2, 15)},
+	[]string{
+		"network",
+		"topology",
+		"role",
+	},
+)
 
 // MetricResourceUpdateCount is the number of times a particular resource's UpdateFunc has been called.
 var MetricResourceUpdateCount = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -512,11 +517,14 @@ func RunTimestamp(stopChan <-chan struct{}, sbClient, nbClient libovsdbclient.Cl
 // RecordPodCreated extracts the scheduled timestamp and records how long it took
 // us to notice this and set up the pod's scheduling.
 func RecordPodCreated(pod *corev1.Pod, netInfo util.NetInfo) {
-	if netInfo.IsUserDefinedNetwork() {
-		// TBD: noop for UDN for now
-		return
-	}
 	t := time.Now()
+
+	network := netInfo.GetNetworkName()
+	topology := netInfo.TopologyType()
+	role := "primary"
+	if netInfo.IsUserDefinedNetwork() && !netInfo.IsPrimaryNetwork() {
+		role = "secondary"
+	}
 
 	// Find the scheduled timestamp
 	for _, cond := range pod.Status.Conditions {
@@ -527,7 +535,9 @@ func RecordPodCreated(pod *corev1.Pod, netInfo util.NetInfo) {
 			return
 		}
 		creationLatency := t.Sub(cond.LastTransitionTime.Time).Seconds()
-		metricPodCreationLatency.Observe(creationLatency)
+		metricPodCreationLatency.WithLabelValues(network, topology, role).Observe(creationLatency)
+		klog.Infof("Pod setup step completed: step=lsp_configured pod=%s/%s network=%s topology=%s role=%s since_scheduled_ms=%.1f",
+			pod.Namespace, pod.Name, network, topology, role, creationLatency*1000)
 		return
 	}
 }
@@ -675,6 +685,12 @@ const (
 	portBindingTable = "Port_Binding"
 )
 
+// podNetworkKey uniquely identifies a pod on a specific network
+type podNetworkKey struct {
+	uid     kapimtypes.UID
+	network string
+}
+
 type record struct {
 	timestamp time.Time
 	timestampType
@@ -686,10 +702,11 @@ type item struct {
 	old       model.Model
 	new       model.Model
 	uid       kapimtypes.UID
+	network   string
 }
 
 type PodRecorder struct {
-	records map[kapimtypes.UID]*record
+	records map[podNetworkKey]*record
 	queue   workqueue.TypedInterface[*item]
 }
 
@@ -709,7 +726,7 @@ func (pr *PodRecorder) Run(sbClient libovsdbclient.Client, stop <-chan struct{})
 	})
 
 	pr.queue = workqueue.NewTyped[*item]()
-	pr.records = make(map[kapimtypes.UID]*record)
+	pr.records = make(map[podNetworkKey]*record)
 
 	sbClient.Cache().AddEventHandler(&cache.EventHandlerFuncs{
 		AddFunc: func(table string, model model.Model) {
@@ -748,36 +765,32 @@ func (pr *PodRecorder) Run(sbClient libovsdbclient.Client, stop <-chan struct{})
 	}()
 }
 
-func (pr *PodRecorder) AddPod(podUID kapimtypes.UID) {
+func (pr *PodRecorder) AddPod(podUID kapimtypes.UID, netInfo util.NetInfo) {
 	if pr.queue != nil && !pr.queueFull() {
-		pr.queue.Add(&item{op: addPod, uid: podUID, timestamp: time.Now()})
+		pr.queue.Add(&item{op: addPod, uid: podUID, network: netInfo.GetNetworkName(), timestamp: time.Now()})
 	}
 }
 
-func (pr *PodRecorder) CleanPod(podUID kapimtypes.UID) {
+func (pr *PodRecorder) CleanPod(podUID kapimtypes.UID, netInfo util.NetInfo) {
 	if pr.queue != nil && !pr.queueFull() {
-		pr.queue.Add(&item{op: cleanPod, uid: podUID})
+		pr.queue.Add(&item{op: cleanPod, uid: podUID, network: netInfo.GetNetworkName()})
 	}
 }
 
 func (pr *PodRecorder) AddLSP(podUID kapimtypes.UID, netInfo util.NetInfo) {
-	if netInfo.IsUserDefinedNetwork() {
-		// TBD: noop for UDN for now
-		return
-	}
 	if pr.queue != nil && !pr.queueFull() {
-		pr.queue.Add(&item{op: addLogicalSwitchPort, uid: podUID, timestamp: time.Now()})
+		pr.queue.Add(&item{op: addLogicalSwitchPort, uid: podUID, network: netInfo.GetNetworkName(), timestamp: time.Now()})
 	}
 }
 
-func (pr *PodRecorder) addLSP(podUID kapimtypes.UID, t time.Time) {
+func (pr *PodRecorder) addLSP(key podNetworkKey, t time.Time) {
 	var r *record
-	if r = pr.getRecord(podUID); r == nil {
-		klog.V(5).Infof("Add Logical Switch Port event expected pod with UID %q in cache", podUID)
+	if r = pr.getRecord(key); r == nil {
+		klog.V(5).Infof("Add Logical Switch Port event expected pod with UID %q network %q in cache", key.uid, key.network)
 		return
 	}
 	if r.timestampType != firstSeen {
-		klog.V(5).Infof("Unexpected last event type (%d) in cache for pod with UID %q", r.timestampType, podUID)
+		klog.V(5).Infof("Unexpected last event type (%d) in cache for pod with UID %q network %q", r.timestampType, key.uid, key.network)
 		return
 	}
 	metricFirstSeenLSPLatency.Observe(t.Sub(r.timestamp).Seconds())
@@ -788,16 +801,16 @@ func (pr *PodRecorder) addLSP(podUID kapimtypes.UID, t time.Time) {
 func (pr *PodRecorder) addPortBinding(m model.Model, t time.Time) {
 	var r *record
 	row := m.(*sbdb.PortBinding)
-	podUID := getPodUIDFromPortBinding(row)
-	if podUID == "" {
+	key := getPodNetworkKeyFromPortBinding(row)
+	if key.uid == "" {
 		return
 	}
-	if r = pr.getRecord(podUID); r == nil {
-		klog.V(5).Infof("Add port binding event expected pod with UID %q in cache", podUID)
+	if r = pr.getRecord(key); r == nil {
+		klog.V(5).Infof("Add port binding event expected pod with UID %q network %q in cache", key.uid, key.network)
 		return
 	}
 	if r.timestampType != logicalSwitchPort {
-		klog.V(5).Infof("Unexpected last event entry (%d) in cache for pod with UID %q", r.timestampType, podUID)
+		klog.V(5).Infof("Unexpected last event entry (%d) in cache for pod with UID %q network %q", r.timestampType, key.uid, key.network)
 		return
 	}
 	metricLSPPortBindingLatency.Observe(t.Sub(r.timestamp).Seconds())
@@ -809,12 +822,12 @@ func (pr *PodRecorder) updatePortBinding(old, new model.Model, t time.Time) {
 	var r *record
 	oldRow := old.(*sbdb.PortBinding)
 	newRow := new.(*sbdb.PortBinding)
-	podUID := getPodUIDFromPortBinding(newRow)
-	if podUID == "" {
+	key := getPodNetworkKeyFromPortBinding(newRow)
+	if key.uid == "" {
 		return
 	}
-	if r = pr.getRecord(podUID); r == nil {
-		klog.V(5).Infof("Port binding update expected pod with UID %q in cache", podUID)
+	if r = pr.getRecord(key); r == nil {
+		klog.V(5).Infof("Port binding update expected pod with UID %q network %q in cache", key.uid, key.network)
 		return
 	}
 
@@ -822,12 +835,11 @@ func (pr *PodRecorder) updatePortBinding(old, new model.Model, t time.Time) {
 		metricPortBindingChassisLatency.Observe(t.Sub(r.timestamp).Seconds())
 		r.timestamp = t
 		r.timestampType = portBindingChassis
-
 	}
 
 	if oldRow.Up != nil && !*oldRow.Up && newRow.Up != nil && *newRow.Up && r.timestampType == portBindingChassis {
 		metricPortBindingUpLatency.Observe(t.Sub(r.timestamp).Seconds())
-		delete(pr.records, podUID)
+		delete(pr.records, key)
 	}
 }
 
@@ -851,39 +863,44 @@ func (pr *PodRecorder) processNextItem() bool {
 }
 
 func (pr *PodRecorder) processItem(i *item) {
+	key := podNetworkKey{uid: i.uid, network: i.network}
 	switch i.op {
 	case addPortBinding:
 		pr.addPortBinding(i.old, i.timestamp)
 	case updatePortBinding:
 		pr.updatePortBinding(i.old, i.new, i.timestamp)
 	case addPod:
-		pr.records[i.uid] = &record{timestamp: i.timestamp, timestampType: firstSeen}
+		pr.records[key] = &record{timestamp: i.timestamp, timestampType: firstSeen}
 	case cleanPod:
-		delete(pr.records, i.uid)
+		delete(pr.records, key)
 	case addLogicalSwitchPort:
-		pr.addLSP(i.uid, i.timestamp)
+		pr.addLSP(key, i.timestamp)
 	}
 }
 
 // getRecord returns record from map with func argument as the key
-func (pr *PodRecorder) getRecord(podUID kapimtypes.UID) *record {
-	r, ok := pr.records[podUID]
+func (pr *PodRecorder) getRecord(key podNetworkKey) *record {
+	r, ok := pr.records[key]
 	if !ok {
-		klog.V(5).Infof("Cache entry expected pod with UID %q but failed to find it", podUID)
+		klog.V(5).Infof("Cache entry expected pod with UID %q network %q but failed to find it", key.uid, key.network)
 		return nil
 	}
 	return r
 }
 
-func getPodUIDFromPortBinding(row *sbdb.PortBinding) kapimtypes.UID {
+func getPodNetworkKeyFromPortBinding(row *sbdb.PortBinding) podNetworkKey {
 	if isPod, ok := row.ExternalIDs["pod"]; !ok || isPod != "true" {
-		return ""
+		return podNetworkKey{}
 	}
 	podUID, ok := row.Options["iface-id-ver"]
 	if !ok {
-		return ""
+		return podNetworkKey{}
 	}
-	return kapimtypes.UID(podUID)
+	network := row.ExternalIDs[types.NetworkExternalID]
+	if network == "" {
+		network = types.DefaultNetworkName
+	}
+	return podNetworkKey{uid: kapimtypes.UID(podUID), network: network}
 }
 
 // setNbE2eTimestamp return true if setting timestamp to NB global options is successful

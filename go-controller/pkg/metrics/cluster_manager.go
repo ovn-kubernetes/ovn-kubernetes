@@ -4,6 +4,7 @@ import (
 	"errors"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -93,6 +94,19 @@ var metricEgressIPRebalanceCount = prometheus.NewCounter(prometheus.CounterOpts{
 
 /** EgressIP metrics recorded from cluster-manager ends**/
 
+var metricPodAllocationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "pod_allocation_duration_seconds",
+	Help:      "The duration for the cluster manager to allocate IP/MAC/tunnel-ID and write the pod annotation",
+	Buckets:   prometheus.ExponentialBuckets(.001, 2, 15)},
+	[]string{
+		"network",
+		"topology",
+		"role",
+	},
+)
+
 var metricUDNCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
@@ -167,6 +181,7 @@ func RegisterClusterManagerFunctional() {
 			prometheus.MustRegister(metricEgressIPRebalanceCount)
 			prometheus.MustRegister(metricEgressIPCount)
 		}
+		prometheus.MustRegister(metricPodAllocationDuration)
 		prometheus.MustRegister(metricUDNCount)
 		prometheus.MustRegister(metricCUDNCount)
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
@@ -238,4 +253,9 @@ func SetDynamicUDNNodeCount(networkName string, nodeCount float64) {
 // DeleteDynamicUDNNodeCount when CUDN/UDN is deleted.
 func DeleteDynamicUDNNodeCount(networkName string) {
 	metricUDNNodesRendered.DeleteLabelValues(networkName)
+}
+
+// RecordPodAllocated records the duration to allocate pod network resources in the cluster manager.
+func RecordPodAllocated(duration time.Duration, network, topology, role string) {
+	metricPodAllocationDuration.WithLabelValues(network, topology, role).Observe(duration.Seconds())
 }
