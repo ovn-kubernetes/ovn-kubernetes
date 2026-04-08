@@ -121,8 +121,8 @@ github.com/gabriel-vasile/mimetype/internal/scan
 # github.com/gaissmai/cidrtree v0.1.4
 ## explicit; go 1.18
 github.com/gaissmai/cidrtree
-# github.com/go-jose/go-jose/v4 v4.0.5
-## explicit; go 1.21
+# github.com/go-jose/go-jose/v4 v4.1.4
+## explicit; go 1.24.0
 github.com/go-jose/go-jose/v4
 github.com/go-jose/go-jose/v4/cipher
 github.com/go-jose/go-jose/v4/json
@@ -550,7 +550,6 @@ go.yaml.in/yaml/v3
 golang.org/x/crypto/cryptobyte
 golang.org/x/crypto/cryptobyte/asn1
 golang.org/x/crypto/ed25519
-golang.org/x/crypto/pbkdf2
 golang.org/x/crypto/sha3
 # golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 ## explicit; go 1.20
