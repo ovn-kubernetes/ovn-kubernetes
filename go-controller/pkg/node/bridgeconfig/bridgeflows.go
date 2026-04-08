@@ -584,6 +584,33 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeMacAddress, actions))
 	}
 
+	// table 0, ARP/NDP requests targeting the node's physical subnet should only be sent to the
+	// default network patch port and LOCAL (host). Without this, the NORMAL action floods
+	// these to all ports including every UDN patch port, causing each UDN's GR to process them
+	// and leading to 4096+ resubmit actions on br-int.
+	//if util.IsNetworkSegmentationSupportEnabled() {
+	//	defaultNetConfig := b.netConfig[types.DefaultNetworkName]
+	//	if defaultNetConfig != nil && defaultNetConfig.OfPortPatch != "" {
+	//		for _, bridgeIP := range bridgeIPs {
+	//			if bridgeIP.IP.IsUnspecified() {
+	//				continue
+	//			}
+	//			if !utilnet.IsIPv6(bridgeIP.IP) {
+	//				mask := net.IP(bridgeIP.Mask).String()
+	//				dftFlows = append(dftFlows,
+	//					fmt.Sprintf("cookie=%s, priority=200, table=0, %s arp, arp_op=1, arp_tpa=%s/%s, actions=output:%s,output:LOCAL",
+	//						nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeIP.IP.Mask(bridgeIP.Mask).String(), mask, defaultNetConfig.OfPortPatch))
+	//			} else {
+	//				// IPv6 NDP neighbor solicitation (ICMPv6 type 135)
+	//				ones, _ := bridgeIP.Mask.Size()
+	//				dftFlows = append(dftFlows,
+	//					fmt.Sprintf("cookie=%s, priority=200, table=0, %s icmp6, icmp_type=135, nd_target=%s/%d, actions=output:%s,output:LOCAL",
+	//						nodetypes.DefaultOpenFlowCookie, matchVLAN, bridgeIP.IP.Mask(bridgeIP.Mask).String(), ones, defaultNetConfig.OfPortPatch))
+	//			}
+	//		}
+	//	}
+	//}
+
 	// table 0, check packets coming from OVN have the correct mac address. Low priority flows that are a catch all
 	// for non-IP packets that would normally be forwarded with NORMAL action (table 0, priority 0 flow).
 	for _, netConfig := range b.patchedNetConfigs() {

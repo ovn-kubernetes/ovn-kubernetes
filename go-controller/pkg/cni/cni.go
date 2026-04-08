@@ -224,15 +224,10 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 			namespace, podName, pr.netName, float64(annotWaitDuration.Microseconds())/1000.0, err)
 		return nil, fmt.Errorf("failed to get pod annotation: %v", err)
 	}
-	// Log cross-component latency: how long CNI waited for cluster-manager annotation
+	// Log how long CNI waited for the annotation to appear
 	if podNADAnnotation != nil {
-		sinceAllocMsg := ""
-		if !podNADAnnotation.AllocatedAt.IsZero() {
-			sinceAlloc := time.Since(podNADAnnotation.AllocatedAt)
-			sinceAllocMsg = fmt.Sprintf(" since_annotation_ms=%.1f", float64(sinceAlloc.Microseconds())/1000.0)
-		}
-		klog.Infof("Pod setup step completed: step=cni_annotation_ready pod=%s/%s network=%s annotation_wait_ms=%.1f%s",
-			namespace, podName, pr.netName, float64(annotWaitDuration.Microseconds())/1000.0, sinceAllocMsg)
+		klog.Infof("Pod setup step completed: step=cni_annotation_ready pod=%s/%s network=%s annotation_wait_ms=%.1f",
+			namespace, podName, pr.netName, float64(annotWaitDuration.Microseconds())/1000.0)
 	}
 
 	var primaryUDNPodInfo *PodInterfaceInfo
@@ -243,14 +238,6 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 			return nil, err
 		}
 		klog.V(4).Infof("Pod %s/%s primaryUDN podRequest %v podInfo %v", namespace, podName, primaryUDNPodRequest, primaryUDNPodInfo)
-		// Log primary UDN annotation cross-component latency
-		primaryAnnotation := primaryUDN.Annotation()
-		if primaryAnnotation != nil && !primaryAnnotation.AllocatedAt.IsZero() {
-			sinceAlloc := time.Since(primaryAnnotation.AllocatedAt)
-			klog.Infof("Pod setup step completed: step=cni_annotation_ready pod=%s/%s network=%s annotation_wait_ms=%.1f since_annotation_ms=%.1f",
-				namespace, podName, primaryUDN.NetworkName(),
-				float64(annotWaitDuration.Microseconds())/1000.0, float64(sinceAlloc.Microseconds())/1000.0)
-		}
 	}
 
 	if err = pr.checkOrUpdatePodUID(pod); err != nil {

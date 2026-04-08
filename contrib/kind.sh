@@ -86,6 +86,8 @@ echo "                                              DEFAULT: shared."
 echo "-ov  | --ovn-image            	              Use the specified docker image instead of building locally. DEFAULT: local build."
 echo "-ovr  | --ovn-repo                            Specify the repository to build OVN from"
 echo "-ovg  | --ovn-gitref                          Specify the branch, tag or commit id to build OVN from, it can be a pattern like 'branch-*' it will order results and use the first one"
+echo "-osr  | --ovs-repo                            Specify the repository to build OVS from"
+echo "-osg  | --ovs-gitref                          Specify the branch, tag or commit id to build OVS from"
 echo "-ml  | --master-loglevel                      Log level for ovnkube (master), DEFAULT: 5."
 echo "-nl  | --node-loglevel                        Log level for ovnkube (node), DEFAULT: 5"
 echo "-dbl | --dbchecker-loglevel                   Log level for ovn-dbchecker (ovnkube-db), DEFAULT: 5."
@@ -245,6 +247,12 @@ parse_args() {
                                                 ;;
             -ovg | --ovn-gitref)                shift
                                                 OVN_GITREF=$1
+                                                ;;
+            -osr | --ovs-repo )                 shift
+                                                OVS_REPO=$1
+                                                ;;
+            -osg | --ovs-gitref)                shift
+                                                OVS_GITREF=$1
                                                 ;;
             -ml  | --master-loglevel )          shift
                                                 if ! [[ "$1" =~ ^[0-9]$ ]]; then

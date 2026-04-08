@@ -6,6 +6,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ipgenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -75,14 +76,14 @@ func GetUDNGatewayMasqueradeIPs(networkID int) ([]*net.IPNet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get v4 masquerade IP, networkID %d: %v", networkID, err)
 		}
-		masqIPs = append(masqIPs, v4MasqIPs.GatewayRouter)
+		masqIPs = append(masqIPs, &net.IPNet{IP: v4MasqIPs.GatewayRouter.IP, Mask: util.GetIPFullMask(v4MasqIPs.GatewayRouter.IP)})
 	}
 	if config.IPv6Mode {
 		v6MasqIPs, err := AllocateV6MasqueradeIPs(networkID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get v6 masquerade IP, networkID %d: %v", networkID, err)
 		}
-		masqIPs = append(masqIPs, v6MasqIPs.GatewayRouter)
+		masqIPs = append(masqIPs, &net.IPNet{IP: v6MasqIPs.GatewayRouter.IP, Mask: util.GetIPFullMask(v6MasqIPs.GatewayRouter.IP)})
 	}
 	return masqIPs, nil
 }

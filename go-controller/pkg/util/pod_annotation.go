@@ -105,8 +105,8 @@ type PodAnnotation struct {
 	Role string
 
 	// AllocatedAt is the timestamp when the cluster manager allocated this
-	// pod's network resources (IP, MAC, tunnel ID). It is used to measure
-	// cross-component latency (e.g. time from allocation to CNI pickup).
+	// pod's network resources (IP, MAC, tunnel ID). Used internally to
+	// measure cross-component latency; NOT serialized to the annotation.
 	AllocatedAt time.Time
 }
 
@@ -133,9 +133,8 @@ type podAnnotation struct {
 	Gateway        string `json:"gateway_ip,omitempty"`
 	GatewayIPv6LLA string `json:"ipv6_lla_gateway_ip,omitempty"`
 
-	TunnelID    int    `json:"tunnel_id,omitempty"`
-	Role        string `json:"role,omitempty"`
-	AllocatedAt string `json:"allocated_at,omitempty"`
+	TunnelID int    `json:"tunnel_id,omitempty"`
+	Role     string `json:"role,omitempty"`
 }
 
 // Internal struct used to marshal PodRoute to the pod annotation
@@ -164,10 +163,6 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		MAC:      podInfo.MAC.String(),
 		Role:     podInfo.Role,
 	}
-	if !podInfo.AllocatedAt.IsZero() {
-		pa.AllocatedAt = podInfo.AllocatedAt.Format(time.RFC3339Nano)
-	}
-
 	if len(podInfo.IPs) == 1 {
 		pa.IP = podInfo.IPs[0].String()
 		if len(podInfo.Gateways) == 1 {
@@ -247,11 +242,6 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 	podAnnotation := &PodAnnotation{
 		TunnelID: a.TunnelID,
 		Role:     a.Role,
-	}
-	if a.AllocatedAt != "" {
-		if t, err := time.Parse(time.RFC3339Nano, a.AllocatedAt); err == nil {
-			podAnnotation.AllocatedAt = t
-		}
 	}
 	podAnnotation.MAC, err = net.ParseMAC(a.MAC)
 	if err != nil {

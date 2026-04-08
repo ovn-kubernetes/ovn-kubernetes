@@ -500,6 +500,7 @@ func (c *Controller) syncService(key string) error {
 		//
 		// Note: this may fail if a node was deleted between listing nodes and applying.
 		// If so, this will fail and we will resync.
+		ensureStart := time.Now()
 		if err := EnsureLBs(c.nbClient, service, existingLBs, lbs, c.netInfo); err != nil {
 			return fmt.Errorf("failed to ensure service %s load balancers for network=%s: %w", key, c.netInfo.GetNetworkName(), err)
 		}
@@ -507,6 +508,18 @@ func (c *Controller) syncService(key string) error {
 		c.alreadyAppliedRWLock.Lock()
 		c.alreadyApplied[key] = lbs
 		c.alreadyAppliedRWLock.Unlock()
+
+		// Count backends across all LB rules to distinguish empty vs populated LBs.
+		totalBackends := 0
+		for _, lb := range lbs {
+			for _, rule := range lb.Rules {
+				totalBackends += len(rule.Targets)
+			}
+		}
+		klog.Infof("Service setup step completed: step=lb_synced service=%s/%s network=%s backends=%d num_lbs=%d elapsed_ms=%.1f since_start_ms=%.1f",
+			namespace, name, c.netInfo.GetNetworkName(), totalBackends, len(lbs),
+			float64(time.Since(ensureStart).Microseconds())/1000.0,
+			float64(time.Since(startTime).Microseconds())/1000.0)
 	}
 
 	c.repair.serviceSynced(key)

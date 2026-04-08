@@ -305,6 +305,7 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 
 	if gw.netInfo.IsUserDefinedNetwork() {
 		maps.Copy(logicalRouterExternalIDs, util.GenerateExternalIDsForSwitchOrRouter(gw.netInfo))
+		logicalRouterOptions["disable_garp_rarp"] = "true"
 	}
 
 	gwRouter := nbdb.LogicalRouter{

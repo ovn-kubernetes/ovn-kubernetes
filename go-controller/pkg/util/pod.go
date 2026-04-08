@@ -1,7 +1,9 @@
 package util
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -12,6 +14,25 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 )
+
+// annotationNADKeys returns the NAD keys present in the pod-networks annotation
+// for diagnostic logging.
+func annotationNADKeys(annotations map[string]string) []string {
+	raw, ok := annotations[OvnPodAnnotationName]
+	if !ok {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return []string{"<parse-error>"}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // AllocateToPodWithRollbackFunc is a function used to allocate a resource to a
 // pod that depends on the current state of the pod, and possibly updating it.
@@ -37,7 +58,9 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 	defer func() {
 		klog.V(5).Infof("[%s/%s] pod update took %v", pod.Namespace, pod.Name, time.Since(start))
 	}()
+	attempt := 0
 	err := retry.OnError(OvnConflictBackoff, IsPodAnnotationUpdateRetryable, func() error {
+		attempt++
 		oldPod, err := podLister.Pods(pod.Namespace).Get(pod.Name)
 		if err != nil {
 			return err
@@ -51,8 +74,14 @@ func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interfa
 		}
 
 		if pod == nil {
+			klog.V(5).Infof("[%s/%s] pod update attempt %d: allocate returned nil (no update needed), rv=%s",
+				oldPod.Namespace, oldPod.Name, attempt, oldPod.ResourceVersion)
 			return nil
 		}
+
+		klog.Infof("[%s/%s] pod update attempt %d: patching annotation, lister rv=%s, annot keys=%v",
+			oldPod.Namespace, oldPod.Name, attempt, oldPod.ResourceVersion,
+			annotationNADKeys(oldPod.Annotations))
 
 		err = kube.PatchPodStatusAnnotations(oldPod, pod)
 		if err != nil && rollback != nil {

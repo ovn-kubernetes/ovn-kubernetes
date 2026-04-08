@@ -27,6 +27,16 @@ else
 OVN_FROM := source
 OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V  |tail -1 | awk '{ print $$1 }')
 endif
+
+OVS_REPO ?=
+OVS_GITREF ?=
+OVS_BUILD_ARGS :=
+ifneq ($(OVS_REPO),)
+OVS_BUILD_ARGS += --build-arg OVS_REPO=${OVS_REPO}
+endif
+ifneq ($(OVS_GITREF),)
+OVS_BUILD_ARGS += --build-arg OVS_GITREF=${OVS_GITREF}
+endif
 GO_VERSION ?= 1.25
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 
@@ -58,6 +68,7 @@ fedora-image:
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
 		--build-arg FEDORA_BASE_DIGEST=$${FEDORA_BASE_DIGEST} \
+		${OVS_BUILD_ARGS} \
 		--platform=linux/${ARCH} \
 		-t ${IMAGE} \
 		-f Dockerfile.fedora ./../..

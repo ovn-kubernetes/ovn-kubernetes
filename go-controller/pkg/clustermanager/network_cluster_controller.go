@@ -680,8 +680,15 @@ type networkClusterControllerEventHandler struct {
 	syncFunc func([]interface{}) error
 }
 
-func (h *networkClusterControllerEventHandler) FilterOutResource(_ interface{}) bool {
-	return false
+func (h *networkClusterControllerEventHandler) FilterOutResource(obj interface{}) bool {
+	if h.objType != factory.PodType {
+		return false
+	}
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return false
+	}
+	return !util.CanServeNamespace(h.ncc.GetNetInfo(), pod.Namespace)
 }
 
 // networkClusterControllerEventHandler functions
@@ -695,7 +702,16 @@ func (h *networkClusterControllerEventHandler) AddResource(obj interface{}, _ bo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
+		start := time.Now()
+		sinceCreation := time.Since(pod.CreationTimestamp.Time)
 		err := h.ncc.podAllocator.Reconcile(nil, pod)
+		reconcileTime := time.Since(start)
+		if sinceCreation > 10*time.Second || reconcileTime > time.Second {
+			klog.Infof("Slow pod handler: event=add pod=%s/%s network=%s since_creation_ms=%.1f reconcile_ms=%.1f",
+				pod.Namespace, pod.Name, h.ncc.GetNetworkName(),
+				float64(sinceCreation.Microseconds())/1000.0,
+				float64(reconcileTime.Microseconds())/1000.0)
+		}
 		if err != nil {
 			return err
 		}
@@ -721,7 +737,16 @@ func (h *networkClusterControllerEventHandler) UpdateResource(oldObj, newObj int
 		if !ok {
 			return fmt.Errorf("could not cast %T new object to *corev1.Pod", newObj)
 		}
+		start := time.Now()
+		sinceCreation := time.Since(new.CreationTimestamp.Time)
 		err := h.ncc.podAllocator.Reconcile(old, new)
+		reconcileTime := time.Since(start)
+		if sinceCreation > 10*time.Second || reconcileTime > time.Second {
+			klog.Infof("Slow pod handler: event=update pod=%s/%s network=%s since_creation_ms=%.1f reconcile_ms=%.1f",
+				new.Namespace, new.Name, h.ncc.GetNetworkName(),
+				float64(sinceCreation.Microseconds())/1000.0,
+				float64(reconcileTime.Microseconds())/1000.0)
+		}
 		if err != nil {
 			return err
 		}
@@ -792,8 +817,19 @@ func (h *networkClusterControllerEventHandler) SyncFunc(objs []interface{}) erro
 	return syncFunc(objs)
 }
 
-func (h *networkClusterControllerEventHandler) AreResourcesEqual(_, _ interface{}) (bool, error) {
-	return false, nil
+func (h *networkClusterControllerEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
+	if h.objType != factory.PodType {
+		return false, nil
+	}
+	pod1, ok := obj1.(*corev1.Pod)
+	if !ok {
+		return false, fmt.Errorf("could not cast obj1 of type %T to *corev1.Pod", obj1)
+	}
+	pod2, ok := obj2.(*corev1.Pod)
+	if !ok {
+		return false, fmt.Errorf("could not cast obj2 of type %T to *corev1.Pod", obj2)
+	}
+	return pod1.Annotations[util.OvnPodAnnotationName] == pod2.Annotations[util.OvnPodAnnotationName], nil
 }
 
 // GetResourceFromInformerCache returns the latest state of the object from the informers cache

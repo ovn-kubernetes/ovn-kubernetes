@@ -330,7 +330,7 @@ func newKubernetesRestConfig(conf *config.KubernetesConfig) (*rest.Config, error
 		return nil, err
 	}
 	kconfig.QPS = 50
-	kconfig.Burst = 50
+	kconfig.Burst = 100
 	// if all the clients are behind HA-Proxy, then on the K8s API server side we only
 	// see the HAProxy's IP and we can't tell the actual client making the request.
 	kconfig.UserAgent = fmt.Sprintf("%s/%s@%s (%s/%s) kubernetes/%s",

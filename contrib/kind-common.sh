@@ -74,7 +74,7 @@ set_common_default_params() {
   NET_CIDR_IPV6=${NET_CIDR_IPV6:-fd00:10:244::/48}
   MULTI_POD_SUBNET=${MULTI_POD_SUBNET:-false}
   if [ "$MULTI_POD_SUBNET" == true ]; then
-    NET_CIDR_IPV4="10.243.0.0/23/24,10.244.0.0/16"
+    NET_CIDR_IPV4="10.243.0.0/16/22,10.244.0.0/16/22"
     NET_CIDR_IPV6="fd00:10:243::/63/64,fd00:10:244::/48"
   fi
   NET_SECOND_CIDR_IPV4=${NET_SECOND_CIDR_IPV4:-172.19.0.0/16}
@@ -237,7 +237,7 @@ build_ovn_image() {
     set_ovn_image
 
     # Build image
-    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" fedora-image
+    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OVS_REPO="${OVS_REPO:-}" OVS_GITREF="${OVS_GITREF:-}" OCI_BIN="${OCI_BIN}" fedora-image
 
     # store in local registry
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
@@ -1643,6 +1643,7 @@ create_kind_cluster() {
   ovn_num_worker=${KIND_NUM_WORKER} \
   kind_num_infra=${KIND_NUM_INFRA} \
   cluster_log_level=${KIND_CLUSTER_LOGLEVEL:-4} \
+  max_pods=${KIND_MAX_PODS:-110} \
   jinjanate "${KIND_CONFIG}" -o "${KIND_CONFIG_LCL}"
 
   # Create KIND cluster. For additional debug, add '--verbosity <int>': 0 None .. 3 Debug

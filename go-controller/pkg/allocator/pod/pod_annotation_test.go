@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"testing"
-	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/google/go-cmp/cmp"
@@ -47,6 +46,10 @@ func (a *ipAllocatorStub) ReleaseIPs(ips []*net.IPNet) error {
 	return nil
 }
 
+func (a *ipAllocatorStub) HasIPs([]*net.IPNet) bool {
+	return false
+}
+
 func (a *ipAllocatorStub) IsErrAllocated(err error) bool {
 	return errors.Is(err, ipam.ErrAllocated)
 }
@@ -68,6 +71,10 @@ func (a *idAllocatorStub) ReserveID(int) error {
 func (a *idAllocatorStub) ReleaseID() int {
 	a.releasedID = true
 	return a.nextID
+}
+
+func (a *idAllocatorStub) IsAllocated() bool {
+	return false
 }
 
 type persistentIPsStub struct {
@@ -1306,10 +1313,6 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				g.Expect(podAnnotation.IPs).To(gomega.BeNil(), "Did not expect IPs")
 				g.Expect(podAnnotation.MAC[0]&2).To(gomega.BeEquivalentTo(2), "Expected local MAC")
 				return
-			}
-			// AllocatedAt is set dynamically; zero it for comparison
-			if podAnnotation != nil {
-				podAnnotation.AllocatedAt = time.Time{}
 			}
 			g.Expect(podAnnotation).To(gomega.Equal(tt.wantPodAnnotation), "diff: %s", cmp.Diff(tt.wantPodAnnotation, podAnnotation))
 

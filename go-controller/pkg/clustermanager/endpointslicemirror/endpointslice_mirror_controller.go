@@ -330,12 +330,15 @@ func (c *Controller) syncDefaultEndpointSlice(ctx context.Context, key string) e
 		return fmt.Errorf("primary NAD %s does not match network %s", nadKey, namespacePrimaryNetwork.GetNetworkName())
 	}
 
+	mirrorStart := time.Now()
 	currentMirror, err := c.mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointSlice, namespacePrimaryNetwork, nadKey)
 	if err != nil {
 		return err
 	}
 
 	if !reflect.DeepEqual(currentMirror, mirroredEndpointSlice) {
+		svcName := defaultEndpointSlice.Labels[v1.LabelServiceName]
+		networkName := namespacePrimaryNetwork.GetNetworkName()
 		if currentMirror.Name == "" {
 			if len(currentMirror.Endpoints) == 0 {
 				klog.V(5).Infof("Skipping creation of empty mirrored EndpointSlice for: %s", cache.MetaObjectToName(defaultEndpointSlice))
@@ -343,10 +346,18 @@ func (c *Controller) syncDefaultEndpointSlice(ctx context.Context, key string) e
 			}
 			klog.Infof("Creating the mirrored EndpointSlice for: %s", cache.MetaObjectToName(defaultEndpointSlice))
 			_, err := c.kubeClient.DiscoveryV1().EndpointSlices(namespace).Create(ctx, currentMirror, metav1.CreateOptions{})
+			if err == nil {
+				klog.Infof("Service setup step completed: step=ep_mirror_created service=%s/%s network=%s endpoints=%d elapsed_ms=%.1f",
+					namespace, svcName, networkName, len(currentMirror.Endpoints), float64(time.Since(mirrorStart).Microseconds())/1000.0)
+			}
 			return err
 		}
 		klog.Infof("Updating the mirrored EndpointSlice: %s for: %s", cache.MetaObjectToName(currentMirror), cache.MetaObjectToName(defaultEndpointSlice))
 		_, err := c.kubeClient.DiscoveryV1().EndpointSlices(namespace).Update(ctx, currentMirror, metav1.UpdateOptions{})
+		if err == nil {
+			klog.Infof("Service setup step completed: step=ep_mirror_updated service=%s/%s network=%s endpoints=%d elapsed_ms=%.1f",
+				namespace, svcName, networkName, len(currentMirror.Endpoints), float64(time.Since(mirrorStart).Microseconds())/1000.0)
+		}
 		return err
 	}
 	return nil

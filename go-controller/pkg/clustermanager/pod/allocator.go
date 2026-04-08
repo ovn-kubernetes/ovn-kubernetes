@@ -384,6 +384,20 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nadKey string, network 
 		return nil
 	}
 
+	// If the tunnel ID is already allocated for this pod+network but the
+	// annotation doesn't reflect it yet, the lister is stale (informer lag).
+	// The annotation was already written successfully — skip re-processing
+	// to avoid wasting API calls. The informer will eventually deliver
+	// the updated pod and needsAnnotationUpdate will correctly bail out.
+	if idAllocator != nil && idAllocator.IsAllocated() {
+		existing, _ := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
+		if existing == nil || existing.TunnelID == 0 {
+			klog.V(4).Infof("Pod %s/%s on %s: tunnel ID already allocated but annotation not visible yet, skipping",
+				pod.Namespace, pod.Name, nadKey)
+			return nil
+		}
+	}
+
 	node, err := a.nodeLister.Get(pod.Spec.NodeName)
 	if err != nil {
 		return fmt.Errorf("failed to get node %q: %w", pod.Spec.NodeName, err)
