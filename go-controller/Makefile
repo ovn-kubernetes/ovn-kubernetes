@@ -88,7 +88,7 @@ clean:
 	rm -f ./pkg/sbdb/ovn-sb.ovsschema
 	rm -f ./pkg/vswitchd/vswitch.ovsschema
 
-.PHONY: lint gofmt verify-go-mod-vendor
+.PHONY: lint gofmt verify-go-mod third-party-licenses verify-third-party-licenses
 
 lint:
 ifeq ($(CONTAINER_RUNNABLE), 0)
@@ -115,12 +115,18 @@ else
 	@./hack/verify-gofmt.sh
 endif
 
-verify-go-mod-vendor:
+verify-go-mod:
 ifeq ($(CONTAINER_RUNNABLE), 0)
-	@GOPATH=${GOPATH} ./hack/verify-go-mod-vendor.sh
+	@GOPATH=${GOPATH} ./hack/verify-go-mod.sh
 else
-	@./hack/verify-go-mod-vendor.sh
+	@./hack/verify-go-mod.sh
 endif
+
+third-party-licenses:
+	@GOPATH=${GOPATH} ./hack/update-third-party-licenses.sh || { echo "third-party license generation failed!"; exit 1; }
+
+verify-third-party-licenses:
+	@GOPATH=${GOPATH} ./hack/verify-third-party-licenses.sh || { echo "third-party license verification failed!"; exit 1; }
 
 pkg/nbdb/ovn-nb.ovsschema:
 	curl -sSL https://raw.githubusercontent.com/ovn-org/ovn/$(OVN_SCHEMA_VERSION)/ovn-nb.ovsschema -o $@

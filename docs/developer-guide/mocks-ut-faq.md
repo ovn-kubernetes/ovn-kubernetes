@@ -1,17 +1,17 @@
 ### How are the mock files for unit tests organized?
 - The name of the mock file generated will be the same as the name of the `interface` definition.
 
-- Mock files for `interfaces` defined in the `go-controller/vendor` directories are located in the 
-`go-controller/pkg/testing/mocks` directory. The directory structure in the `go-controller/pkg/testing/mocks/` closely 
-mimic the directory structure of  `go-controller/vendor/`.
+- Mock files for `interfaces` defined in external dependency packages are located in the
+`go-controller/pkg/testing/mocks` directory. The directory structure in
+`go-controller/pkg/testing/mocks/` mirrors the dependency import path.
 
-	e.g; a) The `Cmd` interface defined in the `go-controller/vendor/k8s.io/utils/exec.go` file has its mock generated 
+	e.g; a) The `Cmd` interface defined in the `k8s.io/utils/exec` package has its mock generated
 	in `go-controller/pkg/testing/mocks/k8s.io/utils/exec/Cmd.go` file
 	
-	e.g; b) The `Link` interface defined in the `go-controller/vendor/github.com/vishvananda/netlink/link.go` file has 
-	its mock generated in `go-controller/pkg/testing/mocks/vishvananda/netlink/Link.go` file
+	e.g; b) The `Link` interface defined in the `github.com/vishvananda/netlink` package has
+	its mock generated in `go-controller/pkg/testing/mocks/github.com/vishvananda/netlink/Link.go` file
 	
-- Mock files for `interfaces` defined in the non vendor directories of the project are located in the `mocks` directory 
+- Mock files for `interfaces` defined in packages in this repository are located in the `mocks` directory
 of the same package as where the interface is defined.
 
 	e.g; a) The `ExecRunner` interface defined in `go-controller/pkg/util/ovs.go` file has the its mock generated in 
@@ -37,10 +37,8 @@ of the same package as where the interface is defined.
     
         `mockery --name SriovnetLibOps --dir pkg/cni/ --output pkg/cni/mocks`
     
-    - Mock for all interfaces defined in the vendor folder `go-controller/vendor/k8s.io/utils/exec` when executing the
-    `mockery` command from dir `go-controller/`
-    
-        `mockery --all --dir vendor/k8s.io/utils/exec --output pkg/testing/mocks/k8s.io/utils/exec`
+    - For interfaces defined in dependency packages, update the package list in `go-controller/.mockery.yaml`
+    and regenerate mocks with `make mocksgen`
         
 - Sample command to generate mocks when using the `docker` image
 
@@ -49,12 +47,10 @@ of the same package as where the interface is defined.
     
         `docker run -v $PWD:/src -w /src vektra/mockery --name SriovNetLibOps --dir pkg/cni/ --output pkg/cni/mocks`
         
-    - Mock for all interfaces defined in the vendor folder `go-controller/vendor/k8s.io/utils/exec` when running the
-    `docker` container from dir `go-controller/`
+    - For interfaces defined in dependency packages, update the package list in `go-controller/.mockery.yaml`
+    and regenerate mocks with `make mocksgen`
     
-        `docker run -v $PWD:/src -w /src vektra/mockery --all --dir vendor/k8s.io/utils/exec --output pkg/testing/mocks/k8s.io/utils/exec`
-    
-### How to regenerate all existing mocks when interfaces (locally defined or in vendor libraries) are updated?
+### How to regenerate all existing mocks when interfaces (locally defined or in dependency packages) are updated?
 
     - Execute the ```make mocksgen``` in situations where all existing mocks have to be regenerated.
     NOTE: It would take a while(approx 20+ minutes) for all mocks to be regenerated.

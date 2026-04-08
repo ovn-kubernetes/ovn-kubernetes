@@ -64,7 +64,7 @@ jobs:
       with:
         version: v2.5.0
         working-directory: go-controller
-        args: --modules-download-mode=vendor --timeout=15m0s --verbose
+        args: --modules-download-mode=readonly --timeout=15m0s --verbose
 
   build-base:
     name: Build-base
@@ -206,9 +206,10 @@ jobs:
       run: |
         set -x
         pushd go-controller
-           # exit early if there are gofmt or go mod / vendor issues
+           # exit early if there are formatting, go mod, or license tree issues
            make gofmt
-           make verify-go-mod-vendor
+           make verify-go-mod
+           make verify-third-party-licenses
            make
            make windows
         popd

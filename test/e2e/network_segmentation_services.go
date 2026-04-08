@@ -316,8 +316,8 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 })
 
-// TODO Once https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4567 merges, use the vendored *TestJig.Run(), which tests
-// the reachability of a service through its name and through its cluster IP. For now only test the cluster IP.
+// TODO Replace these local helpers with upstream TestJig.CheckServiceReachability once it can
+// cover this UDN scenario. That helper validates service-name and ClusterIP reachability.
 
 const OvnNodeIfAddr = "k8s.ovn.org/node-primary-ifaddr"
 

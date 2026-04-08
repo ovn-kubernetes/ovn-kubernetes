@@ -406,7 +406,8 @@ EOF
 }
 
 install_online_ovn_kubernetes_crds() {
-  # NOTE: When you update vendoring versions for the ANP & BANP APIs, we must update the version of the CRD we pull from in the below URL
+  # NOTE: When you update the pinned sigs.k8s.io/network-policy-api version for the ANP and BANP APIs,
+  # update the CRD version in the URLs below as well.
   run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_adminnetworkpolicies.yaml
   run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_baselineadminnetworkpolicies.yaml
 }
