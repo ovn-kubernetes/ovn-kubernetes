@@ -514,6 +514,22 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 			return fmt.Errorf("failed to create cluster port groups for network %q: %w", oc.GetNetworkName(), err)
 		}
 
+		// Add the MACVRF port to ClusterRtrPortGroupNameBase so the
+		// AllowInterNode multicast ACL permits multicast traffic to/from
+		// the EVPN fabric.
+		if oc.multicastSupport && oc.Transport() == types.NetworkTransportEVPN {
+			macvrfportName := util.GetMACVRFPortName(oc.GetNetworkScopedSwitchName(types.OVNLayer2Switch))
+			lsp := &nbdb.LogicalSwitchPort{Name: macvrfportName}
+			lsp, err = libovsdbops.GetLogicalSwitchPort(oc.nbClient, lsp)
+			if err != nil {
+				return fmt.Errorf("failed to get MACVRF port %s: %w", macvrfportName, err)
+			}
+			if err := libovsdbops.AddPortsToPortGroup(oc.nbClient,
+				oc.getClusterPortGroupName(types.ClusterRtrPortGroupNameBase), lsp.UUID); err != nil {
+				return fmt.Errorf("failed to add MACVRF port to router port group for multicast: %w", err)
+			}
+		}
+
 		if err := oc.syncDefaultMulticastPolicies(); err != nil {
 			return fmt.Errorf("failed to sync default multicast policies for network %q: %w", oc.GetNetworkName(), err)
 		}
