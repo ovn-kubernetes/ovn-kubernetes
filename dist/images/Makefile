@@ -13,10 +13,6 @@ all: ubuntu-image fedora-image
 SLASH = -
 ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
 IMAGE_ARCH = $(SLASH)$(ARCH)
-DOCKERFILE_ARCH =
-ifeq ($(ARCH),arm64)
-        DOCKERFILE_ARCH=.arm64
-endif
 IMAGE ?= ovn-daemonset-fedora
 
 OVN_REPO ?= https://github.com/ovn-org/ovn
@@ -29,12 +25,27 @@ OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V
 endif
 GO_VERSION ?= 1.25
 GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
+OVN_KUBERNETES_DIR ?= .
+KUBECTL_MINOR ?= $(shell awk '/^[[:space:]]*k8s.io\/kubernetes v/ {gsub(/^v/, "", $$2); split($$2, version, "."); print version[1] "." version[2]; exit}' ../../go-controller/go.mod)
+UBUNTU_BASE_IMAGE ?= ubuntu:25.10
+FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:43
+
+ifeq ($(strip $(KUBECTL_MINOR)),)
+$(error failed to derive KUBECTL_MINOR from ../../go-controller/go.mod)
+endif
 
 OCI_BIN ?= docker
 
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
-ubuntu-image: bld
-	${OCI_BIN} build -t ovn-kube-ubuntu$(IMAGE_ARCH) -f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
+ubuntu-image:
+	${OCI_BIN} build \
+		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
+		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		--build-arg KUBECTL_MINOR=${KUBECTL_MINOR} \
+		--build-arg UBUNTU_BASE_IMAGE=${UBUNTU_BASE_IMAGE} \
+		--platform=linux/${ARCH} \
+		-t ovn-kube-ubuntu$(IMAGE_ARCH) \
+		-f Dockerfile.ubuntu ../..
 ifeq ($(ARCH),amd64)
 	${OCI_BIN} tag "ovn-kube-ubuntu$(IMAGE_ARCH):latest" \
               "ovn-kube-ubuntu:latest"
@@ -46,8 +57,6 @@ ubuntu-shared-gw-deployment: ubuntu-image
 	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 
-FEDORA_BASE_IMAGE ?= quay.io/fedora/fedora:43
-
 fedora-image:
 	${OCI_BIN} pull --platform=linux/${ARCH} ${FEDORA_BASE_IMAGE} 2>/dev/null || true; \
 	FEDORA_BASE_DIGEST=$$(${OCI_BIN} inspect --format='{{index .RepoDigests 0}}' ${FEDORA_BASE_IMAGE} 2>/dev/null || echo ""); \
@@ -57,6 +66,7 @@ fedora-image:
 		--build-arg OVN_GITREF=${OVN_GITSHA} \
 		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
 		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		--build-arg FEDORA_BASE_IMAGE=${FEDORA_BASE_IMAGE} \
 		--build-arg FEDORA_BASE_DIGEST=$${FEDORA_BASE_DIGEST} \
 		--platform=linux/${ARCH} \
 		-t ${IMAGE} \

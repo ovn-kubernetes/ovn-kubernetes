@@ -11,6 +11,7 @@
 ARG OVN_FROM=koji
 ARG BUILDER_IMAGE
 ARG OVN_KUBERNETES_DIR=.
+ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:43
 
 #############################################
 # Stage to build OVN Kubernetes from Source #
@@ -31,7 +32,7 @@ RUN cd ovn-kubernetes/dist/images && \
 #############################################
 # Stage to get OVN and OVS RPMs from source #
 #############################################
-FROM quay.io/fedora/fedora:43 AS ovnbuilder
+FROM ${FEDORA_BASE_IMAGE} AS ovnbuilder
 USER root
 
 ENV PYTHONDONTWRITEBYTECODE yes
@@ -94,7 +95,7 @@ RUN git log -n 1
 ########################################
 # Stage to download OVN RPMs from koji #
 ########################################
-FROM quay.io/fedora/fedora:43 AS kojidownloader
+FROM ${FEDORA_BASE_IMAGE} AS kojidownloader
 ARG ovnver=ovn-25.09.2-82.fc43
 
 USER root
@@ -115,14 +116,14 @@ RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM" ] ; then 
 ######################################
 # Stage to copy OVN RPMs from source #
 ######################################
-FROM quay.io/fedora/fedora:43 AS source
+FROM ${FEDORA_BASE_IMAGE} AS source
 COPY --from=ovnbuilder /root/ovn/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 COPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 
 ####################################
 # Stage to copy OVN RPMs from koji #
 ####################################
-FROM quay.io/fedora/fedora:43 AS koji
+FROM ${FEDORA_BASE_IMAGE} AS koji
 
 COPY --from=kojidownloader /*.rpm /
 
@@ -150,33 +151,24 @@ RUN INSTALL_PKGS=" \
     dnf clean all && rm -rf /var/cache/dnf/*
 RUN ln -s /usr/bin/python3 /usr/libexec/platform-python
 
-RUN mkdir -p /var/run/openvswitch
-
 RUN rpm -Uhv --nodeps --force /*.rpm
 
 # Built in ../../go_controller, then the binaries are copied here.
 # put things where they are in the pkg
-RUN mkdir -p /usr/libexec/cni/
+RUN mkdir -p /var/run/openvswitch /usr/libexec/cni/
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube /workspace/ovn-kubernetes/dist/images/ovn-kube-util /workspace/ovn-kubernetes/dist/images/ovndbchecker /workspace/ovn-kubernetes/dist/images/hybrid-overlay-node /workspace/ovn-kubernetes/dist/images/ovnkube-identity /workspace/ovn-kubernetes/dist/images/ovnkube-observ /usr/bin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/git_info /root
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /root/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovndb-raft-functions.sh /root/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /workspace/ovn-kubernetes/dist/images/ovndb-raft-functions.sh /workspace/ovn-kubernetes/dist/images/git_info /root/
 
 # iptables wrappers
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /usr/sbin/
-COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
       io.k8s.description="This is a Kubernetes network plugin that provides an overlay network using OVN." \
-      maintainer="Tim Rozet <trozet@redhat.com>"
+      maintainer="ovn-kubernetes@googlegroups.com"
 
 WORKDIR /root
 ENTRYPOINT /root/ovnkube.sh
