@@ -113,7 +113,7 @@ func (_m *NetLinkOps) BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni
 
 	var r0 error
 	if rf, ok := ret.Get(0).(func(netlink.Link, uint16, uint32, types.BridgeVlanOptions) error); ok {
-		r0 = rf(link, vid, vni, opts)
+		r0 = rf(link, vid, vni, options)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -121,7 +121,7 @@ func (_m *NetLinkOps) BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni
 	return r0
 }
 
-// BridgeVlanDel provides a mock function with given fields: link, vid, opts
+// BridgeVlanDel provides a mock function with given fields: link, vid, options
 func (_m *NetLinkOps) BridgeVlanDel(link netlink.Link, vid uint16, options types.BridgeVlanOptions) error {
 	ret := _m.Called(link, vid, options)
 
