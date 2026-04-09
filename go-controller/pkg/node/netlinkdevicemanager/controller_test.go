@@ -665,20 +665,20 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
 			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 
-			nlMock.On("BridgeVlanDelTunnelInfo", vxlanLink, uint16(30), uint32(300), false, true).Return(nil)
+			nlMock.On("BridgeVlanDelTunnelInfo", vxlanLink, uint16(30), uint32(300), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniDel", vxlanLink, uint32(300)).Return(nil)
-			nlMock.On("BridgeVlanDel", vxlanLink, uint16(30), false, false, false, true).Return(nil)
-			nlMock.On("BridgeVlanDel", bridgeLink, uint16(30), false, false, true, false).Return(nil)
+			nlMock.On("BridgeVlanDel", vxlanLink, uint16(30), mocks.BridgeVlanOptions{Master: true}).Return(nil)
+			nlMock.On("BridgeVlanDel", bridgeLink, uint16(30), mocks.BridgeVlanOptions{Self: true}).Return(nil)
 
-			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil)
-			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true}).Return(nil)
+			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniAdd", vxlanLink, uint32(100)).Return(nil)
-			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true).Return(nil)
+			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 
-			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(20), false, false, true, false).Return(nil)
-			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(20), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(20), mocks.BridgeVlanOptions{Self: true}).Return(nil)
+			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(20), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniAdd", vxlanLink, uint32(200)).Return(nil)
-			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(20), uint32(200), false, true).Return(nil)
+			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(20), uint32(200), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 
 			Expect(syncVIDVNIMappings(vxlanLink, bridgeLink, cfg.VIDVNIMappings)).To(Succeed())
 			nlMock.AssertExpectations(GinkgoT())
@@ -717,9 +717,9 @@ var _ = Describe("NetlinkDeviceManager", func() {
 
 			Expect(syncVIDVNIMappings(vxlanLink, bridgeLink, cfg.VIDVNIMappings)).To(Succeed())
 
-			nlMock.AssertNotCalled(GinkgoT(), "BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			nlMock.AssertNotCalled(GinkgoT(), "BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything)
 			nlMock.AssertNotCalled(GinkgoT(), "BridgeVniAdd", mock.Anything, mock.Anything)
-			nlMock.AssertNotCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			nlMock.AssertNotCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 
 		DescribeTable("self-heals when any single component is externally removed",
@@ -738,22 +738,22 @@ var _ = Describe("NetlinkDeviceManager", func() {
 				nlMock.On("BridgeVlanList").Return(vlanList, nil)
 				nlMock.On("BridgeVniList").Return(vniList, nil)
 
-				nlMock.On("BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr).Maybe()
+				nlMock.On("BridgeVlanAdd", mock.Anything, mock.Anything, mock.Anything).Return(eexistErr).Maybe()
 				nlMock.On("IsAlreadyExistsError", eexistErr).Return(true).Maybe()
 				nlMock.On("BridgeVniAdd", mock.Anything, mock.Anything).Return(eexistErr).Maybe()
-				nlMock.On("BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr).Maybe()
+				nlMock.On("BridgeVlanAddTunnelInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(eexistErr).Maybe()
 
-				nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil).Maybe()
-				nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil).Maybe()
+				nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true}).Return(nil).Maybe()
+				nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), mocks.BridgeVlanOptions{Master: true}).Return(nil).Maybe()
 				nlMock.On("BridgeVniAdd", vxlanLink, uint32(100)).Return(nil).Maybe()
-				nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true).Return(nil).Maybe()
+				nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), mocks.BridgeVlanOptions{Master: true}).Return(nil).Maybe()
 
 				Expect(syncVIDVNIMappings(vxlanLink, bridgeLink, cfg.VIDVNIMappings)).To(Succeed())
 
-				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false)
-				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true)
+				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true})
+				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAdd", vxlanLink, uint16(10), mocks.BridgeVlanOptions{Master: true})
 				nlMock.AssertCalled(GinkgoT(), "BridgeVniAdd", vxlanLink, uint32(100))
-				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true)
+				nlMock.AssertCalled(GinkgoT(), "BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), mocks.BridgeVlanOptions{Master: true})
 			},
 			Entry("bridge self VLAN missing",
 				map[int32][]*nl.BridgeVlanInfo{
@@ -1088,21 +1088,21 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("BridgeVlanTunnelShowDev", createdVxlan).Return([]nl.TunnelInfo{}, nil).Once()
 			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
 			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
-			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil)
-			nlMock.On("BridgeVlanAdd", createdVxlan, uint16(10), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true}).Return(nil)
+			nlMock.On("BridgeVlanAdd", createdVxlan, uint16(10), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniAdd", createdVxlan, uint32(100)).Return(nil)
-			nlMock.On("BridgeVlanAddTunnelInfo", createdVxlan, uint16(10), uint32(100), false, true).Return(nil)
+			nlMock.On("BridgeVlanAddTunnelInfo", createdVxlan, uint16(10), uint32(100), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			// ensureDeviceUp: FAILS → triggers defer cleanup
 			nlMock.On("LinkSetUp", createdVxlan).Return(errors.New("ENOMEM"))
 			// defer: removeBridgeSelfVLANs queries tunnel info (second call returns added mapping)
 			nlMock.On("BridgeVlanTunnelShowDev", createdVxlan).Return([]nl.TunnelInfo{{Vid: 10, TunId: 100}}, nil)
-			nlMock.On("BridgeVlanDel", bridgeLink, uint16(10), false, false, true, false).Return(nil)
+			nlMock.On("BridgeVlanDel", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true}).Return(nil)
 			// defer: LinkDelete
 			nlMock.On("LinkDelete", createdVxlan).Return(nil)
 
 			err := controller.reconcileDeviceKey("vxlan0")
 			Expect(err).To(HaveOccurred())
-			nlMock.AssertCalled(GinkgoT(), "BridgeVlanDel", bridgeLink, uint16(10), false, false, true, false)
+			nlMock.AssertCalled(GinkgoT(), "BridgeVlanDel", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true})
 			nlMock.AssertCalled(GinkgoT(), "LinkDelete", createdVxlan)
 		})
 	})
@@ -1347,11 +1347,11 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("BridgeVlanList").Return(map[int32][]*nl.BridgeVlanInfo{}, nil)
 			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 			// Steps 1-3 succeed (VXLAN port VID, VNI filter, tunnel info)
-			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniAdd", vxlanLink, uint32(100)).Return(nil)
-			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true).Return(nil)
+			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			// Step 4: bridge self VLAN fails
-			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(errors.New("ENOMEM"))
+			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true}).Return(errors.New("ENOMEM"))
 			nlMock.On("IsAlreadyExistsError", mock.Anything).Return(false)
 
 			err := syncVIDVNIMappings(vxlanLink, bridgeLink, cfg.VIDVNIMappings)
@@ -1457,16 +1457,16 @@ var _ = Describe("NetlinkDeviceManager", func() {
 			nlMock.On("BridgeVniList").Return(map[int32][]*nl.BridgeVniInfo{}, nil)
 
 			// VID 10: succeeds (new order: VXLAN VID, VNI, tunnel info, bridge self)
-			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(10), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniAdd", vxlanLink, uint32(100)).Return(nil)
-			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), false, true).Return(nil)
-			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), false, false, true, false).Return(nil)
+			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(10), uint32(100), mocks.BridgeVlanOptions{Master: true}).Return(nil)
+			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(10), mocks.BridgeVlanOptions{Self: true}).Return(nil)
 
 			// VID 20: VXLAN-side steps succeed, bridge self VLAN fails
-			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(20), false, false, false, true).Return(nil)
+			nlMock.On("BridgeVlanAdd", vxlanLink, uint16(20), mocks.BridgeVlanOptions{Master: true}).Return(nil)
 			nlMock.On("BridgeVniAdd", vxlanLink, uint32(200)).Return(nil)
-			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(20), uint32(200), false, true).Return(nil)
-			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(20), false, false, true, false).Return(errors.New("ENOMEM"))
+			nlMock.On("BridgeVlanAddTunnelInfo", vxlanLink, uint16(20), uint32(200), mocks.BridgeVlanOptions{Master: true}).Return(nil)
+			nlMock.On("BridgeVlanAdd", bridgeLink, uint16(20), mocks.BridgeVlanOptions{Self: true}).Return(errors.New("ENOMEM"))
 			nlMock.On("IsAlreadyExistsError", mock.Anything).Return(false)
 
 			err := syncVIDVNIMappings(vxlanLink, bridgeLink, cfg.VIDVNIMappings)

@@ -609,7 +609,7 @@ func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error
 	nlOps := util.GetNetLinkOps()
 
 	// Add VID to VXLAN with 'master' flag
-	if err := nlOps.BridgeVlanAdd(vxlanLink, m.VID, false, false, false, true); err != nil {
+	if err := nlOps.BridgeVlanAdd(vxlanLink, m.VID, mocks.BridgeVlanOptions{Master: true}); err != nil {
 		if !nlOps.IsAlreadyExistsError(err) {
 			return fmt.Errorf("failed to add VID %d to VXLAN: %w", m.VID, err)
 		}
@@ -623,14 +623,14 @@ func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error
 	}
 
 	// Add tunnel info (VID -> VNI mapping)
-	if err := nlOps.BridgeVlanAddTunnelInfo(vxlanLink, m.VID, m.VNI, false, true); err != nil {
+	if err := nlOps.BridgeVlanAddTunnelInfo(vxlanLink, m.VID, m.VNI, util.BridgeVlanOptions{Master: true}); err != nil {
 		if !nlOps.IsAlreadyExistsError(err) {
 			return fmt.Errorf("failed to add VID->VNI mapping: %w", err)
 		}
 	}
 
 	// Add VID to bridge with 'self' flag (at LAST, see docstring)
-	if err := nlOps.BridgeVlanAdd(bridgeLink, m.VID, false, false, true, false); err != nil {
+	if err := nlOps.BridgeVlanAdd(bridgeLink, m.VID, util.BridgeVlanOptions{Self: true}); err != nil {
 		if !nlOps.IsAlreadyExistsError(err) {
 			return fmt.Errorf("failed to add VID %d to bridge self: %w", m.VID, err)
 		}
@@ -652,7 +652,7 @@ func removeVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) er
 	var errs []error
 
 	// Remove tunnel_info mapping
-	if err := nlOps.BridgeVlanDelTunnelInfo(vxlanLink, m.VID, m.VNI, false, true); err != nil {
+	if err := nlOps.BridgeVlanDelTunnelInfo(vxlanLink, m.VID, m.VNI, util.BridgeVlanOptions{Master: true}); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
 			errs = append(errs, fmt.Errorf("tunnel_info VID=%d->VNI=%d: %w", m.VID, m.VNI, err))
 		}
@@ -666,14 +666,14 @@ func removeVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) er
 	}
 
 	// Remove VID from VXLAN
-	if err := nlOps.BridgeVlanDel(vxlanLink, m.VID, false, false, false, true); err != nil {
+	if err := nlOps.BridgeVlanDel(vxlanLink, m.VID, util.BridgeVlanOptions{Master: true}); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
 			errs = append(errs, fmt.Errorf("VXLAN VID %d: %w", m.VID, err))
 		}
 	}
 
 	// Remove VID from bridge self
-	if err := nlOps.BridgeVlanDel(bridgeLink, m.VID, false, false, true, false); err != nil {
+	if err := nlOps.BridgeVlanDel(bridgeLink, m.VID, util.BridgeVlanOptions{Self: true}); err != nil {
 		if !nlOps.IsEntryNotFoundError(err) {
 			errs = append(errs, fmt.Errorf("bridge self VID %d: %w", m.VID, err))
 		}
