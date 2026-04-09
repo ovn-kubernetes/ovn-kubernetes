@@ -609,7 +609,7 @@ func addVIDVNIMapping(bridgeLink, vxlanLink netlink.Link, m VIDVNIMapping) error
 	nlOps := util.GetNetLinkOps()
 
 	// Add VID to VXLAN with 'master' flag
-	if err := nlOps.BridgeVlanAdd(vxlanLink, m.VID, mocks.BridgeVlanOptions{Master: true}); err != nil {
+	if err := nlOps.BridgeVlanAdd(vxlanLink, m.VID, util.BridgeVlanOptions{Master: true}); err != nil {
 		if !nlOps.IsAlreadyExistsError(err) {
 			return fmt.Errorf("failed to add VID %d to VXLAN: %w", m.VID, err)
 		}
