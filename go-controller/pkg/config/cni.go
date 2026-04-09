@@ -83,7 +83,8 @@ func ParseNetConf(bytes []byte) (*ovncnitypes.NetConf, error) {
 		Plugins json.RawMessage `json:"plugins"`
 	}
 	if unmarshalErr := json.Unmarshal(bytes, &raw); unmarshalErr == nil && raw.Plugins != nil {
-		confList, err := libcni.ConfListFromBytes(bytes)
+		var confList *libcni.NetworkConfigList
+		confList, err = libcni.ConfListFromBytes(bytes)
 		if err != nil {
 			return nil, err
 		}
