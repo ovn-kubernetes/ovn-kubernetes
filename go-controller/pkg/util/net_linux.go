@@ -27,10 +27,10 @@ import (
 )
 
 type BridgeVlanOptions struct {
-    PVID     bool
-    Untagged bool
-    Self     bool
-    Master   bool
+	PVID     bool
+	Untagged bool
+	Self     bool
+	Master   bool
 }
 
 type NetLinkOps interface {
