@@ -7,4 +7,3 @@ type BridgeVlanOptions struct {
 	Self     bool
 	Master   bool
 }
-

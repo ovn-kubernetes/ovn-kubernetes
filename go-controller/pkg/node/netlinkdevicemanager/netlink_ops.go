@@ -11,8 +11,8 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
-	utiltypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/types"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
+	utiltypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/types"
 )
 
 func getLink(name string) (netlink.Link, error) {
