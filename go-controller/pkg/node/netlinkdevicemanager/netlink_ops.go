@@ -369,7 +369,7 @@ func removeBridgeSelfVLANs(vxlanLink netlink.Link, bridgeLink netlink.Link) erro
 
 	var errs []error
 	for _, m := range mappings {
-		if err := nlOps.BridgeVlanDel(bridgeLink, m.VID, false, false, true, false); err != nil {
+		if err := nlOps.BridgeVlanDel(bridgeLink, m.VID, util.BridgeVlanOptions{Self: true}); err != nil {
 			if !nlOps.IsEntryNotFoundError(err) {
 				errs = append(errs, fmt.Errorf("bridge self VID %d: %w", m.VID, err))
 			}
