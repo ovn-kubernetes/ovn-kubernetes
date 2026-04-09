@@ -749,7 +749,7 @@ build_dnsnameresolver_images() {
   rm -rf /tmp/coredns-ocp-dnsnameresolver
   git clone https://github.com/openshift/coredns-ocp-dnsnameresolver.git /tmp/coredns-ocp-dnsnameresolver
   pushd /tmp/coredns-ocp-dnsnameresolver
-  git checkout release-4.21
+  git checkout release-4.22
   popd
  
   build_image /tmp/coredns-ocp-dnsnameresolver ${COREDNS_WITH_OCP_DNSNAMERESOLVER} Dockerfile.upstream
@@ -852,13 +852,7 @@ install_dnsnameresolver_operator() {
   sed -i -e 's/^\(.*--coredns-namespace=\).*/\1kube-system/' \
     -e 's/^\(.*--coredns-service-name=\).*/\1kube-dns/' \
     -e 's/^\(.*--dns-name-resolver-namespace=\).*/\1ovn-kubernetes/' \
-    -e 's/^\(.*--coredns-port=\).*/\153/' config/default/manager_auth_proxy_patch.yaml
-
-  # gcr.io Container Registry shutdown issue
-  # See https://github.com/kubernetes-sigs/kubebuilder/discussions/3907#discussioncomment-11477582 for more details.
-  # REVERT ME: when coredns team fixes image in upstream, we can revert this patch.
-  sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
-    config/default/manager_auth_proxy_patch.yaml
+    -e 's/^\(.*--coredns-port=\).*/\153/' config/default/manager_dnsnameresolver_patch.yaml
 
   make install CONTROLLER_TOOLS_VERSION=v0.19.0
   make deploy IMG=${DNSNAMERESOLVER_OPERATOR} CONTROLLER_TOOLS_VERSION=v0.19.0

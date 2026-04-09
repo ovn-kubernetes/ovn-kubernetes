@@ -199,6 +199,24 @@ func (_m *Interface) SetAnnotationsOnNode(nodeName string, annotations map[strin
 	return r0
 }
 
+// SetAnnotationsOnNodeWithFieldManager provides a mock function with given fields: nodeName, annotations, fieldManager
+func (_m *Interface) SetAnnotationsOnNodeWithFieldManager(nodeName string, annotations map[string]interface{}, fieldManager string) error {
+	ret := _m.Called(nodeName, annotations, fieldManager)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetAnnotationsOnNodeWithFieldManager")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, map[string]interface{}, string) error); ok {
+		r0 = rf(nodeName, annotations, fieldManager)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // SetAnnotationsOnPod provides a mock function with given fields: namespace, podName, annotations
 func (_m *Interface) SetAnnotationsOnPod(namespace string, podName string, annotations map[string]interface{}) error {
 	ret := _m.Called(namespace, podName, annotations)

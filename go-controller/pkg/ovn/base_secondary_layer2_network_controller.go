@@ -246,6 +246,23 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 		return nil, fmt.Errorf("failed to create logical switch %+v: %v", logicalSwitch, err)
 	}
 
+	// Add the MACVRF port to ClusterRtrPortGroupNameBase so the
+	// higher-priority AllowInterNode multicast ACL overrides the
+	// default deny multicast ACL and permits multicast traffic
+	// to/from the EVPN fabric.
+	if oc.multicastSupport && oc.Transport() == types.NetworkTransportEVPN {
+		for _, lsp := range lsps {
+			if lsp.Name == util.GetMACVRFPortName(switchName) {
+				ops, err = libovsdbops.AddPortsToPortGroupOps(oc.nbClient, ops,
+					oc.getClusterPortGroupName(types.ClusterRtrPortGroupNameBase), lsp.UUID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create ops to add MACVRF port to router port group: %w", err)
+				}
+				break
+			}
+		}
+	}
+
 	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsps, ops)
 	if err != nil {
 		return nil, fmt.Errorf("failed to transact logical switch operations: %w", err)

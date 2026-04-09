@@ -41,8 +41,8 @@ type addressManager struct {
 	nodePrimaryAddr net.IP
 	gatewayBridge   *bridgeconfig.BridgeConfiguration
 
-	OnChanged             func()
-	OnMasqueradeIPChanged func()
+	onAddressesChangedHandlers []func()
+	OnMasqueradeIPChanged      func()
 	// gatewayIfIndex caches the link index of config.Gateway.Interface.
 	// Used in DPUHost mode to filter address events to only the gateway
 	// interface. Refreshed in sync() every 30s; all access is from the
@@ -66,7 +66,6 @@ func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtPort manag
 		cidrs:                 sets.New[string](),
 		mgmtPort:              mgmtPort,
 		gatewayBridge:         gwBridge,
-		OnChanged:             func() {},
 		OnMasqueradeIPChanged: func() {},
 		useNetlink:            useNetlink,
 		syncPeriod:            30 * time.Second,
@@ -133,6 +132,26 @@ func (c *addressManager) ListAddresses() ([]net.IP, []*net.IPNet) {
 		networkAddresses = append(networkAddresses, networkAddress)
 	}
 	return addresses, networkAddresses
+}
+
+// AddOnAddressesChangedHandler registers a callback that will be invoked whenever
+// the node's addresses change. Safe to call after the address manager goroutine
+// has started. No corresponding remove is provided: callers are expected to be
+// lifecycle-bound to the process.
+func (c *addressManager) AddOnAddressesChangedHandler(handler func()) {
+	c.Lock()
+	defer c.Unlock()
+	c.onAddressesChangedHandlers = append(c.onAddressesChangedHandlers, handler)
+}
+
+func (c *addressManager) notifyAddressesChanged() {
+	c.Lock()
+	handlers := make([]func(), len(c.onAddressesChangedHandlers))
+	copy(handlers, c.onAddressesChangedHandlers)
+	c.Unlock()
+	for _, handler := range handlers {
+		handler()
+	}
 }
 
 type subscribeFn func() (bool, chan netlink.AddrUpdate, error)
@@ -202,7 +221,7 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				if err != nil {
 					klog.Errorf("Address Manager failed to update node address annotations: %v", err)
 				}
-				c.OnChanged()
+				c.notifyAddressesChanged()
 			}
 		case <-addressSyncTimer.C:
 			if subscribed {
@@ -529,7 +548,7 @@ func (c *addressManager) sync() {
 			return
 		}
 		for _, link := range links {
-			foundAddrs, err := netlink.AddrList(link, getSupportedIPFamily())
+			foundAddrs, err := util.GetNetLinkOps().AddrList(link, getSupportedIPFamily())
 			if err != nil {
 				klog.Errorf("Failed sync due to being unable to list addresses for %q: %v", link.Attrs().Name, err)
 				return
@@ -556,7 +575,7 @@ func (c *addressManager) sync() {
 		if err != nil {
 			klog.Errorf("Address Manager failed to update node address annotations: %v", err)
 		}
-		c.OnChanged()
+		c.notifyAddressesChanged()
 	}
 	c.reconcileMasqueradeResources()
 }

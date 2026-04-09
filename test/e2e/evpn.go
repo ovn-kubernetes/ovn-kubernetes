@@ -13,12 +13,14 @@ import (
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -846,9 +848,177 @@ func createVTEP(f *framework.Framework, ictx infraapi.Context, name string, cidr
 		})
 	})
 
-	// TODO: Add status check once VTEP controller implements status conditions
 	framework.Logf("VTEP created: %s (CIDRs: %v, Mode: %s)", name, cidrs, mode)
 	return nil
+}
+
+// ensureVTEPLoopbackIPs seeds each node with a VTEP-reachable IP when the
+// VTEP CIDRs are custom subnets that don't overlap with the node's existing
+// InternalIPs. It allocates one IP per CIDR per node, adds it to the loopback
+// interface, and waits for it to appear in host-cidrs. Once the VTEP CR is
+// created the ovnkube-node EVPN controller picks these IPs up through the
+// address manager and writes the k8s.ovn.org/vteps node annotation
+// automatically; the caller should use waitForVTEPAccepted to confirm all
+// nodes have been annotated.
+//
+// When node IPs already fall within the VTEP CIDRs (e.g. VTEP CIDRs match the
+// node IP subnets) this is a no-op.
+func ensureVTEPLoopbackIPs(
+	f *framework.Framework,
+	ictx infraapi.Context,
+	vtepCIDRs []string,
+) error {
+	nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	if nodeIPsOverlapCIDRs(nodeList, vtepCIDRs) {
+		return nil
+	}
+
+	var parsedCIDRs []*net.IPNet
+	for _, cidr := range vtepCIDRs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("failed to parse VTEP CIDR %q: %w", cidr, err)
+		}
+		parsedCIDRs = append(parsedCIDRs, ipNet)
+	}
+
+	for i, node := range nodeList.Items {
+		for _, ipNet := range parsedCIDRs {
+			ip := incrementIP(ipNet.IP, i+1)
+			if !ipNet.Contains(ip) {
+				return fmt.Errorf("ran out of IPs in CIDR %s for node %s", ipNet, node.Name)
+			}
+			_, err := infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "addr", "add", ip.String() + "/32", "dev", "lo"})
+			if err != nil {
+				return fmt.Errorf("failed to add VTEP IP %s to loopback on node %s: %w", ip, node.Name, err)
+			}
+			framework.Logf("Added VTEP IP %s/32 to loopback on node %s", ip, node.Name)
+		}
+		nodeName := node.Name
+		allocatedIPs := make([]string, 0, len(parsedCIDRs))
+		for _, ipNet := range parsedCIDRs {
+			allocatedIPs = append(allocatedIPs, incrementIP(ipNet.IP, i+1).String())
+		}
+		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+			n, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
+			hostCIDRs, err := util.ParseNodeHostCIDRs(n)
+			if err != nil {
+				return false, nil
+			}
+			for _, ip := range allocatedIPs {
+				if !hostCIDRs.Has(ip + "/32") {
+					return false, nil
+				}
+			}
+			return true, nil
+		})
+		if err != nil {
+			return fmt.Errorf("timed out waiting for VTEP IPs %v to appear in host-cidrs on node %s: %w", allocatedIPs, nodeName, err)
+		}
+		framework.Logf("VTEP IPs %v confirmed in host-cidrs on node %s", allocatedIPs, nodeName)
+	}
+
+	ictx.AddCleanUpFn(func() error {
+		nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+		if err != nil {
+			return err
+		}
+		for i, node := range nodeList.Items {
+			for _, ipNet := range parsedCIDRs {
+				ip := incrementIP(ipNet.IP, i+1)
+				_, _ = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"ip", "addr", "del", ip.String() + "/32", "dev", "lo"})
+			}
+		}
+		return nil
+	})
+
+	return nil
+}
+
+// incrementIP returns a copy of ip with offset added. Works for both IPv4 and IPv6.
+func incrementIP(baseIP net.IP, offset int) net.IP {
+	ip := make(net.IP, len(baseIP))
+	copy(ip, baseIP)
+	for i := len(ip) - 1; i >= 0 && offset > 0; i-- {
+		sum := int(ip[i]) + offset
+		ip[i] = byte(sum % 256)
+		offset = sum / 256
+	}
+	return ip
+}
+
+// nodeIPsOverlapCIDRs returns true if at least one node's InternalIP falls
+// within one of the provided CIDRs.
+func nodeIPsOverlapCIDRs(nodeList *corev1.NodeList, cidrStrings []string) bool {
+	var cidrs []*net.IPNet
+	for _, s := range cidrStrings {
+		_, ipNet, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		cidrs = append(cidrs, ipNet)
+	}
+	for _, node := range nodeList.Items {
+		for _, addr := range node.Status.Addresses {
+			if addr.Type != corev1.NodeInternalIP {
+				continue
+			}
+			ip := net.ParseIP(addr.Address)
+			if ip == nil {
+				continue
+			}
+			for _, cidr := range cidrs {
+				if cidr.Contains(ip) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// waitForVTEPAccepted polls the VTEP status until the Accepted condition is
+// True. When node IPs overlap with the VTEP CIDRs (KIND subnet case), parallel
+// tests may cause transient CIDROverlap which is tolerated since it is expected
+// when tests run in parallel specially for the nodeCIDR being the VTEP for unmanaged mode.
+func waitForVTEPAccepted(f *framework.Framework, vtepName string, vtepCIDRs []string) error {
+	client, err := vtepclientset.NewForConfig(f.ClientConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create VTEP client: %w", err)
+	}
+	nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+	tolerateCIDROverlap := nodeIPsOverlapCIDRs(nodeList, vtepCIDRs)
+
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
+		vtep, err := client.K8sV1().VTEPs().Get(ctx, vtepName, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		condition := meta.FindStatusCondition(vtep.Status.Conditions, "Accepted")
+		if condition == nil {
+			return false, nil
+		}
+		if condition.Status == metav1.ConditionTrue {
+			framework.Logf("VTEP %s is healthy (Accepted=True)", vtepName)
+			return true, nil
+		}
+		if tolerateCIDROverlap && condition.Reason == "CIDROverlap" {
+			framework.Logf("VTEP %s Accepted=%s reason=%s (tolerated): %s", vtepName, condition.Status, condition.Reason, condition.Message)
+			return true, nil
+		}
+		framework.Logf("VTEP %s Accepted=%s reason=%s: %s", vtepName, condition.Status, condition.Reason, condition.Message)
+		return false, nil
+	})
 }
 
 // =============================================================================
@@ -1160,11 +1330,23 @@ func runEVPNNetworkAndServers(
 		}
 	}
 
+	framework.Logf("Ensuring VTEP loopback IPs on nodes")
+	err = ensureVTEPLoopbackIPs(f, ictx, vtepSubnets)
+	if err != nil {
+		return err
+	}
+
 	testVTEPName := testName + "-vtep"
-	framework.Logf("Creating VTEP CR")
+	framework.Logf("Creating VTEP CR with subnets %v", vtepSubnets)
 	err = createVTEP(f, ictx, testVTEPName, vtepSubnets, vtepv1.VTEPModeUnmanaged)
 	if err != nil {
 		return err
+	}
+
+	framework.Logf("Waiting for VTEP %s to be accepted", testVTEPName)
+	err = waitForVTEPAccepted(f, testVTEPName, vtepSubnets)
+	if err != nil {
+		return fmt.Errorf("VTEP %s did not become healthy: %w", testVTEPName, err)
 	}
 
 	// Update VTEP name in network spec

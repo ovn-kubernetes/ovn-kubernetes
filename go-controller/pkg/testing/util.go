@@ -12,6 +12,8 @@ import (
 
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -125,5 +127,64 @@ func AddNetworkConnectApplyReactor(fakeClient *networkconnectfake.Clientset) {
 		_ = fakeClient.Tracker().Update(
 			networkconnectv1.SchemeGroupVersion.WithResource("clusternetworkconnects"), cnc, "")
 		return true, cnc, nil
+	})
+}
+
+// AddVTEPApplyReactor adds a reactor to handle Apply (patch) operations on the VTEP fake client.
+// It supports both status subresource patches and metadata patches (e.g. finalizers).
+func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
+	fakeClient.PrependReactor("patch", "vteps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction := action.(ktesting.PatchAction)
+		name := patchAction.GetName()
+
+		existingObj, err := fakeClient.Tracker().Get(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), "", name)
+		if err != nil {
+			return true, nil, err
+		}
+
+		vtep := existingObj.(*vtepv1.VTEP)
+		if patchAction.GetSubresource() == "status" {
+			type StatusPatch struct {
+				Status vtepv1.VTEPStatus `json:"status"`
+			}
+
+			var patchData StatusPatch
+			if err := json.Unmarshal(patchAction.GetPatch(), &patchData); err != nil {
+				return true, nil, err
+			}
+
+			vtep.Status = patchData.Status
+		} else {
+			type MetadataPatch struct {
+				Metadata struct {
+					Finalizers []string `json:"finalizers"`
+				} `json:"metadata"`
+			}
+
+			var patchData MetadataPatch
+			if err := json.Unmarshal(patchAction.GetPatch(), &patchData); err != nil {
+				return true, nil, err
+			}
+
+			vtep.Finalizers = patchData.Metadata.Finalizers
+		}
+
+		_ = fakeClient.Tracker().Update(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), vtep, "")
+
+		// Simulate API server garbage collection: when an object has a
+		// non-zero DeletionTimestamp and no remaining finalizers, the real
+		// API server deletes it from etcd during the update via
+		// ShouldDeleteDuringUpdate (see k8s.io/apiserver store.go). The
+		// fake client does not implement this; an upstream attempt to add
+		// it (kubernetes/kubernetes#122460) was never merged. Without this,
+		// deleted VTEPs linger in the informer cache and cause false CIDR
+		// overlap detections against dying objects.
+		if !vtep.DeletionTimestamp.IsZero() && len(vtep.Finalizers) == 0 {
+			_ = fakeClient.Tracker().Delete(
+				vtepv1.SchemeGroupVersion.WithResource("vteps"), "", vtep.Name)
+		}
+		return true, vtep, nil
 	})
 }

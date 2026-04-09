@@ -184,8 +184,19 @@ func (defaultNetLinkOps) IsAlreadyExistsError(err error) bool {
 	return errors.Is(err, syscall.EEXIST)
 }
 
+// AddrList uses a per-call handle with NETLINK_GET_STRICT_CHK enabled to allow
+// the kernel to filter addresses by ifindex server-side instead of dumping all.
 func (defaultNetLinkOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
-	return netlink.AddrList(link, family)
+	h, err := netlink.NewHandle(unix.NETLINK_ROUTE)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create netlink handle: %v", err)
+	}
+	defer h.Close()
+	if err := h.SetStrictCheck(true); err != nil {
+		klog.V(5).Infof("Failed to enable strict check on netlink handle, falling back to unfiltered dump: %v", err)
+		return netlink.AddrList(link, family)
+	}
+	return h.AddrList(link, family)
 }
 
 func (defaultNetLinkOps) AddrDel(link netlink.Link, addr *netlink.Addr) error {

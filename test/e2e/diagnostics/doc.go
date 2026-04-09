@@ -4,6 +4,7 @@ executed using the following flags at the test suite
 
 - `--collect-conntrack`: Call `conntrack -L`
 - `--collect-iptables`: Call `iptables -L -n`
+- `--collect-nftables`: Call `nft list ruleset`
 - `--collect-ovsflows`: Call `ovs-ofctl dump-flows` per interface
 - `--collect-tcpdump`: Call `tcpdump -vvv -nne` per interface and expression
 
@@ -14,13 +15,14 @@ fr                 = wrappedTestFramework("my-test-suite")
 d                  = diagnostics.New(fr)
 ```
 
-# Then at the beginning of test initialize conntrack, ovsflows and iptables like
+# Then at the beginning of test initialize the daemonsets like
 
 ```golang
 
 	d.ConntrackDumpingDaemonSet()
 	d.OVSFlowsDumpingDaemonSet("breth0")
 	d.IPTablesDumpingDaemonSet()
+	d.NFTablesDumpingDaemonSet()
 
 ```
 

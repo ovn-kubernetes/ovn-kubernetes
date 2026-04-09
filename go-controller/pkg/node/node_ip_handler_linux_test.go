@@ -180,9 +180,9 @@ var _ = Describe("Node IP Handler event tests", func() {
 			It("should not panic and should not trigger masquerade or address change callbacks", func() {
 				var changedCount atomic.Int32
 				var masqueradeCount atomic.Int32
-				tc.ipManager.OnChanged = func() {
+				tc.ipManager.AddOnAddressesChangedHandler(func() {
 					changedCount.Add(1)
-				}
+				})
 				tc.ipManager.OnMasqueradeIPChanged = func() {
 					masqueradeCount.Add(1)
 				}

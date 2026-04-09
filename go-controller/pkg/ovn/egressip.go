@@ -1083,11 +1083,6 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 						if err := e.deleteEgressIPStatusSetup(cachedNetwork, name, statusToRemove); err != nil {
 							return fmt.Errorf("failed to delete EgressIP %s status setup for network %s: %v", name, cachedNetwork.GetNetworkName(), err)
 						}
-						if cachedNetwork != nil {
-							if err := e.deleteEgressIPStatusSetup(cachedNetwork, name, statusToRemove); err != nil {
-								klog.Errorf("Failed to delete EgressIP %s status setup for network %s: %v", name, cachedNetwork.GetNetworkName(), err)
-							}
-						}
 					}
 					processedNetworks[cachedNetwork.GetNetworkName()] = struct{}{}
 					// this pod was managed by statusToRemove.EgressIP; we need to try and add its SNAT back towards nodeIP
