@@ -5,14 +5,14 @@ go 1.25.0
 toolchain go1.25.1
 
 require (
-	github.com/Microsoft/hcsshim v0.9.6
-	github.com/alexflint/go-filemutex v1.2.0
+	github.com/Microsoft/hcsshim v0.13.0
+	github.com/alexflint/go-filemutex v1.3.0
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
 	github.com/bhendo/go-powershell v0.0.0-20190719160123-219e7fb4e41e
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/containernetworking/cni v1.2.3
-	github.com/containernetworking/plugins v1.2.0
-	github.com/coreos/go-iptables v0.6.0
+	github.com/containernetworking/cni v1.3.0
+	github.com/containernetworking/plugins v1.9.0
+	github.com/coreos/go-iptables v0.8.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gaissmai/cidrtree v0.1.4
 	github.com/go-logr/logr v1.4.3
@@ -29,7 +29,7 @@ require (
 	github.com/k8snetworkplumbingwg/sriovnet v1.2.1-0.20250818105516-24ab680f94f3
 	github.com/mdlayher/arp v0.0.0-20220512170110-6706a2966875
 	github.com/mdlayher/ndp v1.0.1
-	github.com/mdlayher/socket v0.2.1
+	github.com/mdlayher/socket v0.5.1
 	github.com/metallb/frr-k8s v0.0.21
 	github.com/miekg/dns v1.1.31
 	github.com/mitchellh/copystructure v1.2.0
@@ -41,22 +41,22 @@ require (
 	github.com/ovn-kubernetes/libovsdb v0.8.2-0.20260302130604-c07ce22366ac
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/safchain/ethtool v0.3.1-0.20231027162144-83e5e0097c91
+	github.com/safchain/ethtool v0.6.2
 	github.com/spf13/afero v1.14.0
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.2
-	github.com/vishvananda/netlink v1.3.2-0.20260209201543-c7039a4139da
+	github.com/vishvananda/netlink v1.3.2-0.20260320193013-72a8cd7e0a73
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/net v0.47.0
 	golang.org/x/sync v0.18.0
 	golang.org/x/sys v0.38.0
 	golang.org/x/time v0.11.0
-	google.golang.org/grpc v1.72.2
+	google.golang.org/grpc v1.73.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20240425232638-1e8b9b7fc655
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/fsnotify/fsnotify.v1 v1.4.7
 	gopkg.in/gcfg.v1 v1.2.3
-	gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.0.2
+	gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.2.5-0.20260316195000-6eb8514eef3c
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.35.1
 	k8s.io/apimachinery v0.35.1
@@ -90,7 +90,7 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.10 // indirect
-	github.com/go-jose/go-jose/v4 v4.0.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-openapi/jsonpointer v0.21.1 // indirect
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.1 // indirect
@@ -102,18 +102,18 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
-	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
+	github.com/google/pprof v0.0.0-20250820193118-f64d9cf942d6 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/josharian/native v1.0.0 // indirect
+	github.com/josharian/native v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/juju/errors v0.0.0-20200330140219-3fe23663418f // indirect
 	github.com/juju/testing v0.0.0-20200706033705-4c23f9c453cd // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/mdlayher/ethernet v0.0.0-20220221185849-529eae5b6118 // indirect
-	github.com/mdlayher/packet v1.0.0 // indirect
+	github.com/mdlayher/packet v1.1.2 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/spdystream v0.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

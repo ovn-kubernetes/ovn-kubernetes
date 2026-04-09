@@ -56,25 +56,35 @@ type LogOptions struct {
 
 // SetLogOptions set the LoggingOptions of NetConf
 func SetLogOptions(options *LogOptions) {
+	// logger is used only if filname is supplied
+	if logger == nil || logger.Filename == "" {
+		return
+	}
+
 	// give some default value
-	logger.MaxSize = 100
-	logger.MaxAge = 5
-	logger.MaxBackups = 5
-	logger.Compress = true
+	updatedLogger := lumberjack.Logger{
+		Filename:   logger.Filename,
+		MaxAge:     5,
+		MaxBackups: 5,
+		Compress:   true,
+		MaxSize:    100,
+		LocalTime:  logger.LocalTime,
+	}
 	if options != nil {
 		if options.MaxAge != nil {
-			logger.MaxAge = *options.MaxAge
+			updatedLogger.MaxAge = *options.MaxAge
 		}
 		if options.MaxSize != nil {
-			logger.MaxSize = *options.MaxSize
+			updatedLogger.MaxSize = *options.MaxSize
 		}
 		if options.MaxBackups != nil {
-			logger.MaxBackups = *options.MaxBackups
+			updatedLogger.MaxBackups = *options.MaxBackups
 		}
 		if options.Compress != nil {
-			logger.Compress = *options.Compress
+			updatedLogger.Compress = *options.Compress
 		}
 	}
+	logger = &updatedLogger
 	loggingW = logger
 }
 
@@ -171,18 +181,32 @@ func SetLogStderr(enable bool) {
 
 // SetLogFile sets logging file
 func SetLogFile(filename string) {
+	// logger is used only if filname is supplied
 	if filename == "" {
 		return
 	}
 
-	logger.Filename = filename
-	loggingW = logger
+	updatedLogger := lumberjack.Logger{
+		Filename:   filename,
+		MaxAge:     5,
+		MaxBackups: 5,
+		Compress:   true,
+		MaxSize:    100,
+	}
 
+	if logger != nil {
+		updatedLogger.MaxAge = logger.MaxAge
+		updatedLogger.MaxBackups = logger.MaxBackups
+		updatedLogger.Compress = logger.Compress
+		updatedLogger.MaxSize = logger.MaxSize
+	}
+	logger = &updatedLogger
+	loggingW = logger
 }
 
 func init() {
 	loggingStderr = true
 	loggingW = nil
 	loggingLevel = PanicLevel
-	logger = &lumberjack.Logger{}
+	logger = nil
 }

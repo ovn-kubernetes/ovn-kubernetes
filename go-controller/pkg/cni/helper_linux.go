@@ -766,7 +766,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 				}
 			}
 
-			return ip.SettleAddresses(contIface.Name, 10)
+			return ip.SettleAddresses(contIface.Name, 10*time.Second)
 		})
 		if err != nil {
 			klog.Warningf("Failed to settle addresses: %q", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -133,6 +135,8 @@ type testNode struct {
 	Labels                   map[string]string
 	PrimaryAddressAnnotation string
 	SubnetsAnnotation        string
+	VTEPIPs                  map[string][]string
+	RawVTEPAnnotation        *string
 }
 
 func (tn testNode) Node() *corev1.Node {
@@ -140,15 +144,26 @@ func (tn testNode) Node() *corev1.Node {
 	if primaryAddressAnnotation == "" {
 		primaryAddressAnnotation = "{\"ipv4\":\"" + nodePrimaryAddr[tn.Name] + "\", \"ipv6\":\"" + nodePrimaryAddrIPv6[tn.Name] + "\"}"
 	}
+	annotations := map[string]string{
+		"k8s.ovn.org/node-subnets": tn.SubnetsAnnotation,
+		util.OvnNodeIfAddr:         primaryAddressAnnotation,
+	}
+	if tn.RawVTEPAnnotation != nil {
+		annotations[util.OVNNodeVTEPs] = *tn.RawVTEPAnnotation
+	} else if len(tn.VTEPIPs) > 0 {
+		vteps := make(map[string]util.VTEPNodeAnnotation, len(tn.VTEPIPs))
+		for vtepName, ips := range tn.VTEPIPs {
+			vteps[vtepName] = util.VTEPNodeAnnotation{IPs: ips}
+		}
+		vtepJSON, _ := json.Marshal(vteps)
+		annotations[util.OVNNodeVTEPs] = string(vtepJSON)
+	}
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:       tn.Name,
-			Labels:     tn.Labels,
-			Generation: int64(tn.Generation),
-			Annotations: map[string]string{
-				"k8s.ovn.org/node-subnets": tn.SubnetsAnnotation,
-				util.OvnNodeIfAddr:         primaryAddressAnnotation,
-			},
+			Name:        tn.Name,
+			Labels:      tn.Labels,
+			Generation:  int64(tn.Generation),
+			Annotations: annotations,
 		},
 	}
 }
@@ -308,6 +323,7 @@ type testNAD struct {
 	Topology              string
 	Transport             string
 	OwnUpdate             bool
+	EVPNVTEPName          string
 	EVPNMACVRFVNI         int32
 	EVPNMACVRFRouteTarget string
 	EVPNIPVRFVNI          int32
@@ -359,6 +375,9 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 	// Add EVPN configuration if present
 	if tn.EVPNMACVRFVNI > 0 || tn.EVPNIPVRFVNI > 0 {
 		evpnConfig := map[string]interface{}{}
+		if tn.EVPNVTEPName != "" {
+			evpnConfig["vtep"] = tn.EVPNVTEPName
+		}
 		if tn.EVPNMACVRFVNI > 0 {
 			macvrf := map[string]interface{}{
 				"vni": tn.EVPNMACVRFVNI,
@@ -426,6 +445,12 @@ func init() {
 	// cannot stop the NAD informer properly (the api we use was generated with
 	// an old codegen and the informer has no shutdown method)
 	config.IPv4Mode = true
+
+	// Disable WatchListClient feature gate for tests.
+	// Fake clientsets from third-party libraries don't yet support WatchList semantics
+	// introduced in K8s 1.35, causing informers to hang waiting for bookmark events.
+	// See: https://github.com/kubernetes/kubernetes/issues/135895
+	os.Setenv("KUBE_FEATURE_WatchListClient", "false")
 }
 
 func TestController_reconcile(t *testing.T) {
@@ -438,8 +463,10 @@ func TestController_reconcile(t *testing.T) {
 		nodes                []*testNode
 		namespaces           []*testNamespace
 		eips                 []*testEIP
+		vteps                []*vtepv1.VTEP
 		reconcile            string
 		transport            string
+		ipv6                 bool
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
 		expectFRRConfigs     []*testFRRConfig
@@ -1188,6 +1215,50 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
+			name: "reconciles EVPN MAC-VRF l2 network with auto target VRF",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNMACVRFVNI: 1000, EVPNMACVRFRouteTarget: "65000:1000"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+  vni 1000
+   route-target import 65000:1000
+   route-target export 65000:1000
+  exit-vni
+ exit-address-family
+exit
+!
+`,
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
 			name: "reconciles EVPN IP-VRF network with auto target and creates a router",
 			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
@@ -1452,6 +1523,594 @@ exit
 			},
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
+		{
+			name: "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "my-vtep", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-vtep"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\"}", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "advertises VTEP IP /128 in default-VRF router prefixes for IPv6 EVPN IP-VRF",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "fd00::1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue6", Namespace: "blue6", Network: util.GenerateCUDNNetworkName("blue6"),
+					Topology: "layer3", Subnet: "fd02::/48", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "my-vtep6", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-vtep6"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"fd64::/64"}},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_blue6\":\"fd02::100/64\"}", VTEPIPs: map[string][]string{"my-vtep6": {"fd64::1"}}}},
+			reconcile:            "ra",
+			ipv6:                 true,
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor fd00::1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue6
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue6
+ address-family l2vpn evpn
+  advertise ipv6 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue6", Prefixes: []string{"fd02::/64"}},
+						{ASN: 65000, Prefixes: []string{"fd64::1/128"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "fd00::1", Advertise: []string{"fd64::1/128"}, Receive: []testPrefixSelector{{Prefix: "fd64::/64", LE: 128}}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue6": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "advertises VTEP IP /32 in default-VRF router prefixes for EVPN MAC-VRF with target VRF",
+			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+						{ASN: 65000, VRF: "red", Prefixes: []string{"10.1.0.0/16"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"),
+					Topology: "layer2", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "my-vtep", EVPNMACVRFVNI: 1000, EVPNMACVRFRouteTarget: "65000:1000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-vtep"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+  vni 1000
+   route-target import 65000:1000
+   route-target export 65000:1000
+  exit-vni
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "red", Prefixes: []string{"10.1.0.0/16"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"10.1.0.0/16"}},
+						}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "deduplicates VTEP IPs when multiple EVPN networks reference the same VTEP",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "shared-vtep", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+				{Name: "green", Namespace: "green", Network: util.GenerateCUDNNetworkName("green"),
+					Topology: "layer3", Subnet: "10.3.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "shared-vtep", EVPNIPVRFVNI: 3000, EVPNIPVRFRouteTarget: "65000:3000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "shared-vtep"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\",\"cluster_udn_green\":\"10.3.1.0/24\"}", VTEPIPs: map[string][]string{"shared-vtep": {"100.64.0.1"}}}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+vrf green
+ vni 3000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+router bgp 65000 vrf green
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:3000
+  route-target export 65000:3000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65000, VRF: "green", Prefixes: []string{"10.3.1.0/24"}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{
+				"blue":  {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+				"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+			},
+		},
+		{
+			name: "advertises VTEP IPs per node across multiple nodes",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "my-vtep", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-vtep"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+			},
+			nodes: []*testNode{
+				{Name: "node1", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\"}", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}},
+				{Name: "node2", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.2.0/24\"}", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.2"}}},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node1"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node1"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node2"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node2"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.2/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.2/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "advertises both VTEP IPs when EVPN networks reference different VTEPs",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "vtep-a", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+				{Name: "green", Namespace: "green", Network: util.GenerateCUDNNetworkName("green"),
+					Topology: "layer3", Subnet: "10.3.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "vtep-b", EVPNIPVRFVNI: 3000, EVPNIPVRFRouteTarget: "65000:3000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "vtep-a"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "vtep-b"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"200.10.0.0/16"}},
+				},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\",\"cluster_udn_green\":\"10.3.1.0/24\"}", VTEPIPs: map[string][]string{"vtep-a": {"100.64.0.1"}, "vtep-b": {"200.10.0.1"}}}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+vrf green
+ vni 3000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+router bgp 65000 vrf green
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:3000
+  route-target export 65000:3000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65000, VRF: "green", Prefixes: []string{"10.3.1.0/24"}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.1/32", "200.10.0.1/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32", "200.10.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}, {Prefix: "200.10.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{
+				"blue":  {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+				"green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+			},
+		},
+		{
+			name: "skips node without VTEP annotation and succeeds for node with annotation",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "my-vtep", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-vtep"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+			},
+			nodes: []*testNode{
+				{Name: "node1", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\"}", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}},
+				{Name: "node2", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.2.0/24\"}"},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node1"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node1"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
+						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+						}},
+					},
+				},
+				{
+					Labels:            map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:       map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node2"},
+					NodeSelector:      map[string]string{"kubernetes.io/hostname": "node2"},
+					RawConfigPriority: 10,
+					RawConfig: `router bgp 65000
+ address-family l2vpn evpn
+  neighbor 192.168.1.1 activate
+  advertise-all-vni
+ exit-address-family
+exit
+!
+vrf blue
+ vni 2000
+exit-vrf
+!
+router bgp 65000 vrf blue
+ address-family l2vpn evpn
+  advertise ipv4 unicast
+  route-target import 65000:2000
+  route-target export 65000:2000
+ exit-address-family
+exit
+!
+`,
+					Routers: []*testRouter{
+						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "fails to reconcile when VTEP annotation is malformed",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 65000, Neighbors: []*testNeighbor{
+							{ASN: 65000, Address: "192.168.1.1"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+					Topology: "layer3", Subnet: "10.2.0.0/16", Labels: map[string]string{"selected": "true"},
+					EVPNVTEPName: "my-vtep", EVPNIPVRFVNI: 2000, EVPNIPVRFRouteTarget: "65000:2000"},
+			},
+			vteps: []*vtepv1.VTEP{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "my-vtep"},
+					Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}},
+				},
+			},
+			nodes: []*testNode{
+				{Name: "node", SubnetsAnnotation: "{\"cluster_udn_blue\":\"10.2.1.0/24\"}", RawVTEPAnnotation: ptr.To("not-json")},
+			},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+			expectFRRConfigs:     []*testFRRConfig{},
+			expectNADAnnotations: map[string]map[string]string{"blue": {}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1471,6 +2130,10 @@ exit
 				},
 			}
 			config.Default.Transport = tt.transport
+			if tt.ipv6 {
+				config.IPv6Mode = true
+				defer func() { config.IPv6Mode = false }()
+			}
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
@@ -1516,6 +2179,11 @@ exit
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 
+			for _, vtep := range tt.vteps {
+				_, err := fakeClientset.VTEPClient.K8sV1().VTEPs().Create(context.Background(), vtep, metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -1554,6 +2222,7 @@ exit
 				wf.NADInformer().Informer().HasSynced,
 				wf.NodeCoreInformer().Informer().HasSynced,
 				wf.EgressIPInformer().Informer().HasSynced,
+				wf.VTEPInformer().Informer().HasSynced,
 			)
 
 			err = nm.Start()
@@ -1811,6 +2480,24 @@ func TestUpdates(t *testing.T) {
 			name:              "reconciles all RAs on updated Node primary address annotation",
 			oldObject:         &testNode{Name: "eip", PrimaryAddressAnnotation: "old"},
 			newObject:         &testNode{Name: "eip", PrimaryAddressAnnotation: "new"},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs on new Node VTEP annotation",
+			oldObject:         &testNode{Name: "eip"},
+			newObject:         &testNode{Name: "eip", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs on removed Node VTEP annotation",
+			oldObject:         &testNode{Name: "eip", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}},
+			newObject:         &testNode{Name: "eip"},
+			expectedReconcile: []string{"ra1", "ra2", "ra3"},
+		},
+		{
+			name:              "reconciles all RAs on changed Node VTEP annotation",
+			oldObject:         &testNode{Name: "eip", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.1"}}},
+			newObject:         &testNode{Name: "eip", VTEPIPs: map[string][]string{"my-vtep": {"100.64.0.2"}}},
 			expectedReconcile: []string{"ra1", "ra2", "ra3"},
 		},
 		{

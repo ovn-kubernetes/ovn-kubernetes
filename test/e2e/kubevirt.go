@@ -1497,6 +1497,7 @@ fi
 			d.ConntrackDumpingDaemonSet()
 			d.OVSFlowsDumpingDaemonSet(deploymentconfig.Get().ExternalBridgeName())
 			d.IPTablesDumpingDaemonSet()
+			d.NFTablesDumpingDaemonSet()
 
 			bandwidthPerMigration := resource.MustParse("40Mi")
 			forcePostCopyMigrationPolicy := &kvmigrationsv1alpha1.MigrationPolicy{

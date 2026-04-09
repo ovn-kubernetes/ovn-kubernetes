@@ -77,9 +77,16 @@ func WriteCNIConfig() error {
 // ParseNetConf parses config in NAD spec
 func ParseNetConf(bytes []byte) (*ovncnitypes.NetConf, error) {
 	var netconf *ovncnitypes.NetConf
+	var err error
 
-	confList, err := libcni.ConfListFromBytes(bytes)
-	if err == nil {
+	var raw struct {
+		Plugins json.RawMessage `json:"plugins"`
+	}
+	if unmarshalErr := json.Unmarshal(bytes, &raw); unmarshalErr == nil && raw.Plugins != nil {
+		confList, err := libcni.ConfListFromBytes(bytes)
+		if err != nil {
+			return nil, err
+		}
 		netconf, err = parseNetConfList(confList)
 		if err == nil {
 			if _, singleErr := parseNetConfSingle(bytes); singleErr == nil {
@@ -123,6 +130,9 @@ func parseNetConfSingle(bytes []byte) (*ovncnitypes.NetConf, error) {
 }
 
 func parseNetConfList(confList *libcni.NetworkConfigList) (*ovncnitypes.NetConf, error) {
+	if len(confList.Plugins) == 0 {
+		return nil, fmt.Errorf("error parsing configuration list %q: no plugins found", confList.Name)
+	}
 	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
 	if err := json.Unmarshal(confList.Plugins[0].Bytes, netconf); err != nil {
 		return nil, err

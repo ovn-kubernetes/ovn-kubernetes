@@ -209,6 +209,18 @@ func MatchFirstIPFamily(isIPv6 bool, ips []net.IP) (net.IP, error) {
 	return nil, fmt.Errorf("no %s IP available", IPFamilyName(isIPv6))
 }
 
+func SplitIPsByIPFamily(ips []net.IP) (ipsv4, ipsv6 []net.IP) {
+	for _, ip := range ips {
+		switch {
+		case utilnet.IsIPv6(ip):
+			ipsv6 = append(ipsv6, ip)
+		default:
+			ipsv4 = append(ipsv4, ip)
+		}
+	}
+	return
+}
+
 // MatchFirstIPNetFamily loops through the array of ipnets and returns the
 // first entry in the list in the same IP Family, based on input flag isIPv6.
 func MatchFirstIPNetFamily(isIPv6 bool, ipnets []*net.IPNet) (*net.IPNet, error) {
@@ -232,6 +244,18 @@ func MatchAllIPNetFamily(isIPv6 bool, ipnets []*net.IPNet) []*net.IPNet {
 	return ret
 }
 
+func SplitIPNetsByIPFamily(ipnets []*net.IPNet) (ipv4, ipv6 []*net.IPNet) {
+	for _, ipnet := range ipnets {
+		switch {
+		case utilnet.IsIPv6CIDR(ipnet):
+			ipv6 = append(ipv6, ipnet)
+		default:
+			ipv4 = append(ipv4, ipnet)
+		}
+	}
+	return
+}
+
 // MatchIPStringFamily loops through the array of string and returns the
 // first entry in the list in the same IP Family, based on input flag isIPv6.
 func MatchIPStringFamily(isIPv6 bool, ipStrings []string) (string, error) {
@@ -241,6 +265,18 @@ func MatchIPStringFamily(isIPv6 bool, ipStrings []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no %s string available", IPFamilyName(isIPv6))
+}
+
+// MatchFirstCIDRStringFamily loops through the array of CIDR strings and returns
+// the first entry in the same IP Family, based on input flag isIPv6.
+func MatchFirstCIDRStringFamily[T ~string](isIPv6 bool, cidrs []T) T {
+	for _, cidr := range cidrs {
+		if utilnet.IsIPv6CIDRString(string(cidr)) == isIPv6 {
+			return cidr
+		}
+	}
+	var zero T
+	return zero
 }
 
 // MatchAllIPStringFamily loops through the array of string and returns a slice
@@ -309,10 +345,10 @@ func IPNetOverlaps(ref *net.IPNet, ipnets ...*net.IPNet) []*net.IPNet {
 }
 
 // ParseIPNets parses the provided string formatted CIDRs
-func ParseIPNets(strs []string) ([]*net.IPNet, error) {
+func ParseIPNets[T ~string](strs []T) ([]*net.IPNet, error) {
 	ipnets := make([]*net.IPNet, len(strs))
 	for i := range strs {
-		ip, ipnet, err := utilnet.ParseCIDRSloppy(strs[i])
+		ip, ipnet, err := utilnet.ParseCIDRSloppy(string(strs[i]))
 		if err != nil {
 			return nil, err
 		}

@@ -1205,7 +1205,7 @@ func (nc *DefaultNodeNetworkController) startEgressIPHealthCheckingServer(mgmtPo
 	}
 
 	mgmtAddress := mgmtAddresses[0]
-	if err := ip.SettleAddresses(ifName, 10); err != nil {
+	if err := ip.SettleAddresses(ifName, 10*time.Second); err != nil {
 		return fmt.Errorf("failed to start Egress IP health checking server due to unsettled IPv6: %w on interface %s", err, ifName)
 	}
 
@@ -1613,4 +1613,15 @@ func configureGlobalForwarding() error {
 		}
 	}
 	return nil
+}
+
+// GetNodeAddressManager returns the node's address manager from the gateway,
+// available after Init() has completed. Returns nil if the gateway has not
+// been initialized or is not the expected type.
+func (nc *DefaultNodeNetworkController) GetNodeAddressManager() *addressManager {
+	gw, ok := nc.Gateway.(*gateway)
+	if !ok || gw == nil {
+		return nil
+	}
+	return gw.nodeIPManager
 }

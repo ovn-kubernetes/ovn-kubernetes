@@ -300,16 +300,6 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
 
-	if util.IsEVPNEnabled() {
-		// Currently NDM is used only by the EVPN controller
-		ncm.ndm = netlinkdevicemanager.NewController()
-
-		ncm.evpnController, err = evpn.NewController(name, wf, ncm.Kube, ncm.ndm, ncm.networkManager.Interface(), ncm.ovsClient)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create EVPN controller: %w", err)
-		}
-	}
-
 	return ncm, nil
 }
 
@@ -437,7 +427,17 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}
 
-	if ncm.evpnController != nil {
+	// The EVPN controller is created here (rather than in the constructor) because it depends on
+	// the node address manager, which is only available after the default node network controller
+	// has been initialized.
+	if util.IsEVPNEnabled() {
+		ncm.ndm = netlinkdevicemanager.NewController()
+
+		ncm.evpnController, err = evpn.NewController(ncm.name, ncm.watchFactory, ncm.Kube, ncm.ndm, ncm.networkManager.Interface(), ncm.ovsClient, ncm.defaultNodeNetworkController.GetNodeAddressManager())
+		if err != nil {
+			return fmt.Errorf("failed to create EVPN controller: %w", err)
+		}
+
 		if err := ncm.evpnController.Start(); err != nil {
 			return fmt.Errorf("failed to start EVPN controller: %w", err)
 		}
