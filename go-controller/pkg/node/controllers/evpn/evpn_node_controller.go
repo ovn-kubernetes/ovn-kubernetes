@@ -35,6 +35,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utiltypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/types"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
@@ -634,7 +635,7 @@ func (c *Controller) ensureOVSPort(vtepName, bridgeName, portName, macVRFLSPName
 		return fmt.Errorf("failed to bring up OVS port %s: %w", portName, err)
 	}
 
-	if err := util.GetNetLinkOps().BridgeVlanAdd(ovsLink, uint16(vid), util.BridgeVlanOptions{PVID: true, Untagged: true, Master: true}); err != nil {
+	if err := util.GetNetLinkOps().BridgeVlanAdd(ovsLink, uint16(vid), utiltypes.BridgeVlanOptions{PVID: true, Untagged: true, Master: true}); err != nil {
 		return fmt.Errorf("failed to set VLAN %d on OVS port %s: %w", vid, portName, err)
 	}
 

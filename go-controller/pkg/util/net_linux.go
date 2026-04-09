@@ -24,14 +24,8 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/types"
 )
-
-type BridgeVlanOptions struct {
-	PVID     bool
-	Untagged bool
-	Self     bool
-	Master   bool
-}
 
 type NetLinkOps interface {
 	LinkList() ([]netlink.Link, error)
@@ -72,12 +66,12 @@ type NetLinkOps interface {
 	IsEntryNotFoundError(err error) bool
 	IsAlreadyExistsError(err error) bool
 	// Bridge VLAN operations
-	BridgeVlanAdd(link netlink.Link, vid uint16, opts BridgeVlanOptions) error
-	BridgeVlanDel(link netlink.Link, vid uint16, opts BridgeVlanOptions) error
+	BridgeVlanAdd(link netlink.Link, vid uint16, options types.BridgeVlanOptions) error
+	BridgeVlanDel(link netlink.Link, vid uint16, options types.BridgeVlanOptions) error
 	BridgeVniAdd(link netlink.Link, vni uint32) error
 	BridgeVniDel(link netlink.Link, vni uint32) error
-	BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, opts BridgeVlanOptions) error
-	BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, opts BridgeVlanOptions) error
+	BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, options types.BridgeVlanOptions) error
+	BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, options types.BridgeVlanOptions) error
 	BridgeVlanTunnelShowDev(link netlink.Link) ([]nl.TunnelInfo, error)
 	BridgeVlanList() (map[int32][]*nl.BridgeVlanInfo, error)
 	BridgeVniList() (map[int32][]*nl.BridgeVniInfo, error)
@@ -266,12 +260,12 @@ func (defaultNetLinkOps) LinkSubscribeWithOptions(ch chan<- netlink.LinkUpdate, 
 	return netlink.LinkSubscribeWithOptions(ch, done, options)
 }
 
-func (defaultNetLinkOps) BridgeVlanAdd(link netlink.Link, vid uint16, opts BridgeVlanOptions) error {
-	return netlink.BridgeVlanAdd(link, vid, opts.PVID, opts.Untagged, opts.Self, opts.Master)
+func (defaultNetLinkOps) BridgeVlanAdd(link netlink.Link, vid uint16, options types.BridgeVlanOptions) error {
+	return netlink.BridgeVlanAdd(link, vid, options.PVID, options.Untagged, options.Self, options.Master)
 }
 
-func (defaultNetLinkOps) BridgeVlanDel(link netlink.Link, vid uint16, opts BridgeVlanOptions) error {
-	return netlink.BridgeVlanDel(link, vid, opts.PVID, opts.Untagged, opts.Self, opts.Master)
+func (defaultNetLinkOps) BridgeVlanDel(link netlink.Link, vid uint16, options types.BridgeVlanOptions) error {
+	return netlink.BridgeVlanDel(link, vid, options.PVID, options.Untagged, options.Self, options.Master)
 }
 
 func (defaultNetLinkOps) BridgeVniAdd(link netlink.Link, vni uint32) error {
@@ -282,12 +276,12 @@ func (defaultNetLinkOps) BridgeVniDel(link netlink.Link, vni uint32) error {
 	return netlink.BridgeVniDel(link, vni)
 }
 
-func (defaultNetLinkOps) BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, opts BridgeVlanOptions) error {
-	return netlink.BridgeVlanAddTunnelInfo(link, vid, vni, opts.Self, opts.Master)
+func (defaultNetLinkOps) BridgeVlanAddTunnelInfo(link netlink.Link, vid uint16, vni uint32, options types.BridgeVlanOptions) error {
+	return netlink.BridgeVlanAddTunnelInfo(link, vid, vni, options.Self, options.Master)
 }
 
-func (defaultNetLinkOps) BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, opts BridgeVlanOptions) error {
-	return netlink.BridgeVlanDelTunnelInfo(link, vid, vni, opts.Self, opts.Master)
+func (defaultNetLinkOps) BridgeVlanDelTunnelInfo(link netlink.Link, vid uint16, vni uint32, options types.BridgeVlanOptions) error {
+	return netlink.BridgeVlanDelTunnelInfo(link, vid, vni, options.Self, options.Master)
 }
 
 func (defaultNetLinkOps) BridgeVlanTunnelShowDev(link netlink.Link) ([]nl.TunnelInfo, error) {
