@@ -2372,7 +2372,7 @@ ip a add %[4]s/24 dev %[2]s
 				By("waiting for policy-owned ACLs to be created")
 				var policyACLCount int
 				Eventually(func() int {
-					count, err := countOVNACLs(mnpName)
+					count, err := countOVNACLs(f.Namespace.Name, mnpName)
 					if err != nil {
 						return -1
 					}
@@ -2380,7 +2380,7 @@ ip a add %[4]s/24 dev %[2]s
 				}, 2*time.Minute, 2*time.Second).Should(BeNumerically(">", 0),
 					"MNP should have generated OVN ACLs")
 
-				policyACLCount, err = countOVNACLs(mnpName)
+				policyACLCount, err = countOVNACLs(f.Namespace.Name, mnpName)
 				Expect(err).NotTo(HaveOccurred())
 				framework.Logf("Policy-owned OVN ACL count: %d", policyACLCount)
 
@@ -2393,7 +2393,7 @@ ip a add %[4]s/24 dev %[2]s
 					context.Background(), mnpName, metav1.DeleteOptions{})).To(Succeed())
 
 				Eventually(func() int {
-					count, err := countOVNACLs(mnpName)
+					count, err := countOVNACLs(f.Namespace.Name, mnpName)
 					if err != nil {
 						return -1
 					}
@@ -2935,9 +2935,9 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 }
 
 // countOVNACLs counts OVN ACLs in the Northbound database.
-// If policyName is empty, counts all ACLs.
-// If policyName is specified, counts only ACLs owned by that policy (via external-ids:policy).
-func countOVNACLs(policyName string) (int, error) {
+// If namespace and policyName are empty, counts all ACLs.
+// If specified, counts only ACLs owned by that policy (via external-ids:k8s.ovn.org/name=namespace:policyName).
+func countOVNACLs(namespace, policyName string) (int, error) {
 	ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 
 	dbPodName, err := e2ekubectl.RunKubectl(ovnNamespace, "get", "pods",
@@ -2949,14 +2949,16 @@ func countOVNACLs(policyName string) (int, error) {
 	dbPodName = strings.Trim(dbPodName, "'")
 
 	var output string
-	if policyName == "" {
+	if namespace == "" || policyName == "" {
 		// Count all ACLs
 		output, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
 			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "list", "acl")
 	} else {
 		// Count only ACLs owned by the specific policy
+		// OVN uses external-ids:k8s.ovn.org/name=namespace:policyName format
+		policyKey := fmt.Sprintf("%s:%s", namespace, policyName)
 		output, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
-			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", fmt.Sprintf("external-ids:policy=%s", policyName))
+			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", fmt.Sprintf("external-ids:k8s.ovn.org/name=%s", policyKey))
 	}
 	if err != nil {
 		return 0, fmt.Errorf("failed to list OVN ACLs: %v", err)
