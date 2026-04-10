@@ -15,6 +15,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -2312,6 +2313,99 @@ ip a add %[4]s/24 dev %[2]s
 					),
 				),
 			)
+
+			// Test validates that OVN-Kubernetes optimizes Multi-Network Policies by aggregating
+			// multiple ipBlock rules instead of creating a 1:1 mapping of ipBlocks to OVN ACLs.
+			// This test requires ENABLE_MULTI_NET=true to be set when deploying the cluster.
+			It("should optimize ACLs when creating policy with many ipBlocks", func() {
+				const (
+					mnpName      = "acl-optimization-test"
+					testPodName  = "acl-test-pod"
+					ipBlockCount = 200
+				)
+
+				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "layer2",
+					cidr:     secondaryFlatL2NetworkCIDR,
+				})
+				netConfig.namespace = f.Namespace.Name
+
+				By("creating the network attachment definition")
+				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+					context.Background(),
+					generateNAD(netConfig, f.ClientSet),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("creating test pod attached to secondary network")
+				podConfig := podConfiguration{
+					name:        testPodName,
+					namespace:   f.Namespace.Name,
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					labels:      map[string]string{"app": "acl-test"},
+				}
+
+				var pod *v1.Pod
+				pod, err = cs.CoreV1().Pods(podConfig.namespace).Create(
+					context.Background(),
+					generatePodSpec(podConfig),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("waiting for pod to be running")
+				Eventually(func() v1.PodPhase {
+					updatedPod, err := cs.CoreV1().Pods(podConfig.namespace).Get(
+						context.Background(), pod.GetName(), metav1.GetOptions{})
+					if err != nil {
+						return v1.PodFailed
+					}
+					return updatedPod.Status.Phase
+				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+
+				By("measuring baseline OVN ACL count")
+				baselineCount, err := countOVNACLs()
+				Expect(err).NotTo(HaveOccurred())
+				framework.Logf("Baseline OVN ACL count: %d", baselineCount)
+
+				By(fmt.Sprintf("creating multi-network policy with %d ipBlock entries", ipBlockCount))
+				mnp := generateMNPWithManyIPBlocks(mnpName, f.Namespace.Name, secondaryNetworkName, ipBlockCount)
+				Expect(createMultiNetworkPolicy(mnpClient, f.Namespace.Name, mnp)).To(Succeed())
+
+				By("waiting for policy to be applied")
+				time.Sleep(10 * time.Second)
+
+				By("measuring OVN ACL count after MNP creation")
+				afterMNPCount, err := countOVNACLs()
+				Expect(err).NotTo(HaveOccurred())
+				framework.Logf("OVN ACL count after MNP: %d", afterMNPCount)
+
+				aclDelta := afterMNPCount - baselineCount
+				framework.Logf("OVN ACL delta from MNP: %d ACLs", aclDelta)
+
+				By("verifying ACL rules were created")
+				Expect(aclDelta).To(BeNumerically(">", 0),
+					"MNP should have generated at least some OVN ACLs")
+
+				By("verifying ACL optimization (total ACLs should not equal ipBlock count)")
+				Expect(aclDelta).NotTo(Equal(ipBlockCount),
+					fmt.Sprintf("ACL count (%d) should not equal ipBlock count (%d), indicating optimization occurred", aclDelta, ipBlockCount))
+
+				By("cleaning up MNP and verifying ACL cleanup")
+				Expect(mnpClient.MultiNetworkPolicies(f.Namespace.Name).Delete(
+					context.Background(), mnpName, metav1.DeleteOptions{})).To(Succeed())
+
+				Eventually(func() int {
+					count, err := countOVNACLs()
+					if err != nil {
+						return -1
+					}
+					return count
+				}, 1*time.Minute, 5*time.Second).Should(BeNumerically("<=", baselineCount+5),
+					"OVN ACLs should be cleaned up after MNP deletion")
+			})
 		})
 	})
 
@@ -2843,4 +2937,78 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 		podConfig.attachments[i].IPRequest = ipsToRequest
 	}
 	return nil
+}
+
+// countOVNACLs counts the total number of OVN ACLs in the Northbound database
+func countOVNACLs() (int, error) {
+	ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+
+	dbPodName, err := e2ekubectl.RunKubectl(ovnNamespace, "get", "pods",
+		"-l", "name=ovnkube-node",
+		"-o", "jsonpath='{.items[0].metadata.name}'")
+	if err != nil {
+		return 0, fmt.Errorf("failed to get OVN DB pod: %v", err)
+	}
+	dbPodName = strings.Trim(dbPodName, "'")
+
+	output, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
+		"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "list", "acl")
+	if err != nil {
+		return 0, fmt.Errorf("failed to list OVN ACLs: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	count := 0
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "_uuid") {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// generateMNPWithManyIPBlocks creates a multi-network policy with specified number of ipBlock entries
+func generateMNPWithManyIPBlocks(name, namespace, nadName string, ipBlockCount int) *mnpapi.MultiNetworkPolicy {
+	// Generate ipBlock peers in 10.0.0.0/8 range
+	peers := make([]mnpapi.MultiNetworkPolicyPeer, 0, ipBlockCount)
+	for i := 0; i < ipBlockCount; i++ {
+		// Create /24 subnets in 10.x.y.0/24 format
+		octet2 := i / 256
+		octet3 := i % 256
+		cidr := fmt.Sprintf("10.%d.%d.0/24", octet2, octet3)
+		peers = append(peers, mnpapi.MultiNetworkPolicyPeer{
+			IPBlock: &mnpapi.IPBlock{
+				CIDR: cidr,
+			},
+		})
+	}
+
+	tcp := v1.ProtocolTCP
+	port := intstr.FromInt(80)
+
+	return &mnpapi.MultiNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Annotations: map[string]string{
+				PolicyForAnnotation: fmt.Sprintf("%s/%s", namespace, nadName),
+			},
+		},
+		Spec: mnpapi.MultiNetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "acl-test"},
+			},
+			Egress: []mnpapi.MultiNetworkPolicyEgressRule{
+				{
+					Ports: []mnpapi.MultiNetworkPolicyPort{
+						{
+							Protocol: &tcp,
+							Port:     &port,
+						},
+					},
+					To: peers,
+				},
+			},
+			PolicyTypes: []mnpapi.MultiPolicyType{mnpapi.PolicyTypeEgress},
+		},
+	}
 }
