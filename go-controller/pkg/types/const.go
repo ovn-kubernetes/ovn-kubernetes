@@ -379,6 +379,14 @@ const (
 	// Contains cluster CIDRs + local node IPv6 addresses that should be exempted from SNAT.
 	NFTNoOverlaySNATExemptV6 = "no-overlay-snat-exempt-v6"
 
+	// NFTEgressIPARPBlockV4 is a set in the dedicated ovn-kubernetes-egressip-ipv4 ARP table
+	// used during application restart to block ARP responses for IPv4 egress IPs
+	NFTEgressIPARPBlockV4 = "egressip-v4"
+
+	// NFTEgressIPNDPBlockV6 is a set in the dedicated ovn-kubernetes-egressip-ipv6 inet table
+	// used during application restart to block NDP responses for IPv6 egress IPs
+	NFTEgressIPNDPBlockV6 = "egressip-v6"
+
 	// Metrics
 	MetricOvnkubeNamespace               = "ovnkube"
 	MetricOvnkubeSubsystemController     = "controller"
