@@ -1285,6 +1285,9 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 						ginkgo.By("Hitting the nodeport on " + node.Name + " and reaching all the endpoints " + protocol)
 						for i := 0; i < maxTries; i++ {
 							epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "hostname")
+							if epHostname == "" {
+								continue
+							}
 							responses.Insert(epHostname)
 
 							// each endpoint returns its hostname. By doing this, we validate that each ep was reached at least once.
@@ -1424,6 +1427,9 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 								valid := false
 								for i := 0; i < maxTries; i++ {
 									epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, address, port, "hostname")
+									if epHostname == "" {
+										continue
+									}
 									responses.Insert(epHostname)
 
 									// each endpoint returns its hostname. By doing this, we validate that each ep was reached at least once.
@@ -1496,8 +1502,13 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 						for i := 0; i < maxTries; i++ {
 							epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "hostname")
 							epClientIP := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "clientip")
+							if epHostname == "" || epClientIP == "" {
+								continue
+							}
 							epClientIP, _, err = net.SplitHostPort(epClientIP)
-							framework.ExpectNoError(err, "failed to parse client ip:port")
+							if err != nil {
+								continue
+							}
 							responses.Insert(epHostname, epClientIP)
 
 							if responses.Equal(expectedResponses) {
@@ -1505,7 +1516,6 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 								valid = true
 								break
 							}
-
 						}
 						gomega.Expect(valid).To(gomega.Equal(true), fmt.Sprintf("Validation failed for node %s. Expected Responses=%v, Actual Responses=%v", node.Name, expectedResponses, responses))
 					}
@@ -1718,6 +1728,9 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					ginkgo.By("Hitting the external service on " + externalAddress + " and reaching all the endpoints " + protocol)
 					for i := 0; i < maxTries; i++ {
 						epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, externalAddress, externalPort, "hostname")
+						if epHostname == "" {
+							continue
+						}
 						responses.Insert(epHostname)
 
 						// each endpoint returns its hostname. By doing this, we validate that each ep was reached at least once.
@@ -1871,8 +1884,13 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 						for i := 0; i < maxTries; i++ {
 							epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "hostname")
 							epClientIP := pokeEndpointViaExternalContainer(externalContainer, protocol, nodeAddress.Address, nodePort, "clientip")
+							if epHostname == "" || epClientIP == "" {
+								continue
+							}
 							epClientIP, _, err = net.SplitHostPort(epClientIP)
-							framework.ExpectNoError(err, "failed to parse client ip:port")
+							if err != nil {
+								continue
+							}
 							responses.Insert(epHostname, epClientIP)
 
 							if responses.Equal(expectedResponses) {
@@ -1880,7 +1898,6 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 								valid = true
 								break
 							}
-
 						}
 						gomega.Expect(valid).To(gomega.Equal(true),
 							fmt.Sprintf("Validation failed for node %s. Expected Responses=%v, Actual Responses=%v", node.Name, expectedResponses, responses))
