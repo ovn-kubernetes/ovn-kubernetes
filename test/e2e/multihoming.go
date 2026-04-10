@@ -2961,6 +2961,11 @@ func countOVNACLs(namespace, policyName string) (int, error) {
 			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", fmt.Sprintf("external-ids:k8s.ovn.org/name=%s", policyKey))
 	}
 	if err != nil {
+		// ovn-nbctl find returns exit code 1 when no results found, which is not an error
+		// Check if output is empty (no results) vs actual command failure
+		if output == "" || strings.TrimSpace(output) == "" {
+			return 0, nil
+		}
 		return 0, fmt.Errorf("failed to list OVN ACLs: %v", err)
 	}
 
