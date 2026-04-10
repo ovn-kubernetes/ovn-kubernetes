@@ -2147,7 +2147,7 @@ ip a add %[4]s/24 dev %[2]s
 						metav1.LabelSelector{},
 						[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress},
 						[]mnpapi.MultiNetworkPolicyIngressRule{
-							mnpapi.MultiNetworkPolicyIngressRule{},
+							{},
 						},
 						nil,
 					),
@@ -2213,7 +2213,7 @@ ip a add %[4]s/24 dev %[2]s
 						},
 						[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress, mnpapi.PolicyTypeEgress},
 						[]mnpapi.MultiNetworkPolicyIngressRule{
-							mnpapi.MultiNetworkPolicyIngressRule{},
+							{},
 						},
 						nil,
 					),
@@ -2365,46 +2365,41 @@ ip a add %[4]s/24 dev %[2]s
 					return updatedPod.Status.Phase
 				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
 
-				By("measuring baseline OVN ACL count")
-				baselineCount, err := countOVNACLs()
-				Expect(err).NotTo(HaveOccurred())
-				framework.Logf("Baseline OVN ACL count: %d", baselineCount)
-
 				By(fmt.Sprintf("creating multi-network policy with %d ipBlock entries", ipBlockCount))
 				mnp := generateMNPWithManyIPBlocks(mnpName, f.Namespace.Name, secondaryNetworkName, ipBlockCount)
 				Expect(createMultiNetworkPolicy(mnpClient, f.Namespace.Name, mnp)).To(Succeed())
 
-				By("waiting for policy to be applied")
-				time.Sleep(10 * time.Second)
+				By("waiting for policy-owned ACLs to be created")
+				var policyACLCount int
+				Eventually(func() int {
+					count, err := countOVNACLs(mnpName)
+					if err != nil {
+						return -1
+					}
+					return count
+				}, 2*time.Minute, 2*time.Second).Should(BeNumerically(">", 0),
+					"MNP should have generated OVN ACLs")
 
-				By("measuring OVN ACL count after MNP creation")
-				afterMNPCount, err := countOVNACLs()
+				policyACLCount, err = countOVNACLs(mnpName)
 				Expect(err).NotTo(HaveOccurred())
-				framework.Logf("OVN ACL count after MNP: %d", afterMNPCount)
+				framework.Logf("Policy-owned OVN ACL count: %d", policyACLCount)
 
-				aclDelta := afterMNPCount - baselineCount
-				framework.Logf("OVN ACL delta from MNP: %d ACLs", aclDelta)
-
-				By("verifying ACL rules were created")
-				Expect(aclDelta).To(BeNumerically(">", 0),
-					"MNP should have generated at least some OVN ACLs")
-
-				By("verifying ACL optimization (total ACLs should not equal ipBlock count)")
-				Expect(aclDelta).NotTo(Equal(ipBlockCount),
-					fmt.Sprintf("ACL count (%d) should not equal ipBlock count (%d), indicating optimization occurred", aclDelta, ipBlockCount))
+				By("verifying ACL optimization occurred (ACL count should be much less than ipBlock count)")
+				Expect(policyACLCount).To(BeNumerically("<", ipBlockCount),
+					fmt.Sprintf("ACL count (%d) should be significantly less than ipBlock count (%d), indicating optimization occurred", policyACLCount, ipBlockCount))
 
 				By("cleaning up MNP and verifying ACL cleanup")
 				Expect(mnpClient.MultiNetworkPolicies(f.Namespace.Name).Delete(
 					context.Background(), mnpName, metav1.DeleteOptions{})).To(Succeed())
 
 				Eventually(func() int {
-					count, err := countOVNACLs()
+					count, err := countOVNACLs(mnpName)
 					if err != nil {
 						return -1
 					}
 					return count
-				}, 1*time.Minute, 5*time.Second).Should(BeNumerically("<=", baselineCount+5),
-					"OVN ACLs should be cleaned up after MNP deletion")
+				}, 1*time.Minute, 5*time.Second).Should(Equal(0),
+					"Policy-owned OVN ACLs should be fully cleaned up after MNP deletion")
 			})
 		})
 	})
@@ -2939,8 +2934,10 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 	return nil
 }
 
-// countOVNACLs counts the total number of OVN ACLs in the Northbound database
-func countOVNACLs() (int, error) {
+// countOVNACLs counts OVN ACLs in the Northbound database.
+// If policyName is empty, counts all ACLs.
+// If policyName is specified, counts only ACLs owned by that policy (via external-ids:policy).
+func countOVNACLs(policyName string) (int, error) {
 	ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 
 	dbPodName, err := e2ekubectl.RunKubectl(ovnNamespace, "get", "pods",
@@ -2951,8 +2948,16 @@ func countOVNACLs() (int, error) {
 	}
 	dbPodName = strings.Trim(dbPodName, "'")
 
-	output, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
-		"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "list", "acl")
+	var output string
+	if policyName == "" {
+		// Count all ACLs
+		output, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
+			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "list", "acl")
+	} else {
+		// Count only ACLs owned by the specific policy
+		output, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
+			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", fmt.Sprintf("external-ids:policy=%s", policyName))
+	}
 	if err != nil {
 		return 0, fmt.Errorf("failed to list OVN ACLs: %v", err)
 	}
