@@ -13,6 +13,8 @@ import (
 )
 
 const OVNKubernetesNFTablesName = "ovn-kubernetes"
+const OVNKubernetesEgressIPv4NFTablesName = "ovn-kubernetes-egressip-ipv4"
+const OVNKubernetesEgressIPv6NFTablesName = "ovn-kubernetes-egressip-ipv6"
 
 var nftHelper knftables.Interface
 

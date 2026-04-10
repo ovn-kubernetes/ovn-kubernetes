@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
@@ -16,6 +17,7 @@ import (
 )
 
 const nftPMTUDChain = "no-pmtud"
+const nftEgressIPDropChain = "egressip-drop"
 
 // setupRemoteNodeNFTSets sets up the NFT sets that contain remote Kubernetes node IPs
 func setupRemoteNodeNFTSets() error {
@@ -202,5 +204,153 @@ func setupPMTUDNFTChain() error {
 	if err != nil {
 		return fmt.Errorf("could not update nftables rule for PMTUD: %v", err)
 	}
+	return nil
+}
+
+// SetupEgressIPARPBlockNFTables sets up the complete nftables configuration (table, set, chain, and rules)
+// for blocking ARP/NDP responses for egress IPs during graceful shutdown.
+func SetupEgressIPARPBlockNFTables(egressIPs []string) error {
+	if len(egressIPs) == 0 {
+		klog.V(5).Info("No egress IPs to setup ARP block rules for")
+		return nil
+	}
+
+	var ipv4Addrs, ipv6Addrs []string
+	for _, ipStr := range egressIPs {
+		if !utilnet.IsIPv6String(ipStr) {
+			ipv4Addrs = append(ipv4Addrs, ipStr)
+		} else {
+			ipv6Addrs = append(ipv6Addrs, ipStr)
+		}
+	}
+
+	if config.IPv4Mode && len(ipv4Addrs) > 0 {
+		nft, err := knftables.New(knftables.ARPFamily, nodenft.OVNKubernetesEgressIPv4NFTablesName)
+		if err != nil {
+			return fmt.Errorf("failed to create egress IP v4 nftables interface: %w", err)
+		}
+
+		tx := nft.NewTransaction()
+
+		tx.Add(&knftables.Table{})
+
+		tx.Add(&knftables.Set{
+			Name:    types.NFTEgressIPARPBlockV4,
+			Comment: knftables.PtrTo("IPv4 egress IPs"),
+			Type:    "ipv4_addr",
+		})
+
+		for _, ipStr := range ipv4Addrs {
+			tx.Add(&knftables.Element{
+				Set: types.NFTEgressIPARPBlockV4,
+				Key: []string{ipStr},
+			})
+		}
+
+		tx.Add(&knftables.Chain{
+			Name:     nftEgressIPDropChain,
+			Comment:  knftables.PtrTo("Block ARP for egress IPs during application restart"),
+			Type:     knftables.PtrTo(knftables.FilterType),
+			Hook:     knftables.PtrTo(knftables.InputHook),
+			Priority: knftables.PtrTo(knftables.FilterPriority),
+		})
+
+		tx.Add(&knftables.Rule{
+			Chain: nftEgressIPDropChain,
+			Rule: knftables.Concat(
+				"arp daddr ip @"+types.NFTEgressIPARPBlockV4,
+				"drop",
+			),
+		})
+
+		if err = nft.Run(context.TODO(), tx); err != nil {
+			return fmt.Errorf("could not setup egress IP v4 nftables: %v", err)
+		}
+	}
+
+	if config.IPv6Mode && len(ipv6Addrs) > 0 {
+		nft, err := knftables.New(knftables.InetFamily, nodenft.OVNKubernetesEgressIPv6NFTablesName)
+		if err != nil {
+			return fmt.Errorf("failed to create egress IP v6 nftables interface: %w", err)
+		}
+
+		tx := nft.NewTransaction()
+
+		tx.Add(&knftables.Table{})
+
+		tx.Add(&knftables.Set{
+			Name:    types.NFTEgressIPNDPBlockV6,
+			Comment: knftables.PtrTo("IPv6 egress IPs"),
+			Type:    "ipv6_addr",
+		})
+
+		for _, ipStr := range ipv6Addrs {
+			tx.Add(&knftables.Element{
+				Set: types.NFTEgressIPNDPBlockV6,
+				Key: []string{ipStr},
+			})
+		}
+
+		tx.Add(&knftables.Chain{
+			Name:     nftEgressIPDropChain,
+			Comment:  knftables.PtrTo("Block NDP for egress IPs during application restart"),
+			Type:     knftables.PtrTo(knftables.FilterType),
+			Hook:     knftables.PtrTo(knftables.InputHook),
+			Priority: knftables.PtrTo(knftables.FilterPriority),
+		})
+
+		tx.Add(&knftables.Rule{
+			Chain: nftEgressIPDropChain,
+			Rule: knftables.Concat(
+				"icmpv6 type nd-neighbor-solicit",
+				"icmpv6 taddr @"+types.NFTEgressIPNDPBlockV6,
+				"drop",
+			),
+		})
+
+		if err = nft.Run(context.TODO(), tx); err != nil {
+			return fmt.Errorf("could not setup egress IP v6 nftables: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// CleanupEgressIPARPBlockNFTTable deletes the dedicated nftables tables for egress IP ARP/NDP blocking.
+// Called during startup to remove stale rules from previous container shutdown.
+// On full node reboot, nftables state is cleared automatically, so this primarily handles container restarts.
+func CleanupEgressIPARPBlockNFTTable() error {
+	if config.IPv4Mode {
+		nft, err := knftables.New(knftables.ARPFamily, nodenft.OVNKubernetesEgressIPv4NFTablesName)
+		if err != nil {
+			return fmt.Errorf("failed to create egress IP v4 nftables interface: %w", err)
+		}
+
+		tx := nft.NewTransaction()
+		tx.Delete(&knftables.Table{})
+
+		if err = nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
+			return fmt.Errorf("could not delete egress IP v4 nftables table: %v", err)
+		} else {
+			klog.Infof("Deleted stale egress IP v4 nftables table from previous shutdown")
+		}
+	}
+
+	if config.IPv6Mode {
+		nft, err := knftables.New(knftables.InetFamily, nodenft.OVNKubernetesEgressIPv6NFTablesName)
+		if err != nil {
+			return fmt.Errorf("failed to create egress IP v6 nftables interface: %w", err)
+		}
+
+		tx := nft.NewTransaction()
+		tx.Delete(&knftables.Table{})
+
+		if err = nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
+			return fmt.Errorf("could not delete egress IP v6 nftables table: %v", err)
+		} else {
+			klog.Infof("Deleted stale egress IP v6 nftables table from previous shutdown")
+		}
+	}
+
 	return nil
 }
