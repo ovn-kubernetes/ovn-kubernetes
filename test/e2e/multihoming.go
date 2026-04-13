@@ -2955,10 +2955,12 @@ func countOVNACLs(namespace, policyName string) (int, error) {
 			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "list", "acl")
 	} else {
 		// Count only ACLs owned by the specific policy
-		// OVN uses external-ids:k8s.ovn.org/name=namespace:policyName format
+		// OVN uses external_ids with k8s.ovn.org/name=namespace:policyName format
+		// Use ovn-nbctl find syntax: external_ids{>=}{"key"="value"}
 		policyKey := fmt.Sprintf("%s:%s", namespace, policyName)
+		findExpr := fmt.Sprintf("external_ids{>=}{\"k8s.ovn.org/name\"=\"%s\"}", policyKey)
 		output, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
-			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", fmt.Sprintf("external-ids:k8s.ovn.org/name=%s", policyKey))
+			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", findExpr)
 	}
 	if err != nil {
 		// ovn-nbctl find returns exit code 1 when no results found, which is not an error
