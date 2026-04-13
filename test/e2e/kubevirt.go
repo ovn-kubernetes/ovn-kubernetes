@@ -329,7 +329,22 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			polling := 15 * time.Second
 			for podName, serverPodIPs := range serverPodIPsByName {
 				for _, serverPodIP := range serverPodIPs {
-					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 0 -c %[2]s --logfile /tmp/%[1]s_%[2]s_iperf3.log &", podName, serverPodIP), polling)
+					iperfLogFile := fmt.Sprintf("/tmp/%s_%s_iperf3.log", podName, serverPodIP)
+
+					By(fmt.Sprintf("remove iperf3 log for %s: %s", serverPodIP, stage))
+					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("rm -f %s", iperfLogFile), polling)
+					if err != nil {
+						return fmt.Errorf("failed removing iperf3 log file %s: %w", output, err)
+					}
+
+					By(fmt.Sprintf("check iperf3 connectivity for %s: %s", serverPodIP, stage))
+					output, err = virtClient.RunCommand(vmi, fmt.Sprintf("iperf3 -t 1 -c %s", serverPodIP), polling)
+					if err != nil {
+						return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
+					}
+
+					By(fmt.Sprintf("start iperf3 to %s: %s", serverPodIP, stage))
+					output, err = virtClient.RunCommand(vmi, fmt.Sprintf("nohup iperf3 -t 0 -c %[2]s --logfile %[1]s &", iperfLogFile, serverPodIP), polling)
 					if err != nil {
 						return fmt.Errorf("%s: %w", output, err)
 					}
