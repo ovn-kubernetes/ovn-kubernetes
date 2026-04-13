@@ -80,6 +80,11 @@ usage() {
     echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled."
+    echo "-cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process. DEFAULT: Disabled"
+    echo "-ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled"
+    echo "-df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled"
+    echo "-dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled"
+    echo "-gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-n4  | --no-ipv4                              Disable IPv4. DEFAULT: IPv4 Enabled."
     echo "-i6  | --ipv6                                 Enable IPv6. DEFAULT: IPv6 Disabled."
@@ -182,6 +187,17 @@ parse_args() {
                                                     ENABLE_NO_OVERLAY_OUTBOUND_SNAT=false
                                                     ENABLE_NO_OVERLAY_MANAGED_ROUTING=false
                                                   fi
+                                                  ;;
+            -cm | --compact-mode )                OVN_COMPACT_MODE=true
+                                                  ;;
+            -ds | --disable-snat-multiple-gws )   OVN_DISABLE_SNAT_MULTIPLE_GWS=true
+                                                  ;;
+            -df | --disable-forwarding )          OVN_DISABLE_FORWARDING=true
+                                                  ;;
+            -dgb | --dummy-gateway-bridge )       OVN_DUMMY_GATEWAY_BRIDGE=true
+                                                  ;;
+            -gm | --gateway-mode )                shift
+                                                  OVN_GATEWAY_MODE=$1
                                                   ;;
             -n4 | --no-ipv4 )                     PLATFORM_IPV4_SUPPORT=false
                                                   ;;
@@ -324,34 +340,6 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_instances=512
 }
 
-label_ovn_single_node_zones() {
-  KIND_NODES=$(kind_get_nodes)
-  for n in $KIND_NODES; do
-    kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
-  done
-}
-
-label_ovn_multiple_nodes_zones() {
-  KIND_NODES=$(kind_get_nodes | sort)
-  zone_idx=1
-  n=1
-  for node in $KIND_NODES; do
-    zone="zone-${zone_idx}"
-    kubectl label node "${node}" k8s.ovn.org/zone-name=${zone} --overwrite
-    if [ "${n}" == "1" ]; then
-      # Mark 1st node of each zone as zone control plane
-      kubectl label node "${node}" node-role.kubernetes.io/zone-controller="" --overwrite
-    fi
-
-    if [ "${n}" == "${KIND_NUM_NODES_PER_ZONE}" ]; then
-      n=1
-      zone_idx=$((zone_idx+1))
-    else
-      n=$((n+1))
-    fi
-  done
-}
-
 create_ovn_kubernetes() {
     cd ${DIR}/../helm/ovn-kubernetes
     if [[ $KIND_NUM_NODES_PER_ZONE == 1 ]]; then
@@ -383,9 +371,10 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set serviceNetwork="${ESCAPED_SVC_CIDR}" \
           --set mtu=${OVN_MTU} \
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
-          --set global.image.repository=${OVN_IMAGE%%:*} \
+          --set global.image.repository=${OVN_IMAGE%:*} \
           --set global.image.tag=${OVN_IMAGE##*:} \
           --set global.enableAdminNetworkPolicy=true \
+          --set global.enableMultiExternalGateway=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -405,12 +394,18 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableNoOverlay=$(if [ "${ENABLE_NO_OVERLAY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlaySnat=$(if [ "${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlayManagedRouting=$(if [ "${ENABLE_NO_OVERLAY_MANAGED_ROUTING}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enablePersistentIPs=true \
+          --set global.enableConfigDuration=true \
           --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.allowICMPNetworkPolicy=$(if [ "${OVN_ALLOW_ICMP_NETPOL}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.gatewayMode="${OVN_GATEWAY_MODE}" \
+          $( [ -n "$OVN_GATEWAY_OPTS" ] && echo "--set global.gatewayOpts=\"${OVN_GATEWAY_OPTS}\"" ) \
+          --set global.extGatewayNetworkInterface=$(if [ "${OVN_SECOND_BRIDGE}" == "true" ]; then echo "eth1"; else echo ""; fi) \
           --set global.disableSnatMultipleGws=$(if [ "${OVN_DISABLE_SNAT_MULTIPLE_GWS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.disableForwarding=$(if [ "${OVN_DISABLE_FORWARDING}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.unprivilegedMode=false \
+          --set global.enableCompactMode=$(if [ "${OVN_COMPACT_MODE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.dummyGatewayBridge=$(if [ "${OVN_DUMMY_GATEWAY_BRIDGE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF
        )
@@ -429,11 +424,14 @@ parse_args "$@"
 set_default_params
 print_params
 helm_prereqs
-build_ovn_image
 create_kind_cluster
 if [ "$ENABLE_COREDUMPS" == true ]; then
   setup_coredumps
 fi
+if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
+  connect_local_registry
+fi
+build_ovn_image
 detect_apiserver_url
 install_ovn_image
 if [ "$OVN_SECOND_BRIDGE" == true ]; then
@@ -497,6 +495,10 @@ if [ "$KIND_INSTALL_PLUGINS" == true ]; then
 fi
 if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   install_kubevirt
+  install_cert_manager
+  if [ "$KIND_OPT_OUT_KUBEVIRT_IPAM" != true ]; then
+    install_kubevirt_ipam_controller
+  fi
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then

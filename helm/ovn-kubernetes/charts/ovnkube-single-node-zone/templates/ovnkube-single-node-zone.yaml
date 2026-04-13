@@ -80,6 +80,10 @@ spec:
           value: "1.2.0"
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel | quote }}
+        - name: OVN_GATEWAY_MODE
+          value: {{ default "shared" .Values.global.gatewayMode }}
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: {{ hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false | quote }}
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:

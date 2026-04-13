@@ -47,6 +47,8 @@ set_common_default_params() {
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
+  KIND_LOCAL_REGISTRY_NAME=${KIND_LOCAL_REGISTRY_NAME:-kind-registry}
+  KIND_LOCAL_REGISTRY_PORT=${KIND_LOCAL_REGISTRY_PORT:-5000}
   KIND_INSTALL_INGRESS=${KIND_INSTALL_INGRESS:-false}
   KIND_INSTALL_METALLB=${KIND_INSTALL_METALLB:-false}
   KIND_INSTALL_PLUGINS=${KIND_INSTALL_PLUGINS:-false}
@@ -115,6 +117,11 @@ set_common_default_params() {
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
   if [ "$OVN_COMPACT_MODE" == true ]; then
     KIND_NUM_WORKER=0
+  fi
+  OVN_DUMMY_GATEWAY_BRIDGE=${OVN_DUMMY_GATEWAY_BRIDGE:-false}
+  OVN_GATEWAY_OPTS=${OVN_GATEWAY_OPTS:-""}
+  if [ "$OVN_DUMMY_GATEWAY_BRIDGE" == true ]; then
+    OVN_GATEWAY_OPTS="--allow-no-uplink --gateway-interface=br-ex"
   fi
 
   KIND_NUM_MASTER=1
@@ -227,6 +234,45 @@ set_ovn_image() {
   else
     OVN_IMAGE="localhost/ovn-daemonset-fedora:dev"
   fi
+}
+
+create_local_registry() {
+    # create registry container unless it already exists
+    if [ "$($OCI_BIN inspect -f '{{.State.Running}}' "${KIND_LOCAL_REGISTRY_NAME}" 2>/dev/null || true)" != 'true' ]; then
+      $OCI_BIN run \
+        -d --restart=always -p "127.0.0.1:${KIND_LOCAL_REGISTRY_PORT}:5000" --name "${KIND_LOCAL_REGISTRY_NAME}" \
+        registry:2
+    fi
+}
+
+connect_local_registry() {
+    # connect the registry to the cluster network if not already connected
+    if [ "$($OCI_BIN inspect -f='{{json .NetworkSettings.Networks.kind}}' "${KIND_LOCAL_REGISTRY_NAME}")" = 'null' ]; then
+      $OCI_BIN network connect "kind" "${KIND_LOCAL_REGISTRY_NAME}"
+    fi
+
+    # Reference docs for local registry:
+    # - https://kind.sigs.k8s.io/docs/user/local-registry/
+    # - https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-registry-hosting
+  namespace: kube-public
+data:
+  localRegistryHosting.v1: |
+    host: "localhost:${KIND_LOCAL_REGISTRY_PORT}"
+    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
+EOF
+
+    # Configure containerd hosts.toml for the local registry (containerd 2.x)
+    local registry_dir="/etc/containerd/certs.d/localhost:${KIND_LOCAL_REGISTRY_PORT}"
+    for node in $(kind get nodes --name "${KIND_CLUSTER_NAME}"); do
+        $OCI_BIN exec "${node}" mkdir -p "${registry_dir}"
+        $OCI_BIN exec "${node}" sh -c \
+            "printf '[host.\"http://${KIND_LOCAL_REGISTRY_NAME}:${KIND_LOCAL_REGISTRY_PORT}\"]\n' > ${registry_dir}/hosts.toml"
+    done
 }
 
 build_ovn_image() {
@@ -1677,5 +1723,158 @@ label_ovn_ha() {
   # to choose the nodes where ovn master components will be placed
   for n in $MASTER_NODES; do
     kubectl label node "$n" k8s.ovn.org/ovnkube-db=true node-role.kubernetes.io/control-plane="" --overwrite
+  done
+}
+
+label_ovn_single_node_zones() {
+  KIND_NODES=$(kind_get_nodes)
+  for n in $KIND_NODES; do
+    kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
+  done
+}
+
+label_ovn_multiple_nodes_zones() {
+  KIND_NODES=$(kind_get_nodes | sort)
+  zone_idx=1
+  n=1
+  for node in $KIND_NODES; do
+    zone="zone-${zone_idx}"
+    kubectl label node "${node}" k8s.ovn.org/zone-name=${zone} --overwrite
+    if [ "${n}" == "1" ]; then
+      # Mark 1st node of each zone as zone control plane
+      kubectl label node "${node}" node-role.kubernetes.io/zone-controller="" --overwrite
+    fi
+
+    if [ "${n}" == "${KIND_NUM_NODES_PER_ZONE}" ]; then
+      n=1
+      zone_idx=$((zone_idx+1))
+    else
+      n=$((n+1))
+    fi
+  done
+}
+
+OPENSSL=""
+set_openssl_binary() {
+  for s in openssl openssl3; do
+      if ! command_exists "${s}" ; then
+          continue
+      fi
+      if [ "$(${s} version | awk -F '[ |.]' '{print $2}')" == "3" ]; then
+          OPENSSL="${s}"
+          echo "Found OpenSSL version 3 in binary ${OPENSSL}"
+          break
+      fi
+  done
+  if [ "${OPENSSL}" == "" ] ; then
+    echo "Dependency not met: Cannot find openssl version 3 (searched for openssl and openssl3)"
+    exit 1
+  fi
+}
+
+scale_kind_cluster() {
+  echo "Scaling cluster to ${KIND_NUM_WORKER} workers..."
+  rm -rf /tmp/kindscaler
+  # change this to https://github.com/lobuhi/kindscaler once PR https://github.com/lobuhi/kindscaler/pull/1 is accepted
+  git clone https://github.com/trozet/kindscaler /tmp/kindscaler
+  /tmp/kindscaler/kindscaler.sh ${KIND_CLUSTER_NAME} -r worker -c ${KIND_NUM_WORKER}
+  if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
+      if [ "${KIND_NUM_NODES_PER_ZONE}" == "1" ]; then
+       label_ovn_single_node_zones
+      else
+        label_ovn_multiple_nodes_zones
+      fi
+  fi
+  if [ "$OVN_IMAGE" == local ]; then
+    set_ovn_image
+  fi
+  install_ovn_image
+  if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
+    set_dnsnameresolver_images
+    install_dnsnameresolver_images
+  fi
+}
+
+# install_ipsec will apply the IPsec DaemonSet, create a CA that can be used by the IPsec pods. It will then add it to
+# configmap -n ovn-kubernetes signer-ca. After that, it will monitor all CSRs that are pending and it will sign those
+# with the CA cert. After each iteration, it will check if the ovn-ipsec DaemonSet pods rolled out successfully.
+# Make sure to run this at the very end of the setup process.
+install_ipsec() {
+  pushd "${MANIFEST_OUTPUT_DIR}"
+  run_kubectl apply -f ovn-ipsec.yaml
+  popd
+
+  # Create the CA (stored inside the signer-ca ConfigMap) that the IPsec pods use to sign their certificates
+  ca_dir=$(mktemp -d)
+  pushd "${ca_dir}"
+  ${OPENSSL} genrsa -out ca-bundle.key 4096
+  ${OPENSSL} req -x509 -new -nodes -key ca-bundle.key -sha256 -days 10240 -out ca-bundle.crt \
+      -subj "/C=CA/ST=Arctica/L=Northpole/O=Acme Inc/OU=DevOps/CN=www.example.com/emailAddress=dev@www.example.com"
+  kubectl create configmap -n ovn-kubernetes signer-ca --from-file ca-bundle.crt
+
+  # For ca. 5 minutes max (60 * 5 seconds + overhead) ...
+  success=false
+  for i in {1..60}; do
+    # ... try to get all CSRs and sign them
+    csrs=$(oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}')
+    for csr in ${csrs}; do
+      kubectl get csr "${csr}" -o jsonpath='{.spec.request}' | base64 --decode | \
+          sed -n '/BEGIN CERTIFICATE REQUEST/,$p' > "${csr}"
+      ${OPENSSL} x509 -req -in ${csr} -CA ca-bundle.crt -CAkey ca-bundle.key -CAcreateserial -out "${csr}.crt" -days 3650  \
+          -sha256 -extensions v3_req -copy_extensions copy
+      kubectl get csr "${csr}" -o json | \
+          jq '.status.certificate = "'$(base64 "${csr}.crt" | tr -d '\n')'"' | \
+          kubectl replace --raw /apis/certificates.k8s.io/v1/certificatesigningrequests/${csr}/status -f -
+    done
+
+    # ... and then check if the ovn-ipsec DaemonSet rolled out completely (wait for 5 seconds)
+    if kubectl rollout status daemonset -n ovn-kubernetes ovn-ipsec --timeout 5s; then
+        echo "All IPsec pods rolled out successfully"
+        success=true
+        break
+    fi
+    echo "IPsec pods did not roll out successfully yet"
+  done
+  popd
+  rm -Rf "${ca_dir}"
+
+  if ! ${success}; then
+      echo "IPsec pods did not roll out successfully"
+      exit 1
+  fi
+}
+
+# fixup_kubeconfig_names ensures kind clusters are named based off provided
+# values by removing the 'kind-' prefix from context/user/cluster names.
+fixup_kubeconfig_names() {
+  sed -i -- "s/user: kind-.*/user: ${KIND_CLUSTER_NAME}/g" $KUBECONFIG
+  sed -i -- "s/name: kind-.*/name: ${KIND_CLUSTER_NAME}/g" $KUBECONFIG
+  sed -i -- "s/cluster: kind-.*/cluster: ${KIND_CLUSTER_NAME}/g" $KUBECONFIG
+  sed -i -- "s/current-context: .*/current-context: ${KIND_CLUSTER_NAME}/g" $KUBECONFIG
+}
+
+remove_default_route() {
+  KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
+  for n in $KIND_NODES; do
+    "$OCI_BIN" exec "$n" ip route delete default
+  done
+}
+
+add_dns_hostnames() {
+  dns="$'"
+  KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
+  # find all IPs and build dns entries
+  for n in $KIND_NODES; do
+	ip=$("$OCI_BIN" container inspect -f '{{ .NetworkSettings.Networks.kind.IPAddress }}' "$n")
+        dns+="$ip $n \n"
+        ip=$("$OCI_BIN" container inspect -f '{{ .NetworkSettings.Networks.kind.GlobalIPv6Address }}' "$n")
+	dns+="$ip $n \n"
+  done
+
+  dns+="'"
+
+  # update dns on each node
+  for n in $KIND_NODES; do
+	"$OCI_BIN" exec "$n" bash -c "echo  $dns >> /etc/hosts"
   done
 }
