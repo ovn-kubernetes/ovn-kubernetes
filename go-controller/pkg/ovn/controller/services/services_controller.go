@@ -815,6 +815,11 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(key string) error {
 func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) error {
 	klog.Infof("Configuring UDN enabled service route for service %s/%s in network: %s", service.Namespace, service.Name, c.netInfo.GetNetworkName())
 
+	if len(c.nodeInfos) == 0 {
+		return fmt.Errorf("no nodes tracked yet for network %s, cannot configure UDN enabled service route for %s/%s",
+			c.netInfo.GetNetworkName(), service.Namespace, service.Name)
+	}
+
 	extIDs := map[string]string{
 		types.NetworkExternalID:           c.netInfo.GetNetworkName(),
 		types.TopologyExternalID:          c.netInfo.TopologyType(),

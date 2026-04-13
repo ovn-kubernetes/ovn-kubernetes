@@ -1876,3 +1876,45 @@ func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
 
 	return nil
 }
+
+// TestConfigureUDNEnabledServiceRouteWithoutNodes - verifies retry when no nodes tracked
+func TestConfigureUDNEnabledServiceRouteWithoutNodes(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ns := "default"
+
+	oldIPv4Mode := config.IPv4Mode
+	config.IPv4Mode = true
+	defer func() { config.IPv4Mode = oldIPv4Mode }()
+
+	l3UDN, err := getSampleUDNNetInfo(ns, types.Layer3Topology)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	dbSetup := libovsdbtest.TestSetup{}
+	controller, err := newControllerWithDBSetupForNetwork(dbSetup, l3UDN, ns)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	defer controller.close()
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubernetes",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP: "10.96.0.1",
+			Type:      corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	serviceKey := "default/kubernetes"
+
+	err = controller.configureUDNEnabledServiceRoute(service)
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("no nodes tracked yet"))
+
+	initialRequeues := controller.queue.NumRequeues(serviceKey)
+	controller.handleErr(err, serviceKey)
+	g.Expect(controller.queue.NumRequeues(serviceKey)).To(gomega.Equal(initialRequeues + 1))
+
+	controller.handleErr(nil, serviceKey)
+	g.Expect(controller.queue.NumRequeues(serviceKey)).To(gomega.Equal(0))
+}
