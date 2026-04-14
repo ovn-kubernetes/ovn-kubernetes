@@ -23,7 +23,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -582,7 +582,7 @@ func checkBridgeMapping(ovsClient client.Client, topology string, networkName st
 		return nil
 	}
 
-	openvSwitch, err := ovs.GetOpenvSwitch(ovsClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsClient)
 	if err != nil {
 		return fmt.Errorf("failed getting openvswitch: %w", err)
 	}

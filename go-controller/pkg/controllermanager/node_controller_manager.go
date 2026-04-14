@@ -24,7 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
@@ -135,7 +135,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 			}
 			return false
 		}
-		ovsIfaces, err := ovsops.FindInterfacesWithPredicate(ncm.ovsClient, p)
+		ovsIfaces, err := libovsdbops.FindInterfacesWithPredicate(ncm.ovsClient, p)
 		if err == nil {
 			for _, ovsIface := range ovsIfaces {
 				internalMgmtPorts[ovsIface.Name] = ovsIface.Name
@@ -150,7 +150,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 			_, ok := item.ExternalIDs[ovntypes.OvnManagementPortNameExternalID]
 			return ok
 		}
-		ovsReps, err := ovsops.FindInterfacesWithPredicate(ncm.ovsClient, p)
+		ovsReps, err := libovsdbops.FindInterfacesWithPredicate(ncm.ovsClient, p)
 		if err == nil {
 			for _, ovsIface := range ovsReps {
 				repMgmtPorts[ovsIface.ExternalIDs[ovntypes.OvnManagementPortNameExternalID]] = repInfo{name: ovsIface.Name, netName: ovsIface.ExternalIDs[ovntypes.NetworkExternalID]}

@@ -1,4 +1,4 @@
-package ovs
+package ops
 
 import (
 	"context"

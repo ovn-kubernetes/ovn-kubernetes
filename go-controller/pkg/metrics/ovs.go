@@ -17,7 +17,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -287,7 +287,7 @@ func convertToFloat64(val *int) float64 {
 }
 
 func getOvsVersionInfo(ovsDBClient libovsdbclient.Client) {
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
 		klog.Errorf("Failed to get ovsdb openvswitch entry :(%v)", err)
 		return
@@ -442,7 +442,7 @@ func ovsDatapathMetricsUpdate() {
 }
 
 func updateOvsBridgeMetrics(ovsDBClient libovsdbclient.Client, ovsOfctl ovsClient) error {
-	bridgeList, err := ovsops.ListBridges(ovsDBClient)
+	bridgeList, err := libovsdbops.ListBridges(ovsDBClient)
 	if err != nil {
 		return fmt.Errorf("failed to get ovsdb bridge table :(%v)", err)
 	}
@@ -488,7 +488,7 @@ func getOvsBridgeOpenFlowsCount(ovsOfctl ovsClient, bridgeName string) (float64,
 
 // updateOvsInterfaceMetrics updates the ovs interface metrics obtained from ovsdb
 func updateOvsInterfaceMetrics(ovsDBClient libovsdbclient.Client) error {
-	interfaceList, err := ovsops.ListInterfaces(ovsDBClient)
+	interfaceList, err := libovsdbops.ListInterfaces(ovsDBClient)
 	if err != nil {
 		return fmt.Errorf("failed to get ovsdb interface table :(%v)", err)
 	}
@@ -568,7 +568,7 @@ func setOvsMemoryMetrics(ovsVswitchdAppctl ovsClient) (err error) {
 // setOvsHwOffloadMetrics updates the hw-offload, tc-policy metrics
 // obtained from Open_vSwitch table updates
 func setOvsHwOffloadMetrics(ovsDBClient libovsdbclient.Client) (err error) {
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
 		return fmt.Errorf("failed to get ovsdb openvswitch entry :(%v)", err)
 	}
