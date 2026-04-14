@@ -272,7 +272,7 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 	if !c.services.Has(key) {
 		return
 	}
-	c.queue.AddRateLimited(key)
+	c.queue.Add(key)
 }
 
 func (c *Controller) onServiceUpdate(_, newObj interface{}) {
@@ -284,7 +284,7 @@ func (c *Controller) onServiceUpdate(_, newObj interface{}) {
 	if !c.services.Has(key) {
 		return
 	}
-	c.queue.AddRateLimited(key)
+	c.queue.Add(key)
 }
 
 func (c *Controller) onServiceDelete(obj interface{}) {
@@ -296,5 +296,5 @@ func (c *Controller) onServiceDelete(obj interface{}) {
 	if !c.services.Has(key) {
 		return
 	}
-	c.queue.AddRateLimited(key)
+	c.queue.Add(key)
 }
