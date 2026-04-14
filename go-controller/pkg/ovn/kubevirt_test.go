@@ -816,8 +816,28 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 
 					// Change the phase by updating to emulate the logic of transition
 					if virtLauncherPodToCreate.updatePhase != nil {
-						podToCreate.Status.Phase = *virtLauncherPodToCreate.updatePhase
-						_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).UpdateStatus(context.TODO(), podToCreate, metav1.UpdateOptions{})
+						// Wait for the controller to finish processing the pod
+						// (i.e., OVN annotations are set by EnsurePodAnnotationForVM).
+						// The fake client's UpdateStatus replaces the entire object,
+						// so we must read the latest pod to avoid overwriting the
+						// controller's annotation patch, which would race with this
+						// status update.
+						Eventually(func() error {
+							p, err := fakeOvn.controller.watchFactory.GetPod(podToCreate.Namespace, podToCreate.Name)
+							if err != nil {
+								return err
+							}
+							_, err = util.UnmarshalPodAnnotation(p.Annotations, ovntypes.DefaultNetworkName)
+							return err
+						}).
+							WithTimeout(time.Minute).
+							WithPolling(time.Second).
+							Should(Succeed(), "should have OVN pod annotation set by the controller")
+
+						latestPod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Get(context.TODO(), podToCreate.Name, metav1.GetOptions{})
+						Expect(err).NotTo(HaveOccurred())
+						latestPod.Status.Phase = *virtLauncherPodToCreate.updatePhase
+						_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).UpdateStatus(context.TODO(), latestPod, metav1.UpdateOptions{})
 						Expect(err).NotTo(HaveOccurred())
 						Eventually(func() (corev1.PodPhase, error) {
 							updatedPod, err := fakeOvn.controller.watchFactory.GetPod(podToCreate.Namespace, podToCreate.Name)
@@ -825,7 +845,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						}).
 							WithTimeout(time.Minute).
 							WithPolling(time.Second).
-							Should(Equal(podToCreate.Status.Phase), "should be in the updated phase")
+							Should(Equal(*virtLauncherPodToCreate.updatePhase), "should be in the updated phase")
 
 					}
 				}
