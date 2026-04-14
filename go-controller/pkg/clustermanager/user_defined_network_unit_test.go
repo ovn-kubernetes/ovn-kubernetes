@@ -904,7 +904,6 @@ func initConfig(ctx *cli.Context, ovkConfig config.OVNKubernetesFeatureConfig) e
 	if err != nil {
 		return err
 	}
-	config.Kubernetes.HostNetworkNamespace = ""
 	config.OVNKubernetesFeature = ovkConfig
 	return nil
 }
