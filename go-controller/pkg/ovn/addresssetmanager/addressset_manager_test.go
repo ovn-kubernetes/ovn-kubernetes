@@ -60,7 +60,8 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		ip3            = "10.128.1.3"
 		ip4            = "10.128.1.4"
 		hostNetPodIP   = "10.0.1.1"
-		hostNetNsIP    = "10.244.0.2"
+		node1Subnet    = "10.244.0.0/24"
+		node1MgmtIP    = "10.244.0.2"
 	)
 	var (
 		asf               *addressset.FakeAddressSetFactory
@@ -69,6 +70,7 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		clientSet         *util.OVNKubeControllerClientset
 		initialDB         libovsdbtest.TestSetup
 		libovsdbCleanup   *libovsdbtest.Context
+		libovsdbNBClient  libovsdbclient.Client
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -103,7 +105,6 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		wf, err = factory.NewOVNKubeControllerWatchFactory(clientSet)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(wf.Start()).To(gomega.Succeed())
-		var libovsdbNBClient libovsdbclient.Client
 		libovsdbNBClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		addressSetManager = NewAddressSetManager(wf.PodCoreInformer(), wf.NamespaceInformer(), wf.NodeCoreInformer(), libovsdbNBClient,
@@ -228,9 +229,16 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 				pod.Labels = map[string]string{podLabelKey: pod.Name}
 				podsList = append(podsList, *pod)
 			}
-			startAddrSetManager(initialDB, []corev1.Namespace{namespace1, namespace2, hostNetNamespace}, podsList)
-			// imitate HostNetworkNamespace address set update
-			addressSetManager.SetHostNetworkNamespaceIPs([]string{hostNetNsIP})
+			testNode := corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet),
+					},
+				},
+			}
+			startAddrSetManagerWithNodes(initialDB, []corev1.Namespace{namespace1, namespace2, hostNetNamespace}, podsList,
+				[]corev1.Node{testNode})
 
 			_, _, _, err := addressSetManager.EnsureAddressSet(
 				peer.PodSelector, peer.NamespaceSelector, nil, staticNamespace, "backRef", controllerName, &util.DefaultNetInfo{}, legacyMode)
@@ -296,7 +304,7 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		ginkgo.Entry("all pods from all namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
 			PodSelector:       &metav1.LabelSelector{},
 			NamespaceSelector: &metav1.LabelSelector{},
-		}, namespaceName1, []string{ip1, ip2, ip3, ip4, hostNetNsIP}, true),
+		}, namespaceName1, []string{ip1, ip2, ip3, ip4, node1MgmtIP}, true),
 		ginkgo.Entry("selected pods from all namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
 			PodSelector: &metav1.LabelSelector{
 				MatchExpressions: []metav1.LabelSelectorRequirement{
@@ -634,6 +642,180 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			asf.EventuallyExpectEmptyAddressSetExist(peerASIDs)
 		})
+	})
+
+	ginkgo.It("reconciles HostNetworkNamespace IPs", func() {
+		config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
+		hostNetNamespace := *testing.NewNamespace(config.Kubernetes.HostNetworkNamespace)
+		startAddrSetManager(initialDB, []corev1.Namespace{hostNetNamespace}, nil)
+
+		_, _, _, err := addressSetManager.EnsureAddressSet(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", "backRef", controllerName, &util.DefaultNetInfo{}, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		hostNSASIDs := GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", controllerName, true)
+		asf.EventuallyExpectEmptyAddressSetExist(hostNSASIDs)
+		// this is calculated based on node-id
+		gwIP1 := "100.64.0.1"
+
+		testNode := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet),
+					"k8s.ovn.org/node-id":      "1",
+				},
+			},
+		}
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node1MgmtIP, gwIP1})
+
+		// imitate node update, even though that should never happen
+		gwIP2 := "100.64.0.2"
+		testNode.Annotations["k8s.ovn.org/node-id"] = "2"
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Update(context.TODO(), &testNode, metav1.UpdateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node1MgmtIP, gwIP2})
+		node2MgmtIP := "10.244.1.2"
+		testNode2 := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "node2",
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", "10.244.1.0/24"),
+				},
+			},
+		}
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode2, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node1MgmtIP, gwIP2, node2MgmtIP})
+
+		// delete second node and check if IPs are removed from address set
+		err = clientSet.KubeClient.CoreV1().Nodes().Delete(context.TODO(), testNode2.Name, metav1.DeleteOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node1MgmtIP, gwIP2})
+
+		// Imitate restart replacing node1 with node2 to make sure HostNetworkNamespace IPs are fully updated on initialSync
+		ginkgo.By("restarting addressSetManager with different node in the cluster")
+		addressSetManager.Stop()
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode2, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		err = clientSet.KubeClient.CoreV1().Nodes().Delete(context.TODO(), testNode.Name, metav1.DeleteOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		addressSetManager = NewAddressSetManager(wf.PodCoreInformer(), wf.NamespaceInformer(), wf.NodeCoreInformer(), libovsdbNBClient,
+			func(_ string) string { return "" })
+		addressSetManager.addressSetFactoryV4 = asf
+		err = addressSetManager.Start()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		// run EnsureAddressSet again, otherwise address set won't be reconciled with no users
+		_, _, _, err = addressSetManager.EnsureAddressSet(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", "backRef", controllerName, &util.DefaultNetInfo{}, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node2MgmtIP})
+	})
+	ginkgo.It("updates IPs for existing nodes when the host network traffic namespace is created", func() {
+		config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
+		// this is calculated based on node-id
+		gwIP1 := "100.64.0.1"
+		testNode := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet),
+					"k8s.ovn.org/node-id":      "1",
+				},
+			},
+		}
+		startAddrSetManagerWithNodes(initialDB, nil, nil, []corev1.Node{testNode})
+		_, _, _, err := addressSetManager.EnsureAddressSet(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", "backRef", controllerName, &util.DefaultNetInfo{}, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		hostNSASIDs := GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", controllerName, true)
+		asf.EventuallyExpectEmptyAddressSetExist(hostNSASIDs)
+
+		hostNetNamespace := testing.NewNamespace(config.Kubernetes.HostNetworkNamespace)
+		_, err = clientSet.KubeClient.CoreV1().Namespaces().Create(context.TODO(), hostNetNamespace, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node1MgmtIP, gwIP1})
+
+	})
+	ginkgo.It("includes node primary IP in HostNetworkNamespace address_set when NoOverlay mode is enabled", func() {
+		config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
+		// Enable NoOverlay transport mode
+		config.Default.Transport = "no-overlay"
+		hostNetNamespace := *testing.NewNamespace(config.Kubernetes.HostNetworkNamespace)
+		// Start with empty NodeList, then add node after namespace is created
+		startAddrSetManager(initialDB, []corev1.Namespace{hostNetNamespace}, nil)
+
+		_, _, _, err := addressSetManager.EnsureAddressSet(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", "backRef", controllerName, &util.DefaultNetInfo{}, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		hostNSASIDs := GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", controllerName, true)
+		// Wait for empty address set to be created
+		asf.EventuallyExpectEmptyAddressSetExist(hostNSASIDs)
+
+		// Create the node with only 1 annotation, it shouldn't fail and will parse what we have
+		testNode := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					util.OvnNodeIfAddr: "{\"ipv4\":\"192.168.1.10/24\"}",
+				},
+			},
+		}
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		// Build expected IPs following the same pattern as the remote zone test
+		// When NoOverlay is enabled, primary interface IPv4 should also be included
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{"192.168.1.10"})
+
+		// Now update primary IP. Even though it should never happen, make sure we handle it correctly
+		testNode.Annotations[util.OvnNodeIfAddr] = "{\"ipv4\":\"192.168.1.11/24\"}"
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Update(context.TODO(), &testNode, metav1.UpdateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{"192.168.1.11"})
+	})
+	ginkgo.It("correctly updates HostNetworkNamespace for hybrid overlay nodes", func() {
+		config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
+		hostNetNamespace := *testing.NewNamespace(config.Kubernetes.HostNetworkNamespace)
+		// set hybrid overlay selector
+		config.HybridOverlay.Enabled = true
+		config.Kubernetes.NoHostSubnetNodes, _ = metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: map[string]string{"a": "b"}})
+		// Start with empty NodeList, then add node after namespace is created
+		startAddrSetManager(initialDB, []corev1.Namespace{hostNetNamespace}, nil)
+
+		_, _, _, err := addressSetManager.EnsureAddressSet(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", "backRef", controllerName, &util.DefaultNetInfo{}, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		hostNSASIDs := GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, &metav1.LabelSelector{}, nil,
+			"", controllerName, true)
+		// Wait for empty address set to be created
+		asf.EventuallyExpectEmptyAddressSetExist(hostNSASIDs)
+
+		// this is calculated based on node-id
+		gwIP := "100.64.0.1"
+		// Create node that doesn't match hybrid overlay selector, it should be added to HostNetworkNamespace address set
+		testNode := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet),
+					"k8s.ovn.org/node-id":      "1",
+				},
+			},
+		}
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectAddressSetWithAddresses(hostNSASIDs, []string{node1MgmtIP, gwIP})
+
+		// Now label node as hybrid overlay, should be removed
+		testNode.Labels = map[string]string{"a": "b"}
+		_, err = clientSet.KubeClient.CoreV1().Nodes().Update(context.TODO(), &testNode, metav1.UpdateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		asf.EventuallyExpectEmptyAddressSetExist(hostNSASIDs)
 	})
 })
 

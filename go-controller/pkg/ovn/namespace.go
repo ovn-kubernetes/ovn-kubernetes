@@ -17,7 +17,6 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -323,101 +322,5 @@ func (oc *DefaultNetworkController) deleteNamespace(ns *corev1.Namespace) error 
 // with its mutex locked.
 // ns is the name of the namespace, while namespace is the optional k8s namespace object
 func (oc *DefaultNetworkController) ensureNamespaceLocked(ns string, readOnly bool, namespace *corev1.Namespace) (*namespaceInfo, func(), error) {
-	ipsGetter := func(ns string) []net.IP {
-		// special handling of host network namespace. issues/3381
-		if config.Kubernetes.HostNetworkNamespace != "" && ns == config.Kubernetes.HostNetworkNamespace {
-			return oc.getAllHostNamespaceAddresses()
-		}
-		return oc.getAllNamespacePodAddresses(ns)
-	}
-	// special handling of host network namespace. issues/3381
-	if config.Kubernetes.HostNetworkNamespace != "" && ns == config.Kubernetes.HostNetworkNamespace {
-		oc.addressSetManager.SetHostNetworkNamespaceIPs(util.StringSlice(oc.getAllHostNamespaceAddresses()))
-	}
-	return oc.ensureNamespaceLockedCommon(ns, readOnly, namespace, ipsGetter, oc.configureNamespace)
-}
-
-// getAllHostNamespaceAddresses retrives management port and gateway router LRP
-// IP for all nodes in the cluster
-func (oc *DefaultNetworkController) getAllHostNamespaceAddresses() []net.IP {
-	var ips []net.IP
-	// add the mp0 interface addresses to this namespace.
-	existingNodes, err := oc.watchFactory.GetNodes()
-	if err != nil {
-		klog.Errorf("Failed to get all nodes (%v)", err)
-	} else {
-		ips = make([]net.IP, 0, len(existingNodes))
-		for _, node := range existingNodes {
-			if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
-				// skip hybrid overlay nodes
-				continue
-			}
-			hostNetworkIPs, err := oc.getHostNamespaceAddressesForNode(node)
-			if err != nil {
-				klog.Errorf("Error parsing annotation for node %s: %v", node.Name, err)
-			}
-			ips = append(ips, hostNetworkIPs...)
-		}
-	}
-	return ips
-}
-
-// getHostNamespaceAddressesForNode retrives management port and gateway router LRP
-// IP of a specific node
-func (oc *DefaultNetworkController) getHostNamespaceAddressesForNode(node *corev1.Node) ([]net.IP, error) {
-	var ips []net.IP
-	hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, types.DefaultNetworkName)
-	if err != nil {
-		return nil, err
-	}
-	for _, hostSubnet := range hostSubnets {
-		mgmtIfAddr := oc.GetNodeManagementIP(hostSubnet)
-		ips = append(ips, mgmtIfAddr.IP)
-	}
-	// for shared gateway mode we will use LRP IPs to SNAT host network traffic
-	// so add these to the address set.
-	lrpIPs, gwIPsErr := udn.GetGWRouterIPs(node, oc.GetNetInfo())
-	if gwIPsErr != nil {
-		if !util.IsAnnotationNotSetError(gwIPsErr) {
-			return nil, gwIPsErr
-		}
-		// FIXME(tssurya): This is present for backwards compatibility
-		// Remove me a few months from now
-		var lrpAddrsErr error
-		lrpIPs, lrpAddrsErr = util.ParseNodeGatewayRouterLRPAddrs(node)
-		if lrpAddrsErr != nil {
-			return nil, fmt.Errorf("failed to fallback to annotations after error %q: %w", gwIPsErr, lrpAddrsErr)
-		}
-	}
-
-	for _, lrpIP := range lrpIPs {
-		ips = append(ips, lrpIP.IP)
-	}
-
-	// When NoOverlay mode is enabled, also include the node's primary physical interface IP
-	if oc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay {
-		nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node)
-		if err != nil {
-			if !util.IsAnnotationNotSetError(err) {
-				return nil, fmt.Errorf("failed to get node primary interface address: %w", err)
-			}
-		} else {
-			if nodeIfAddr.IPv4 != "" {
-				ipv4, _, err := net.ParseCIDR(nodeIfAddr.IPv4)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse node primary IPv4 address %s: %w", nodeIfAddr.IPv4, err)
-				}
-				ips = append(ips, ipv4)
-			}
-			if nodeIfAddr.IPv6 != "" {
-				ipv6, _, err := net.ParseCIDR(nodeIfAddr.IPv6)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse node primary IPv6 address %s: %w", nodeIfAddr.IPv6, err)
-				}
-				ips = append(ips, ipv6)
-			}
-		}
-	}
-
-	return ips, nil
+	return oc.ensureNamespaceLockedCommon(ns, readOnly, namespace, oc.configureNamespace)
 }

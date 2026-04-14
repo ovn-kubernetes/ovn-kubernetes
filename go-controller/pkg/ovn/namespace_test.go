@@ -5,7 +5,6 @@ package ovn
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -15,12 +14,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -30,7 +26,6 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func getNamespaceAnnotations(fakeClient kubernetes.Interface, name string) map[string]string {
@@ -103,7 +98,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			_, err = fakeOvn.asf.NewAddressSet(ns2, []string{"1.1.1.2"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// netpol peer address set for existing netpol, should stay
-			netpol := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, nil, "nsName", ovntypes.DefaultNetworkControllerName)
+			netpol := addresssetmanager.GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, nil, "nsName", ovntypes.DefaultNetworkControllerName, false)
 			_, err = fakeOvn.asf.NewAddressSet(netpol, []string{"1.1.1.3"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// egressQoS-owned address set, should stay
@@ -202,139 +197,6 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
 			pg.UUID = pg.Name + "-UUID"
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{pg}))
-		})
-
-		ginkgo.It("creates an address set for existing nodes when the host network traffic namespace is created", func() {
-			config.Gateway.Mode = config.GatewayModeShared
-			config.Gateway.NodeportEnable = true
-			config.Gateway.EphemeralPortRange = config.DefaultEphemeralPortRange
-			var err error
-			config.Default.ClusterSubnets, err = config.ParseClusterSubnetEntries(clusterCIDR)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			node1 := tNode{
-				Name:                 "node1",
-				NodeIP:               "1.2.3.4",
-				NodeLRPMAC:           "0a:58:0a:01:01:01",
-				LrpIP:                "100.64.0.2",
-				LrpIPv6:              "fd98::2",
-				DrLrpIP:              "100.64.0.1",
-				PhysicalBridgeMAC:    "11:22:33:44:55:66",
-				SystemID:             "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
-				NodeSubnet:           "10.1.1.0/24",
-				GWRouter:             ovntypes.GWRouterPrefix + "node1",
-				GatewayRouterIPMask:  "172.16.16.2/24",
-				GatewayRouterIP:      "172.16.16.2",
-				GatewayRouterNextHop: "172.16.16.1",
-				PhysicalBridgeName:   "br-eth0",
-				NodeGWIP:             "10.1.1.1/24",
-				NodeMgmtPortIP:       "10.1.1.2",
-				NodeMgmtPortMAC:      "0a:58:0a:01:01:02",
-				DnatSnatIP:           "169.254.0.1",
-			}
-			// create a test node and annotate it with host subnet
-			testNode := node1.k8sNode("2")
-
-			hostNetworkNamespace := "test-host-network-ns"
-			config.Kubernetes.HostNetworkNamespace = hostNetworkNamespace
-
-			expectedClusterLBGroup := newLoadBalancerGroup(ovntypes.ClusterLBGroupName)
-			expectedSwitchLBGroup := newLoadBalancerGroup(ovntypes.ClusterSwitchLBGroupName)
-			expectedRouterLBGroup := newLoadBalancerGroup(ovntypes.ClusterRouterLBGroupName)
-			expectedOVNClusterRouter := newOVNClusterRouter()
-			expectedNodeSwitch := node1.logicalSwitch([]string{expectedClusterLBGroup.UUID, expectedSwitchLBGroup.UUID})
-			expectedClusterRouterPortGroup := newRouterPortGroup()
-			expectedClusterPortGroup := newClusterPortGroup()
-
-			fakeOvn.startWithDBSetup(
-				libovsdb.TestSetup{
-					NBData: []libovsdb.TestData{
-						newClusterJoinSwitch(),
-						expectedOVNClusterRouter,
-						expectedNodeSwitch,
-						expectedClusterRouterPortGroup,
-						expectedClusterPortGroup,
-						expectedClusterLBGroup,
-						expectedSwitchLBGroup,
-						expectedRouterLBGroup,
-					},
-				},
-				&corev1.NamespaceList{
-					Items: []corev1.Namespace{
-						*ovntest.NewNamespace(hostNetworkNamespace),
-					},
-				},
-				&corev1.NodeList{
-					Items: []corev1.Node{
-						testNode,
-					},
-				},
-			)
-			fakeOvn.controller.multicastSupport = false
-
-			fakeOvn.controller.defaultCOPPUUID, err = EnsureDefaultCOPP(fakeOvn.nbClient)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: fakeOvn.fakeClient.KubeClient}, testNode.Name)
-
-			vlanID := uint(1024)
-			l3Config := node1.gatewayConfig(config.GatewayModeShared, vlanID)
-			err = util.SetL3GatewayConfig(nodeAnnotator, l3Config)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = util.UpdateNodeManagementPortMACAddresses(&testNode, nodeAnnotator, ovntest.MustParseMAC(node1.NodeMgmtPortMAC), ovntypes.DefaultNetworkName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(node1.NodeSubnet))
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = util.SetNodeHostCIDRs(nodeAnnotator, sets.New[string](fmt.Sprintf("%s/24", node1.NodeIP)))
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = nodeAnnotator.Run()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			updatedNode, err := fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			nodeHostSubnetAnnotations, err := util.ParseNodeHostSubnetAnnotation(updatedNode, ovntypes.DefaultNetworkName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(nodeHostSubnetAnnotations[0].String()).To(gomega.Equal(node1.NodeSubnet))
-
-			expectedDatabaseState := []libovsdb.TestData{}
-			expectedDatabaseState = addNodeLogicalFlowsWithServiceController(expectedDatabaseState, expectedOVNClusterRouter,
-				expectedNodeSwitch, expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1, fakeOvn.controller.svcTemplateSupport)
-
-			// Addressset of the host-network namespace was initialized but the node logical switch management port address may or may not
-			// be in the addressset yet, depending on if the host subnets annotation of the node exists in the informer cache. The addressset
-			// can only be deterministic when WatchNamespaces() handles this host network namespace.
-
-			gwLRPIPs, err := udn.GetGWRouterIPs(&testNode, &util.DefaultNetInfo{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(gwLRPIPs).ToNot(gomega.BeEmpty())
-
-			err = fakeOvn.controller.WatchNamespaces()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			startDefaultNodeController(fakeOvn.controller)
-
-			err = fakeOvn.controller.StartServiceController(wg, false)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			nodeSubnet := ovntest.MustParseIPNet(node1.NodeSubnet)
-			var clusterSubnets []*net.IPNet
-			for _, clusterSubnet := range config.Default.ClusterSubnets {
-				clusterSubnets = append(clusterSubnets, clusterSubnet.CIDR)
-			}
-			skipSnat := false
-			expectedDatabaseState = generateGatewayInitExpectedNB(expectedDatabaseState, expectedOVNClusterRouter,
-				expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{nodeSubnet}, l3Config,
-				[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)}, skipSnat,
-				node1.NodeMgmtPortIP, "1400")
-			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
-
-			// check the namespace again and ensure the address set
-			// being created with the right set of IPs in it.
-			allowIPs := []string{node1.NodeMgmtPortIP}
-			for _, lrpIP := range gwLRPIPs {
-				allowIPs = append(allowIPs, lrpIP.IP.String())
-			}
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(hostNetworkNamespace, allowIPs)
 		})
 
 		ginkgo.It("reconciles an existing namespace port group, without updating it", func() {

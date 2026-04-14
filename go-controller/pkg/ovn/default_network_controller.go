@@ -129,7 +129,6 @@ type DefaultNetworkController struct {
 	nodeClusterRouterPortFailed sync.Map
 	hybridOverlayFailed         sync.Map
 	syncZoneICFailed            sync.Map
-	syncHostNetAddrSetFailed    sync.Map
 	syncEIPNodeRerouteFailed    sync.Map
 	syncEIPNodeFailed           sync.Map
 
@@ -486,12 +485,11 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 			_, gwSync := oc.gatewaysFailed.Load(newNode.Name)
 			_, hoSync := oc.hybridOverlayFailed.Load(newNode.Name)
 			_, zoneICSync := oc.syncZoneICFailed.Load(newNode.Name)
-			_, hostNetAddrSetSync := oc.syncHostNetAddrSetFailed.Load(newNode.Name)
 			// When a bootstrap retry first failed while the node was remote, only syncZoneICFailed may be set.
 			// If the node later becomes local before any local switch state was populated in lsManager, we must
 			// do the full local node add instead of replaying only the previous remote-zone retry state.
 			localSwitchReady := oc.hasLocalNodeSwitchState(newNode)
-			if localSwitchReady && (nodeSync || clusterRtrSync || mgmtSync || gwSync || hoSync || zoneICSync || hostNetAddrSetSync) {
+			if localSwitchReady && (nodeSync || clusterRtrSync || mgmtSync || gwSync || hoSync || zoneICSync) {
 				nodeSyncsParam = &nodeSyncs{
 					syncNode:              nodeSync,
 					syncClusterRouterPort: clusterRtrSync,
@@ -576,29 +574,6 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 		}
 		if err := oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC); err != nil {
 			aggregatedErrors = append(aggregatedErrors, err)
-		}
-	}
-
-	_, syncHostNetAddrSet := oc.syncHostNetAddrSetFailed.Load(newNode.Name)
-	hostNamespaceAddressesChanged := oldNode != nil &&
-		(defaultNodeSubnetChangedWithState(oldNode, newNode, oldState, newState) ||
-			gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()))
-	if oldNode == nil || syncHostNetAddrSet || hostNamespaceAddressesChanged {
-		hostNamespaceAddrSetErr := false
-		if hostNamespaceAddressesChanged {
-			if err := oc.delIPFromHostNetworkNamespaceAddrSet(oldNode); err != nil {
-				klog.Errorf("Failed to delete old node IPs from %s address_set: %v", config.Kubernetes.HostNetworkNamespace, err)
-				hostNamespaceAddrSetErr = true
-				oc.syncHostNetAddrSetFailed.Store(newNode.Name, true)
-				aggregatedErrors = append(aggregatedErrors, err)
-			}
-		}
-		if err := oc.addIPToHostNetworkNamespaceAddrSet(newNode); err != nil {
-			klog.Errorf("Failed to add node IPs to %s address_set: %v", config.Kubernetes.HostNetworkNamespace, err)
-			oc.syncHostNetAddrSetFailed.Store(newNode.Name, true)
-			aggregatedErrors = append(aggregatedErrors, err)
-		} else if !hostNamespaceAddrSetErr {
-			oc.syncHostNetAddrSetFailed.Delete(newNode.Name)
 		}
 	}
 

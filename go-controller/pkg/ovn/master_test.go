@@ -35,7 +35,6 @@ import (
 	egressqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/fake"
 	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -852,7 +851,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		expectedNBDatabaseState        []libovsdbtest.TestData
 		l3GatewayConfig                *util.L3GatewayConfig
 		nodeHostCIDRs                  sets.Set[string]
-		fakeOvn                        *FakeOVN
 	)
 
 	const (
@@ -866,7 +864,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
-		fakeOvn = NewFakeOVN(true)
 		config.OVNKubernetesFeature.EnableEgressIP = true
 
 		app = cli.NewApp()
@@ -1477,12 +1474,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				ginkgo.By("delete node and check that there are no retries for the deleted node")
 				err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), node.Name, metav1.DeleteOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				ginkgo.By("ensure failures for sync host network address or adding nodes are cleared")
-				gomega.Eventually(func() bool {
-					_, foundSyncHostNetAddrSetFailed := oc.syncHostNetAddrSetFailed.Load(node.Name)
-					_, foundAddNodeFailed := oc.addNodeFailed.Load(node.Name)
-					return foundSyncHostNetAddrSetFailed || foundAddNodeFailed
-				}).Should(gomega.BeFalse())
 				return nil
 			}
 			err := app.Run([]string{
@@ -1772,217 +1763,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				})
 				return err
 			}).Should(gomega.Succeed())
-
-			return nil
-		}
-
-		err := app.Run([]string{
-			app.Name,
-			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
-			"--nodeport",
-		})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	ginkgo.It("verify IPs in host-network-namespace address_set after remote zone node add or delete", func() {
-		app.Action = func(ctx *cli.Context) error {
-			_, err := config.InitConfig(ctx, nil, nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			config.OVNKubernetesFeature.EnableInterconnect = true
-			config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
-
-			// add the transit switch port bindings on behalf of ovn-northd so that
-			// the node gets added successfully. This is required for test simulation
-			// and not required in real world scenario.
-			pb := &sbdb.PortBinding{
-				LogicalPort: "tstor-node1",
-				Datapath:    "tstor-node1",
-				TunnelKey:   5,
-			}
-			dp := &sbdb.DatapathBinding{
-				UUID:      "tstor-node1",
-				TunnelKey: 6,
-			}
-			dbSetup.SBData = append(
-				dbSetup.SBData,
-				pb,
-				dp,
-			)
-
-			// transit_switch is required to be able to start OVN with an empty
-			// NodeList and to avoid calling ensureTransitSwitch which expects
-			// a list of nodes. This is required for test simulation and not
-			// required in real world scenario.
-			ts := &nbdb.LogicalSwitch{
-				Name: "transit_switch",
-			}
-			dbSetup.NBData = append(
-				dbSetup.NBData,
-				ts,
-			)
-
-			// https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/go-controller/pkg/ovn/namespace.go#L312
-			// adds management port and gateway router LRP IP to HostNetworkNamespace address set whenever
-			// the namespace gets created. Hence starting OVN with an empty NodeList and adding the node
-			// after the namespace is created successfully
-			fakeOvn.startWithDBSetup(dbSetup,
-				&corev1.NamespaceList{
-					Items: []corev1.Namespace{*ovntest.NewNamespace(config.Kubernetes.HostNetworkNamespace)},
-				},
-				&corev1.NodeList{
-					Items: []corev1.Node{},
-				},
-			)
-
-			// Required to make sure a remote zone node is being added
-			fakeOvn.controller.zone = "node1"
-
-			gomega.Expect(fakeOvn.controller.WatchNamespaces()).To(gomega.Succeed(), "Namespace should be created fine")
-			startDefaultNodeController(fakeOvn.controller)
-
-			// Check whether the address_set is empty after HostNetworkNamespace addition
-			fakeOvn.asf.EventuallyExpectEmptyAddressSetExist(config.Kubernetes.HostNetworkNamespace)
-
-			// Set annotations required to create remote zone node
-			newNodeSubnet := "10.1.2.0/24"
-			transitSwitchSubnet := "100.88.0.3/16"
-			testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\"]}", newNodeSubnet)
-			testNode.Annotations["k8s.ovn.org/node-chassis-id"] = chassisIDForNode(testNode.Name)
-			testNode.Annotations["k8s.ovn.org/node-encap-ips"] = "[\"1.2.3.4\"]"
-			testNode.Annotations["k8s.ovn.org/node-transit-switch-port-ifaddr"] = fmt.Sprintf("{\"ipv4\":\"%s\"}", transitSwitchSubnet)
-			testNode.Annotations["k8s.ovn.org/zone-name"] = "foo"
-			updatedNode, err := fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode, metav1.CreateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			// Check whether node IPs have been added to HostNetworkNamespace
-			// address_set or not
-			var ips []string
-			hostSubnets, err := util.ParseNodeHostSubnetAnnotation(updatedNode, types.DefaultNetworkName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			mgmt_ips := util.GetNodeManagementIfAddr(hostSubnets[0])
-			ips = append(ips, mgmt_ips.IP.String())
-			lrpips, err := udn.GetGWRouterIPs(updatedNode, oc.GetNetInfo())
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			lrpip, _, _ := net.ParseCIDR(lrpips[0].String())
-			ips = append(ips, lrpip.String())
-
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(config.Kubernetes.HostNetworkNamespace, ips)
-
-			// Delete the node and check whether the address_set is empty or not
-			err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Delete(context.TODO(), testNode.Name, metav1.DeleteOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			var emptyAddress []string
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(config.Kubernetes.HostNetworkNamespace, emptyAddress)
-
-			return nil
-		}
-
-		err := app.Run([]string{
-			app.Name,
-			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
-			"--nodeport",
-		})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	ginkgo.It("refreshes IPs in host-network-namespace address_set after local node update", func() {
-		app.Action = func(ctx *cli.Context) error {
-			_, err := config.InitConfig(ctx, nil, nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
-			annotatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			fakeOvn.startWithDBSetup(dbSetup,
-				&corev1.NamespaceList{
-					Items: []corev1.Namespace{*ovntest.NewNamespace(config.Kubernetes.HostNetworkNamespace)},
-				},
-				&corev1.NodeList{
-					Items: []corev1.Node{*annotatedNode},
-				},
-			)
-
-			gomega.Expect(fakeOvn.controller.WatchNamespaces()).To(gomega.Succeed(), "Namespace should be created fine")
-			startDefaultNodeController(fakeOvn.controller)
-
-			updatedNode, err := fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			initialIPs, err := fakeOvn.controller.getHostNamespaceAddressesForNode(updatedNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(config.Kubernetes.HostNetworkNamespace, util.StringSlice(initialIPs))
-
-			updatedNode = updatedNode.DeepCopy()
-			updatedNode.Annotations["k8s.ovn.org/node-subnets"] = "{\"default\":[\"10.1.3.0/24\"]}"
-			updatedNode, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), updatedNode, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			refreshedIPs, err := fakeOvn.controller.getHostNamespaceAddressesForNode(updatedNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(config.Kubernetes.HostNetworkNamespace, util.StringSlice(refreshedIPs))
-
-			return nil
-		}
-
-		err := app.Run([]string{
-			app.Name,
-			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
-			"--nodeport",
-		})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	ginkgo.It("includes node primary IP in host-network-namespace address_set when NoOverlay mode is enabled", func() {
-		app.Action = func(ctx *cli.Context) error {
-			_, err := config.InitConfig(ctx, nil, nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
-			// Enable NoOverlay transport mode
-			config.Default.Transport = "no-overlay"
-
-			// Start with empty NodeList, then add node after namespace is created
-			fakeOvn.startWithDBSetup(dbSetup,
-				&corev1.NamespaceList{
-					Items: []corev1.Namespace{*ovntest.NewNamespace(config.Kubernetes.HostNetworkNamespace)},
-				},
-				&corev1.NodeList{
-					Items: []corev1.Node{},
-				},
-			)
-
-			gomega.Expect(fakeOvn.controller.WatchNamespaces()).To(gomega.Succeed(), "Namespace should be created fine")
-			startDefaultNodeController(fakeOvn.controller)
-
-			// Wait for empty address set to be created
-			fakeOvn.asf.EventuallyExpectEmptyAddressSetExist(config.Kubernetes.HostNetworkNamespace)
-
-			// Now create the node with all required annotations
-			newNodeSubnet := "10.1.1.0/24"
-			testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":[\"%s\"]}", newNodeSubnet)
-			testNode.Annotations["k8s.ovn.org/node-chassis-id"] = chassisIDForNode(testNode.Name)
-			testNode.Annotations["k8s.ovn.org/node-primary-ifaddr"] = "{\"ipv4\":\"192.168.1.10/24\"}"
-			createdNode, err := fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), &testNode, metav1.CreateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			// Build expected IPs following the same pattern as the remote zone test
-			var ips []string
-			hostSubnets, err := util.ParseNodeHostSubnetAnnotation(createdNode, types.DefaultNetworkName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			mgmt_ips := util.GetNodeManagementIfAddr(hostSubnets[0])
-			ips = append(ips, mgmt_ips.IP.String())
-			lrpips, err := udn.GetGWRouterIPs(createdNode, fakeOvn.controller.GetNetInfo())
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			lrpip, _, _ := net.ParseCIDR(lrpips[0].String())
-			ips = append(ips, lrpip.String())
-
-			// When NoOverlay is enabled, primary interface IPv4 should also be included
-			ips = append(ips, "192.168.1.10") // IPv4 primary interface IP
-
-			fakeOvn.asf.EventuallyExpectAddressSetWithAddresses(config.Kubernetes.HostNetworkNamespace, ips)
 
 			return nil
 		}

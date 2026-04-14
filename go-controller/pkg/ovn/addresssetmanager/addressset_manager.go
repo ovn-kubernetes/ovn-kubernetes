@@ -5,6 +5,7 @@ package addresssetmanager
 
 import (
 	"fmt"
+	"net"
 	"slices"
 	"sort"
 	"strings"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -95,11 +97,12 @@ type AddressSetManager struct {
 	// All network controllers are getting this function from the same networkmanager, so we can share it
 	getNetworkNameForNADKey func(nadKey string) string
 
-	// both hostNetworkNamespaceIps and hostNetworkSelectingAddrSets are protected by the same lock.
+	// hostNetworkNamespaceExists, hostNetworkNamespaceIPsPerNode and hostNetworkSelectingAddrSets are protected by the same lock.
 	// can only be taken after the addressSets key lock and never vice versa to avoid deadlocks.
-	hostNetworkNamespaceLock sync.RWMutex
+	hostNetworkNamespaceLock   sync.RWMutex
+	hostNetworkNamespaceExists bool
 	// local cache of HostNetworkNamespace address set IPs
-	hostNetworkNamespaceIps []string
+	hostNetworkNamespaceIPsPerNode map[string][]string
 	// local cache of address sets that select HostNetworkNamespace
 	hostNetworkSelectingAddrSets sets.Set[string]
 }
@@ -107,17 +110,18 @@ type AddressSetManager struct {
 func NewAddressSetManager(podInformer coreinformers.PodInformer, namespaceInformer coreinformers.NamespaceInformer,
 	nodeInformer coreinformers.NodeInformer, nbClient libovsdbclient.Client, getNetworkNameForNADKey func(nadKey string) string) *AddressSetManager {
 	m := &AddressSetManager{
-		name:                         "pod-selector-address-set-manager",
-		nbClient:                     nbClient,
-		addressSetFactoryV4:          addressset.NewOvnAddressSetFactory(nbClient, true, false),
-		addressSetFactoryV6:          addressset.NewOvnAddressSetFactory(nbClient, false, true),
-		addressSetFactoryDualstack:   addressset.NewOvnAddressSetFactory(nbClient, true, true),
-		addressSets:                  syncmap.NewSyncMap[*podSelectorAddressSet](),
-		podLister:                    podInformer.Lister(),
-		namespaceLister:              namespaceInformer.Lister(),
-		nodeLister:                 nodeInformer.Lister(),
-		getNetworkNameForNADKey:      getNetworkNameForNADKey,
-		hostNetworkSelectingAddrSets: sets.New[string](),
+		name:                           "pod-selector-address-set-manager",
+		nbClient:                       nbClient,
+		addressSetFactoryV4:            addressset.NewOvnAddressSetFactory(nbClient, true, false),
+		addressSetFactoryV6:            addressset.NewOvnAddressSetFactory(nbClient, false, true),
+		addressSetFactoryDualstack:     addressset.NewOvnAddressSetFactory(nbClient, true, true),
+		addressSets:                    syncmap.NewSyncMap[*podSelectorAddressSet](),
+		podLister:                      podInformer.Lister(),
+		namespaceLister:                namespaceInformer.Lister(),
+		nodeLister:                     nodeInformer.Lister(),
+		getNetworkNameForNADKey:        getNetworkNameForNADKey,
+		hostNetworkSelectingAddrSets:   sets.New[string](),
+		hostNetworkNamespaceIPsPerNode: make(map[string][]string),
 	}
 	podCfg := &controller.ControllerConfig[corev1.Pod]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
@@ -183,6 +187,11 @@ func (m *AddressSetManager) Stop() {
 // it through EnsureAddressSet, so if you look in the db directly some address sets may have stale IPs, but that only means
 // that they are not used anymore.
 func (m *AddressSetManager) initialSync() error {
+	if config.Kubernetes.HostNetworkNamespace != "" {
+		if err := m.updateHostNetworkNamespaceExists(); err != nil {
+			return fmt.Errorf("failed to check if host network namespace %s exists: %v", config.Kubernetes.HostNetworkNamespace, err)
+		}
+	}
 	return libovsdbutil.DeleteAddrSetsWithoutACLRefAnyController(libovsdbops.AddressSetPodSelector, m.nbClient)
 }
 
@@ -414,7 +423,43 @@ func (m *AddressSetManager) nsNeedUpdate(old, new *corev1.Namespace) bool {
 	return false
 }
 
+func (m *AddressSetManager) updateHostNetworkNamespaceExists() error {
+	_, err := m.namespaceLister.Get(config.Kubernetes.HostNetworkNamespace)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get host network namespace %s: %v", config.Kubernetes.HostNetworkNamespace, err)
+		}
+	}
+	m.hostNetworkNamespaceLock.Lock()
+	defer m.hostNetworkNamespaceLock.Unlock()
+	if err != nil {
+		// namespace was deleted/never existed
+		clear(m.hostNetworkNamespaceIPsPerNode)
+		m.hostNetworkNamespaceExists = false
+		return nil
+	}
+	if !m.hostNetworkNamespaceExists {
+		// namespace was just created, get all existing host network IPs
+		ips, err := m.getAllHostNamespaceAddresses()
+		if err != nil {
+			return fmt.Errorf("error getting host network namespace %s IPs: %v", config.Kubernetes.HostNetworkNamespace, err)
+		}
+
+		m.hostNetworkNamespaceIPsPerNode = ips
+		for addrSetKey := range m.hostNetworkSelectingAddrSets {
+			m.addressSetReconciler.Reconcile(addrSetKey)
+		}
+	}
+	m.hostNetworkNamespaceExists = true
+	return nil
+}
+
 func (m *AddressSetManager) reconcileNamespace(nsKey string) error {
+	if config.Kubernetes.HostNetworkNamespace != "" && nsKey == config.Kubernetes.HostNetworkNamespace {
+		if err := m.updateHostNetworkNamespaceExists(); err != nil {
+			return fmt.Errorf("failed to check if host network namespace %s exists: %v", config.Kubernetes.HostNetworkNamespace, err)
+		}
+	}
 	// find address sets that could be affected by this namespace event
 	// Get all existing keys, then lock address sets per key and check if they are affected.
 	// If the new keys are added, it will always call reconcile for that new key, so there is no race.
@@ -461,10 +506,23 @@ func (m *AddressSetManager) nodeNeedUpdate(old, new *corev1.Node) bool {
 		// if node labels change, we need to reconcile address sets that use a node selector
 		return true
 	}
+	// only check annotations that are used in getHostNamespaceAddressesForNode
+	if util.NodeSubnetAnnotationChangedForNetwork(old, new, ovntypes.DefaultNetworkName) || util.NodeIDAnnotationChanged(old, new) ||
+		old.Annotations[util.OvnNodeIfAddr] != new.Annotations[util.OvnNodeIfAddr] {
+		// hostnetwork namespace may need to be updated
+		m.hostNetworkNamespaceLock.Lock()
+		defer m.hostNetworkNamespaceLock.Unlock()
+		return m.hostNetworkNamespaceExists
+	}
+
 	return false
 }
 
 func (m *AddressSetManager) reconcileNode(nodeKey string) error {
+	// update host network IPs first to have fresh info for addr set reconcile
+	// don't return error immediately to let other changes like node selector be propagated
+	hostNetworkErr := m.updateHostNetworkIPs(nodeKey)
+
 	// find address sets that could be affected by this node event
 	// Get all existing keys, then lock address sets per key and check if they are affected.
 	// If the new keys are added, it will always call reconcile for that new key, so there is no race.
@@ -500,54 +558,129 @@ func (m *AddressSetManager) reconcileNode(nodeKey string) error {
 			return fmt.Errorf("failed to reconcile address set %s for node %s: %v", addrSetKey, nodeKey, err)
 		}
 	}
+	return hostNetworkErr
+}
+
+func (m *AddressSetManager) updateHostNetworkIPs(nodeName string) error {
+	m.hostNetworkNamespaceLock.Lock()
+	defer m.hostNetworkNamespaceLock.Unlock()
+	if !m.hostNetworkNamespaceExists {
+		return nil
+	}
+	node, err := m.nodeLister.Get(nodeName)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get node %s: %v", nodeName, err)
+	}
+	if err != nil || config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
+		// delete event OR node started matching hybrid overlay and should be ignored for host network namespace
+		// delete host network IPs for this node from host network namespace's address set
+		updated := len(m.hostNetworkNamespaceIPsPerNode[nodeName]) != 0
+		delete(m.hostNetworkNamespaceIPsPerNode, nodeName)
+
+		if !updated {
+			return nil
+		}
+		for addrSetKey := range m.hostNetworkSelectingAddrSets {
+			m.addressSetReconciler.Reconcile(addrSetKey)
+		}
+		return nil
+	}
+	// add/update node event
+	hostNetworkPolicyIPs, err := m.getHostNamespaceAddressesForNode(node)
+	if err != nil {
+		return fmt.Errorf("error parsing annotation for node %s: %w", node.Name, err)
+	}
+	// add the host network IPs for this node to host network namespace's address set
+	// hostNetworkPolicyIPs is built from the annotations and always preserves ips order
+	if slices.Equal(m.hostNetworkNamespaceIPsPerNode[node.Name], hostNetworkPolicyIPs) {
+		return nil
+	}
+	m.hostNetworkNamespaceIPsPerNode[node.Name] = hostNetworkPolicyIPs
+	for addrSetKey := range m.hostNetworkSelectingAddrSets {
+		m.addressSetReconciler.Reconcile(addrSetKey)
+	}
 	return nil
 }
 
-func (m *AddressSetManager) SetHostNetworkNamespaceIPs(ips []string) {
-	m.hostNetworkNamespaceLock.Lock()
-	defer m.hostNetworkNamespaceLock.Unlock()
-	m.hostNetworkNamespaceIps = ips
-	for addrSetKey := range m.hostNetworkSelectingAddrSets {
-		m.addressSetReconciler.Reconcile(addrSetKey)
-	}
-}
-
-func (m *AddressSetManager) AddHostNetworkNamespaceIPs(ips []string) {
-	m.hostNetworkNamespaceLock.Lock()
-	defer m.hostNetworkNamespaceLock.Unlock()
-	updated := false
-	for _, ip := range ips {
-		if !slices.Contains(m.hostNetworkNamespaceIps, ip) {
-			updated = true
-			m.hostNetworkNamespaceIps = append(m.hostNetworkNamespaceIps, ip)
+// getAllHostNamespaceAddresses retrieves management port and gateway router LRP
+// IP for all nodes in the cluster
+func (m *AddressSetManager) getAllHostNamespaceAddresses() (map[string][]string, error) {
+	ips := make(map[string][]string)
+	// add the mp0 interface addresses to this namespace.
+	existingNodes, err := m.nodeLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all nodes (%v)", err)
+	} else {
+		for _, node := range existingNodes {
+			if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
+				// skip hybrid overlay nodes
+				continue
+			}
+			hostNetworkIPs, err := m.getHostNamespaceAddressesForNode(node)
+			if err != nil {
+				klog.Errorf("Error parsing annotation for node %s: %v", node.Name, err)
+			}
+			ips[node.Name] = hostNetworkIPs
 		}
 	}
-	if !updated {
-		return
-	}
-	for addrSetKey := range m.hostNetworkSelectingAddrSets {
-		m.addressSetReconciler.Reconcile(addrSetKey)
-	}
+	return ips, nil
 }
 
-func (m *AddressSetManager) DeleteHostNetworkNamespaceIPs(ips []string) {
-	m.hostNetworkNamespaceLock.Lock()
-	defer m.hostNetworkNamespaceLock.Unlock()
-	updated := false
-	for _, ip := range ips {
-		ipIdx := slices.Index(m.hostNetworkNamespaceIps, ip)
-		if ipIdx == -1 {
-			continue
+// getHostNamespaceAddressesForNode retrieves management port and gateway router LRP
+// IP of a specific node
+func (m *AddressSetManager) getHostNamespaceAddressesForNode(node *corev1.Node) ([]string, error) {
+	var ips []string
+	defaultNetInfo := &util.DefaultNetInfo{}
+	hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, ovntypes.DefaultNetworkName)
+	if err != nil {
+		if !util.IsAnnotationNotSetError(err) {
+			return nil, fmt.Errorf("failed to get node host subnets: %w", err)
 		}
-		m.hostNetworkNamespaceIps = slices.Delete(m.hostNetworkNamespaceIps, ipIdx, ipIdx+1)
-		updated = true
 	}
-	if !updated {
-		return
+	for _, hostSubnet := range hostSubnets {
+		mgmtIfAddr := defaultNetInfo.GetNodeManagementIP(hostSubnet)
+		if mgmtIfAddr == nil {
+			return nil, fmt.Errorf("node %s has no management IP in subnet %s", node.Name, hostSubnet.String())
+		}
+		ips = append(ips, mgmtIfAddr.IP.String())
 	}
-	for addrSetKey := range m.hostNetworkSelectingAddrSets {
-		m.addressSetReconciler.Reconcile(addrSetKey)
+	// for shared gateway mode we will use LRP IPs to SNAT host network traffic
+	// so add these to the address set.
+	lrpIPs, gwIPsErr := udn.GetGWRouterIPs(node, defaultNetInfo)
+	if gwIPsErr != nil {
+		if !util.IsAnnotationNotSetError(gwIPsErr) {
+			return nil, gwIPsErr
+		}
 	}
+
+	for _, lrpIP := range lrpIPs {
+		ips = append(ips, lrpIP.IP.String())
+	}
+	// When NoOverlay mode is enabled, also include the node's primary physical interface IP
+	if defaultNetInfo.Transport() == ovntypes.NetworkTransportNoOverlay {
+		nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node)
+		if err != nil {
+			if !util.IsAnnotationNotSetError(err) {
+				return nil, fmt.Errorf("failed to get node primary interface address: %w", err)
+			}
+		} else {
+			if nodeIfAddr.IPv4 != "" {
+				ipv4, _, err := net.ParseCIDR(nodeIfAddr.IPv4)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse node primary IPv4 address %s: %w", nodeIfAddr.IPv4, err)
+				}
+				ips = append(ips, ipv4.String())
+			}
+			if nodeIfAddr.IPv6 != "" {
+				ipv6, _, err := net.ParseCIDR(nodeIfAddr.IPv6)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse node primary IPv6 address %s: %w", nodeIfAddr.IPv6, err)
+				}
+				ips = append(ips, ipv6.String())
+			}
+		}
+	}
+	return ips, nil
 }
 
 func (m *AddressSetManager) reconcileAddressSet(key string) error {
@@ -621,11 +754,15 @@ func (m *AddressSetManager) reconcileAddressSet(key string) error {
 			psAddrSet.podSelector.Empty() {
 			// update m.hostNetworkSelectingAddrSets
 			m.hostNetworkNamespaceLock.Lock()
-			if matchedNamespaces == nil || matchedNamespaces.Has(config.Kubernetes.HostNetworkNamespace) {
-				ips = append(ips, m.hostNetworkNamespaceIps...)
-				m.hostNetworkSelectingAddrSets.Insert(key)
-			} else {
-				m.hostNetworkSelectingAddrSets.Delete(key)
+			if m.hostNetworkNamespaceExists {
+				if matchedNamespaces == nil || matchedNamespaces.Has(config.Kubernetes.HostNetworkNamespace) {
+					for _, hostnetIPs := range m.hostNetworkNamespaceIPsPerNode {
+						ips = append(ips, hostnetIPs...)
+					}
+					m.hostNetworkSelectingAddrSets.Insert(key)
+				} else {
+					m.hostNetworkSelectingAddrSets.Delete(key)
+				}
 			}
 			m.hostNetworkNamespaceLock.Unlock()
 		}

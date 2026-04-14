@@ -629,6 +629,8 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		netPolicyName1        = "networkpolicy1"
 		netPolicyName2        = "networkpolicy2"
 		nodeName              = "node1"
+		node1Subnet           = "10.244.0.0/24"
+		node1MgmtIP           = "10.244.0.2"
 		labelName      string = "pod-name"
 		labelVal       string = "server"
 		portNum        int32  = 81
@@ -686,13 +688,15 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			}
 			podsList = append(podsList, *knetPod)
 		}
+		testNode := newNode(nodeName, "192.168.126.202/24")
+		testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet)
 		fakeOvn.startWithDBSetup(dbSetup,
 			&corev1.NamespaceList{
 				Items: namespaces,
 			},
 			&corev1.NodeList{
 				Items: []corev1.Node{
-					*newNode(nodeName, "192.168.126.202/24"),
+					*testNode,
 				},
 			},
 			&corev1.PodList{
@@ -1119,7 +1123,6 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 	})
 
 	ginkgo.Context("during execution", func() {
-		const hostNetIP = "10.244.0.2"
 		const ns1PodIP = "10.128.1.3"
 		const ns1HostnetPodIP = "10.0.1.1"
 		const ns2PodIP = "10.128.1.4"
@@ -1140,18 +1143,15 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				}, nil)
 				startOvn(initialDB, []corev1.Namespace{namespace1, namespace2, hostNetNamespace}, []knet.NetworkPolicy{*netpol},
 					[]testPod{ns1Pod, ns1HosnetPod, ns2Pod}, nil)
-				// imitate HostNetworkNamespace address set update
-				fakeOvn.controller.addressSetManager.SetHostNetworkNamespaceIPs([]string{hostNetIP})
 
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, []string{ns1Pod.podIP})
 				namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, []string{ns2Pod.podIP})
-				// this namespace doesn't have ips, because we don't create nodes
-				hostNamespaceAddressSetv4, _ := buildNamespaceAddressSets(hostNetNamespace.Name, nil)
+				hostNamespaceAddressSetV4, _ := buildNamespaceAddressSets(config.Kubernetes.HostNetworkNamespace, []string{})
 
 				expectedData := getNamespaceWithSinglePolicyExpectedData(
 					newNetpolDataParams(netpol).withPeerIPs(peerIPs...).withLocalPortUUIDs(ns1Pod.portUUID),
 					getUpdatedInitialDB([]testPod{ns1Pod, ns2Pod}))
-				expectedData = append(expectedData, namespace1AddressSetv4, namespace2AddressSetv4, hostNamespaceAddressSetv4)
+				expectedData = append(expectedData, namespace1AddressSetv4, namespace2AddressSetv4, hostNamespaceAddressSetV4)
 
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 			},
@@ -1201,7 +1201,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			ginkgo.Entry("empty namespace selector matches on HostNetworkNamespace IPs + legacyNetpolMode=true",
 				knet.NetworkPolicyPeer{
 					NamespaceSelector: &metav1.LabelSelector{},
-				}, []string{ns1PodIP, ns2PodIP, hostNetIP}),
+				}, []string{ns1PodIP, ns2PodIP, node1MgmtIP}),
 		)
 
 		ginkgo.It("correctly creates and deletes a networkpolicy allowing a port to a local pod", func() {
@@ -1906,7 +1906,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 		})
 
-		ginkgo.It("references all namespace address sets for empty namespace selector, even if they don't have pods (HostNetworkNamespace)", func() {
+		ginkgo.It("references all namespaces pod IP for empty namespace selector, (including HostNetworkNamespace)", func() {
 			app.Action = func(*cli.Context) error {
 				config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
 				hostNamespace := *ovntest.NewNamespace(config.Kubernetes.HostNetworkNamespace)
@@ -1923,9 +1923,6 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				startOvn(initialDB, []corev1.Namespace{namespace1, hostNamespace}, []knet.NetworkPolicy{*networkPolicy},
 					[]testPod{nPodTest}, nil)
 
-				// emulate namespace handler adding management IPs for this address set
-				fakeOvn.controller.addressSetManager.SetHostNetworkNamespaceIPs([]string{hostNetIP})
-
 				// create networkPolicy, check db
 				_, err := fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
 					Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
@@ -1934,12 +1931,13 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				expectedData := getNamespaceWithSinglePolicyExpectedData(
 					newNetpolDataParams(networkPolicy).
 						withLocalPortUUIDs(nPodTest.portUUID).
-						withPeerIPs(nPodTest.podIP, "10.244.0.2"),
+						// this is added via HostNetworkNamespace
+						withPeerIPs(nPodTest.podIP, node1MgmtIP),
 					getUpdatedInitialDB([]testPod{nPodTest}))
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, []string{nPodTest.podIP})
-				// this namespace doesn't have ips, because we don't create nodes
-				hostNamespaceAddressSetv4, _ := buildNamespaceAddressSets(hostNamespace.Name, nil)
-				expectedData = append(expectedData, namespace1AddressSetv4, hostNamespaceAddressSetv4)
+				hostNamespaceAddressSetV4, _ := buildNamespaceAddressSets(config.Kubernetes.HostNetworkNamespace, []string{})
+
+				expectedData = append(expectedData, namespace1AddressSetv4, hostNamespaceAddressSetV4)
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 
 				return nil

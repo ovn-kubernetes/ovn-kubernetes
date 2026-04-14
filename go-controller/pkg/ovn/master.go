@@ -802,20 +802,12 @@ func (oc *DefaultNetworkController) deleteOVNNodeEvent(node *corev1.Node) error 
 		oc.syncZoneICFailed.Delete(node.Name)
 	}
 
-	// Remove management port IP and node's gateway-router-lrp-ifaddr
-	// from address_set specific to HostNetworkNamespace
-	if err := oc.delIPFromHostNetworkNamespaceAddrSet(node); err != nil {
-		return fmt.Errorf("failed to delete IPs from %s address_set: %v",
-			config.Kubernetes.HostNetworkNamespace, err)
-	}
-
 	oc.lsManager.DeleteSwitch(node.Name)
 	oc.addNodeFailed.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.gatewaysFailed.Delete(node.Name)
 	oc.nodeClusterRouterPortFailed.Delete(node.Name)
 	oc.localZoneNodes.Delete(node.Name)
-	oc.syncHostNetAddrSetFailed.Delete(node.Name)
 
 	return nil
 }
@@ -873,84 +865,6 @@ func (oc *DefaultNetworkController) deleteHoNodeEvent(node *corev1.Node) error {
 		if err != nil {
 			return fmt.Errorf("failed to remove hybrid overlay static routes and route policy: %w", err)
 		}
-	}
-	return nil
-}
-
-// addIPToHostNetworkNamespaceAddrSet adds management port IP and node's
-// gateway-router-lrp-ifaddr to address_set created for HostNetworkNamespace.
-// This function gets called from both AddResource & UpdateResource to add IPs
-// to address_set for both local and remote zone nodes.
-func (oc *DefaultNetworkController) addIPToHostNetworkNamespaceAddrSet(node *corev1.Node) error {
-	var hostNetworkPolicyIPs []net.IP
-
-	if util.NoHostSubnet(node) {
-		return nil
-	}
-	hostNetworkPolicyIPs, err := oc.getHostNamespaceAddressesForNode(node)
-	if err != nil {
-		parsedErr := err
-		if !oc.isLocalZoneNode(node) {
-			parsedErr = types.NewSuppressedError(err)
-		}
-		return fmt.Errorf("error parsing annotation for node %s: %w", node.Name, parsedErr)
-	}
-
-	// add the host network IPs for this node to host network namespace's address set
-	if err = func() error {
-		hostNetworkNamespace := config.Kubernetes.HostNetworkNamespace
-		if hostNetworkNamespace != "" {
-			nsInfo, nsUnlock, err := oc.ensureNamespaceLocked(hostNetworkNamespace, true, nil)
-			if err != nil {
-				return fmt.Errorf("failed to ensure namespace locked: %v", err)
-			}
-			defer nsUnlock()
-			oc.addressSetManager.AddHostNetworkNamespaceIPs(util.StringSlice(hostNetworkPolicyIPs))
-			if err = nsInfo.addressSet.AddAddresses(util.StringSlice(hostNetworkPolicyIPs)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// delIPFromHostNetworkNamespaceAddrSet removes management port IP and node's
-// gateway-router-lrp-ifaddr from address_set created for HostNetworkNamespace.
-// This function gets called from deleteOVNNodeEvent to remove IPs from address_set
-// for both local and remote zone nodes
-func (oc *DefaultNetworkController) delIPFromHostNetworkNamespaceAddrSet(node *corev1.Node) error {
-	var hostNetworkPolicyIPs []net.IP
-
-	hostNetworkPolicyIPs, err := oc.getHostNamespaceAddressesForNode(node)
-	if err != nil {
-		if util.IsAnnotationNotSetError(err) {
-			// if annotation is not set for node subnet or node GW router LRP IP address, we can assume nothing was added to the
-			// host network namespace address set. We depend on both annotations to be set before configuring the address set.
-			return nil
-		}
-		return fmt.Errorf("error parsing annotation for node %s: %v", node.Name, err)
-	}
-
-	// delete host network IPs for this node from host network namespace's address set
-	if err = func() error {
-		hostNetworkNamespace := config.Kubernetes.HostNetworkNamespace
-		if hostNetworkNamespace != "" {
-			nsInfo, nsUnlock, err := oc.ensureNamespaceLocked(hostNetworkNamespace, true, nil)
-			if err != nil {
-				return fmt.Errorf("failed to ensure namespace locked: %v", err)
-			}
-			defer nsUnlock()
-			oc.addressSetManager.DeleteHostNetworkNamespaceIPs(util.StringSlice(hostNetworkPolicyIPs))
-			if err = nsInfo.addressSet.DeleteAddresses(util.StringSlice(hostNetworkPolicyIPs)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}(); err != nil {
-		return err
 	}
 	return nil
 }
