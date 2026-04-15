@@ -2956,29 +2956,56 @@ func countOVNACLs(namespace, policyName string) (int, error) {
 	} else {
 		// Count only ACLs owned by the specific policy
 		// OVN uses external_ids with k8s.ovn.org/name=namespace:policyName format
-		// Use ovn-nbctl find syntax: external-ids:key=value
-		policyKey := fmt.Sprintf("%s:%s", namespace, policyName)
-		findExpr := fmt.Sprintf("external-ids:k8s.ovn.org/name=%s", policyKey)
+		// List all ACLs with their external_ids and filter in Go code to avoid
+		// ovn-nbctl find syntax issues with keys containing dots and slashes
 		output, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPodName,
-			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid", "find", "acl", findExpr)
+			"-c", "nb-ovsdb", "--", "ovn-nbctl", "--no-leader-only", "--columns=_uuid,external_ids", "list", "acl")
 	}
 	if err != nil {
-		// ovn-nbctl find returns exit code 1 when no results found, which is not an error
-		// Check if output is empty (no results) vs actual command failure
-		if output == "" || strings.TrimSpace(output) == "" {
-			return 0, nil
-		}
 		return 0, fmt.Errorf("failed to list OVN ACLs: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	count := 0
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "_uuid") {
+	if namespace == "" || policyName == "" {
+		// Count all ACLs
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+		count := 0
+		for _, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "_uuid") {
+				count++
+			}
+		}
+		return count, nil
+	} else {
+		// Filter ACLs by policy name in external_ids
+		policyKey := fmt.Sprintf("%s:%s", namespace, policyName)
+		targetExtID := fmt.Sprintf("\"k8s.ovn.org/name\"=\"%s\"", policyKey)
+
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+		count := 0
+		inACL := false
+		hasTargetPolicy := false
+
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "_uuid") {
+				// Start of new ACL entry
+				if inACL && hasTargetPolicy {
+					count++
+				}
+				inACL = true
+				hasTargetPolicy = false
+			} else if strings.HasPrefix(trimmed, "external_ids") && strings.Contains(line, targetExtID) {
+				hasTargetPolicy = true
+			}
+		}
+
+		// Check last ACL
+		if inACL && hasTargetPolicy {
 			count++
 		}
+
+		return count, nil
 	}
-	return count, nil
 }
 
 // generateMNPWithManyIPBlocks creates a multi-network policy with specified number of ipBlock entries
