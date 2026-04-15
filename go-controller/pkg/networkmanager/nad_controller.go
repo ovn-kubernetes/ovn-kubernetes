@@ -124,17 +124,11 @@ func newController(
 
 	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		c.podTracker = NewPodTrackerController("pod-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
-		podID, err := c.RegisterNADReconciler(c.podTracker.NADReconciler())
-		if err != nil {
-			return nil, fmt.Errorf("failed to register pod tracker NAD reconciler: %w", err)
-		}
+		podID := c.RegisterNADReconciler(c.podTracker.NADReconciler())
 		c.podReconcilerID = podID
 		if config.OVNKubernetesFeature.EnableEgressIP {
 			c.egressIPTracker = NewEgressIPTrackerController("egress-ip-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
-			eipID, err := c.RegisterNADReconciler(c.egressIPTracker.NADReconciler())
-			if err != nil {
-				return nil, fmt.Errorf("failed to register egress IP tracker NAD reconciler: %w", err)
-			}
+			eipID := c.RegisterNADReconciler(c.egressIPTracker.NADReconciler())
 			c.eipReconcilerID = eipID
 		}
 		c.filterNADsOnNode = filterNADsOnNode
@@ -390,17 +384,13 @@ func (c *nadController) Stop() {
 	controller.Stop(c.controller)
 	c.networkController.Stop()
 	if c.podReconcilerID != 0 {
-		if err := c.DeRegisterNADReconciler(c.podReconcilerID); err != nil {
-			klog.Warningf("Failed to deregister pod tracker NAD reconciler: %v", err)
-		}
+		c.DeRegisterNADReconciler(c.podReconcilerID)
 	}
 	if c.podTracker != nil {
 		c.podTracker.Stop()
 	}
 	if c.eipReconcilerID != 0 {
-		if err := c.DeRegisterNADReconciler(c.eipReconcilerID); err != nil {
-			klog.Warningf("Failed to deregister egress IP tracker NAD reconciler: %v", err)
-		}
+		c.DeRegisterNADReconciler(c.eipReconcilerID)
 	}
 	if c.egressIPTracker != nil {
 		c.egressIPTracker.Stop()
@@ -408,7 +398,7 @@ func (c *nadController) Stop() {
 }
 
 // RegisterNADReconciler registers a reconciler to receive NAD keys for reconciliation.
-func (c *nadController) RegisterNADReconciler(r NADReconciler) (uint64, error) {
+func (c *nadController) RegisterNADReconciler(r NADReconciler) uint64 {
 	c.Lock()
 	defer c.Unlock()
 	if c.reconcilers == nil {
@@ -417,18 +407,17 @@ func (c *nadController) RegisterNADReconciler(r NADReconciler) (uint64, error) {
 	c.nextReconcilerID++
 	id := c.nextReconcilerID
 	c.reconcilers[id] = reconcilerRegistration{id: id, r: r}
-	return id, nil
+	return id
 }
 
 // DeRegisterNADReconciler removes a previously registered reconciler by ID.
-func (c *nadController) DeRegisterNADReconciler(id uint64) error {
+func (c *nadController) DeRegisterNADReconciler(id uint64) {
 	c.Lock()
 	defer c.Unlock()
 	if _, ok := c.reconcilers[id]; !ok {
-		return fmt.Errorf("reconciler id %d not found", id)
+		return
 	}
 	delete(c.reconcilers, id)
-	return nil
 }
 
 // notifyReconcilers enqueues the NAD key to all registered reconcilers

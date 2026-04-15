@@ -68,25 +68,24 @@ type FakeNetworkManager struct {
 	UDNNamespaces sets.Set[string]
 }
 
-func (fnm *FakeNetworkManager) RegisterNADReconciler(r NADReconciler) (uint64, error) {
+func (fnm *FakeNetworkManager) RegisterNADReconciler(r NADReconciler) uint64 {
 	fnm.Lock()
 	defer fnm.Unlock()
 	fnm.nextID++
 	id := fnm.nextID
 	fnm.Reconcilers = append(fnm.Reconcilers, reconcilerRegistration{id: id, r: r})
-	return id, nil
+	return id
 }
 
-func (fnm *FakeNetworkManager) DeRegisterNADReconciler(id uint64) error {
+func (fnm *FakeNetworkManager) DeRegisterNADReconciler(id uint64) {
 	fnm.Lock()
 	defer fnm.Unlock()
 	for i, rec := range fnm.Reconcilers {
 		if rec.id == id {
 			fnm.Reconcilers = append(fnm.Reconcilers[:i], fnm.Reconcilers[i+1:]...)
-			return nil
+			return
 		}
 	}
-	return fmt.Errorf("reconciler not found")
 }
 
 func (fnm *FakeNetworkManager) TriggerHandlers(nadName string, info util.NetInfo, removed bool) {

@@ -1424,15 +1424,20 @@ func (e *EgressIPController) getALocalZoneNodeName() (string, error) {
 	return "", fmt.Errorf("failed to find a local OVN zone Node")
 }
 
-func (e *EgressIPController) StartNADReconciler() error {
+func (e *EgressIPController) StartNADReconciler() (err error) {
 	if e.networkManager == nil || e.nadReconciler == nil {
 		return nil
 	}
+
 	if !e.nadReconcilerRegistered {
-		id, err := e.networkManager.RegisterNADReconciler(e.nadReconciler)
-		if err != nil {
-			return err
-		}
+		defer func() {
+			if err != nil {
+				e.networkManager.DeRegisterNADReconciler(e.nadReconcilerID)
+				e.nadReconcilerRegistered = false
+				e.nadReconcilerID = 0
+			}
+		}()
+		id := e.networkManager.RegisterNADReconciler(e.nadReconciler)
 		e.nadReconcilerID = id
 		e.nadReconcilerRegistered = true
 	}
@@ -1444,9 +1449,7 @@ func (e *EgressIPController) StopNADReconciler() {
 		return
 	}
 	if e.nadReconcilerRegistered {
-		if err := e.networkManager.DeRegisterNADReconciler(e.nadReconcilerID); err != nil {
-			klog.Warningf("Failed to deregister egress IP NAD reconciler: %v", err)
-		}
+		e.networkManager.DeRegisterNADReconciler(e.nadReconcilerID)
 		e.nadReconcilerRegistered = false
 	}
 	controller.Stop(e.nadReconciler)

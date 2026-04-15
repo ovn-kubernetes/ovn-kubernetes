@@ -366,22 +366,22 @@ func (oc *EFController) initialSync() error {
 	return oc.dnsNameResolver.DeleteStaleAddrSets(oc.nbClient)
 }
 
-func (oc *EFController) Start() error {
+func (oc *EFController) Start() (err error) {
 	klog.Infof("Starting EgressFirewall controller")
-	id, err := oc.networkManager.RegisterNADReconciler(oc.nadReconciler)
-	if err != nil {
-		return err
-	}
-	oc.nadReconcilerID = id
+	oc.nadReconcilerID = oc.networkManager.RegisterNADReconciler(oc.nadReconciler)
+	defer func() {
+		if err != nil {
+			oc.networkManager.DeRegisterNADReconciler(oc.nadReconcilerID)
+			oc.nadReconcilerID = 0
+		}
+	}()
 	return controller.StartWithInitialSync(oc.initialSync, oc.controller, oc.nodeController, oc.nadReconciler)
 }
 
 func (oc *EFController) Stop() {
 	klog.Infof("%s: shutting down", oc.name)
 	if oc.nadReconcilerID != 0 {
-		if err := oc.networkManager.DeRegisterNADReconciler(oc.nadReconcilerID); err != nil {
-			klog.Warningf("%s: failed to deregister NAD reconciler: %v", oc.name, err)
-		}
+		oc.networkManager.DeRegisterNADReconciler(oc.nadReconcilerID)
 	}
 	controller.Stop(oc.nodeController, oc.controller, oc.nadReconciler)
 	oc.nadReconciler = nil

@@ -53,8 +53,7 @@ func TestNADNeedsUpdate_NotifiesReconcilersOnNoopUpdate(t *testing.T) {
 	t.Cleanup(func() { controller.Stop(r) })
 
 	c := &nadController{name: "test-nad-controller"}
-	_, err := c.RegisterNADReconciler(r)
-	g.Expect(err).To(gomega.Succeed())
+	c.RegisterNADReconciler(r)
 
 	oldNAD := &nettypes.NetworkAttachmentDefinition{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "nad", ResourceVersion: "1"},
@@ -86,8 +85,7 @@ func TestNADNeedsUpdate_DoesNotNotifyReconcilersOnRelevantUpdate(t *testing.T) {
 	t.Cleanup(func() { controller.Stop(r) })
 
 	c := &nadController{name: "test-nad-controller"}
-	_, err := c.RegisterNADReconciler(r)
-	g.Expect(err).To(gomega.Succeed())
+	c.RegisterNADReconciler(r)
 
 	oldNAD := &nettypes.NetworkAttachmentDefinition{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "nad", ResourceVersion: "1"},
@@ -138,8 +136,7 @@ func TestSyncNAD_NotifiesReconcilers(t *testing.T) {
 		primaryNADs:        map[string]string{},
 		networkIDAllocator: netIDAlloc,
 	}
-	_, err := c.RegisterNADReconciler(r)
-	g.Expect(err).To(gomega.Succeed())
+	c.RegisterNADReconciler(r)
 
 	nadNS := "ns"
 	nadName := "nad"

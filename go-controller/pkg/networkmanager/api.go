@@ -91,9 +91,9 @@ type Interface interface {
 	// This uses NAD controller state and does not parse the NAD object.
 	GetNADKeysForNetwork(networkName string) []string
 	// RegisterNADReconciler registers a reconciler to be notified of NAD changes.
-	RegisterNADReconciler(r NADReconciler) (uint64, error)
+	RegisterNADReconciler(r NADReconciler) uint64
 	// DeRegisterNADReconciler removes a previously registered reconciler.
-	DeRegisterNADReconciler(id uint64) error
+	DeRegisterNADReconciler(id uint64)
 
 	// GetNetworkByID returns the network with the given ID or nil if not found.
 	// This is an O(1) lookup using an internal index.
@@ -298,11 +298,11 @@ func (nm defaultNetworkManager) GetNetworkNameForNADKey(_ string) string { retur
 
 func (nm defaultNetworkManager) GetNADKeysForNetwork(_ string) []string { return nil }
 
-func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) (uint64, error) {
-	return 0, nil
+func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) uint64 {
+	return 0
 }
 
-func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) error { return nil }
+func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) {}
 
 func (nm defaultNetworkManager) GetNetworkByID(id int) util.NetInfo {
 	if id != types.DefaultNetworkID {

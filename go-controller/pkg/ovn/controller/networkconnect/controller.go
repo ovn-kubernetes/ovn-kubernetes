@@ -190,7 +190,7 @@ func NewController(
 // Start starts the controller. Uses StartWithInitialSync so that repairStaleCNCs
 // runs once at startup (after informers are synced, before workers) to clean up
 // OVN state for CNCs that no longer exist in the API.
-func (c *Controller) Start() error {
+func (c *Controller) Start() (err error) {
 	klog.Infof("Starting ovnkube network connect controller for zone %s", c.zone)
 	initialSync := func() error { return c.repairStaleCNCs() }
 	if c.nadReconciler == nil {
@@ -200,11 +200,13 @@ func (c *Controller) Start() error {
 			c.serviceController,
 		)
 	}
-	id, err := c.networkManager.RegisterNADReconciler(c.nadReconciler)
-	if err != nil {
-		return err
-	}
-	c.nadReconcilerID = id
+	c.nadReconcilerID = c.networkManager.RegisterNADReconciler(c.nadReconciler)
+	defer func() {
+		if err != nil {
+			c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID)
+			c.nadReconcilerID = 0
+		}
+	}()
 	return controllerutil.StartWithInitialSync(initialSync,
 		c.cncController,
 		c.nodeController,
@@ -216,9 +218,7 @@ func (c *Controller) Start() error {
 // Stop stops the controller.
 func (c *Controller) Stop() {
 	if c.nadReconcilerID != 0 {
-		if err := c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID); err != nil {
-			klog.Warningf("Failed to deregister CNC NAD reconciler: %v", err)
-		}
+		c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID)
 	}
 	if c.nadReconciler != nil {
 		controllerutil.Stop(

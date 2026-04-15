@@ -156,14 +156,16 @@ func NewController(
 	return c
 }
 
-func (c *Controller) Start() error {
-	defer klog.Infof("Cluster manager network connect controllers started")
+func (c *Controller) Start() (err error) {
+	defer func() {
+		if err != nil {
+			c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID)
+		} else {
+			klog.Infof("Cluster manager network connect controllers started")
+		}
+	}()
 
-	id, err := c.networkManager.RegisterNADReconciler(c.nadReconciler)
-	if err != nil {
-		return err
-	}
-	c.nadReconcilerID = id
+	c.nadReconcilerID = c.networkManager.RegisterNADReconciler(c.nadReconciler)
 	return controllerutil.StartWithInitialSync(
 		c.initialSync,
 		c.cncController,
@@ -269,9 +271,7 @@ func (c *Controller) initialSync() error {
 
 func (c *Controller) Stop() {
 	if c.nadReconcilerID != 0 {
-		if err := c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID); err != nil {
-			klog.Warningf("clustermanager-network-connect: failed to deregister NAD reconciler: %v", err)
-		}
+		c.networkManager.DeRegisterNADReconciler(c.nadReconcilerID)
 	}
 	controllerutil.Stop(
 		c.cncController,
