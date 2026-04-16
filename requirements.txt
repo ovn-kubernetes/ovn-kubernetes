@@ -19,3 +19,4 @@ pymdown-extensions
 PyYAML
 six
 tornado
+mkdocs-meta-descriptions-plugin

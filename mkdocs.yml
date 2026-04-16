@@ -37,6 +37,7 @@ theme:
     - content.code.copy
 plugins:
   - search
+  - meta-descriptions
   - awesome-pages
   - mike
   - mermaid2
