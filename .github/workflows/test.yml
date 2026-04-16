@@ -416,7 +416,13 @@ jobs:
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
         make -C test upgrade-ovn
-
+    
+    - name: Run EgressIP upgrade verification
+      run: |
+       export OVN_IMAGE="ovn-daemonset-fedora:pr"
+       make -C test control-plane \
+        WHAT="EgressIP survives ovnkube-node rolling upgrade"
+    
     - name: Runner Diagnostics
       if: always()
       uses: ./.github/actions/diagnostics
