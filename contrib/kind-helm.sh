@@ -15,6 +15,7 @@ set_default_params() {
   set_common_default_params
   check_ipv6
   set_cluster_cidr_ip_families
+  OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
 }
 
 usage() {
@@ -83,6 +84,7 @@ usage() {
     echo "-cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process. DEFAULT: Disabled"
     echo "-ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled"
     echo "-df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled"
+    echo "--disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled"
     echo "-dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled"
     echo "-gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
@@ -101,6 +103,39 @@ usage() {
     echo "-npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
     echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
     echo "--allow-icmp-netpol                           Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules"
+    echo "-ecp | --encap-port                           GENEVE UDP tunnel port."
+    echo "-dp  | --disable-pkt-mtu-check                Disable checking for packets mtu size. DEFAULT: false"
+    echo "-is  | --ipsec                                Enable IPsec. DEFAULT: false"
+    echo "-sm  | --scale-metrics                        Enable scale metrics. DEFAULT: false"
+    echo "-ehp | --egress-ip-healthcheck-port           TCP port used for gRPC session by egress IP node check. DEFAULT: 9107 (Use \"0\" for legacy dial to port 9)."
+    echo "-nf  | --netflow-targets                      A comma-separated set of NetFlow collectors to export flow data. DEFAULT: Disabled"
+    echo "-sf  | --sflow-targets                        A comma-separated set of SFlow collectors to export flow data. DEFAULT: Disabled"
+    echo "-if  | --ipfix-targets                        A comma-separated set of IPFIX collectors to export flow data. DEFAULT: Disabled"
+    echo "-ifs | --ipfix-sampling                       Rate at which packets should be sampled and sent to each target collector. DEFAULT: 400"
+    echo "-ifm | --ipfix-cache-max-flows                Maximum number of IPFIX flow records that can be cached at a time. DEFAULT: 0 (disabled)"
+    echo "-ifa | --ipfix-cache-active-timeout           Maximum period in seconds for which an IPFIX flow record is cached. DEFAULT: 60"
+    echo "-lcl | --libovsdb-client-logfile              Separate logs for libovsdb client into provided file. DEFAULT: do not separate."
+    echo "-eb  | --egress-gw-separate-bridge            The external gateway traffic uses a separate bridge (sets up xgw bridge and eth1)."
+    echo "-lr  | --local-kind-registry                  Configure kind to use a local container registry for images."
+    echo "-ep  | --experimental-provider                Use an experimental OCI provider such as podman instead of docker."
+    echo "--deploy                                      Deploy ovn-kubernetes without restarting kind"
+    echo "--add-nodes                                   Adds nodes to an existing cluster. Number of nodes set by --num-workers. Use -ic if the cluster uses interconnect."
+    echo "--isolated                                    After cluster creation, remove default route from nodes and publish kind node IPs as /etc/hosts entries for DNS-less isolation."
+    echo "-ml  | --master-loglevel                      Log level for ovnkube-master/cluster-manager pods (0..5). DEFAULT: 4"
+    echo "-nl  | --node-loglevel                        Log level for ovnkube-node pods (0..5). DEFAULT: 4"
+    echo "-dbl | --dbchecker-loglevel                   Log level for the ovn-dbchecker container (0..5). DEFAULT: 4"
+    echo "-nbl | --ovn-loglevel-nb                      Log level for ovn-nbdb. DEFAULT: '-vconsole:info -vfile:info'"
+    echo "-sbl | --ovn-loglevel-sb                      Log level for ovn-sbdb. DEFAULT: '-vconsole:info -vfile:info'"
+    echo "-ndl | --ovn-loglevel-northd                  Log level for ovn-northd. DEFAULT: '-vconsole:info -vfile:info'"
+    echo "-cl  | --ovn-loglevel-controller              Log level for ovn-controller. DEFAULT: '-vconsole:info'"
+    echo "-dd  | --dns-domain                           Configure a custom dnsDomain for k8s services. DEFAULT: 'cluster.local'"
+    echo "-inf | --num-infra                            Number of infra (tainted, not-ready) kind nodes. DEFAULT: 0"
+    echo "-hns | --host-network-namespace               Namespace used to classify host-network traffic. DEFAULT: 'ovn-host-network'"
+    echo "-prom | --install-prometheus                  Install Prometheus monitoring stack."
+    echo "-sw  | --allow-system-writes                  Allow the script to write to /etc/hosts and other system files when needed."
+    echo "-ric | --run-in-container                     Run the script from inside a docker container (adapts kubeconfig API URL)."
+    echo "-kc  | --kubeconfig                           Output kubeconfig path. DEFAULT: \$HOME/\$KIND_CLUSTER_NAME.conf"
+    echo "-nokvipam | --opt-out-kv-ipam                 Skip installing the KubeVirt IPAM controller (requires --install-kubevirt)."
     echo ""
 
 }
@@ -239,6 +274,8 @@ parse_args() {
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
                                                   IC_ARG_PROVIDED=true
                                                   ;;
+            --disable-ovnkube-identity )          OVN_ENABLE_OVNKUBE_IDENTITY=false
+                                                  ;;
             -npz | --nodes-per-zone )             shift
                                                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
                                                       echo "Invalid num-nodes-per-zone: $1"
@@ -256,6 +293,102 @@ parse_args() {
                                                   OVN_MTU=$1
                                                   ;;
             --enable-coredumps )                  ENABLE_COREDUMPS=true
+                                                  ;;
+            -ecp | --encap-port )                 shift
+                                                  OVN_ENCAP_PORT=$1
+                                                  ;;
+            -dp | --disable-pkt-mtu-check )       OVN_DISABLE_PKT_MTU_CHECK=true
+                                                  ;;
+            -is | --ipsec )                       ENABLE_IPSEC=true
+                                                  ;;
+            -sm | --scale-metrics )               OVN_METRICS_SCALE_ENABLE=true
+                                                  ;;
+            -ehp | --egress-ip-healthcheck-port ) shift
+                                                  OVN_EGRESSIP_HEALTHCHECK_PORT=$1
+                                                  ;;
+            -nf | --netflow-targets )             shift
+                                                  OVN_NETFLOW_TARGETS=$1
+                                                  ;;
+            -sf | --sflow-targets )               shift
+                                                  OVN_SFLOW_TARGETS=$1
+                                                  ;;
+            -if | --ipfix-targets )               shift
+                                                  OVN_IPFIX_TARGETS=$1
+                                                  ;;
+            -ifs | --ipfix-sampling )             shift
+                                                  OVN_IPFIX_SAMPLING=$1
+                                                  ;;
+            -ifm | --ipfix-cache-max-flows )      shift
+                                                  OVN_IPFIX_CACHE_MAX_FLOWS=$1
+                                                  ;;
+            -ifa | --ipfix-cache-active-timeout ) shift
+                                                  OVN_IPFIX_CACHE_ACTIVE_TIMEOUT=$1
+                                                  ;;
+            -lcl | --libovsdb-client-logfile )    shift
+                                                  LIBOVSDB_CLIENT_LOGFILE=$1
+                                                  ;;
+            -eb | --egress-gw-separate-bridge )   OVN_SECOND_BRIDGE=true
+                                                  ;;
+            -lr | --local-kind-registry )         KIND_LOCAL_REGISTRY=true
+                                                  ;;
+            -ep | --experimental-provider )       shift
+                                                  KIND_EXPERIMENTAL_PROVIDER=$1
+                                                  ;;
+            -h | --help )                         usage
+                                                  exit
+                                                  ;;
+            --deploy )                            KIND_CREATE=false
+                                                  ;;
+            --add-nodes )                         KIND_ADD_NODES=true
+                                                  KIND_CREATE=false
+                                                  ;;
+            --isolated )                          OVN_ISOLATED=true
+                                                  ;;
+            -ml | --master-loglevel )             shift
+                                                  MASTER_LOG_LEVEL=$1
+                                                  ;;
+            -nl | --node-loglevel )               shift
+                                                  NODE_LOG_LEVEL=$1
+                                                  ;;
+            -dbl | --dbchecker-loglevel )         shift
+                                                  DBCHECKER_LOG_LEVEL=$1
+                                                  ;;
+            -nbl | --ovn-loglevel-nb )            shift
+                                                  OVN_LOG_LEVEL_NB=$1
+                                                  ;;
+            -sbl | --ovn-loglevel-sb )            shift
+                                                  OVN_LOG_LEVEL_SB=$1
+                                                  ;;
+            -ndl | --ovn-loglevel-northd )        shift
+                                                  OVN_LOG_LEVEL_NORTHD=$1
+                                                  ;;
+            -cl | --ovn-loglevel-controller )     shift
+                                                  OVN_LOG_LEVEL_CONTROLLER=$1
+                                                  ;;
+            -dd | --dns-domain )                  shift
+                                                  KIND_DNS_DOMAIN=$1
+                                                  ;;
+            -inf | --num-infra )                  shift
+                                                  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+                                                      echo "Invalid num-infra: $1"
+                                                      usage
+                                                      exit 1
+                                                  fi
+                                                  KIND_NUM_INFRA=$1
+                                                  ;;
+            -hns | --host-network-namespace )     shift
+                                                  OVN_HOST_NETWORK_NAMESPACE=$1
+                                                  ;;
+            -prom | --install-prometheus )        KIND_INSTALL_PROMETHEUS=true
+                                                  ;;
+            -sw | --allow-system-writes )         KIND_ALLOW_SYSTEM_WRITES=true
+                                                  ;;
+            -ric | --run-in-container )           RUN_IN_CONTAINER=true
+                                                  ;;
+            -kc | --kubeconfig )                  shift
+                                                  KUBECONFIG=$1
+                                                  ;;
+            -nokvipam | --opt-out-kv-ipam )       KIND_OPT_OUT_KUBEVIRT_IPAM=true
                                                   ;;
             * )                                   usage
                                                   exit 1
@@ -315,6 +448,35 @@ print_params() {
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      echo "DYNAMIC_UDN_ALLOCATION = $DYNAMIC_UDN_ALLOCATION"
      echo "DYNAMIC_UDN_GRACE_PERIOD =  $DYNAMIC_UDN_GRACE_PERIOD"
+     echo "ENABLE_IPSEC = $ENABLE_IPSEC"
+     echo "OVN_ENCAP_PORT = $OVN_ENCAP_PORT"
+     echo "OVN_DISABLE_PKT_MTU_CHECK = $OVN_DISABLE_PKT_MTU_CHECK"
+     echo "OVN_METRICS_SCALE_ENABLE = $OVN_METRICS_SCALE_ENABLE"
+     echo "OVN_EGRESSIP_HEALTHCHECK_PORT = $OVN_EGRESSIP_HEALTHCHECK_PORT"
+     echo "OVN_NETFLOW_TARGETS = $OVN_NETFLOW_TARGETS"
+     echo "OVN_SFLOW_TARGETS = $OVN_SFLOW_TARGETS"
+     echo "OVN_IPFIX_TARGETS = $OVN_IPFIX_TARGETS"
+     echo "OVN_IPFIX_SAMPLING = $OVN_IPFIX_SAMPLING"
+     echo "OVN_IPFIX_CACHE_MAX_FLOWS = $OVN_IPFIX_CACHE_MAX_FLOWS"
+     echo "OVN_IPFIX_CACHE_ACTIVE_TIMEOUT = $OVN_IPFIX_CACHE_ACTIVE_TIMEOUT"
+     echo "LIBOVSDB_CLIENT_LOGFILE = $LIBOVSDB_CLIENT_LOGFILE"
+     echo "OVN_ISOLATED = $OVN_ISOLATED"
+     echo "KIND_ADD_NODES = $KIND_ADD_NODES"
+     echo "KIND_CREATE = $KIND_CREATE"
+     echo "KIND_LOCAL_REGISTRY = $KIND_LOCAL_REGISTRY"
+     echo "KIND_DNS_DOMAIN = $KIND_DNS_DOMAIN"
+     echo "KIND_NUM_INFRA = $KIND_NUM_INFRA"
+     echo "OVN_HOST_NETWORK_NAMESPACE = $OVN_HOST_NETWORK_NAMESPACE"
+     echo "KIND_INSTALL_PROMETHEUS = $KIND_INSTALL_PROMETHEUS"
+     echo "KIND_ALLOW_SYSTEM_WRITES = $KIND_ALLOW_SYSTEM_WRITES"
+     echo "RUN_IN_CONTAINER = $RUN_IN_CONTAINER"
+     echo "MASTER_LOG_LEVEL = $MASTER_LOG_LEVEL"
+     echo "NODE_LOG_LEVEL = $NODE_LOG_LEVEL"
+     echo "DBCHECKER_LOG_LEVEL = $DBCHECKER_LOG_LEVEL"
+     echo "OVN_LOG_LEVEL_NB = $OVN_LOG_LEVEL_NB"
+     echo "OVN_LOG_LEVEL_SB = $OVN_LOG_LEVEL_SB"
+     echo "OVN_LOG_LEVEL_NORTHD = $OVN_LOG_LEVEL_NORTHD"
+     echo "OVN_LOG_LEVEL_CONTROLLER = $OVN_LOG_LEVEL_CONTROLLER"
      if [[ $OVN_ENABLE_INTERCONNECT == true ]]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
        if [ "${KIND_NUM_NODES_PER_ZONE}" -gt 1 ] && [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" = "true" ]; then
@@ -365,7 +527,7 @@ create_ovn_kubernetes() {
     ESCAPED_NET_CIDR="${NET_CIDR//,/\\,}"
     ESCAPED_SVC_CIDR="${SVC_CIDR//,/\\,}"
     cmd=$(cat <<EOF
-helm install ovn-kubernetes . -f "${value_file}" \
+helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set k8sAPIServer=${API_URL} \
           --set podNetwork="${ESCAPED_NET_CIDR}" \
           --set serviceNetwork="${ESCAPED_SVC_CIDR}" \
@@ -406,6 +568,40 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.unprivilegedMode=false \
           --set global.enableCompactMode=$(if [ "${OVN_COMPACT_MODE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.dummyGatewayBridge=$(if [ "${OVN_DUMMY_GATEWAY_BRIDGE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          $( [ -n "${OVN_ENCAP_PORT}" ] && echo "--set global.encapPort=${OVN_ENCAP_PORT}" ) \
+          --set global.disablePacketMtuCheck=$(if [ "${OVN_DISABLE_PKT_MTU_CHECK}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableIpsec=$(if [ "${ENABLE_IPSEC}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set tags.ovn-ipsec=$(if [ "${ENABLE_IPSEC}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set tags.ovnkube-identity=$(if [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableMetricsScale=$(if [ "${OVN_METRICS_SCALE_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          $( [ -n "${OVN_EGRESSIP_HEALTHCHECK_PORT}" ] && echo "--set global.egressIpHealthCheckPort=${OVN_EGRESSIP_HEALTHCHECK_PORT}" ) \
+          $( [ -n "${OVN_NETFLOW_TARGETS}" ] && echo "--set global.netFlowTargets=${OVN_NETFLOW_TARGETS}" ) \
+          $( [ -n "${OVN_SFLOW_TARGETS}" ] && echo "--set global.sflowTargets=${OVN_SFLOW_TARGETS}" ) \
+          $( [ -n "${OVN_IPFIX_TARGETS}" ] && echo "--set global.ipfixTargets=${OVN_IPFIX_TARGETS}" ) \
+          $( [ -n "${OVN_IPFIX_SAMPLING}" ] && echo "--set global.ipfixSampling=${OVN_IPFIX_SAMPLING}" ) \
+          $( [ -n "${OVN_IPFIX_CACHE_MAX_FLOWS}" ] && echo "--set global.ipfixCacheMaxFlows=${OVN_IPFIX_CACHE_MAX_FLOWS}" ) \
+          $( [ -n "${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT}" ] && echo "--set global.ipfixCacheActiveTimeout=${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT}" ) \
+          $( [ -n "${LIBOVSDB_CLIENT_LOGFILE}" ] && echo "--set global.libovsdbClientLogFile=${LIBOVSDB_CLIENT_LOGFILE}" ) \
+          --set hostNetworkNamespace=${OVN_HOST_NETWORK_NAMESPACE} \
+          --set ovnkube-master.logLevel=${MASTER_LOG_LEVEL} \
+          --set ovnkube-control-plane.logLevel=${MASTER_LOG_LEVEL} \
+          --set ovnkube-node.logLevel=${NODE_LOG_LEVEL} \
+          --set ovnkube-single-node-zone.ovnkubeNodeLogLevel=${NODE_LOG_LEVEL} \
+          --set ovnkube-zone-controller.ovnkubeLocalLogLevel=${NODE_LOG_LEVEL} \
+          --set ovnkube-db-raft.dbCheckerLogLevel=${DBCHECKER_LOG_LEVEL} \
+          --set-string ovnkube-db.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
+          --set-string ovnkube-db-raft.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
+          --set-string ovnkube-single-node-zone.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
+          --set-string ovnkube-zone-controller.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
+          --set-string ovnkube-db.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
+          --set-string ovnkube-db-raft.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
+          --set-string ovnkube-single-node-zone.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
+          --set-string ovnkube-zone-controller.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
+          --set-string ovnkube-master.northdLogLevel="${OVN_LOG_LEVEL_NORTHD}" \
+          --set-string ovnkube-single-node-zone.northdLogLevel="${OVN_LOG_LEVEL_NORTHD}" \
+          --set-string ovnkube-zone-controller.northdLogLevel="${OVN_LOG_LEVEL_NORTHD}" \
+          --set-string ovnkube-node.ovnControllerLogLevel="${OVN_LOG_LEVEL_CONTROLLER}" \
+          --set-string ovnkube-single-node-zone.ovnControllerLogLevel="${OVN_LOG_LEVEL_CONTROLLER}" \
           ${ovnkube_db_options}
 EOF
        )
@@ -424,9 +620,31 @@ parse_args "$@"
 set_default_params
 print_params
 helm_prereqs
-create_kind_cluster
-if [ "$ENABLE_COREDUMPS" == true ]; then
-  setup_coredumps
+
+# --add-nodes: scale an existing cluster and exit without touching the helm release
+if [ "$KIND_ADD_NODES" == true ]; then
+  scale_kind_cluster
+  if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
+    connect_local_registry
+  fi
+  kubectl_wait_pods
+  exit 0
+fi
+
+if [ "$KIND_CREATE" == true ]; then
+  create_kind_cluster
+  if [ "$ENABLE_COREDUMPS" == true ]; then
+    setup_coredumps
+  fi
+  # when kind-helm.sh is run from inside a container, rewrite the kubeconfig API URL
+  # to the control-plane container's IP (127.0.0.1 is not reachable across containers).
+  if [ "$RUN_IN_CONTAINER" == true ]; then
+    run_script_in_container
+  fi
+  # when using a non-default cluster name, fix up the context/cluster/user names in kubeconfig
+  if [ "$KIND_CLUSTER_NAME" != "ovn" ]; then
+    fixup_kubeconfig_names
+  fi
 fi
 if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
   connect_local_registry
@@ -439,6 +657,10 @@ if [ "$OVN_SECOND_BRIDGE" == true ]; then
 fi
 docker_disable_ipv6
 coredns_patch
+if [ "$OVN_ISOLATED" == true ]; then
+  remove_default_route
+  add_dns_hostnames
+fi
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     build_dnsnameresolver_images
     install_dnsnameresolver_images
@@ -507,6 +729,14 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
     configure_frr_k8s
   fi
+fi
+
+# IPsec pods need the signer-ca ConfigMap and signed CSRs before they can roll out.
+# The ovn-ipsec DaemonSet is created by the helm chart (tags.ovn-ipsec=true), install_ipsec
+# handles the CA creation and CSR signing (manifest apply is skipped when helm owns the DS).
+if [ "$ENABLE_IPSEC" == true ]; then
+  set_openssl_binary
+  install_ipsec
 fi
 
 interconnect_arg_check
