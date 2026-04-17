@@ -104,6 +104,10 @@ type networkClusterController struct {
 	// every event. Updated when NAD keys change (Reconcile).
 	cachedNamespaces atomic.Value // stores map[string]bool
 
+	// podDispatcher is the shared pod event dispatcher that routes events
+	// to this controller's workqueue. Set by the cluster manager.
+	podDispatcher *podDispatcher
+
 	util.ReconcilableNetInfo
 }
 
@@ -369,12 +373,10 @@ func (ncc *networkClusterController) init() error {
 		ncc.podCtrl = controller.NewController(
 			fmt.Sprintf("cm-pod-%s", ncc.GetNetworkName()),
 			&controller.ControllerConfig[corev1.Pod]{
-				RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-				Reconcile:      ncc.reconcilePod,
-				ObjNeedsUpdate: ncc.podNeedsUpdate,
-				Threadiness:    3,
-				Informer:       ncc.watchFactory.PodCoreInformer().Informer(),
-				Lister:         ncc.podLister.List,
+				RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+				Reconcile:   ncc.reconcilePod,
+				Threadiness: 3,
+				Lister:      ncc.podLister.List,
 			},
 		)
 	}
@@ -613,9 +615,16 @@ func (ncc *networkClusterController) Start(_ context.Context) error {
 		}
 
 		start = time.Now()
-		klog.Infof("Cluster manager network controller %q starting Pod controller...", ncc.GetNetworkName())
-		if err := controller.StartWithInitialSync(ncc.syncPods, ncc.podCtrl); err != nil {
+		klog.Infof("Cluster manager network controller %q syncing pods...", ncc.GetNetworkName())
+		if err := ncc.syncPods(); err != nil {
+			return fmt.Errorf("unable to sync pods: %w", err)
+		}
+		klog.Infof("Cluster manager network controller %q starting Pod workers...", ncc.GetNetworkName())
+		if err := controller.Start(ncc.podCtrl); err != nil {
 			return fmt.Errorf("unable to start pod controller: %w", err)
+		}
+		if ncc.podDispatcher != nil {
+			ncc.podDispatcher.AddController(ncc.GetNetInfo().GetNADNamespaces(), ncc.podCtrl)
 		}
 		klog.Infof("Cluster manager network controller %q completed Pod controller start. Took: %v", ncc.GetNetworkName(), time.Since(start))
 	}
@@ -636,6 +645,9 @@ func (ncc *networkClusterController) Stop() {
 	}
 
 	if ncc.podCtrl != nil {
+		if ncc.podDispatcher != nil {
+			ncc.podDispatcher.RemoveController(ncc.GetNetInfo().GetNADNamespaces())
+		}
 		controller.Stop(ncc.podCtrl)
 	}
 	if ncc.podHandler != nil {
@@ -682,6 +694,9 @@ func (ncc *networkClusterController) Reconcile(netInfo util.NetInfo) error {
 		klog.Errorf("Failed to reconcile network %s: %v", ncc.GetNetworkName(), err)
 	}
 	ncc.refreshCachedNamespaces()
+	if ncc.podDispatcher != nil && ncc.podCtrl != nil {
+		ncc.podDispatcher.AddController(ncc.GetNetInfo().GetNADNamespaces(), ncc.podCtrl)
+	}
 	if reconcilePendingPods && ncc.podCtrl != nil {
 		ncc.podCtrl.ReconcileAll()
 	}
