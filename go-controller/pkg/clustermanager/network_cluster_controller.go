@@ -7,16 +7,21 @@ import (
 	"net"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	cache "k8s.io/client-go/tools/cache"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
 	k8snodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/klog/v2"
 
@@ -27,6 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	sharednode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -52,7 +58,11 @@ type networkClusterController struct {
 
 	nodeReconciler *clusterManagerNodeController
 
-	// retry framework for L2 pod ip allocation
+	// pod controller for L2 pod ip allocation (replaces retryPods for scale)
+	podCtrl   controller.Controller
+	podLister corelisters.PodLister
+
+	// legacy retry framework for L2 pod ip allocation (used when podCtrl is nil)
 	podHandler *factory.Handler
 	retryPods  *objretry.RetryFramework
 
@@ -88,6 +98,11 @@ type networkClusterController struct {
 
 	nadKeysLock sync.Mutex
 	lastNADKeys sets.Set[string]
+
+	// cachedNamespaces is a snapshot of GetNADNamespaces() stored as a map
+	// for fast O(1) lookups in podNeedsUpdate without taking the RLock on
+	// every event. Updated when NAD keys change (Reconcile).
+	cachedNamespaces atomic.Value // stores map[string]bool
 
 	util.ReconcilableNetInfo
 }
@@ -299,7 +314,7 @@ func (ncc *networkClusterController) init() error {
 	}
 
 	if ncc.hasPodAllocation() {
-		ncc.retryPods = ncc.newRetryFramework(factory.PodType, true)
+		ncc.podLister = ncc.watchFactory.PodCoreInformer().Lister()
 		ipAllocator, err := newIPAllocatorForNetwork(ncc.GetNetInfo())
 		if err != nil {
 			return fmt.Errorf("could not initialize the IP allocator for network %q: %w", ncc.GetNetworkName(), err)
@@ -350,6 +365,18 @@ func (ncc *networkClusterController) init() error {
 		if err := ncc.podAllocator.Init(); err != nil {
 			return fmt.Errorf("failed to initialize pod ip allocator: %w", err)
 		}
+
+		ncc.podCtrl = controller.NewController(
+			fmt.Sprintf("cm-pod-%s", ncc.GetNetworkName()),
+			&controller.ControllerConfig[corev1.Pod]{
+				RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+				Reconcile:      ncc.reconcilePod,
+				ObjNeedsUpdate: ncc.podNeedsUpdate,
+				Threadiness:    3,
+				Informer:       ncc.watchFactory.PodCoreInformer().Informer(),
+				Lister:         ncc.podLister.List,
+			},
+		)
 	}
 
 	return nil
@@ -546,6 +573,7 @@ func (ncc *networkClusterController) relevantNodeAnnotationsChanged(oldState, ne
 func (ncc *networkClusterController) Start(_ context.Context) error {
 	start := time.Now()
 	klog.Infof("Initializing cluster manager network controller %q ...", ncc.GetNetworkName())
+	ncc.refreshCachedNamespaces()
 	err := ncc.init()
 	if err != nil {
 		return err
@@ -585,13 +613,11 @@ func (ncc *networkClusterController) Start(_ context.Context) error {
 		}
 
 		start = time.Now()
-		klog.Infof("Cluster manager network controller %q starting Pod watcher...", ncc.GetNetworkName())
-		podHandler, err := ncc.retryPods.WatchResource()
-		if err != nil {
-			return fmt.Errorf("unable to watch pods: %w", err)
+		klog.Infof("Cluster manager network controller %q starting Pod controller...", ncc.GetNetworkName())
+		if err := controller.StartWithInitialSync(ncc.syncPods, ncc.podCtrl); err != nil {
+			return fmt.Errorf("unable to start pod controller: %w", err)
 		}
-		ncc.podHandler = podHandler
-		klog.Infof("Cluster manager network controller %q completed watch Pods. Took: %v", ncc.GetNetworkName(), time.Since(start))
+		klog.Infof("Cluster manager network controller %q completed Pod controller start. Took: %v", ncc.GetNetworkName(), time.Since(start))
 	}
 
 	return nil
@@ -609,6 +635,9 @@ func (ncc *networkClusterController) Stop() {
 		ncc.nodeReconciler.DeregisterNetworkController(ncc.GetNetworkName())
 	}
 
+	if ncc.podCtrl != nil {
+		controller.Stop(ncc.podCtrl)
+	}
 	if ncc.podHandler != nil {
 		ncc.watchFactory.RemovePodHandler(ncc.podHandler)
 	}
@@ -652,12 +681,30 @@ func (ncc *networkClusterController) Reconcile(netInfo util.NetInfo) error {
 	if err != nil {
 		klog.Errorf("Failed to reconcile network %s: %v", ncc.GetNetworkName(), err)
 	}
-	if reconcilePendingPods && ncc.retryPods != nil {
-		if err := objretry.RequeuePendingPods(ncc.watchFactory, ncc.GetNetInfo(), ncc.retryPods); err != nil {
-			klog.Errorf("Failed to requeue pending pods for network %s: %v", ncc.GetNetworkName(), err)
-		}
+	ncc.refreshCachedNamespaces()
+	if reconcilePendingPods && ncc.podCtrl != nil {
+		ncc.podCtrl.ReconcileAll()
 	}
 	return nil
+}
+
+func (ncc *networkClusterController) refreshCachedNamespaces() {
+	nsMap := make(map[string]bool)
+	for _, ns := range ncc.GetNetInfo().GetNADNamespaces() {
+		nsMap[ns] = true
+	}
+	ncc.cachedNamespaces.Store(nsMap)
+}
+
+func (ncc *networkClusterController) canServeNamespaceCached(namespace string) bool {
+	if !ncc.IsPrimaryNetwork() {
+		return true
+	}
+	nsMap, _ := ncc.cachedNamespaces.Load().(map[string]bool)
+	if nsMap == nil {
+		return util.CanServeNamespace(ncc.GetNetInfo(), namespace)
+	}
+	return nsMap[namespace]
 }
 
 func (ncc *networkClusterController) updateNADKeysChanged(nadKeys []string) bool {
@@ -668,6 +715,93 @@ func (ncc *networkClusterController) updateNADKeysChanged(nadKeys []string) bool
 	changed := ncc.lastNADKeys == nil || !next.Equal(ncc.lastNADKeys)
 	ncc.lastNADKeys = next
 	return changed
+}
+
+// podNeedsUpdate returns true if the pod event should be enqueued for this
+// network controller. It filters by namespace (only pods in namespaces served
+// by this network) and by relevant field changes (annotation or scheduling).
+func (ncc *networkClusterController) podNeedsUpdate(oldPod, newPod *corev1.Pod) bool {
+	start := time.Now()
+	result := ncc.podNeedsUpdateInner(oldPod, newPod)
+	if elapsed := time.Since(start); elapsed > time.Millisecond {
+		podName := ""
+		if newPod != nil {
+			podName = newPod.Namespace + "/" + newPod.Name
+		}
+		klog.Warningf("Slow podNeedsUpdate: pod=%s network=%s elapsed_us=%d result=%v",
+			podName, ncc.GetNetworkName(), elapsed.Microseconds(), result)
+	}
+	return result
+}
+
+func (ncc *networkClusterController) podNeedsUpdateInner(oldPod, newPod *corev1.Pod) bool {
+	if newPod == nil {
+		return false
+	}
+	if !util.PodScheduled(newPod) {
+		return false
+	}
+	if newPod.Annotations[util.OvnPodAnnotationName] == "" {
+		return false
+	}
+	enqueue := false
+	if oldPod == nil {
+		enqueue = true
+	} else {
+		enqueue = oldPod.Annotations[util.OvnPodAnnotationName] != newPod.Annotations[util.OvnPodAnnotationName]
+	}
+	if !enqueue {
+		return false
+	}
+	if !ncc.canServeNamespaceCached(newPod.Namespace) {
+		return false
+	}
+
+	sinceCreation := time.Since(newPod.CreationTimestamp.Time)
+	if sinceCreation > 10*time.Second {
+		klog.Infof("Pod event enqueued: pod=%s/%s network=%s since_creation_ms=%.1f rv=%s",
+			newPod.Namespace, newPod.Name, ncc.GetNetworkName(),
+			float64(sinceCreation.Microseconds())/1000.0,
+			newPod.ResourceVersion)
+	}
+	return true
+}
+
+// reconcilePod is called by the pod controller worker goroutine. It re-reads
+// the pod from the lister (ensuring fresh state) and delegates to the pod
+// allocator.
+func (ncc *networkClusterController) reconcilePod(key string) error {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return fmt.Errorf("invalid pod key %q: %w", key, err)
+	}
+
+	pod, err := ncc.podLister.Pods(namespace).Get(name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// pod deleted — the allocator handles cleanup via completed pod
+			// updates before the pod is actually removed
+			return nil
+		}
+		return err
+	}
+
+	return ncc.podAllocator.Reconcile(nil, pod)
+}
+
+// syncPods is the initial sync function called before the pod controller
+// workers start. It processes all existing pods to reserve already-allocated
+// IPs in the in-memory allocator, similar to the old Sync path.
+func (ncc *networkClusterController) syncPods() error {
+	pods, err := ncc.podLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+	objs := make([]interface{}, 0, len(pods))
+	for _, p := range pods {
+		objs = append(objs, p)
+	}
+	return ncc.podAllocator.Sync(objs)
 }
 
 // networkClusterControllerEventHandler object handles the events
