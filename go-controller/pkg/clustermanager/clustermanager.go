@@ -205,7 +205,7 @@ func NewClusterManager(
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
 		if config.ManagedBGP.FRRNamespace != "" {
-			cm.managedBGPController = managedbgp.NewController(wf, ovnClient.FRRClient, ovnClient.RouteAdvertisementsClient, recorder)
+			cm.managedBGPController = managedbgp.NewController(wf, ovnClient.FRRClient, ovnClient.RouteAdvertisementsClient, ovnClient.UserDefinedNetworkClient)
 		}
 		if config.Default.Transport == types.NetworkTransportNoOverlay {
 			cm.noOverlayController = nooverlay.NewController(wf, recorder)

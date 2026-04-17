@@ -950,6 +950,19 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
+		isManagedRouting := cudnATemplate.Spec.Network.Transport == udnv1.TransportOptionNoOverlay &&
+			cudnATemplate.Spec.Network.NoOverlay != nil &&
+			cudnATemplate.Spec.Network.NoOverlay.Routing == udnv1.RoutingManaged
+
+		ginkgo.BeforeEach(func() {
+			if isManagedRouting && !isManagedBGPEnabled(f) {
+				e2eskipper.Skipf("managed routing is not enabled on the cluster")
+			}
+			if !isManagedRouting && isManagedBGPEnabled(f) {
+				e2eskipper.Skipf("overlay transport tests are not supported on managed routing clusters")
+			}
+		})
+
 		ginkgo.Context("", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 			ginkgo.BeforeAll(func() {
 				ginkgo.By("Configuring primary UDN namespaces")
@@ -1124,59 +1137,100 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				podNetDefault, err = f.ClientSet.CoreV1().Pods(podNetDefault.Namespace).Get(context.TODO(), podNetDefault.Name, metav1.GetOptions{})
 				framework.ExpectNoError(err)
 
-				ginkgo.By("Expose networks")
-				ra = &rav1.RouteAdvertisements{
-					ObjectMeta: metav1.ObjectMeta{
-						GenerateName: "advertised-networks-isolation-ra",
-					},
-					Spec: rav1.RouteAdvertisementsSpec{
-						NetworkSelectors: apitypes.NetworkSelectors{
-							apitypes.NetworkSelector{
-								NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
-								ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
-									NetworkSelector: metav1.LabelSelector{
-										MatchLabels: map[string]string{"advertised-networks-isolation": ""},
+				if isManagedRouting {
+					ginkgo.By("Waiting for TransportAccepted condition on CUDNs")
+					for _, cudnName := range []string{cudnA.Name, cudnB.Name} {
+						gomega.Eventually(func() string {
+							cudn, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Get(context.TODO(), cudnName, metav1.GetOptions{})
+							if err != nil {
+								return ""
+							}
+							condition := meta.FindStatusCondition(cudn.Status.Conditions, "TransportAccepted")
+							if condition == nil {
+								return ""
+							}
+							if condition.Status != metav1.ConditionTrue {
+								return ""
+							}
+							return string(condition.Status)
+						}, 30*time.Second, time.Second).Should(gomega.Equal("True"),
+							"TransportAccepted condition should be True on CUDN %s", cudnName)
+					}
+
+					ginkgo.By("Waiting for auto-created RouteAdvertisements to be accepted")
+					raClient, err := raclientset.NewForConfig(f.ClientConfig())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					for _, cudnName := range []string{cudnA.Name, cudnB.Name} {
+						gomega.Eventually(func() string {
+							raList, err := raClient.K8sV1().RouteAdvertisements().List(context.TODO(), metav1.ListOptions{
+								LabelSelector: fmt.Sprintf("k8s.ovn.org/managed-network=%s", cudnName),
+							})
+							if err != nil || len(raList.Items) == 0 {
+								return ""
+							}
+							condition := meta.FindStatusCondition(raList.Items[0].Status.Conditions, "Accepted")
+							if condition == nil {
+								return ""
+							}
+							return condition.Reason
+						}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"),
+							"auto-created RouteAdvertisement for CUDN %s should be Accepted", cudnName)
+					}
+				} else {
+					ginkgo.By("Expose networks")
+					ra = &rav1.RouteAdvertisements{
+						ObjectMeta: metav1.ObjectMeta{
+							GenerateName: "advertised-networks-isolation-ra",
+						},
+						Spec: rav1.RouteAdvertisementsSpec{
+							NetworkSelectors: apitypes.NetworkSelectors{
+								apitypes.NetworkSelector{
+									NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+									ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+										NetworkSelector: metav1.LabelSelector{
+											MatchLabels: map[string]string{"advertised-networks-isolation": ""},
+										},
 									},
 								},
 							},
+							NodeSelector:             metav1.LabelSelector{},
+							FRRConfigurationSelector: metav1.LabelSelector{},
+							Advertisements: []rav1.AdvertisementType{
+								rav1.PodNetwork,
+							},
 						},
-						NodeSelector:             metav1.LabelSelector{},
-						FRRConfigurationSelector: metav1.LabelSelector{},
-						Advertisements: []rav1.AdvertisementType{
-							rav1.PodNetwork,
-						},
-					},
-				}
-
-				raClient, err := raclientset.NewForConfig(f.ClientConfig())
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				ginkgo.By("ensure route advertisement matching both networks was created successfully")
-				gomega.Eventually(func() string {
-					ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
-					if err != nil {
-						return ""
 					}
-					condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
-					if condition == nil {
-						return ""
-					}
-					return condition.Reason
-				}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
 
-				ginkgo.By("ensure routes from UDNs are learned by the external FRR router")
-				serverContainerIPs := getBGPServerContainerIPs(f)
-				for _, serverContainerIP := range serverContainerIPs {
-					for _, node := range nodes.Items {
-						if cudnA.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-							checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnATemplate.Name)
-							checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnBTemplate.Name)
-						} else {
-							checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnATemplate.Spec.Network.Layer2.Subnets)
-							checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnBTemplate.Spec.Network.Layer2.Subnets)
+					raClient, err := raclientset.NewForConfig(f.ClientConfig())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					ginkgo.By("ensure route advertisement matching both networks was created successfully")
+					gomega.Eventually(func() string {
+						ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+						if err != nil {
+							return ""
+						}
+						condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+						if condition == nil {
+							return ""
+						}
+						return condition.Reason
+					}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+
+					ginkgo.By("ensure routes from UDNs are learned by the external FRR router")
+					serverContainerIPs := getBGPServerContainerIPs(f)
+					for _, serverContainerIP := range serverContainerIPs {
+						for _, node := range nodes.Items {
+							if cudnA.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+								checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnATemplate.Name)
+								checkL3NodePodRoute(node, serverContainerIP, routerContainerName, types.CUDNPrefix+cudnBTemplate.Name)
+							} else {
+								checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnATemplate.Spec.Network.Layer2.Subnets)
+								checkL2NodePodRoute(node, serverContainerIP, routerContainerName, cudnBTemplate.Spec.Network.Layer2.Subnets)
+							}
 						}
 					}
 				}
@@ -1875,6 +1929,54 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Layer2: &udnv1.Layer2Config{
 						Role:    "Primary",
 						Subnets: udnv1.DualStackCIDRs{"103.103.0.0/16", "2014:100:200::0/60"},
+					},
+				},
+			},
+		},
+	),
+	ginkgo.Entry("Layer3 NoOverlay managed", feature.NoOverlay,
+		&udnv1.ClusterUserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "bgp-udn-layer3-nooverlay-managed-network-a",
+				Labels: map[string]string{"bgp-udn-layer3-nooverlay-managed-network-a": ""},
+			},
+			Spec: udnv1.ClusterUserDefinedNetworkSpec{
+				Network: udnv1.NetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer3,
+					Layer3: &udnv1.Layer3Config{
+						Role: "Primary",
+						Subnets: []udnv1.Layer3Subnet{
+							{CIDR: "104.104.0.0/16", HostSubnet: 24},
+							{CIDR: "2015:100:200::0/60", HostSubnet: 64},
+						},
+					},
+					Transport: udnv1.TransportOptionNoOverlay,
+					NoOverlay: &udnv1.NoOverlayConfig{
+						OutboundSNAT: udnv1.SNATDisabled,
+						Routing:      udnv1.RoutingManaged,
+					},
+				},
+			},
+		},
+		&udnv1.ClusterUserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "bgp-udn-layer3-nooverlay-managed-network-b",
+				Labels: map[string]string{"bgp-udn-layer3-nooverlay-managed-network-b": ""},
+			},
+			Spec: udnv1.ClusterUserDefinedNetworkSpec{
+				Network: udnv1.NetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer3,
+					Layer3: &udnv1.Layer3Config{
+						Role: "Primary",
+						Subnets: []udnv1.Layer3Subnet{
+							{CIDR: "105.105.0.0/16", HostSubnet: 24},
+							{CIDR: "2016:100:200::0/60", HostSubnet: 64},
+						},
+					},
+					Transport: udnv1.TransportOptionNoOverlay,
+					NoOverlay: &udnv1.NoOverlayConfig{
+						OutboundSNAT: udnv1.SNATDisabled,
+						Routing:      udnv1.RoutingManaged,
 					},
 				},
 			},
@@ -3251,6 +3353,19 @@ func isNoOverlayOutboundSNATEnabled(f *framework.Framework) bool {
 	conf, ok := cm.Data["ovnkube.conf"]
 	gomega.Expect(ok).To(gomega.BeTrue(), "ovnkube.conf key must be present in ovnkube-config configmap")
 	re := regexp.MustCompile(`(?m)^\s*outbound-snat\s*=\s*enabled\s*$`)
+	return re.MatchString(conf)
+}
+
+// isManagedBGPEnabled reads the ovnkube-config configmap to determine
+// whether the managed BGP controller is enabled. The controller is enabled
+// when the [bgp-managed] section has a non-empty frr-namespace configured.
+func isManagedBGPEnabled(f *framework.Framework) bool {
+	cm, err := f.ClientSet.CoreV1().ConfigMaps(deploymentconfig.Get().OVNKubernetesNamespace()).Get(
+		context.TODO(), "ovnkube-config", metav1.GetOptions{})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "must get ovnkube-config configmap")
+	conf, ok := cm.Data["ovnkube.conf"]
+	gomega.Expect(ok).To(gomega.BeTrue(), "ovnkube.conf key must be present in ovnkube-config configmap")
+	re := regexp.MustCompile(`(?m)^\s*frr-namespace\s*=\s*\S+`)
 	return re.MatchString(conf)
 }
 

@@ -3,6 +3,7 @@ package managedbgp
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,17 +16,40 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/record"
+	ctesting "k8s.io/client-go/testing"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
+
+var generateNameCount uint32
+
+// addGenerateNameReactor adds a reactor to a fake client that simulates
+// the server-side GenerateName behavior.
+func addGenerateNameReactor(fake interface {
+	PrependReactor(verb, resource string, reaction ctesting.ReactionFunc)
+}) {
+	fake.PrependReactor("create", "*", func(action ctesting.Action) (handled bool, ret runtime.Object, err error) {
+		ret = action.(ctesting.CreateAction).GetObject()
+		meta, ok := ret.(metav1.Object)
+		if !ok {
+			return
+		}
+		if meta.GetName() == "" && meta.GetGenerateName() != "" {
+			meta.SetName(meta.GetGenerateName() + fmt.Sprintf("%d", atomic.AddUint32(&generateNameCount, 1)))
+		}
+		return
+	})
+}
 
 func TestManagedBGPController(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
@@ -34,17 +58,16 @@ func TestManagedBGPController(t *testing.T) {
 
 var _ = ginkgo.Describe("Managed BGP Controller", func() {
 	var (
-		recorder *record.FakeRecorder
-
 		// Save original config
-		oldTopology             string
-		oldASNumber             uint32
-		oldFRRNamespace         string
-		oldOVNConfigNamespace   string
-		oldEnableMultiNetwork   bool
-		oldEnableRouteAdvertise bool
-		oldTransport            string
-		oldNoOverlayRouting     string
+		oldTopology              string
+		oldASNumber              uint32
+		oldFRRNamespace          string
+		oldOVNConfigNamespace    string
+		oldEnableMultiNetwork    bool
+		oldEnableRouteAdvertise  bool
+		oldEnableNetSegmentation bool
+		oldTransport             string
+		oldNoOverlayRouting      string
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -55,6 +78,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 		oldOVNConfigNamespace = config.Kubernetes.OVNConfigNamespace
 		oldEnableMultiNetwork = config.OVNKubernetesFeature.EnableMultiNetwork
 		oldEnableRouteAdvertise = config.OVNKubernetesFeature.EnableRouteAdvertisements
+		oldEnableNetSegmentation = config.OVNKubernetesFeature.EnableNetworkSegmentation
 		oldTransport = config.Default.Transport
 		oldNoOverlayRouting = config.NoOverlay.Routing
 
@@ -67,8 +91,8 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 		config.Kubernetes.OVNConfigNamespace = "ovn-kubernetes"
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 
-		recorder = record.NewFakeRecorder(100)
 	})
 
 	ginkgo.AfterEach(func() {
@@ -79,6 +103,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 		config.Kubernetes.OVNConfigNamespace = oldOVNConfigNamespace
 		config.OVNKubernetesFeature.EnableMultiNetwork = oldEnableMultiNetwork
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = oldEnableRouteAdvertise
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = oldEnableNetSegmentation
 		config.Default.Transport = oldTransport
 		config.NoOverlay.Routing = oldNoOverlayRouting
 	})
@@ -88,24 +113,25 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset()
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			gomega.Expect(controller).NotTo(gomega.BeNil())
 			gomega.Expect(controller.frrClient).To(gomega.Equal(frrFakeClient))
 			gomega.Expect(controller.wf).To(gomega.Equal(wf))
-			gomega.Expect(controller.recorder).To(gomega.Equal(recorder))
 			gomega.Expect(controller.nodeController).NotTo(gomega.BeNil())
-			gomega.Expect(controller.managedRAController).NotTo(gomega.BeNil())
-			gomega.Expect(controller.managedFRRController).NotTo(gomega.BeNil())
+			gomega.Expect(controller.raController).NotTo(gomega.BeNil())
+			gomega.Expect(controller.frrController).NotTo(gomega.BeNil())
 		})
 	})
 
@@ -121,12 +147,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1, node2)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -134,7 +162,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
@@ -146,9 +174,9 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			}, 2*time.Second).Should(gomega.Equal(1))
 
 			// Verify base configuration
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+			baseConfig, err := getBaseFRRConfig(frrFakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(baseConfig.Labels).To(gomega.HaveKeyWithValue(FRRConfigManagedLabel, FRRConfigManagedValue))
+			gomega.Expect(baseConfig.Labels).To(gomega.HaveKeyWithValue(frrConfigManagedLabel, frrConfigManagedValue))
 			gomega.Expect(baseConfig.Spec.BGP.Routers).To(gomega.HaveLen(1))
 			gomega.Expect(baseConfig.Spec.BGP.Routers[0].ASN).To(gomega.Equal(uint32(64512)))
 			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors).To(gomega.HaveLen(2))
@@ -170,12 +198,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1, node2)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -183,7 +213,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
@@ -193,7 +223,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				return len(list.Items)
 			}, 2*time.Second).Should(gomega.Equal(1))
 
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+			baseConfig, err := getBaseFRRConfig(frrFakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors).To(gomega.HaveLen(2))
 
@@ -208,12 +238,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1, node2)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -221,7 +253,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
@@ -231,7 +263,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				return len(list.Items)
 			}, 2*time.Second).Should(gomega.Equal(1))
 
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+			baseConfig, err := getBaseFRRConfig(frrFakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// 2 nodes × 2 addresses each = 4 neighbors
 			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors).To(gomega.HaveLen(4))
@@ -243,56 +275,6 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			gomega.Expect(addresses).To(gomega.ConsistOf("10.0.0.1", "fd00::1", "10.0.0.2", "fd00::2"))
 		})
 
-		ginkgo.It("should remove stale managed base FRRConfigurations", func() {
-			node1 := createNode("node1", "10.0.0.1", "")
-			staleBaseConfig := &frrtypes.FRRConfiguration{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "ovnk-managed-stale",
-					Namespace: config.ManagedBGP.FRRNamespace,
-					Labels: map[string]string{
-						FRRConfigManagedLabel: FRRConfigManagedValue,
-					},
-				},
-				Spec: frrtypes.FRRConfigurationSpec{},
-			}
-
-			fakeClient := fake.NewSimpleClientset(node1)
-			frrFakeClient := frrfake.NewSimpleClientset(staleBaseConfig)
-			raFakeClient := rafake.NewSimpleClientset()
-
-			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
-				KubeClient:                fakeClient,
-				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: raFakeClient,
-				FRRClient:                 frrFakeClient,
-			})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			defer wf.Shutdown()
-
-			err = wf.Start()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
-			err = controller.Start()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			defer controller.Stop()
-
-			gomega.Eventually(func() int {
-				list, _ := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).List(context.TODO(), metav1.ListOptions{})
-				return len(list.Items)
-			}, 2*time.Second).Should(gomega.Equal(1))
-
-			gomega.Eventually(func() bool {
-				_, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), "ovnk-managed-stale", metav1.GetOptions{})
-				return apierrors.IsNotFound(err)
-			}, 2*time.Second).Should(gomega.BeTrue())
-
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(baseConfig.Labels).To(gomega.HaveKeyWithValue(FRRConfigManagedLabel, FRRConfigManagedValue))
-			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors).To(gomega.HaveLen(1))
-		})
-
 		ginkgo.It("should update base FRRConfiguration when a node is added", func() {
 			node1 := createNode("node1", "10.0.0.1", "")
 			node2 := createNode("node2", "10.0.0.2", "")
@@ -300,12 +282,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1, node2)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -313,14 +297,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
 			// Wait for initial configuration
 			gomega.Eventually(func() int {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				bc, err := getBaseFRRConfig(frrFakeClient)
 				if err != nil {
 					return 0
 				}
@@ -334,7 +318,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 
 			// Should update to include node3
 			gomega.Eventually(func() []string {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				bc, err := getBaseFRRConfig(frrFakeClient)
 				if err != nil {
 					return nil
 				}
@@ -353,12 +337,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1, node2)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -366,13 +352,13 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
 			gomega.Eventually(func() int {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				bc, err := getBaseFRRConfig(frrFakeClient)
 				if err != nil {
 					return 0
 				}
@@ -385,14 +371,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 
 			// Should update to exclude node2
 			gomega.Eventually(func() int {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				bc, err := getBaseFRRConfig(frrFakeClient)
 				if err != nil {
 					return -1
 				}
 				return len(bc.Spec.BGP.Routers[0].Neighbors)
 			}, 2*time.Second).Should(gomega.Equal(1))
 
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+			baseConfig, err := getBaseFRRConfig(frrFakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors[0].Address).To(gomega.Equal("10.0.0.1"))
 		})
@@ -403,12 +389,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -416,13 +404,13 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
 			gomega.Eventually(func() string {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				bc, err := getBaseFRRConfig(frrFakeClient)
 				if err != nil || len(bc.Spec.BGP.Routers) == 0 || len(bc.Spec.BGP.Routers[0].Neighbors) == 0 {
 					return ""
 				}
@@ -436,7 +424,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 
 			// Should update to new IP
 			gomega.Eventually(func() string {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				bc, err := getBaseFRRConfig(frrFakeClient)
 				if err != nil || len(bc.Spec.BGP.Routers) == 0 || len(bc.Spec.BGP.Routers[0].Neighbors) == 0 {
 					return ""
 				}
@@ -444,23 +432,80 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			}, 2*time.Second).Should(gomega.Equal("10.0.0.99"))
 		})
 
-		ginkgo.It("should clean up managed resources when managed mode is disabled", func() {
+		ginkgo.It("should repair base FRRConfiguration drift", func() {
+			node := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
+			err = controller.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer controller.Stop()
+
+			gomega.Eventually(func() error {
+				_, err := getBaseFRRConfig(frrFakeClient)
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			// Drift the FRR config externally (both spec and label)
+			baseConfig, err := getBaseFRRConfig(frrFakeClient)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			drifted := baseConfig.DeepCopy()
+			drifted.Labels = map[string]string{"drifted": "true"}
+			drifted.Spec.BGP.Routers[0].Neighbors = []frrtypes.Neighbor{{
+				Address:   "10.0.0.99",
+				ASN:       config.ManagedBGP.ASNumber,
+				DisableMP: false,
+			}}
+			_, err = frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Update(context.TODO(), drifted, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// FRR config should be repaired
+			gomega.Eventually(func() bool {
+				cfg, err := getBaseFRRConfig(frrFakeClient)
+				if err != nil {
+					return false
+				}
+				return cfg.Labels[frrConfigManagedLabel] == frrConfigManagedValue &&
+					len(cfg.Spec.BGP.Routers) == 1 &&
+					len(cfg.Spec.BGP.Routers[0].Neighbors) == 1 &&
+					cfg.Spec.BGP.Routers[0].Neighbors[0].Address == "10.0.0.1" &&
+					cfg.Spec.BGP.Routers[0].Neighbors[0].DisableMP
+			}, 2*time.Second).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should clean up CDN RouteAdvertisement and FRR config when CDN managed mode is disabled", func() {
 			// Pre-create the resources that would have been created by a previous managed-mode run
 			baseFRRConfig := &frrtypes.FRRConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      BaseFRRConfigName(),
+					Name:      managedFRRConfigurationName,
 					Namespace: config.ManagedBGP.FRRNamespace,
 					Labels: map[string]string{
-						FRRConfigManagedLabel: FRRConfigManagedValue,
+						frrConfigManagedLabel: frrConfigManagedValue,
 					},
 				},
 				Spec: frrtypes.FRRConfigurationSpec{},
 			}
 			managedRA := &ratypes.RouteAdvertisements{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: ManagedRouteAdvertisementName(types.DefaultNetworkName),
+					Name: managedRouteAdvertisementName(types.DefaultNetworkName),
 					Labels: map[string]string{
-						ManagedRANetworkLabel: types.DefaultNetworkName,
+						managedRANetworkLabel: types.DefaultNetworkName,
 					},
 				},
 			}
@@ -468,12 +513,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset()
 			frrFakeClient := frrfake.NewSimpleClientset(baseFRRConfig)
 			raFakeClient := rafake.NewSimpleClientset(managedRA)
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -481,24 +528,24 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			// Switch to unmanaged mode
+			// Switch CDN to unmanaged mode
 			config.NoOverlay.Routing = config.NoOverlayRoutingUnmanaged
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
-			// Base FRRConfiguration should be deleted
+			// CDN managed RouteAdvertisement should be deleted
 			gomega.Eventually(func() bool {
-				_, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
 				return apierrors.IsNotFound(err)
 			}, 2*time.Second).Should(gomega.BeTrue())
 
-			// Managed RouteAdvertisement should be deleted
+			// Base FRRConfiguration should be deleted (no managed networks remain)
 			gomega.Eventually(func() bool {
-				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ManagedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
-				return apierrors.IsNotFound(err)
+				_, err := getBaseFRRConfig(frrFakeClient)
+				return err != nil
 			}, 2*time.Second).Should(gomega.BeTrue())
 		})
 
@@ -506,12 +553,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset()
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -519,7 +568,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
@@ -531,21 +580,20 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = fakeClient.CoreV1().Nodes().Delete(context.TODO(), "temp", metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+			var baseConfig *frrtypes.FRRConfiguration
 			// Should still create base config, just with no neighbors
 			gomega.Eventually(func() bool {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
-				return err == nil && bc != nil
+				baseConfig, err = getBaseFRRConfig(frrFakeClient)
+				return err == nil && baseConfig != nil
 			}, 2*time.Second).Should(gomega.BeTrue())
 
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(baseConfig.Spec.BGP.Routers).To(gomega.HaveLen(1))
 			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors).To(gomega.BeEmpty())
 		})
 	})
 
 	ginkgo.Context("Non-full-mesh topology", func() {
-		ginkgo.It("should fail to start when topology is not full-mesh", func() {
+		ginkgo.It("should return error from ensureBaseFRRConfiguration when topology is not full-mesh", func() {
 			config.ManagedBGP.Topology = ""
 
 			node1 := createNode("node1", "10.0.0.1", "")
@@ -553,12 +601,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset(node1)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -566,15 +616,10 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
-			err = controller.Start()
-			gomega.Expect(err).To(gomega.MatchError("initial sync failed: unsupported managed BGP topology: "))
-
-			// Start should fail before creating the base FRRConfiguration
-			gomega.Consistently(func() int {
-				list, _ := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).List(context.TODO(), metav1.ListOptions{})
-				return len(list.Items)
-			}, 1*time.Second, 100*time.Millisecond).Should(gomega.Equal(0))
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
+			err = controller.ensureBaseFRRConfiguration()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("unsupported managed BGP topology"))
 		})
 	})
 
@@ -585,16 +630,18 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset()
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller = NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller = NewController(wf, frrFakeClient, raFakeClient, nil)
 		})
 
 		ginkgo.It("should return true when old node is nil", func() {
@@ -644,12 +691,14 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			fakeClient := fake.NewSimpleClientset()
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -657,37 +706,39 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
 			// Verify managed RouteAdvertisement was created
 			gomega.Eventually(func() error {
-				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ManagedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
 				return err
 			}, 2*time.Second).Should(gomega.Succeed())
 
-			ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ManagedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
+			ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(ra.Labels).To(gomega.HaveKeyWithValue(ManagedRANetworkLabel, types.DefaultNetworkName))
-			gomega.Expect(ra.Spec.FRRConfigurationSelector.MatchLabels).To(gomega.HaveKeyWithValue(FRRConfigManagedLabel, FRRConfigManagedValue))
+			gomega.Expect(ra.Labels).To(gomega.HaveKeyWithValue(managedRANetworkLabel, types.DefaultNetworkName))
+			gomega.Expect(ra.Spec.FRRConfigurationSelector.MatchLabels).To(gomega.HaveKeyWithValue(frrConfigManagedLabel, frrConfigManagedValue))
 			gomega.Expect(ra.Spec.Advertisements).To(gomega.ConsistOf(ratypes.PodNetwork))
 			gomega.Expect(ra.Spec.NetworkSelectors).To(gomega.HaveLen(1))
 			gomega.Expect(ra.Spec.NetworkSelectors[0].NetworkSelectionType).To(gomega.Equal(apitypes.DefaultNetwork))
 		})
 
-		ginkgo.It("should recreate managed RouteAdvertisement when deleted", func() {
+		ginkgo.It("should repair managed RouteAdvertisement drift", func() {
 			node := createNode("node1", "10.0.0.1", "")
 			fakeClient := fake.NewSimpleClientset(node)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -695,12 +746,399 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
+			controller := NewController(wf, frrFakeClient, raFakeClient, nil)
 			err = controller.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
-			raName := ManagedRouteAdvertisementName(types.DefaultNetworkName)
+			raName := managedRouteAdvertisementName(types.DefaultNetworkName)
+			gomega.Eventually(func() error {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			// Drift the RA externally
+			ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			drifted := ra.DeepCopy()
+			drifted.Labels = map[string]string{"drifted": "true"}
+			drifted.Spec.FRRConfigurationSelector.MatchLabels = map[string]string{"drifted": "true"}
+			_, err = raFakeClient.K8sV1().RouteAdvertisements().Update(context.TODO(), drifted, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// RA should be repaired
+			gomega.Eventually(func() bool {
+				ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+				if err != nil {
+					return false
+				}
+				return ra.Labels[managedRANetworkLabel] == types.DefaultNetworkName &&
+					ra.Spec.FRRConfigurationSelector.MatchLabels[frrConfigManagedLabel] == frrConfigManagedValue
+			}, 2*time.Second).Should(gomega.BeTrue())
+		})
+	})
+
+	ginkgo.Context("cudnNeedsUpdate", func() {
+		var controller *Controller
+
+		ginkgo.BeforeEach(func() {
+			fakeClient := fake.NewSimpleClientset()
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			controller = NewController(wf, frrFakeClient, raFakeClient, nil)
+		})
+
+		ginkgo.It("should return true when a managed CUDN is added", func() {
+			newCUDN := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			gomega.Expect(controller.cudnNeedsUpdate(nil, newCUDN)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should return false when an unmanaged CUDN is added", func() {
+			newCUDN := createUnmanagedCUDN("green", map[string]string{"network": "green"})
+			gomega.Expect(controller.cudnNeedsUpdate(nil, newCUDN)).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should return true when a managed CUDN managed-network label changes", func() {
+			oldCUDN := createManagedCUDN("blue", map[string]string{managedRANetworkLabel: "blue"})
+			newCUDN := oldCUDN.DeepCopy()
+			newCUDN.Labels[managedRANetworkLabel] = "changed"
+			gomega.Expect(controller.cudnNeedsUpdate(oldCUDN, newCUDN)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should return false when a managed CUDN unrelated labels change", func() {
+			oldCUDN := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			newCUDN := oldCUDN.DeepCopy()
+			newCUDN.Labels["extra"] = "value"
+			gomega.Expect(controller.cudnNeedsUpdate(oldCUDN, newCUDN)).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should return false when an unmanaged CUDN labels change", func() {
+			oldCUDN := createUnmanagedCUDN("green", map[string]string{"network": "green"})
+			newCUDN := oldCUDN.DeepCopy()
+			newCUDN.Labels["extra"] = "value"
+			gomega.Expect(controller.cudnNeedsUpdate(oldCUDN, newCUDN)).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should return false when new CUDN is nil", func() {
+			oldCUDN := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			gomega.Expect(controller.cudnNeedsUpdate(oldCUDN, nil)).To(gomega.BeFalse())
+		})
+	})
+
+	ginkgo.Context("owned resource update filters", func() {
+		var controller *Controller
+
+		ginkgo.BeforeEach(func() {
+			fakeClient := fake.NewSimpleClientset()
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			controller = NewController(wf, frrFakeClient, raFakeClient, nil)
+		})
+
+		ginkgo.It("should reconcile external managed RouteAdvertisement add events", func() {
+			ra := &ratypes.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: managedRouteAdvertisementName("blue"),
+					Labels: map[string]string{
+						managedRANetworkLabel: "blue",
+					},
+				},
+			}
+			gomega.Expect(controller.raNeedsUpdate(nil, ra)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should ignore own managed RouteAdvertisement add events", func() {
+			now := metav1.Now()
+			ra := &ratypes.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: managedRouteAdvertisementName("blue"),
+					Labels: map[string]string{
+						managedRANetworkLabel: "blue",
+					},
+					ManagedFields: []metav1.ManagedFieldsEntry{
+						{Manager: fieldManager, Time: &now},
+					},
+				},
+			}
+			gomega.Expect(controller.raNeedsUpdate(nil, ra)).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should reconcile managed RouteAdvertisement updates", func() {
+			oldRA := &ratypes.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: managedRouteAdvertisementName("blue"),
+					Labels: map[string]string{
+						managedRANetworkLabel: "blue",
+					},
+				},
+			}
+			newRA := oldRA.DeepCopy()
+			newRA.Spec.Advertisements = []ratypes.AdvertisementType{ratypes.EgressIP}
+			gomega.Expect(controller.raNeedsUpdate(oldRA, newRA)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should reconcile external managed FRRConfiguration add events", func() {
+			frr := &frrtypes.FRRConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      managedFRRConfigurationName,
+					Namespace: config.ManagedBGP.FRRNamespace,
+					Labels: map[string]string{
+						frrConfigManagedLabel: frrConfigManagedValue,
+					},
+				},
+			}
+			gomega.Expect(controller.frrNeedsUpdate(nil, frr)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should ignore own managed FRRConfiguration add events", func() {
+			now := metav1.Now()
+			frr := &frrtypes.FRRConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      managedFRRConfigurationName,
+					Namespace: config.ManagedBGP.FRRNamespace,
+					Labels: map[string]string{
+						frrConfigManagedLabel: frrConfigManagedValue,
+					},
+					ManagedFields: []metav1.ManagedFieldsEntry{
+						{Manager: fieldManager, Time: &now},
+					},
+				},
+			}
+			gomega.Expect(controller.frrNeedsUpdate(nil, frr)).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("should reconcile managed FRRConfiguration updates", func() {
+			oldFRR := &frrtypes.FRRConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      managedFRRConfigurationName,
+					Namespace: config.ManagedBGP.FRRNamespace,
+					Labels: map[string]string{
+						frrConfigManagedLabel: frrConfigManagedValue,
+					},
+				},
+			}
+			newFRR := oldFRR.DeepCopy()
+			newFRR.Spec.NodeSelector.MatchLabels = map[string]string{"role": "worker"}
+			gomega.Expect(controller.frrNeedsUpdate(oldFRR, newFRR)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("should reconcile managed FRRConfiguration label drift", func() {
+			oldFRR := &frrtypes.FRRConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      managedFRRConfigurationName,
+					Namespace: config.ManagedBGP.FRRNamespace,
+					Labels: map[string]string{
+						frrConfigManagedLabel: frrConfigManagedValue,
+					},
+				},
+			}
+			newFRR := oldFRR.DeepCopy()
+			newFRR.Labels = map[string]string{"drifted": "true"}
+			gomega.Expect(controller.frrNeedsUpdate(oldFRR, newFRR)).To(gomega.BeTrue())
+		})
+	})
+
+	ginkgo.Context("CUDN managed routing", func() {
+		ginkgo.BeforeEach(func() {
+			config.ManagedBGP.Topology = config.ManagedBGPTopologyFullMesh
+			// CDN is NOT no-overlay — CUDN-only managed mode
+			config.Default.Transport = ""
+			config.NoOverlay.Routing = ""
+		})
+
+		ginkgo.It("should create RouteAdvertisement for managed CUDN", func() {
+			cudn := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
+
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer c.Stop()
+
+			// Verify CUDN RouteAdvertisement was created
+			gomega.Eventually(func() error {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("blue"), metav1.GetOptions{})
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("blue"), metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(ra.Labels).To(gomega.HaveKeyWithValue(managedRANetworkLabel, "blue"))
+			gomega.Expect(ra.Spec.Advertisements).To(gomega.ConsistOf(ratypes.PodNetwork))
+			gomega.Expect(ra.Spec.FRRConfigurationSelector.MatchLabels).To(gomega.HaveKeyWithValue(frrConfigManagedLabel, frrConfigManagedValue))
+			gomega.Expect(ra.Spec.NetworkSelectors).To(gomega.HaveLen(1))
+			gomega.Expect(ra.Spec.NetworkSelectors[0].NetworkSelectionType).To(gomega.Equal(apitypes.ClusterUserDefinedNetworks))
+			gomega.Expect(ra.Spec.NetworkSelectors[0].ClusterUserDefinedNetworkSelector).NotTo(gomega.BeNil())
+			gomega.Expect(ra.Spec.NetworkSelectors[0].ClusterUserDefinedNetworkSelector.NetworkSelector.MatchLabels).To(
+				gomega.HaveKeyWithValue(managedRANetworkLabel, "blue"))
+
+			// Verify base FRRConfiguration was also created
+			gomega.Eventually(func() error {
+				_, err := getBaseFRRConfig(frrFakeClient)
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			// Verify NO CDN RouteAdvertisement was created (CDN is not no-overlay)
+			_, err = raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName(types.DefaultNetworkName), metav1.GetOptions{})
+			gomega.Expect(err).To(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should delete RouteAdvertisement when managed CUDN is deleted", func() {
+			cudn := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
+
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer c.Stop()
+
+			// Wait for RA to be created
+			gomega.Eventually(func() error {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("blue"), metav1.GetOptions{})
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			// Delete the CUDN
+			err = udnFakeClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), "blue", metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// RA should be deleted
+			gomega.Eventually(func() bool {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("blue"), metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}, 2*time.Second).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should create base FRRConfiguration when a managed CUDN is added after startup", func() {
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			udnFakeClient := udnfake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer c.Stop()
+
+			cudn := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			_, err = udnFakeClient.K8sV1().ClusterUserDefinedNetworks().Create(context.TODO(), cudn, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() error {
+				_, err := getBaseFRRConfig(frrFakeClient)
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			gomega.Eventually(func() error {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("blue"), metav1.GetOptions{})
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+		})
+
+		ginkgo.It("should restore RouteAdvertisement if externally deleted while running", func() {
+			cudn := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
+
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer c.Stop()
+
+			raName := managedRouteAdvertisementName("blue")
 			gomega.Eventually(func() error {
 				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
 				return err
@@ -710,31 +1148,27 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			gomega.Eventually(func() error {
-				ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				if ra.Labels[ManagedRANetworkLabel] != types.DefaultNetworkName {
-					return fmt.Errorf("managed label not restored")
-				}
-				if ra.Spec.NetworkSelectors[0].NetworkSelectionType != apitypes.DefaultNetwork {
-					return fmt.Errorf("default network selector not restored")
-				}
-				return nil
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+				return err
 			}, 2*time.Second).Should(gomega.Succeed())
 		})
 
-		ginkgo.It("should repair managed RouteAdvertisement drift", func() {
-			node := createNode("node1", "10.0.0.1", "")
-			fakeClient := fake.NewSimpleClientset(node)
+		ginkgo.It("should restore base FRRConfiguration if externally deleted while running", func() {
+			cudn := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
+
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -742,96 +1176,43 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
-			err = controller.Start()
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			defer controller.Stop()
+			defer c.Stop()
 
-			raName := ManagedRouteAdvertisementName(types.DefaultNetworkName)
-			ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			drifted := ra.DeepCopy()
-			drifted.Labels = map[string]string{"drifted": "true"}
-			drifted.Spec.FRRConfigurationSelector.MatchLabels = map[string]string{"drifted": "true"}
-			_, err = raFakeClient.K8sV1().RouteAdvertisements().Update(context.TODO(), drifted, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
+			var baseFRR *frrtypes.FRRConfiguration
 			gomega.Eventually(func() error {
-				ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				if ra.Labels[ManagedRANetworkLabel] != types.DefaultNetworkName {
-					return fmt.Errorf("managed label not restored")
-				}
-				if ra.Spec.FRRConfigurationSelector.MatchLabels[FRRConfigManagedLabel] != FRRConfigManagedValue {
-					return fmt.Errorf("frr selector not restored")
-				}
-				return nil
-			}, 2*time.Second).Should(gomega.Succeed())
-		})
-	})
-
-	ginkgo.Context("Base FRRConfiguration self-healing", func() {
-		ginkgo.It("should recreate base FRRConfiguration when deleted", func() {
-			node := createNode("node1", "10.0.0.1", "")
-			fakeClient := fake.NewSimpleClientset(node)
-			frrFakeClient := frrfake.NewSimpleClientset()
-			raFakeClient := rafake.NewSimpleClientset()
-
-			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
-				KubeClient:                fakeClient,
-				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
-				RouteAdvertisementsClient: raFakeClient,
-				FRRClient:                 frrFakeClient,
-			})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			defer wf.Shutdown()
-
-			err = wf.Start()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
-			err = controller.Start()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			defer controller.Stop()
-
-			baseName := BaseFRRConfigName()
-			gomega.Eventually(func() error {
-				_, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), baseName, metav1.GetOptions{})
+				baseFRR, err = getBaseFRRConfig(frrFakeClient)
 				return err
 			}, 2*time.Second).Should(gomega.Succeed())
 
-			err = frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Delete(context.TODO(), baseName, metav1.DeleteOptions{})
+			err = frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Delete(context.TODO(), baseFRR.Name, metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+			// Controller recreates the base FRRConfiguration
 			gomega.Eventually(func() error {
-				cfg, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), baseName, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				if cfg.Labels[FRRConfigManagedLabel] != FRRConfigManagedValue {
-					return fmt.Errorf("managed label not restored")
-				}
-				if len(cfg.Spec.BGP.Routers) != 1 || len(cfg.Spec.BGP.Routers[0].Neighbors) != 1 {
-					return fmt.Errorf("expected single-node full-mesh config to be restored")
-				}
-				return nil
+				_, err := getBaseFRRConfig(frrFakeClient)
+				return err
 			}, 2*time.Second).Should(gomega.Succeed())
 		})
 
-		ginkgo.It("should repair base FRRConfiguration drift", func() {
-			node := createNode("node1", "10.0.0.1", "")
-			fakeClient := fake.NewSimpleClientset(node)
+		ginkgo.It("should not create RouteAdvertisement for unmanaged CUDN", func() {
+			cudn := createUnmanagedCUDN("green", map[string]string{"network": "green"})
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
+
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -839,58 +1220,48 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
-			err = controller.Start()
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			defer controller.Stop()
+			defer c.Stop()
 
-			baseName := BaseFRRConfigName()
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), baseName, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			drifted := baseConfig.DeepCopy()
-			drifted.Labels = map[string]string{"drifted": "true"}
-			drifted.Spec.BGP.Routers[0].Neighbors = []frrtypes.Neighbor{{
-				Address:   "10.0.0.99",
-				ASN:       config.ManagedBGP.ASNumber,
-				DisableMP: false,
-			}}
-			_, err = frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Update(context.TODO(), drifted, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			gomega.Eventually(func() error {
-				cfg, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), baseName, metav1.GetOptions{})
-				if err != nil {
-					return err
-				}
-				if cfg.Labels[FRRConfigManagedLabel] != FRRConfigManagedValue {
-					return fmt.Errorf("managed label not restored")
-				}
-				if len(cfg.Spec.BGP.Routers) != 1 || len(cfg.Spec.BGP.Routers[0].Neighbors) != 1 {
-					return fmt.Errorf("expected single-node full-mesh config to be restored")
-				}
-				neighbor := cfg.Spec.BGP.Routers[0].Neighbors[0]
-				if neighbor.Address != "10.0.0.1" || !neighbor.DisableMP {
-					return fmt.Errorf("base FRRConfiguration not restored")
-				}
-				return nil
-			}, 2*time.Second).Should(gomega.Succeed())
+			// Should not create a CUDN RA
+			gomega.Consistently(func() bool {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("green"), metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}, 1*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
 		})
-	})
 
-	ginkgo.Context("ensureManagedRouteAdvertisement for CUDN", func() {
-		ginkgo.It("should build correct CUDN network selector", func() {
-			config.ManagedBGP.Topology = config.ManagedBGPTopologyFullMesh
+		ginkgo.It("should not create RouteAdvertisement for non-no-overlay CUDN", func() {
+			// CUDN without transport set (default Geneve)
+			cudn := &userdefinednetworkv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "default-transport",
+					Labels: map[string]string{"network": "default-transport"},
+				},
+				Spec: userdefinednetworkv1.ClusterUserDefinedNetworkSpec{
+					Network: userdefinednetworkv1.NetworkSpec{
+						Topology: userdefinednetworkv1.NetworkTopologyLayer3,
+						Layer3: &userdefinednetworkv1.Layer3Config{
+							Role: userdefinednetworkv1.NetworkRolePrimary,
+						},
+					},
+				},
+			}
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
 
-			fakeClient := fake.NewSimpleClientset()
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
 			frrFakeClient := frrfake.NewSimpleClientset()
 			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
 
 			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
 				KubeClient:                fakeClient,
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -898,24 +1269,122 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			controller := NewController(wf, frrFakeClient, raFakeClient, recorder)
-			err = controller.ensureManagedRouteAdvertisement("blue")
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer c.Stop()
+
+			gomega.Consistently(func() bool {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), managedRouteAdvertisementName("default-transport"), metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}, 1*time.Second, 100*time.Millisecond).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("should restore RouteAdvertisement if externally deleted on restart", func() {
+			cudn := createManagedCUDN("blue", map[string]string{"network": "blue"})
+			udnFakeClient := udnfake.NewSimpleClientset(cudn)
+
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnFakeClient,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			ra, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ManagedRouteAdvertisementName("blue"), metav1.GetOptions{})
+			c := NewController(wf, frrFakeClient, raFakeClient, udnFakeClient)
+			err = c.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(ra.Labels).To(gomega.HaveKeyWithValue(ManagedRANetworkLabel, "blue"))
-			gomega.Expect(ra.Spec.NetworkSelectors).To(gomega.HaveLen(1))
-			gomega.Expect(ra.Spec.NetworkSelectors[0].NetworkSelectionType).To(gomega.Equal(apitypes.ClusterUserDefinedNetworks))
-			gomega.Expect(ra.Spec.NetworkSelectors[0].ClusterUserDefinedNetworkSelector).NotTo(gomega.BeNil())
-			gomega.Expect(ra.Spec.NetworkSelectors[0].ClusterUserDefinedNetworkSelector.NetworkSelector.MatchLabels).To(
-				gomega.HaveKeyWithValue(ManagedRANetworkLabel, "blue"),
-			)
-			gomega.Expect(ra.Spec.Advertisements).To(gomega.ConsistOf(ratypes.PodNetwork))
-			gomega.Expect(ra.Spec.FRRConfigurationSelector.MatchLabels).To(gomega.HaveKeyWithValue(FRRConfigManagedLabel, FRRConfigManagedValue))
+			defer c.Stop()
+
+			// Wait for RA to be created
+			raName := managedRouteAdvertisementName("blue")
+			gomega.Eventually(func() error {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+
+			c.Stop()
+
+			// Delete the RA externally
+			err = raFakeClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), raName, metav1.DeleteOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() bool {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+				return apierrors.IsNotFound(err)
+			}, 2*time.Second).Should(gomega.BeTrue())
+
+			// Wait for the informer cache to process the deletion
+			gomega.Eventually(func() error {
+				_, err := c.raLister.Get(raName)
+				return err
+			}, 2*time.Second).ShouldNot(gomega.Succeed())
+
+			// reconcileNetwork (triggered on restart) should restore the RA
+			err = c.reconcileNetwork("blue")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() error {
+				_, err := raFakeClient.K8sV1().RouteAdvertisements().Get(context.TODO(), raName, metav1.GetOptions{})
+				return err
+			}, 2*time.Second).Should(gomega.Succeed())
+		})
+
+		ginkgo.It("should not create RA when no managed CUDNs exist", func() {
+			node1 := createNode("node1", "10.0.0.1", "")
+			fakeClient := fake.NewSimpleClientset(node1)
+			frrFakeClient := frrfake.NewSimpleClientset()
+			raFakeClient := rafake.NewSimpleClientset()
+			addGenerateNameReactor(frrFakeClient)
+
+			wf, err := factory.NewClusterManagerWatchFactory(&util.OVNClusterManagerClientset{
+				KubeClient:                fakeClient,
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				RouteAdvertisementsClient: raFakeClient,
+				FRRClient:                 frrFakeClient,
+				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			err = wf.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			c := NewController(wf, frrFakeClient, raFakeClient, nil)
+			err = c.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer c.Stop()
+
+			// No CUDN RAs should be created (no CDN RA either since CDN is not no-overlay)
+			gomega.Consistently(func() int {
+				list, _ := raFakeClient.K8sV1().RouteAdvertisements().List(context.TODO(), metav1.ListOptions{})
+				return len(list.Items)
+			}, 1*time.Second, 100*time.Millisecond).Should(gomega.Equal(0))
 		})
 	})
 })
+
+// getBaseFRRConfig returns the managed base FRRConfiguration found by name.
+func getBaseFRRConfig(frrClient *frrfake.Clientset) (*frrtypes.FRRConfiguration, error) {
+	cfg, err := frrClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(
+		context.TODO(), managedFRRConfigurationName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
 
 // Helper function to create test nodes
 func createNode(name, ipv4, ipv6 string) *corev1.Node {
@@ -959,4 +1428,48 @@ func createNode(name, ipv4, ipv6 string) *corev1.Node {
 	return node
 }
 
-// Helper function to create test RouteAdvertisement
+// Helper function to create a managed CUDN (NoOverlay + Managed routing)
+func createManagedCUDN(name string, labels map[string]string) *userdefinednetworkv1.ClusterUserDefinedNetwork {
+	return &userdefinednetworkv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: labels,
+		},
+		Spec: userdefinednetworkv1.ClusterUserDefinedNetworkSpec{
+			Network: userdefinednetworkv1.NetworkSpec{
+				Topology: userdefinednetworkv1.NetworkTopologyLayer3,
+				Layer3: &userdefinednetworkv1.Layer3Config{
+					Role: userdefinednetworkv1.NetworkRolePrimary,
+				},
+				Transport: userdefinednetworkv1.TransportOptionNoOverlay,
+				NoOverlay: &userdefinednetworkv1.NoOverlayConfig{
+					OutboundSNAT: userdefinednetworkv1.SNATEnabled,
+					Routing:      userdefinednetworkv1.RoutingManaged,
+				},
+			},
+		},
+	}
+}
+
+// Helper function to create an unmanaged CUDN (NoOverlay + Unmanaged routing)
+func createUnmanagedCUDN(name string, labels map[string]string) *userdefinednetworkv1.ClusterUserDefinedNetwork {
+	return &userdefinednetworkv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: labels,
+		},
+		Spec: userdefinednetworkv1.ClusterUserDefinedNetworkSpec{
+			Network: userdefinednetworkv1.NetworkSpec{
+				Topology: userdefinednetworkv1.NetworkTopologyLayer3,
+				Layer3: &userdefinednetworkv1.Layer3Config{
+					Role: userdefinednetworkv1.NetworkRolePrimary,
+				},
+				Transport: userdefinednetworkv1.TransportOptionNoOverlay,
+				NoOverlay: &userdefinednetworkv1.NoOverlayConfig{
+					OutboundSNAT: userdefinednetworkv1.SNATDisabled,
+					Routing:      userdefinednetworkv1.RoutingUnmanaged,
+				},
+			},
+		},
+	}
+}
