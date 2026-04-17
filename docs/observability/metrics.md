@@ -17,6 +17,7 @@ Measurement accuracy can be impacted by other parallel processing that might be 
 ## Change log
 This list is to help notify if there are additions, changes or removals to metrics. Latest changes are at the top of this list.
 
+- Add `transport` label to `ovnkube_clustermanager_cluster_user_defined_networks` to distinguish CUDNs by transport type (Geneve, EVPN, NoOverlay, Localnet)
 - Add metrics to track logfile size for ovnkube processes - ovnkube_node_logfile_size_bytes and ovnkube_controller_logfile_size_bytes
 - Remove ovnkube_controller_ovn_cli_latency_seconds metrics since we have moved most of the OVN DB operations to libovsdb.
 - Effect of OVN IC architecture:

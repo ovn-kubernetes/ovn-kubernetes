@@ -115,6 +115,7 @@ var metricCUDNCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	[]string{
 		"role",
 		"topology",
+		"transport",
 	},
 )
 
@@ -223,14 +224,20 @@ func DecrementUDNCount(role, topology string) {
 	metricUDNCount.WithLabelValues(role, topology).Dec()
 }
 
-// IncrementCUDNCount increments the number of ClusterUserDefinedNetworks of the given type
-func IncrementCUDNCount(role, topology string) {
-	metricCUDNCount.WithLabelValues(role, topology).Inc()
+// SetCUDNCount sets the CUDN count for a specific label combination.
+func SetCUDNCount(role, topology, transport string, count float64) {
+	metricCUDNCount.WithLabelValues(role, topology, transport).Set(count)
 }
 
-// DecrementCUDNCount decrements the number of ClusterUserDefinedNetworks of the given type
-func DecrementCUDNCount(role, topology string) {
-	metricCUDNCount.WithLabelValues(role, topology).Dec()
+// DeleteCUDNCount removes a label combination from the CUDN count gauge.
+func DeleteCUDNCount(role, topology, transport string) {
+	metricCUDNCount.DeleteLabelValues(role, topology, transport)
+}
+
+// ResetCUDNCount resets the CUDN count gauge, removing all label combinations.
+// Intended for use in tests to ensure metric isolation between test cases.
+func ResetCUDNCount() {
+	metricCUDNCount.Reset()
 }
 
 // SetDynamicUDNNodeCount sets the number of nodes currently active with a CUDN/UDN.
