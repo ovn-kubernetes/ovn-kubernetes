@@ -14,6 +14,7 @@ env:
   REPOSITORY: ovn-kubernetes
   FEDORA_IMAGE_NAME: ovn-kube-fedora
   UBUNTU_IMAGE_NAME: ovn-kube-ubuntu
+  DEBIAN_IMAGE_NAME: ovn-kube-debian
   BUILDER_IMAGE: quay.io/projectquay/golang:1.25
 jobs:
   # Build Fedora image for each platform
@@ -297,3 +298,142 @@ jobs:
     - name: Inspect image
       run: |
         docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.REPOSITORY }}/${{ env.UBUNTU_IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+  # Build Debian image for each platform
+  build-debian:
+    name: Build Debian (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+        - platform: linux/amd64
+          runner: ubuntu-latest
+        - platform: linux/arm64
+          runner: ubuntu-24.04-arm
+    steps:
+    - name: Prepare
+      run: |
+        platform=${{ matrix.platform }}
+        echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go-controller/go.mod'
+        # Disabling cache to avoid warnings until these two issues are fixed
+        # https://github.com/actions/setup-go/issues/424
+        # https://github.com/actions/setup-go/issues/403
+        # cache-dependency-path: "**/*.sum"
+        cache: false
+      id: go
+
+    - name: Log in to the GH Container registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up environment
+      run: |
+        export GOPATH=$(go env GOPATH)
+        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
+        echo "$GOPATH/bin" >> $GITHUB_PATH
+
+    - name: Build ovnkube-binaries copy to context 
+      run: | 
+        pushd go-controller 
+         make 
+        popd 
+
+        pushd dist/images
+          cp -r ../../go-controller/_output/go/bin/* .
+        popd 
+    
+    - name: Generate git-info to write to image
+      run: | 
+        BRANCH=$(git rev-parse --short "$GITHUB_SHA")
+        COMMIT=$(git rev-parse  HEAD)
+        pushd dist/images
+          echo "ref: ${BRANCH}  commit: ${COMMIT}" > git_info
+        popd 
+
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Extract metadata (tags, labels) for debian ovn-k image
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.REPOSITORY }}/${{ env.DEBIAN_IMAGE_NAME }}
+
+    - name: Build and push Debian based Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        builder: ${{ steps.buildx.outputs.name }}
+        context: ./dist/images
+        file: ./dist/images/Dockerfile.debian
+        push: true
+        platforms: ${{ matrix.platform }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha,scope=debian-${{ env.PLATFORM_PAIR }}
+        cache-to: type=gha,mode=max,scope=debian-${{ env.PLATFORM_PAIR }}
+        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.REPOSITORY }}/${{ env.DEBIAN_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+    - name: Export digest
+      run: |
+        mkdir -p /tmp/digests
+        digest="${{ steps.build.outputs.digest }}"
+        touch "/tmp/digests/${digest#sha256:}"
+
+    - name: Upload digest
+      uses: actions/upload-artifact@v7
+      with:
+        name: digests-debian-${{ env.PLATFORM_PAIR }}
+        path: /tmp/digests/*
+        if-no-files-found: error
+        retention-days: 1
+
+  # Merge Debian multi-platform images
+  merge-debian:
+    name: Merge Debian
+    runs-on: debian-latest
+    needs: build-debian
+    steps:
+    - name: Download digests
+      uses: actions/download-artifact@v8
+      with:
+        path: /tmp/digests
+        pattern: digests-debian-*
+        merge-multiple: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to the GH Container registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata (tags, labels) for debian ovn-k image
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.REPOSITORY }}/${{ env.DEBIAN_IMAGE_NAME }}
+
+    - name: Create manifest list and push
+      working-directory: /tmp/digests
+      run: |
+        docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          $(printf '${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.REPOSITORY }}/${{ env.DEBIAN_IMAGE_NAME }}@sha256:%s ' *)
+
+    - name: Inspect image
+      run: |
+        docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.REPOSITORY }}/${{ env.DEBIAN_IMAGE_NAME }}:${{ steps.meta.outputs.version }}

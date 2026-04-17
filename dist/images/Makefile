@@ -40,6 +40,13 @@ ifeq ($(ARCH),amd64)
               "ovn-kube-ubuntu:latest"
 endif
 
+debian-image: bld
+	${OCI_BIN} build -t ovn-kube-debian$(IMAGE_ARCH) -f Dockerfile.debian$(DOCKERFILE_ARCH) .
+ifeq ($(ARCH),amd64)
+	${OCI_BIN} tag "ovn-kube-debian$(IMAGE_ARCH):latest" \
+			  "ovn-kube-debian:latest"
+endif
+
 ubuntu-shared-gw-deployment: ubuntu-image
 	# This is the default in the ovnkube*.yaml files
 	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
