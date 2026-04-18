@@ -219,9 +219,18 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 			annotCondFn = isDPUReady(annotCondFn, pr.nadKey)
 		}
 	}
+	annotWaitStart := time.Now()
 	pod, annotations, podNADAnnotation, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, pr.nadKey, annotCondFn)
+	annotWaitDuration := time.Since(annotWaitStart)
 	if err != nil {
+		klog.Warningf("Pod setup step failed: step=cni_annotation_ready pod=%s/%s network=%s annotation_wait_ms=%.1f err=%v",
+			namespace, podName, pr.netName, float64(annotWaitDuration.Microseconds())/1000.0, err)
 		return nil, fmt.Errorf("failed to get pod annotation: %v", err)
+	}
+	// Log how long CNI waited for the annotation to appear
+	if podNADAnnotation != nil {
+		klog.Infof("Pod setup step completed: step=cni_annotation_ready pod=%s/%s network=%s annotation_wait_ms=%.1f",
+			namespace, podName, pr.netName, float64(annotWaitDuration.Microseconds())/1000.0)
 	}
 
 	var primaryUDNPodInfo *PodInterfaceInfo
@@ -454,6 +463,7 @@ func HandlePodRequest(
 	var response *Response
 	var err, err1 error
 
+	cniStart := time.Now()
 	klog.Infof("%s %s starting CNI request %+v", request, request.Command, request)
 	switch request.Command {
 	case CNIAdd:
@@ -480,8 +490,13 @@ func HandlePodRequest(
 		}
 	}
 
+	cniDuration := time.Since(cniStart)
 	klog.Infof("%s %s finished CNI request %+v, result %q, err %v",
 		request, request.Command, request, string(resultForLogging), err)
+	if request.Command == CNIAdd && err == nil {
+		klog.Infof("Pod setup step completed: step=cni_complete pod=%s/%s network=%s elapsed_ms=%.1f",
+			request.PodNamespace, request.PodName, request.netName, float64(cniDuration.Microseconds())/1000.0)
+	}
 
 	if err != nil {
 		// Prefix errors with request info for easier failure debugging

@@ -233,7 +233,7 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 	}
 
 	podDesc := oldPod.Namespace + "/" + oldPod.Name
-	klog.Infof("Patching annotations on pod %s", podDesc)
+	klog.V(5).Infof("Patching annotations on pod %s", podDesc)
 	_, err = k.KClient.CoreV1().Pods(oldPod.Namespace).Patch(
 		context.TODO(),
 		oldPod.Name,
@@ -243,7 +243,8 @@ func (k *Kube) PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error {
 		"status",
 	)
 	if err != nil {
-		klog.Errorf("Error in patching annotations on pod %s: %v", podDesc, err)
+		klog.Errorf("Error in patching annotations on pod %s (rv=%s, keys=%v, hasRVGuard=%t): %v",
+			podDesc, oldPod.ResourceVersion, keys, requiresResourceVersionGuard, err)
 	}
 	return err
 }

@@ -29,6 +29,8 @@ type NamedAllocator interface {
 	AllocateID() (int, error)
 	ReserveID(int) error
 	ReleaseID() int
+	// IsAllocated returns true if an ID has already been allocated for this name.
+	IsAllocated() bool
 }
 
 // idAllocator is used to allocate id for a resource and store the resource - id in a map
@@ -137,6 +139,10 @@ func (allocator *namedAllocator) ReserveID(id int) error {
 
 func (allocator *namedAllocator) ReleaseID() int {
 	return allocator.allocator.ReleaseID(allocator.name)
+}
+
+func (allocator *namedAllocator) IsAllocated() bool {
+	return allocator.allocator.GetID(allocator.name) != invalidID
 }
 
 // idsAllocator is used to allocate multiple ids for a resource and store the resource - ids in a map

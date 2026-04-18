@@ -49,6 +49,10 @@ func (a *ipAllocatorStub) ReleaseIPs(ips []*net.IPNet) error {
 	return nil
 }
 
+func (a *ipAllocatorStub) HasIPs([]*net.IPNet) bool {
+	return false
+}
+
 func (a *ipAllocatorStub) IsErrAllocated(err error) bool {
 	return errors.Is(err, ipam.ErrAllocated)
 }
@@ -70,6 +74,10 @@ func (a *idAllocatorStub) ReserveID(int) error {
 func (a *idAllocatorStub) ReleaseID() int {
 	a.releasedID = true
 	return a.nextID
+}
+
+func (a *idAllocatorStub) IsAllocated() bool {
+	return false
 }
 
 type persistentIPsStub struct {

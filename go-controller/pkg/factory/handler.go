@@ -402,12 +402,24 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 			if atomic.LoadUint32(&intInf.hasHandlers) == hasNoHandler {
 				return
 			}
+			enqueueTime := time.Now()
 			intInf.queueMap.enqueueEvent(nil, obj, i.oType, false, func(e *event) {
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "add").Inc()
+				queueLatency := time.Since(enqueueTime)
 				start := time.Now()
 				intInf.forEachQueuedHandler(func(h *Handler) {
 					h.OnAdd(e.obj, false)
 				})
+				handlerDuration := time.Since(start)
+				if queueLatency > 5*time.Second || handlerDuration > time.Second {
+					meta, _ := getObjectMeta(i.oType, e.obj)
+					if meta != nil {
+						klog.Infof("Slow event: type=%s event=add obj=%s/%s queue_latency_ms=%.1f handler_ms=%.1f",
+							name, meta.Namespace, meta.Name,
+							float64(queueLatency.Microseconds())/1000.0,
+							float64(handlerDuration.Microseconds())/1000.0)
+					}
+				}
 				metrics.MetricResourceAddLatency.Observe(time.Since(start).Seconds())
 			})
 		},
@@ -416,14 +428,15 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 			if atomic.LoadUint32(&intInf.hasHandlers) == hasNoHandler {
 				return
 			}
+			enqueueTime := time.Now()
 			intInf.queueMap.enqueueEvent(oldObj, newObj, i.oType, false, func(e *event) {
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "update").Inc()
+				queueLatency := time.Since(enqueueTime)
 				start := time.Now()
 				intInf.forEachQueuedHandler(func(h *Handler) {
 					old := oldObj.(metav1.Object)
 					new := newObj.(metav1.Object)
 					if old.GetUID() != new.GetUID() {
-						// This occurs not so often, so log this occurance.
 						klog.Infof("Object %s/%s is replaced, invoking delete followed by add handler", new.GetNamespace(), new.GetName())
 						h.OnDelete(e.oldObj)
 						h.OnAdd(e.obj, false)
@@ -431,6 +444,16 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 						h.OnUpdate(e.oldObj, e.obj)
 					}
 				})
+				handlerDuration := time.Since(start)
+				if queueLatency > 5*time.Second || handlerDuration > time.Second {
+					meta, _ := getObjectMeta(i.oType, e.obj)
+					if meta != nil {
+						klog.Infof("Slow event: type=%s event=update obj=%s/%s queue_latency_ms=%.1f handler_ms=%.1f",
+							name, meta.Namespace, meta.Name,
+							float64(queueLatency.Microseconds())/1000.0,
+							float64(handlerDuration.Microseconds())/1000.0)
+					}
+				}
 				metrics.MetricResourceUpdateLatency.Observe(time.Since(start).Seconds())
 			})
 		},

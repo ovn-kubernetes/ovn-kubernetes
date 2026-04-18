@@ -399,6 +399,18 @@ func allocatePodAnnotationWithRollback(
 		}
 	}()
 
+	if util.DoesNetworkRequireTunnelIDs(netInfo) {
+		podNetworks, errAnnot := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		if errAnnot != nil {
+			klog.Errorf("Failed to unmarshal pod annotations: %v", errAnnot)
+			return
+		}
+		if _, ok := podNetworks[types.DefaultNetworkName]; !ok {
+			klog.Infof("Pod network %s not found, skipping for now", types.DefaultNetworkName)
+			return
+		}
+	}
+
 	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	isNetworkAllocated := podAnnotation != nil
 	if podAnnotation == nil {

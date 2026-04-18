@@ -951,7 +951,7 @@ func (h *defaultNetworkControllerEventHandler) RecordAddEvent(obj interface{}) {
 	case factory.PodType:
 		pod := obj.(*corev1.Pod)
 		klog.V(5).Infof("Recording add event on pod %s/%s", pod.Namespace, pod.Name)
-		h.oc.podRecorder.AddPod(pod.UID)
+		h.oc.podRecorder.AddPod(pod.UID, h.oc.GetNetInfo())
 		recorders.GetConfigDurationRecorder().Start("pod", pod.Namespace, pod.Name)
 	case factory.PolicyType:
 		np := obj.(*knet.NetworkPolicy)
@@ -980,7 +980,7 @@ func (h *defaultNetworkControllerEventHandler) RecordDeleteEvent(obj interface{}
 	case factory.PodType:
 		pod := obj.(*corev1.Pod)
 		klog.V(5).Infof("Recording delete event on pod %s/%s", pod.Namespace, pod.Name)
-		h.oc.podRecorder.CleanPod(pod.UID)
+		h.oc.podRecorder.CleanPod(pod.UID, h.oc.GetNetInfo())
 		recorders.GetConfigDurationRecorder().Start("pod", pod.Namespace, pod.Name)
 	case factory.PolicyType:
 		np := obj.(*knet.NetworkPolicy)

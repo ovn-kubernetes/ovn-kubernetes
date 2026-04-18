@@ -31,6 +31,10 @@ type userDefinedNetworkClusterManager struct {
 
 	errorReporter  NetworkStatusReporter
 	nodeReconciler *clusterManagerNodeController
+
+	// podDispatcher is a single event handler on the pod informer that
+	// routes events to the correct network controller's workqueue.
+	podDispatcher *podDispatcher
 }
 
 func newUserDefinedNetworkClusterManager(
@@ -41,12 +45,17 @@ func newUserDefinedNetworkClusterManager(
 	nodeReconciler *clusterManagerNodeController,
 ) (*userDefinedNetworkClusterManager, error) {
 	klog.Infof("Creating user-defined network cluster manager")
+	pd := newPodDispatcher()
+	if err := pd.Start(wf); err != nil {
+		return nil, err
+	}
 	sncm := &userDefinedNetworkClusterManager{
 		ovnClient:      ovnClient,
 		watchFactory:   wf,
 		networkManager: networkManager,
 		recorder:       recorder,
 		nodeReconciler: nodeReconciler,
+		podDispatcher:  pd,
 	}
 	return sncm, nil
 }
@@ -77,6 +86,7 @@ func (sncm *userDefinedNetworkClusterManager) NewNetworkController(nInfo util.Ne
 		sncm.errorReporter,
 		sncm.nodeReconciler,
 	)
+	sncc.podDispatcher = sncm.podDispatcher
 	return sncc, nil
 }
 

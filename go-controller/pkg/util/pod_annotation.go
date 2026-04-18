@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
@@ -105,6 +106,11 @@ type PodAnnotation struct {
 	//     is otherwise locked for all intents and purposes.
 	// At a given time a pod can have only 1 network with role:"primary"
 	Role string
+
+	// AllocatedAt is the timestamp when the cluster manager allocated this
+	// pod's network resources (IP, MAC, tunnel ID). Used internally to
+	// measure cross-component latency; NOT serialized to the annotation.
+	AllocatedAt time.Time
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -160,7 +166,6 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		MAC:      podInfo.MAC.String(),
 		Role:     podInfo.Role,
 	}
-
 	if len(podInfo.IPs) == 1 {
 		pa.IP = podInfo.IPs[0].String()
 		if len(podInfo.Gateways) == 1 {

@@ -178,6 +178,10 @@ func (nas *namedAllocatorStub) AllocateNextIPs() ([]*net.IPNet, error) {
 	return nil, nil
 }
 
+func (nas *namedAllocatorStub) HasIPs([]*net.IPNet) bool {
+	return false
+}
+
 func (nas *namedAllocatorStub) ReleaseIPs([]*net.IPNet) error {
 	return nil
 }

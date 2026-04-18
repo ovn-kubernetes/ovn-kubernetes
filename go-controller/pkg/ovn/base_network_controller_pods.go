@@ -583,11 +583,10 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	// to make sure the UDN code has no bugs before we switch to
 	// it for the default network as well. If at all possible, keep them
 	// functionally equivalent going forward.
-	var annotationUpdated bool
 	if bnc.IsUserDefinedNetwork() {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(pod, existingLSP, nadKey, network, networkRole)
+		podAnnotation, _, err = bnc.allocatePodAnnotationForUserDefinedNetwork(pod, existingLSP, nadKey, network, networkRole)
 	} else {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(pod, existingLSP, podDesc, nadKey, network, networkRole)
+		podAnnotation, _, err = bnc.allocatePodAnnotation(pod, existingLSP, podDesc, nadKey, network, networkRole)
 	}
 
 	if err != nil {
@@ -646,7 +645,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 			fmt.Errorf("error creating logical switch port %+v on switch %+v: %+v", *lsp, *ls, err)
 	}
 
-	return ops, lsp, podAnnotation, annotationUpdated && !lspExist, nil
+	return ops, lsp, podAnnotation, !lspExist, nil
 }
 
 func (bnc *BaseNetworkController) updatePodAnnotationWithRetry(origPod *corev1.Pod, podInfo *util.PodAnnotation, nadKey string) error {
@@ -959,9 +958,10 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 		}
 	}
 	podAnnotation = &util.PodAnnotation{
-		IPs:  podIfAddrs,
-		MAC:  podMac,
-		Role: networkRole,
+		IPs:         podIfAddrs,
+		MAC:         podMac,
+		Role:        networkRole,
+		AllocatedAt: time.Now(),
 	}
 	var nodeSubnets []*net.IPNet
 	if nodeSubnets = bnc.lsManager.GetSwitchSubnets(switchName); nodeSubnets == nil && bnc.doesNetworkRequireIPAM() {

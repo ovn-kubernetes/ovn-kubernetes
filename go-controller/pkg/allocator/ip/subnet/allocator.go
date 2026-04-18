@@ -48,6 +48,8 @@ type NamedAllocator interface {
 	AllocateIPs(ips []*net.IPNet) error
 	AllocateNextIPs() ([]*net.IPNet, error)
 	ReleaseIPs(ips []*net.IPNet) error
+	// HasIPs returns true if all of the provided IPs are currently allocated.
+	HasIPs(ips []*net.IPNet) bool
 }
 
 // ErrSubnetNotFound is used to inform the subnet is not being managed
@@ -502,4 +504,37 @@ func (ipAllocator *IPAllocator) AllocateNextIPs() ([]*net.IPNet, error) {
 // ReleaseIPs release the provided IPs
 func (ipAllocator *IPAllocator) ReleaseIPs(ips []*net.IPNet) error {
 	return ipAllocator.allocator.ReleaseIPs(ipAllocator.name, ips)
+}
+
+// HasIPs returns true if all of the provided IPs are currently allocated.
+func (ipAllocator *IPAllocator) HasIPs(ips []*net.IPNet) bool {
+	ipAllocator.allocator.RLock()
+	defer ipAllocator.allocator.RUnlock()
+	subnetInfo, ok := ipAllocator.allocator.cache[ipAllocator.name]
+	if !ok {
+		return false
+	}
+	for _, ipnet := range ips {
+		found := false
+		for _, ipam := range subnetInfo.ipams {
+			cidr := ipam.CIDR()
+			if cidr.Contains(ipnet.IP) && ipam.Has(ipnet.IP) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			for _, ipam := range subnetInfo.staticIPAMs {
+				cidr := ipam.CIDR()
+				if cidr.Contains(ipnet.IP) && ipam.Has(ipnet.IP) {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
