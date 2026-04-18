@@ -1425,7 +1425,7 @@ func TestSyncAll(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
 					Annotations: map[string]string{
-						util.OvnNetworkIDs: fmt.Sprintf(`{"%s": "%d"}`, network_A.NetConf.Name, nodeNetworkID),
+						util.OvnNetworkIDs: fmt.Sprintf(`{"%s": "%d"}`, network_A.Name, nodeNetworkID),
 					},
 				},
 			},
@@ -1443,7 +1443,7 @@ func TestSyncAll(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-node",
 					Annotations: map[string]string{
-						util.OvnNetworkIDs: fmt.Sprintf(`{"%s": "%d"}`, network_A.NetConf.Name, nodeNetworkID),
+						util.OvnNetworkIDs: fmt.Sprintf(`{"%s": "%d"}`, network_A.Name, nodeNetworkID),
 					},
 				},
 			},
@@ -1525,11 +1525,12 @@ func TestSyncAll(t *testing.T) {
 			}
 
 			var controller Controller
-			if tt.mode == modeZone {
+			switch tt.mode {
+			case modeZone:
 				controller, err = NewForZone("test", tcm, wf)
-			} else if tt.mode == modeNode {
+			case modeNode:
 				controller, err = NewForNode("test", tcm, wf)
-			} else {
+			default:
 				controller, err = NewForCluster(
 					tcm,
 					wf,

@@ -1203,7 +1203,7 @@ func (bnc *BaseNetworkController) newNetworkQoSController() error {
 	}
 	bnc.nqosController, err = nqoscontroller.NewController(
 		bnc.controllerName,
-		bnc.ReconcilableNetInfo.GetNetInfo(),
+		bnc.GetNetInfo(),
 		bnc.nbClient,
 		bnc.recorder,
 		bnc.kube.NetworkQoSClient,

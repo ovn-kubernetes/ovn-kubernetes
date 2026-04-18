@@ -1092,13 +1092,14 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 
 	if nc.dpuNodeLeaseManager != nil {
-		if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		switch config.OvnKubeNode.Mode {
+		case types.NodeModeDPU:
 			nc.wg.Add(1)
 			go func() {
 				defer nc.wg.Done()
 				nc.dpuNodeLeaseManager.RunUpdater(ctx)
 			}()
-		} else if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		case types.NodeModeDPUHost:
 			if err := nc.dpuNodeLeaseManager.CheckStatus(ctx); err != nil {
 				klog.Warningf("Initial DPU node lease check failed: %v", err)
 			}

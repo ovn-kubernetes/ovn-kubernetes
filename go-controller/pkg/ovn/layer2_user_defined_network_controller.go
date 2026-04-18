@@ -418,7 +418,7 @@ func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 
 	// Switch that holds management ports is deleted below (BaseLayer2UserDefinedNetworkController.cleanup);
 	// LSPs are cascade-deleted with the logical switch.
-	if err := oc.BaseLayer2UserDefinedNetworkController.cleanup(); err != nil {
+	if err := oc.cleanup(); err != nil {
 		return fmt.Errorf("failed to cleanup network %q: %w", networkName, err)
 	}
 
@@ -526,12 +526,12 @@ func (oc *Layer2UserDefinedNetworkController) init() error {
 }
 
 func (oc *Layer2UserDefinedNetworkController) Stop() {
-	klog.Infof("Stopping controller for UDN %s", oc.GetNetworkName())
-	oc.BaseLayer2UserDefinedNetworkController.stop()
+	klog.Infof("Stoping controller for UDN %s", oc.GetNetworkName())
+	oc.stop()
 }
 
 func (oc *Layer2UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
-	return oc.BaseNetworkController.reconcile(
+	return oc.reconcile(
 		netInfo,
 		func(node string) { oc.gatewaysFailed.Store(node, true) },
 	)

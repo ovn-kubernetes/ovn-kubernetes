@@ -827,9 +827,10 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					acl := acl
 					// update ACL logging information
 					acl.Log = true
-					if acl.Action == nbdb.ACLActionDrop {
+					switch acl.Action {
+					case nbdb.ACLActionDrop:
 						acl.Severity = ptr.To(nbdb.ACLSeverityAlert)
-					} else if acl.Action == nbdb.ACLActionAllowRelated {
+					case nbdb.ACLActionAllowRelated:
 						acl.Severity = ptr.To(nbdb.ACLSeverityInfo)
 					}
 					expectedDatabaseState = append(expectedDatabaseState, acl)
@@ -853,9 +854,10 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					acl := acl.(*nbdb.ACL)
 					// update ACL logging information
 					acl.Log = true
-					if acl.Action == nbdb.ACLActionDrop {
+					switch acl.Action {
+					case nbdb.ACLActionDrop:
 						acl.Severity = ptr.To(nbdb.ACLSeverityWarning)
-					} else if acl.Action == nbdb.ACLActionAllowRelated {
+					case nbdb.ACLActionAllowRelated:
 						acl.Severity = ptr.To(nbdb.ACLSeverityDebug)
 					}
 				}

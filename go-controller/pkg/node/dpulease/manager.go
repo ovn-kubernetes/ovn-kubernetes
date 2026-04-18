@@ -299,7 +299,7 @@ func (m *Manager) isExpired(lease *coordinationv1.Lease) (bool, string) {
 		return true, "DPU node lease missing renew time or duration"
 	}
 
-	expire := lease.Spec.RenewTime.Time.Add(time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second)
+	expire := lease.Spec.RenewTime.Add(time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second)
 	if time.Now().After(expire) {
 		return true, fmt.Sprintf("DPU node lease expired at %s", expire.UTC().Format(time.RFC3339))
 	}

@@ -1229,7 +1229,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			}
 
 			if tt.invalidNetworkAnnotation {
-				pod.ObjectMeta.Annotations = map[string]string{
+				pod.Annotations = map[string]string{
 					nadapi.NetworkAttachmentAnnot: "",
 				}
 			}

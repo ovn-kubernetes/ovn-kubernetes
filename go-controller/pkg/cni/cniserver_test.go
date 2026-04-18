@@ -59,9 +59,10 @@ func clientDoCNI(t *testing.T, client *http.Client, req *Request) ([]byte, int) 
 var expectedResult cnitypes.Result
 
 func serverHandleCNI(request *PodRequest, _ *ClientSet, _ *KubeAPIAuth, _ networkmanager.Interface, _ client.Client) ([]byte, error) {
-	if request.Command == CNIAdd {
+	switch request.Command {
+	case CNIAdd:
 		return json.Marshal(&expectedResult)
-	} else if request.Command == CNIDel || request.Command == CNIUpdate || request.Command == CNICheck || request.Command == CNIStatus {
+	case CNIDel, CNIUpdate, CNICheck, CNIStatus:
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unhandled CNI command %v", request.Command)
