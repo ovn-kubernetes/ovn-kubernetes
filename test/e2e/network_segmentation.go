@@ -1513,6 +1513,79 @@ spec:
 				}
 			})
 		})
+
+		It("should correctly report subsystem error on node subnet allocation", func() {
+			nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
+			framework.ExpectNoError(err)
+
+			By("create test ClusterUserDefinedNetwork")
+			// create network that only has 2 node subnets (/24 cluster subnet has only 2 /25 node subnets)
+			cudnName := randomNetworkMetaName()
+			cudnManifest := `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: ` + cudnName + `
+spec:
+  namespaceSelector:
+    matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: In
+      values: [` + strings.Join(testTenantNamespaces, ",") + `]
+  network:
+    topology: "Layer3"
+    layer3:
+      role: Secondary
+      subnets:
+        - cidr: "10.10.100.0/24"
+          hostSubnet: 25
+`
+			cleanup, err := createManifest("", cudnManifest)
+			DeferCleanup(func() {
+				cleanup()
+				_, _ = e2ekubectl.RunKubectl("", "delete", clusterUserDefinedNetworkResource, cudnName)
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 5*time.Second, time.Second).Should(Succeed())
+
+			conditionsJSON, err := e2ekubectl.RunKubectl("", "get", clusterUserDefinedNetworkResource, cudnName, "-o", "jsonpath={.status.conditions}")
+			Expect(err).NotTo(HaveOccurred())
+			var actualConditions []metav1.Condition
+			Expect(json.Unmarshal([]byte(conditionsJSON), &actualConditions)).To(Succeed())
+
+			netAllocationCondition := "NetworkAllocationSucceeded"
+
+			if len(nodes.Items) <= 2 {
+				By("when cluster has <= 2 nodes, no error is expected")
+				found := false
+				for _, condition := range actualConditions {
+					if condition.Type == netAllocationCondition && condition.Status == metav1.ConditionTrue {
+						found = true
+					}
+				}
+				Expect(found).To(BeTrue(), "NetworkAllocationSucceeded condition should be True when cluster has <= 2 nodes")
+			} else {
+				By("when cluster has > 2 nodes, error is expected")
+				found := false
+				for _, condition := range actualConditions {
+					if condition.Type == netAllocationCondition && condition.Status == metav1.ConditionFalse {
+						found = true
+					}
+				}
+				Expect(found).To(BeTrue(), "NetworkAllocationSucceeded condition should be False when cluster has > 2 nodes")
+				events, err := cs.CoreV1().Events("").List(context.Background(), metav1.ListOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				found = false
+				for _, event := range events.Items {
+					if event.Reason == "NetworkAllocationFailed" && event.LastTimestamp.After(time.Now().Add(-30*time.Second)) &&
+						strings.Contains(event.Message, "error allocating network") {
+						found = true
+						break
+					}
+				}
+				Expect(found).To(BeTrue(), "should have found an event for failed node allocation")
+			}
+		})
 	})
 
 	It("when primary network exist, ClusterUserDefinedNetwork status should report not-ready", func() {

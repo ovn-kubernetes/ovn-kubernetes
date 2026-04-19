@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	metaapplyv1 "k8s.io/client-go/applyconfigurations/meta/v1"
@@ -574,10 +575,10 @@ func (c *Controller) ReconcileNamespace(key string) error {
 	return nil
 }
 
-// UpdateSubsystemCondition may be used by other controllers handling UDN/NAD/network setup to report conditions that
-// may affect UDN functionality.
+// UpdateSubsystemCondition may be used by other controllers handling UDN/CUDN/NAD/network setup to report conditions that
+// may affect UDN/CUDN functionality.
 // FieldManager should be unique for every subsystem.
-// If given network is not managed by a UDN, no condition will be reported and no error will be returned.
+// If given network is not managed by a UDN/CUDN, no condition will be reported and no error will be returned.
 // Events may be used to report additional information about the condition to avoid overloading the condition message.
 // When condition should not change, but new events should be reported, pass condition = nil.
 func (c *Controller) UpdateSubsystemCondition(
@@ -586,28 +587,32 @@ func (c *Controller) UpdateSubsystemCondition(
 	condition *metav1.Condition,
 	events ...*util.EventDetails,
 ) error {
-	// try to find udn using network name
+	// try to find udn/cudn using network name
 	udnNamespace, udnName := util.ParseNetworkName(networkName)
 	if udnName == "" {
 		return nil
 	}
 
-	// Handle CUDN (cluster-scoped): namespace is empty for CUDNs
+	var obj runtime.Object
+	var err error
 	if udnNamespace == "" {
-		return c.updateCUDNSubsystemCondition(udnName, fieldManager, condition, events...)
+		obj, err = c.cudnLister.Get(udnName)
+	} else {
+		obj, err = c.udnLister.UserDefinedNetworks(udnNamespace).Get(udnName)
+	}
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get (Cluster)UserDefinedNetwork %s/%s from cache: %w", udnNamespace, udnName, err)
 	}
 
-	udn, err := c.udnLister.UserDefinedNetworks(udnNamespace).Get(udnName)
+	objRef, err := reference.GetReference(userdefinednetworkscheme.Scheme, obj)
 	if err != nil {
-		return nil
-	}
-
-	udnRef, err := reference.GetReference(userdefinednetworkscheme.Scheme, udn)
-	if err != nil {
-		return fmt.Errorf("failed to get object reference for UserDefinedNetwork %s/%s: %w", udnNamespace, udnName, err)
+		return fmt.Errorf("failed to get object reference for (Cluster)UserDefinedNetwork %s/%s: %w", udnNamespace, udnName, err)
 	}
 	for _, event := range events {
-		c.eventRecorder.Event(udnRef, event.EventType, event.Reason, event.Note)
+		c.eventRecorder.Event(objRef, event.EventType, event.Reason, event.Note)
 	}
 
 	if condition == nil {
@@ -622,69 +627,25 @@ func (c *Controller) UpdateSubsystemCondition(
 		Message:            &condition.Message,
 	}
 
-	udnStatus := udnapplyconfkv1.UserDefinedNetworkStatus().WithConditions(applyCondition)
-
-	applyUDN := udnapplyconfkv1.UserDefinedNetwork(udnName, udnNamespace).WithStatus(udnStatus)
 	opts := metav1.ApplyOptions{
 		FieldManager: fieldManager,
 		Force:        true,
 	}
-	_, err = c.udnClient.K8sV1().UserDefinedNetworks(udnNamespace).ApplyStatus(context.Background(), applyUDN, opts)
+
+	if udnNamespace == "" {
+		applyConf := udnapplyconfkv1.ClusterUserDefinedNetwork(udnName).
+			WithStatus(udnapplyconfkv1.ClusterUserDefinedNetworkStatus().WithConditions(applyCondition))
+		_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(context.Background(), applyConf, opts)
+	} else {
+		udnStatus := udnapplyconfkv1.UserDefinedNetworkStatus().WithConditions(applyCondition)
+		applyUDN := udnapplyconfkv1.UserDefinedNetwork(udnName, udnNamespace).WithStatus(udnStatus)
+		_, err = c.udnClient.K8sV1().UserDefinedNetworks(udnNamespace).ApplyStatus(context.Background(), applyUDN, opts)
+	}
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to update UserDefinedNetwork %s/%s status: %w", udnNamespace, udnName, err)
-	}
-	return nil
-}
-
-func (c *Controller) updateCUDNSubsystemCondition(
-	cudnName string,
-	fieldManager string,
-	condition *metav1.Condition,
-	events ...*util.EventDetails,
-) error {
-	cudn, err := c.cudnLister.Get(cudnName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %s from cache: %w", cudnName, err)
-	}
-
-	cudnRef, err := reference.GetReference(userdefinednetworkscheme.Scheme, cudn)
-	if err != nil {
-		return fmt.Errorf("failed to get object reference for ClusterUserDefinedNetwork %s: %w", cudnName, err)
-	}
-	for _, event := range events {
-		c.eventRecorder.Event(cudnRef, event.EventType, event.Reason, event.Note)
-	}
-
-	if condition == nil {
-		return nil
-	}
-
-	applyCondition := &metaapplyv1.ConditionApplyConfiguration{
-		Type:               &condition.Type,
-		Status:             &condition.Status,
-		LastTransitionTime: &condition.LastTransitionTime,
-		Reason:             &condition.Reason,
-		Message:            &condition.Message,
-	}
-
-	applyConf := udnapplyconfkv1.ClusterUserDefinedNetwork(cudnName).
-		WithStatus(udnapplyconfkv1.ClusterUserDefinedNetworkStatus().WithConditions(applyCondition))
-	opts := metav1.ApplyOptions{
-		FieldManager: fieldManager,
-		Force:        true,
-	}
-	_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(context.Background(), applyConf, opts)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to update ClusterUserDefinedNetwork %s status: %w", cudnName, err)
+		return fmt.Errorf("failed to update (Cluster)UserDefinedNetwork %s/%s status: %w", udnNamespace, udnName, err)
 	}
 	return nil
 }
