@@ -116,8 +116,19 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 
 func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 	nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(obj.GetName())
-	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to get NetworkAttachmentDefinition %s/%s from cache: %v", namespace, obj.GetName(), err)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get NetworkAttachmentDefinition %s/%s from cache: %v", namespace, obj.GetName(), err)
+		}
+		// Informer caches may lag object creation/deletion. Confirm a cache miss against the API
+		// before treating the NAD as absent and allowing cleanup bookkeeping to proceed.
+		nad, err = c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Get(context.Background(), obj.GetName(), metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to get NetworkAttachmentDefinition %s/%s from api: %v", namespace, obj.GetName(), err)
+		}
 	}
 	nadCopy := nad.DeepCopy()
 
