@@ -389,6 +389,8 @@ func (oc *Layer3UserDefinedNetworkController) Stop() {
 		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
 	}
 	if oc.routeImportManager != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] layer3: calling routeImportManager.ForgetNetwork for network %s", oc.GetNetworkName())
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
 	}
 }
@@ -551,10 +553,17 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 
 	// Add ourselves to the route import manager
 	if oc.routeImportManager != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] layer3: calling routeImportManager.AddNetwork for network %s (id=%d, transport=%s)",
+			oc.GetNetworkName(), oc.GetNetworkID(), oc.GetNetInfo().Transport())
 		err := oc.routeImportManager.AddNetwork(oc.GetNetInfo())
 		if err != nil {
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] layer3: routeImportManager.AddNetwork FAILED for network %s: %v", oc.GetNetworkName(), err)
 			return fmt.Errorf("failed to add network %s to the route import manager: %v", oc.GetNetworkName(), err)
 		}
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] layer3: routeImportManager.AddNetwork succeeded for network %s", oc.GetNetworkName())
 	}
 
 	// start NetworkQoS controller if feature is enabled

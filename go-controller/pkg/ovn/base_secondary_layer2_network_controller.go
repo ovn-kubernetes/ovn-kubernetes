@@ -58,6 +58,8 @@ func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
 	}
 	if oc.routeImportManager != nil && config.Gateway.Mode == config.GatewayModeShared {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] layer2: calling routeImportManager.ForgetNetwork for network %s", oc.GetNetworkName())
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
 	}
 }
@@ -165,10 +167,17 @@ func (oc *BaseLayer2UserDefinedNetworkController) run() error {
 
 	// Add ourselves to the route import manager
 	if oc.routeImportManager != nil && config.Gateway.Mode == config.GatewayModeShared {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] layer2: calling routeImportManager.AddNetwork for network %s (id=%d, transport=%s)",
+			oc.GetNetworkName(), oc.GetNetworkID(), oc.GetNetInfo().Transport())
 		err := oc.routeImportManager.AddNetwork(oc.GetNetInfo())
 		if err != nil {
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] layer2: routeImportManager.AddNetwork FAILED for network %s: %v", oc.GetNetworkName(), err)
 			return fmt.Errorf("failed to add network %s to the route import manager: %v", oc.GetNetworkName(), err)
 		}
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] layer2: routeImportManager.AddNetwork succeeded for network %s", oc.GetNetworkName())
 	}
 	return nil
 }

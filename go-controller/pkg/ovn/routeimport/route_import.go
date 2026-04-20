@@ -130,7 +130,8 @@ func (c *controller) AddNetwork(network util.NetInfo) error {
 		c.tables[unix.RT_TABLE_MAIN] = networkID
 	}
 
-	c.log.V(5).Info("Started tracking network", "name", name, "id", networkID)
+	// [5952] diagnostic PR — promoted from V(5) to Info. Revert before merging.
+	c.log.Info("[5952] Started tracking network", "name", name, "id", networkID, "isDefault", network.IsDefault(), "transport", network.Transport())
 	c.reconcile(name)
 
 	return nil
@@ -149,7 +150,8 @@ func (c *controller) ForgetNetwork(name string) {
 	delete(c.networks, name)
 	c.setTableForNetworkUnlocked(network.GetNetworkID(), noTable)
 
-	c.log.V(5).Info("Stopped tracking network", "name", name)
+	// [5952] diagnostic PR — promoted from V(5) to Info. Revert before merging.
+	c.log.Info("[5952] Stopped tracking network", "name", name)
 }
 
 func (c *controller) NeedsReconciliation(network util.NetInfo) bool {
@@ -251,9 +253,18 @@ func (c *controller) syncRouteUpdate(update *netlink.RouteUpdate) {
 
 	table := update.Table
 	network := c.getNetworkForTable(table)
-	if network != nil {
-		c.reconcile(network.GetNetworkName())
+	if network == nil {
+		// [5952] diagnostic PR — we want visibility on BGP route events that
+		// land on a table we don't yet know about. Revert before merging.
+		c.log.Info("[5952] BGP route event on unknown table — no reconcile queued",
+			"table", table, "dst", stringer{update.Dst}, "gw", stringer{update.Gw}, "type", update.Type)
+		return
 	}
+	// [5952] diagnostic PR — promoted: every BGP route event that matters.
+	// Revert before merging.
+	c.log.Info("[5952] BGP route event on tracked table — queueing reconcile",
+		"table", table, "network", network.GetNetworkName(), "dst", stringer{update.Dst}, "gw", stringer{update.Gw}, "type", update.Type)
+	c.reconcile(network.GetNetworkName())
 }
 
 func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
@@ -277,13 +288,18 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 	// if the network is unknown do nothing for now and wait for the
 	// reconciliation after AddNetwork to handle things
 	if network == nil {
-		c.log.V(5).Info("Ignoring VRF event of unknown network", "vrf", vrf.Name)
+		// [5952] diagnostic PR — promoted from V(5). If VRF events fire
+		// before AddNetwork, this shows up here. The AddNetwork reconcile
+		// later must pick up the VRF via LinkByName. Revert before merging.
+		c.log.Info("[5952] Ignoring VRF event of unknown network", "vrf", vrf.Name, "parsedID", networkID)
 		return
 	}
 
 	// we only care about VRF updates. If a VRF is deleted we assume the network
 	// itself is being deleted and that will be handled through ForgetNetwork
 	if update.Header.Type != unix.RTM_NEWLINK {
+		// [5952] diagnostic PR — log VRF deletion events too.
+		c.log.Info("[5952] Skipping non-NEWLINK VRF event", "vrf", vrf.Name, "network", network.GetNetworkName(), "type", update.Header.Type)
 		return
 	}
 
@@ -293,8 +309,14 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 	if needsReconcile {
 		c.setTableForNetworkUnlocked(networkID, table)
 		networkName := network.GetNetworkName()
-		c.log.V(5).Info("Associated table with network", "table", table, "network", networkName)
+		// [5952] diagnostic PR — promoted from V(5). This is the critical
+		// moment the tables cache gets populated for a CUDN VRF. Revert before
+		// merging.
+		c.log.Info("[5952] Associated table with network", "table", table, "network", networkName)
 		c.reconcile(networkName)
+	} else {
+		// [5952] diagnostic PR — log no-op VRF events (already associated).
+		c.log.Info("[5952] VRF event — table already associated", "table", table, "network", network.GetNetworkName())
 	}
 }
 
@@ -317,10 +339,13 @@ func (s stringer) String() string {
 
 func (c *controller) syncNetwork(network string) error {
 	start := time.Now()
-	c.log.V(5).Info("Reconciling network", "network", network)
+	// [5952] diagnostic PR — promoted from V(5) to Info. Revert before merging.
+	c.log.Info("[5952] Reconciling network — start", "network", network)
 
 	info := c.getNetwork(network)
 	if info == nil {
+		// [5952] diagnostic PR — controller doesn't know this network anymore.
+		c.log.Info("[5952] Reconciling network — unknown network, nothing to do", "network", network)
 		return nil
 	}
 
@@ -330,12 +355,21 @@ func (c *controller) syncNetwork(network string) error {
 	// mantain c.tables
 	table, err := c.getRoutingTableForNetwork(network)
 	if err != nil {
+		// [5952] diagnostic PR — promote error context.
+		c.log.Info("[5952] Reconciling network — failed to look up VRF table", "network", network, "err", err)
 		return fmt.Errorf("failed to get VRF table from network: %w", err)
 	}
 	if table == noTable {
-		// no VRF exists yet for the network
+		// [5952] diagnostic PR — VRF not found yet. This means getRoutingTableForNetwork
+		// did `LinkByName(mp<NID>-udn-vrf)` and it returned NotFound. Next
+		// reconcile will fire when the VRF link event arrives. Revert before merging.
+		c.log.Info("[5952] Reconciling network — VRF not present yet (no table), will wait for link event",
+			"network", network, "expectedVRF", util.GetNetworkVRFName(info), "networkID", info.GetNetworkID())
 		return nil
 	}
+	// [5952] diagnostic PR — VRF found.
+	c.log.Info("[5952] Reconciling network — found VRF table",
+		"network", network, "table", table, "vrfName", util.GetNetworkVRFName(info), "networkID", info.GetNetworkID(), "transport", info.Transport())
 
 	// sneakily set the hint for syncRouteUpdate. Handles this sequence of events:
 	// 1. link create event
@@ -371,10 +405,17 @@ func (c *controller) syncNetwork(network string) error {
 	deletes := actual.Difference(expected)
 	adds := expected.Difference(actual)
 	if len(deletes)+len(adds) == 0 {
-		c.log.V(5).Info("Found no updates for router", "router", router)
+		// [5952] diagnostic PR — promoted from V(5). Tells us reconcile is a
+		// no-op, which is the most likely failure mode for the CUDN GR in
+		// the missing-routes flake. Revert before merging.
+		c.log.Info("[5952] Reconcile no-op — expected == actual",
+			"router", router, "network", network, "table", table, "expectedCount", expected.Len(), "actualCount", actual.Len(),
+			"expected", stringer{expected}, "actual", stringer{actual})
 		return nil
 	}
-	c.log.V(5).Info("Found updates for router", "router", router, "adds", stringer{adds}, "deletes", stringer{deletes})
+	// [5952] diagnostic PR — promoted from V(5). Revert before merging.
+	c.log.Info("[5952] Reconcile has updates",
+		"router", router, "network", network, "table", table, "adds", stringer{adds}, "deletes", stringer{deletes})
 
 	var errs []error
 	var ops []ovsdb.Operation
@@ -418,7 +459,12 @@ func (c *controller) syncNetwork(network string) error {
 	}
 
 	err = errors.Join(errs...)
-	c.log.V(5).Info("Reconciled network", "network", network, "took", time.Since(start), "ops", ops, "errors", err)
+	// [5952] diagnostic PR — promoted from V(5). Tells us reconcile completed
+	// and how many OVN ops were transacted. Revert before merging.
+	c.log.Info("[5952] Reconciled network — done",
+		"network", network, "router", router, "table", table,
+		"addCount", len(adds), "deleteCount", len(deletes),
+		"took", time.Since(start), "errors", err)
 	return err
 }
 
@@ -434,15 +480,23 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet) (sets.S
 	}
 
 	routes := sets.New[route]()
+	var ignored int
 	for _, nlroute := range nlroutes {
 		if util.IsContainedInAnyCIDR(nlroute.Dst, ignoreSubnets...) {
-			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
+			// [5952] diagnostic PR — promoted from V(5). Revert before merging.
+			c.log.Info("[5952] Ignoring BGP route in ignoreSubnets", "table", table, "route", stringer{nlroute})
+			ignored++
 			continue
 		}
 		routes.Insert(routesFromNetlinkRoute(&nlroute)...)
 	}
 
-	c.log.V(5).Info("Listed BGP routes", "table", table, "routes", stringer{routes}, "took", time.Since(start))
+	// [5952] diagnostic PR — promoted from V(5). This tells us what the
+	// kernel VRF table had at reconcile time — the key datum for the flake.
+	// Revert before merging.
+	c.log.Info("[5952] Listed kernel BGP routes",
+		"table", table, "kernelCount", len(nlroutes), "ignoredCount", ignored,
+		"resultCount", routes.Len(), "routes", stringer{routes}, "took", time.Since(start))
 	return routes, nil
 }
 
@@ -465,7 +519,8 @@ func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]str
 		routes.Insert(r)
 		uuids[r] = lrsr.UUID
 	}
-	c.log.V(5).Info("Listed OVN routes", "router", router, "routes", stringer{routes}, "took", time.Since(start))
+	// [5952] diagnostic PR — promoted from V(5). Revert before merging.
+	c.log.Info("[5952] Listed OVN routes", "router", router, "count", routes.Len(), "routes", stringer{routes}, "took", time.Since(start))
 	return routes, uuids, nil
 }
 

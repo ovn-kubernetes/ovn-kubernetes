@@ -358,6 +358,8 @@ func (oc *DefaultNetworkController) Stop() {
 		oc.eIPC.StopNADReconciler()
 	}
 	if oc.routeImportManager != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] default: calling routeImportManager.ForgetNetwork")
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
 	}
 	if oc.networkConnectController != nil {
@@ -641,10 +643,16 @@ func (oc *DefaultNetworkController) init() error {
 
 	// Add ourselves to the route import manager
 	if oc.routeImportManager != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] default: calling routeImportManager.AddNetwork (transport=%s)", oc.GetNetInfo().Transport())
 		err := oc.routeImportManager.AddNetwork(oc.GetNetInfo())
 		if err != nil {
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] default: routeImportManager.AddNetwork FAILED: %v", err)
 			return fmt.Errorf("failed to add default network to the route import manager: %v", err)
 		}
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] default: routeImportManager.AddNetwork succeeded")
 	}
 
 	return nil

@@ -292,23 +292,49 @@ func (c *Controller) reconcile(name string) error {
 }
 
 func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.RouteAdvertisements) (bool, error) {
+	// [5952] diagnostic PR — revert before merging.
+	klog.Infof("[5952] clustermanager-RA: reconcileRouteAdvertisements START ra=%q", name)
+
 	// generate FRRConfigurations
 	frrConfigs, nads, cfgErr := c.generateFRRConfigurations(ra)
 	if cfgErr != nil && !errors.Is(cfgErr, errPending) {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] clustermanager-RA: generateFRRConfigurations FAILED ra=%q err=%v", name, cfgErr)
 		return false, cfgErr
 	}
+	// [5952] diagnostic PR — summarize what was generated for this RA.
+	// Revert before merging.
+	cfgNames := make([]string, 0, len(frrConfigs))
+	for _, fc := range frrConfigs {
+		cfgNames = append(cfgNames, fc.Name)
+	}
+	nadNames := make([]string, 0, len(nads))
+	for _, n := range nads {
+		nadNames = append(nadNames, n.Namespace+"/"+n.Name)
+	}
+	klog.Infof("[5952] clustermanager-RA: generateFRRConfigurations ra=%q cfgErr=%v frrConfigCount=%d frrConfigNames=%v nadCount=%d nadNames=%v",
+		name, cfgErr, len(frrConfigs), cfgNames, len(nads), nadNames)
 
 	// update them
 	hadFRRConfigUpdates, err := c.updateFRRConfigurations(name, frrConfigs)
 	if err != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] clustermanager-RA: updateFRRConfigurations FAILED ra=%q err=%v", name, err)
 		return false, fmt.Errorf("failed updating FRRConfigurations for RouteAdvertisements %q: %w", name, err)
 	}
+	// [5952] diagnostic PR — revert before merging.
+	klog.Infof("[5952] clustermanager-RA: updateFRRConfigurations ra=%q hadUpdates=%v", name, hadFRRConfigUpdates)
 
 	// annotate NADs
 	hadNADUpdates, err := c.updateNADs(name, nads)
 	if err != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] clustermanager-RA: updateNADs FAILED ra=%q err=%v", name, err)
 		return false, fmt.Errorf("failed annotating NADs for RouteAdvertisements %q: %w", name, err)
 	}
+	// [5952] diagnostic PR — revert before merging.
+	klog.Infof("[5952] clustermanager-RA: reconcileRouteAdvertisements DONE ra=%q hadFRRConfigUpdates=%v hadNADUpdates=%v cfgErr=%v",
+		name, hadFRRConfigUpdates, hadNADUpdates, cfgErr)
 
 	return hadFRRConfigUpdates || hadNADUpdates, cfgErr
 }
@@ -1198,7 +1224,10 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 
 		if len(oldFRRConfigs) == 0 {
 			// does not exist, create
-			_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] clustermanager-RA: CREATE FRRConfiguration ns=%s generateName=%q ra=%s key=%s",
+				newFRRConfig.Namespace, newFRRConfig.GenerateName, ra, key)
+			created, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
 				context.Background(),
 				newFRRConfig,
 				metav1.CreateOptions{
@@ -1206,8 +1235,12 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 				},
 			)
 			if err != nil {
+				// [5952] diagnostic PR — revert before merging.
+				klog.Infof("[5952] clustermanager-RA: CREATE FRRConfiguration FAILED ra=%s err=%v", ra, err)
 				return hadUpdates, err
 			}
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] clustermanager-RA: CREATED FRRConfiguration name=%s ra=%s key=%s", created.Name, ra, key)
 			hadUpdates = true
 			continue
 		}
@@ -1220,12 +1253,16 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 
 		// no changes needed so skip
 		if reflect.DeepEqual(newFRRConfig.Spec, oldFRRConfig.Spec) {
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] clustermanager-RA: FRRConfiguration unchanged name=%s ra=%s key=%s", oldFRRConfig.Name, ra, key)
 			continue
 		}
 
 		// otherwise update
 		newFRRConfig.Name = oldFRRConfig.Name
 		newFRRConfig.ResourceVersion = oldFRRConfig.ResourceVersion
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] clustermanager-RA: UPDATE FRRConfiguration name=%s ra=%s key=%s", newFRRConfig.Name, ra, key)
 		_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Update(
 			context.Background(),
 			newFRRConfig,
@@ -1234,6 +1271,8 @@ func (c *Controller) updateFRRConfigurations(ra string, frrConfigurations []*frr
 			},
 		)
 		if err != nil {
+			// [5952] diagnostic PR — revert before merging.
+			klog.Infof("[5952] clustermanager-RA: UPDATE FRRConfiguration FAILED name=%s ra=%s err=%v", newFRRConfig.Name, ra, err)
 			return hadUpdates, err
 		}
 		hadUpdates = true
@@ -1369,7 +1408,11 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 		}
 	}
 
-	_, err = c.raClient.K8sV1().RouteAdvertisements().ApplyStatus(
+	// [5952] diagnostic PR — revert before merging.
+	klog.Infof("[5952] clustermanager-RA: updateRAStatus ra=%s status=%s cstatus=%v reason=%s hadUpdates=%v genErr=%v",
+		ra.Name, status, cstatus, reason, hadUpdates, err)
+
+	_, applyErr := c.raClient.K8sV1().RouteAdvertisements().ApplyStatus(
 		context.Background(),
 		raapply.RouteAdvertisements(ra.Name).WithStatus(
 			raapply.RouteAdvertisementsStatus().WithStatus(status).WithConditions(
@@ -1386,8 +1429,10 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 			FieldManager: fieldManager,
 		},
 	)
-	if err != nil {
-		return fmt.Errorf("failed to apply status for RouteAdvertisements %q: %w", ra.Name, err)
+	if applyErr != nil {
+		// [5952] diagnostic PR — revert before merging.
+		klog.Infof("[5952] clustermanager-RA: updateRAStatus ApplyStatus FAILED ra=%s err=%v", ra.Name, applyErr)
+		return fmt.Errorf("failed to apply status for RouteAdvertisements %q: %w", ra.Name, applyErr)
 	}
 
 	return nil
