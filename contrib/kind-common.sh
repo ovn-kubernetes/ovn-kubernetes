@@ -1816,7 +1816,7 @@ install_ipsec() {
   success=false
   for i in {1..60}; do
     # ... try to get all CSRs and sign them
-    csrs=$(oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}')
+    csrs=$(kubectl get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}')
     for csr in ${csrs}; do
       kubectl get csr "${csr}" -o jsonpath='{.spec.request}' | base64 --decode | \
           sed -n '/BEGIN CERTIFICATE REQUEST/,$p' > "${csr}"
@@ -1861,20 +1861,16 @@ remove_default_route() {
 }
 
 add_dns_hostnames() {
-  dns="$'"
+  local entries=""
   KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
-  # find all IPs and build dns entries
   for n in $KIND_NODES; do
-	ip=$("$OCI_BIN" container inspect -f '{{ .NetworkSettings.Networks.kind.IPAddress }}' "$n")
-        dns+="$ip $n \n"
-        ip=$("$OCI_BIN" container inspect -f '{{ .NetworkSettings.Networks.kind.GlobalIPv6Address }}' "$n")
-	dns+="$ip $n \n"
+    local v4 v6
+    v4=$("$OCI_BIN" container inspect -f '{{ .NetworkSettings.Networks.kind.IPAddress }}' "$n")
+    v6=$("$OCI_BIN" container inspect -f '{{ .NetworkSettings.Networks.kind.GlobalIPv6Address }}' "$n")
+    [ -n "$v4" ] && entries+=$(printf '%s %s\n' "$v4" "$n")$'\n'
+    [ -n "$v6" ] && entries+=$(printf '%s %s\n' "$v6" "$n")$'\n'
   done
-
-  dns+="'"
-
-  # update dns on each node
   for n in $KIND_NODES; do
-	"$OCI_BIN" exec "$n" bash -c "echo  $dns >> /etc/hosts"
+    printf '%s' "$entries" | "$OCI_BIN" exec -i "$n" bash -c 'cat >> /etc/hosts'
   done
 }
