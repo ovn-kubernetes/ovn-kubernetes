@@ -1443,11 +1443,6 @@ func isLocalGWModeEnabled() bool {
 	return present && val == "local"
 }
 
-func isHelmEnabled() bool {
-	val, present := os.LookupEnv("USE_HELM")
-	return present && val == "true"
-}
-
 func isPreConfiguredUdnAddressesEnabled() bool {
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_PRE_CONF_UDN_ADDR_ENABLE")

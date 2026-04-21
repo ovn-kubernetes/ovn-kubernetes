@@ -318,7 +318,6 @@ jobs:
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_MULTICAST_ENABLE:  "false"
       OVN_ENABLE_INTERCONNECT: "true"
-      USE_HELM: "true"
     steps:
 
     - name: Check out code into the Go module directory - from Base branch
@@ -541,7 +540,6 @@ jobs:
       KIND_NUM_WORKER: "${{ matrix.num-workers }}"
       KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
       OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
-      USE_HELM: "true"
       OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"

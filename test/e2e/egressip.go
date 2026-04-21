@@ -39,7 +39,6 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	"k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
-	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -3426,11 +3425,6 @@ spec:
 	})
 
 	ginkgo.It("Should fail if egressip-mark annotation is present during EgressIP creation", func() {
-		// This check can be removed when https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5879 is addressed
-		if isHelmEnabled() {
-			e2eskipper.Skipf("Skipping this test for HELM environment as we dont create required Validatingadmissionpolicy in a HELM environment")
-		}
-
 		ginkgo.By("1. Create an EgressIP object with one egress IP defined")
 		var egressIP1 net.IP
 		var err error
@@ -3470,11 +3464,6 @@ spec:
 	})
 
 	ginkgo.It("Should fail if egressip-mark annotation is being added by a regular user", func() {
-		// This check can be removed when https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5879 is addressed
-		if isHelmEnabled() {
-			e2eskipper.Skipf("Skipping this test for HELM environment as we dont create required Validatingadmissionpolicy in a HELM environment")
-		}
-
 		ginkgo.By("1. Add the \"k8s.ovn.org/egress-assignable\" label to egress1Node node")
 		egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
 		egressNodeAvailabilityHandler.Enable(egress1Node.name)
