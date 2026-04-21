@@ -113,6 +113,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:

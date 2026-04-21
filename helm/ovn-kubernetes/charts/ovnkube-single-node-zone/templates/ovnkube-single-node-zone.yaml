@@ -97,6 +97,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         - name: K8S_NODE
           valueFrom:
             fieldRef:
@@ -162,6 +166,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         - name: K8S_NODE
           valueFrom:
             fieldRef:
@@ -366,6 +374,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         - name: OVN_KUBERNETES_NAMESPACE
           valueFrom:
             fieldRef:
@@ -582,6 +594,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         - name: OVN_NORTH
           value: "local"
         - name: OVN_SOUTH

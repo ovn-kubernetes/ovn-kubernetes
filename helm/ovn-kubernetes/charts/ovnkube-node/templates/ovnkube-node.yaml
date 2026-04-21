@@ -164,6 +164,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         - name: OVN_GATEWAY_MODE
           value: {{ default "shared" .Values.global.gatewayMode }}
         - name: OVN_GATEWAY_OPTS
@@ -359,6 +363,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        {{- if .Values.global.metricsIp }}
+        - name: METRICS_IP
+          value: {{ .Values.global.metricsIp | quote }}
+        {{- end }}
         # end of container
       nodeSelector:
         kubernetes.io/os: "linux"

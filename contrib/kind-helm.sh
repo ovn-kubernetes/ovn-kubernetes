@@ -566,6 +566,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set global.disableSnatMultipleGws=$(if [ "${OVN_DISABLE_SNAT_MULTIPLE_GWS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.disableForwarding=$(if [ "${OVN_DISABLE_FORWARDING}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.unprivilegedMode=false \
+          --set global.metricsIp="${METRICS_IP:-}" \
           --set global.enableCompactMode=$(if [ "${OVN_COMPACT_MODE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.dummyGatewayBridge=$(if [ "${OVN_DUMMY_GATEWAY_BRIDGE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           $( [ -n "${OVN_ENCAP_PORT}" ] && echo "--set global.encapPort=${OVN_ENCAP_PORT}" ) \
