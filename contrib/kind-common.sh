@@ -1134,7 +1134,7 @@ get_kubevirt_release_url() {
 
 readonly FRR_K8S_VERSION=v0.0.21
 readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.1
-readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.4.3
+readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.5.3
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
@@ -1161,10 +1161,13 @@ clone_frr() {
     # https://github.com/FRRouting/frr/pull/15714).
     #
     # Bump to 10.4.1 for upstream demo was posted here: https://github.com/metallb/frr-k8s/pull/404
-    # We bump further to 10.4.3 to include additional fixes for EVPN:
+    # We bump further to 10.5.3 to include additional fixes for EVPN and coredumps:
     # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3907335193
     # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3898408592
     # https://github.com/FRRouting/frr/pull/20496
+    #
+    # Note: 10.5.3 is aligned with current metallb trunk:
+    # https://github.com/metallb/metallb/pull/2993
     replace_in_file_or_exit \
       hack/demo/demo.sh \
       "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \

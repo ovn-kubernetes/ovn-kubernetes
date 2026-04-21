@@ -23,7 +23,7 @@ var (
 	nginx                 = "nginx:1"
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
-	frr                   = "quay.io/frrouting/frr:10.4.3"
+	frr                   = "quay.io/frrouting/frr:10.5.3"
 
 	extraImages []string
 )
