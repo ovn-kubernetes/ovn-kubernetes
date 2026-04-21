@@ -10,6 +10,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
@@ -131,6 +133,33 @@ var metricUDNNodesRendered = prometheus.NewGaugeVec(
 	},
 )
 
+var metricRouteAdvertisementCondition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "route_advertisement_condition",
+	Help: "Status condition of RouteAdvertisements resources. " +
+		"Value is 1 for the active status, 0 for the inactive status. " +
+		"Use the 'condition' and 'status' labels to select.",
+}, []string{"name", "condition", "status"})
+
+var metricCUDNCondition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "cluster_user_defined_network_condition",
+	Help: "Status condition of ClusterUserDefinedNetwork resources. " +
+		"Value is 1 for the active status, 0 for the inactive status. " +
+		"Use the 'condition' and 'status' labels to select.",
+}, []string{"name", "condition", "status"})
+
+var metricVTEPCondition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "vtep_condition",
+	Help: "Status condition of VTEP resources. " +
+		"Value is 1 for the active status, 0 for the inactive status. " +
+		"Use the 'condition' and 'status' labels to select.",
+}, []string{"name", "condition", "status"})
+
 // RegisterClusterManagerBase registers ovnkube cluster manager base metrics with the Prometheus registry.
 // This function should only be called once.
 func RegisterClusterManagerBase() {
@@ -173,8 +202,15 @@ func RegisterClusterManagerFunctional() {
 		}
 		prometheus.MustRegister(metricUDNCount)
 		prometheus.MustRegister(metricCUDNCount)
+		prometheus.MustRegister(metricCUDNCondition)
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			prometheus.MustRegister(metricUDNNodesRendered)
+		}
+		if config.OVNKubernetesFeature.EnableRouteAdvertisements {
+			prometheus.MustRegister(metricRouteAdvertisementCondition)
+		}
+		if config.OVNKubernetesFeature.EnableEVPN {
+			prometheus.MustRegister(metricVTEPCondition)
 		}
 		if err := prometheus.Register(MetricResourceRetryFailuresCount); err != nil {
 			var alreadyRegistered prometheus.AlreadyRegisteredError
@@ -248,4 +284,53 @@ func SetDynamicUDNNodeCount(networkName string, nodeCount float64) {
 // DeleteDynamicUDNNodeCount when CUDN/UDN is deleted.
 func DeleteDynamicUDNNodeCount(networkName string) {
 	metricUDNNodesRendered.DeleteLabelValues(networkName)
+}
+
+// recordCondition emits both status="true" and status="false" timeseries for a
+// condition gauge; exactly one is 1, the other is 0.
+//
+// NOTE: this assumes callers never emit ConditionUnknown. If ConditionUnknown
+// is passed, both the status="true" and status="false" timeseries will be 0.
+// Should ConditionUnknown become a possible value in the future, a dedicated
+// metric (or an additional label value) will be needed to track it.
+func recordCondition(metric *prometheus.GaugeVec, name, condition string, status metav1.ConditionStatus) {
+	metric.WithLabelValues(name, condition, "true").Set(boolFloat64(status == metav1.ConditionTrue))
+	metric.WithLabelValues(name, condition, "false").Set(boolFloat64(status == metav1.ConditionFalse))
+}
+
+// RecordRouteAdvertisementCondition records the condition metric for a RouteAdvertisements resource.
+func RecordRouteAdvertisementCondition(name, condition string, status metav1.ConditionStatus) {
+	recordCondition(metricRouteAdvertisementCondition, name, condition, status)
+}
+
+// DeleteRouteAdvertisementCondition removes all condition timeseries for a deleted RouteAdvertisements resource.
+func DeleteRouteAdvertisementCondition(name string) {
+	metricRouteAdvertisementCondition.DeletePartialMatch(prometheus.Labels{"name": name})
+}
+
+// RecordCUDNCondition records the condition metric for a ClusterUserDefinedNetwork resource.
+func RecordCUDNCondition(name, condition string, status metav1.ConditionStatus) {
+	recordCondition(metricCUDNCondition, name, condition, status)
+}
+
+// DeleteCUDNCondition removes all condition timeseries for a deleted ClusterUserDefinedNetwork resource.
+func DeleteCUDNCondition(name string) {
+	metricCUDNCondition.DeletePartialMatch(prometheus.Labels{"name": name})
+}
+
+// RecordVTEPCondition records the condition metric for a VTEP resource.
+func RecordVTEPCondition(name, condition string, status metav1.ConditionStatus) {
+	recordCondition(metricVTEPCondition, name, condition, status)
+}
+
+// DeleteVTEPCondition removes all condition timeseries for a deleted VTEP resource.
+func DeleteVTEPCondition(name string) {
+	metricVTEPCondition.DeletePartialMatch(prometheus.Labels{"name": name})
+}
+
+func boolFloat64(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }

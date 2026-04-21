@@ -306,6 +306,7 @@ func (c *Controller) initializeController() error {
 
 	c.initializeNamespaceTracker(cudnNADs)
 	c.seedCUDNCountMetrics(cudnNADs)
+	seedCUDNConditionMetrics(cudnNADs)
 
 	if util.IsEVPNEnabled() {
 		// Recover VID allocations from existing EVPN CUDNs.
@@ -973,6 +974,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
 			delete(c.namespaceTracker, cudnName)
 			c.cudnMetricUncounted(cudnName, &cudn.Spec.Network)
+			metrics.DeleteCUDNCondition(cudnName)
 			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
 			c.releaseEVPNIDsForNetwork(cudnName)
 		}
@@ -1117,6 +1119,7 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 		return fmt.Errorf("failed to update ClusterUserDefinedNetwork status %q: %w", cudnName, err)
 	}
 	klog.Infof("Updated status ClusterUserDefinedNetwork %q", cudn.Name)
+	recordCUDNConditionMetrics(cudn)
 
 	return nil
 }

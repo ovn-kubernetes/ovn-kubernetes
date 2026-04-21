@@ -15,6 +15,7 @@ import (
 
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/applyconfiguration/vtep/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 )
 
 const (
@@ -29,7 +30,17 @@ const (
 	reasonEVPNIPv6NotSupported    = "EVPNIPv6NotSupported"
 )
 
+// updateStatusCondition records the condition metric and applies the status
+// condition to the VTEP resource. The API update is skipped if the condition
+// already matches, but the metric is always recorded to stay correct after
+// leader restarts.
 func (c *Controller) updateStatusCondition(vtep *vtepv1.VTEP, conditionType string, status metav1.ConditionStatus, reason, message string) error {
+	// Always record the metric, even if we skip the API update.
+	// This ensures the metric is correct after leader restarts when the informer
+	// fires synthetic creates and the existing condition hasn't changed.
+	// This relies on RecordVTEPCondition being cheap (in-memory only, no I/O).
+	metrics.RecordVTEPCondition(vtep.Name, conditionType, status)
+
 	const maxMessageLen = 32768
 	if len(message) >= maxMessageLen {
 		message = message[:maxMessageLen-1]

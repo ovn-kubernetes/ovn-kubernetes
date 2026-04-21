@@ -12,6 +12,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,7 +28,9 @@ import (
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -149,12 +153,23 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 
+	markVTEPForDeletion := func(name string) {
+		ginkgo.GinkgoHelper()
+		v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), name, metav1.GetOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		now := metav1.Now()
+		v.DeletionTimestamp = &now
+		_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
+
 	ginkgo.BeforeEach(func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 		config.OVNKubernetesFeature.EnableEVPN = true
+		metrics.RegisterClusterManagerFunctional()
 		config.Gateway.Mode = config.GatewayModeLocal
 	})
 
@@ -171,6 +186,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 		ginkgo.It("sets Accepted=False for a VTEP with mode Managed", func() {
 			vtep := newVTEP("managed-vtep", vtepv1.VTEPModeManaged, "100.64.0.0/24")
 			start(vtep)
+			ginkgo.DeferCleanup(metrics.DeleteVTEPCondition, "managed-vtep")
 
 			gomega.Eventually(func() (*metav1.Condition, error) {
 				return getVTEPCondition(fakeVTEP, "managed-vtep", conditionTypeAccepted)
@@ -187,6 +203,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 		ginkgo.It("sets Accepted=True for a VTEP with mode Unmanaged", func() {
 			vtep := newVTEP("unmanaged-vtep", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
 			start(vtep)
+			ginkgo.DeferCleanup(metrics.DeleteVTEPCondition, "unmanaged-vtep")
 
 			gomega.Eventually(func() (*metav1.Condition, error) {
 				return getVTEPCondition(fakeVTEP, "unmanaged-vtep", conditionTypeAccepted)
@@ -266,12 +283,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				return getVTEPFinalizers(fakeVTEP, "delete-vtep")
 			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 
-			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "delete-vtep", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now := metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("delete-vtep")
 
 			gomega.Eventually(func() ([]string, error) {
 				return getVTEPFinalizers(fakeVTEP, "delete-vtep")
@@ -287,19 +299,14 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				return getVTEPFinalizers(fakeVTEP, "blocked-vtep")
 			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 
-			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "blocked-vtep", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now := metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("blocked-vtep")
 
 			gomega.Consistently(func() ([]string, error) {
 				return getVTEPFinalizers(fakeVTEP, "blocked-vtep")
 			}).WithTimeout(3 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 
 			// Delete the CUDN — the VTEP should now be garbage-collected
-			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+			err := fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
 				context.Background(), "test-cudn", metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -605,12 +612,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}
 
 			// Delete vtep-c: vtep-a and vtep-b still overlap, both stay Accepted=False
-			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-c", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now := metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("vtep-c")
 
 			gomega.Consistently(func() (*metav1.Condition, error) {
 				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
@@ -621,12 +623,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}).WithTimeout(2 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
 
 			// Delete vtep-b: vtep-a is the only one left, no more conflicts
-			v, err = fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-b", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now = metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("vtep-b")
 
 			gomega.Eventually(func() (*metav1.Condition, error) {
 				return getVTEPCondition(fakeVTEP, "vtep-a", conditionTypeAccepted)
@@ -1105,12 +1102,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 
 			// Simulate deletion of the VTEP (sets DeletionTimestamp, blocked by finalizer)
-			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-cudn-del", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now := metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("vtep-cudn-del")
 
 			// Finalizer should remain because CUDN still references the VTEP
 			gomega.Consistently(func() ([]string, error) {
@@ -1119,7 +1111,7 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 
 			// Delete the CUDN -- this should trigger the CUDN controller
 			// which re-queues the deleting VTEP
-			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+			err := fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
 				context.Background(), "cudn-ref", metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1149,15 +1141,10 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 
 			// Request VTEP deletion
-			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-multi-ref", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now := metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("vtep-multi-ref")
 
 			// Delete first CUDN -- VTEP should still be blocked by cudn-two
-			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+			err := fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
 				context.Background(), "cudn-one", metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1197,15 +1184,10 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
 
 			// Request VTEP deletion
-			v, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-norequeue", metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			now := metav1.Now()
-			v.DeletionTimestamp = &now
-			_, err = fakeVTEP.K8sV1().VTEPs().Update(context.Background(), v, metav1.UpdateOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			markVTEPForDeletion("vtep-norequeue")
 
 			// Delete the non-EVPN CUDN -- should NOT unblock the VTEP
-			err = fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
+			err := fakeClientset.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Delete(
 				context.Background(), "cudn-plain", metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1520,6 +1502,68 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 			))
 		})
 	})
+
+	ginkgo.Context("VTEP condition metrics", func() {
+		ginkgo.It("should record Accepted=True condition metric for an Unmanaged VTEP", func() {
+			vtep := newVTEP("metrics-unmanaged", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep)
+			ginkgo.DeferCleanup(metrics.DeleteVTEPCondition, "metrics-unmanaged")
+
+			gomega.Eventually(func() (*metav1.Condition, error) {
+				return getVTEPCondition(fakeVTEP, "metrics-unmanaged", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionTrue))
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				valTrue, found := getVTEPConditionMetricValue("metrics-unmanaged", "Accepted", "true")
+				g.Expect(found).To(gomega.BeTrue(), "condition metric status=true should exist")
+				g.Expect(valTrue).To(gomega.Equal(1.0))
+				valFalse, found := getVTEPConditionMetricValue("metrics-unmanaged", "Accepted", "false")
+				g.Expect(found).To(gomega.BeTrue(), "condition metric status=false should exist")
+				g.Expect(valFalse).To(gomega.Equal(0.0))
+			}).Should(gomega.Succeed(), "Accepted condition metrics should be recorded")
+		})
+
+		ginkgo.It("should record Accepted=False condition metric for a Managed VTEP", func() {
+			vtep := newVTEP("metrics-managed", vtepv1.VTEPModeManaged, "100.64.0.0/24")
+			start(vtep)
+			ginkgo.DeferCleanup(metrics.DeleteVTEPCondition, "metrics-managed")
+
+			gomega.Eventually(func() (*metav1.Condition, error) {
+				return getVTEPCondition(fakeVTEP, "metrics-managed", conditionTypeAccepted)
+			}).WithTimeout(5 * time.Second).Should(gomega.HaveField("Status", metav1.ConditionFalse))
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				valTrue, found := getVTEPConditionMetricValue("metrics-managed", "Accepted", "true")
+				g.Expect(found).To(gomega.BeTrue(), "condition metric status=true should exist")
+				g.Expect(valTrue).To(gomega.Equal(0.0))
+				valFalse, found := getVTEPConditionMetricValue("metrics-managed", "Accepted", "false")
+				g.Expect(found).To(gomega.BeTrue(), "condition metric status=false should exist")
+				g.Expect(valFalse).To(gomega.Equal(1.0))
+			}).Should(gomega.Succeed(), "Accepted condition metrics should be recorded")
+		})
+
+		ginkgo.It("should remove condition metrics on VTEP deletion", func() {
+			vtep := newVTEP("metrics-delete", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
+			start(vtep)
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				_, found := getVTEPConditionMetricValue("metrics-delete", "Accepted", "true")
+				g.Expect(found).To(gomega.BeTrue(), "condition metric should exist before deletion")
+			}).Should(gomega.Succeed())
+
+			gomega.Eventually(func() ([]string, error) {
+				return getVTEPFinalizers(fakeVTEP, "metrics-delete")
+			}).WithTimeout(5 * time.Second).Should(gomega.ContainElement(finalizerVTEP))
+
+			markVTEPForDeletion("metrics-delete")
+
+			gomega.Eventually(func() bool {
+				_, foundTrue := getVTEPConditionMetricValue("metrics-delete", "Accepted", "true")
+				_, foundFalse := getVTEPConditionMetricValue("metrics-delete", "Accepted", "false")
+				return foundTrue || foundFalse
+			}).Should(gomega.BeFalse(), "condition metrics should be removed after deletion")
+		})
+	})
 })
 
 var _ = ginkgo.Describe("vtepNameInMessage", func() {
@@ -1583,3 +1627,42 @@ var _ = ginkgo.Describe("vtepNameInMessage", func() {
 		gomega.Expect(vtepNameInMessage(msg, "vtep-bbb")).To(gomega.BeTrue())
 	})
 })
+
+func findMetricFamily(name string) *dto.MetricFamily {
+	ginkgo.GinkgoHelper()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to gather metrics")
+	for _, mf := range mfs {
+		if mf.GetName() == name {
+			return mf
+		}
+	}
+	return nil
+}
+
+func getVTEPConditionMetricValue(nameLabel, conditionLabel, statusLabel string) (float64, bool) {
+	metricName := prometheus.BuildFQName(ovntypes.MetricOvnkubeNamespace, ovntypes.MetricOvnkubeSubsystemClusterManager, "vtep_condition")
+	mf := findMetricFamily(metricName)
+	if mf == nil {
+		return 0, false
+	}
+	for _, metric := range mf.GetMetric() {
+		if metricLabelValue(metric.GetLabel(), "name") == nameLabel &&
+			metricLabelValue(metric.GetLabel(), "condition") == conditionLabel &&
+			metricLabelValue(metric.GetLabel(), "status") == statusLabel {
+			if metric.GetGauge() != nil {
+				return metric.GetGauge().GetValue(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func metricLabelValue(labels []*dto.LabelPair, name string) string {
+	for _, label := range labels {
+		if label.GetName() == name {
+			return label.GetValue()
+		}
+	}
+	return ""
+}

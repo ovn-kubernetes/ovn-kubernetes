@@ -35,6 +35,7 @@ import (
 	vtepscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/scheme"
 	vteplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -151,6 +152,8 @@ func (c *Controller) reconcileVTEP(key string) error {
 	vtep, err := c.vtepLister.Get(vtepName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			// Clean up condition metric timeseries for the deleted VTEP.
+			metrics.DeleteVTEPCondition(vtepName)
 			c.requeueConflictingVTEPs(vtepName)
 			return nil
 		}
