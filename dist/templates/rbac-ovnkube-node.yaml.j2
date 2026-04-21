@@ -143,6 +143,25 @@ rules:
       resources:
           - network-attachment-definitions
       verbs: ["list", "get", "watch"]
+    - apiGroups: ["resource.k8s.io"]
+      resources:
+          - resourceslices
+      verbs: ["list", "watch", "create", "update", "delete"]
+    - apiGroups: ["resource.k8s.io"]
+      resources:
+          - resourceclaims
+          - deviceclasses
+      verbs: ["get"]
+    - apiGroups: ["resource.k8s.io"]
+      resources:
+          - resourceclaims/status
+      verbs: ["patch", "update"]
+    - apiGroups: ["resource.k8s.io"]
+      resources:
+          - resourceclaims/driver
+      verbs: ["associated-node:update", "associated-node:patch"]
+      resourceNames:
+          - ovnkube-node
     {% if ovn_enable_interconnect == "true" -%}
     - apiGroups: ["networking.k8s.io"]
       resources:

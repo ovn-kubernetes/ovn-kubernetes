@@ -272,7 +272,10 @@ spec:
           readOnly: true
         - mountPath: /var/lib/kubelet
           name: host-kubelet
-          readOnly: true
+        - mountPath: /var/lib/kubelet/plugins
+          name: host-kubelet-plugins
+        - mountPath: /var/lib/kubelet/plugins_registry
+          name: host-kubelet-plugins-registry
         - mountPath: /host-kubernetes
           name: host-kubeconfig
           readOnly: true
@@ -292,6 +295,8 @@ spec:
         - mountPath: /var/run/netns
           name: host-netns
           mountPropagation: Bidirectional
+        - mountPath: /var/run/nri
+          name: host-var-run-nri
         - mountPath: /var/run/openvswitch/
           name: host-var-run-ovs
         - mountPath: /var/run/ovn/
@@ -637,6 +642,12 @@ spec:
       - name: host-kubelet
         hostPath:
           path: /var/lib/kubelet
+      - name: host-kubelet-plugins
+        hostPath:
+          path: /var/lib/kubelet/plugins
+      - name: host-kubelet-plugins-registry
+        hostPath:
+          path: /var/lib/kubelet/plugins_registry
       - name: host-kubeconfig
         hostPath:
           path: /etc/kubernetes/
@@ -658,6 +669,9 @@ spec:
       - name: host-netns
         hostPath:
           path: /var/run/netns
+      - name: host-var-run-nri
+        hostPath:
+          path: /var/run/nri
       - name: host-var-log-ovs
         hostPath:
           path: /var/log/openvswitch
