@@ -180,7 +180,7 @@ func DeleteManagementPortInternalOVSInterface(network, ovsIfName string) error {
 	}
 
 	// verify linux device removal - insurance in case something happens with OVS/OVSDB and interface is not removed
-	if link, err := netlink.LinkByName(ovsIfName); err == nil {
+	if link, err := util.GetNetLinkOps().LinkByName(ovsIfName); err == nil {
 		klog.Warningf("Management port interface %s still exists after OVS del-port, deleting manually", ovsIfName)
 		err = netlink.LinkDel(link)
 		if err != nil {

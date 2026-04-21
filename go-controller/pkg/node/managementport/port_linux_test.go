@@ -831,6 +831,7 @@ var _ = Describe("Management Port tests", func() {
 				execMock.AddFakeCmdsNoOutputNoError([]string{
 					"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgmtPortName,
 				})
+				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(nil, fmt.Errorf("link not found"))
 
 				err := syncMgmtPortInterface(ovsClient, mgmtPortName, false)
 				Expect(err).ToNot(HaveOccurred())
