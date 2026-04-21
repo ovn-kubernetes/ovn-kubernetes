@@ -240,6 +240,7 @@ var (
 	// OvnKubeNode holds ovnkube-node parsed config file parameters and command-line overrides
 	OvnKubeNode = OvnKubeNodeConfig{
 		Mode:                      types.NodeModeFull,
+		EnableDRA:                 false,
 		DPUNodeLeaseRenewInterval: 10,
 		DPUNodeLeaseDuration:      40,
 	}
@@ -641,6 +642,7 @@ type HybridOverlayConfig struct {
 // OvnKubeNodeConfig holds ovnkube-node configurations
 type OvnKubeNodeConfig struct {
 	Mode                      string `gcfg:"mode"`
+	EnableDRA                 bool   `gcfg:"enable-dra"`
 	MgmtPortNetdev            string `gcfg:"mgmt-port-netdev"`
 	MgmtPortDPResourceName    string `gcfg:"mgmt-port-dp-resource-name"`
 	DPUNodeLeaseRenewInterval int    `gcfg:"dpu-node-lease-renew-interval"`
@@ -1830,6 +1832,12 @@ var OvnKubeNodeFlags = []cli.Flag{
 		Usage:       "ovnkube-node operating mode full (default), dpu, dpu-host",
 		Value:       OvnKubeNode.Mode,
 		Destination: &cliConfig.OvnKubeNode.Mode,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-dra",
+		Usage:       "Enable Kubernetes Dynamic Resource Allocation (DRA) host-device driver integration on ovnkube-node.",
+		Value:       OvnKubeNode.EnableDRA,
+		Destination: &cliConfig.OvnKubeNode.EnableDRA,
 	},
 	&cli.StringFlag{
 		Name: "ovnkube-node-mgmt-port-netdev",
