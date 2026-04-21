@@ -28,7 +28,7 @@ spec:
         kubernetes.io/os: "linux"
       annotations:
     spec:
-      priorityClassName: "system-cluster-critical"
+      priorityClassName: "system-node-critical"
       hostNetwork: true
       dnsPolicy: Default
       {{ "hostPID: true" if ovn_unprivileged_mode=="no" }}
