@@ -38,7 +38,7 @@ In order to generate the latest yaml files for a given CRD or to add a new CRD, 
 the `types.go` has been created according to sig-apimachinery docs, the developer can run
 `make codegen` to be able to generate all the clientgen, listers and informers for the new
 CRD along with the deep-copy methods and actual yaml files which get created in `_output/crd`
-folder and are copied over to `dist/templates` to then be used when creating a KIND cluster.
+folder and are copied over to `helm/ovn-kubernetes/crds` to then be used when creating a KIND cluster.
 
 ## Level-Driven Controllers
 
