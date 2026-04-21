@@ -240,7 +240,7 @@ var (
 	// OvnKubeNode holds ovnkube-node parsed config file parameters and command-line overrides
 	OvnKubeNode = OvnKubeNodeConfig{
 		Mode:                      types.NodeModeFull,
-		EnableDRA:                 false,
+		EnableDRA:                 true,
 		DPUNodeLeaseRenewInterval: 10,
 		DPUNodeLeaseDuration:      40,
 	}
