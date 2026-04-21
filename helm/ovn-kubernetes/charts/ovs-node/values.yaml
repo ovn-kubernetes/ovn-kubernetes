@@ -1,0 +1,5 @@
+# DaemonSet updateStrategy. Set to OnDelete during upgrade flows to prevent
+# helm from rolling ovs-node pods — restarting ovs-vswitchd while ovnkube-node
+# is still running against it tears down OVS state (bridge/port bindings) and
+# crashes the running ovnkube-controller with "phys port eth0 ofport changed".
+updateStrategy: RollingUpdate

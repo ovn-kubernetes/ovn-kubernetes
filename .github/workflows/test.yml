@@ -318,6 +318,8 @@ jobs:
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_MULTICAST_ENABLE:  "false"
       OVN_ENABLE_INTERCONNECT: "true"
+      # TODO(koolzz): deprecate once infra is switched completely to kind-helm.sh
+      USE_HELM: "true"
     steps:
 
     - name: Check out code into the Go module directory - from Base branch

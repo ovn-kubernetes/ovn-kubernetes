@@ -16,7 +16,7 @@ spec:
     matchLabels:
       app: ovs-node
   updateStrategy:
-    type: RollingUpdate
+    type: {{ default "RollingUpdate" .Values.updateStrategy }}
   template:
     metadata:
       labels:
