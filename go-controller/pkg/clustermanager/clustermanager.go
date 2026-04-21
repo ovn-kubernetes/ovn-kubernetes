@@ -93,7 +93,6 @@ func NewClusterManager(
 		wf:             wf,
 		recorder:       recorder,
 		identity:       identity,
-		statusManager:  status_manager.NewStatusManager(wf, ovnClient),
 		networkManager: networkmanager.Default(),
 	}
 
@@ -116,6 +115,7 @@ func NewClusterManager(
 			return nil, err
 		}
 	}
+	cm.statusManager = status_manager.NewStatusManager(wf, ovnClient, cm.networkManager.Interface())
 
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", cm.networkManager.Interface())
 	defaultNetClusterController := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder, nodeController)

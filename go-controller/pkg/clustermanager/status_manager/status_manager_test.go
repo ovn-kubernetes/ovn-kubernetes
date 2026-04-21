@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
+
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +23,7 @@ import (
 	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager/zone_tracker"
+	ovnkcnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	egressfirewallapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
@@ -29,6 +32,7 @@ import (
 	networkqosapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
@@ -86,6 +90,17 @@ func newEgressFirewall(namespace string) *egressfirewallapi.EgressFirewall {
 			},
 		},
 	}
+}
+
+func newPrimaryL3NetInfo(name string) util.NetInfo {
+	netInfo, err := util.NewNetInfo(&ovnkcnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: name},
+		Topology: types.Layer3Topology,
+		Subnets:  "10.1.130.0/16/24",
+		Role:     types.NetworkRolePrimary,
+	})
+	Expect(err).NotTo(HaveOccurred())
+	return netInfo
 }
 
 func updateEgressFirewallStatus(egressFirewall *egressfirewallapi.EgressFirewall, status *egressfirewallapi.EgressFirewallStatus,
@@ -293,7 +308,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		apbrouteName   = "route"
 	)
 
-	start := func(zones sets.Set[string], objects ...runtime.Object) {
+	startWithNetworkManager := func(zones sets.Set[string], nm networkmanager.Interface, objects ...runtime.Object) {
 		for _, zone := range zones.UnsortedList() {
 			objects = append(objects, getNodeWithZone(zone, zone))
 		}
@@ -301,13 +316,17 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		var err error
 		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
 		Expect(err).NotTo(HaveOccurred())
-		statusManager = NewStatusManager(wf, fakeClient)
+		statusManager = NewStatusManager(wf, fakeClient, nm)
 
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
 
 		err = statusManager.Start()
 		Expect(err).NotTo(HaveOccurred())
+	}
+
+	start := func(zones sets.Set[string], objects ...runtime.Object) {
+		startWithNetworkManager(zones, networkmanager.Default().Interface(), objects...)
 	}
 
 	BeforeEach(func() {
@@ -378,6 +397,34 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		updateEgressFirewallStatus(egressFirewall, &egressfirewallapi.EgressFirewallStatus{
 			Messages: []string{types.GetZoneStatus("zone1", "OK"), types.GetZoneStatus("zone2", "OK")},
 		}, fakeClient)
+		checkEFStatusEventually(egressFirewall, false, false, fakeClient)
+	})
+
+	It("updates EgressFirewall status with only relevant active zones", func() {
+		config.OVNKubernetesFeature.EnableEgressFirewall = true
+		config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+		config.IPv4Mode = true
+
+		zones := sets.New("zone1", "zone2", "zone3")
+		namespace1 := util.NewNamespace(namespace1Name)
+		egressFirewall := newEgressFirewall(namespace1.Name)
+		activeNetwork := newPrimaryL3NetInfo("tenant-red")
+		networkManager := &networkmanager.FakeNetworkManager{
+			PrimaryNetworks: map[string]util.NetInfo{
+				namespace1.Name: activeNetwork,
+			},
+			ActiveNodes: map[string]bool{
+				"zone1": true,
+				"zone2": false,
+				"zone3": false,
+			},
+		}
+		startWithNetworkManager(zones, networkManager, namespace1, egressFirewall)
+
+		updateEgressFirewallStatus(egressFirewall, &egressfirewallapi.EgressFirewallStatus{
+			Messages: []string{types.GetZoneStatus("zone1", "OK")},
+		}, fakeClient)
+
 		checkEFStatusEventually(egressFirewall, false, false, fakeClient)
 	})
 	It("updates APBRoute status with 1 zone", func() {
@@ -629,7 +676,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		var err error
 		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
 		Expect(err).NotTo(HaveOccurred())
-		statusManager = NewStatusManager(wf, fakeClient)
+		statusManager = NewStatusManager(wf, fakeClient, networkmanager.Default().Interface())
 
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
@@ -716,7 +763,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		var err error
 		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
 		Expect(err).NotTo(HaveOccurred())
-		statusManager = NewStatusManager(wf, fakeClient)
+		statusManager = NewStatusManager(wf, fakeClient, networkmanager.Default().Interface())
 
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())

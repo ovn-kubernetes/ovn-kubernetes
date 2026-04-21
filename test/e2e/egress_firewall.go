@@ -71,7 +71,11 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				if err != nil {
 					framework.Failf("could not get egressfirewall %q in namespace %s: %v", "default", namespace, err)
 				}
-				return status == "EgressFirewall Rules applied"
+				if status == "EgressFirewall Rules applied" {
+					return true
+				}
+				framework.Logf("egressfirewall %q in namespace %s is not applied. Status: %s", "default", namespace, status)
+				return false
 			}, 10*time.Second).Should(gomega.BeTrue(),
 				fmt.Sprintf("expected egress firewall in namespace %s to be successfully applied", namespace))
 		}

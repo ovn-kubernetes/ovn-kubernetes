@@ -8,23 +8,35 @@ import (
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
+	corelisters "k8s.io/client-go/listers/core/v1"
 
 	egressfirewallapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	egressfirewallapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/applyconfiguration/egressfirewall/v1"
 	egressfirewallclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned"
 	egressfirewalllisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type egressFirewallManager struct {
-	lister egressfirewalllisters.EgressFirewallLister
-	client egressfirewallclientset.Interface
+	lister         egressfirewalllisters.EgressFirewallLister
+	nodeLister     corelisters.NodeLister
+	client         egressfirewallclientset.Interface
+	networkManager networkmanager.Interface
 }
 
-func newEgressFirewallManager(lister egressfirewalllisters.EgressFirewallLister, client egressfirewallclientset.Interface) *egressFirewallManager {
+// getRelevantZones is consumed through a generic interface assertion in the shared status manager.
+var _ relevantZoneProvider[egressfirewallapi.EgressFirewall] = (*egressFirewallManager)(nil)
+
+func newEgressFirewallManager(lister egressfirewalllisters.EgressFirewallLister, nodeLister corelisters.NodeLister, client egressfirewallclientset.Interface, networkManager networkmanager.Interface) *egressFirewallManager {
 	return &egressFirewallManager{
-		lister: lister,
-		client: client,
+		lister:         lister,
+		nodeLister:     nodeLister,
+		client:         client,
+		networkManager: networkManager,
 	}
 }
 
@@ -41,6 +53,39 @@ func (m *egressFirewallManager) getMessages(egressFirewall *egressfirewallapi.Eg
 //lint:ignore U1000 generic interfaces throw false-positives
 func (m *egressFirewallManager) getManagedFields(egressFirewall *egressfirewallapi.EgressFirewall) []metav1.ManagedFieldsEntry {
 	return egressFirewall.ManagedFields
+}
+
+func (m *egressFirewallManager) getRelevantZones(egressFirewall *egressfirewallapi.EgressFirewall, zones sets.Set[string]) (sets.Set[string], error) {
+	activeNetwork, err := m.networkManager.GetActiveNetworkForNamespace(egressFirewall.Namespace)
+	if err != nil {
+		if util.IsInvalidPrimaryNetworkError(err) {
+			return nil, err
+		}
+		return nil, err
+	}
+	if activeNetwork == nil {
+		return sets.New[string](), nil
+	}
+	if activeNetwork.IsDefault() {
+		return zones.Clone(), nil
+	}
+
+	nodes, err := m.nodeLister.List(labels.Everything())
+	if err != nil {
+		return nil, err
+	}
+
+	relevantZones := sets.New[string]()
+	for _, node := range nodes {
+		if !m.networkManager.NodeHasNetwork(node.Name, activeNetwork.GetNetworkName()) {
+			continue
+		}
+		nodeZone := util.GetNodeZone(node)
+		if zones.Has(nodeZone) {
+			relevantZones.Insert(nodeZone)
+		}
+	}
+	return relevantZones, nil
 }
 
 //lint:ignore U1000 generic interfaces throw false-positives
