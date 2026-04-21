@@ -111,7 +111,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			}
 			config.Gateway.Mode = gwMode
 			if config.OVNKubernetesFeature.EnableInterconnect {
-				config.Default.Zone = testICZone
+				config.Default.Zone = nodeName
 			}
 			if knet.IsIPv6CIDRString(netInfo.clustersubnets) {
 				config.IPv6Mode = true
@@ -125,6 +125,9 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					*netInfo.netconf(),
 				)
 				Expect(err).NotTo(HaveOccurred())
+				if netInfo.isPrimary && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+					nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef("dynamic-cudn")}
+				}
 
 				n := testing.NewNamespace(ns)
 				if netInfo.isPrimary {
@@ -193,13 +196,21 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
 				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchNamespaces()).To(Succeed())
+				Expect(fullL3UDNController.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
 					Expect(userDefinedNetController.bnc.WatchNetworkPolicy()).To(Succeed())
-					ninfo, err := fakeOvn.networkManager.Interface().GetActiveNetworkForNamespace(ns)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(ninfo.GetNetworkName()).To(Equal(netInfo.netName))
+					Eventually(func() string {
+						ninfo, err := fakeOvn.networkManager.Interface().GetActiveNetworkForNamespace(ns)
+						if err != nil {
+							return ""
+						}
+						if ninfo == nil {
+							return ""
+						}
+						return ninfo.GetNetworkName()
+					}).WithTimeout(3 * time.Second).To(Equal(netInfo.netName))
 				}
 
 				// check that after start networks annotations and nbdb will be updated
@@ -326,7 +337,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				}
 			}
 			if config.OVNKubernetesFeature.EnableInterconnect {
-				config.Default.Zone = testICZone
+				config.Default.Zone = nodeName
 			}
 			app.Action = func(_ *cli.Context) error {
 				netConf := netInfo.netconf()
@@ -426,6 +437,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
 				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchNamespaces()).To(Succeed())
+				Expect(fullL3UDNController.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
@@ -528,6 +540,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			Expect(l3Controller.init()).To(Succeed())
 			Expect(l3Controller.RegisterNodeHandler()).To(Succeed())
 			Expect(l3Controller.WatchNamespaces()).To(Succeed())
+			Expect(l3Controller.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
 			Expect(l3Controller.WatchPods()).To(Succeed())
 			Expect(l3Controller.WatchNetworkPolicy()).To(Succeed())
 
@@ -589,7 +602,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Default.Zone = testICZone
+			config.Default.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			// Basic UDN setup
@@ -597,6 +610,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			n := newUDNNamespace(ns)
 			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netInfo.netconf())
 			Expect(err).NotTo(HaveOccurred())
+			nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef("dynamic-cudn")}
 
 			// Local node and remote node with NAD
 			localNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
@@ -779,7 +793,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Default.Zone = testICZone
+			config.Default.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			const (
@@ -1415,7 +1429,7 @@ func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInf
 
 	zone := types.OvnDefaultZone
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		zone = testICZone
+		zone = config.Default.Zone
 	}
 
 	return &corev1.Node{

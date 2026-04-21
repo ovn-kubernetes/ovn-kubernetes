@@ -67,6 +67,9 @@ type nadController struct {
 	nads map[string]string
 	// nadsByNetwork tracks NAD keys grouped by network name.
 	nadsByNetwork map[string]sets.Set[string]
+	// dynamicFilterNADs tracks whether a NAD should be activity-gated by Dynamic UDN.
+	// Bare NADs are not filtered and therefore should be treated as present on all nodes.
+	dynamicFilterNADs map[string]bool
 
 	// primaryNADs holds a mapping of namespace to NAD of primary UDNs
 	primaryNADs map[string]string
@@ -117,17 +120,18 @@ func newController(
 		reconcilers:       map[uint64]reconcilerRegistration{},
 		nads:              map[string]string{},
 		nadsByNetwork:     map[string]sets.Set[string]{},
+		dynamicFilterNADs: map[string]bool{},
 		primaryNADs:       map[string]string{},
 		markedForRemoval:  map[string]time.Time{},
 	}
 	networkController.getNADKeysForNetwork = c.GetNADKeysForNetwork
 
 	if cm != nil && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-		c.podTracker = NewPodTrackerController("pod-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
+		c.podTracker = NewPodTrackerController(fmt.Sprintf("%s pod-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
 		podID := c.RegisterNADReconciler(c.podTracker.NADReconciler())
 		c.podReconcilerID = podID
 		if config.OVNKubernetesFeature.EnableEgressIP {
-			c.egressIPTracker = NewEgressIPTrackerController("egress-ip-tracker", wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
+			c.egressIPTracker = NewEgressIPTrackerController(fmt.Sprintf("%s egress-ip-tracker", c.name), wf, c.OnNetworkRefChange, c.GetPrimaryNADForNamespace)
 			eipID := c.RegisterNADReconciler(c.egressIPTracker.NADReconciler())
 			c.eipReconcilerID = eipID
 		}
@@ -210,11 +214,29 @@ func (c *nadController) NodeHasNetwork(node, networkName string) bool {
 	}
 	c.RUnlock()
 	for _, nad := range nads {
+		if !c.nadUsesDynamicFiltering(nad) {
+			return true
+		}
 		if c.nodeHasNAD(node, nad) {
 			return true
 		}
 	}
 	return false
+}
+
+func nadRequiresDynamicFiltering(nad *nettypes.NetworkAttachmentDefinition) bool {
+	ownerRef := metav1.GetControllerOf(nad)
+	if ownerRef == nil {
+		return false
+	}
+
+	return ownerRef.Kind == "ClusterUserDefinedNetwork" || ownerRef.Kind == "UserDefinedNetwork"
+}
+
+func (c *nadController) nadUsesDynamicFiltering(nadKey string) bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.dynamicFilterNADs[nadKey]
 }
 
 // addNADToNetworkLocked must be called with nadController locked
@@ -259,8 +281,8 @@ func (c *nadController) deleteNADFromNetworkLocked(networkName, nadKey string) {
 //
 // This function should never call into the trackers (i.e. nodeHasNAD) as it would cause deadlock.
 func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
-	klog.V(4).Infof("Network change for zone controller triggered by pod/egress IP events "+
-		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
+	klog.V(4).Infof("%s Network change for zone controller triggered by pod/egress IP events "+
+		"on node: %s, NAD: %s, active: %t", c.name, node, nadNamespacedName, active)
 
 	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
 	if err != nil {
@@ -315,16 +337,11 @@ func (c *nadController) OnNetworkRefChange(node, nadNamespacedName string, activ
 
 // filter should only be called if cm.filterNADsOnNode is set
 func (c *nadController) filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error) {
-	ownerRef := metav1.GetControllerOf(nad)
-	if ownerRef == nil {
+	if !nadRequiresDynamicFiltering(nad) {
 		return false, nil
 	}
 
 	ourNode := c.filterNADsOnNode
-
-	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
-		return false, nil
-	}
 
 	// we don't support multiple nodes per zone, assume zone name is node name
 	if c.nodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
@@ -631,6 +648,10 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 			return nil
 		}
 		nadNetworkName = nadNetwork.GetNetworkName()
+		if c.dynamicFilterNADs == nil {
+			c.dynamicFilterNADs = map[string]bool{}
+		}
+		c.dynamicFilterNADs[key] = nadRequiresDynamicFiltering(nad)
 	}
 
 	defer func() {
@@ -724,6 +745,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 			}
 			networkName := previousNetworkName
 			delete(c.nads, key)
+			delete(c.dynamicFilterNADs, key)
 			if networkName != "" {
 				c.deleteNADFromNetworkLocked(networkName, key)
 			}

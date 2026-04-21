@@ -926,7 +926,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Default.Zone = testICZone
+			config.Default.Zone = nodeName
 			config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
 
 			// Basic UDN setup
@@ -934,6 +934,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			n := newUDNNamespace(ns)
 			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netInfo.netconf())
 			Expect(err).NotTo(HaveOccurred())
+			nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef("dynamic-cudn")}
 
 			// Local node and remote node with NAD
 			localNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
@@ -1079,7 +1080,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.Default.Zone = testICZone
+			config.Default.Zone = nodeName
 
 			netInfo := dummyLayer2PrimaryUserDefinedNetwork("100.200.0.0/16")
 			nsA := "namespace-a"
@@ -1421,6 +1422,9 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 		*netInfo.netconf(),
 	)
 	Expect(err).NotTo(HaveOccurred())
+	if netInfo.isPrimary && config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef("dynamic-cudn")}
+	}
 
 	n := testing.NewNamespace(ns)
 	if netInfo.isPrimary {
@@ -1528,7 +1532,7 @@ func setupConfig(netInfo userDefinedNetInfo, testConfig testConfiguration, gatew
 		config.IPv4Mode = false
 	}
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		config.Default.Zone = testICZone
+		config.Default.Zone = nodeName
 	}
 }
 

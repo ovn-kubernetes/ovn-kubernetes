@@ -69,7 +69,6 @@ const (
 	fakeUUIDv6                  = "8a86f6d8-7972-4253-b0bd-ddbef66e9304"
 	fakePgUUID                  = "bf02f460-5058-4689-8fcb-d31a1e484ed2"
 	ovnClusterPortGroupUUID     = fakePgUUID
-	testICZone                  = "test"
 	coppUUID                    = "copp-UUID"
 )
 
