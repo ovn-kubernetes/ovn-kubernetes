@@ -397,7 +397,7 @@ func setOVSFlowTargets(node *corev1.Node) error {
 
 // validateEncapIP returns false if there is an error or if the given IP is not known local IP address.
 func validateEncapIP(encapIP string) (bool, error) {
-	links, err := netlink.LinkList()
+	links, err := util.GetNetLinkOps().LinkList()
 	if err != nil {
 		return false, fmt.Errorf("failed to get all the links on the node: %v", err)
 	}

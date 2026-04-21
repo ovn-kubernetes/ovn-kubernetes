@@ -550,7 +550,7 @@ func (c *addressManager) sync() {
 	var addrs []netlink.Addr
 
 	if c.useNetlink {
-		links, err := netlink.LinkList()
+		links, err := util.GetNetLinkOps().LinkList()
 		if err != nil {
 			klog.Errorf("Failed sync due to being unable to list links: %v", err)
 			return
