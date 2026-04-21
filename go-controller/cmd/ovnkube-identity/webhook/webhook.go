@@ -23,11 +23,13 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/csrapprover"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovnwebhook"
+	ovntls "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tls"
 )
 
 var logger = klog.NewKlogr()
@@ -83,7 +85,9 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 		informerFactory := informers.NewSharedInformerFactory(client, 10*time.Minute)
 		nodeInformer := informerFactory.Core().V1().Nodes().Informer()
 		informerFactory.Start(stopCh)
+
 		klog.Infof("Waiting for caches to sync")
+
 		cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced)
 
 		nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
@@ -91,6 +95,7 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 			scheme.Scheme,
 			ovnwebhook.NewPodAdmissionWebhook(nodeLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
 		).WithRecoverPanic(true)
+
 		podHandler, err := admission.StandaloneWebhook(
 			podWebhook,
 			admission.StandaloneOptions{
@@ -101,13 +106,26 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 		if err != nil {
 			return fmt.Errorf("failed to setup the pod admission webhook: %w", err)
 		}
+
 		webhookMux.Handle("/pod", podHandler)
 	}
 
-	cfg := &tls.Config{
-		NextProtos: []string{"h2"},
-		MinVersion: tls.VersionTLS10,
+	tlsClient, err := ctrlclient.New(restCfg, ctrlclient.Options{Scheme: ovntls.NewScheme()})
+	if err != nil {
+		return fmt.Errorf("error creating client: %w", err)
 	}
+
+	// Fetch TLS configuration from the cluster's API Server to honor the TLS security profile.
+	// This ensures the webhook server complies with cluster-wide TLS policies.
+	tlsProfile, err := ovntls.GetProfileFromAPIServer(ctx, tlsClient)
+	if err != nil {
+		return fmt.Errorf("failed to get TLS profile from API Server: %v", err)
+	}
+
+	cfg := tlsProfile.TLSConfig
+
+	// Set NextProtos for HTTP/2 support (required for webhooks)
+	cfg.NextProtos = []string{"h2"}
 
 	certPath := filepath.Join(config.CertDir, "tls.crt")
 	keyPath := filepath.Join(config.CertDir, "tls.key")
@@ -122,6 +140,13 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 			klog.Fatalf("Certificate watcher failed to start: %v", err)
 		}
 	}()
+
+	// Set up a watch for TLS profile changes and trigger graceful shutdown when one occurs.
+	err = ovntls.WatchProfileAndSignalOnChange(ctx, restCfg, tlsProfile, syscall.SIGINT)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS profile watch: %w", err)
+	}
+
 	srv := &http.Server{
 		Handler:           webhookMux,
 		IdleTimeout:       90 * time.Second,
@@ -144,6 +169,7 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to create the listener: %v", err)
 	}
+
 	listener := tls.NewListener(innerListener, cfg)
 
 	idleWebhookConnectionsClosed := make(chan struct{})
@@ -151,16 +177,21 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 		klog.Infof("Waiting for the webhook server to gracefully close")
 		<-idleWebhookConnectionsClosed
 	}()
+
 	go func() {
 		<-ctx.Done()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 		defer cancel()
+
 		if err := srv.Shutdown(ctx); err != nil {
 			klog.Errorf("Failed shutting down the HTTP server: %v", err)
 		}
+
 		close(idleWebhookConnectionsClosed)
 	}()
 
 	klog.Infof("Starting the webhook server")
+
 	return srv.Serve(listener)
 }
