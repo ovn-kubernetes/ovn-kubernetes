@@ -943,6 +943,9 @@ func (bnc *BaseNetworkController) recordNodeErrorEvent(node *corev1.Node, nodeEr
 		// TBD, noop for UDN for now
 		return
 	}
+	if types.IsSuppressedError(nodeErr) {
+		return
+	}
 	nodeRef, err := ref.GetReference(scheme.Scheme, node)
 	if err != nil {
 		klog.Errorf("Couldn't get a reference to node %s to post an event: %v", node.Name, err)
