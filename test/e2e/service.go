@@ -1084,14 +1084,6 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					if err != nil {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
-					providerCtx.AddCleanUpFn(func() error {
-						// manually add the a secondary IP to each node
-						_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", iproute2Proto, "addr", "del", cidr, "dev", deploymentconfig.Get().ExternalBridgeName()})
-						if err != nil {
-							return fmt.Errorf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
-						}
-						return nil
-					})
 					toCurlAddresses.Insert(ip)
 				}
 			}
