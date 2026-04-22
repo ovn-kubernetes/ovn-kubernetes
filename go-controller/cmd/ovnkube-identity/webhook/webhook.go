@@ -6,6 +6,7 @@ package webhook
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,7 +24,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
-	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
@@ -44,6 +45,10 @@ type Config struct {
 	CertDir                 string
 	Host                    string
 	Port                    int
+
+	// These fields are constructors used for creating client and are intended for testing.
+	NewGeneralClient    func(*rest.Config) (client.Client, error)
+	NewKubernetesClient func(*rest.Config) (kubernetes.Interface, error)
 }
 
 // Run starts the webhook server
@@ -53,7 +58,14 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	// The webhook server is set up and started in a very similar way to the default one:
 	// https://github.com/ovn-kubernetes/ovn-kubernetes/blob/7c0838bb46d6de202f509abe47609c8da09311b2/go-controller/vendor/sigs.k8s.io/controller-runtime/pkg/webhook/server.go#L212
 
-	client, err := kubernetes.NewForConfig(restCfg)
+	newKubernetesClient := config.NewKubernetesClient
+	if newKubernetesClient == nil {
+		newKubernetesClient = func(cfg *rest.Config) (kubernetes.Interface, error) {
+			return kubernetes.NewForConfig(cfg)
+		}
+	}
+
+	kubeClient, err := newKubernetesClient(restCfg)
 	if err != nil {
 		return fmt.Errorf("error creating clientset: %v", err)
 	}
@@ -82,7 +94,7 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 
 	// in non-ic ovnkube-node without additional conditions does not have the permissions to update pods
 	if config.EnableInterconnect || len(config.CSRAcceptanceConditions) > 1 {
-		informerFactory := informers.NewSharedInformerFactory(client, 10*time.Minute)
+		informerFactory := informers.NewSharedInformerFactory(kubeClient, 10*time.Minute)
 		nodeInformer := informerFactory.Core().V1().Nodes().Informer()
 		informerFactory.Start(stopCh)
 
@@ -110,9 +122,16 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 		webhookMux.Handle("/pod", podHandler)
 	}
 
-	tlsClient, err := ctrlclient.New(restCfg, ctrlclient.Options{Scheme: ovntls.NewScheme()})
+	newTLSClient := config.NewGeneralClient
+	if newTLSClient == nil {
+		newTLSClient = func(cfg *rest.Config) (client.Client, error) {
+			return client.New(cfg, client.Options{Scheme: ovntls.NewScheme()})
+		}
+	}
+
+	tlsClient, err := newTLSClient(restCfg)
 	if err != nil {
-		return fmt.Errorf("error creating client: %w", err)
+		return fmt.Errorf("error creating TLS client: %w", err)
 	}
 
 	// Fetch TLS configuration from the cluster's API Server to honor the TLS security profile.
@@ -193,5 +212,10 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 
 	klog.Infof("Starting the webhook server")
 
-	return srv.Serve(listener)
+	err = srv.Serve(listener)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("webhook server failed: %w", err)
+	}
+
+	return nil
 }
