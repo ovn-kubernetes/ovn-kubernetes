@@ -522,11 +522,29 @@ spec:
 					expectAccessFromDiffNode: true,
 				},
 				{
+					// ETP=Local on L2 UDN: cross-node access is expected to SUCCEED.
+					//
+					// On the default network and L3 UDN, externalTrafficPolicy=Local causes
+					// OVN to program per-node load balancers whose backend lists contain only
+					// endpoints local to that node. A NodePort request arriving at a node
+					// with no local backend hits an LB with an empty backend list and is
+					// dropped — this is the standard ETP=Local contract.
+					//
+					// On L2 UDN, the network is a flat Layer 2 broadcast domain spanning all
+					// nodes. There is no per-node endpoint scoping enforced at the datapath
+					// level, so NodePort traffic arriving at nodeB (which has no local
+					// backend) is still forwarded to the backend on nodeA. The ETP=Local
+					// policy is effectively not enforced.
+					//
+					// This test asserts the current (observed) L2 behavior. If/when OVN adds
+					// ETP=Local enforcement for L2 topologies, change expectAccessFromDiffNode
+					// to false so the negative assertion in the else branch fires.
+					// TODO: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/XXXX
 					name:                     "NodePort with ETP=Local",
 					serviceType:              v1.ServiceTypeNodePort,
 					externalTrafficPolicy:    v1.ServiceExternalTrafficPolicyLocal,
 					expectAccessFromSameNode: true,
-					expectAccessFromDiffNode: false,
+					expectAccessFromDiffNode: true,
 				},
 				{
 					name:                     "LoadBalancer",
@@ -587,13 +605,14 @@ spec:
 				case v1.ServiceTypeNodePort:
 					nodePort := int(svc.Spec.Ports[0].NodePort)
 
+					const ipv6NodePortL2UDNIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6285"
+
 					// Test from nodeA (where backend is located)
-					// Skip IPv6 NodePort tests - not supported for L2 UDN
 					nodeAIPs, err := ParseNodeHostIPDropNetMask(&nodes.Items[0])
 					Expect(err).NotTo(HaveOccurred())
 					for nodeAIP := range nodeAIPs {
 						if utilnet.IsIPv6String(nodeAIP) {
-							By(fmt.Sprintf("Skipping IPv6 NodePort test for %s (not supported for L2 UDN)", nodeAIP))
+							By(fmt.Sprintf("Skipping IPv6 NodePort test for %s (not supported for L2 UDN, see: %s)", nodeAIP, ipv6NodePortL2UDNIssue))
 							continue
 						}
 						By(fmt.Sprintf("Testing %s connectivity to NodePort %s:%d (nodeA)", tc.name, nodeAIP, nodePort))
@@ -607,12 +626,11 @@ spec:
 					}
 
 					// Test from nodeB (where no backend is located for ETP=Local)
-					// Skip IPv6 NodePort tests - not supported for L2 UDN
 					nodeBIPs, err := ParseNodeHostIPDropNetMask(&nodes.Items[1])
 					Expect(err).NotTo(HaveOccurred())
 					for nodeBIP := range nodeBIPs {
 						if utilnet.IsIPv6String(nodeBIP) {
-							By(fmt.Sprintf("Skipping IPv6 NodePort test for %s (not supported for L2 UDN)", nodeBIP))
+							By(fmt.Sprintf("Skipping IPv6 NodePort test for %s (not supported for L2 UDN, see: %s)", nodeBIP, ipv6NodePortL2UDNIssue))
 							continue
 						}
 						By(fmt.Sprintf("Testing %s connectivity to NodePort %s:%d (nodeB)", tc.name, nodeBIP, nodePort))
@@ -622,9 +640,6 @@ spec:
 							Eventually(func() error {
 								return connectToServer(clientPodConfigDiffNode, nodeBIP, uint16(nodePort))
 							}, 2*time.Minute, 5*time.Second).Should(Succeed())
-						} else if tc.externalTrafficPolicy == v1.ServiceExternalTrafficPolicyLocal {
-							// Skip ETP=Local "not accessible" check for L2 UDN - behavior differs from default network
-							By(fmt.Sprintf("Skipping ETP=Local 'not accessible' check for %s (L2 UDN behavior differs)", nodeBIP))
 						} else {
 							By(fmt.Sprintf("Verifying %s service is NOT accessible from nodeB IP %s", tc.name, nodeBIP))
 							Consistently(func() error {
@@ -650,7 +665,7 @@ spec:
 
 					if !lbAssigned {
 						By("Skipping LoadBalancer test - cluster does not have LoadBalancer support (no IP assigned within 30s)")
-						continue
+						break // break out of switch to reach the per-iteration service delete below
 					}
 
 					// Test all LoadBalancer ingress IPs (pods have addresses for all configured IP families)
@@ -939,21 +954,6 @@ func filterLoadBalancerIngressByIPFamily(f *framework.Framework, service *v1.Ser
 	return lbIngressIPs
 }
 
-// withStaticIPMAC sets static IP and MAC via annotations.
-// The ip parameter should be the IP address without CIDR suffix (e.g., "192.168.40.3").
-// The CIDR suffix "/24" is added automatically for IPv4.
-func withStaticIPMAC(ip, mac string) podOption {
-	ipWithCIDR := ip + "/24"
-	annotation := fmt.Sprintf(`[{"name":"default","namespace":"ovn-kubernetes","ips":["%s"],"mac":"%s"}]`, ipWithCIDR, mac)
-	return func(pod *podConfiguration) {
-		if pod.annotations == nil {
-			pod.annotations = make(map[string]string)
-		}
-		pod.annotations["v1.multus-cni.io/default-network"] = annotation
-		pod.staticIP = ip
-	}
-}
-
 // withStaticIPsMAC sets static IPs (IPv4 and/or IPv6) and MAC via annotations.
 // The ips parameter should be IP addresses without CIDR suffix.
 // CIDR suffix "/24" is added for IPv4, "/64" for IPv6.
@@ -967,7 +967,7 @@ func withStaticIPsMAC(ips []string, mac string) podOption {
 		}
 	}
 	ipsJSON := `"` + strings.Join(ipsWithCIDR, `","`) + `"`
-	annotation := fmt.Sprintf(`[{"name":"default","namespace":"ovn-kubernetes","ips":[%s],"mac":"%s"}]`, ipsJSON, mac)
+	annotation := fmt.Sprintf(`[{"name":"default","namespace":"%s","ips":[%s],"mac":"%s"}]`, deploymentconfig.Get().OVNKubernetesNamespace(), ipsJSON, mac)
 	return func(pod *podConfiguration) {
 		if pod.annotations == nil {
 			pod.annotations = make(map[string]string)
