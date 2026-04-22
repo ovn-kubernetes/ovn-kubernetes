@@ -332,8 +332,11 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			reservedIP1V4    = "192.168.40.4/32"
 			reservedIP2V4    = "192.168.40.5/32"
 			backendIPv4      = "192.168.40.6"
+			backendIPv4Rsvd  = backendIPv4 + "/32"
 			clientSameIPv4   = "192.168.40.7"
+			clientSameRsvdV4 = clientSameIPv4 + "/32"
 			clientDiffIPv4   = "192.168.40.8"
+			clientDiffRsvdV4 = clientDiffIPv4 + "/32"
 
 			// IPv6 configuration
 			l2SubnetV6       = "2001:db8:abcd:0012::/64"
@@ -341,8 +344,11 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			reservedIP1V6    = "2001:db8:abcd:0012::4/128"
 			reservedIP2V6    = "2001:db8:abcd:0012::5/128"
 			backendIPv6      = "2001:db8:abcd:0012::6"
+			backendIPv6Rsvd  = backendIPv6 + "/128"
 			clientSameIPv6   = "2001:db8:abcd:0012::7"
+			clientSameRsvdV6 = clientSameIPv6 + "/128"
 			clientDiffIPv6   = "2001:db8:abcd:0012::8"
+			clientDiffRsvdV6 = clientDiffIPv6 + "/128"
 		)
 
 		type serviceTestCase struct {
@@ -387,15 +393,18 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			if isDualStack {
 				By("1. Configuring dual-stack CUDN with IPv4 and IPv6 subnets")
 				subnets = fmt.Sprintf(`"%s", "%s"`, l2SubnetV4, l2SubnetV6)
-				reservedSubnets = fmt.Sprintf(`"%s", "%s", "%s", "%s"`, reservedIP1V4, reservedIP2V4, reservedIP1V6, reservedIP2V6)
+				reservedSubnets = fmt.Sprintf(`"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"`,
+					reservedIP1V4, reservedIP2V4, backendIPv4Rsvd, clientSameRsvdV4, clientDiffRsvdV4,
+					reservedIP1V6, reservedIP2V6, backendIPv6Rsvd, clientSameRsvdV6, clientDiffRsvdV6)
 				defaultGatewayIPs = fmt.Sprintf(`"%s", "%s"`, defaultGatewayV4, defaultGatewayV6)
 				backendIPs = []string{backendIPv4, backendIPv6}
 				clientSameIPs = []string{clientSameIPv4, clientSameIPv6}
 				clientDiffIPs = []string{clientDiffIPv4, clientDiffIPv6}
-			} else if isIPv6Primary {
+			} else if isIPv6Primary && !isDualStack {
 				By("1. Configuring IPv6-only CUDN")
 				subnets = fmt.Sprintf(`"%s"`, l2SubnetV6)
-				reservedSubnets = fmt.Sprintf(`"%s", "%s"`, reservedIP1V6, reservedIP2V6)
+				reservedSubnets = fmt.Sprintf(`"%s", "%s", "%s", "%s", "%s"`,
+					reservedIP1V6, reservedIP2V6, backendIPv6Rsvd, clientSameRsvdV6, clientDiffRsvdV6)
 				defaultGatewayIPs = fmt.Sprintf(`"%s"`, defaultGatewayV6)
 				backendIPs = []string{backendIPv6}
 				clientSameIPs = []string{clientSameIPv6}
@@ -403,7 +412,8 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			} else {
 				By("1. Configuring IPv4-only CUDN")
 				subnets = fmt.Sprintf(`"%s"`, l2SubnetV4)
-				reservedSubnets = fmt.Sprintf(`"%s", "%s"`, reservedIP1V4, reservedIP2V4)
+				reservedSubnets = fmt.Sprintf(`"%s", "%s", "%s", "%s", "%s"`,
+					reservedIP1V4, reservedIP2V4, backendIPv4Rsvd, clientSameRsvdV4, clientDiffRsvdV4)
 				defaultGatewayIPs = fmt.Sprintf(`"%s"`, defaultGatewayV4)
 				backendIPs = []string{backendIPv4}
 				clientSameIPs = []string{clientSameIPv4}
@@ -457,22 +467,14 @@ spec:
 			f.AddNamespacesToDelete(ns2)
 
 			By("4. Waiting for NAD to be created in namespaces")
-			Eventually(func() error {
-				_, err := nadClient.NetworkAttachmentDefinitions(namespaceA1).Get(
-					context.Background(),
-					cudnName,
-					metav1.GetOptions{},
-				)
-				return err
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
-			Eventually(func() error {
-				_, err := nadClient.NetworkAttachmentDefinitions(namespaceA2).Get(
-					context.Background(),
-					cudnName,
-					metav1.GetOptions{},
-				)
-				return err
-			}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			for _, ns := range []string{namespaceA1, namespaceA2} {
+				ns := ns
+				Eventually(func() error {
+					_, err := nadClient.NetworkAttachmentDefinitions(ns).Get(
+						context.Background(), cudnName, metav1.GetOptions{})
+					return err
+				}, 2*time.Minute, 5*time.Second).Should(Succeed())
+			}
 
 			By("5. Creating backend pod with static IP(s) in namespace a1 on nodeA")
 			backendPodConfig := *podConfig(
@@ -522,29 +524,16 @@ spec:
 					expectAccessFromDiffNode: true,
 				},
 				{
-					// ETP=Local on L2 UDN: cross-node access is expected to SUCCEED.
-					//
-					// On the default network and L3 UDN, externalTrafficPolicy=Local causes
-					// OVN to program per-node load balancers whose backend lists contain only
-					// endpoints local to that node. A NodePort request arriving at a node
-					// with no local backend hits an LB with an empty backend list and is
-					// dropped — this is the standard ETP=Local contract.
-					//
-					// On L2 UDN, the network is a flat Layer 2 broadcast domain spanning all
-					// nodes. There is no per-node endpoint scoping enforced at the datapath
-					// level, so NodePort traffic arriving at nodeB (which has no local
-					// backend) is still forwarded to the backend on nodeA. The ETP=Local
-					// policy is effectively not enforced.
-					//
-					// This test asserts the current (observed) L2 behavior. If/when OVN adds
-					// ETP=Local enforcement for L2 topologies, change expectAccessFromDiffNode
-					// to false so the negative assertion in the else branch fires.
-					// TODO: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/XXXX
+					// ETP=Local: NodePort on a node with no local backend should
+					// drop the traffic. The test sends from client on nodeA to
+					// nodeB's IP (cross-node path); nodeB has no local endpoint
+					// so the request is dropped. This confirms ETP=Local is
+					// enforced on L2 UDN.
 					name:                     "NodePort with ETP=Local",
 					serviceType:              v1.ServiceTypeNodePort,
 					externalTrafficPolicy:    v1.ServiceExternalTrafficPolicyLocal,
 					expectAccessFromSameNode: true,
-					expectAccessFromDiffNode: true,
+					expectAccessFromDiffNode: false,
 				},
 				{
 					name:                     "LoadBalancer",
@@ -607,7 +596,12 @@ spec:
 
 					const ipv6NodePortL2UDNIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6285"
 
-					// Test from nodeA (where backend is located)
+					// Both loops use clientPodConfigSameNode (on nodeA) so that
+					// the second loop exercises the true cross-node datapath:
+					// client on nodeA → nodeB IP. This is the path that
+					// distinguishes ETP=Local from ETP=Cluster.
+
+					// Test client on nodeA → nodeA IP (local NodePort)
 					nodeAIPs, err := ParseNodeHostIPDropNetMask(&nodes.Items[0])
 					Expect(err).NotTo(HaveOccurred())
 					for nodeAIP := range nodeAIPs {
@@ -618,14 +612,17 @@ spec:
 						By(fmt.Sprintf("Testing %s connectivity to NodePort %s:%d (nodeA)", tc.name, nodeAIP, nodePort))
 
 						if tc.expectAccessFromSameNode {
-							By(fmt.Sprintf("Verifying %s service is accessible from client on same node via %s", tc.name, nodeAIP))
+							By(fmt.Sprintf("Verifying %s service is accessible from client on nodeA via nodeA IP %s", tc.name, nodeAIP))
 							Eventually(func() error {
 								return connectToServer(clientPodConfigSameNode, nodeAIP, uint16(nodePort))
 							}, 2*time.Minute, 5*time.Second).Should(Succeed())
 						}
 					}
 
-					// Test from nodeB (where no backend is located for ETP=Local)
+					// Test client on nodeA → nodeB IP (cross-node NodePort)
+					// For ETP=Local, nodeB has no local backend so the request
+					// should be dropped on the default/L3 network. On L2 UDN
+					// the request still succeeds (see ETP=Local test case comment).
 					nodeBIPs, err := ParseNodeHostIPDropNetMask(&nodes.Items[1])
 					Expect(err).NotTo(HaveOccurred())
 					for nodeBIP := range nodeBIPs {
@@ -636,14 +633,14 @@ spec:
 						By(fmt.Sprintf("Testing %s connectivity to NodePort %s:%d (nodeB)", tc.name, nodeBIP, nodePort))
 
 						if tc.expectAccessFromDiffNode {
-							By(fmt.Sprintf("Verifying %s service is accessible from client on different node via %s", tc.name, nodeBIP))
+							By(fmt.Sprintf("Verifying %s service is accessible from client on nodeA via nodeB IP %s", tc.name, nodeBIP))
 							Eventually(func() error {
-								return connectToServer(clientPodConfigDiffNode, nodeBIP, uint16(nodePort))
+								return connectToServer(clientPodConfigSameNode, nodeBIP, uint16(nodePort))
 							}, 2*time.Minute, 5*time.Second).Should(Succeed())
 						} else {
-							By(fmt.Sprintf("Verifying %s service is NOT accessible from nodeB IP %s", tc.name, nodeBIP))
+							By(fmt.Sprintf("Verifying %s service is NOT accessible via nodeB IP %s", tc.name, nodeBIP))
 							Consistently(func() error {
-								return connectToServer(clientPodConfigDiffNode, nodeBIP, uint16(nodePort))
+								return connectToServer(clientPodConfigSameNode, nodeBIP, uint16(nodePort))
 							}, 10*time.Second, 2*time.Second).ShouldNot(Succeed())
 						}
 					}
@@ -973,9 +970,5 @@ func withStaticIPsMAC(ips []string, mac string) podOption {
 			pod.annotations = make(map[string]string)
 		}
 		pod.annotations["v1.multus-cni.io/default-network"] = annotation
-		// Store first IP as staticIP for backward compatibility
-		if len(ips) > 0 {
-			pod.staticIP = ips[0]
-		}
 	}
 }

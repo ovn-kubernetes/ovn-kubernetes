@@ -207,7 +207,6 @@ type podConfiguration struct {
 	hostNetwork            bool
 	ipRequestFromSubnet    string
 	usesExternalRouter     bool
-	staticIP               string // IP address without CIDR suffix, set by withStaticIPMAC
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
