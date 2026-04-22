@@ -563,6 +563,10 @@ spec:
 						Type: tc.serviceType,
 					},
 				}
+				if isDualStack {
+					policy := v1.IPFamilyPolicyPreferDualStack
+					svc.Spec.IPFamilyPolicy = &policy
+				}
 				if tc.serviceType == v1.ServiceTypeNodePort || tc.serviceType == v1.ServiceTypeLoadBalancer {
 					svc.Spec.ExternalTrafficPolicy = tc.externalTrafficPolicy
 				}
@@ -596,6 +600,14 @@ spec:
 
 					const ipv6NodePortL2UDNIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6285"
 
+					// On IPv6-only clusters, all node IPs are IPv6 and IPv6 NodePort
+					// is not supported for L2 UDN (see issue above). Skip the entire
+					// NodePort case to make the coverage gap explicit.
+					if isIPv6Primary && !isDualStack {
+						By(fmt.Sprintf("Skipping %s NodePort test entirely — IPv6-only cluster, not supported for L2 UDN (see: %s)", tc.name, ipv6NodePortL2UDNIssue))
+						break
+					}
+
 					// Both loops use clientPodConfigSameNode (on nodeA) so that
 					// the second loop exercises the true cross-node datapath:
 					// client on nodeA → nodeB IP. This is the path that
@@ -619,10 +631,10 @@ spec:
 						}
 					}
 
-					// Test client on nodeA → nodeB IP (cross-node NodePort)
+					// Test client on nodeA → nodeB IP (cross-node NodePort).
 					// For ETP=Local, nodeB has no local backend so the request
-					// should be dropped on the default/L3 network. On L2 UDN
-					// the request still succeeds (see ETP=Local test case comment).
+					// must be dropped; for ETP=Cluster it must succeed. This
+					// exercises the path that distinguishes Local from Cluster.
 					nodeBIPs, err := ParseNodeHostIPDropNetMask(&nodes.Items[1])
 					Expect(err).NotTo(HaveOccurred())
 					for nodeBIP := range nodeBIPs {
@@ -665,8 +677,10 @@ spec:
 						break // break out of switch to reach the per-iteration service delete below
 					}
 
-					// Test all LoadBalancer ingress IPs (pods have addresses for all configured IP families)
-					for _, lbIngress := range svc.Status.LoadBalancer.Ingress {
+					// Test all LoadBalancer ingress IPs (pods have addresses for all configured IP families).
+					// Use the shared filter to drop MetalLB-assigned ingress IPs of an unintended IP family
+					// on single-stack clusters (see filterLoadBalancerIngressByIPFamily).
+					for _, lbIngress := range filterLoadBalancerIngressByIPFamily(f, svc) {
 						lbIP := lbIngress.IP
 						if lbIP == "" {
 							continue
