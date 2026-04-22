@@ -13,11 +13,18 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// hasHostEndpoints determines if a slice of endpoints contains a host networked pod.
-func hasHostEndpoints(endpointIPs []string, netInfo util.NetInfo) bool {
-	for _, endpointIP := range endpointIPs {
-		if IsHostEndpoint(endpointIP, netInfo) {
-			return true
+// hasHostEndpoints determines if an LBEndpointsList contains at least one host networked endpoint.
+func hasHostEndpoints(lbes util.LBEndpointsList, netInfo util.NetInfo) bool {
+	for _, lbe := range lbes {
+		for _, endpointIP := range lbe.V4IPs {
+			if IsHostEndpoint(endpointIP, netInfo) {
+				return true
+			}
+		}
+		for _, endpointIP := range lbe.V6IPs {
+			if IsHostEndpoint(endpointIP, netInfo) {
+				return true
+			}
 		}
 	}
 	return false
