@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
@@ -788,10 +789,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
 			framework.ExpectNoError(err, "must get BGP network subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
-			var nodeIPv6LLA string
-			if isDualStackCluster(nodes) {
+			var frrIPv6LLA string
+			if isIPv6Supported(f.ClientSet) {
 				var err error
-				nodeIPv6LLA, err = GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
+				frrIPv6LLA, err = GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 			for _, node := range nodes.Items {
@@ -814,7 +815,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
-						return strings.Contains(routes, nodeIPv6LLA)
+						return strings.Contains(routes, frrIPv6LLA)
 					}, 30*time.Second).Should(gomega.BeTrue())
 				}
 			}
@@ -829,6 +830,66 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					} else {
 						ginkgo.Fail("unexpected topology: neither Layer3 nor Layer2 network spec is set")
 					}
+				}
+			}
+
+			layer2LocalGateway := cudnTemplate.Spec.Network.Layer2 != nil && IsGatewayModeLocal(f.ClientSet)
+			if layer2LocalGateway {
+				ginkgo.By("ensure CUDN VRF has a BGP-imported route to the external server CIDR")
+			} else {
+				ginkgo.By("ensure CUDN gateway router has a BGP-imported route to the external server CIDR")
+			}
+			for _, node := range nodes.Items {
+				nodeName := node.Name
+				for _, tc := range []struct {
+					cidr, nextHop string
+				}{
+					{externalServerV4CIDR, frrContainerIPv4},
+					{externalServerV6CIDR, frrIPv6LLA},
+				} {
+					if tc.cidr == "" || tc.nextHop == "" {
+						continue
+					}
+					isV6 := utilnet.IsIPv6CIDRString(tc.cidr)
+					if isV6 && !isIPv6Supported(f.ClientSet) {
+						continue
+					}
+					if !isV6 && !isIPv4Supported(f.ClientSet) {
+						continue
+					}
+					if layer2LocalGateway {
+						framework.Logf("Checking on node %s for CUDN VRF %s route to %s via %s", nodeName, cUDN.Name, tc.cidr, tc.nextHop)
+						gomega.Eventually(func() bool {
+							found, err := hasRouteInCUDNVRF(node, cUDN.Name, tc.cidr, tc.nextHop)
+							if err != nil {
+								framework.Logf("failed to check CUDN VRF route on node %s: %v", nodeName, err)
+								return false
+							}
+							return found
+						}, 60*time.Second, 5*time.Second).Should(gomega.BeTrue(),
+							"route for %s via %s not found in CUDN VRF %s on node %s",
+							tc.cidr, tc.nextHop, cUDN.Name, nodeName)
+						continue
+					}
+					// Assert the GR has a static-route line matching
+					// the CIDR and the expected next hop, that is the external FRR
+					// container IP.
+					gomega.Eventually(func() bool {
+						routes, err := cudnGRRoutesForNode(f.ClientSet, cUDN.Name, nodeName)
+						if err != nil {
+							framework.Logf("failed to list CUDN GR routes on node %s: %v", nodeName, err)
+							return false
+						}
+						framework.Logf("CUDN GR routes on node %s:\n%s", nodeName, routes)
+						for _, line := range strings.Split(routes, "\n") {
+							if strings.Contains(line, tc.cidr) && strings.Contains(line, tc.nextHop) {
+								return true
+							}
+						}
+						return false
+					}, 60*time.Second, 5*time.Second).Should(gomega.BeTrue(),
+						"CUDN %q GR on node %s is missing a route %s -> %s",
+						cUDN.Name, nodeName, tc.cidr, tc.nextHop)
 				}
 			}
 
@@ -3347,4 +3408,58 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		framework.Logf("Routes in FRR for %s: %s", podCIDR, routes)
 		return strings.Contains(routes, nodeIP[0])
 	}, 30*time.Second).Should(gomega.BeTrue(), "route for %s via %s not found on %s", podCIDR, nodeIP[0], routerContainerName)
+}
+
+func hasRouteInCUDNVRF(node corev1.Node, cudnName, cidr, nextHop string) (bool, error) {
+	if len(cudnName) > 15 {
+		return false, fmt.Errorf("CUDN name %q is too long to be used as the Linux VRF device name", cudnName)
+	}
+
+	routeCommand := []string{"ip", "--json", "route", "show", "vrf", cudnName, cidr}
+	if utilnet.IsIPv6CIDRString(cidr) {
+		routeCommand = []string{"ip", "-6", "--json", "route", "show", "vrf", cudnName, cidr}
+	}
+
+	out, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), routeCommand)
+	if err != nil {
+		return false, fmt.Errorf("failed to get routes from CUDN VRF %s on node %s: %w", cudnName, node.Name, err)
+	}
+	routes := []kernelRoute{}
+	if err := json.Unmarshal([]byte(out), &routes); err != nil {
+		return false, fmt.Errorf("failed to parse routes from CUDN VRF %s on node %s: %w; output: %s", cudnName, node.Name, err, out)
+	}
+	framework.Logf("Routes in CUDN VRF %s on node %s for %s: %s", cudnName, node.Name, cidr, out)
+	return hasBGPRoute(routes, cidr, nextHop), nil
+}
+
+type kernelRoute struct {
+	Dst      string               `json:"dst"`
+	Gateway  string               `json:"gateway"`
+	Protocol string               `json:"protocol"`
+	Nexthops []kernelRouteNexthop `json:"nexthops"`
+}
+
+type kernelRouteNexthop struct {
+	Gateway string `json:"gateway"`
+}
+
+func hasBGPRoute(routes []kernelRoute, cidr, nextHop string) bool {
+	for _, route := range routes {
+		if route.Dst == cidr && route.Protocol == "bgp" && routeHasGateway(route, nextHop) {
+			return true
+		}
+	}
+	return false
+}
+
+func routeHasGateway(route kernelRoute, nextHop string) bool {
+	if route.Gateway == nextHop {
+		return true
+	}
+	for _, nexthop := range route.Nexthops {
+		if nexthop.Gateway == nextHop {
+			return true
+		}
+	}
+	return false
 }
