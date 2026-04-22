@@ -1,3 +1,15 @@
+> **⚠️ The `./daemonset.sh` step in this guide is out of date.**
+>
+> OVN-Kubernetes no longer ships the Jinja2 manifest templates that
+> `daemonset.sh` renders — the supported install path is the Helm chart. The
+> prerequisite steps below (VM setup, `kubeadm init`, container runtime
+> install, etc.) are still accurate; only the section that invokes
+> `./daemonset.sh` to deploy OVN-Kubernetes itself is stale.
+>
+> To deploy OVN-Kubernetes on the cluster you've built with this guide, follow
+> [Launching OVN-Kubernetes with Helm](launching-ovn-kubernetes-with-helm.md)
+> instead of the `./daemonset.sh` section.
+
 The following is a walkthrough for an installation in an environment with 4 virtual machines, and a cluster deployed with `kubeadm`. This shall serve as a guide for people who are curious enough to deploy OVN-Kubernetes on a manually created cluster and to play around with the components. 
 
 Note that the resulting environment might be highly unstable.
