@@ -154,7 +154,7 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceOnStart(t *testing.T) {
 	g.Expect(wf.Start()).To(gomega.Succeed())
 	defer wf.Shutdown()
 	nm := &networkmanager.FakeNetworkManager{}
-	nm.SetNodeActive(node.Name, false)
+	nm.SetNodeActive(networkName, node.Name, false)
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
@@ -229,7 +229,7 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceAfterStart(t *testing.T) {
 	g.Expect(wf.Start()).To(gomega.Succeed())
 	defer wf.Shutdown()
 	nm := &networkmanager.FakeNetworkManager{}
-	nm.SetNodeActive(node.Name, true)
+	nm.SetNodeActive(networkName, node.Name, true)
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
@@ -251,7 +251,7 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceAfterStart(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(util.HasNodeHostSubnetAnnotation(updatedNode, networkName)).To(gomega.BeTrue())
 
-	nm.SetNodeActive(node.Name, false)
+	nm.SetNodeActive(networkName, node.Name, false)
 	ncc.HandleNetworkRefChange(node.Name, false)
 
 	g.Eventually(func() bool {
@@ -303,7 +303,7 @@ func TestHandleNetworkRefChangeAllocatesOnActivation(t *testing.T) {
 	g.Expect(wf.Start()).To(gomega.Succeed())
 	defer wf.Shutdown()
 	nm := &networkmanager.FakeNetworkManager{}
-	nm.SetNodeActive(node.Name, false)
+	nm.SetNodeActive(networkName, node.Name, false)
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
@@ -331,7 +331,7 @@ func TestHandleNetworkRefChangeAllocatesOnActivation(t *testing.T) {
 	}, time.Second, 50*time.Millisecond).Should(gomega.BeFalse())
 
 	// Activate and verify allocation occurs via retry framework.
-	nm.SetNodeActive(node.Name, true)
+	nm.SetNodeActive(networkName, node.Name, true)
 	ncc.HandleNetworkRefChange(node.Name, true)
 
 	g.Eventually(func() bool {
@@ -396,7 +396,7 @@ func TestReconcileNodeCleansUpOnNoHostSubnetTransition(t *testing.T) {
 	defer wf.Shutdown()
 
 	nm := &networkmanager.FakeNetworkManager{}
-	nm.SetNodeActive(newNode.Name, false)
+	nm.SetNodeActive(networkName, newNode.Name, false)
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
@@ -459,7 +459,7 @@ func TestReconcileNodeMarksNodeSyncFailedOnCleanupError(t *testing.T) {
 	defer wf.Shutdown()
 
 	nm := &networkmanager.FakeNetworkManager{}
-	nm.SetNodeActive(node.Name, false)
+	nm.SetNodeActive(networkName, node.Name, false)
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()

@@ -413,10 +413,12 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 			PrimaryNetworks: map[string]util.NetInfo{
 				namespace1.Name: activeNetwork,
 			},
-			ActiveNodes: map[string]bool{
-				"zone1": true,
-				"zone2": false,
-				"zone3": false,
+			ActiveNodes: map[string]map[string]bool{
+				activeNetwork.GetNetworkName(): {
+					"zone1": true,
+					"zone2": false,
+					"zone3": false,
+				},
 			},
 		}
 		startWithNetworkManager(zones, networkManager, namespace1, egressFirewall)
