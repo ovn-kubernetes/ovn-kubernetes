@@ -89,7 +89,7 @@ for crd in ${crds}; do
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/clientset \
     --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/clientset \
     --apply-configuration-package github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
-    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
+    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes,EgressIPTraffic:EgressIPTraffics" \
     "$@"
 
   echo "Generating listers for $crd ($api_version)"
@@ -97,7 +97,7 @@ for crd in ${crds}; do
     --go-header-file hack/boilerplate.go.txt \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/listers \
     --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
-    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
+    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes,EgressIPTraffic:EgressIPTraffics" \
     github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
@@ -108,7 +108,7 @@ for crd in ${crds}; do
     --listers-package  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/informers \
     --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/informers \
-    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
+    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes,EgressIPTraffic:EgressIPTraffics" \
     github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
@@ -134,6 +134,8 @@ echo "Copying egressFirewall CRD"
 cp _output/crds/k8s.ovn.org_egressfirewalls.yaml ../dist/templates/k8s.ovn.org_egressfirewalls.yaml.j2
 echo "Copying egressIP CRD"
 cp _output/crds/k8s.ovn.org_egressips.yaml ../dist/templates/k8s.ovn.org_egressips.yaml.j2
+echo "Copying egressIPTraffic CRD"
+cp _output/crds/k8s.ovn.org_egressiptraffics.yaml ../dist/templates/k8s.ovn.org_egressiptraffics.yaml.j2
 echo "Copying egressQoS CRD"
 cp _output/crds/k8s.ovn.org_egressqoses.yaml ../dist/templates/k8s.ovn.org_egressqoses.yaml.j2
 echo "Copying adminpolicybasedexternalroutes CRD"

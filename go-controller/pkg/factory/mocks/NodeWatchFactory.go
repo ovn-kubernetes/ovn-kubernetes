@@ -13,6 +13,8 @@ import (
 
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
 
+	egressiptrafficv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressiptraffic/v1/apis/informers/externalversions/egressiptraffic/v1"
+
 	factory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 
 	informerscorev1 "k8s.io/client-go/informers/core/v1"
@@ -241,6 +243,26 @@ func (_m *NodeWatchFactory) EgressIPInformer() egressipv1.EgressIPInformer {
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(egressipv1.EgressIPInformer)
+		}
+	}
+
+	return r0
+}
+
+// EgressIPTrafficInformer provides a mock function with no fields
+func (_m *NodeWatchFactory) EgressIPTrafficInformer() egressiptrafficv1.EgressIPTrafficInformer {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EgressIPTrafficInformer")
+	}
+
+	var r0 egressiptrafficv1.EgressIPTrafficInformer
+	if rf, ok := ret.Get(0).(func() egressiptrafficv1.EgressIPTrafficInformer); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(egressiptrafficv1.EgressIPTrafficInformer)
 		}
 	}
 

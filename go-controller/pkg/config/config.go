@@ -486,6 +486,8 @@ type OVNKubernetesFeatureConfig struct {
 	EnableAdminNetworkPolicy bool `gcfg:"enable-admin-network-policy"`
 	// EgressIP feature is enabled
 	EnableEgressIP bool `gcfg:"enable-egress-ip"`
+	// EgressIPTraffic feature is enabled (per-destination egress IP routing)
+	EnableEgressIPTraffic bool `gcfg:"enable-egress-iptraffic"`
 	// EgressIP node reachability total timeout in seconds
 	EgressIPReachabiltyTotalTimeout int  `gcfg:"egressip-reachability-total-timeout"`
 	EnableEgressFirewall            bool `gcfg:"enable-egress-firewall"`
@@ -1197,6 +1199,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Use EgressIP CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableEgressIP,
 		Value:       OVNKubernetesFeature.EnableEgressIP,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-egress-iptraffic",
+		Usage:       "Use EgressIPTraffic CRD feature with ovn-kubernetes for per-destination egress IP routing. Implies --enable-egress-ip.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableEgressIPTraffic,
+		Value:       OVNKubernetesFeature.EnableEgressIPTraffic,
 	},
 	&cli.IntFlag{
 		Name:        "egressip-reachability-total-timeout",
@@ -2301,6 +2309,10 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 	}
 	if OVNKubernetesFeature.EnableDynamicUDNAllocation && !OVNKubernetesFeature.EnableNetworkSegmentation {
 		return fmt.Errorf("the Dynamic UDN Allocation feature cannot be enabled without also enabling Network Segmentation")
+	}
+	if OVNKubernetesFeature.EnableEgressIPTraffic && !OVNKubernetesFeature.EnableEgressIP {
+		klog.Infof("EgressIPTraffic requires EgressIP, enabling EgressIP")
+		OVNKubernetesFeature.EnableEgressIP = true
 	}
 	return nil
 }

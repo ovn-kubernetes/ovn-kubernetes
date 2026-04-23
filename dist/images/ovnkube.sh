@@ -261,6 +261,8 @@ ovn_multicast_enable=${OVN_MULTICAST_ENABLE:-}
 ovn_admin_network_policy_enable=${OVN_ADMIN_NETWORK_POLICY_ENABLE:=false}
 #OVN_EGRESSIP_ENABLE - enable egress IP for ovn-kubernetes
 ovn_egressip_enable=${OVN_EGRESSIP_ENABLE:-false}
+#OVN_EGRESSIPTRAFFIC_ENABLE - enable egress IP traffic (per-destination egress IP routing)
+ovn_egressiptraffic_enable=${OVN_EGRESSIPTRAFFIC_ENABLE:-false}
 #OVN_EGRESSIP_HEALTHCHECK_PORT - egress IP node check to use grpc on this port
 ovn_egress_ip_healthcheck_port=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
 #OVN_EGRESSFIREWALL_ENABLE - enable egressFirewall for ovn-kubernetes
@@ -1358,6 +1360,11 @@ ovn-master() {
       egressip_enabled_flag="--enable-egress-ip"
   fi
 
+  egressiptraffic_enabled_flag=
+  if [[ ${ovn_egressiptraffic_enable} == "true" ]]; then
+      egressiptraffic_enabled_flag="--enable-egress-iptraffic"
+  fi
+
   egressip_healthcheck_port_flag=
   if [[ -n "${ovn_egress_ip_healthcheck_port}" ]]; then
       egressip_healthcheck_port_flag="--egressip-node-healthcheck-port=${ovn_egress_ip_healthcheck_port}"
@@ -1519,6 +1526,7 @@ ovn-master() {
     ${disable_snat_multiple_gws_flag} \
     ${egressfirewall_enabled_flag} \
     ${egressip_enabled_flag} \
+    ${egressiptraffic_enabled_flag} \
     ${egressip_healthcheck_port_flag} \
     ${egressqos_enabled_flag} \
     ${egressservice_enabled_flag} \
@@ -1696,6 +1704,12 @@ ovnkube-controller() {
       egressip_enabled_flag="--enable-egress-ip"
   fi
   echo "egressip_enabled_flag=${egressip_enabled_flag}"
+
+  egressiptraffic_enabled_flag=
+  if [[ ${ovn_egressiptraffic_enable} == "true" ]]; then
+      egressiptraffic_enabled_flag="--enable-egress-iptraffic"
+  fi
+  echo "egressiptraffic_enabled_flag=${egressiptraffic_enabled_flag}"
 
   egressip_healthcheck_port_flag=
   if [[ -n "${ovn_egress_ip_healthcheck_port}" ]]; then
@@ -1883,6 +1897,7 @@ ovnkube-controller() {
     ${disable_snat_multiple_gws_flag} \
     ${egressfirewall_enabled_flag} \
     ${egressip_enabled_flag} \
+    ${egressiptraffic_enabled_flag} \
     ${egressip_healthcheck_port_flag} \
     ${egressqos_enabled_flag} \
     ${egressservice_enabled_flag} \
@@ -2074,6 +2089,12 @@ ovnkube-controller-with-node() {
       egressip_enabled_flag="--enable-egress-ip"
   fi
   echo "egressip_enabled_flag=${egressip_enabled_flag}"
+
+  egressiptraffic_enabled_flag=
+  if [[ ${ovn_egressiptraffic_enable} == "true" ]]; then
+      egressiptraffic_enabled_flag="--enable-egress-iptraffic"
+  fi
+  echo "egressiptraffic_enabled_flag=${egressiptraffic_enabled_flag}"
 
   egressip_healthcheck_port_flag=
   if [[ -n "${ovn_egress_ip_healthcheck_port}" ]]; then
@@ -2410,6 +2431,7 @@ ovnkube-controller-with-node() {
     ${egressfirewall_enabled_flag} \
     ${egress_interface} \
     ${egressip_enabled_flag} \
+    ${egressiptraffic_enabled_flag} \
     ${egressip_healthcheck_port_flag} \
     ${egressqos_enabled_flag} \
     ${egressservice_enabled_flag} \
@@ -2507,6 +2529,11 @@ ovn-cluster-manager() {
   egressip_enabled_flag=
   if [[ ${ovn_egressip_enable} == "true" ]]; then
       egressip_enabled_flag="--enable-egress-ip"
+  fi
+
+  egressiptraffic_enabled_flag=
+  if [[ ${ovn_egressiptraffic_enable} == "true" ]]; then
+      egressiptraffic_enabled_flag="--enable-egress-iptraffic"
   fi
 
   egressip_healthcheck_port_flag=
@@ -2705,6 +2732,7 @@ ovn-cluster-manager() {
     ${anp_enabled_flag} \
     ${egressfirewall_enabled_flag} \
     ${egressip_enabled_flag} \
+    ${egressiptraffic_enabled_flag} \
     ${egressip_healthcheck_port_flag} \
     ${egressqos_enabled_flag} \
     ${egressservice_enabled_flag} \
@@ -2870,6 +2898,11 @@ ovn-node() {
   egressip_enabled_flag=
   if [[ ${ovn_egressip_enable} == "true" ]]; then
       egressip_enabled_flag="--enable-egress-ip"
+  fi
+
+  egressiptraffic_enabled_flag=
+  if [[ ${ovn_egressiptraffic_enable} == "true" ]]; then
+      egressiptraffic_enabled_flag="--enable-egress-iptraffic"
   fi
 
   egressip_healthcheck_port_flag=
@@ -3128,6 +3161,7 @@ ovn-node() {
         ${disable_snat_multiple_gws_flag} \
         ${egress_interface} \
         ${egressip_enabled_flag} \
+        ${egressiptraffic_enabled_flag} \
         ${egressip_healthcheck_port_flag} \
         ${egressservice_enabled_flag} \
         ${enable_lflow_cache} \

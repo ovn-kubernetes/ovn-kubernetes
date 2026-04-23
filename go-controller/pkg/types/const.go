@@ -133,7 +133,8 @@ const (
 	HybridOverlayReroutePriority          = 501
 	DefaultNoRereoutePriority             = 102
 	EgressSVCReroutePriority              = 101
-	EgressIPReroutePriority               = 100
+	EgressIPTrafficReroutePriority        = 100 // higher priority for trafficSelector EgressIPs with destination-specific matches
+	EgressIPReroutePriority               = 99
 	EgressIPRerouteQoSRulePriority        = 103
 	NetworkConnectPolicyPriority          = 9001
 	// priority of logical router policies on a nodes gateway router

@@ -271,6 +271,9 @@ while [ "$1" != "" ]; do
   --egress-ip-enable)
     OVN_EGRESSIP_ENABLE=$VALUE
     ;;
+  --egress-iptraffic-enable)
+    OVN_EGRESSIPTRAFFIC_ENABLE=$VALUE
+    ;;
   --egress-ip-healthcheck-port)
     OVN_EGRESSIP_HEALTHCHECK_PORT=$VALUE
     ;;
@@ -530,6 +533,8 @@ ovn_admin_network_policy_enable=${OVN_ADMIN_NETWORK_POLICY_ENABLE}
 echo "ovn_admin_network_policy_enable: ${ovn_admin_network_policy_enable}"
 ovn_egress_ip_enable=${OVN_EGRESSIP_ENABLE}
 echo "ovn_egress_ip_enable: ${ovn_egress_ip_enable}"
+ovn_egress_iptraffic_enable=${OVN_EGRESSIPTRAFFIC_ENABLE}
+echo "ovn_egress_iptraffic_enable: ${ovn_egress_iptraffic_enable}"
 ovn_egress_ip_healthcheck_port=${OVN_EGRESSIP_HEALTHCHECK_PORT}
 echo "ovn_egress_ip_healthcheck_port: ${ovn_egress_ip_healthcheck_port}"
 ovn_egress_firewall_enable=${OVN_EGRESSFIREWALL_ENABLE}
@@ -713,6 +718,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_multi_network_enable=${ovn_multi_network_enable} \
   ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
@@ -775,6 +781,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_multi_network_enable=${ovn_multi_network_enable} \
   ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
@@ -838,6 +845,7 @@ ovn_image=${image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_netflow_targets=${ovn_netflow_targets} \
@@ -887,6 +895,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_firewall_enable=${ovn_egress_firewall_enable} \
   ovn_egress_qos_enable=${ovn_egress_qos_enable} \
@@ -946,6 +955,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_firewall_enable=${ovn_egress_firewall_enable} \
   ovn_egress_qos_enable=${ovn_egress_qos_enable} \
@@ -1038,6 +1048,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_firewall_enable=${ovn_egress_firewall_enable} \
   ovn_egress_qos_enable=${ovn_egress_qos_enable} \
@@ -1138,6 +1149,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_firewall_enable=${ovn_egress_firewall_enable} \
   ovn_egress_qos_enable=${ovn_egress_qos_enable} \
@@ -1211,6 +1223,7 @@ ovn_image=${ovnkube_image} \
   ovn_multicast_enable=${ovn_multicast_enable} \
   ovn_admin_network_policy_enable=${ovn_admin_network_policy_enable} \
   ovn_egress_ip_enable=${ovn_egress_ip_enable} \
+  ovn_egress_iptraffic_enable=${ovn_egress_iptraffic_enable} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_egress_firewall_enable=${ovn_egress_firewall_enable} \
@@ -1351,6 +1364,7 @@ cp ../templates/rbac-ovnkube-db.yaml.j2 ${output_dir}/rbac-ovnkube-db.yaml
 cp ../templates/ovnkube-monitor.yaml.j2 ${output_dir}/ovnkube-monitor.yaml
 cp ../templates/k8s.ovn.org_egressfirewalls.yaml.j2 ${output_dir}/k8s.ovn.org_egressfirewalls.yaml
 cp ../templates/k8s.ovn.org_egressips.yaml.j2 ${output_dir}/k8s.ovn.org_egressips.yaml
+cp ../templates/k8s.ovn.org_egressiptraffics.yaml.j2 ${output_dir}/k8s.ovn.org_egressiptraffics.yaml
 cp ../templates/k8s.ovn.org_egressqoses.yaml.j2 ${output_dir}/k8s.ovn.org_egressqoses.yaml
 cp ../templates/k8s.ovn.org_egressservices.yaml.j2 ${output_dir}/k8s.ovn.org_egressservices.yaml
 cp ../templates/k8s.ovn.org_adminpolicybasedexternalroutes.yaml.j2 ${output_dir}/k8s.ovn.org_adminpolicybasedexternalroutes.yaml

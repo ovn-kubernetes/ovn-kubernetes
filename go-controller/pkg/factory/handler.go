@@ -28,6 +28,7 @@ import (
 	networkconnectlister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
 	egressfirewalllister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
 	egressiplister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
+	egressiptrafficlister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressiptraffic/v1/apis/listers/egressiptraffic/v1"
 	egressqoslister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
 	egressservicelister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
 	networkqoslister "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
@@ -495,6 +496,8 @@ func newInformerLister(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 		return anplister.NewBaselineAdminNetworkPolicyLister(sharedInformer.GetIndexer()), nil
 	case EgressIPType:
 		return egressiplister.NewEgressIPLister(sharedInformer.GetIndexer()), nil
+	case EgressIPTrafficType:
+		return egressiptrafficlister.NewEgressIPTrafficLister(sharedInformer.GetIndexer()), nil
 	case CloudPrivateIPConfigType:
 		return cloudprivateipconfiglister.NewCloudPrivateIPConfigLister(sharedInformer.GetIndexer()), nil
 	case EndpointSliceType:

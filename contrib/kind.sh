@@ -618,6 +618,7 @@ create_ovn_kube_manifests() {
     --ovnkube-config-duration-enable=true \
     --admin-network-policy-enable=true \
     --egress-ip-enable=true \
+    --egress-iptraffic-enable=true \
     --egress-ip-healthcheck-port="${OVN_EGRESSIP_HEALTHCHECK_PORT}" \
     --egress-firewall-enable=true \
     --egress-qos-enable=true \
@@ -698,6 +699,7 @@ install_ovn() {
 
   run_kubectl apply -f k8s.ovn.org_egressfirewalls.yaml
   run_kubectl apply -f k8s.ovn.org_egressips.yaml
+  run_kubectl apply -f k8s.ovn.org_egressiptraffics.yaml
   run_kubectl apply -f k8s.ovn.org_egressqoses.yaml
   run_kubectl apply -f k8s.ovn.org_egressservices.yaml
   run_kubectl apply -f k8s.ovn.org_adminpolicybasedexternalroutes.yaml

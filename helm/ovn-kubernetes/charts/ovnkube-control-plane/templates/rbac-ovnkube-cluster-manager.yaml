@@ -69,6 +69,7 @@ rules:
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - egressips
+          - egressiptraffics
           - egressservices
           - adminpolicybasedexternalroutes
           - egressfirewalls
@@ -81,6 +82,7 @@ rules:
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - egressips
+          - egressiptraffics
           - egressservices/status
           - networkqoses/status
           - userdefinednetworks

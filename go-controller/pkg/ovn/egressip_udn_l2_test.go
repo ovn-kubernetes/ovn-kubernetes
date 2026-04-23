@@ -339,7 +339,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP, v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),
@@ -726,7 +726,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP, v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),
@@ -895,7 +895,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),
@@ -1250,7 +1250,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP, v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),
@@ -1772,7 +1772,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP, v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDN.Namespace, egressPodCDN.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDN.Namespace, egressPodCDN.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID",
 						LogicalIP:   podV4IP,
@@ -2136,7 +2136,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP, v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDN.Namespace, egressPodCDN.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDN.Namespace, egressPodCDN.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.NAT{
 						UUID:        "egressip-nat-UUID",
 						LogicalIP:   podV4IP,
@@ -2507,7 +2507,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP, v4Node2Tsp},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),
@@ -2882,7 +2882,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					// CDN
 					getReRouteStaticRoute(v4ClusterSubnet, node1DefaultRtoJIP),
 					getReRoutePolicy(podV4IP, "4", "reroute-UUID", []string{node1DefaultRtoJIP},
-						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNLocal.Namespace, egressPodCDNLocal.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName, ovntypes.EgressIPReroutePriority).GetExternalIDs()),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
 						Match:       fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4ClusterSubnet, v4ClusterSubnet),

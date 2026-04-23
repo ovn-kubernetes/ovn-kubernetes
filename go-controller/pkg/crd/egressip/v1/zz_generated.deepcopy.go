@@ -81,6 +81,7 @@ func (in *EgressIPSpec) DeepCopyInto(out *EgressIPSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	in.TrafficSelector.DeepCopyInto(&out.TrafficSelector)
 	in.NamespaceSelector.DeepCopyInto(&out.NamespaceSelector)
 	in.PodSelector.DeepCopyInto(&out.PodSelector)
 	return
