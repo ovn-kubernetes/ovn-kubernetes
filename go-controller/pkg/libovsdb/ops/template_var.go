@@ -54,13 +54,16 @@ func deleteChassisTemplateVarVariablesOps(nbClient libovsdbclient.Client,
 		deleteTemplate.Variables[name] = ""
 	}
 	modelClient := newModelClient(nbClient)
-	return modelClient.DeleteOps(ops, operationModel{
+	opModel := operationModel{
 		Model:            deleteTemplate,
-		ModelPredicate:   predicate,
 		OnModelMutations: []interface{}{&deleteTemplate.Variables},
 		ErrNotFound:      false,
 		BulkOp:           true,
-	})
+	}
+	if predicate != nil {
+		opModel.ModelPredicate = predicate
+	}
+	return modelClient.DeleteOps(ops, opModel)
 }
 
 // DeleteChassisTemplateVarVariablesOps removes all variables listed as
