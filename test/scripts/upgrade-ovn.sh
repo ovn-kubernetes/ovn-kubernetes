@@ -29,9 +29,8 @@ done
 # reaches zero, so waiting on that jsonpath never matches. Wait for the pods
 # themselves to be deleted using each Deployment's own selector.
 for d in "${!SAVED_REPLICAS[@]}"; do
-  selector=$(kubectl -n ovn-kubernetes get deployment "$d" \
-    -o=jsonpath='{range .spec.selector.matchLabels}{@}{end}' \
-    | jq -r 'to_entries | map("\(.key)=\(.value)") | join(",")' 2>/dev/null) || selector=""
+  selector=$(kubectl -n ovn-kubernetes get deployment "$d" -o json \
+    | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")' 2>/dev/null) || selector=""
   if [[ -n "$selector" ]]; then
     kubectl -n ovn-kubernetes wait pod -l "$selector" \
       --for=delete --timeout=120s || true

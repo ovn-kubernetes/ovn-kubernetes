@@ -332,7 +332,7 @@ parse_args() {
             -lr | --local-kind-registry )         KIND_LOCAL_REGISTRY=true
                                                   ;;
             -ep | --experimental-provider )       shift
-                                                  KIND_EXPERIMENTAL_PROVIDER=$1
+                                                  export KIND_EXPERIMENTAL_PROVIDER="$1"
                                                   ;;
             -h | --help )                         usage
                                                   exit
@@ -535,6 +535,12 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
           --set global.image.repository=${OVN_IMAGE%:*} \
           --set global.image.tag=${OVN_IMAGE##*:} \
+          --set-string global.v4JoinSubnet="${JOIN_SUBNET_IPV4}" \
+          --set-string global.v6JoinSubnet="${JOIN_SUBNET_IPV6}" \
+          --set-string global.v4MasqueradeSubnet="${MASQUERADE_SUBNET_IPV4}" \
+          --set-string global.v6MasqueradeSubnet="${MASQUERADE_SUBNET_IPV6}" \
+          --set-string global.v4TransitSubnet="${TRANSIT_SUBNET_IPV4}" \
+          --set-string global.v6TransitSubnet="${TRANSIT_SUBNET_IPV6}" \
           --set global.enableAdminNetworkPolicy=true \
           --set global.enableMultiExternalGateway=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -574,6 +580,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set global.disablePacketMtuCheck=$(if [ "${OVN_DISABLE_PKT_MTU_CHECK}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableIpsec=$(if [ "${ENABLE_IPSEC}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set tags.ovn-ipsec=$(if [ "${ENABLE_IPSEC}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableOvnKubeIdentity=$(if [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set tags.ovnkube-identity=$(if [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMetricsScale=$(if [ "${OVN_METRICS_SCALE_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           $( [ -n "${OVN_EGRESSIP_HEALTHCHECK_PORT}" ] && echo "--set global.egressIpHealthCheckPort=${OVN_EGRESSIP_HEALTHCHECK_PORT}" ) \
@@ -638,31 +645,31 @@ if [ "$KIND_CREATE" == true ]; then
   if [ "$ENABLE_COREDUMPS" == true ]; then
     setup_coredumps
   fi
-  # when kind-helm.sh is run from inside a container, rewrite the kubeconfig API URL
-  # to the control-plane container's IP (127.0.0.1 is not reachable across containers).
-  if [ "$RUN_IN_CONTAINER" == true ]; then
-    run_script_in_container
+  if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
+    connect_local_registry
   fi
-  # when using a non-default cluster name, fix up the context/cluster/user names in kubeconfig
-  if [ "$KIND_CLUSTER_NAME" != "ovn" ]; then
-    fixup_kubeconfig_names
+  docker_disable_ipv6
+  if [ "$OVN_SECOND_BRIDGE" == true ]; then
+    docker_create_second_interface
+  fi
+  coredns_patch
+  if [ "$OVN_ISOLATED" == true ]; then
+    remove_default_route
+    add_dns_hostnames
   fi
 fi
-if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
-  connect_local_registry
+# when kind-helm.sh is run from inside a container, rewrite the kubeconfig API URL
+# to the control-plane container's IP (127.0.0.1 is not reachable across containers).
+if [ "$RUN_IN_CONTAINER" == true ]; then
+  run_script_in_container
+fi
+# when using a non-default cluster name, fix up the context/cluster/user names in kubeconfig
+if [ "$KIND_CLUSTER_NAME" != "ovn" ]; then
+  fixup_kubeconfig_names
 fi
 build_ovn_image
 detect_apiserver_url
 install_ovn_image
-if [ "$OVN_SECOND_BRIDGE" == true ]; then
-  docker_create_second_interface
-fi
-docker_disable_ipv6
-coredns_patch
-if [ "$OVN_ISOLATED" == true ]; then
-  remove_default_route
-  add_dns_hostnames
-fi
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     build_dnsnameresolver_images
     install_dnsnameresolver_images

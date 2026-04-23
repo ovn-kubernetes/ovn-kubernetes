@@ -1914,7 +1914,8 @@ install_ipsec() {
   ${OPENSSL} genrsa -out ca-bundle.key 4096
   ${OPENSSL} req -x509 -new -nodes -key ca-bundle.key -sha256 -days 10240 -out ca-bundle.crt \
       -subj "/C=CA/ST=Arctica/L=Northpole/O=Acme Inc/OU=DevOps/CN=www.example.com/emailAddress=dev@www.example.com"
-  kubectl create configmap -n ovn-kubernetes signer-ca --from-file ca-bundle.crt
+  kubectl create configmap -n ovn-kubernetes signer-ca --from-file ca-bundle.crt \
+      --dry-run=client -o yaml | kubectl apply -f -
 
   # For ca. 5 minutes max (60 * 5 seconds + overhead) ...
   success=false
@@ -1952,12 +1953,13 @@ install_ipsec() {
 # and makes sure the control-plane node is reachable by substituting 127.0.0.1
 # with the control-plane container's IP.
 run_script_in_container() {
+  local master_ip
   if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
-    local master_ip=$("$OCI_BIN" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${KIND_CLUSTER_NAME}-control-plane" | head -n 1)
+    master_ip=$("$OCI_BIN" inspect -f '{{ (index .NetworkSettings.Networks "kind").IPAddress }}' "${KIND_CLUSTER_NAME}-control-plane")
     sed -i -- "s/server: .*/server: https:\/\/$master_ip:6443/g" "$KUBECONFIG"
   else
-    local master_ipv6=$("$OCI_BIN" inspect -f '{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}' "${KIND_CLUSTER_NAME}-control-plane" | head -n 1)
-    sed -i -- "s/server: .*/server: https:\/\/[$master_ipv6]:6443/g" "$KUBECONFIG"
+    master_ip=$("$OCI_BIN" inspect -f '{{ (index .NetworkSettings.Networks "kind").GlobalIPv6Address }}' "${KIND_CLUSTER_NAME}-control-plane")
+    sed -i -- "s/server: .*/server: https:\/\/[$master_ip]:6443/g" "$KUBECONFIG"
   fi
   chmod a+r "$KUBECONFIG"
 }
