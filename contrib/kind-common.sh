@@ -177,6 +177,9 @@ set_common_default_params() {
   fi
   OVN_DUMMY_GATEWAY_BRIDGE=${OVN_DUMMY_GATEWAY_BRIDGE:-false}
   OVN_GATEWAY_OPTS=${OVN_GATEWAY_OPTS:-""}
+  if [ "$OVN_ISOLATED" == true ]; then
+    OVN_GATEWAY_OPTS="--gateway-interface=eth0"
+  fi
   if [ "$OVN_DUMMY_GATEWAY_BRIDGE" == true ]; then
     OVN_GATEWAY_OPTS="--allow-no-uplink --gateway-interface=br-ex"
   fi

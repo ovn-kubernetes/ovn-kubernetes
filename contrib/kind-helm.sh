@@ -577,9 +577,9 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set tags.ovnkube-identity=$(if [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMetricsScale=$(if [ "${OVN_METRICS_SCALE_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           $( [ -n "${OVN_EGRESSIP_HEALTHCHECK_PORT}" ] && echo "--set global.egressIpHealthCheckPort=${OVN_EGRESSIP_HEALTHCHECK_PORT}" ) \
-          $( [ -n "${OVN_NETFLOW_TARGETS}" ] && echo "--set global.netFlowTargets=${OVN_NETFLOW_TARGETS}" ) \
-          $( [ -n "${OVN_SFLOW_TARGETS}" ] && echo "--set global.sflowTargets=${OVN_SFLOW_TARGETS}" ) \
-          $( [ -n "${OVN_IPFIX_TARGETS}" ] && echo "--set global.ipfixTargets=${OVN_IPFIX_TARGETS}" ) \
+          $( [ -n "${OVN_NETFLOW_TARGETS}" ] && echo "--set global.netFlowTargets=${OVN_NETFLOW_TARGETS//,/\\,}" ) \
+          $( [ -n "${OVN_SFLOW_TARGETS}" ] && echo "--set global.sflowTargets=${OVN_SFLOW_TARGETS//,/\\,}" ) \
+          $( [ -n "${OVN_IPFIX_TARGETS}" ] && echo "--set global.ipfixTargets=${OVN_IPFIX_TARGETS//,/\\,}" ) \
           $( [ -n "${OVN_IPFIX_SAMPLING}" ] && echo "--set global.ipfixSampling=${OVN_IPFIX_SAMPLING}" ) \
           $( [ -n "${OVN_IPFIX_CACHE_MAX_FLOWS}" ] && echo "--set global.ipfixCacheMaxFlows=${OVN_IPFIX_CACHE_MAX_FLOWS}" ) \
           $( [ -n "${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT}" ] && echo "--set global.ipfixCacheActiveTimeout=${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT}" ) \
