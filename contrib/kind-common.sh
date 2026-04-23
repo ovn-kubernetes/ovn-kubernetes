@@ -1493,6 +1493,38 @@ EOF
   fi
 
   kubectl apply -n frr-k8s-system -f receive_filtered.yaml
+
+  # DO NOT MERGE — issue #5952 diagnostic PR.
+  # Persist FRR debug flags by delivering them through frr-k8s's own
+  # rendering pipeline via the existing receive-all FRRConfiguration's
+  # spec.raw.rawConfig.  The directives below get appended to every
+  # rendered frr.conf, so they survive every frr-reload.py invocation
+  # (unlike vtysh-injected debug flags, which frr-reload.py would
+  # promptly strip on the next reload because they aren't in the
+  # rendered config).
+  #
+  # We raise the log-sink level on the file target to `debugging` AND
+  # enable the specific debug flags that help diagnose mp<N>-udn-vrf
+  # VRF_UNKNOWN wedge:
+  #   - log commands          — every config cmd bgpd processes (shows
+  #                             exactly what frr-reload.py emits)
+  #   - debug bgp zebra       — ZAPI traffic in bgpd (VRF_ADD / INTERFACE_*)
+  #   - debug zebra events    — zebra's own event handling
+  #
+  # We patch the existing receive-all CR (rather than creating a new
+  # FRRConfiguration) because every RouteAdvertisements in the BGP tests
+  # runs with `frrConfigurationSelector: {}` (matches every CR) and ovn-k's
+  # RA validator requires each selected FRRConfiguration to contribute a
+  # VRF-matched router with neighbors (controller.go:829, :930, :769).
+  # receive-all already has neighbors and passes validation; piggy-backing
+  # the raw config onto it avoids introducing a second CR that would
+  # need its own router/neighbor stanza.
+  #
+  # Priority 100 lands the raw block near the bottom of the rendered
+  # frr.conf so it doesn't collide with ovn-k-generated directives.
+  kubectl patch -n frr-k8s-system frrconfiguration receive-all \
+    --type=merge \
+    -p '{"spec":{"raw":{"priority":100,"rawConfig":"log file /etc/frr/frr.log debugging\nlog commands\ndebug bgp zebra\ndebug zebra events\n"}}}'
   popd || exit 1
 
   rm -rf "${FRR_TMP_DIR}"
