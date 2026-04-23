@@ -90,7 +90,7 @@ func (c *Controller) syncAdminNetworkPolicy(key string) error {
 	if err != nil {
 		// we can ignore the error if status update doesn't succeed; best effort
 		_ = c.updateANPStatusToNotReady(anp.Name, err.Error())
-		if !errors.Is(err, ErrorANPPriorityUnsupported) {
+		if errors.Is(err, ErrorANPPriorityUnsupported) {
 			// we don't want to retry for these specific errors since they
 			// need manual intervention from users to update their CRDs
 			return nil
