@@ -449,6 +449,88 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("Cleanup L2 primary UDN with IC discovers stale networks via tunnel ID annotation", func() {
+			app.Action = func(ctx *cli.Context) error {
+				nodes := []corev1.Node{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "node1",
+							Annotations: map[string]string{
+								"k8s.ovn.org/node-subnets":                                  "{\"default\":[\"10.244.0.0/24\"]}",
+								"k8s.ovn.org/network-ids":                                   "{\"default\":\"0\"}",
+								"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{\"l2-primary\":\"5\"}",
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "node2",
+							Annotations: map[string]string{
+								"k8s.ovn.org/node-subnets":                                  "{\"default\":[\"10.244.1.0/24\"]}",
+								"k8s.ovn.org/network-ids":                                   "{\"default\":\"0\"}",
+								"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{\"l2-primary\":\"6\"}",
+							},
+						},
+					},
+				}
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+					Items: nodes,
+				})
+				fakeClient := &util.OVNClusterManagerClientset{
+					KubeClient:            kubeFakeClient,
+					NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
+				}
+
+				gomega.Expect(initConfig(ctx, config.OVNKubernetesFeatureConfig{
+					EnableMultiNetwork: true,
+					EnableInterconnect: true,
+				})).To(gomega.Succeed())
+				var err error
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = f.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				checkTunnelIDsCleaned := func() error {
+					for _, n := range nodes {
+						updatedNode, err := f.GetNode(n.Name)
+						if err != nil {
+							return err
+						}
+						// default annotations should remain
+						_, err = util.ParseNodeHostSubnetAnnotation(updatedNode, ovntypes.DefaultNetworkName)
+						if err != nil {
+							return fmt.Errorf("default subnet annotation missing on node %s: %v", updatedNode.Name, err)
+						}
+						// l2-primary tunnel ID should be cleaned
+						if util.HasUDNLayer2NodeGRLRPTunnelID(updatedNode, "l2-primary") {
+							return fmt.Errorf("tunnel ID annotation for l2-primary still present on node %s", updatedNode.Name)
+						}
+					}
+					return nil
+				}
+
+				nodeController = newClusterManagerNodeController(f)
+
+				sncm, err := newUserDefinedNetworkClusterManager(fakeClient, f, networkmanager.Default().Interface(), recorder, nodeController)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// No valid networks passed — l2-primary should be detected as stale
+				// via tunnel ID annotation and cleaned up.
+				err = sncm.CleanupStaleNetworks()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				gomega.Eventually(checkTunnelIDsCleaned).ShouldNot(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		ginkgo.Context("persistent IP allocations", func() {
 			const (
 				claimName   = "claim1"
