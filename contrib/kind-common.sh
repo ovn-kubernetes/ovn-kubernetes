@@ -627,6 +627,23 @@ install_metallb() {
     'kind_path = os.path.join(build_path, "kind")' \
     'kind_path = "kind"'
 
+  # MetalLB v0.15.3 still pins its in-cluster FRR speaker containers to 10.4.1.
+  # Keep the pinned upstream string for patching, but replace the actual
+  # deployed image so CI exercises the same FRR build as the rest of our BGP
+  # setup and coredump debugging.
+  replace_in_file_or_exit \
+    config/frr/speaker-patch.yaml \
+    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${FRR_DEPLOYED_IMAGE}"
+  replace_in_file_or_exit \
+    config/manifests/metallb-frr.yaml \
+    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${FRR_DEPLOYED_IMAGE}"
+  replace_in_file_or_exit \
+    charts/metallb/values.yaml \
+    "tag: ${FRR_K8S_UPSTREAM_FRR_IMAGE##*:}" \
+    "tag: ${FRR_DEPLOYED_IMAGE##*:}"
+
   pip install -r dev-env/requirements.txt
 
   local ip_family ipv6_network
