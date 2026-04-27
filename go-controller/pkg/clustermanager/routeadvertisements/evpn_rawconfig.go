@@ -16,6 +16,7 @@ import (
 //	router bgp <asn>                    <- genGlobalEVPNSection
 //	 address-family l2vpn evpn
 //	  neighbor <ip> activate
+//	  neighbor <ip> allowas-in origin
 //	  advertise-all-vni
 //	  vni <id>                          <- (one per MAC-VRF with RT, section only added when MAC-VRF RT is set)
 //	   route-target import <rt>
@@ -74,6 +75,7 @@ exit-vrf
 //	router bgp <asn>
 //	 address-family l2vpn evpn
 //	  neighbor <ip> activate
+//	  neighbor <ip> allowas-in origin
 //	  advertise-all-vni
 //	  vni <id>                          <- (Section only added when MAC-VRF RT is set)
 //	   route-target import <rt>
@@ -90,6 +92,10 @@ func genGlobalEVPNSection(asn uint32, neighbors []string, macVRFs []*vrfConfig) 
 
 	for _, neighbor := range neighbors {
 		fmt.Fprintf(&buf, "  neighbor %s activate\n", neighbor)
+		// Needed for eBGP peers sharing our ASN; no-op for iBGP. Applied
+		// unconditionally because the peer type may be unknown (e.g.
+		// `remote-as auto`, not yet supported by frr-k8s but anticipated).
+		fmt.Fprintf(&buf, "  neighbor %s allowas-in origin\n", neighbor)
 	}
 	buf.WriteString("  advertise-all-vni\n")
 

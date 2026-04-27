@@ -1204,6 +1204,7 @@ func TestController_reconcile(t *testing.T) {
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
   vni 1000
    route-target import 65000:1000
@@ -1248,6 +1249,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
   vni 1000
    route-target import 65000:1000
@@ -1292,6 +1294,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1354,6 +1357,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1503,6 +1507,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
   vni 1000
    route-target import 65000:1000
@@ -1563,6 +1568,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1628,6 +1634,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor fd00::1 activate
+  neighbor fd00::1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1695,6 +1702,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
   vni 1000
    route-target import 65000:1000
@@ -1756,6 +1764,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1839,6 +1848,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1871,6 +1881,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -1942,6 +1953,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -2025,6 +2037,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -2057,6 +2070,7 @@ exit
 					RawConfig: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit

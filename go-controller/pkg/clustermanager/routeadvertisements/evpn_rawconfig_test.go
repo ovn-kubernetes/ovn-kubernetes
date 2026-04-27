@@ -27,6 +27,7 @@ func TestGenerateEVPNRawConfig(t *testing.T) {
 			want: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -45,6 +46,7 @@ exit
 			want: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
   vni 1000
    route-target import 65000:1000
@@ -71,6 +73,7 @@ exit
 			want: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -106,6 +109,7 @@ exit
 			want: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   advertise-all-vni
  exit-address-family
 exit
@@ -144,7 +148,9 @@ exit
 			want: `router bgp 65000
  address-family l2vpn evpn
   neighbor 192.168.1.1 activate
+  neighbor 192.168.1.1 allowas-in origin
   neighbor 192.168.1.2 activate
+  neighbor 192.168.1.2 allowas-in origin
   advertise-all-vni
   vni 1000
    route-target import 65000:1000
