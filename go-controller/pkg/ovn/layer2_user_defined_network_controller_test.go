@@ -1450,24 +1450,20 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 
 	objects = append(objects, extraObjects...)
 
+	if !config.OVNKubernetesFeature.EnableInterconnect {
+		// In non-IC unit tests, seed the default-network pod annotation before
+		// starting the informers to avoid a race where the UDN controller's
+		// WatchPods reads the pod from the informer cache before the cache
+		// reflects a post-startup Update, causing it to clobber the "default"
+		// annotation. IC tests set their own annotations on the pod directly.
+		defaultNetworkPodInfo := podInfo
+		defaultNetworkPodInfo.udnPodInfos = map[string]*udnPodInfo{}
+		setPodAnnotations(pod, defaultNetworkPodInfo)
+	}
+
 	fakeOvn.startWithDBSetup(initialDB, objects...)
 	podInfo.populateLogicalSwitchCache(fakeOvn)
 
-	// on IC, the test itself spits out the pod with the
-	// annotations set, since on production it would be the
-	// clustermanager to annotate the pod.
-	if !config.OVNKubernetesFeature.EnableInterconnect {
-		By("asserting the pod originally does *not* feature the OVN pod networks annotation")
-		// pod exists, networks annotations don't
-		pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podInfo.namespace).Get(context.Background(), podInfo.podName, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		_, ok := pod.Annotations[util.OvnPodAnnotationName]
-		if ok {
-			return fmt.Errorf("expected pod annotation %q", util.OvnPodAnnotationName)
-		}
-	}
 	if err = fakeOvn.networkManager.Start(); err != nil {
 		return err
 	}
@@ -1479,23 +1475,6 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	err = fullL2UDNController.init()
 	if err != nil {
 		return fmt.Errorf("failed to initialize %s controller: %w", userDefinedNetworkName, err)
-	}
-
-	if !config.OVNKubernetesFeature.EnableInterconnect {
-		// In non-IC unit tests, seed the default-network pod annotation directly.
-		// This helper only validates UDN topology in NBDB, so starting the default
-		// controller path here would add unrelated default-network objects. IC tests
-		// do not assert the full default annotation in this setup path.
-		pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podInfo.namespace).Get(context.Background(), podInfo.podName, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		defaultNetworkPodInfo := podInfo
-		defaultNetworkPodInfo.udnPodInfos = map[string]*udnPodInfo{}
-		setPodAnnotations(pod, defaultNetworkPodInfo)
-		if _, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
-			return err
-		}
 	}
 	By("asserting the pod (once reconciled) *features* the OVN pod networks annotation")
 	userDefinedNetController, doesControllerExist := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
