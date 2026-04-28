@@ -511,7 +511,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 					return nil
 				}
 
-				nodeController = newClusterManagerNodeController(f)
+				nodeController = nodecontroller.NewController(f, "clustermanager-node", networkmanager.Default().Interface())
 
 				sncm, err := newUserDefinedNetworkClusterManager(fakeClient, f, networkmanager.Default().Interface(), recorder, nodeController)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
