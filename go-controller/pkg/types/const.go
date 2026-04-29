@@ -128,6 +128,7 @@ const (
 	UDNHostCIDRPolicyPriority             = "99"
 	HybridOverlaySubnetPriority           = 1002
 	HybridOverlayReroutePriority          = 501
+	UDNEnabledServicePolicyPriority       = 400
 	DefaultNoRereoutePriority             = 102
 	EgressSVCReroutePriority              = 101
 	EgressIPReroutePriority               = 100

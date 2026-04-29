@@ -786,22 +786,32 @@ func (c *Controller) getServiceNamespacedNameFromEndpointSlice(endpointSlice *di
 
 func (c *Controller) cleanupUDNEnabledServiceRoute(key string) error {
 	klog.Infof("Removing UDN enabled service route for service %s in network: %s", key, c.netInfo.GetNetworkName())
-	delPredicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
+
+	routeDelPredicate := func(route *nbdb.LogicalRouterStaticRoute) bool {
 		return route.ExternalIDs[types.NetworkExternalID] == c.netInfo.GetNetworkName() &&
 			route.ExternalIDs[types.TopologyExternalID] == c.netInfo.TopologyType() &&
 			route.ExternalIDs[types.UDNEnabledServiceExternalID] == key
+	}
+	policyDelPredicate := func(policy *nbdb.LogicalRouterPolicy) bool {
+		return policy.ExternalIDs[types.NetworkExternalID] == c.netInfo.GetNetworkName() &&
+			policy.ExternalIDs[types.TopologyExternalID] == c.netInfo.TopologyType() &&
+			policy.ExternalIDs[types.UDNEnabledServiceExternalID] == key
 	}
 
 	var ops []ovsdb.Operation
 	var err error
 	if c.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
 		for _, node := range c.nodeInfos {
-			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, c.netInfo.GetNetworkScopedGWRouterName(node.name), delPredicate); err != nil {
+			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, c.netInfo.GetNetworkScopedGWRouterName(node.name), routeDelPredicate); err != nil {
 				return err
 			}
 		}
 	} else {
-		if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, c.netInfo.GetNetworkScopedClusterRouterName(), delPredicate); err != nil {
+		routerName := c.netInfo.GetNetworkScopedClusterRouterName()
+		if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, routerName, routeDelPredicate); err != nil {
+			return err
+		}
+		if ops, err = libovsdbops.DeleteLogicalRouterPolicyWithPredicateOps(c.nbClient, ops, routerName, policyDelPredicate); err != nil {
 			return err
 		}
 	}
@@ -817,6 +827,60 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) er
 		types.TopologyExternalID:          c.netInfo.TopologyType(),
 		types.UDNEnabledServiceExternalID: ktypes.NamespacedName{Namespace: service.Namespace, Name: service.Name}.String(),
 	}
+
+	useNodeLocalPolicy := util.ServiceInternalTrafficPolicyLocal(service) &&
+		(c.netInfo.TopologyType() != types.Layer2Topology || globalconfig.Layer2UsesTransitRouter)
+
+	if useNodeLocalPolicy {
+		return c.configureUDNEnabledServicePolicy(service, extIDs)
+	}
+	return c.configureUDNEnabledServiceStaticRoute(service, extIDs)
+}
+
+func (c *Controller) configureUDNEnabledServicePolicy(service *corev1.Service, extIDs map[string]string) error {
+	routerName := c.netInfo.GetNetworkScopedClusterRouterName()
+	l3Prefix := "ip4"
+	if utilnet.IsIPv6String(service.Spec.ClusterIP) {
+		l3Prefix = "ip6"
+	}
+
+	var ops []ovsdb.Operation
+	for _, nodeInfo := range c.nodeInfos {
+		mgmtIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6String(service.Spec.ClusterIP), nodeInfo.mgmtIPs)
+		if err != nil {
+			return err
+		}
+
+		match := fmt.Sprintf(`inport == "%s%s" && %s.dst == %s`,
+			types.RouterToSwitchPrefix,
+			nodeInfo.switchName,
+			l3Prefix,
+			service.Spec.ClusterIP)
+
+		policy := nbdb.LogicalRouterPolicy{
+			Priority:    types.UDNEnabledServicePolicyPriority,
+			Match:       match,
+			Action:      nbdb.LogicalRouterPolicyActionReroute,
+			Nexthops:    []string{mgmtIP.String()},
+			ExternalIDs: extIDs,
+		}
+
+		p := func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.Priority == policy.Priority && item.Match == policy.Match
+		}
+
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(c.nbClient, ops, routerName, &policy, p,
+			&policy.Nexthops, &policy.Action)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err := libovsdbops.TransactAndCheck(c.nbClient, ops)
+	return err
+}
+
+func (c *Controller) configureUDNEnabledServiceStaticRoute(service *corev1.Service, extIDs map[string]string) error {
 	routesEqual := func(a, b *nbdb.LogicalRouterStaticRoute) bool {
 		return a.IPPrefix == b.IPPrefix &&
 			a.ExternalIDs[types.NetworkExternalID] == b.ExternalIDs[types.NetworkExternalID] &&
@@ -842,7 +906,7 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) er
 		if c.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
 			routerName = nodeInfo.gatewayRouterName
 		}
-		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})
 		if err != nil {
