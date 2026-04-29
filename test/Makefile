@@ -13,12 +13,17 @@ DUALSTACK_CONVERSION?=false
 # Coredump detection settings
 # Directory where kind clusters store coredumps
 COREDUMP_DIR?=/tmp/kind/logs/coredumps
+# Processes to skip when checking for coredumps (pipe-separated for grep).
+# nft: nftables 1.0.6 (Debian 12 / current kind images) segfaults on
+# `nft list ruleset` used by the debug-5952 dumper. See
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5952.
+SKIPPED_COREDUMPS?=nft
 
-# Check for coredumps and fail if any are found
+# Check for coredumps and fail if any are found (excluding skipped processes)
 # Usage: $(call check-coredumps)
 define check-coredumps
 	@if [ -d "$(COREDUMP_DIR)" ]; then \
-		coredumps=$$(find "$(COREDUMP_DIR)" -maxdepth 1 -type f 2>/dev/null); \
+		coredumps=$$(find "$(COREDUMP_DIR)" -maxdepth 1 -type f 2>/dev/null | grep -v -E '$(SKIPPED_COREDUMPS)' || true); \
 		if [ -n "$$coredumps" ]; then \
 			echo "ERROR: Coredumps found:"; \
 			echo "$$coredumps"; \

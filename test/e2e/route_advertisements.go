@@ -643,9 +643,26 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 	var frrContainerIPv4, frrContainerIPv6 string
 	var nodes *corev1.NodeList
 	var clientPod *corev1.Pod
+	// cUDNName captures the CUDN name for the debug-5952 dumper
+	// (see route_advertisements_debug.go). Set inside the DescribeTable body.
+	var cUDNName string
 
 	f := wrappedTestFramework("pod2external-route-advertisements")
 	f.SkipNamespaceCreation = true
+
+	// Diagnostic dump on failure — see issue #5952.
+	ginkgo.JustAfterEach(func() {
+		var nodeList []corev1.Node
+		if nodes != nil {
+			nodeList = nodes.Items
+		}
+		var clientPodName, clientPodNS string
+		if clientPod != nil {
+			clientPodName = clientPod.Name
+			clientPodNS = clientPod.Namespace
+		}
+		dumpNoOverlayDebug(f, nodeList, cUDNName, clientPodName, clientPodNS)
+	})
 
 	ginkgo.BeforeEach(func() {
 		var err error
@@ -707,6 +724,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			}
 			cUDN, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudnTemplate, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			cUDNName = cUDN.Name
 			ginkgo.DeferCleanup(func() {
 				udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), cUDN.Name, metav1.DeleteOptions{})
 			})

@@ -1169,6 +1169,12 @@ func wrappedTestFramework(basename string) *framework.Framework {
 		logLocation := "/var/log"
 		coredumpDir := "/tmp/kind/logs/coredumps"
 		dbLocation := "/var/lib/openvswitch"
+		// nft: nftables 1.0.6 (shipped in Debian 12 / current kind images)
+		// reliably segfaults on `nft list ruleset` and family-level
+		// enumerations used by the debug-5952 dumper. See
+		// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5952.
+		skippedCoredumps := []string{"nft"}
+
 		// Check for coredumps on host
 		var coredumpFiles []string
 		files, err := os.ReadDir(coredumpDir)
@@ -1177,7 +1183,14 @@ func wrappedTestFramework(basename string) *framework.Framework {
 				if file.IsDir() {
 					continue
 				}
-				coredumpFiles = append(coredumpFiles, file.Name())
+				fileName := file.Name()
+				if slices.ContainsFunc(skippedCoredumps, func(s string) bool {
+					return strings.Contains(fileName, s)
+				}) {
+					framework.Logf("Ignoring coredump for skipped process: %s", fileName)
+					continue
+				}
+				coredumpFiles = append(coredumpFiles, fileName)
 			}
 		}
 
