@@ -58,6 +58,7 @@ type NetLinkOps interface {
 	RouteAdd(route *netlink.Route) error
 	RouteReplace(route *netlink.Route) error
 	RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
+	RuleList(family int) ([]netlink.Rule, error)
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
 	RuleAdd(rule *netlink.Rule) error
 	RuleDel(rule *netlink.Rule) error
@@ -405,7 +406,7 @@ func (defaultNetLinkOps) LinkGetProtinfo(link netlink.Link) (netlink.Protinfo, e
 	return h.LinkGetProtinfo(link)
 }
 
-func RuleList(family int) ([]netlink.Rule, error) {
+func (defaultNetLinkOps) RuleList(family int) ([]netlink.Rule, error) {
 	h, err := newNetlinkHandle(unix.NETLINK_ROUTE)
 	if err != nil {
 		return nil, err
@@ -430,6 +431,10 @@ func LinkByName(interfaceName string) (netlink.Link, error) {
 		return nil, fmt.Errorf("failed to lookup link %s: %w", interfaceName, err)
 	}
 	return link, nil
+}
+
+func RuleList(family int) ([]netlink.Rule, error) {
+	return netLinkOps.RuleList(family)
 }
 
 // LinkSetUp returns the netlink device with its state marked up
