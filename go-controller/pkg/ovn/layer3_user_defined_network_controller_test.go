@@ -2118,7 +2118,7 @@ func nodePhysicalIPAddress() *net.IPNet {
 func udnGWSNATAddress() *net.IPNet {
 	return &net.IPNet{
 		IP:   net.ParseIP("169.254.169.13"),
-		Mask: net.CIDRMask(24, 32),
+		Mask: net.CIDRMask(32, 32),
 	}
 }
 
@@ -2168,9 +2168,7 @@ func expectedExternalSwitchAndLSPs(netInfo util.NetInfo, gwConfig util.L3Gateway
 
 func externalSwitchRouterPortOptions(gatewayRouterName string) map[string]string {
 	return map[string]string{
-		"nat-addresses":             "router",
-		"exclude-lb-vips-from-garp": "true",
-		libovsdbops.RouterPort:      types.GWRouterToExtSwitchPrefix + gatewayRouterName,
+		libovsdbops.RouterPort: types.GWRouterToExtSwitchPrefix + gatewayRouterName,
 	}
 }
 
@@ -2232,6 +2230,7 @@ func gwRouterOptions(gwConfig util.L3GatewayConfig) map[string]string {
 		"chassis":                       gwConfig.ChassisID,
 		"always_learn_from_arp_request": "false",
 		"dynamic_neigh_routers":         dynamicNeighRouters,
+		"disable_garp_rarp":             "true",
 	}
 }
 
