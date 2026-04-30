@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -853,7 +854,7 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				}
 
 				// Create and start controller
-				controller = NewController(zoneName, nbClient, wf, fakeNM.Interface())
+				controller = NewController(zoneName, nbClient, wf, fakeNM.Interface(), record.NewFakeRecorder(100))
 
 				err = controller.Start()
 				Expect(err).NotTo(HaveOccurred())

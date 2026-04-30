@@ -513,6 +513,7 @@ func (oc *DefaultNetworkController) newNetworkConnectController() error {
 		oc.nbClient,
 		oc.watchFactory,
 		oc.networkManager,
+		oc.recorder,
 	)
 	return nil
 }
