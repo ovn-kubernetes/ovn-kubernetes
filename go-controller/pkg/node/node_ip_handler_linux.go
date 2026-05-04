@@ -551,7 +551,7 @@ func (c *addressManager) sync() {
 			return
 		}
 		for _, link := range links {
-			foundAddrs, err := util.GetNetLinkOps().AddrList(link, getSupportedIPFamily())
+			foundAddrs, err := util.GetNetLinkOps().AddrList(link, 0)
 			if err != nil {
 				klog.Errorf("Failed sync due to being unable to list addresses for %q: %v", link.Attrs().Name, err)
 				return
