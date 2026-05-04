@@ -845,7 +845,7 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) er
 		if c.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
 			routerName = nodeInfo.gatewayRouterName
 		}
-		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})
 		if err != nil {

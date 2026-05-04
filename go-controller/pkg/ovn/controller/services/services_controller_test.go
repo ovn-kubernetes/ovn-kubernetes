@@ -1580,6 +1580,102 @@ func TestSyncServices(t *testing.T) {
 	}
 }
 
+// TestConfigureUDNEnabledServiceRouteMultiNode verifies that
+// configureUDNEnabledServiceRoute creates static routes for all nodes,
+// not just the last one. Regression test for a bug where nil was passed
+// instead of the accumulating ops slice.
+func TestConfigureUDNEnabledServiceRouteMultiNode(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+
+	ns := "testns"
+	serviceName := "kubernetes"
+	serviceClusterIP := "192.168.1.1"
+
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+
+	l3UDN, err := getSampleUDNNetInfo(ns, types.Layer3Topology)
+	if err != nil {
+		t.Fatalf("Error creating UDN net info: %v", err)
+	}
+
+	clusterRouterName := l3UDN.GetNetworkScopedClusterRouterName()
+
+	nodeAMgmtIP := "192.168.200.2"
+	nodeBMgmtIP := "192.168.201.2"
+
+	initialDb := []libovsdbtest.TestData{
+		&nbdb.LogicalRouter{
+			UUID: clusterRouterName,
+			Name: clusterRouterName,
+		},
+	}
+
+	nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{NBData: initialDb}, nil)
+	if err != nil {
+		t.Fatalf("Error creating NB test harness: %v", err)
+	}
+	defer cleanup.Cleanup()
+
+	controller := &Controller{
+		nbClient: nbClient,
+		netInfo:  l3UDN,
+		nodeInfos: []nodeInfo{
+			{
+				name:    nodeA,
+				mgmtIPs: []net.IP{net.ParseIP(nodeAMgmtIP)},
+			},
+			{
+				name:    nodeB,
+				mgmtIPs: []net.IP{net.ParseIP(nodeBMgmtIP)},
+			},
+		},
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+		Spec: corev1.ServiceSpec{
+			Type:       corev1.ServiceTypeClusterIP,
+			ClusterIP:  serviceClusterIP,
+			ClusterIPs: []string{serviceClusterIP},
+		},
+	}
+
+	err = controller.configureUDNEnabledServiceRoute(service)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	dstIP := nbdb.LogicalRouterStaticRoutePolicyDstIP
+	extIDs := map[string]string{
+		types.NetworkExternalID:           l3UDN.GetNetworkName(),
+		types.TopologyExternalID:          l3UDN.TopologyType(),
+		types.UDNEnabledServiceExternalID: ns + "/" + serviceName,
+	}
+
+	expectedDb := []libovsdbtest.TestData{
+		&nbdb.LogicalRouter{
+			UUID:         clusterRouterName,
+			Name:         clusterRouterName,
+			StaticRoutes: []string{"route-node-a", "route-node-b"},
+		},
+		&nbdb.LogicalRouterStaticRoute{
+			UUID:        "route-node-a",
+			IPPrefix:    serviceClusterIP,
+			Nexthop:     nodeAMgmtIP,
+			Policy:      &dstIP,
+			ExternalIDs: extIDs,
+		},
+		&nbdb.LogicalRouterStaticRoute{
+			UUID:        "route-node-b",
+			IPPrefix:    serviceClusterIP,
+			Nexthop:     nodeBMgmtIP,
+			Policy:      &dstIP,
+			ExternalIDs: extIDs,
+		},
+	}
+
+	g.Expect(nbClient).To(libovsdbtest.HaveData(expectedDb))
+}
+
 func nodeLogicalSwitch(nodeName string, lbGroups []string, namespacedServiceNames ...string) *nbdb.LogicalSwitch {
 	return nodeLogicalSwitchForNetwork(nodeName, lbGroups, &util.DefaultNetInfo{}, namespacedServiceNames...)
 }
