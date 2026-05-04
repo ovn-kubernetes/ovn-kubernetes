@@ -990,13 +990,40 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 			}
 		}
 
-		snat := libovsdbops.BuildSNATWithMatch(
-			&masqIP.ManagementPort.IP,
-			localPodSubnet,
-			outputPort,
-			extIDs,
-			snatMatch,
-		)
+		// For noOverlay mode with outboundSNAT enabled in local gateway mode, add exempted_ext_ips
+		// to prevent SNATing pod-to-pod traffic within the same CUDN while still SNATing pod-to-external traffic.
+		// This SNAT is on ovn_cluster_router, which is used in local gateway mode.
+		var snat *nbdb.NAT
+		if bsnc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay &&
+			bsnc.GetNetInfo().OutboundSNAT() == types.NoOverlaySNATEnabled &&
+			config.Gateway.Mode == config.GatewayModeLocal {
+			snatMatch = ""
+			v4UUID, v6UUID, err := getNoOverlaySNATExemptionAsUUID(bsnc.addressSetFactory, bsnc.GetNetInfo(), bsnc.controllerName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get no-overlay SNAT exemption address set UUID: %w", err)
+			}
+			// Use the appropriate UUID based on IP family
+			exemptedExtIPs := v4UUID
+			if ipFamily == utilnet.IPv6 {
+				exemptedExtIPs = v6UUID
+			}
+			snat = libovsdbops.BuildSNATWithExemptedExtIPs(
+				&masqIP.ManagementPort.IP,
+				localPodSubnet,
+				outputPort,
+				extIDs,
+				snatMatch,
+				exemptedExtIPs,
+			)
+		} else {
+			snat = libovsdbops.BuildSNATWithMatch(
+				&masqIP.ManagementPort.IP,
+				localPodSubnet,
+				outputPort,
+				extIDs,
+				snatMatch,
+			)
+		}
 		snats = append(snats, snat)
 	}
 

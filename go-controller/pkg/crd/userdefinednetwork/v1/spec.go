@@ -30,6 +30,11 @@ func (s *UserDefinedNetworkSpec) GetEVPN() *EVPNConfig {
 	return nil
 }
 
+func (s *UserDefinedNetworkSpec) GetNoOverlay() *NoOverlayConfig {
+	// UDN (namespace-scoped) does not support no-overlay transport
+	return nil
+}
+
 func (s *NetworkSpec) GetTopology() NetworkTopology {
 	return s.Topology
 }
@@ -52,4 +57,8 @@ func (s *NetworkSpec) GetTransport() TransportOption {
 
 func (s *NetworkSpec) GetEVPN() *EVPNConfig {
 	return s.EVPN
+}
+
+func (s *NetworkSpec) GetNoOverlay() *NoOverlayConfig {
+	return s.NoOverlay
 }
