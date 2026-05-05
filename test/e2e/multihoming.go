@@ -2315,6 +2315,98 @@ ip a add %[4]s/24 dev %[2]s
 					),
 				),
 			)
+
+			// The following test mirrors test_negative_ingress_multi_network_policy
+			// (CNV-10645) from the openshift-virtualization-tests suite
+			// (tests/network/flat_overlay/test_multi_network_policy.py) but uses
+			// pods instead of VMs.
+			//
+			// Key properties matching the Python test:
+			//   - IPAMless layer2 NAD (no subnets configured)
+			//   - Static IPs configured inside the pod via "ip addr add"
+			//     (equivalent to cloud-init configuring eth1 in the VM guest;
+			//     OVN does NOT learn the IPs through IPAM)
+			//   - IPs in the 10.200.0.0/24 range (IPV4_ADDRESS_SUBNET_PREFIX)
+			//   - Ingress MNP allows only 10.200.0.123/32 (non-existent)
+			//   - Connectivity verified with ICMP ping (assert_no_ping)
+			Context("on a flat overlay (layer2) secondary network", func() {
+				const (
+					podAStaticIP = "10.200.0.1/24"
+					podBStaticIP = "10.200.0.2/24"
+					podBIP       = "10.200.0.2"
+					// nonExistentIP matches the Python test: IPV4_ADDRESS_SUBNET_PREFIX + ".123/32"
+					nonExistentIP = "10.200.0.123/32"
+				)
+
+				var netConfig networkAttachmentConfig
+
+				BeforeEach(func() {
+					netConfig = newNetworkAttachmentConfig(networkAttachmentConfigParams{
+						name:     secondaryNetworkName,
+						topology: "layer2",
+					})
+					netConfig.namespace = f.Namespace.Name
+					By("creating the IPAMless flat L2 overlay network attachment definition")
+					_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+						context.Background(),
+						generateNAD(netConfig, cs),
+						metav1.CreateOptions{},
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					By("waiting for the controller to sync the NAD")
+					time.Sleep(3 * time.Second)
+				})
+
+				FIt("blocks ingress traffic when an ingress multi-network policy only allows a non-existent source IP", func() {
+					podAConfig := podConfiguration{
+						name:         "pod-a",
+						namespace:    f.Namespace.Name,
+						attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						labels:       map[string]string{"app": "pod-a"},
+						isPrivileged: true,
+					}
+					podBConfig := podConfiguration{
+						name:         "pod-b",
+						namespace:    f.Namespace.Name,
+						attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						labels:       map[string]string{"app": "pod-b"},
+						isPrivileged: true,
+					}
+
+					By("creating podA and podB on the IPAMless flat L2 overlay network")
+					kickstartPod(cs, podAConfig)
+					kickstartPod(cs, podBConfig)
+
+					By("configuring static IPs inside the pods (equivalent to cloud-init in the VM guest)")
+					Expect(configurePodStaticIP(podAConfig.namespace, podAConfig.name, podAStaticIP)).To(Succeed())
+					Expect(configurePodStaticIP(podBConfig.namespace, podBConfig.name, podBStaticIP)).To(Succeed())
+
+					By("verifying baseline connectivity: podA can ping podB before any policy")
+					Eventually(func() error {
+						return pingServerPodFromClient(cs, podBConfig, podAConfig, podBIP)
+					}, 2*time.Minute, 6*time.Second).Should(Succeed())
+
+					By("creating an ingress multi-network policy on podB allowing only 10.200.0.123/32 (non-existent)")
+					ingressPolicy := multiNetIngressLimitingIPBlockPolicy(
+						secondaryNetworkName,
+						metav1.LabelSelector{MatchLabels: map[string]string{"app": "pod-b"}},
+						mnpapi.IPBlock{CIDR: nonExistentIP},
+					)
+					Expect(createMultiNetworkPolicy(mnpClient, f.Namespace.Name, ingressPolicy)).To(Succeed())
+
+					By("asserting podA cannot ping podB (assert_no_ping equivalent)")
+					Eventually(func() error {
+						return pingServerPodFromClient(cs, podBConfig, podAConfig, podBIP)
+					}, 2*time.Minute, 6*time.Second).ShouldNot(Succeed())
+
+					By("confirming the traffic stays blocked")
+					Consistently(func() error {
+						return pingServerPodFromClient(cs, podBConfig, podAConfig, podBIP)
+					}, 15*time.Second, 5*time.Second).ShouldNot(Succeed())
+				})
+
+			})
 		})
 	})
 
