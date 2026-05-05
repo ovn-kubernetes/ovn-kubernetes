@@ -159,9 +159,11 @@ func UnmarshalPodDPUConnStatusAllNetworks(annotations map[string]string) (map[st
 	return podDcss, nil
 }
 
-// MarshalPodDPUConnStatus adds the pod's connection status of the specified NAD to the corresponding pod annotation.
-// if scs is nil, delete the pod's connection status of the specified NAD
-func MarshalPodDPUConnStatus(annotations map[string]string, scs *DPUConnectionStatus, nadKey string) (map[string]string, error) {
+// MarshalPodDPUConnStatus merges the given connection statuses into the pod's
+// DPU connection status annotation. Only the keys present in statusMap are
+// updated or deleted; other existing entries are left intact. A nil value
+// in the map deletes that NAD's status entry.
+func MarshalPodDPUConnStatus(annotations map[string]string, statusMap map[string]*DPUConnectionStatus) (map[string]string, error) {
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
@@ -169,20 +171,30 @@ func MarshalPodDPUConnStatus(annotations map[string]string, scs *DPUConnectionSt
 	if err != nil {
 		return nil, err
 	}
-	sc, ok := podScss[nadKey]
-	if scs != nil {
-		if ok && sc == *scs {
-			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD key %s already exists in %v",
-				DPUConnectionStatusAnnot, nadKey, annotations)
+
+	changed := false
+	for nadKey, scs := range statusMap {
+		if scs != nil {
+			sc, ok := podScss[nadKey]
+			if ok && sc == *scs {
+				continue
+			}
+			podScss[nadKey] = *scs
+			changed = true
+		} else {
+			if _, ok := podScss[nadKey]; !ok {
+				continue
+			}
+			delete(podScss, nadKey)
+			changed = true
 		}
-		podScss[nadKey] = *scs
-	} else {
-		if !ok {
-			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD key %s already removed",
-				DPUConnectionStatusAnnot, nadKey)
-		}
-		delete(podScss, nadKey)
 	}
+
+	if !changed {
+		return nil, newAnnotationAlreadySetError("OVN pod %s annotation already up to date",
+			DPUConnectionStatusAnnot)
+	}
+
 	bytes, err := json.Marshal(podScss)
 	if err != nil {
 		return nil, fmt.Errorf("failed marshaling pod annotation map %v: %v", podScss, err)
@@ -211,11 +223,13 @@ func UnmarshalPodDPUConnStatus(annotations map[string]string, nadKey string) (*D
 }
 
 // UpdatePodDPUConnStatusWithRetry updates the DPU connection status annotation
-// on the pod retrying on conflict
-func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, dpuConnStatus *DPUConnectionStatus, nadKey string) error {
+// on the pod retrying on conflict. Only the keys in statusMap are updated;
+// existing entries for other NADs are left intact. A nil value deletes that
+// NAD's status entry.
+func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, statusMap map[string]*DPUConnectionStatus) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
-		pod.Annotations, err = MarshalPodDPUConnStatus(pod.Annotations, dpuConnStatus, nadKey)
+		pod.Annotations, err = MarshalPodDPUConnStatus(pod.Annotations, statusMap)
 		if err != nil {
 			return nil, nil, err
 		}

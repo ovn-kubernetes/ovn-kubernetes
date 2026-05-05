@@ -169,7 +169,7 @@ func (c *addressManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) {
 		return
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if !config.IsModeDPUHost() {
 		c.addHandlerForAddrChange()
 	}
 	doneWg.Add(1)
@@ -209,7 +209,7 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				c.reconcileMasqueradeResources()
 				continue
 			}
-			if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+			if config.IsModeDPUHost() {
 				if c.gatewayIfIndex != 0 && a.LinkIndex == c.gatewayIfIndex {
 					c.reconcileMasqueradeResources()
 				}
@@ -542,7 +542,7 @@ func (c *addressManager) sync() {
 	if config.IsModeDPU() {
 		return
 	}
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		c.reconcileMasqueradeResources()
 		return
 	}

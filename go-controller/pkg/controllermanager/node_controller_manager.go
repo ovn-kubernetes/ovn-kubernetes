@@ -31,6 +31,7 @@ import (
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/dpu"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/evpn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
@@ -76,6 +77,8 @@ type NodeControllerManager struct {
 	ndm *netlinkdevicemanager.Controller
 	// evpn controller that manages EVPN datapath
 	evpnController *evpn.Controller
+	// dpu controller that manages DPU representor port lifecycle for all networks
+	dpuController *dpu.Controller
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -120,7 +123,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 	validMpx.Insert(util.GetNetworkScopedK8sMgmtHostIntfName(0))
 	validMpx.Insert(util.GetNetworkScopedK8sMgmtHostIntfName(0) + "_0")
 
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && ncm.ovsClient != nil {
+	if !config.IsModeDPUHost() && ncm.ovsClient != nil {
 		// then get all existing management ports for primary UDNs
 		// internal management port map, key is managementPortIfName (types.K8sMgmtIntfNamePrefix + <networkID>), value is management port OVS interface name
 		internalMgmtPorts := make(map[string]string)
@@ -183,7 +186,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 	}
 
 	// cleanup stale management port netdev
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+	if !config.IsModeDPU() {
 		links, err := util.GetNetLinkOps().LinkList()
 		if err == nil {
 			for _, link := range links {
@@ -252,7 +255,7 @@ func (ncm *NodeControllerManager) newCommonNetworkControllerInfo(wf factory.Node
 // (1) dpu mode is enabled when multiple networks feature is enabled
 // (2) primary user-defined networks is enabled (all modes)
 func isNetworkManagerRequiredForNode() bool {
-	return (config.OVNKubernetesFeature.EnableMultiNetwork && config.OvnKubeNode.Mode == ovntypes.NodeModeDPU) ||
+	return (config.OVNKubernetesFeature.EnableMultiNetwork && config.IsModeDPU()) ||
 		util.IsNetworkSegmentationSupportEnabled() ||
 		util.IsRouteAdvertisementsEnabled()
 }
@@ -284,7 +287,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		}
 	}
 
-	if config.OvnKubeNode.MgmtPortDPResourceName != "" && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+	if config.OvnKubeNode.MgmtPortDPResourceName != "" && !config.IsModeDPU() {
 		ncm.deviceAllocator, err = deviceresource.DeviceResourceManager().GetDeviceResourceAllocator(config.OvnKubeNode.MgmtPortDPResourceName)
 		if err != nil {
 			if err.Error() != deviceresource.ErrResourceNotDefined.Error() {
@@ -305,7 +308,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		// routes into OVN. Full mode uses one VRF manager for both.
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
 	}
-	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+	if util.IsNetworkSegmentationSupportEnabled() && !config.IsModeDPU() {
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
 
@@ -373,7 +376,7 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}()
 
-	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost {
+	if !config.IsModeDPUHost() {
 		// start health check to ensure there are no stale OVS internal ports
 		go wait.Until(func() {
 			checkForStaleOVSInternalPorts()
@@ -388,7 +391,7 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		ncm.routeManager.Run(ncm.stopChan, 2*time.Minute)
 	}()
 
-	if config.OvnKubeNode.MgmtPortDPResourceName != "" && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+	if config.OvnKubeNode.MgmtPortDPResourceName != "" && !config.IsModeDPU() {
 		ncm.mpdm = managementport.NewMgmtPortDeviceManager(ncm.Kube, ncm.watchFactory, ncm.name, ncm.deviceAllocator)
 		err = ncm.mpdm.Init()
 		if err != nil {
@@ -457,6 +460,14 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}
 
+	if config.IsModeDPU() {
+		ncm.dpuController = dpu.NewController(ncm.watchFactory, ncm.Kube,
+			ncm.ovnNodeClient.KubeClient, ncm.networkManager.Interface(), ncm.ovsClient)
+		if err := ncm.dpuController.Start(); err != nil {
+			return fmt.Errorf("failed to start DPU controller: %w", err)
+		}
+	}
+
 	// start workaround and remove when ovn has native support for silencing GARPs for LRPs
 	// https://issues.redhat.com/browse/FDP-1537
 	// when in mode ovnkube controller with node, wait until ovnkube controller is syncd before removing drop flows for GARPs
@@ -486,6 +497,11 @@ waitForControllerSyncLoop:
 
 // Stop gracefully stops all managed controllers
 func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
+	if ncm.dpuController != nil {
+		ncm.dpuController.Stop()
+		ncm.dpuController = nil
+	}
+
 	// Stop EVPN controller before closing stopChan so NDM doesn't process
 	// stale events while EVPN is shutting down.
 	if ncm.evpnController != nil {
