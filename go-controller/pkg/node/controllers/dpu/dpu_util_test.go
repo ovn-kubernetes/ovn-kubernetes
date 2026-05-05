@@ -1,29 +1,29 @@
 // SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-package node
+package dpu
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/stretchr/testify/mock"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/model"
-	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	adminpolicybasedrouteclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	factorymocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	linkMock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
@@ -37,22 +37,6 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-// failOnceClient wraps a libovsdb Client and makes the first Transact call
-// return an error, then unblocks. All other methods are forwarded unchanged.
-// Used to exercise retry loops without depending on real network/timing
-// behavior from the test harness.
-type failOnceClient struct {
-	libovsdbclient.Client
-	fired atomic.Bool
-}
-
-func (f *failOnceClient) Transact(ctx context.Context, ops ...ovsdb.Operation) ([]ovsdb.OperationResult, error) {
-	if f.fired.CompareAndSwap(false, true) {
-		return nil, fmt.Errorf("injected transient ovsdb failure")
-	}
-	return f.Client.Transact(ctx, ops...)
-}
 
 type ovnInstalledClient struct {
 	libovsdbclient.Client
@@ -157,12 +141,11 @@ var _ = Describe("Node DPU tests", func() {
 	var kubeMock kubemocks.Interface
 	var factoryMock factorymocks.NodeWatchFactory
 	var pod corev1.Pod
-	var dnnc *DefaultNodeNetworkController
+	var ctrl *Controller
 	var podInformer coreinformermocks.PodInformer
 	var podLister v1mocks.PodLister
 	var podNamespaceLister v1mocks.PodNamespaceLister
 	var clientset *cni.ClientSet
-	var routeManager *routemanager.Controller
 
 	origSriovnetOps := util.GetSriovnetOps()
 	origNetlinkOps := util.GetNetLinkOps()
@@ -179,14 +162,14 @@ var _ = Describe("Node DPU tests", func() {
 		Expect(err).NotTo(HaveOccurred())
 		err = cni.SetExec(execMock)
 		Expect(err).NotTo(HaveOccurred())
-		routeManager = routemanager.NewController()
-		Expect(routeManager).NotTo(BeNil())
 
 		kubeMock = kubemocks.Interface{}
-		apbExternalRouteClient := adminpolicybasedrouteclient.NewSimpleClientset()
+
 		factoryMock = factorymocks.NodeWatchFactory{}
-		cnnci := newCommonNodeNetworkControllerInfo(nil, &kubeMock, apbExternalRouteClient, &factoryMock, nil, "", routeManager)
-		dnnc = newDefaultNodeNetworkController(cnnci, nil, nil, routeManager, nil, nil)
+		ctrl = &Controller{
+			kube:         &kubeMock,
+			watchFactory: &factoryMock,
+		}
 
 		podInformer = coreinformermocks.PodInformer{}
 		podNamespaceLister = v1mocks.PodNamespaceLister{}
@@ -202,7 +185,6 @@ var _ = Describe("Node DPU tests", func() {
 	})
 
 	AfterEach(func() {
-		// Restore mocks so it does not affect other tests in the suite
 		util.SetSriovnetOpsInst(origSriovnetOps)
 		util.SetNetLinkOpMockInst(origNetlinkOps)
 		cni.ResetRunner()
@@ -214,7 +196,7 @@ var _ = Describe("Node DPU tests", func() {
 		var vfPciAddress string
 		var vfLink *linkMock.Link
 		var ifInfo *cni.PodInterfaceInfo
-		var scd util.DPUConnectionDetails
+		var state *dpuConnectionState
 
 		BeforeEach(func() {
 			vfRep = "pf0vf9"
@@ -233,49 +215,36 @@ var _ = Describe("Node DPU tests", func() {
 
 			fakeClient := newFakeKubeClientWithPod(&pod)
 			clientset = cni.NewClientSet(fakeClient, &podLister)
-			scd = util.DPUConnectionDetails{
+			scd := util.DPUConnectionDetails{
 				PfId:      "0",
 				VfId:      "9",
 				SandboxId: "a8d09931",
 			}
+			state = &dpuConnectionState{
+				vfRepName: vfRep,
+				sandboxId: scd.SandboxId,
+			}
 			podAnnot, err := util.MarshalPodDPUConnDetails(nil, &scd, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
-			// set pod annotations
 			pod.Annotations = podAnnot
 		})
 
-		It("Fails if GetVfRepresentorDPU fails", func() {
-			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return("", fmt.Errorf("failed to get VF representor"))
-			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
-
-			// call addRepPort()
-			err := dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to get VF representor"))
-			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
-		})
-
 		It("Fails if GetPCIFromDeviceName fails", func() {
-			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(vfRep, nil)
 			sriovnetOpsMock.On("GetPCIFromDeviceName", vfRep).Return("", fmt.Errorf("could not find PCI Address"))
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			// call addRepPort()
-			err := dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err := ctrl.addRepPort(&pod, state, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("could not find PCI Address"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
 
 		It("Fails if configure OVS fails", func() {
-			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(vfRep, nil)
+			ctrl.ovsClient = nil
 			sriovnetOpsMock.On("GetPCIFromDeviceName", vfRep).Return(vfPciAddress, nil)
-
-			sriovnetOpsMock.On("GetPciFromNetDevice", vfRep).Return("0000:03:00.8", nil)
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSGetCmd("bridge", "br-int", "datapath_type", ""),
 			})
-			// set ovs CMD output
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSFindCmd("30", "Interface", "name",
 					"external-ids:iface-id="+genIfaceID(pod.Namespace, pod.Name)),
@@ -289,22 +258,18 @@ var _ = Describe("Node DPU tests", func() {
 				Cmd: genOVSAddPortCmd(vfRep, genIfaceID(pod.Namespace, pod.Name), "", "", "a8d09931", string(pod.UID)),
 				Err: fmt.Errorf("failed to run ovs command"),
 			})
-			// Mock netlink/ovs calls for cleanup
 			checkOVSPortPodInfo(execMock, vfRep, false, "15", "", "")
 
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			// call addRepPort()
-			err := dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err := ctrl.addRepPort(&pod, state, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to run ovs command"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 		})
 
 		It("Fails if configure OVS fails but OVS interface is added", func() {
-			sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(vfRep, nil)
 			sriovnetOpsMock.On("GetPCIFromDeviceName", vfRep).Return(vfPciAddress, nil)
-			sriovnetOpsMock.On("GetPciFromNetDevice", vfRep).Return("0000:03:00.8", nil)
 
 			// Seed the harness with a pre-existing OVS port for vfRep owned by
 			// a different iface-id: cni.ConfigureOVS (libovsdb path) will fail
@@ -324,7 +289,7 @@ var _ = Describe("Node DPU tests", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			defer ovsCleanup.Cleanup()
-			dnnc.ovsClient = ovsClient
+			ctrl.ovsClient = ovsClient
 
 			// Cleanup path is shell-out for GetOVSPortPodInfo and netlink.
 			checkOVSPortPodInfo(execMock, vfRep, true, "15", "a8d09931", "default")
@@ -332,7 +297,7 @@ var _ = Describe("Node DPU tests", func() {
 			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 
-			err = dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+			err = ctrl.addRepPort(&pod, state, ifInfo, clientset)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("was added for iface-id"))
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
@@ -342,7 +307,6 @@ var _ = Describe("Node DPU tests", func() {
 			var ovsCleanup *libovsdbtest.Context
 
 			BeforeEach(func() {
-				sriovnetOpsMock.On("GetVfRepresentorDPU", "0", "9").Return(vfRep, nil)
 				sriovnetOpsMock.On("GetPCIFromDeviceName", vfRep).Return(vfPciAddress, nil)
 
 				// Seed an OVSDB harness with an empty br-int so cni.ConfigureOVS
@@ -358,15 +322,12 @@ var _ = Describe("Node DPU tests", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				ovsCleanup = ctx
-				dnnc.ovsClient = &ovnInstalledClient{
+				ctrl.ovsClient = &ovnInstalledClient{
 					Client:    ovsClient,
 					ifaceName: vfRep,
 				}
 
-				// waitForPodInterface reads the libovsdb cache. The test client
-				// marks the created interface as installed to model OVN setting
-				// external_ids:ovn-installed=true.
-				// ConfigureOVS calls LinkByName/LinkSetMTU/LinkSetUp when deviceID != ""
+				// ovnInstalledClient marks waitForPodInterface's libovsdb lookup as installed.
 				netlinkOpsMock.On("LinkByName", vfRep).Return(vfLink, nil)
 				netlinkOpsMock.On("LinkSetMTU", vfLink, ifInfo.MTU).Return(nil)
 				netlinkOpsMock.On("LinkSetUp", vfLink).Return(nil)
@@ -385,7 +346,7 @@ var _ = Describe("Node DPU tests", func() {
 					Status: "Ready",
 				}
 				cpod := pod.DeepCopy()
-				cpod.Annotations, err = util.MarshalPodDPUConnStatus(cpod.Annotations, &dcs, types.DefaultNetworkName)
+				cpod.Annotations, err = util.MarshalPodDPUConnStatus(cpod.Annotations, map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: &dcs})
 				Expect(err).ToNot(HaveOccurred())
 
 				factoryMock.On("PodCoreInformer").Return(&podInformer)
@@ -394,7 +355,7 @@ var _ = Describe("Node DPU tests", func() {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(nil)
 
-				err = dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+				err = ctrl.addRepPort(&pod, state, ifInfo, clientset)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			})
@@ -405,9 +366,8 @@ var _ = Describe("Node DPU tests", func() {
 					Status: "Ready",
 				}
 				cpod := pod.DeepCopy()
-				cpod.Annotations, err = util.MarshalPodDPUConnStatus(cpod.Annotations, &dcs, types.DefaultNetworkName)
+				cpod.Annotations, err = util.MarshalPodDPUConnStatus(cpod.Annotations, map[string]*util.DPUConnectionStatus{types.DefaultNetworkName: &dcs})
 				Expect(err).ToNot(HaveOccurred())
-				// Mock netlink/ovs calls for cleanup
 				checkOVSPortPodInfo(execMock, vfRep, true, "15", "a8d09931", "default")
 				netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
 
@@ -417,7 +377,7 @@ var _ = Describe("Node DPU tests", func() {
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 				kubeMock.On("PatchPodStatusAnnotations", &pod, cpod).Return(fmt.Errorf("failed to set pod annotations"))
 
-				err = dnnc.addRepPort(&pod, &scd, ifInfo, clientset)
+				err = ctrl.addRepPort(&pod, state, ifInfo, clientset)
 				Expect(err).To(HaveOccurred())
 				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
 			})
@@ -427,20 +387,19 @@ var _ = Describe("Node DPU tests", func() {
 	Context("delRepPort", func() {
 		var vfRep string
 		var vfLink *linkMock.Link
-		var scd util.DPUConnectionDetails
+		var state *dpuConnectionState
 
 		BeforeEach(func() {
 			vfRep = "pf0vf9"
 			vfLink = &linkMock.Link{}
-			scd = util.DPUConnectionDetails{
-				PfId:      "0",
-				VfId:      "9",
-				SandboxId: "a8d09931",
+			state = &dpuConnectionState{
+				vfRepName: vfRep,
+				sandboxId: "a8d09931",
 			}
 		})
 
 		It("Sets link down for VF representor and removes VF representor from OVS", func() {
-			checkOVSPortPodInfo(execMock, vfRep, true, "15", scd.SandboxId, types.DefaultNetworkName)
+			checkOVSPortPodInfo(execMock, vfRep, true, "15", state.sandboxId, types.DefaultNetworkName)
 			netlinkOpsMock.On("LinkByName", vfRep).Return(vfLink, nil)
 			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
 			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
@@ -453,14 +412,15 @@ var _ = Describe("Node DPU tests", func() {
 			})
 			Expect(err).ToNot(HaveOccurred())
 			defer ovsCleanup.Cleanup()
-			dnnc.ovsClient = ovsClient
-			err = dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			ctrl.ovsClient = ovsClient
+			err = ctrl.delRepPort(&pod, state, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
+			expectOVSPortAndInterfaceAbsent(ovsClient, vfRep)
 		})
 
 		It("Does not fail if LinkByName failed", func() {
-			checkOVSPortPodInfo(execMock, vfRep, true, "15", scd.SandboxId, types.DefaultNetworkName)
+			checkOVSPortPodInfo(execMock, vfRep, true, "15", state.sandboxId, types.DefaultNetworkName)
 			netlinkOpsMock.On("LinkByName", vfRep).Return(nil, fmt.Errorf("failed to get link"))
 			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
 				OVSData: []libovsdbtest.TestData{
@@ -472,32 +432,326 @@ var _ = Describe("Node DPU tests", func() {
 			})
 			Expect(err).ToNot(HaveOccurred())
 			defer ovsCleanup.Cleanup()
-			dnnc.ovsClient = ovsClient
-			err = dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+			ctrl.ovsClient = ovsClient
+			err = ctrl.delRepPort(&pod, state, types.DefaultNetworkName)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
+			expectOVSPortAndInterfaceAbsent(ovsClient, vfRep)
+		})
+	})
+
+	Context("bootstrapDPUPodMapFromOVS", func() {
+		It("No-ops when no representor interfaces exist", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9"},
+			})
+			defer cleanup()
+
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{}, nil)
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
+			Expect(err).ToNot(HaveOccurred())
+
+			count := 0
+			ctrl.podNADToDPUCDMap.Range(func(_, _ interface{}) bool { count++; return true })
+			Expect(count).To(Equal(0))
 		})
 
-		It("Does not fail if removal of VF representor from OVS fails once", func() {
-			// Wrap the harness client so the first Transact errors out; the
-			// retry loop in delRepPort should recover on the second attempt.
-			checkOVSPortPodInfo(execMock, vfRep, true, "15", scd.SandboxId, types.DefaultNetworkName)
-			netlinkOpsMock.On("LinkByName", vfRep).Return(vfLink, nil)
-			netlinkOpsMock.On("LinkSetDown", vfLink).Return(nil)
-			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
-				OVSData: []libovsdbtest.TestData{
-					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br-int-uuid"}},
-					&vswitchd.Bridge{UUID: "br-int-uuid", Name: "br-int", Ports: []string{"vfrep-port-uuid"}},
-					&vswitchd.Port{UUID: "vfrep-port-uuid", Name: "pf0vf9", Interfaces: []string{"vfrep-iface-uuid"}},
-					&vswitchd.Interface{UUID: "vfrep-iface-uuid", Name: "pf0vf9"},
+		It("Populates state for an existing pod on default network", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_a-pod", ifaceIDVer: "uid-1"},
+			})
+			defer cleanup()
+
+			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "a-pod", Namespace: "foo-ns", UID: "uid-1",
+			}}
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{existingPod}, nil)
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
+			Expect(err).ToNot(HaveOccurred())
+
+			v, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-1"))
+			Expect(ok).To(BeTrue())
+			ps := v.(*podDPUState)
+			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+			Expect(ps.nadStates[types.DefaultNetworkName].vfRepName).To(Equal("pf0vf9"))
+			Expect(ps.nadStates[types.DefaultNetworkName].sandboxId).To(Equal("sb1"))
+
+			uidVal, ok := ctrl.podKeyToUID.Load("foo-ns/a-pod")
+			Expect(ok).To(BeTrue())
+			Expect(uidVal).To(Equal(k8stypes.UID("uid-1")))
+		})
+
+		It("Populates state for an existing pod on a UDN", func() {
+			udnNADKey := "ns1/nad1"
+			udnPrefix := util.GetUserDefinedNetworkPrefix(udnNADKey)
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{
+					name: "pf0vf10", sandbox: "sb2", vfNetdevName: "pf0vf10",
+					ifaceID: udnPrefix + "foo-ns_a-pod", ifaceIDVer: "uid-2",
+					nadKey: udnNADKey,
 				},
 			})
+			defer cleanup()
+
+			existingPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "a-pod", Namespace: "foo-ns", UID: "uid-2",
+			}}
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{existingPod}, nil)
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
-			defer ovsCleanup.Cleanup()
-			dnnc.ovsClient = &failOnceClient{Client: ovsClient}
-			err = dnnc.delRepPort(&pod, &scd, vfRep, types.DefaultNetworkName)
+
+			v, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-2"))
+			Expect(ok).To(BeTrue())
+			ps := v.(*podDPUState)
+			Expect(ps.nadStates).To(HaveKey(udnNADKey))
+			Expect(ps.nadStates[udnNADKey].vfRepName).To(Equal("pf0vf10"))
+			Expect(ps.nadStates[udnNADKey].sandboxId).To(Equal("sb2"))
+
+			uidVal, ok := ctrl.podKeyToUID.Load("foo-ns/a-pod")
+			Expect(ok).To(BeTrue())
+			Expect(uidVal).To(Equal(k8stypes.UID("uid-2")))
+		})
+
+		It("Deletes orphaned representor port when pod no longer exists", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb-old", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_gone-pod", ifaceIDVer: "uid-gone"},
+			})
+			defer cleanup()
+
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{}, nil)
+			netlinkOpsMock.On("LinkByName", "pf0vf9").Return(nil, fmt.Errorf("no link"))
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
 			Expect(err).ToNot(HaveOccurred())
-			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc())
+
+			count := 0
+			ctrl.podNADToDPUCDMap.Range(func(_, _ interface{}) bool { count++; return true })
+			Expect(count).To(Equal(0))
+			expectOVSPortAndInterfaceAbsent(ctrl.ovsClient, "pf0vf9")
+		})
+
+		It("Handles mix of existing and orphaned ports", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_alive-pod", ifaceIDVer: "uid-alive"},
+				{name: "pf0vf10", sandbox: "sb2", vfNetdevName: "pf0vf10", ifaceID: "foo-ns_dead-pod", ifaceIDVer: "uid-dead"},
+			})
+			defer cleanup()
+
+			alivePod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "alive-pod", Namespace: "foo-ns", UID: "uid-alive",
+			}}
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{alivePod}, nil)
+			netlinkOpsMock.On("LinkByName", "pf0vf10").Return(nil, fmt.Errorf("no link"))
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
+			Expect(err).ToNot(HaveOccurred())
+
+			v, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-alive"))
+			Expect(ok).To(BeTrue())
+			ps := v.(*podDPUState)
+			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+
+			_, ok = ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-dead"))
+			Expect(ok).To(BeFalse())
+
+			expectOVSPortAndInterfaceAbsent(ctrl.ovsClient, "pf0vf10")
+			expectOVSPortAndInterfacePresent(ctrl.ovsClient, "pf0vf9")
+		})
+
+		It("Populates multi-NAD state for the same pod with indexed NAD key", func() {
+			// Use an indexed NAD key ("ns1/nad1/1") to verify that the full
+			// indexed key is stored in the map and podKeyFromIfaceID correctly
+			// strips the prefix derived from it.
+			indexedNADKey := "ns1/nad1/1"
+			udnPrefix := util.GetUserDefinedNetworkPrefix(indexedNADKey)
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_multi-pod", ifaceIDVer: "uid-multi"},
+				{
+					name: "pf0vf10", sandbox: "sb1", vfNetdevName: "pf0vf10",
+					ifaceID: udnPrefix + "foo-ns_multi-pod", ifaceIDVer: "uid-multi",
+					nadKey: indexedNADKey,
+				},
+			})
+			defer cleanup()
+
+			multiPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "multi-pod", Namespace: "foo-ns", UID: "uid-multi",
+			}}
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{multiPod}, nil)
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
+			Expect(err).ToNot(HaveOccurred())
+
+			v, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-multi"))
+			Expect(ok).To(BeTrue())
+			ps := v.(*podDPUState)
+			Expect(ps.nadStates).To(HaveLen(2))
+			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+			Expect(ps.nadStates[types.DefaultNetworkName].vfRepName).To(Equal("pf0vf9"))
+			Expect(ps.nadStates).To(HaveKey(indexedNADKey))
+			Expect(ps.nadStates[indexedNADKey].vfRepName).To(Equal("pf0vf10"))
+		})
+
+		It("Skips interfaces with incomplete external IDs", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceIDVer: "uid-1"},
+				{name: "pf0vf10", sandbox: "sb2", vfNetdevName: "pf0vf10", ifaceID: "foo-ns_ok-pod", ifaceIDVer: "uid-ok"},
+			})
+			defer cleanup()
+
+			okPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "ok-pod", Namespace: "foo-ns", UID: "uid-ok",
+			}}
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{okPod}, nil)
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
+			Expect(err).ToNot(HaveOccurred())
+
+			_, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-1"))
+			Expect(ok).To(BeFalse())
+
+			v, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-ok"))
+			Expect(ok).To(BeTrue())
+			ps := v.(*podDPUState)
+			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+		})
+
+		It("Populates existing pod state even when orphan cleanup runs", func() {
+			cleanup := setupOVSHarnessWithInterfaces(ctrl, []ovsInterfaceData{
+				{name: "pf0vf9", sandbox: "sb1", vfNetdevName: "pf0vf9", ifaceID: "foo-ns_orphan", ifaceIDVer: "uid-orphan"},
+				{name: "pf0vf10", sandbox: "sb2", vfNetdevName: "pf0vf10", ifaceID: "foo-ns_alive-pod", ifaceIDVer: "uid-alive"},
+			})
+			defer cleanup()
+
+			alivePod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name: "alive-pod", Namespace: "foo-ns", UID: "uid-alive",
+			}}
+			factoryMock.On("GetAllPods").Return([]*corev1.Pod{alivePod}, nil)
+			netlinkOpsMock.On("LinkByName", "pf0vf9").Return(nil, fmt.Errorf("no link"))
+
+			err := ctrl.bootstrapDPUPodMapFromOVS()
+			Expect(err).ToNot(HaveOccurred())
+
+			v, ok := ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-alive"))
+			Expect(ok).To(BeTrue())
+			ps := v.(*podDPUState)
+			Expect(ps.nadStates).To(HaveKey(types.DefaultNetworkName))
+
+			_, ok = ctrl.podNADToDPUCDMap.Load(k8stypes.UID("uid-orphan"))
+			Expect(ok).To(BeFalse())
+
+			expectOVSPortAndInterfaceAbsent(ctrl.ovsClient, "pf0vf9")
+			expectOVSPortAndInterfacePresent(ctrl.ovsClient, "pf0vf10")
+		})
+	})
+
+	Context("getNetInfoForNADKey", func() {
+		var fakeNetMgr *networkmanager.FakeNetworkManager
+
+		BeforeEach(func() {
+			fakeNetMgr = &networkmanager.FakeNetworkManager{
+				NADNetworks: map[string]util.NetInfo{
+					"ns1/nad1": &util.DefaultNetInfo{},
+				},
+			}
+			ctrl.networkMgr = fakeNetMgr
+		})
+
+		It("Returns NetInfo for default network", func() {
+			ni := ctrl.getNetInfoForNADKey(types.DefaultNetworkName)
+			Expect(ni).NotTo(BeNil())
+		})
+
+		It("Returns NetInfo for base NAD key", func() {
+			ni := ctrl.getNetInfoForNADKey("ns1/nad1")
+			Expect(ni).NotTo(BeNil())
+		})
+
+		It("Returns NetInfo for indexed NAD key", func() {
+			ni := ctrl.getNetInfoForNADKey("ns1/nad1/1")
+			Expect(ni).NotTo(BeNil())
+		})
+
+		It("Returns nil for unknown NAD key", func() {
+			ni := ctrl.getNetInfoForNADKey("ns1/unknown")
+			Expect(ni).To(BeNil())
 		})
 	})
 })
+
+// ovsInterfaceData holds the external IDs for setting up an OVS interface in tests.
+type ovsInterfaceData struct {
+	name         string
+	sandbox      string
+	vfNetdevName string
+	ifaceID      string
+	ifaceIDVer   string
+	nadKey       string // empty = default network
+}
+
+// setupOVSHarnessWithInterfaces creates a fresh OVS test harness with the specified
+// interfaces on br-int and updates ctrl.ovsClient. Returns a cleanup function.
+func setupOVSHarnessWithInterfaces(ctrl *Controller, ifaces []ovsInterfaceData) func() {
+	var portUUIDs []string
+	var ovsData []libovsdbtest.TestData
+
+	for _, iface := range ifaces {
+		portUUID := fmt.Sprintf("port-%s-uuid", iface.name)
+		intfUUID := fmt.Sprintf("intf-%s-uuid", iface.name)
+		portUUIDs = append(portUUIDs, portUUID)
+
+		extIDs := map[string]string{}
+		if iface.sandbox != "" {
+			extIDs["sandbox"] = iface.sandbox
+		}
+		if iface.vfNetdevName != "" {
+			extIDs["vf-netdev-name"] = iface.vfNetdevName
+		}
+		if iface.ifaceID != "" {
+			extIDs["iface-id"] = iface.ifaceID
+		}
+		if iface.ifaceIDVer != "" {
+			extIDs["iface-id-ver"] = iface.ifaceIDVer
+		}
+		if iface.nadKey != "" {
+			extIDs[types.NADExternalID] = iface.nadKey
+		}
+
+		ovsData = append(ovsData,
+			&vswitchd.Port{UUID: portUUID, Name: iface.name, Interfaces: []string{intfUUID}},
+			&vswitchd.Interface{UUID: intfUUID, Name: iface.name, ExternalIDs: extIDs},
+		)
+	}
+
+	ovsData = append(ovsData,
+		&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"bridge-br-int-uuid"}},
+		&vswitchd.Bridge{UUID: "bridge-br-int-uuid", Name: "br-int", Ports: portUUIDs},
+	)
+
+	ovsClient, testCtx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: ovsData,
+	})
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+	ctrl.ovsClient = ovsClient
+	return testCtx.Cleanup
+}
+
+func expectOVSPortAndInterfaceAbsent(ovsClient libovsdbclient.Client, name string) {
+	GinkgoHelper()
+	_, err := libovsdbops.GetOVSPort(ovsClient, name)
+	Expect(errors.Is(err, libovsdbclient.ErrNotFound)).To(BeTrue())
+	_, err = libovsdbops.GetOVSInterface(ovsClient, name)
+	Expect(errors.Is(err, libovsdbclient.ErrNotFound)).To(BeTrue())
+}
+
+func expectOVSPortAndInterfacePresent(ovsClient libovsdbclient.Client, name string) {
+	GinkgoHelper()
+	_, err := libovsdbops.GetOVSPort(ovsClient, name)
+	Expect(err).NotTo(HaveOccurred())
+	_, err = libovsdbops.GetOVSInterface(ovsClient, name)
+	Expect(err).NotTo(HaveOccurred())
+}
