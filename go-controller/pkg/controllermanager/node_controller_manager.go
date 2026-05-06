@@ -13,6 +13,7 @@ import (
 
 	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -563,14 +564,15 @@ func (ncm *NodeControllerManager) checkForStaleOVSRepresentorInterfaces() {
 	// list Pods and calculate the expected iface-ids.
 	// Note: we do this after scanning ovs interfaces to avoid deleting ports of pods that where just scheduled
 	// on the node.
-	pods, err := ncm.watchFactory.GetPods("")
+	// Use ncm.Kube instead of watchFactory to avoid cache staleness, since CNI may use kube client directly to create pod
+	pods, err := ncm.Kube.(*kube.Kube).KClient.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		klog.Errorf("Failed to list pods. %v", err)
 		return
 	}
 	expectedPodUIDs := make(map[string]struct{})
-	for _, pod := range pods {
-		if pod.Spec.NodeName == ncm.name && !util.PodWantsHostNetwork(pod) {
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == ncm.name && !util.PodWantsHostNetwork(&pod) {
 			// Note: wf (WatchFactory) *usually* returns pods assigned to this node, however we dont rely on it
 			// and add this check to filter out pods assigned to other nodes. (e.g when ovnkube master and node
 			// share the same process)
