@@ -3,6 +3,7 @@ linters:
   default: none
   enable:
     - errcheck
+    - forbidigo
     - ginkgolinter
     - govet
     - importas
@@ -14,6 +15,12 @@ linters:
     - thelper
     - unused
   settings:
+    forbidigo:
+      forbid:
+        - pattern: 'netlink\.(?:[A-Za-z0-9]+List(?:Filtered)?|LinkByName|LinkGetProtinfo|ConntrackDeleteFilters)\('
+          msg: Use util/GetNetLinkOps wrappers or add a retry-enabled helper in pkg/util/net_linux.go so dump-capable netlink reads use RetryInterrupted-enabled handles.
+        - pattern: 'netlink\.NewHandle(?:At|AtFrom)?\('
+          msg: Use the handle helpers in pkg/util/net_linux.go so RetryInterrupted is enabled consistently.
     govet:
       disable:
         - fieldalignment
@@ -75,6 +82,22 @@ linters:
       - builtin$
       - examples$
     rules:
+      # Tests intentionally use direct netlink reads for end-state assertions and
+      # fake-kernel setup/verification, so the production-code guardrail does
+      # not add value there.
+      - linters:
+          - forbidigo
+        path: _test\.go
+      # pkg/testing exposes low-level helpers that create and inspect real test
+      # interfaces directly via netlink.
+      - linters:
+          - forbidigo
+        path: pkg/testing/
+      # This file defines the approved retry-enabled handle helpers and is the
+      # single place where direct netlink handle construction is expected.
+      - linters:
+          - forbidigo
+        path: pkg/util/net_linux\.go
       # Ignore SA1019 in k8s v1.35 rebase
       # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6102
       - linters:
