@@ -2106,19 +2106,20 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		timeoutNOK = 5 * time.Second        // 4-6 attempts
 		pollingNOK = 100 * time.Millisecond // poll immediately
 
-		// Used for cross-network connectivity checks after route leaking is
-		// already configured for EVPN loose mode. The BGP topology is
-		// already up at that point; we only need to wait for EVPN route
-		// propagation. On a local KIND cluster the full chain (FRR RT-import
-		// policy change → kernel VRF table update → advertise ipv4 unicast
-		// re-originates type-5 UPDATEs → FRR-K8s processes → OVN-K programs
-		// flows) can take up to ~60 s.
-		timeoutRouteLeaking = 60 * time.Second
-
 		// 1s, minimum
 		curlMaxTime    = 1
 		curlMaxTimeStr = "1"
 	)
+	// Used for cross-network connectivity checks after route leaking is already
+	// configured for EVPN loose mode. Default follows loose-mode helper polling on
+	// external FRR (~30s) plus cluster propagation slack; override with
+	// EVPN_ROUTE_LEAKING_TIMEOUT (Go duration syntax, e.g. 90s) for slow CI.
+	timeoutRouteLeaking := 60 * time.Second
+	if override := os.Getenv("EVPN_ROUTE_LEAKING_TIMEOUT"); override != "" {
+		if parsed, err := time.ParseDuration(override); err == nil && parsed > 0 {
+			timeoutRouteLeaking = parsed
+		}
+	}
 	var netexecPortStr = fmt.Sprintf("%d", netexecPort)
 	testPodToHostnameAndExpect := func(src *corev1.Pod, dstIP, expect string) {
 		ginkgo.GinkgoHelper()
@@ -2653,26 +2654,42 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								)
 							})
 
-					// Probe the spec generators at tree-building time to determine the It
-					// description. We only inspect structural properties (transport type,
-					// IP-VRF presence); the actual specs used by the test are generated
-					// freshly in BeforeEach via capturedNetworkSpec/capturedOtherNetworkSpec.
-					// Only pure IP-VRF networks (no MAC-VRF) support inter-VRF route leaking;
-					// networks with a MAC-VRF component are excluded even if they also have an IP-VRF.
-					probeIsIPVRFOnly := func(spec *udnv1.NetworkSpec) bool {
-						return spec != nil && spec.EVPN != nil && spec.EVPN.IPVRF != nil && spec.EVPN.MACVRF == nil
-					}
-					outerProbe := networkSpecGen()
-					innerProbe := otherNetworkSpecGen()
-					probeBothEVPN := outerProbe != nil && outerProbe.Transport == udnv1.TransportOptionEVPN &&
-						innerProbe != nil && innerProbe.Transport == udnv1.TransportOptionEVPN
-					isolationItDesc := "Both networks are isolated in strict mode"
-					if os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && probeBothEVPN &&
-						probeIsIPVRFOnly(outerProbe) && probeIsIPVRFOnly(innerProbe) {
-						isolationItDesc = "Both networks communication is allowed in loose mode"
-					}
+							// Probe the spec generators at tree-building time to determine the It
+							// description. We only inspect structural properties (transport type,
+							// IP-VRF presence); the actual specs used by the test are generated
+							// freshly in BeforeEach via capturedNetworkSpec/capturedOtherNetworkSpec.
+							// Only pure IP-VRF networks (no MAC-VRF) support inter-VRF route leaking;
+							// networks with a MAC-VRF component are excluded even if they also have an IP-VRF.
+							const (
+								isolationItDescStrict = "Both networks are isolated in strict mode"
+								isolationItDescLoose  = "Both networks communication is allowed in loose mode"
+							)
+							probeIsIPVRFOnly := func(spec *udnv1.NetworkSpec) bool {
+								return spec != nil && spec.EVPN != nil && spec.EVPN.IPVRF != nil && spec.EVPN.MACVRF == nil
+							}
+							outerProbe := networkSpecGen()
+							innerProbe := otherNetworkSpecGen()
+							probeBothEVPN := outerProbe != nil && outerProbe.Transport == udnv1.TransportOptionEVPN &&
+								innerProbe != nil && innerProbe.Transport == udnv1.TransportOptionEVPN
+							isolationItDesc := isolationItDescStrict
+							if os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && probeBothEVPN &&
+								probeIsIPVRFOnly(outerProbe) && probeIsIPVRFOnly(innerProbe) {
+								isolationItDesc = isolationItDescLoose
+							}
 
-					ginkgo.It(isolationItDesc, func() {
+							ginkgo.It(isolationItDesc, func() {
+								outerSpec := capturedNetworkSpec
+								innerSpec := capturedOtherNetworkSpec
+								bothEVPN := outerSpec != nil && outerSpec.Transport == udnv1.TransportOptionEVPN &&
+									innerSpec != nil && innerSpec.Transport == udnv1.TransportOptionEVPN
+								runtimeLoose := os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && bothEVPN &&
+									isEVPNIPVRFOnly(outerSpec) && isEVPNIPVRFOnly(innerSpec)
+								probeLoose := isolationItDesc == isolationItDescLoose
+								if runtimeLoose != probeLoose {
+									framework.Failf("isolation It description does not match runtime loose mode: descLoose=%v runtimeLoose=%v (it=%q)",
+										probeLoose, runtimeLoose, isolationItDesc)
+								}
+
 								ginkgo.By("Running two pods on the other network namespace on different nodes")
 								var otherPodSameNode, otherPodDiffNode *corev1.Pod
 								wg := sync.WaitGroup{}
@@ -2729,15 +2746,13 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									},
 								)
 
-								outerSpec := capturedNetworkSpec
-								innerSpec := capturedOtherNetworkSpec
-								bothEVPN := outerSpec != nil && outerSpec.Transport == udnv1.TransportOptionEVPN &&
-									innerSpec != nil && innerSpec.Transport == udnv1.TransportOptionEVPN
 								looseIsolationMode := os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && bothEVPN &&
 									isEVPNIPVRFOnly(outerSpec) && isEVPNIPVRFOnly(innerSpec)
 								if looseIsolationMode {
 									ginkgo.By("Configuring loose EVPN inter-VRF route leaking on external FRR")
-									gomega.Expect(addLooseEVPNInterVRFRouting(ictx, bgpASN, outerSpec, innerSpec)).To(gomega.Succeed())
+									configured, err := addLooseEVPNInterVRFRouting(ictx, bgpASN, outerSpec, innerSpec)
+									gomega.Expect(err).NotTo(gomega.HaveOccurred())
+									gomega.Expect(configured).To(gomega.BeTrue(), "loose mode expects inter-VRF import vrf to be applied for pure IP-VRF EVPN pair")
 								}
 								crossNetworkPodConnectivity := func(src *corev1.Pod, dstIP string) {
 									ginkgo.GinkgoHelper()

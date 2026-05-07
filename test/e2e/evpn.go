@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
@@ -32,6 +33,11 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	utilnet "k8s.io/utils/net"
 )
+
+// looseEVPNInterVRFFRRMutex serializes vtysh sessions against the shared external
+// FRR container for loose-mode inter-VRF setup/teardown. Concurrent tests could
+// otherwise interleave configure blocks and corrupt BGP state.
+var looseEVPNInterVRFFRRMutex sync.Mutex
 
 // =============================================================================
 // EVPN E2E Test Infrastructure
@@ -548,12 +554,18 @@ func setupIPVRFBGPOnExternalFRR(ictx infraapi.Context, vrfName string, asn, vni 
 // This helper only manages "import vrf" / "no import vrf" commands. The l2vpn evpn
 // advertise directives are owned by setupIPVRFBGPOnExternalFRR and are not touched here.
 // Cleanup is registered via ictx.AddCleanUpFn().
-func addLooseEVPNInterVRFRouting(ictx infraapi.Context, asn int, specA, specB *udnv1.NetworkSpec) error {
+//
+// The first return is false when route leaking was skipped (non-IP-VRF pair), or
+// true when import vrf was applied. The second return is non-nil on failure.
+func addLooseEVPNInterVRFRouting(ictx infraapi.Context, asn int, specA, specB *udnv1.NetworkSpec) (bool, error) {
 	if !isEVPNIPVRFOnly(specA) || !isEVPNIPVRFOnly(specB) {
 		framework.Logf("Skipping loose EVPN inter-VRF routing: one or both networks are not pure IP-VRF (specA isIPVRFOnly=%v, specB isIPVRFOnly=%v)",
 			isEVPNIPVRFOnly(specA), isEVPNIPVRFOnly(specB))
-		return nil
+		return false, nil
 	}
+
+	looseEVPNInterVRFFRRMutex.Lock()
+	defer looseEVPNInterVRFFRRMutex.Unlock()
 
 	vniA := int(specA.EVPN.IPVRF.VNI)
 	vniB := int(specB.EVPN.IPVRF.VNI)
@@ -618,24 +630,17 @@ func addLooseEVPNInterVRFRouting(ictx infraapi.Context, asn int, specA, specB *u
 			"end",
 		}
 		if _, rbErr := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(rollbackArgs...)); rbErr != nil {
-			framework.Logf("Warning: best-effort rollback of import vrf also failed (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, rbErr)
+			framework.Logf("rollback failed after partial import vrf - external FRR may be inconsistent (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, rbErr)
+			return false, fmt.Errorf("loose EVPN inter-VRF config failed and rollback failed (FRR may be inconsistent): config_err=%w, rollback_err=%v", err, rbErr)
 		}
-		return fmt.Errorf("failed to configure loose EVPN inter-VRF routing (VRF %s <-> VRF %s): %w", vrfNameA, vrfNameB, err)
-	}
-
-	// Trigger a BGP soft outbound reset so FRR immediately re-advertises the
-	// newly re-originated type-5 UPDATEs to cluster nodes, rather than waiting
-	// for the next BGP UPDATE cycle.
-	softResetArgs := []string{
-		fmt.Sprintf("clear bgp vrf %s l2vpn evpn soft out", vrfNameA),
-		fmt.Sprintf("clear bgp vrf %s l2vpn evpn soft out", vrfNameB),
-	}
-	if _, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(softResetArgs...)); err != nil {
-		// Non-fatal: the routes will still propagate, just more slowly.
-		framework.Logf("Warning: BGP soft reset after inter-VRF import vrf failed (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, err)
+		framework.Logf("Rolled back partial import vrf after vtysh failure (VRF %s <-> VRF %s)", vrfNameA, vrfNameB)
+		return false, fmt.Errorf("failed to configure loose EVPN inter-VRF routing (rollback succeeded): %w", err)
 	}
 
 	ictx.AddCleanUpFn(func() error {
+		looseEVPNInterVRFFRRMutex.Lock()
+		defer looseEVPNInterVRFFRRMutex.Unlock()
+
 		frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
 		cleanupArgs := []string{
 			"configure terminal",
@@ -662,8 +667,37 @@ func addLooseEVPNInterVRFRouting(ictx infraapi.Context, asn int, specA, specB *u
 		return nil
 	})
 
+	// Trigger a BGP soft outbound reset so FRR immediately re-advertises the
+	// newly re-originated type-5 UPDATEs to cluster nodes, rather than waiting
+	// for the next BGP UPDATE cycle.
+	softResetArgs := []string{
+		fmt.Sprintf("clear bgp vrf %s l2vpn evpn soft out", vrfNameA),
+		fmt.Sprintf("clear bgp vrf %s l2vpn evpn soft out", vrfNameB),
+	}
+	if _, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(softResetArgs...)); err != nil {
+		// Non-fatal: the routes will still propagate, just more slowly.
+		framework.Logf("Warning: BGP soft reset after inter-VRF import vrf failed (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, err)
+	}
+
+	vrfShowsType5EVPN := func(vrf string) bool {
+		out, execErr := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(fmt.Sprintf("show bgp vrf %s l2vpn evpn", vrf)))
+		if execErr != nil {
+			return false
+		}
+		return strings.Contains(out, "Route Distinguisher") && strings.Contains(out, "[5]")
+	}
+	if pollErr := wait.PollImmediate(2*time.Second, 30*time.Second, func() (bool, error) {
+		if vrfShowsType5EVPN(vrfNameA) && vrfShowsType5EVPN(vrfNameB) {
+			return true, nil
+		}
+		framework.Logf("Waiting for type-5 EVPN routes on external FRR after inter-VRF import (VRF %s <-> %s)...", vrfNameA, vrfNameB)
+		return false, nil
+	}); pollErr != nil {
+		return true, fmt.Errorf("timeout waiting for type-5 EVPN routes on external FRR after inter-VRF import (VRF %s <-> %s): %w", vrfNameA, vrfNameB, pollErr)
+	}
+
 	framework.Logf("Configured loose EVPN inter-VRF routing: VRF %s <-> VRF %s (import vrf)", vrfNameA, vrfNameB)
-	return nil
+	return true, nil
 }
 
 // =============================================================================
