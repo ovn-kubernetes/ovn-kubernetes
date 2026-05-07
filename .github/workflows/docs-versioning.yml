@@ -1,0 +1,87 @@
+name: Publish Versioned Docs
+on:
+  push:
+    branches:
+      - master
+      - 'release-*'
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs-versioning.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: |
+          pip install mkdocs-material mike \
+            mkdocs-meta-descriptions-plugin \
+            mkdocs-awesome-pages-plugin \
+            mkdocs-mermaid2-plugin \
+            mkdocs-glightbox
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy All Versions
+        run: |
+          git fetch origin gh-pages --depth=1 || true
+
+          # Cache master's stylesheet so every version gets the same look
+          mkdir -p /tmp/master-stylesheets
+          git show origin/master:docs/stylesheets/extra.css > /tmp/master-stylesheets/extra.css
+
+          # Collect all release-* branches, sorted by version (ascending)
+          RELEASES=$(git branch -r --list 'origin/release-*' \
+            | sed 's|^[[:space:]]*origin/||' \
+            | sort -V)
+
+          # The highest release becomes "Stable" and gets the latest alias
+          LATEST_RELEASE=$(echo "$RELEASES" | tail -1)
+
+          for BRANCH in $RELEASES; do
+            VERSION=$(echo "$BRANCH" | sed 's/release-//')
+
+            git checkout -f "origin/${BRANCH}"
+
+            # Each branch keeps its own mkdocs.yml (and nav), but gets
+            # master's stylesheet for a consistent visual appearance.
+            mkdir -p docs/stylesheets
+            cp /tmp/master-stylesheets/extra.css docs/stylesheets/extra.css
+
+            # Ensure mike version provider is set so the dropdown renders
+            if ! grep -q 'provider: mike' mkdocs.yml; then
+              sed -i '/^extra:/a\  version:' mkdocs.yml
+              sed -i '/^  version:$/a\    provider: mike' mkdocs.yml
+            fi
+
+            if [ "$BRANCH" = "$LATEST_RELEASE" ]; then
+              mike deploy --push --update-aliases --title "v${VERSION} (Stable)" "$VERSION" latest
+            else
+              mike deploy --push --title "v${VERSION} (Legacy)" "$VERSION"
+            fi
+          done
+
+          # Deploy master
+          git checkout -f origin/master
+          mike deploy --push --title "Master (Dev)" master
+
+          # Master is the default landing page
+          mike set-default --push master
