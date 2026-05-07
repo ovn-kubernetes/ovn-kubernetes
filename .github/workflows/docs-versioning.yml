@@ -1,0 +1,63 @@
+name: Publish Versioned Docs
+on:
+  push:
+    branches:
+      - master
+      - 'release-*'
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs-versioning.yml'
+      - 'hack/build-docs.sh'
+      - 'requirements.txt'
+  # Creating a new release-* ref (e.g. git push origin master:release-1.4) often
+  # has no path diff, so the paths filter above would skip it. The create event
+  # covers that case; the job if: below ignores tags and non-release branches.
+  create:
+  workflow_dispatch:
+    inputs:
+      releases:
+        description: >
+          Branches to deploy: "all" (default) or a comma-separated list of
+          existing branches (e.g. release-1.1,master). Invalid names fail the job.
+        required: false
+        default: 'all'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    if: >
+      github.event_name != 'create' ||
+      startsWith(github.ref, 'refs/heads/release-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy Versions
+        env:
+          # create / push always rebuild all versions so labels stay consistent.
+          # workflow_dispatch may narrow the set via the releases input.
+          RELEASES: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.releases || 'all') || 'all' }}
+        run: |
+          pushd docs
+            make build-docs PUSH=1 RELEASES="${RELEASES}"
+          popd

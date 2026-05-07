@@ -12,7 +12,7 @@ mkdocs-macros-plugin
 mkdocs-material
 mkdocs-material-extensions
 mkdocs-mermaid2-plugin
-mike
+mike==2.1.4
 pep562
 Pygments
 pymdown-extensions
