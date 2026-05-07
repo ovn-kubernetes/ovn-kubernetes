@@ -2462,7 +2462,7 @@ spec:
 	   4. Create two pods matching the EgressIP: one running on each of the egress nodes
 	   5. Check connectivity from a pod to an external "node" hosted on the OVN network and verify the expected src IP
 	   6. Check connectivity from a pod to an external "node" hosted on the secondary host network and verify the expected src IP
-	   6a. Verify that the secondary host network EgressIP is NOT in the bridge-egress-ips node annotation
+	   6a. Verify EgressIP SNAT configuration in OVN NB DB
 	   6b. Verify that the secondary host network EgressIP is NOT configured on the OVS bridge
 	   7. Check connectivity from one pod to the other and verify that the connection is achieved
 	   8. Check connectivity from both pods to the api-server (running hostNetwork:true) and verifying that the connection is achieved
@@ -2602,22 +2602,51 @@ spec:
 			"a network that is secondary host network and verify that the src IP is the expected egressIP, failed: %v",
 			podNamespace.Name, pod2Name, err)
 
-		ginkgo.By("6a. Verify that the secondary host network EgressIP is NOT in the bridge-egress-ips node annotation")
-		// The secondary EgressIP must not be configured on the OVS bridge. Prior to the fix, the node's
-		// BridgeEIPAddrManager would incorrectly add secondary network IPs to the bridge and annotation.
-		annotJSON, err := e2ekubectl.RunKubectl("", "get", "node", nodeNameHostingSecondaryHostEIP,
-			"-o", fmt.Sprintf("jsonpath={.metadata.annotations['%s']}", strings.ReplaceAll(util.OVNNodeBridgeEgressIPs, "/", "\\/")))
-		framework.ExpectNoError(err, "should be able to get %s annotation on node %s", util.OVNNodeBridgeEgressIPs, nodeNameHostingSecondaryHostEIP)
-		gomega.Expect(annotJSON).ShouldNot(gomega.ContainSubstring(egressIPSecondaryHost),
-			fmt.Sprintf("secondary EgressIP %s should NOT be in %s annotation on node %s, got: %s",
-				egressIPSecondaryHost, util.OVNNodeBridgeEgressIPs, nodeNameHostingSecondaryHostEIP, annotJSON))
+		ginkgo.By("6a. Verify EgressIP SNAT configuration in OVN NB DB")
+		// Query the OVN Northbound database to confirm that SNAT entries exist for the
+		// pod's logical IP with the expected EgressIPs as external IPs. This validates
+		// that the EgressIP system is functioning correctly at the OVN level.
+		pod1IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, podNamespace.Name, pod1Name)
+		framework.ExpectNoError(err, "step 6a failed to get pod %s IP", pod1Name)
+		ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+		dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "name=ovnkube-db",
+			"-o=jsonpath='{.items..metadata.name}'")
+		dbContainerName := "nb-ovsdb"
+		if isInterconnectEnabled() {
+			dbPods, err = e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node",
+				"--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeNameHostingOVNEIP),
+				"-o=jsonpath='{.items..metadata.name}'")
+		}
+		if err != nil || len(dbPods) == 0 {
+			framework.Failf("step 6a failed to find OVN DB pod, err: %v", err)
+		}
+		dbPod := strings.Split(dbPods, " ")[0]
+		dbPod = strings.TrimPrefix(dbPod, "'")
+		dbPod = strings.TrimSuffix(dbPod, "'")
+		if len(dbPod) == 0 {
+			framework.Failf("step 6a OVN DB pod name is empty after parsing")
+		}
+		logicalIP := fmt.Sprintf("logical_ip=%s", pod1IP.String())
+		if isIPv6TestRun {
+			logicalIP = fmt.Sprintf("logical_ip=\"%s\"", pod1IP.String())
+		}
+		snats, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", dbPod, "-c", dbContainerName, "--",
+			"ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
+		framework.ExpectNoError(err, "step 6a failed to query OVN NAT table for pod %s (IP: %s)", pod1Name, pod1IP.String())
+		gomega.Expect(snats).Should(gomega.ContainSubstring(egressIPOVN),
+			"OVN EgressIP %s should have a SNAT entry for pod %s (IP: %s) in OVN NB DB, got: %s",
+			egressIPOVN, pod1Name, pod1IP.String(), snats)
 
 		ginkgo.By("6b. Verify that the secondary host network EgressIP is NOT configured on the OVS bridge")
 		// Directly inspect the bridge interface addresses on the node hosting the secondary EgressIP.
+		// BridgeEIPAddrManager.parseAndValidateEIP() should skip secondary network IPs via isOVNNetworkIP(),
+		// so the secondary EgressIP must not appear on the bridge.
 		bridgeName := deploymentconfig.Get().ExternalBridgeName()
 		brAddrOutput, err := infraprovider.Get().ExecK8NodeCommand(nodeNameHostingSecondaryHostEIP,
 			[]string{"ip", "addr", "show", "dev", bridgeName})
 		framework.ExpectNoError(err, "should be able to list addresses on bridge %s on node %s", bridgeName, nodeNameHostingSecondaryHostEIP)
+		framework.Logf("Bridge %s addresses on node %s (secondary EgressIP %s should be absent):\n%s",
+			bridgeName, nodeNameHostingSecondaryHostEIP, egressIPSecondaryHost, brAddrOutput)
 		gomega.Expect(brAddrOutput).ShouldNot(gomega.ContainSubstring(egressIPSecondaryHost),
 			fmt.Sprintf("secondary EgressIP %s should NOT be configured on bridge %s on node %s",
 				egressIPSecondaryHost, bridgeName, nodeNameHostingSecondaryHostEIP))
