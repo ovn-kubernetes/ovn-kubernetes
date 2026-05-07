@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
@@ -71,7 +70,6 @@ func NewZoneTracker(nodeInformer coreinformers.NodeInformer, onZonesUpdate func(
 	}
 
 	controllerConfig := &controller.ControllerConfig[corev1.Node]{
-		RateLimiter:    workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
 		Informer:       nodeInformer.Informer(),
 		Lister:         nodeInformer.Lister().List,
 		ObjNeedsUpdate: zt.needsUpdate,

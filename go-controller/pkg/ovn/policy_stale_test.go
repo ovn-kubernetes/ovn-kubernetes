@@ -126,6 +126,10 @@ func getStaleDefaultDenyDataWithICMP(networkPolicy *knet.NetworkPolicy, includeI
 	return append(testData, egressDenyPG, ingressDenyPG)
 }
 
+func getMultinetNsAddrSetHashNames(ns, controllerName string) (string, string) {
+	return addressset.GetHashNamesForAS(getStaleNamespaceAddrSetDbIDs(ns, controllerName))
+}
+
 // getStalePolicyACLs builds stale ACLs for given peers
 func getStalePolicyACLs(gressIdx int, namespace, policyName string, peerNamespaces []string,
 	peers []knet.NetworkPolicyPeer, policyType knet.PolicyType, netInfo util.NetInfo) []*nbdb.ACL {
@@ -293,12 +297,9 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 					Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// make sure stale ACLs were updated
-				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
-				namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
 				expectedData := getNamespaceWithSinglePolicyExpectedData(
 					newNetpolDataParams(networkPolicy),
 					initialDB.NBData)
-				expectedData = append(expectedData, namespace1AddressSetv4, namespace2AddressSetv4)
 
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 			},
@@ -328,9 +329,6 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 			expectedData := getNamespaceWithSinglePolicyExpectedData(
 				newNetpolDataParams(networkPolicy),
 				initialDB.NBData)
-			namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
-			namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
-			expectedData = append(expectedData, namespace1AddressSetv4, namespace2AddressSetv4)
 
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 		})
@@ -357,9 +355,6 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 			expectedData := getNamespaceWithSinglePolicyExpectedData(
 				newNetpolDataParams(networkPolicy),
 				initialDB.NBData)
-			namespace1AddressSetv4, _ := buildNamespaceAddressSets(longNamespaceName63, nil)
-			namespace2AddressSetv4, _ := buildNamespaceAddressSets(namespace2.Name, nil)
-			expectedData = append(expectedData, namespace1AddressSetv4, namespace2AddressSetv4)
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 		})
 	})

@@ -527,23 +527,43 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer controller.Stop()
 
-			// Create and immediately delete a node to trigger reconciliation
+			waitForBaseNeighbors := func(expected ...string) {
+				gomega.Eventually(func() error {
+					baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
+					if err != nil {
+						return err
+					}
+					if len(baseConfig.Spec.BGP.Routers) != 1 {
+						return fmt.Errorf("expected one BGP router, got %d", len(baseConfig.Spec.BGP.Routers))
+					}
+					neighbors := baseConfig.Spec.BGP.Routers[0].Neighbors
+					if len(neighbors) != len(expected) {
+						return fmt.Errorf("expected neighbors %v, got %v", expected, neighbors)
+					}
+					for i, expectedAddress := range expected {
+						if neighbors[i].Address != expectedAddress {
+							return fmt.Errorf("expected neighbor %d to be %q, got %q", i, expectedAddress, neighbors[i].Address)
+						}
+					}
+					return nil
+				}, 2*time.Second).Should(gomega.Succeed())
+			}
+
+			// Should create the base config with no neighbors when no nodes exist.
+			waitForBaseNeighbors()
+
+			// Add a node and wait until the controller has reconciled it before
+			// deleting it. Otherwise the test can race with the queued add event.
 			tempNode := createNode("temp", "10.0.0.99", "")
 			_, err = fakeClient.CoreV1().Nodes().Create(context.TODO(), tempNode, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			waitForBaseNeighbors("10.0.0.99")
+
 			err = fakeClient.CoreV1().Nodes().Delete(context.TODO(), "temp", metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			// Should still create base config, just with no neighbors
-			gomega.Eventually(func() bool {
-				bc, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
-				return err == nil && bc != nil
-			}, 2*time.Second).Should(gomega.BeTrue())
-
-			baseConfig, err := frrFakeClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(context.TODO(), BaseFRRConfigName(), metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(baseConfig.Spec.BGP.Routers).To(gomega.HaveLen(1))
-			gomega.Expect(baseConfig.Spec.BGP.Routers[0].Neighbors).To(gomega.BeEmpty())
+			// Should return to no neighbors after the last node is deleted.
+			waitForBaseNeighbors()
 		})
 	})
 

@@ -9,6 +9,7 @@
   --md-sidebar-width: var(--ok-sidebar-base);
   --ok-content-max: min(56.25rem, 90vw);
   --md-header-height: clamp(80px, 15vh, 140px);
+  --text-emphasis: #ffffffa6;
 }
 
 /* THEME SYSTEM: Defines distinct color palettes for Light (default) and Dark (slate) modes*/
@@ -22,6 +23,7 @@
   --ok-sidebar-border: #a855f7;
   --ok-sidebar-bg: rgba(255, 255, 255, 0.96);
   --ok-sidebar-edge: rgba(168, 85, 247, 0.14);
+  --text-emphasis: #000000d1;
   --ok-sidebar-gradient: linear-gradient(
     to right,
     var(--ok-sidebar-edge) 0%,
@@ -88,10 +90,9 @@
 
 
 .md-typeset h1 {
-  color: var(--md-default-fg-color--light);
   line-height: 1.3;
   margin: 0 0 clamp(-0.25rem, 0.5vw, 0.75rem) 0;
-  font-weight: 400;
+  color: var(--text-emphasis);
 }
 
 /* ANCHOR LINKS: Styles hoverable section links with smooth transitions and a temporary "copy confirmation" tooltip for better navigation UX. */

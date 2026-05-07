@@ -41,6 +41,9 @@ COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 # copy git commit number into image
 COPY git_info /root
 
+# include checked-in third-party license files in the final image
+COPY LICENSES/ /usr/share/licenses/ovn-kubernetes/
+
 # iptables wrappers
 COPY ./iptables-scripts/iptables /usr/sbin/
 COPY ./iptables-scripts/iptables-save /usr/sbin/

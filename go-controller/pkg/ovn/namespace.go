@@ -64,7 +64,7 @@ func (oc *DefaultNetworkController) getRoutingPodGWs(nsInfo *namespaceInfo) map[
 
 // addLocalPodToNamespace returns pod's routing gateway info and the ops needed
 // to add pod's IP to the namespace's address set and port group.
-func (oc *DefaultNetworkController) addLocalPodToNamespace(ns string, ips []*net.IPNet, portUUID string) (*gatewayInfo, map[string]gatewayInfo, []ovsdb.Operation, error) {
+func (oc *DefaultNetworkController) addLocalPodToNamespace(ns string, portUUID string) (*gatewayInfo, map[string]gatewayInfo, []ovsdb.Operation, error) {
 	var err error
 	nsInfo, nsUnlock, err := oc.ensureNamespaceLocked(ns, true, nil)
 	if err != nil {
@@ -73,21 +73,11 @@ func (oc *DefaultNetworkController) addLocalPodToNamespace(ns string, ips []*net
 
 	defer nsUnlock()
 
-	ops, err := oc.addLocalPodToNamespaceLocked(nsInfo, ips, portUUID)
+	ops, err := oc.addLocalPodToNamespaceLocked(nsInfo, portUUID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return oc.getRoutingExternalGWs(nsInfo), oc.getRoutingPodGWs(nsInfo), ops, nil
-}
-
-func (oc *DefaultNetworkController) addRemotePodToNamespace(ns string, ips []*net.IPNet) error {
-	nsInfo, nsUnlock, err := oc.ensureNamespaceLocked(ns, true, nil)
-	if err != nil {
-		return fmt.Errorf("failed to ensure namespace locked: %v", err)
-	}
-
-	defer nsUnlock()
-	return nsInfo.addressSet.AddAddresses(util.IPNetsIPToStringSlice(ips))
 }
 
 func isNamespaceMulticastEnabled(annotations map[string]string) bool {

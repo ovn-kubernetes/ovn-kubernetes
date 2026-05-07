@@ -52,5 +52,6 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 ## Information on Past Releases
 
 * [v1.0.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.0) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.0.0) - not maintained anymore.
-* [v1.1.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.1) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.1.0) - actively maintained
+* [v1.1.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.1) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.1.0) - not maintained anymore.
 * [v1.2.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.2) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.2.0) - actively maintained
+* [v1.3.0](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/release-1.3) - [release-notes](https://github.com/ovn-kubernetes/ovn-kubernetes/releases/tag/v1.3.0) - actively maintained

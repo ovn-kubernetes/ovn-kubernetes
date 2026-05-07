@@ -13,7 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	kubeMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	v1mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -43,7 +43,7 @@ var _ = Describe("cni_dpu tests", func() {
 			SandboxID:    "824bceff24af3",
 			Netns:        "ns",
 			IfName:       "eth0",
-			CNIConf: &types.NetConf{
+			CNIConf: &ovncnitypes.NetConf{
 				NetConf:  cnitypes.NetConf{},
 				DeviceID: "",
 			},

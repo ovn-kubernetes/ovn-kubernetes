@@ -75,11 +75,14 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         # ovn db is stored in the pod in /etc/openvswitch
-        # (or in /etc/ovn if OVN from new repository is used)
+        # (or in /etc/ovn if OVN from new repository is used,
+        # or in /var/lib/ovn if using Debian/Ubuntu packages)
         # and on the host in /var/lib/openvswitch/
         - mountPath: /etc/openvswitch/
           name: host-var-lib-ovs
         - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/lib/ovn/
           name: host-var-lib-ovs
         - mountPath: /var/log/openvswitch/
           name: host-var-log-ovs
@@ -98,7 +101,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel }}
         - name: K8S_APISERVER
@@ -148,11 +151,14 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         # ovn db is stored in the pod in /etc/openvswitch
-        # (or in /etc/ovn if OVN from new repository is used)
+        # (or in /etc/ovn if OVN from new repository is used,
+        # or in /var/lib/ovn if using Debian/Ubuntu packages)
         # and on the host in /var/lib/openvswitch/
         - mountPath: /etc/openvswitch/
           name: host-var-lib-ovs
         - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/lib/ovn/
           name: host-var-lib-ovs
         - mountPath: /var/log/openvswitch/
           name: host-var-log-ovs
@@ -171,7 +177,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_SB
           value: {{ default "-vconsole:info -vfile:info" .Values.sbLogLevel }}
         - name: K8S_APISERVER
@@ -214,11 +220,14 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         # ovn db is stored in the pod in /etc/openvswitch
-        # (or in /etc/ovn if OVN from new repository is used)
+        # (or in /etc/ovn if OVN from new repository is used,
+        # or in /var/lib/ovn if using Debian/Ubuntu packages)
         # and on the host in /var/lib/openvswitch/
         - mountPath: /etc/openvswitch/
           name: host-var-lib-ovs
         - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/lib/ovn/
           name: host-var-lib-ovs
         - mountPath: /var/log/openvswitch/
           name: host-var-log-ovs
@@ -241,7 +250,7 @@ spec:
           value: "crash"
         {{ end -}}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.dbCheckerLogLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE

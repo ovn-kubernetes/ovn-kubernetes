@@ -27,9 +27,10 @@ For kubelet network probes to work with UDN pods, the following are required:
   [6.1.112](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.1.112)
 - cgroupv2: required for kubelet probes to work with UDN pods
 
-## BGP and EVPN (ENABLE_ROUTE_ADVERTISEMENTS)
+## BGP, EVPN, and No-Overlay (ENABLE_ROUTE_ADVERTISEMENTS)
 
-[Feature link](bgp-integration/route-advertisements.md)
+- [Route Advertisements feature link](bgp-integration/route-advertisements.md)
+- [No-overlay feature link](bgp-integration/no-overlay.md)
 
 | OVN-Kubernetes release | frr-k8s | frr  | 
 |------------------------|---------|------|

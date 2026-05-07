@@ -476,6 +476,7 @@ jobs:
         pushd go-controller
            make gofmt
            make verify-go-mod-vendor
+           make verify-third-party-licenses
            make
            make windows
         popd

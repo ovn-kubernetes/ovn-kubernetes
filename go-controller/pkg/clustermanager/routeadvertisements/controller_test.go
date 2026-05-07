@@ -1589,7 +1589,7 @@ exit
 					Routers: []*testRouter{
 						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},
@@ -1655,7 +1655,7 @@ exit
 					Routers: []*testRouter{
 						{ASN: 65000, VRF: "blue6", Prefixes: []string{"fd02::/64"}},
 						{ASN: 65000, Prefixes: []string{"fd64::1/128"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "fd00::1", Advertise: []string{"fd64::1/128"}, Receive: []testPrefixSelector{{Prefix: "fd64::/64", LE: 128}}},
+							{ASN: 65000, Address: "fd00::1", Advertise: []string{"fd64::1/128"}, Receive: []testPrefixSelector{{Prefix: "fd64::/64", LE: 128, GE: 128}}},
 						}},
 					},
 				},
@@ -1717,7 +1717,7 @@ exit
 							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"10.1.0.0/16"}},
 						}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},
@@ -1798,7 +1798,7 @@ exit
 						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
 						{ASN: 65000, VRF: "green", Prefixes: []string{"10.3.1.0/24"}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},
@@ -1869,7 +1869,7 @@ exit
 					Routers: []*testRouter{
 						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},
@@ -1902,7 +1902,7 @@ exit
 					Routers: []*testRouter{
 						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.2/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.2/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.2/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},
@@ -1987,7 +1987,7 @@ exit
 						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
 						{ASN: 65000, VRF: "green", Prefixes: []string{"10.3.1.0/24"}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.1/32", "200.10.0.1/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32", "200.10.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}, {Prefix: "200.10.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32", "200.10.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}, {Prefix: "200.10.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},
@@ -2058,7 +2058,7 @@ exit
 					Routers: []*testRouter{
 						{ASN: 65000, VRF: "blue", Prefixes: []string{"10.2.1.0/24"}},
 						{ASN: 65000, Prefixes: []string{"100.64.0.1/32"}, Neighbors: []*testNeighbor{
-							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32}}},
+							{ASN: 65000, Address: "192.168.1.1", Advertise: []string{"100.64.0.1/32"}, Receive: []testPrefixSelector{{Prefix: "100.64.0.0/16", LE: 32, GE: 32}}},
 						}},
 					},
 				},

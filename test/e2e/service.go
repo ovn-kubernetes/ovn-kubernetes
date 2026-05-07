@@ -1274,6 +1274,10 @@ spec:
 				if len(egressIP.Items) > 1 {
 					framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIP.Items))
 				}
+				if len(egressIP.Items[0].Status.Items) == 0 {
+					framework.Logf("EgressIP %s is not assigned to node %s yet", egressIP, egressNode)
+					return false, nil
+				}
 				return egressIP.Items[0].Status.Items[0].Node == egressNode, nil
 			})
 			if err != nil {
@@ -2692,6 +2696,10 @@ spec:
 			json.Unmarshal([]byte(egressIPStdout), &egressIP)
 			if len(egressIP.Items) > 1 {
 				framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIP.Items))
+			}
+			if len(egressIP.Items[0].Status.Items) == 0 {
+				framework.Logf("EgressIP %s is not assigned to node %s yet", egressIP1.String(), nonBackendNodeName)
+				return false, nil
 			}
 			return egressIP.Items[0].Status.Items[0].Node == nonBackendNodeName, nil
 		})

@@ -4500,7 +4500,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 		   17.   Verify pod-to-pod works cross-network again
 		   18.   Verify service connectivity FAILS cross-network, but works within same network
 		*/
-		It("pod and service connectivity through CNC connectivity types toggling [Feature:NetworkConnect]", func() {
+		It("pod and service connectivity through CNC connectivity types toggling", func() {
 			// Setup (Steps 1-4) completed in BeforeEach
 			// This test starts from Step 5
 

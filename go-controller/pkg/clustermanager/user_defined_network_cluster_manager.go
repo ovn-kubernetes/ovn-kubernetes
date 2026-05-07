@@ -4,7 +4,7 @@
 package clustermanager
 
 import (
-	"github.com/containernetworking/cni/pkg/types"
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -178,7 +178,7 @@ func (sncm *userDefinedNetworkClusterManager) CleanupStaleNetworks(validNetworks
 // clean up stale node annotations for the given network. It skips the full
 // init() path and only sets up what Cleanup() requires: a nodeAllocator.
 func (sncm *userDefinedNetworkClusterManager) newDummyNetworkController(topoType, netName string) (networkmanager.NetworkController, error) {
-	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType})
+	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: cnitypes.NetConf{Name: netName}, Topology: topoType})
 	nc := newNetworkClusterController(
 		netInfo,
 		sncm.ovnClient,

@@ -83,11 +83,19 @@ func (vrfm *Controller) runInternal(stopChan <-chan struct{}, doneWg *sync.WaitG
 	}
 	subscribed, linkUpdateCh, err := subscribe()
 	if err != nil {
+		if closeErr := currentNs.Close(); closeErr != nil {
+			klog.Warningf("VRF Manager: failed to close namespace handle: %v", closeErr)
+		}
 		return fmt.Errorf("error during netlink subscribe, err: %v", err)
 	}
 	doneWg.Add(1)
 	go func() {
 		defer doneWg.Done()
+		defer func() {
+			if err := currentNs.Close(); err != nil {
+				klog.Warningf("VRF Manager: failed to close namespace handle: %v", err)
+			}
+		}()
 		err = currentNs.Do(func(_ ns.NetNS) error {
 			linkSyncTimer := time.NewTicker(reconcilePeriod)
 			defer linkSyncTimer.Stop()

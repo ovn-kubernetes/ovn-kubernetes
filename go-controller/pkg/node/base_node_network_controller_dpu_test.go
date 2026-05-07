@@ -59,10 +59,6 @@ func genOVSGetCmd(table, record, column, key string) string {
 	return fmt.Sprintf("ovs-vsctl --timeout=30 --if-exists get %s %s %s", table, record, column)
 }
 
-func genOfctlDumpFlowsCmd(queryStr string) string {
-	return fmt.Sprintf("ovs-ofctl --timeout=10 --no-stats --strict dump-flows br-int %s", queryStr)
-}
-
 func genIfaceID(podNamespace, podName string) string {
 	return fmt.Sprintf("%s_%s", podNamespace, podName)
 }
@@ -302,23 +298,10 @@ var _ = Describe("Node DPU tests", func() {
 					Cmd: genOVSFindCmd("30", "qos", "_uuid",
 						"external-ids:sandbox=a8d09931"),
 				})
-				// getIfaceOFPort
+				// waitForPodInterface
 				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genOVSGetCmd("Interface", "pf0vf9", "ofport", ""),
-					Output: "1",
-				})
-				// waitForPodFlows
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genOVSGetCmd("Interface", "pf0vf9", "external-ids", "iface-id"),
-					Output: genIfaceID(pod.Namespace, pod.Name),
-				})
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genOfctlDumpFlowsCmd("table=9,dl_src="),
-					Output: "non-empty-output",
-				})
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genOfctlDumpFlowsCmd("table=0,in_port=1"),
-					Output: "non-empty-output",
+					Cmd:    genOVSGetCmd("Interface", "pf0vf9", "external-ids", "iface-id") + " " + "external-ids:ovn-installed",
+					Output: genIfaceID(pod.Namespace, pod.Name) + "\n" + "true",
 				})
 				// ConfigureOVS now calls LinkByName/LinkSetMTU/LinkSetUp when deviceID != ""
 				netlinkOpsMock.On("LinkByName", vfRep).Return(vfLink, nil)

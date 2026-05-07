@@ -15,7 +15,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
@@ -81,7 +80,6 @@ func New(node string, nbClient client.Client) Controller {
 		&controllerutil.ReconcilerConfig{
 			Threadiness: 1,
 			Reconcile:   c.syncNetwork,
-			RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
 		},
 	)
 

@@ -190,9 +190,6 @@ func CreateOrUpdateLogicalRouterPort(nbClient libovsdbclient.Client, router *nbd
 // and returns the corresponding ops
 func CreateOrUpdateLogicalRouterPortOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, router *nbdb.LogicalRouter,
 	lrp *nbdb.LogicalRouterPort, chassis *nbdb.GatewayChassis, fields ...interface{}) ([]ovsdb.Operation, error) {
-	if err := validateRequestedChassisOption(lrp.Options); err != nil {
-		return nil, err
-	}
 	opModels := []operationModel{}
 	if chassis != nil {
 		opModels = append(opModels, operationModel{

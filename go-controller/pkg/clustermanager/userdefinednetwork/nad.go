@@ -13,7 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
-	cnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -45,7 +45,7 @@ func NetAttachDefNotInUse(nad *netv1.NetworkAttachmentDefinition, pods []*corev1
 // PrimaryNetAttachDefNotExist checks no OVN-K primary network NAD exist in the given slice.
 func PrimaryNetAttachDefNotExist(nads []*netv1.NetworkAttachmentDefinition) error {
 	for _, nad := range nads {
-		var netConf *cnitypes.NetConf
+		var netConf *ovncnitypes.NetConf
 		if err := json.Unmarshal([]byte(nad.Spec.Config), &netConf); err != nil {
 			return fmt.Errorf("failed to validate no primary network exist: unmarshal failed [%s/%s]: %w",
 				nad.Namespace, nad.Name, err)

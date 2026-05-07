@@ -87,9 +87,10 @@ nav:
     - Internal Subnets: design/ovn-kubernetes-subnets.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
-    - Launching OVN-Kubernetes: installation/launching-ovn-kubernetes-on-kind.md
+    - Launching OVN-Kubernetes sandbox env: installation/launching-ovn-kubernetes-on-kind.md
     - Launching OVN-Kubernetes Using Helm: installation/launching-ovn-kubernetes-with-helm.md
     - Launching OVN-Kubernetes with DPU Acceleration: installation/launching-ovn-kubernetes-with-dpu.md
+    - Launching OVN-Kubernetes with kubeadm: installation/INSTALL.KUBEADM.md
     - Configuration Guide: getting-started/configuration.md
     - Requirements: features/requirements.md
     - CLI Guide: getting-started/cli-guide.md
@@ -117,9 +118,12 @@ nav:
       - UserDefinedNetwork: api-reference/userdefinednetwork-api-spec.md
       - RouteAdvertisements: api-reference/routeadvertisements-api-spec.md
       - ClusterNetworkConnect: api-reference/clusternetworkconnect-api-spec.md
+      - VTEP: api-reference/vtep-api-spec.md
   - Features:
     - Universal Connectivity:
       - UserDefinedNetwork: features/user-defined-networks/user-defined-networks.md
+      - Connecting UserDefinedNetworks: features/user-defined-networks/cluster-network-connect.md
+      - Dynamic UDN Node Allocation: features/user-defined-networks/dynamic-udn.md
     - NetworkSecurityControls:
       - AdminNetworkPolicy: features/network-security-controls/admin-network-policy.md
       - NetworkPolicy: features/network-security-controls/network-policy.md
@@ -147,6 +151,8 @@ nav:
       - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
     - BGP Integration:
       - Route Advertisements: features/bgp-integration/route-advertisements.md
+      - No-Overlay Mode: features/bgp-integration/no-overlay.md
+      - EVPN: features/bgp-integration/evpn.md
   - Troubleshooting:
     - Introduction: troubleshooting/debugging.md
     - OVNKube Trace: troubleshooting/ovnkube-trace.md

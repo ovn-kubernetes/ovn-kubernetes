@@ -5,7 +5,7 @@
 #set -euo pipefail
 
 verify-ovsdb-raft() {
-  check_ovn_daemonset_version "1.2.0"
+  check_ovn_daemonset_version "1.3.0"
 
   if [[ ${ovn_db_host} == "" ]]; then
     echo "failed to retrieve the IP address of the host $(hostname). Exiting..."

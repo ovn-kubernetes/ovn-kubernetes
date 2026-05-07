@@ -453,12 +453,15 @@ func (c *Controller) validateNodeVTEPIPs(vtep *vtepv1.VTEP) error {
 }
 
 func (c *Controller) handleManagedModeNotSupported(vtep *vtepv1.VTEP) error {
-	vtepRef, err := reference.GetReference(vtepscheme.Scheme, vtep)
-	if err != nil {
-		return fmt.Errorf("failed to get object reference for VTEP %s: %w", vtep.Name, err)
+	existingCond := meta.FindStatusCondition(vtep.Status.Conditions, conditionTypeAccepted)
+	if existingCond == nil || existingCond.Status != metav1.ConditionFalse || existingCond.Reason != reasonManagedModeNotSupported {
+		vtepRef, err := reference.GetReference(vtepscheme.Scheme, vtep)
+		if err != nil {
+			return fmt.Errorf("failed to get object reference for VTEP %s: %w", vtep.Name, err)
+		}
+		c.eventRecorder.Event(vtepRef, corev1.EventTypeWarning, reasonManagedModeNotSupported,
+			"Managed VTEP mode is not yet implemented; only Unmanaged mode is currently supported")
 	}
-	c.eventRecorder.Event(vtepRef, corev1.EventTypeWarning, reasonManagedModeNotSupported,
-		"Managed VTEP mode is not yet implemented; only Unmanaged mode is currently supported")
 
 	return c.updateStatusCondition(vtep, conditionTypeAccepted, metav1.ConditionFalse,
 		reasonManagedModeNotSupported,

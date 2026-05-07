@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"net"
 
-	"github.com/containernetworking/cni/pkg/types"
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 )
 
 // NetConf is CNI NetConf with DeviceID
 type NetConf struct {
-	types.NetConf
+	cnitypes.NetConf
 	// Role is valid only on L3 / L2 topologies. Not on localnet.
 	// It allows for using this network to be either secondary or
 	// primary user defined network for the pod.
@@ -120,9 +120,9 @@ type NetConf struct {
 // v1.3.0 changed types.NetConf from a distinct type to a type alias for PluginConf,
 // causing PluginConf.MarshalJSON to be promoted into any struct embedding types.NetConf.
 func (n NetConf) MarshalJSON() ([]byte, error) {
-	// cniConf is a new type with the same layout as types.PluginConf but without
+	// cniConf is a new type with the same layout as cnitypes.PluginConf but without
 	// its MarshalJSON method, so embedding it uses standard struct marshaling.
-	type cniConf types.PluginConf
+	type cniConf cnitypes.PluginConf
 	type netConf struct {
 		cniConf
 		Role                  string      `json:"role,omitempty"`

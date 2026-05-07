@@ -410,7 +410,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		if lsp != nil {
 			portUUID = lsp.UUID
 		}
-		addOps, err := bsnc.addPodToNamespaceForUserDefinedNetwork(pod.Namespace, podAnnotation.IPs, portUUID)
+		addOps, err := bsnc.addPodToNamespaceForUserDefinedNetwork(pod.Namespace, portUUID)
 		if err != nil {
 			return err
 		}
@@ -491,13 +491,6 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 		// handle remote pod clean up but only do this one time
 		if !hasLogicalPort && !alreadyProcessed {
-			if bsnc.doesNetworkRequireIPAM() &&
-				// address set is for network policy only. So either multi network policy is enabled or network
-				// segmentation, and it is a primary UDN (regular netpol)
-				(util.IsMultiNetworkPoliciesSupportEnabled() || (util.IsNetworkSegmentationSupportEnabled() && bsnc.IsPrimaryNetwork())) {
-				return bsnc.removeRemoteZonePodFromNamespaceAddressSet(pod)
-			}
-
 			// except for localnet networks, continue the delete flow in case a node just
 			// became remote where we might still need to cleanup. On L3 networks
 			// the node switch is removed so there is no need to do this.
@@ -710,7 +703,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 }
 
 // addPodToNamespaceForUserDefinedNetwork returns the ops needed to add pod's IP to the namespace's address set.
-func (bsnc *BaseUserDefinedNetworkController) addPodToNamespaceForUserDefinedNetwork(ns string, ips []*net.IPNet, portUUID string) ([]ovsdb.Operation, error) {
+func (bsnc *BaseUserDefinedNetworkController) addPodToNamespaceForUserDefinedNetwork(ns string, portUUID string) ([]ovsdb.Operation, error) {
 	var err error
 	nsInfo, nsUnlock, err := bsnc.ensureNamespaceLockedForUserDefinedNetwork(ns, true, nil)
 	if err != nil {
@@ -719,7 +712,7 @@ func (bsnc *BaseUserDefinedNetworkController) addPodToNamespaceForUserDefinedNet
 
 	defer nsUnlock()
 
-	return bsnc.addLocalPodToNamespaceLocked(nsInfo, ips, portUUID)
+	return bsnc.addLocalPodToNamespaceLocked(nsInfo, portUUID)
 }
 
 // AddNamespaceForUserDefinedNetwork creates corresponding addressset in ovn db for User Defined Network

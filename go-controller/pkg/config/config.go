@@ -80,7 +80,7 @@ var (
 	// ovn-kubernetes build date
 	BuildDate = ""
 	// ovn-kubernetes version, to be changed with every release
-	Version = "1.2.0"
+	Version = "1.3.0"
 	// version of the go runtime used to compile ovn-kubernetes
 	GoVersion = runtime.Version()
 	// os and architecture used to build ovn-kubernetes

@@ -15,11 +15,12 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 
@@ -109,7 +110,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			addHybridOverlayAddNodeMocks(nlMock)
 
 			testNode := createNode(hoNodeName, "linux", hoNodeIP, map[string]string{
-				types.HybridOverlayNodeSubnet: hoNodeSubnet,
+				hotypes.HybridOverlayNodeSubnet: hoNodeSubnet,
 			})
 
 			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -140,7 +141,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 					return nil, err
 				}
 				return updatedNode.Annotations, nil
-			}, 2).Should(HaveKeyWithValue(types.HybridOverlayDRMAC, hoNodeDRMAC))
+			}, 2).Should(HaveKeyWithValue(hotypes.HybridOverlayDRMAC, hoNodeDRMAC))
 			return nil
 		}
 		appHONRun(app)
@@ -156,7 +157,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			testPod1 := createPod("default", "testpod-1", hoNodeName, "2.2.3.5/24", "aa:bb:cc:dd:ee:ff")
 			testPod2 := createPod("default", "testpod-2", "other-worker", "2.2.3.6/24", "ab:bb:cc:dd:ee:ff")
 			testNode := createNode(hoNodeName, "linux", hoNodeIP, map[string]string{
-				types.HybridOverlayNodeSubnet: hoNodeSubnet,
+				hotypes.HybridOverlayNodeSubnet: hoNodeSubnet,
 			})
 
 			fakeClient := fake.NewSimpleClientset(&corev1.PodList{
@@ -196,7 +197,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 					return nil, err
 				}
 				return updatedPod.Annotations, nil
-			}, 2).ShouldNot(HaveKey(util.OvnPodAnnotationName))
+			}, 2).ShouldNot(HaveKey(types.OvnPodAnnotationName))
 
 			Eventually(func() (map[string]string, error) {
 				updatedPod, err := fakeClient.CoreV1().Pods("default").Get(context.TODO(), "testpod-2", metav1.GetOptions{})
@@ -204,7 +205,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 					return nil, err
 				}
 				return updatedPod.Annotations, nil
-			}, 2).Should(HaveKey(util.OvnPodAnnotationName))
+			}, 2).Should(HaveKey(types.OvnPodAnnotationName))
 			return nil
 		}
 		appHONRun(app)

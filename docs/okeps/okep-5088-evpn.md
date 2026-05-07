@@ -247,6 +247,10 @@ we just need a way to get the packet from the pod into the IP-VRF, it does not m
 or if we use an SVI interface attached to the Linux Bridge. Therefore, we will never configure an IP address on the SVI
 interface of the Linux bridge, and rely on ovn-k8s-mpx to get packets to the IP-VRF.
 
+Nonetheless, for MAC-VRFs a Layer 2 SVI is still created on the Linux bridge. While it is not used as a gateway and does
+not need an IP address, FRR depends on it as an IP domain anchor with a neighbor table from which it generates Type 2
+routes with IP and installs entries from learned Type 2 routes with IP for ARP suppression.
+
 For the remaining devices, the API will drive their creation, covered in a later section.
 
 ### Workflow Description
@@ -363,8 +367,8 @@ The IP address assigned (managed) or discovered (unmanaged) by OVN-Kubernetes wi
 `k8s.ovn.org/vteps: {"vtep-name1": {"ips": ["ipv4", "ipv6"]}, "vtep-name2": {"ips": ["ipv4", "ipv6"]}}`.
 For managed mode, ovnkube-cluster-manager allocates IPs and writes the annotation. For unmanaged mode,
 ovnkube-node discovers IPs on the node that fall within the VTEP CIDRs and writes the annotation back.
-Even though the user or external automation (e.g. a loopback IP for EVPN) originally configured the IP on the
-interface, annotating it to the node object provides a central view through the Kubernetes API so that operators
+Even though the user or external automation originally configured the VTEP IP on the interface,
+annotating it to the node object provides a central view through the Kubernetes API so that operators
 can inspect every node's VTEP IPs without SSH access. This is especially important for future use cases like
 multi VTEP Geneve tunnels where the VTEP IP may be DHCP-assigned and not known to the user ahead of time.
 ovnkube-cluster-manager then reads the annotation to validate all nodes have VTEP IPs.
@@ -379,7 +383,7 @@ VTEP Status Conditions will have one type `Accepted` with the following reasons:
 The allocated VTEPIPs will not be included in the status. So the user has no way to know what went wrong when
 its `AllocationFailed` and which node to check to fix the situation from the status alone. The node side
 controller will add events in case something goes wrong with the allocation (in managed mode, if the VTEP IP
-could not be added to the loopback interface and in unmanaged mode, if discovery failed) to provide input to the user.
+could not be configured on an interface and in unmanaged mode, if discovery failed) to provide input to the user.
 
 ### CUDN CRD changes for EVPN
 
@@ -470,9 +474,11 @@ unmanaged VTEP includes the Kubernetes node IP for a node, then the node IP will
 node IP should be avoided in most cases, as that IP will already be tied to a specific interface on the node. This
 prevents proper Layer 3 failure handling. While the node IP on a dedicated link could use bonding to prevent Layer 2
 failover, if something goes wrong on the Layer 3 interface, or the leaf connected to that link goes down, then there is
-no failover. With EVPN, it is advantageous to assign the VTEP IP to a loopback interface, so that multihoming and
-failover handling can occur. If a link goes down to one leaf, BFD will fire, and there will be a mass withdrawal of
-routes, moving all traffic to a second leaf.
+no failover. With EVPN, it is advantageous to assign the VTEP IP to an interface without a physical link
+carrier, so that multihoming and failover handling can occur. If a link goes down to one leaf, BFD will fire,
+and there will be a mass withdrawal of routes, moving all traffic to a second leaf. Although loopback interfaces
+are generally used for this, in our case we will use VTEP IPs configured as primary addresses on dummy interfaces
+which facilitates management and filtering out unwanted addresses from discovery.
 
 If the VTEP is in unmanaged mode, ovnkube-node discovers IPs on each node that fall within the VTEP CIDRs and writes
 the `k8s.ovn.org/vteps` annotation. Keepalived VIPs (identified by the `vip` label suffix that keepalived
@@ -504,8 +510,10 @@ For the rest of the examples in this section, assume there is a layer 2 UDN call
 
 Once the VTEP IP is assigned, ovnkube-node will then handle configuring the following:
 ```bash
-# VTEP IP assignment to loopback - only done in VTEP managed mode
-ip addr add 100.64.0.1/32 dev lo
+# VTEP IP assignment to dummy interface - only done in VTEP managed mode
+ip link add evlo-evpn-vtep type dummy
+ip addr add 100.64.0.1/32 dev evlo-evpn-vtep
+ip link set evlo-evpn-vtep up
 
 # SVD bridge + VXLAN setup
 ip link add br0 type bridge vlan_filtering 1 vlan_default_pvid 0
@@ -542,11 +550,22 @@ bridge vlan add dev vxlan0 vid 12
 bridge vni add dev vxlan0 vni 100
 bridge vlan add dev vxlan0 vid 12 tunnel_info id 100
 
+## SVI 
+ip link add br0.12 link br0 type vlan id 12
+ip link set br0.12 address aa:bb:cc:00:00:64 addrgenmode none
+ip link set br0.12 master blue
+ip link set br0.12 up
+
 # 2. Connect OVS to the Linux Bridge
 ovs-vsctl add-port br-int blue -- set interface blue type=internal external-ids:iface-id=blue
 ip link set blue master br0
 bridge vlan add dev blue vid 12 pvid untagged
 ip link set blue up
+
+# Per pod: static FDB and neighbor entries
+# example pod with MAC 0a:58:0a:00:0a:05 and IP 10.0.10.5
+bridge fdb add 0a:58:0a:00:0a:05 dev blue vlan 12 master static
+ip neigh add 10.0.10.5 lladdr 0a:58:0a:00:0a:05 dev br0.12 nud permanent
 ```
 
 The Linux configuration ends up looking like this:
@@ -616,7 +635,9 @@ Kubernetes nodes. This allows for VM migration and other layer 2 connectivity be
 and entities within.
 
 ovnkube-controller will be responsible for configuring OVN, including the extra OVS internal port attached to the worker logical
-switch.
+switch. Additionally, for each pod in the UDN, static FDB and neighbor entries are created on the Linux bridge and the SVI
+respectively. Both entries are needed for FRR to generate Type 2 routes with IP. Creating the FDB entry statically also
+avoids depending on bootstrap traffic that would otherwise be needed to populate the entry through MAC learning.
 
 In addition to VTEP IP allocation, ovnkube-cluster-manager will be responsible for generating FRR-K8S config to enable
 FRR with EVPN. The config for the above example would look something like this:
@@ -688,8 +709,10 @@ The RouteAdvertisements CRD will still work in conjunction with the EVPN CRD to 
 A Layer 3 UDN with an IP-VRF is really just a subset of the previous example, as far as configuration of the node:
 
 ```bash
-# VTEP IP assignment to loopback - only done in VTEP managed mode
-ip addr add 100.64.0.1/32 dev lo
+# VTEP IP assignment to dummy interface - only done in VTEP managed mode
+ip link add evlo-evpn-vtep type dummy
+ip addr add 100.64.0.1/32 dev evlo-evpn-vtep
+ip link set evlo-evpn-vtep up
 
 # SVD bridge + VXLAN setup
 ip link add br0 type bridge vlan_filtering 1 vlan_default_pvid 0
@@ -768,8 +791,10 @@ In this case each node has its own layer 2 domain, and routing is used via the I
 With only a MAC-VRF it is also a subset of the previous node configuration:
 
 ```bash
-# VTEP IP assignment to loopback - only done in VTEP managed mode
-ip addr add 100.64.0.1/32 dev lo
+# VTEP IP assignment to dummy interface - only done in VTEP managed mode
+ip link add evlo-evpn-vtep type dummy
+ip addr add 100.64.0.1/32 dev evlo-evpn-vtep
+ip link set evlo-evpn-vtep up
 
 # SVD bridge + VXLAN setup
 ip link add br0 type bridge vlan_filtering 1 vlan_default_pvid 0
@@ -789,11 +814,22 @@ bridge vlan add dev vxlan0 vid 12
 bridge vni add dev vxlan0 vni 100
 bridge vlan add dev vxlan0 vid 12 tunnel_info id 100
 
-# 2. Connect OVS to the Linux Bridge
+## 2. SVI 
+ip link add br0.12 link br0 type vlan id 12
+ip link set br0.12 address aa:bb:cc:00:00:64 addrgenmode none
+ip link set br0.12 master blue
+ip link set br0.12 up
+
+# 3. Connect OVS to the Linux Bridge
 ovs-vsctl add-port br-int blue -- set interface blue type=internal external-ids:iface-id=blue
 ip link set blue master br0
 bridge vlan add dev blue vid 12 pvid untagged
 ip link set blue up
+
+# Per pod: static FDB and neighbor entries
+# example pod with MAC 0a:58:0a:00:0a:05 and IP 10.0.10.5
+bridge fdb add 0a:58:0a:00:0a:05 dev blue vlan 12 master static
+ip neigh add 10.0.10.5 lladdr 0a:58:0a:00:0a:05 dev br0.12 nud permanent
 ```
 
 The FRR configuration is also a subset of the original config:
@@ -956,8 +992,8 @@ drawbacks listed above, and therefore OpenPERouter is not a viable alternative.
 Another design for unmanaged VTEP mode had ovnkube-cluster-manager discover VTEP IPs by reading
 the existing `k8s.ovn.org/host-cidrs` node annotation and matching those IPs against the VTEP CIDRs.
 This avoided introducing a new annotation, since `host-cidrs` already contains all IPs configured on
-the node (and will be extended to include loopback interface IPs). The RouteAdvertisements controller
-would independently perform the same discovery when generating FRR configurations.
+the node. The RouteAdvertisements controller would independently perform the same discovery when
+generating FRR configurations.
 
 This approach was rejected primarily because users would have no way to know which IP was selected as
 the VTEP IP for a given node without inspecting the `host-cidrs` annotation and mentally replaying

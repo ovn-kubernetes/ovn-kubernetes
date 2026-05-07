@@ -6,21 +6,27 @@ package addresssetmanager
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -50,6 +56,32 @@ func eventuallyExpectEmptyAddressSetsExist(nbClient libovsdbclient.Client, peer 
 	}
 }
 
+// this is a test wrapper to count db transactions
+type countingClient struct {
+	libovsdbclient.Client
+	transactCount atomic.Int64
+}
+
+func (c *countingClient) Transact(ctx context.Context, ops ...ovsdb.Operation) ([]ovsdb.OperationResult, error) {
+	c.transactCount.Add(1)
+	return c.Client.Transact(ctx, ops...)
+}
+
+func newNetInfo(networkName, topology, role, subnets string) util.NetInfo {
+	netconf := ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: networkName,
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Role:     role,
+		Topology: topology,
+		Subnets:  subnets,
+	}
+	netInfo, err := util.NewNetInfo(&netconf)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return netInfo
+}
+
 var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 	const (
 		namespaceName1 = "namespace1"
@@ -66,12 +98,14 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		node1MgmtIP    = "10.244.0.2"
 	)
 	var (
-		addressSetManager *AddressSetManager
-		wf                *factory.WatchFactory
-		clientSet         *util.OVNKubeControllerClientset
-		initialDB         libovsdbtest.TestSetup
-		libovsdbCleanup   *libovsdbtest.Context
-		libovsdbNBClient  libovsdbclient.Client
+		addressSetManager  *AddressSetManager
+		wf                 *factory.WatchFactory
+		clientSet          *util.OVNKubeControllerClientset
+		initialDB          libovsdbtest.TestSetup
+		libovsdbCleanup    *libovsdbtest.Context
+		libovsdbNBClient   libovsdbclient.Client
+		countingNBClient   *countingClient
+		fakeNetworkManager *networkmanager.FakeNetworkManager
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -79,6 +113,9 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{},
+		}
+		fakeNetworkManager = &networkmanager.FakeNetworkManager{
+			NADNetworks: map[string]util.NetInfo{},
 		}
 	})
 
@@ -107,8 +144,10 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		gomega.Expect(wf.Start()).To(gomega.Succeed())
 		libovsdbNBClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		addressSetManager = NewAddressSetManager(wf.PodCoreInformer(), wf.NamespaceInformer(), wf.NodeCoreInformer(), libovsdbNBClient,
-			func(_ string) string { return "" })
+		// this is only used for "saves db transactions when IPs don't change" test
+		countingNBClient = &countingClient{Client: libovsdbNBClient}
+		addressSetManager = NewAddressSetManager(wf.PodCoreInformer(), wf.NamespaceInformer(), wf.NodeCoreInformer(), countingNBClient,
+			fakeNetworkManager.Interface().GetNetworkNameForNADKey)
 		err = addressSetManager.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
@@ -208,131 +247,168 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		// expect 2 peer address sets only
 		gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{peerAS, peerASLegacy}))
 	})
-	ginkgo.DescribeTable("adds selected pod ips to the address set",
-		func(peer knet.NetworkPolicyPeer, staticNamespace string, addrSetIPs []string, legacyMode bool) {
-			namespace1 := *testing.NewNamespace(namespaceName1)
-			namespace2 := *testing.NewNamespace(namespaceName2)
-			config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
-			hostNetNamespace := *testing.NewNamespace(config.Kubernetes.HostNetworkNamespace)
-			ns1pod1 := testing.NewPod(namespace1.Name, "ns1pod1", nodeName, ip1)
-			ns1pod2 := testing.NewPod(namespace1.Name, "ns1pod2", nodeName, ip2)
-			ns1pod3 := testing.NewPod(namespace1.Name, "ns1pod3", nodeName, hostNetPodIP)
-			ns1pod3.Spec.HostNetwork = true
-			ns2pod1 := testing.NewPod(namespace2.Name, "ns2pod1", nodeName, ip3)
-			ns2pod2 := testing.NewPod(namespace2.Name, "ns2pod2", nodeName, ip4)
-			podsList := []corev1.Pod{}
-			for _, pod := range []*corev1.Pod{ns1pod1, ns1pod2, ns1pod3, ns2pod1, ns2pod2} {
-				pod.Labels = map[string]string{podLabelKey: pod.Name}
-				podsList = append(podsList, *pod)
-			}
-			testNode := corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: nodeName,
-					Annotations: map[string]string{
-						"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet),
-					},
-				},
-			}
-			startAddrSetManagerWithNodes(initialDB, []corev1.Namespace{namespace1, namespace2, hostNetNamespace}, podsList,
-				[]corev1.Node{testNode})
+	// this is run during ginkgo tree construction, so env is not set yet
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+	primaryNetInfo := newNetInfo("primarynet", types.Layer3Topology, types.NetworkRolePrimary, "10.128.1.0/24/27")
+	secondaryNetInfo := newNetInfo("secondarynet", types.Layer2Topology, types.NetworkRoleSecondary, "10.128.1.0/24")
 
-			_, _, _, err := addressSetManager.EnsureAddressSet(
-				peer.PodSelector, peer.NamespaceSelector, nil, staticNamespace, "backRef", controllerName, &util.DefaultNetInfo{}, legacyMode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			// address set should be created and pod ips added
-			peerASIDs := GetPodSelectorAddrSetDbIDs(peer.PodSelector, peer.NamespaceSelector, nil, staticNamespace, controllerName, legacyMode)
-			peerAS, _ := addressset.GetTestDbAddrSets(peerASIDs, addrSetIPs)
-			gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{peerAS}))
-		},
-		ginkgo.Entry("all pods from a static namespace", knet.NetworkPolicyPeer{
-			PodSelector:       &metav1.LabelSelector{},
-			NamespaceSelector: nil,
-		}, namespaceName1, []string{ip1, ip2, hostNetPodIP}, false),
-		ginkgo.Entry("selected pods from a static namespace", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{podLabelKey: "ns1pod1"},
+	newPod := func(namespace, name, node, podIP string, netInfo util.NetInfo) *corev1.Pod {
+		nadKey := fmt.Sprintf("%s/%s", namespace, netInfo.GetNetworkName())
+		fakeNetworkManager.NADNetworks[nadKey] = netInfo
+		if netInfo.GetNetworkName() == types.DefaultNetworkName {
+			return testing.NewPod(namespace, name, node, podIP)
+		} else {
+			return testing.NewPodWithSecondaryNADIP(namespace, name, node, "10.244.0.2", netInfo.GetNetworkName(), podIP)
+		}
+	}
+
+	for _, netInfo := range []util.NetInfo{&util.DefaultNetInfo{}, primaryNetInfo, secondaryNetInfo} {
+		netInfo := netInfo
+		ginkgo.DescribeTable(fmt.Sprintf("[%s] adds selected pod ips to the address set and removes on delete", netInfo.GetNetworkName()),
+			func(peer knet.NetworkPolicyPeer, staticNamespace string, addrSetIPsList []string, legacyMode bool, netInfo util.NetInfo) {
+				addrSetIPs := sets.New(addrSetIPsList...)
+				namespace1 := *testing.NewNamespace(namespaceName1)
+				namespace2 := *testing.NewNamespace(namespaceName2)
+				config.Kubernetes.HostNetworkNamespace = "ovn-host-network"
+				hostNetNamespace := *testing.NewNamespace(config.Kubernetes.HostNetworkNamespace)
+				ns1pod1 := newPod(namespace1.Name, "ns1pod1", nodeName, ip1, netInfo)
+				ns1pod2 := newPod(namespace1.Name, "ns1pod2", nodeName, ip2, netInfo)
+				ns1pod3 := newPod(namespace1.Name, "ns1pod3", nodeName, hostNetPodIP, netInfo)
+				ns1pod3.Spec.HostNetwork = true
+				ns2pod1 := newPod(namespace2.Name, "ns2pod1", nodeName, ip3, netInfo)
+				ns2pod2 := newPod(namespace2.Name, "ns2pod2", nodeName, ip4, netInfo)
+				podsList := []corev1.Pod{}
+				for _, pod := range []*corev1.Pod{ns1pod1, ns1pod2, ns1pod3, ns2pod1, ns2pod2} {
+					pod.Labels = map[string]string{podLabelKey: pod.Name}
+					podsList = append(podsList, *pod)
+				}
+				testNode := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: nodeName,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet),
+						},
+					},
+				}
+				startAddrSetManagerWithNodes(initialDB, []corev1.Namespace{namespace1, namespace2, hostNetNamespace}, podsList,
+					[]corev1.Node{testNode})
+
+				_, _, _, err := addressSetManager.EnsureAddressSet(
+					peer.PodSelector, peer.NamespaceSelector, nil, staticNamespace, "backRef", controllerName, netInfo, legacyMode)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// address set should be created and pod ips added
+				peerASIDs := GetPodSelectorAddrSetDbIDs(peer.PodSelector, peer.NamespaceSelector, nil, staticNamespace, controllerName, legacyMode)
+				// non-default networks don't match hostNetwork namespace remove node1MgmtIP if present
+				if !netInfo.IsDefault() {
+					addrSetIPs.Delete(node1MgmtIP)
+					// secondary networks don't match hostNetwork pods, remove hostNetPodIP if present
+					if !netInfo.IsPrimaryNetwork() {
+						addrSetIPs.Delete(hostNetPodIP)
+					}
+				}
+				peerAS, _ := addressset.GetTestDbAddrSets(peerASIDs, addrSetIPs.UnsortedList())
+				gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{peerAS}))
+				// now delete ns1pod1 and ns1pod3 to test both overlay and hostnet pod IP cleanup
+				err = clientSet.KubeClient.CoreV1().Pods(namespace1.Name).Delete(context.TODO(), ns1pod1.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = clientSet.KubeClient.CoreV1().Pods(namespace1.Name).Delete(context.TODO(), ns1pod3.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// deleted pod IPs should be removed from address set
+				addrSetIPs.Delete(ip1, hostNetPodIP)
+				peerAS, _ = addressset.GetTestDbAddrSets(peerASIDs, addrSetIPs.UnsortedList())
+				gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{peerAS}))
 			},
-			NamespaceSelector: nil,
-		}, namespaceName1, []string{ip1}, false),
-		ginkgo.Entry("all pods from all namespaces", knet.NetworkPolicyPeer{
-			PodSelector:       &metav1.LabelSelector{},
-			NamespaceSelector: &metav1.LabelSelector{},
-		}, namespaceName1, []string{ip1, ip2, hostNetPodIP, ip3, ip4}, false),
-		ginkgo.Entry("selected pods from all namespaces", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{
-				MatchExpressions: []metav1.LabelSelectorRequirement{
-					{
-						Key:      podLabelKey,
-						Operator: metav1.LabelSelectorOpIn,
-						Values:   []string{"ns1pod1", "ns2pod1"},
+			ginkgo.Entry("all pods from a static namespace", knet.NetworkPolicyPeer{
+				PodSelector:       &metav1.LabelSelector{},
+				NamespaceSelector: nil,
+			}, namespaceName1, []string{ip1, ip2, hostNetPodIP}, false, netInfo),
+			ginkgo.Entry("selected pods from a static namespace", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{podLabelKey: "ns1pod1"},
+				},
+				NamespaceSelector: nil,
+			}, namespaceName1, []string{ip1}, false, netInfo),
+			ginkgo.Entry("all pods from all namespaces", knet.NetworkPolicyPeer{
+				PodSelector:       &metav1.LabelSelector{},
+				NamespaceSelector: &metav1.LabelSelector{},
+			}, namespaceName1, []string{ip1, ip2, hostNetPodIP, ip3, ip4}, false, netInfo),
+			ginkgo.Entry("selected pods from all namespaces", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      podLabelKey,
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"ns1pod1", "ns2pod1"},
+						},
 					},
 				},
-			},
-			NamespaceSelector: &metav1.LabelSelector{},
-		}, namespaceName1, []string{ip1, ip3}, false),
-		ginkgo.Entry("all pods from selected namespaces", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{},
-			NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"name": namespaceName2,
-				},
-			},
-		}, namespaceName1, []string{ip3, ip4}, false),
-		ginkgo.Entry("selected pods from selected namespaces", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{podLabelKey: "ns2pod1"},
-			},
-			NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"name": namespaceName2,
-				},
-			},
-		}, namespaceName1, []string{ip3}, false),
-		ginkgo.Entry("all pods from a static namespace, legacyNetpolMode", knet.NetworkPolicyPeer{
-			PodSelector:       &metav1.LabelSelector{},
-			NamespaceSelector: nil,
-		}, namespaceName1, []string{ip1, ip2}, true),
-		ginkgo.Entry("selected pods from a static namespace, legacyNetpolMode", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{podLabelKey: "ns1pod1"},
-			},
-			NamespaceSelector: nil,
-		}, namespaceName1, []string{ip1}, true),
-		ginkgo.Entry("all pods from all namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
-			PodSelector:       &metav1.LabelSelector{},
-			NamespaceSelector: &metav1.LabelSelector{},
-		}, namespaceName1, []string{ip1, ip2, ip3, ip4, node1MgmtIP}, true),
-		ginkgo.Entry("selected pods from all namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{
-				MatchExpressions: []metav1.LabelSelectorRequirement{
-					{
-						Key:      podLabelKey,
-						Operator: metav1.LabelSelectorOpIn,
-						Values:   []string{"ns1pod1", "ns2pod1"},
+				NamespaceSelector: &metav1.LabelSelector{},
+			}, namespaceName1, []string{ip1, ip3}, false, netInfo),
+			ginkgo.Entry("all pods from selected namespaces", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{},
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"name": namespaceName2,
 					},
 				},
-			},
-			NamespaceSelector: &metav1.LabelSelector{},
-		}, namespaceName1, []string{ip1, ip3}, true),
-		ginkgo.Entry("all pods from selected namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{},
-			NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"name": namespaceName2,
+			}, namespaceName1, []string{ip3, ip4}, false, netInfo),
+			ginkgo.Entry("selected pods from selected namespaces", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{podLabelKey: "ns2pod1"},
 				},
-			},
-		}, namespaceName1, []string{ip3, ip4}, true),
-		ginkgo.Entry("selected pods from selected namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
-			PodSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{podLabelKey: "ns2pod1"},
-			},
-			NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"name": namespaceName2,
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"name": namespaceName2,
+					},
 				},
-			},
-		}, namespaceName1, []string{ip3}, true),
-	)
+			}, namespaceName1, []string{ip3}, false, netInfo),
+			ginkgo.Entry("all pods from a static namespace, legacyNetpolMode", knet.NetworkPolicyPeer{
+				PodSelector:       &metav1.LabelSelector{},
+				NamespaceSelector: nil,
+			}, namespaceName1, []string{ip1, ip2}, true, netInfo),
+			ginkgo.Entry("selected pods from a static namespace, legacyNetpolMode", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{podLabelKey: "ns1pod1"},
+				},
+				NamespaceSelector: nil,
+			}, namespaceName1, []string{ip1}, true, netInfo),
+			ginkgo.Entry("all pods from all namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
+				PodSelector:       &metav1.LabelSelector{},
+				NamespaceSelector: &metav1.LabelSelector{},
+			}, namespaceName1, []string{ip1, ip2, ip3, ip4, node1MgmtIP}, true, netInfo),
+			ginkgo.Entry("selected pods from all namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{
+							Key:      podLabelKey,
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{"ns1pod1", "ns2pod1"},
+						},
+					},
+				},
+				NamespaceSelector: &metav1.LabelSelector{},
+			}, namespaceName1, []string{ip1, ip3}, true, netInfo),
+			ginkgo.Entry("all pods from selected namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{},
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"name": namespaceName2,
+					},
+				},
+			}, namespaceName1, []string{ip3, ip4}, true, netInfo),
+			ginkgo.Entry("selected pods from selected namespaces, legacyNetpolMode", knet.NetworkPolicyPeer{
+				PodSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{podLabelKey: "ns2pod1"},
+				},
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"name": namespaceName2,
+					},
+				},
+			}, namespaceName1, []string{ip3}, true, netInfo),
+		)
+	}
 	ginkgo.It("on initial sync deletes unreferenced and updates referenced address sets", func() {
 		unusedPodSelIDs := GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, nil, "nsName", controllerName, false)
 		unusedPodSelAS, _ := addressset.GetTestDbAddrSets(unusedPodSelIDs, []string{"1.1.1.2"})
@@ -507,6 +583,30 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 		// IP should be deleted from the address set on delete event, since the new pod with the same ip
 		// should not be present in given address set
 		eventuallyExpectEmptyAddressSetsExist(addressSetManager.nbClient, peer, namespace1.Name)
+	})
+	ginkgo.It("saves db transactions when IPs don't change", func() {
+		namespace1 := *testing.NewNamespace(namespaceName1)
+		ns1pod1 := testing.NewPod(namespace1.Name, "ns1pod1", nodeName, ip1)
+
+		startAddrSetManager(initialDB, []corev1.Namespace{namespace1}, []corev1.Pod{*ns1pod1})
+
+		_, _, _, err := addressSetManager.EnsureAddressSet(
+			&metav1.LabelSelector{}, nil, nil, namespace1.Name, "backRef", controllerName, &util.DefaultNetInfo{}, false)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		dbIDs := GetPodSelectorAddrSetDbIDs(&metav1.LabelSelector{}, nil, nil, namespace1.Name, controllerName, false)
+		expectedAS, _ := addressset.GetTestDbAddrSets(dbIDs, []string{ip1})
+		gomega.Eventually(addressSetManager.nbClient).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{expectedAS}))
+		// expect 2 transactions: 1 to create addr set and 1 to set IPs
+		gomega.Expect(countingNBClient.transactCount.Load()).To(gomega.Equal(int64(2)))
+
+		// Now update pod labels, which will cause the address set reconciliation
+		ns1pod1.Labels["newLabel"] = "newValue"
+		_, err = clientSet.KubeClient.CoreV1().Pods(namespace1.Name).Update(context.TODO(), ns1pod1, metav1.UpdateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Consistently(addressSetManager.nbClient, 200*time.Millisecond, 50*time.Millisecond).Should(libovsdbtest.HaveData([]libovsdbtest.TestData{expectedAS}))
+		// no new transactions should happen since IPs don't change
+		gomega.Expect(countingNBClient.transactCount.Load()).To(gomega.Equal(int64(2)))
 	})
 
 	ginkgo.It("CleanupForController removes controller entries", func() {

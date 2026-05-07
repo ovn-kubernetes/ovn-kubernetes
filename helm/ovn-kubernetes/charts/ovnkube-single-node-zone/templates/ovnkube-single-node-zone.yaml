@@ -51,11 +51,14 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         # ovn db is stored in the pod in /etc/openvswitch
-        # (or in /etc/ovn if OVN from new repository is used)
+        # (or in /etc/ovn if OVN from new repository is used,
+        # or in /var/lib/ovn if using Debian/Ubuntu packages)
         # and on the host in /var/lib/openvswitch/
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
         - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/lib/ovn/
           name: host-var-lib-ovs
         - mountPath: /var/log/openvswitch/
           name: host-var-log-ovs
@@ -77,13 +80,15 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_NB
           value: {{ default "-vconsole:info -vfile:info" .Values.nbLogLevel | quote }}
         - name: OVN_GATEWAY_MODE
           value: {{ default "shared" .Values.global.gatewayMode }}
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: {{ hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false | quote }}
+        - name: ENABLE_IPSEC
+          value: {{ hasKey .Values.global "enableIpsec" | ternary .Values.global.enableIpsec false | quote }}
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
@@ -124,11 +129,14 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         # ovn db is stored in the pod in /etc/openvswitch
-        # (or in /etc/ovn if OVN from new repository is used)
+        # (or in /etc/ovn if OVN from new repository is used,
+        # or in /var/lib/ovn if using Debian/Ubuntu packages)
         # and on the host in /var/lib/openvswitch/
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
         - mountPath: /etc/ovn/
+          name: host-var-lib-ovs
+        - mountPath: /var/lib/ovn/
           name: host-var-lib-ovs
         - mountPath: /var/log/openvswitch/
           name: host-var-log-ovs
@@ -150,7 +158,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_SB
           value: {{ default "-vconsole:info -vfile:info" .Values.sbLogLevel | quote }}
         - name: K8S_APISERVER
@@ -218,7 +226,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: {{ default "-vconsole:info -vfile:info" .Values.northdLogLevel | quote }}
         - name: K8S_APISERVER
@@ -301,6 +309,9 @@ spec:
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
+        - mountPath: /var/lib/ovn/
+          name: host-var-lib-ovs
+          readOnly: true
         - mountPath: /run/systemd/private
           name: run-systemd
           subPath: private
@@ -325,7 +336,7 @@ spec:
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.ovnkubeNodeLogLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE
@@ -540,7 +551,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: {{ default "-vconsole:info" .Values.ovnControllerLogLevel | quote }}
         - name: K8S_APISERVER
@@ -589,7 +600,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: K8S_NODE_IP
           valueFrom:
             fieldRef:

@@ -373,7 +373,7 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 
 	cfg := &tls.Config{
 		NextProtos: []string{"h2"},
-		MinVersion: tls.VersionTLS10,
+		MinVersion: tls.VersionTLS12,
 	}
 
 	certPath := filepath.Join(cliCfg.certDir, "tls.crt")

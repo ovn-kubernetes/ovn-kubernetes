@@ -4,12 +4,19 @@
 package testing
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"net"
 	"strings"
+
+	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
+	apimachinerytypes "k8s.io/apimachinery/pkg/types"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func NewPodMeta(namespace, name string, additionalLabels map[string]string) metav1.ObjectMeta {
@@ -21,7 +28,7 @@ func NewPodMeta(namespace, name string, additionalLabels map[string]string) meta
 	}
 	return metav1.ObjectMeta{
 		Name:      name,
-		UID:       types.UID(name),
+		UID:       apimachinerytypes.UID(name),
 		Namespace: namespace,
 		Labels:    labels,
 	}
@@ -109,6 +116,60 @@ func NewPod(namespace, name, node, podIP string) *corev1.Pod {
 	}
 }
 
+// ipAddrToHWAddr takes the four octets of IPv4 address (aa.bb.cc.dd, for example) and uses them in creating
+// a MAC address (0A:58:AA:BB:CC:DD).  For IPv6, create a hash from the IPv6 string and use that for MAC Address.
+// Assumption: the caller will ensure that an empty net.IP{} will NOT be passed.
+func ipAddrToHWAddr(ip net.IP) net.HardwareAddr {
+	// Ensure that for IPv4, we are always working with the IP in 4-byte form.
+	ip4 := ip.To4()
+	if ip4 != nil {
+		// safe to use private MAC prefix: 0A:58
+		return net.HardwareAddr{0x0A, 0x58, ip4[0], ip4[1], ip4[2], ip4[3]}
+	}
+
+	hash := sha256.Sum256([]byte(ip.String()))
+	return net.HardwareAddr{0x0A, 0x58, hash[0], hash[1], hash[2], hash[3]}
+}
+
+func getPodAnnotationDefault(ip string, hasPrimaryUDN bool) string {
+	role := "primary"
+	if hasPrimaryUDN {
+		role = "infrastructure-locked"
+	}
+	netip := net.ParseIP(ip)
+	mac := ipAddrToHWAddr(netip)
+	return fmt.Sprintf(`"default":{"mac_address":"%s","ip_address":"%s/24","role":"%s"}`, mac.String(), ip, role)
+}
+
+func getPodAnnotationPrimary(namespace, nadName, ip string) string {
+	netip := net.ParseIP(ip)
+	mac := ipAddrToHWAddr(netip)
+	return fmt.Sprintf(`"%s/%s":{"mac_address":"%s","ip_address":"%s/24","role":"primary"}`,
+		namespace, nadName, mac, ip)
+}
+
+func getPodAnnotationSecondary(namespace, nadName, ip string) string {
+	netip := net.ParseIP(ip)
+	mac := ipAddrToHWAddr(netip)
+	return fmt.Sprintf(`"%s/%s":{"mac_address":"%s","ip_address":"%s/24","role":"secondary"}`,
+		namespace, nadName, mac, ip)
+}
+
+func NewPodWithPrimaryNADIP(namespace, name, node, defaultNetworkIP, nadName, nadIP string) *corev1.Pod {
+	pod := NewPod(namespace, name, node, defaultNetworkIP)
+	pod.Annotations = map[string]string{types.OvnPodAnnotationName: fmt.Sprintf(`{%s,%s}`, getPodAnnotationDefault(defaultNetworkIP, true), getPodAnnotationPrimary(namespace, nadName, nadIP))}
+	return pod
+}
+
+func NewPodWithSecondaryNADIP(namespace, name, node, defaultNetworkIP, nadAndNetworkName, nadIP string) *corev1.Pod {
+	pod := NewPod(namespace, name, node, defaultNetworkIP)
+	pod.Annotations = map[string]string{
+		types.OvnPodAnnotationName:   fmt.Sprintf(`{%s,%s}`, getPodAnnotationDefault(defaultNetworkIP, false), getPodAnnotationSecondary(namespace, nadAndNetworkName, nadIP)),
+		nadv1.NetworkAttachmentAnnot: nadAndNetworkName,
+	}
+	return pod
+}
+
 func NewNamespaceMeta(namespace string, additionalLabels map[string]string) metav1.ObjectMeta {
 	labels := map[string]string{
 		"name": namespace,
@@ -117,7 +178,7 @@ func NewNamespaceMeta(namespace string, additionalLabels map[string]string) meta
 		labels[k] = v
 	}
 	return metav1.ObjectMeta{
-		UID:         types.UID(namespace),
+		UID:         apimachinerytypes.UID(namespace),
 		Name:        namespace,
 		Labels:      labels,
 		Annotations: map[string]string{},
@@ -144,7 +205,7 @@ func NewTestNetworkPolicy(name, namespace string, podSelector metav1.LabelSelect
 	egress []networkingv1.NetworkPolicyEgressRule, policyTypes ...networkingv1.PolicyType) *networkingv1.NetworkPolicy {
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
-			UID:       types.UID(namespace),
+			UID:       apimachinerytypes.UID(namespace),
 			Name:      name,
 			Namespace: namespace,
 			Labels: map[string]string{

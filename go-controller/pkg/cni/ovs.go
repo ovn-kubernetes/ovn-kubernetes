@@ -7,15 +7,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
-	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -161,77 +158,6 @@ func ofctlExec(args ...string) (string, error) {
 	return stdoutStr, nil
 }
 
-// getIfaceOFPort returns the of port number for an interface
-func getIfaceOFPort(ifaceName string) (int, error) {
-	port, err := ovsGet("Interface", ifaceName, "ofport", "")
-	if err == nil && port == "" {
-		return -1, fmt.Errorf("cannot find OpenFlow port for OVS interface: %s, error: %v ", ifaceName, err)
-	}
-
-	iPort, err := strconv.Atoi(port)
-	if err != nil {
-		return -1, fmt.Errorf("unable to parse OpenFlow port %s, error: %v", port, err)
-	}
-	return iPort, nil
-}
-
-func doPodFlowsExist(mac string, ifAddrs []*net.IPNet, ofPort int) bool {
-	// Function checks for OpenFlow flows to know the pod is ready
-	// Legacy way to check pod readiness for versions that don't support ovn-installed
-
-	// query represents the match criteria, and different OF tables that this query may match on
-	type query struct {
-		match  string
-		tables []int
-	}
-
-	// Query the flows by mac address for in_port_security and OF port
-	queries := []query{
-		{
-			match:  "dl_src=" + mac,
-			tables: []int{9},
-		},
-		{
-			match:  fmt.Sprintf("in_port=%d", ofPort),
-			tables: []int{0},
-		},
-	}
-	for _, ifAddr := range ifAddrs {
-		var ipMatch string
-		if !utilnet.IsIPv6(ifAddr.IP) {
-			ipMatch = "ip,ip_dst"
-		} else {
-			ipMatch = "ipv6,ipv6_dst"
-		}
-		// add queries for out_port_security
-		// note we need to support table 48 for 20.06 OVN backwards compatibility. Table 49 is now
-		// where out_port_security lives
-		queries = append(queries,
-			query{fmt.Sprintf("%s=%s", ipMatch, ifAddr.IP), []int{48, 49}},
-		)
-	}
-
-	// Must find the right flows in all queries to succeed
-	for _, query := range queries {
-		found := false
-		// Look for a match in any table of this query to be considered success
-		for _, table := range query.tables {
-			queryStr := fmt.Sprintf("table=%d,%s", table, query.match)
-			// ovs-ofctl dumps error on stderr, so stdout will only dump flow data if matches the query.
-			stdout, err := ofctlExec("dump-flows", "br-int", queryStr)
-			if err == nil && len(stdout) > 0 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
-}
-
 // checkCancelSandbox checks that this sandbox is still valid for the current
 // instance of the pod in the apiserver. Sandbox requests and pod instances
 // have a 1:1 relationship determined by pod UID. If we detect that the pod
@@ -275,21 +201,8 @@ func checkCancelSandbox(mac string, getter PodInfoGetter, namespace, name, nadKe
 func waitForPodInterface(ctx context.Context, ifInfo *PodInterfaceInfo,
 	ifaceName, ifaceID string, getter PodInfoGetter,
 	namespace, name, initialPodUID string) error {
-	var detail string
-	var ofPort int
-	var err error
-
-	// DPUHost mode can't use OVS external IDs for port-up detection because
-	// there is no ovn-controller running in DPUHost mode to set port-up
-	checkExternalIDs := !ifInfo.IsDPUHostMode
-	if checkExternalIDs {
-		detail = " (ovn-installed)"
-	} else {
-		ofPort, err = getIfaceOFPort(ifaceName)
-		if err != nil {
-			return err
-		}
-	}
+	// Note that this function is called either the Full mode or the DPU mode
+	columns := []string{"external-ids:iface-id", "external-ids:ovn-installed"}
 
 	mac := ifInfo.MAC.String()
 	ifAddrs := ifInfo.IPs
@@ -300,32 +213,20 @@ func waitForPodInterface(ctx context.Context, ifInfo *PodInterfaceInfo,
 			if ctx.Err() == context.Canceled {
 				errDetail = "canceled while"
 			}
-			return fmt.Errorf("%s waiting for OVS port binding%s for %s %v", errDetail, detail, mac, ifAddrs)
+			return fmt.Errorf("%s waiting for OVS port binding (ovn-installed) for %s %v", errDetail, mac, ifAddrs)
 		default:
-			columns := []string{"external-ids:iface-id"}
-			if checkExternalIDs {
-				// get ovn-installed flag in the same request
-				columns = append(columns, "external-ids:ovn-installed")
-			}
+			// check to see if the interface has its expected external id set, which indicates if it is active
 			output, err := ovsGetMultiOutput("Interface", ifaceName, columns)
-			// check to see if the interface has its external id set, which indicates if it is active
 			// It may have been cleared by a subsequent CNI ADD and if so, there's no need to keep checking for flows
 			if err == nil && len(output) > 0 && output[0] != ifaceID {
 				return fmt.Errorf("OVS sandbox port %s is no longer active (probably due to a subsequent "+
 					"CNI ADD)", ifaceName)
 			}
-			if checkExternalIDs {
-				if err == nil && len(output) == 2 && output[1] == "true" {
-					klog.V(5).Infof("Interface %s has ovn-installed=true", ifaceName)
-					return nil
-				}
-				klog.V(5).Infof("Still waiting for OVS port %s to have ovn-installed=true", ifaceName)
-			} else {
-				if doPodFlowsExist(mac, ifAddrs, ofPort) {
-					// success
-					return nil
-				}
+			if err == nil && len(output) == 2 && output[1] == "true" {
+				klog.V(5).Infof("Interface %s has ovn-installed=true", ifaceName)
+				return nil
 			}
+			klog.V(5).Infof("Still waiting for OVS port %s to have ovn-installed=true", ifaceName)
 
 			if err := checkCancelSandbox(mac, getter, namespace, name, ifInfo.NADKey, initialPodUID); err != nil {
 				return fmt.Errorf("%v waiting for OVS port binding for %s %v", err, mac, ifAddrs)

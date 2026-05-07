@@ -551,7 +551,7 @@ func newPodWithIPs(namespace, name string, primaryUDN bool, ips []string, openPo
 	if primaryUDN {
 		role = types.NetworkRoleInfrastructure
 	}
-	annotations[util.OvnPodAnnotationName] = fmt.Sprintf(`{"default": {"role": "%s", "ip_addresses":[%s], "mac_address":"0a:58:0a:f4:02:03"}}`,
+	annotations[types.OvnPodAnnotationName] = fmt.Sprintf(`{"default": {"role": "%s", "ip_addresses":[%s], "mac_address":"0a:58:0a:f4:02:03"}}`,
 		role, strings.Join(annoPodIPs, ","))
 
 	return &corev1.Pod{

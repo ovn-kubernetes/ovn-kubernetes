@@ -188,7 +188,6 @@ func NewEFController(
 	)
 
 	nodeControllerConfig := &controller.ControllerConfig[corev1.Node]{
-		RateLimiter:    workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
 		Informer:       nodeInformer.Informer(),
 		Lister:         nodeInformer.Lister().List,
 		MaxAttempts:    controller.InfiniteAttempts,

@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -44,9 +45,9 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 		return nil, fmt.Errorf("failed to get NetworkAttachmentDefinition %s/%s from cache: %v", namespace, obj.GetName(), err)
 	}
 
-	renderOpts, err := c.allocateEVPNVIDsIfNeeded(obj)
+	renderOpts, err := c.allocateEVPNIDsIfNeeded(obj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to allocate EVPN VIDs: %w", err)
+		return nil, fmt.Errorf("failed to allocate EVPN IDs: %w", err)
 	}
 
 	desiredNAD, err := c.renderNadFn(obj, namespace, renderOpts...)
@@ -164,14 +165,14 @@ func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 	return nil
 }
 
-// allocateEVPNVIDsIfNeeded checks if the object is an EVPN network and allocates VIDs if needed.
+// allocateEVPNIDsIfNeeded checks if the object is an EVPN network and allocates VIDs and reserves VNIs if needed.
 // Returns render options containing the allocated VIDs, or empty options for non-EVPN networks.
 // Returns an error if EVPN transport is requested but the feature flag is disabled.
 //
 // This function relies on the idempotency of AllocateID: if a VID was already allocated for a key
 // (either during recovery or a previous reconciliation), AllocateID returns the same VID.
 // This means VIDs are stable across reconciliations without needing to parse the existing NAD.
-func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.RenderOption, error) {
+func (c *Controller) allocateEVPNIDsIfNeeded(obj client.Object) ([]template.RenderOption, error) {
 	spec := template.GetSpec(obj)
 	if spec.GetTransport() != userdefinednetworkv1.TransportOptionEVPN {
 		return nil, nil
@@ -188,8 +189,13 @@ func (c *Controller) allocateEVPNVIDsIfNeeded(obj client.Object) ([]template.Ren
 	}
 
 	networkName := obj.GetName()
-	var macVRFVID, ipVRFVID int
 
+	// ptr.Deref yields zero-value VRFConfig for nil VRFs, reserveVNIs skips VNI 0
+	if err := c.reserveVNIs(networkName, evpnCfg.VTEP, ptr.Deref(evpnCfg.MACVRF, userdefinednetworkv1.VRFConfig{}).VNI, ptr.Deref(evpnCfg.IPVRF, userdefinednetworkv1.VRFConfig{}).VNI); err != nil {
+		return nil, fmt.Errorf("failed to reserve VNIs: %w", err)
+	}
+
+	var macVRFVID, ipVRFVID int
 	// Allocate VID for MAC-VRF if present
 	if evpnCfg.MACVRF != nil {
 		vid, err := c.vidAllocator.AllocateID(macVRFKey(networkName))

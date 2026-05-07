@@ -344,9 +344,9 @@ func (m *AddressSetManager) podNeedUpdate(old, new *corev1.Pod) bool {
 	}
 	if old == nil {
 		// new pod, check if it has IPs already, if not, wait for update event when IPs are assigned
-		return new.Annotations[util.OvnPodAnnotationName] != "" || len(new.Status.PodIPs) > 0
+		return new.Annotations[ovntypes.OvnPodAnnotationName] != "" || len(new.Status.PodIPs) > 0
 	}
-	if new.Annotations[util.OvnPodAnnotationName] != old.Annotations[util.OvnPodAnnotationName] {
+	if new.Annotations[ovntypes.OvnPodAnnotationName] != old.Annotations[ovntypes.OvnPodAnnotationName] {
 		// this annotation is set when pod gets its IPs, so if it changes, we need to reconcile to update address set with new IPs
 		return true
 	}
@@ -838,7 +838,7 @@ func (m *AddressSetManager) getPodIPs(pods []*corev1.Pod, netInfo util.NetInfo, 
 			// skip hostNetwork pods if requested, since they are not selected in legacyNetpolMode
 			continue
 		}
-		if pod.Annotations[util.OvnPodAnnotationName] == "" && len(pod.Status.PodIPs) == 0 {
+		if pod.Annotations[ovntypes.OvnPodAnnotationName] == "" && len(pod.Status.PodIPs) == 0 {
 			// pod doesn't have IPs yet, skip it
 			continue
 		}

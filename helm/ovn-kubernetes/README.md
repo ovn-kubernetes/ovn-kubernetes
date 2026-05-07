@@ -2,7 +2,7 @@
 
 -----------------------
 
-![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.2.0](https://img.shields.io/badge/AppVersion-1.2.0-informational?style=flat-square)
+![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.3.0](https://img.shields.io/badge/AppVersion-1.3.0-informational?style=flat-square)
 
 **Homepage:** <https://ovn-kubernetes.io/>
 
@@ -11,106 +11,14 @@
 * <https://github.com/ovn-kubernetes/ovn-kubernetes>
 * <https://github.com/ovn-org/ovn>
 
-## Introduction
+This Helm chart deploys OVN-Kubernetes, an OVN-based CNI plugin for Kubernetes that provides network virtualization, network policy, services, and overlay networking for pods.
 
-This helm chart supports deploying OVN K8s CNI in a K8s cluster.
+For installation instructions, see:
 
-Open Virtual Networking (OVN) Kubernetes CNI is an open source networking and
-network security solution for Kubernetes workloads. It leverages a distributed
-OVN SDN control plane and per-node Open vSwitch (OVS) to provide network
-virtualization and network connectivity to K8s Pods. It does so by creating a logical
-network topology using logical constructs such as logical switches (Layer 2) and
-logical routers (Layer 3). The Pod interfaces are represented by logical ports on
-the logical switches. On these logical switch ports, one can specify IP network
-information (IP address and MAC address), anti-spoofing rules (MAC and IP),
-Security Groups, QoS configuration, and so on.
+- [Launching OVN-Kubernetes with Helm](../../docs/installation/launching-ovn-kubernetes-with-helm.md) — Kind quickstart and step-by-step install.
+- [Launching OVN-Kubernetes with kubeadm](../../docs/installation/INSTALL.KUBEADM.md) — multi-VM walkthrough on a `kubeadm`-bootstrapped cluster.
 
-A port, either physical SR-IOV VF or virtual VETH, assigned to a Pod will be associated
-with a corresponding logical port, this will result in applying all the logical port
-configuration onto the physical port. The logical port becomes the API for
-configuring the physical port.
-
-In addition to providing overlay network connectivity for Pods in the K8s cluster,
-OVN K8s CNI supports a plethora of advanced networking features, such as
-
-```
-- Optimized and Accelerated K8s Network Policy on Pod's traffic
-- Optimized and Accelerated K8s Service Implementation (aka Load Balancers and NAT)
-- Optimized and Accelerated Policy Based Routing
-- Multi-Home Pods with an option for Secondary networks to be on a Layer-2
-  Overlay (flat network), Layer-2 Underlay (VLAN-based) on private or public
-  subnets.
-- Optimized and Accelerated K8s Network Policy on Pod's secondary networks
-```
-
-Most of these services are distributed and implemented via a pipeline (series
-of OpenFlow tables with OpenFlow flows) on local OVS switches. These OVS
-pipelines are very amenable to offloading to NIC hardware, which should result
-in the best possible networking performance and CPU savings on the host.
-
-The OVN K8s CNI architecture is a layered architecture with OVS at the bottom,
-followed by OVN, and finally OVN K8s CNI at the top. Each layer has several
-K8s components - deployments, daemonsets, and statefulsets. Each component at
-every layer is a subchart by itself. Based on the deployment needs, all or
-some of these subcharts are installed to provide the aforementioned OVN K8s
-CNI features, this can be done by editing `tags` section in values.yaml file.
-
-## Quickstart:
-- Install Kind, see https://kind.sigs.k8s.io
-- Run script `contrib/kind-helm.sh` to set up a basic OVN/Kubernetes cluster.
-- Run following command to set up a OVN/Kubernetes cluster with single-node-zone interconnect enabled.
-  ```
-  contrib/kind-helm.sh -ic
-  ```
-- Add `-npz` (node-per-zone) to set up cluster with multi-node-zone interconnect
-  ```
-  contrib/kind-helm.sh -ic -wk 3 -npz 2
-  ```
-
-## Manual steps:
-
-- Launch a Kind cluster without CNI and kubeproxy (additional controle-plane or worker nodes can be added)
-```
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-- role: worker
-networking:
-  disableDefaultCNI: true
-  kubeProxyMode: none
-```
-
-- Optional: build local image and load it into Kind nodes
-```
-# cd dist/images
-# make ubuntu-image
-# docker tag ovn-kube-ubuntu:latest ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:master
-# kind load docker-image ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:master
-```
-
-This chart does not use a `values.yaml` by default. You must specify a values file during installation.
-
-- Run `helm install` with the appropriate `k8sAPIServer`, `ovnkube-identity.replicas`, image repo and tag
-```
-# cd helm/ovn-kubernetes
-# helm install ovn-kubernetes . -f values-no-ic.yaml --set k8sAPIServer="https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath='{.items[0].status.hostIP}'):6443" --set ovnkube-identity.replicas=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l) --set global.image.repository=ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu --set global.image.tag=master
-```
-
-## Alternative Configurations
-
-To deploy ovn-kubernetes in interconnect mode, use `-f values-single-node-zone.yaml` instead of `-f values-no-ic.yaml`.
-Additionally, you must set the zone annotation on each node before deploying.
-
-Here is an example of how to set the annotation in a Kind cluster:
-
-```
-for n in $(kind get nodes --name "${kind_cluster_name}"); do
-  kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
-done
-```
-
-Following section describes the meaning of the values.
+The rest of this README documents the chart values.
 
 ## Values
 
@@ -689,15 +597,6 @@ false
 </pre>
 </td>
 			<td>MTU of network interface in a Kubernetes pod</td>
-		</tr>
-		<tr>
-			<td>ovnkube-identity.replicas</td>
-			<td>int</td>
-			<td><pre lang="json">
-1
-</pre>
-</td>
-			<td>number of ovnube-identity pods, co-located with kube-apiserver process, so need to be the same number of control plane nodes</td>
 		</tr>
 		<tr>
 			<td>ovnkube-master.replicas</td>

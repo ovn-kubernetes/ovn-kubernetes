@@ -12,8 +12,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -71,7 +72,7 @@ func (n *HONodeController) AddNode(node *corev1.Node) error {
 
 	klog.Infof("Set hybrid overlay DRMAC annotation: %s", drMAC)
 	if err := n.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{
-		types.HybridOverlayDRMAC: drMAC,
+		hotypes.HybridOverlayDRMAC: drMAC,
 	}); err != nil {
 		return fmt.Errorf("failed to set DRMAC annotation on node: %v", err)
 	}
@@ -89,11 +90,11 @@ func (n *HONodeController) AddPod(pod *corev1.Pod) error {
 		return nil
 	}
 
-	_, ok := pod.Annotations[util.OvnPodAnnotationName]
+	_, ok := pod.Annotations[types.OvnPodAnnotationName]
 	if ok {
 		klog.Infof("Remove the ovnkube pod annotation from pod %s", pod.Name)
 		podToUpdate := pod.DeepCopy()
-		delete(podToUpdate.Annotations, util.OvnPodAnnotationName)
+		delete(podToUpdate.Annotations, types.OvnPodAnnotationName)
 		if err := n.kube.PatchPodStatusAnnotations(pod, podToUpdate); err != nil {
 			return fmt.Errorf("failed to remove ovnkube pod annotation from pod %s: %v", pod.Name, err)
 		}

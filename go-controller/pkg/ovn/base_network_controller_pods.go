@@ -254,14 +254,12 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 
 	var allOps, ops []ovsdb.Operation
 
-	// if the ip is in use by another pod we should not try to remove it from the address set
-	if shouldRelease {
-		if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
-			podIfAddrs, portUUID); err != nil {
-			return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
-		}
-		allOps = append(allOps, ops...)
+	if ops, err = bnc.deletePodFromNamespace(pod.Namespace,
+		portUUID); err != nil {
+		return nil, fmt.Errorf("unable to delete pod %s from namespace: %w", podDesc, err)
 	}
+	allOps = append(allOps, ops...)
+
 	ops, err = bnc.delLSPOps(logicalPort, switchName, portUUID)
 	// Tolerate cases where logical switch of the logical port no longer exist in OVN.
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
@@ -733,7 +731,7 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 	return ops, nil
 }
 
-func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, podIfAddrs []*net.IPNet, portUUID string) ([]ovsdb.Operation, error) {
+func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
 	// for UDN, namespace may be not managed
 	nsInfo, nsUnlock := bnc.getNamespaceLocked(ns, true)
 	if nsInfo == nil {
@@ -742,11 +740,6 @@ func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, podIfAddrs [
 	defer nsUnlock()
 	var ops []ovsdb.Operation
 	var err error
-	if nsInfo.addressSet != nil {
-		if ops, err = nsInfo.addressSet.DeleteAddressesReturnOps(util.IPNetsIPToStringSlice(podIfAddrs)); err != nil {
-			return nil, err
-		}
-	}
 
 	if nsInfo.portGroupName != "" && len(portUUID) > 0 {
 		if ops, err = libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {

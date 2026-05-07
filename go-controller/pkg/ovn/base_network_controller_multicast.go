@@ -6,6 +6,7 @@ package ovn
 import (
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
@@ -58,11 +59,14 @@ func getMulticastACLIgrMatchV6(addrSetName string) string {
 	return "(mldv1 || mldv2 || (ip6.src == $" + addrSetName + " && " + ipv6DynamicMulticastMatch + "))"
 }
 
+func getMulticastAddrsetBackref(namespace string) string {
+	return fmt.Sprintf("%v/%v", "Multicast", namespace)
+}
+
 // Creates the match string used for ACLs allowing incoming multicast into a
 // namespace, that is, from IPs that are in the namespace's address set.
-func (bnc *BaseNetworkController) getMulticastACLIgrMatch(nsInfo *namespaceInfo) string {
+func (bnc *BaseNetworkController) getMulticastACLIgrMatch(addrSetNameV4, addrSetNameV6 string) string {
 	var ipv4Match, ipv6Match string
-	addrSetNameV4, addrSetNameV6 := nsInfo.addressSet.GetASHashNames()
 	ipv4Mode, ipv6Mode := bnc.IPMode()
 	if ipv4Mode {
 		ipv4Match = getMulticastACLIgrMatchV4(addrSetNameV4)
@@ -117,6 +121,20 @@ func getNamespaceMcastACLDbIDs(ns string, aclDir libovsdbutil.ACLDirection, cont
 //     namespace address set).
 func (bnc *BaseNetworkController) createMulticastAllowPolicy(ns string, nsInfo *namespaceInfo) error {
 	portGroupName := bnc.getNamespacePortGroupName(ns)
+	// we use legacyNetpolMode to avoid adding hostNetwork pods (aka node) IPs.
+	// Another side-effect of using legacyNetpolMode is that HostNetworkNamespace could be matched,
+	// but since we are using static namespace and not a selector, this will never happen
+	// (unless multicast is enabled on HostNetworkNamespace, which should never happen)
+	asKey, addrSetNameV4, addrSetNameV6, err := bnc.addressSetManager.EnsureAddressSet(
+		&metav1.LabelSelector{}, nil, nil, ns, getMulticastAddrsetBackref(ns),
+		bnc.controllerName, bnc.GetNetInfo(), true)
+	// even if EnsureAddressSet failed, add key for future cleanup or retry.
+	nsInfo.addrSetOwnerBackref = asKey
+	nsInfo.addrSetNameV4 = addrSetNameV4
+	nsInfo.addrSetNameV6 = addrSetNameV6
+	if err != nil {
+		return fmt.Errorf("unable to ensure address set for namespace %s: %v", ns, err)
+	}
 
 	aclDir := libovsdbutil.ACLEgress
 	egressMatch := libovsdbutil.GetACLMatch(portGroupName, bnc.getMulticastACLEgrMatch(), aclDir)
@@ -125,7 +143,7 @@ func (bnc *BaseNetworkController) createMulticastAllowPolicy(ns string, nsInfo *
 	egressACL := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultMcastAllowPriority, egressMatch, nbdb.ACLActionAllow, nil, aclPipeline)
 
 	aclDir = libovsdbutil.ACLIngress
-	ingressMatch := libovsdbutil.GetACLMatch(portGroupName, bnc.getMulticastACLIgrMatch(nsInfo), aclDir)
+	ingressMatch := libovsdbutil.GetACLMatch(portGroupName, bnc.getMulticastACLIgrMatch(addrSetNameV4, addrSetNameV6), aclDir)
 	dbIDs = getNamespaceMcastACLDbIDs(ns, aclDir, bnc.controllerName)
 	aclPipeline = libovsdbutil.ACLDirectionToACLPipeline(aclDir)
 	ingressACL := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultMcastAllowPriority, ingressMatch, nbdb.ACLActionAllow, nil, aclPipeline)
@@ -149,7 +167,7 @@ func (bnc *BaseNetworkController) createMulticastAllowPolicy(ns string, nsInfo *
 	return nil
 }
 
-func (bnc *BaseNetworkController) deleteMulticastAllowPolicy(ns string) error {
+func (bnc *BaseNetworkController) deleteMulticastAllowPolicy(ns string, nsInfo *namespaceInfo) error {
 	portGroupName := bnc.getNamespacePortGroupName(ns)
 
 	// mcast acls have ACLMulticastNamespace owner
@@ -169,6 +187,16 @@ func (bnc *BaseNetworkController) deleteMulticastAllowPolicy(ns string) error {
 	if err != nil {
 		return fmt.Errorf("unable to delete multicast acls for namespace %s: %w", ns, err)
 	}
+	// nsInfo is nil on initial sync, there is no need to cleanup address set in that case
+	if nsInfo != nil {
+		if err := bnc.addressSetManager.DeleteAddressSet(nsInfo.addrSetOwnerBackref, getMulticastAddrsetBackref(ns)); err != nil {
+			return fmt.Errorf("unable to delete address set for namespace %s: %v", ns, err)
+		}
+		nsInfo.addrSetOwnerBackref = ""
+		nsInfo.addrSetNameV4 = ""
+		nsInfo.addrSetNameV6 = ""
+	}
+
 	return nil
 }
 
@@ -273,6 +301,9 @@ func (bnc *BaseNetworkController) disableMulticast() error {
 	if err != nil {
 		return fmt.Errorf("unable to delete namespaced multicast objects: %v", err)
 	}
+	// disableMulticast is only called on controller creation to clean up stale db entries.
+	// there is no need to call cleanups on the addresssetManager, because no calls to EnsureAddressSet
+	// were done if multicast is disabled.
 	return nil
 }
 
@@ -317,7 +348,7 @@ func (bnc *BaseNetworkController) syncNsMulticast(k8sNamespaces map[string]bool)
 	}
 
 	for _, staleNs := range staleNamespaces {
-		if err = bnc.deleteMulticastAllowPolicy(staleNs); err != nil {
+		if err = bnc.deleteMulticastAllowPolicy(staleNs, nil); err != nil {
 			return fmt.Errorf("unable to delete multicast allow policy for stale ns %s: %v", staleNs, err)
 		}
 	}

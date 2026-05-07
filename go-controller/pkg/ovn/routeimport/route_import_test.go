@@ -441,7 +441,7 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			}
 			r := controllerutil.NewReconciler(
 				"test",
-				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](0, 0, 0)})
+				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](0, 0)})
 			c := &controller{
 				log:        testr.New(t),
 				networkIDs: tt.fields.networkIDs,
@@ -575,7 +575,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			}
 			r := controllerutil.NewReconciler(
 				"test",
-				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](0, 0, 0)},
+				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](0, 0)},
 			)
 			for id, network := range tt.fields.networkIDs {
 				netInfo := &multinetworkmocks.NetInfo{}

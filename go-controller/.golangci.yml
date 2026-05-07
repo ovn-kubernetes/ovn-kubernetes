@@ -37,6 +37,12 @@ linters:
           alias: nodeutil
         - pkg: github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types
           alias: nodetypes
+        - pkg: github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types
+          alias: hotypes
+        - pkg: github.com/containernetworking/cni/pkg/types
+          alias: cnitypes
+        - pkg: github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types
+          alias: ovncnitypes
       no-unaliased: true
     revive:
       rules:

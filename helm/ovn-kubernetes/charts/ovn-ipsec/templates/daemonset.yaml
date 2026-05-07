@@ -204,8 +204,11 @@ spec:
           ulimit -n 1024
 
           /usr/libexec/ipsec/addconn --config /etc/ipsec.conf --checkconfig
-          # Check kernel modules
-          /usr/libexec/ipsec/_stackmanager start
+          # Check kernel modules only for libreswan version <= 5.2. The _stackmanager binary is
+          # removed from 5.3 onwards, so this check is not needed on later versions.
+          if [ -e /usr/libexec/ipsec/_stackmanager ]; then
+            /usr/libexec/ipsec/_stackmanager start
+          fi
           # Check nss database status
           /usr/sbin/ipsec --checknss
           # Start the pluto IKE daemon

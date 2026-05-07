@@ -23,7 +23,7 @@ import (
 	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager/zone_tracker"
-	ovnkcnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	egressfirewallapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
@@ -93,7 +93,7 @@ func newEgressFirewall(namespace string) *egressfirewallapi.EgressFirewall {
 }
 
 func newPrimaryL3NetInfo(name string) util.NetInfo {
-	netInfo, err := util.NewNetInfo(&ovnkcnitypes.NetConf{
+	netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
 		NetConf:  cnitypes.NetConf{Name: name},
 		Topology: types.Layer3Topology,
 		Subnets:  "10.1.130.0/16/24",

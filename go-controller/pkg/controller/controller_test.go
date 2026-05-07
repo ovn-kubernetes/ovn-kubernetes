@@ -59,9 +59,6 @@ var _ = Describe("Level-driven controller", func() {
 
 		config.Informer = coreFactory.Core().V1().Pods().Informer()
 		config.Lister = coreFactory.Core().V1().Pods().Lister().List
-		if config.RateLimiter == nil {
-			config.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, 5)
-		}
 		controller = NewController("controller-name", config)
 
 		coreFactory.Start(stopChan)
@@ -140,11 +137,11 @@ var _ = Describe("Level-driven controller", func() {
 			failureCounter.Add(1)
 			return fmt.Errorf("failure")
 		}
-		config.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, DefaultMaxAttempts)
+		config.RateLimiter = workqueue.NewTypedItemExponentialFailureRateLimiter[string](1*time.Millisecond, 50*time.Millisecond)
 		startController(config, nil, namespace, pod)
 
-		Eventually(failureCounter.Load, (DefaultMaxAttempts+1)*100*time.Millisecond).Should(BeEquivalentTo(DefaultMaxAttempts))
-		time.Sleep(1 * time.Second)
+		Eventually(failureCounter.Load, 5*time.Second).Should(BeEquivalentTo(DefaultMaxAttempts))
+		time.Sleep(200 * time.Millisecond)
 		Expect(failureCounter.Load()).To(BeEquivalentTo(DefaultMaxAttempts + 1))
 
 		// trigger update, check it is handled
@@ -253,14 +250,14 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 		podConfig.Informer = coreFactory.Core().V1().Pods().Informer()
 		podConfig.Lister = coreFactory.Core().V1().Pods().Lister().List
 		if podConfig.RateLimiter == nil {
-			podConfig.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, 5)
+			podConfig.RateLimiter = workqueue.NewTypedItemExponentialFailureRateLimiter[string](100*time.Millisecond, 1*time.Second)
 		}
 		podController = NewController("podController", podConfig)
 
 		nsConfig.Informer = coreFactory.Core().V1().Namespaces().Informer()
 		nsConfig.Lister = coreFactory.Core().V1().Namespaces().Lister().List
 		if nsConfig.RateLimiter == nil {
-			nsConfig.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, 5)
+			nsConfig.RateLimiter = workqueue.NewTypedItemExponentialFailureRateLimiter[string](100*time.Millisecond, 1*time.Second)
 		}
 		namespaceController = NewController("namespaceController", nsConfig)
 

@@ -551,6 +551,11 @@ func (as *ovnAddressSets) Destroy() error {
 // given addresses, disregarding existing state.
 func (as *ovnAddressSet) setAddresses(addresses []string) error {
 	uniqAddresses := getUniqueAddresses(addresses)
+
+	if as.hasOnlyAddresses(uniqAddresses...) {
+		return nil
+	}
+
 	addrset := nbdb.AddressSet{
 		UUID:      as.uuid,
 		Name:      as.hashName,
@@ -612,6 +617,33 @@ func (as *ovnAddressSet) hasAddresses(addresses ...string) bool {
 	}
 
 	if len(existingAddresses) == 0 {
+		return false
+	}
+
+	for _, address := range addresses {
+		found := false
+		for _, existingAddress := range existingAddresses {
+			if existingAddress == address {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// hasOnlyAddresses returns true if an address set contains only the given Addresses and no more
+func (as *ovnAddressSet) hasOnlyAddresses(addresses ...string) bool {
+	existingAddresses, err := as.getAddresses()
+	if err != nil {
+		return false
+	}
+
+	if len(existingAddresses) != len(addresses) {
 		return false
 	}
 

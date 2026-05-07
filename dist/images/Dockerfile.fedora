@@ -163,6 +163,7 @@ RUN mkdir -p /usr/libexec/cni/
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube /workspace/ovn-kubernetes/dist/images/ovn-kube-util /workspace/ovn-kubernetes/dist/images/ovndbchecker /workspace/ovn-kubernetes/dist/images/hybrid-overlay-node /workspace/ovn-kubernetes/dist/images/ovnkube-identity /workspace/ovn-kubernetes/dist/images/ovnkube-observ /usr/bin/
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/git_info /root
 COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/LICENSES/ /usr/share/licenses/ovn-kubernetes/
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn

@@ -30,6 +30,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	egressqosapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
 	egressqosapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/applyconfiguration/egressqos/v1"
 	egressqosinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/informers/externalversions/egressqos/v1"
@@ -188,7 +189,7 @@ func (oc *DefaultNetworkController) initEgressQoSController(
 	oc.egressQoSLister = eqInformer.Lister()
 	oc.egressQoSSynced = eqInformer.Informer().HasSynced
 	oc.egressQoSQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controller.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressqos"},
 	)
 	_, err := eqInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -204,7 +205,7 @@ func (oc *DefaultNetworkController) initEgressQoSController(
 	oc.egressQoSPodLister = podInformer.Lister()
 	oc.egressQoSPodSynced = podInformer.Informer().HasSynced
 	oc.egressQoSPodQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controller.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressqospods"},
 	)
 	_, err = podInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -219,7 +220,7 @@ func (oc *DefaultNetworkController) initEgressQoSController(
 	oc.egressQoSNodeLister = nodeInformer.Lister()
 	oc.egressQoSNodeSynced = nodeInformer.Informer().HasSynced
 	oc.egressQoSNodeQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controller.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressqosnodes"},
 	)
 	_, err = nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{

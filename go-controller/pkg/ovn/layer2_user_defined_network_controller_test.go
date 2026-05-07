@@ -24,7 +24,7 @@ import (
 	knet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
-	ovnkcnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
@@ -465,7 +465,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				// clustermanager to annotate the pod.
 				if !config.OVNKubernetesFeature.EnableInterconnect {
 					// pod exists, networks annotations don't
-					_, ok := pod.Annotations[util.OvnPodAnnotationName]
+					_, ok := pod.Annotations[ovntypes.OvnPodAnnotationName]
 					Expect(ok).To(BeFalse())
 				}
 
@@ -825,7 +825,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		controller := &Layer2UserDefinedNetworkController{}
 		controller.watchFactory = fakeOvn.watcher
 		// this network won't invoke nodeID check, so it should pass
-		netInfo, err := util.NewNetInfo(&ovnkcnitypes.NetConf{
+		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
 			NetConf:    cnitypes.NetConf{Name: "test"},
 			Topology:   ovntypes.Layer2Topology,
 			JoinSubnet: "100.65.0.0/16,fd99::/64",
@@ -841,7 +841,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		}))
 		// this network has a small subnet, it will do the nodeID check
 		// it will fail if there is a node with nodeID 1022, which doesn't exist for now
-		netInfo, err = util.NewNetInfo(&ovnkcnitypes.NetConf{
+		netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{
 			NetConf:    cnitypes.NetConf{Name: "test"},
 			Topology:   ovntypes.Layer2Topology,
 			JoinSubnet: "100.65.0.0/22",

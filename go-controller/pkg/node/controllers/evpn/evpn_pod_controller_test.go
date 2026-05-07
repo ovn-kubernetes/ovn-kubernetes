@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	netlinkMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
@@ -89,7 +90,7 @@ var _ = Describe("EVPN pod controller", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-pod", Namespace: "test-ns",
 					UID:         "pod-uid-1",
-					Annotations: map[string]string{util.OvnPodAnnotationName: podAnnotation},
+					Annotations: map[string]string{types.OvnPodAnnotationName: podAnnotation},
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			}
@@ -232,7 +233,7 @@ var _ = Describe("EVPN pod controller", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-pod", Namespace: "test-ns",
 					UID:         "pod-uid-1",
-					Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"ip_addresses":["10.244.0.5/24"],"mac_address":"0a:58:0a:f4:00:05"}}`},
+					Annotations: map[string]string{types.OvnPodAnnotationName: `{"default":{"ip_addresses":["10.244.0.5/24"],"mac_address":"0a:58:0a:f4:00:05"}}`},
 				},
 				Spec: corev1.PodSpec{NodeName: nodeName},
 			}

@@ -1,15 +1,3 @@
-> **⚠️ The `./daemonset.sh` step in this guide is out of date.**
->
-> OVN-Kubernetes no longer ships the Jinja2 manifest templates that
-> `daemonset.sh` renders — the supported install path is the Helm chart. The
-> prerequisite steps below (VM setup, `kubeadm init`, container runtime
-> install, etc.) are still accurate; only the section that invokes
-> `./daemonset.sh` to deploy OVN-Kubernetes itself is stale.
->
-> To deploy OVN-Kubernetes on the cluster you've built with this guide, follow
-> [Launching OVN-Kubernetes with Helm](launching-ovn-kubernetes-with-helm.md)
-> instead of the `./daemonset.sh` section.
-
 The following is a walkthrough for an installation in an environment with 4 virtual machines, and a cluster deployed with `kubeadm`. This shall serve as a guide for people who are curious enough to deploy OVN-Kubernetes on a manually created cluster and to play around with the components. 
 
 Note that the resulting environment might be highly unstable.
@@ -128,7 +116,7 @@ iptables -I INPUT -p tcp --dport 5000 -j ACCEPT
 iptables-save > /etc/sysconfig/iptables
 ~~~
 
-Also set up an HTTP registry:
+Also set up an HTTP registry (**optional** — only needed if you plan to mirror the OVN-Kubernetes image to `gw1` instead of pulling from a public registry):
 ~~~
 yum install podman -y
 mkdir -p /opt/registry/data
@@ -198,7 +186,7 @@ yum install NetworkManager-ovs.x86_64 -y
 systemctl enable --now openvswitch
 ~~~
 
-Alternatively, on Rocky Linux, you can also build your own RPMs directly from the SRPMs, e.g.:
+Alternatively, on Rocky Linux, you can also build your own RPMs directly from the SRPMs (**optional** — only needed if the NFV SIG packages above are unavailable or you need a specific OVS build), e.g.:
 ~~~
 yum install '@Development Tools'
 yum install desktop-file-utils libcap-ng-devel libmnl-devel numactl-devel openssl-devel python3-devel python3-pyOpenSSL python3-setuptools python3-sphinx rdma-core-devel unbound-devel -y
@@ -334,12 +322,17 @@ EOF
 sudo sysctl --system
 ~~~
 
-Then, install cri-o. At time of this writing, the latest version was 1.21:
+Then, install cri-o. The kubic OBS repository older docs reference has been retired; modern cri-o ships from `pkgs.k8s.io`. Pin to the latest cri-o stable stream that's actually published (cri-o stable streams typically trail upstream Kubernetes by one or two minor versions, so they can be older than the `kubeadm` you install below):
 ~~~
-OS=CentOS_8
-VERSION=1.21
-curl -L -o /etc/yum.repos.d/devel:kubic:libcontainers:stable.repo https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/devel:kubic:libcontainers:stable.repo
-curl -L -o /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:$VERSION.repo https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable:cri-o:$VERSION/$OS/devel:kubic:libcontainers:stable:cri-o:$VERSION.repo
+CRIO_VERSION=v1.32
+cat <<EOF > /etc/yum.repos.d/cri-o.repo
+[cri-o]
+name=CRI-O
+baseurl=https://pkgs.k8s.io/addons:/cri-o:/stable:/${CRIO_VERSION}/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/addons:/cri-o:/stable:/${CRIO_VERSION}/rpm/repodata/repomd.xml.key
+EOF
 yum install cri-o -y
 ~~~
 
@@ -369,22 +362,22 @@ systemctl enable crio --now
 See [https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl) for further details.
 
 ~~~
+KUBE_VERSION=v1.35
 cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
 [kubernetes]
 name=Kubernetes
-baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+baseurl=https://pkgs.k8s.io/core:/stable:/${KUBE_VERSION}/rpm/
 enabled=1
 gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-exclude=kubelet kubeadm kubectl
+gpgkey=https://pkgs.k8s.io/core:/stable:/${KUBE_VERSION}/rpm/repodata/repomd.xml.key
+exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
 EOF
 
 # Set SELinux in permissive mode (effectively disabling it)
 sudo setenforce 0
 sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
 
-sudo yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+sudo yum install -y kubelet kubeadm kubectl conntrack-tools --disableexcludes=kubernetes
 
 sudo systemctl enable --now kubelet
 ~~~
@@ -395,11 +388,15 @@ Execute the following instructions **only** on the master node, `node1`.
 
 ### Install instructions for kubeadm
 
-Deploy on the master node `node1`:
+Deploy on the master node `node1`. Use CIDRs that match the OVN-Kubernetes Helm chart defaults, and skip the kube-proxy addon (OVN-Kubernetes provides its own service implementation):
 ~~~
-kubeadm init --pod-network-cidr 172.16.0.0/16 --service-cidr 172.17.0.0/16 --apiserver-advertise-address 192.168.123.1
+kubeadm init \
+    --pod-network-cidr=10.244.0.0/16 \
+    --service-cidr=10.96.0.0/16 \
+    --apiserver-advertise-address=192.168.123.1 \
+    --skip-phases=addon/kube-proxy
 mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/ovn.conf $HOME/.kube/config
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 ~~~
 
@@ -414,13 +411,14 @@ kube-system   coredns-78fcd69978-mzpzr        0/1     ContainerCreating   0     
 kube-system   etcd-node1                      1/1     Running             2          33s   192.168.122.205   node1   <none>           <none>
 kube-system   kube-apiserver-node1            1/1     Running             2          33s   192.168.122.205   node1   <none>           <none>
 kube-system   kube-controller-manager-node1   1/1     Running             3          33s   192.168.122.205   node1   <none>           <none>
-kube-system   kube-proxy-vm44k                1/1     Running             0          22s   192.168.122.205   node1   <none>           <none>
 kube-system   kube-scheduler-node1            1/1     Running             3          28s   192.168.122.205   node1   <none>           <none>
 ~~~
 
 Now, deploy OVN-Kubernetes - see below.
 
 ### Deploying OVN-Kubernetes on node1
+
+Several of the next sub-steps — **install build dependencies, install Go, build the OVN-Kubernetes image, and push it to the local registry** — are **optional**: they're only needed if you want to build a custom OVN-Kubernetes image and serve it from `gw1`'s registry. The **clone step in between is required either way**, because `helm install` runs from the chart directory inside the clone. If you're happy using the public `ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:master` image, run only the clone step below, then jump to the `helm install` step further down and adjust `--set global.image.repository` / `--set global.image.tag` accordingly.
 
 Install build dependencies and create a softlink for `pip` to `pip3`:
 ~~~
@@ -439,6 +437,7 @@ go version
 
 Now, clone the OVN-Kubernetes repository:
 ~~~
+yum install -y git
 mkdir -p $HOME/work/src/github.com/ovn-kubernetes
 cd $HOME/work/src/github.com/ovn-kubernetes
 git clone https://github.com/ovn-kubernetes/ovn-kubernetes
@@ -465,33 +464,31 @@ buildah bud -t $OVN_IMAGE -f Dockerfile.fedora .
 podman push $OVN_IMAGE
 ~~~
 
-Next, run:
-~~~
-OVN_IMAGE=192.168.123.254:5000/ovn-daemonset-fedora:latest
-MASTER_IP=192.168.123.1
-NET_CIDR="172.16.0.0/16/24"
-SVC_CIDR="172.17.0.0/16"
-./daemonset.sh --image=${OVN_IMAGE} \
-    --net-cidr="${NET_CIDR}" --svc-cidr="${SVC_CIDR}" \
-    --gateway-mode="local" \
-    --k8s-apiserver=https://${MASTER_IP}:6443
-~~~
-
-You might also have to work around an issue where br-int is added by OVN, but the necessary files in /var/run/openvswitch are not created until Open vSwitch is restarted - [see here for more details](#issues-workarounds). This only happens on the master, so let's pre-create `br-int` there:
+Before starting OVN-Kubernetes, work around an issue where `br-int` is added by OVN but the necessary files in `/var/run/openvswitch` are not created until Open vSwitch is restarted (see [Issues / workarounds](#issues--workarounds)). This only matters on the master, so pre-create `br-int` there:
 ~~~
 ovs-vsctl add-br br-int
 ~~~
 
-Now, set up ovnkube:
+Next, install OVN-Kubernetes with the Helm chart, pointing `global.image.repository` at the image you just pushed (or use the public `ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu` image to skip the build steps above). If `helm` isn't already on the master, install it with `curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash`.
 ~~~
-# set up the namespace
-kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovn-setup.yaml
-# set up the database pods - wait until the pods are up and running before progressing to the next command:
-kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-db.yaml
-# set up the master pods - wait until the pods are up and running before progressing to the next command:
-kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-master.yaml
-# set up the ovnkube-node pods - wait until the pods are up and running before progressing to the next command:
-kubectl apply -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-node.yaml
+cd $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/helm/ovn-kubernetes
+helm install ovn-kubernetes . \
+    -f values-no-ic.yaml \
+    --set k8sAPIServer="https://192.168.123.1:6443" \
+    --set global.image.repository=192.168.123.254:5000/ovn-daemonset-fedora \
+    --set global.image.tag=latest
+~~~
+
+> **CEL CRD note:** Several OVN-Kubernetes CRDs use CEL `x-kubernetes-validations` rules that don't install cleanly on older Kubernetes versions — the per-CRD cost budget rejects four of them on Kubernetes 1.31, and the indexed `all(i, v, …)` macro used by `vteps` and `routeadvertisements` is rejected on 1.32. Use Kubernetes 1.33 or newer (the example above pins to v1.35) and the chart's CRDs install cleanly via `helm install`.
+
+For interconnect (IC) mode — recommended for new production deployments — use `-f values-single-node-zone.yaml` instead of `-f values-no-ic.yaml`, and label every node with its zone name **before** running `helm install`:
+~~~
+for n in node1 node2 node3; do kubectl label node $n k8s.ovn.org/zone-name=$n --overwrite; done
+~~~
+
+The Helm chart deploys the namespace, the OVN database, the master, and the ovnkube-node pods in one step. Watch them come up:
+~~~
+kubectl get pods -n ovn-kubernetes -o wide -w
 ~~~
 
 Once all OVN related pods are up, you should see that the CoreDNS pods have started as well and they should be in the correct network.
@@ -501,12 +498,7 @@ kube-system      coredns-78fcd69978-ms969         1/1     Running   0          2
 kube-system      coredns-78fcd69978-w6k2z         1/1     Running   0          36s     172.16.0.5        node1   <none>           <none>
 ~~~
 
-Finally, delete the kube-proxy DaemonSet:
-~~~
-kubectl delete ds -n kube-system kube-proxy
-~~~
-
-You should now see the following when listing all pods:
+You should now see the following when listing all pods (kube-proxy is absent because it was disabled at `kubeadm init` time with `--skip-phases=addon/kube-proxy`):
 ~~~
 [root@node1 ~]# kubectl get pods -A -o wide
 NAMESPACE        NAME                             READY   STATUS    RESTARTS   AGE     IP                NODE    NOMINATED NODE   READINESS GATES
@@ -611,14 +603,48 @@ Installed:
 Complete!
 ~~~
 
+Once the worker nodes have joined (see [Joining worker nodes](#joining-worker-nodes-to-the-environment)), you can also confirm the geneve tunnel between zones works by running two pods on different nodes and verifying cross-node connectivity plus service-cluster DNS:
+~~~
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata: {name: test-n2}
+spec:
+  nodeSelector: {kubernetes.io/hostname: node2}
+  containers:
+  - name: c
+    image: registry.k8s.io/e2e-test-images/agnhost:2.47
+    command: ["/agnhost", "netexec", "--http-port=8080"]
+    securityContext: {capabilities: {add: [NET_RAW]}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: test-n3}
+spec:
+  nodeSelector: {kubernetes.io/hostname: node3}
+  containers:
+  - name: c
+    image: registry.k8s.io/e2e-test-images/agnhost:2.47
+    command: ["/agnhost", "netexec", "--http-port=8080"]
+    securityContext: {capabilities: {add: [NET_RAW]}}
+EOF
+
+# Cross-node ICMP exercises the geneve tunnel
+N3_IP=$(kubectl get pod test-n3 -o jsonpath='{.status.podIP}')
+kubectl exec test-n2 -- ping -c 3 -W 2 $N3_IP
+
+# Cross-node TCP via agnhost's HTTP listener
+kubectl exec test-n2 -- /agnhost connect --timeout=3s $N3_IP:8080
+
+# Service DNS resolution via the cluster DNS service IP
+kubectl exec test-n2 -- nslookup kubernetes.default.svc.cluster.local 10.96.0.10
+~~~
+
 ### Uninstalling OVN-Kubernetes
 
-In order to uninstall OVN kubernetes:
+In order to uninstall OVN-Kubernetes:
 ~~~
-kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-node.yaml
-kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-master.yaml
-kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovnkube-db.yaml
-kubectl delete -f $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/dist/yaml/ovn-setup.yaml
+helm uninstall ovn-kubernetes
 ~~~
 
 ### Issues / workarounds:
@@ -632,6 +658,8 @@ The best workaroud is to pre-create br-int before the OVN-Kubernetes installatio
 ~~~
 ovs-vsctl add-br br-int
 ~~~
+
+`br-ex` disappears from the OVS database whenever the OVN-Kubernetes Helm release is uninstalled and reinstalled (or upgraded across modes — for example switching from `values-no-ic.yaml` to `values-single-node-zone.yaml`). The `ovs-node` container resets the OVS DB on startup, removing any user-managed bridges. NetworkManager keeps the `br-ex` connection profile but cannot recreate it because the OVS DB is now under container control. The simplest recovery is to reboot each affected node — NetworkManager re-establishes `br-ex` from its persisted profile during boot, and ovn-kubernetes reconciles the patch port back to `br-int`. Plan for a per-node reboot whenever the chart is reinstalled.
 
 ## Joining worker nodes to the environment
 

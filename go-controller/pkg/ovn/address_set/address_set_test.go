@@ -38,10 +38,9 @@ func getDbAsWithUUID(dbIDs *libovsdbops.DbObjectIDs, ips []string, UUID string, 
 	return as
 }
 
-func getNamespaceAddrSetDbIDs(namespaceName, controller string) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, controller, map[libovsdbops.ExternalIDKey]string{
-		// namespace has only 1 address set, no additional ids are required
-		libovsdbops.ObjectNameKey: namespaceName,
+func getEgressServiceAddrSetDbIDs(serviceName, controller string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetEgressService, controller, map[libovsdbops.ExternalIDKey]string{
+		libovsdbops.ObjectNameKey: serviceName,
 	})
 }
 
@@ -62,7 +61,7 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 		asFactory    AddressSetFactory
 		testdbCtx    *libovsdbtest.Context
 		nbClient     libovsdbclient.Client
-		addrsetDbIDs = getNamespaceAddrSetDbIDs(addrsetName, controllerName)
+		addrsetDbIDs = getEgressServiceAddrSetDbIDs(addrsetName, controllerName)
 	)
 
 	ginkgo.BeforeEach(func() {
@@ -90,14 +89,14 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 						Name: "1",
 						ExternalIDs: map[string]string{
 							libovsdbops.OwnerControllerKey.String(): controllerName,
-							libovsdbops.OwnerTypeKey.String():       string(libovsdbops.NamespaceOwnerType),
+							libovsdbops.OwnerTypeKey.String():       string(libovsdbops.EgressServiceOwnerType),
 						},
 					},
 					&nbdb.AddressSet{
 						Name: "2",
 						ExternalIDs: map[string]string{
 							libovsdbops.OwnerControllerKey.String(): controllerName,
-							libovsdbops.OwnerTypeKey.String():       string(libovsdbops.NamespaceOwnerType),
+							libovsdbops.OwnerTypeKey.String():       string(libovsdbops.EgressServiceOwnerType),
 							libovsdbops.ObjectNameKey.String():      "ns",
 						},
 					},
@@ -122,11 +121,11 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 				asFactory = NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
 
 				expectedIndexes := map[string]*libovsdbops.DbObjectIDs{
-					"":   libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, controllerName, nil),
-					"ns": getNamespaceAddrSetDbIDs("ns", controllerName),
+					"":   libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetEgressService, controllerName, nil),
+					"ns": getEgressServiceAddrSetDbIDs("ns", controllerName),
 				}
 				handledIndexes := map[string]*libovsdbops.DbObjectIDs{}
-				_ = asFactory.ProcessEachAddressSet(controllerName, libovsdbops.AddressSetNamespace,
+				_ = asFactory.ProcessEachAddressSet(controllerName, libovsdbops.AddressSetEgressService,
 					func(dbIDs *libovsdbops.DbObjectIDs) error {
 						handledIndexes[dbIDs.GetObjectID(libovsdbops.ObjectNameKey)] = dbIDs
 						return nil

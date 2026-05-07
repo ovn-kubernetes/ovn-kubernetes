@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/containernetworking/cni/pkg/types"
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	fakeipamclaimclient "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
 	ipamclaimsfactory "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/informers/externalversions"
@@ -55,7 +55,7 @@ var _ = Describe("Persistent IP allocator operations", func() {
 
 		BeforeEach(func() {
 			netConf := &ovncnitypes.NetConf{
-				NetConf:  types.NetConf{Name: networkName},
+				NetConf:  cnitypes.NetConf{Name: networkName},
 				Topology: ovnktypes.Layer2Topology,
 				Subnets:  "192.10.10.0/24",
 			}
@@ -416,7 +416,7 @@ func generateIPAMClaimsListerAndTeardownFunc(stopChannel <-chan struct{}, ipamCl
 
 func dummyNetconf(networkName string) *ovncnitypes.NetConf {
 	return &ovncnitypes.NetConf{
-		NetConf:  types.NetConf{Name: networkName},
+		NetConf:  cnitypes.NetConf{Name: networkName},
 		Topology: ovnktypes.Layer2Topology,
 		Subnets:  "192.10.10.0/24",
 	}

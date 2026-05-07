@@ -8,12 +8,13 @@ KIND (Kubernetes in Docker) deployment of OVN kubernetes is a fast and easy mean
 - Docker run time or podman
 - [KIND](https://kubernetes.io/docs/setup/learning-environment/kind/)
    - Installation instructions can be found at https://github.com/kubernetes-sigs/kind#installation-and-usage. 
-   - NOTE: The OVN-Kubernetes [ovn-kubernetes/contrib/kind.sh](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.sh) and [ovn-kubernetes/contrib/kind.yaml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.yaml) files provision port 11337. If firewalld is enabled, this port will need to be unblocked:
+   - NOTE: The [ovn-kubernetes/contrib/kind.sh](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.sh) and [ovn-kubernetes/contrib/kind.yaml.j2](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.yaml.j2) files provision port 11337. If firewalld is enabled, this port will need to be unblocked:
 
       ```
       sudo firewall-cmd --permanent --add-port=11337/tcp; sudo firewall-cmd --reload
       ```
 - [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
+- [Helm](https://helm.sh/docs/intro/install/) v3
 - Python 3 and [pipx](https://pipx.pypa.io/stable/installation/)
 - jq
 - openssl
@@ -21,7 +22,7 @@ KIND (Kubernetes in Docker) deployment of OVN kubernetes is a fast and easy mean
 - Go 1.23.0 or above
 - For podman users: skopeo
 
-For OVN kubernetes KIND deployment, use the `kind.sh` script.
+For OVN kubernetes KIND deployment, use the `kind.sh` script (a symlink to `kind-helm.sh`, which deploys OVN-Kubernetes via Helm).
 
 First Download and build the OVN-Kubernetes repo: 
 
@@ -118,66 +119,123 @@ configuration options when deploying. Use `./kind.sh -h` to see the latest optio
 
 ```
 [root@ovnkubernetes contrib]# ./kind.sh --help
-usage: kind.sh [[[-cf |--config-file <file>] [-kt|keep-taint] [-ha|--ha-enabled]
-                 [-ho |--hybrid-enabled] [-ii|--install-ingress] [-n4|--no-ipv4]
-                 [-i6 |--ipv6] [-wk|--num-workers <num>] [-ds|--disable-snat-multiple-gws]
-                 [-dp |--disable-pkt-mtu-check] [-df|--disable-forwarding]
-                 [-nf |--netflow-targets <targets>] [sf|--sflow-targets <targets>]
-                 [-if |--ipfix-targets <targets>] [-ifs|--ipfix-sampling <num>]
-                 [-ifm|--ipfix-cache-max-flows <num>] [-ifa|--ipfix-cache-active-timeout <num>]
-                 [-sw |--allow-system-writes] [-gm|--gateway-mode <mode>]
-                 [-nl |--node-loglevel <num>] [-ml|--master-loglevel <num>]
-                 [-dbl|--dbchecker-loglevel <num>] [-ndl|--ovn-loglevel-northd <loglevel>]
-                 [-nbl|--ovn-loglevel-nb <loglevel>] [-sbl|--ovn-loglevel-sb <loglevel>]
-                 [-cl |--ovn-loglevel-controller <loglevel>] [-me|--multicast-enabled]
-                 [-ep |--experimental-provider <name>] |
-                 [-eb |--egress-gw-separate-bridge]
-                 [-nqe|--network-qos-enable]
-                 [-h]]
+usage: kind-helm.sh [--delete]
+       [ -cf  | --config-file <file> ]
+       [ -kt  | --keep-taint ]
+       [ -ha  | --ha-enabled ]
+       [ -me  | --multicast-enabled ]
+       [ -ho  | --hybrid-enabled ]
+       [ -el  | --ovn-empty-lb-events ]
+       [ -ii  | --install-ingress ]
+       [ -mlb | --install-metallb ]
+       [ -pl  | --install-cni-plugins ]
+       [ -ikv | --install-kubevirt ]
+       [ -mne | --multi-network-enable ]
+       [ -nse | --network-segmentation-enable ]
+       [ -nce | --network-connect-enable ]
+       [ -uae | --preconfigured-udn-addresses-enable ]
+       [ -rae | --route-advertisements-enable ]
+       [ -evpn | --evpn-enable ]
+       [-dudn | --dynamic-udn-allocation]
+       [-dug | --dynamic-udn-removal-grace-period]
+       [-adv | --advertise-default-network]
+       [-rud | --routed-udn-isolation-disable]
+       [ -nqe | --network-qos-enable ]
+       [ -noe | --no-overlay-enable [snat-enabled|managed] ]
+       [ -n4  | --no-ipv4 ]
+       [ -i6  | --ipv6 ]
+       [ -wk  | --num-workers <num> ]
+       [ -ic  | --enable-interconnect]
+       [ -npz | --node-per-zone ]
+       [ -ov  | --ovn-image <image> ]
+       [ -ovr | --ovn-repo <repo> ]
+       [ -ovg | --ovn-gitref <ref> ]
+       [ -cn  | --cluster-name ]
+       [ -mip | --metrics-ip <ip> ]
+       [ -mtu <mtu> ]
+       [ --enable-coredumps ]
+       [ -h ]
 
--cf  | --config-file                Name of the KIND J2 configuration file.
-                                    DEFAULT: ./kind.yaml.j2
--kt  | --keep-taint                 Do not remove taint components.
-                                    DEFAULT: Remove taint components.
--ha  | --ha-enabled                 Enable high availability. DEFAULT: HA Disabled.
--me  | --multicast-enabled          Enable multicast. DEFAULT: Disabled.
--scm | --separate-cluster-manager   Separate cluster manager from ovnkube-master and run as a separate container within ovnkube-master deployment.
--ho  | --hybrid-enabled             Enable hybrid overlay. DEFAULT: Disabled.
--ds  | --disable-snat-multiple-gws  Disable SNAT for multiple gws. DEFAULT: Disabled.
--dp  | --disable-pkt-mtu-check      Disable checking packet size greater than MTU. Default: Disabled
--df  | --disable-forwarding         Disable forwarding on OVNK controlled interfaces. Default: Enabled
--nf  | --netflow-targets            Comma delimited list of ip:port or :port (using node IP) netflow collectors. DEFAULT: Disabled.
--sf  | --sflow-targets              Comma delimited list of ip:port or :port (using node IP) sflow collectors. DEFAULT: Disabled.
--if  | --ipfix-targets              Comma delimited list of ip:port or :port (using node IP) ipfix collectors. DEFAULT: Disabled.
--ifs | --ipfix-sampling             Fraction of packets that are sampled and sent to each target collector: 1 packet out of every <num>. DEFAULT: 400 (1 out of 400 packets).
--ifm | --ipfix-cache-max-flows      Maximum number of IPFIX flow records that can be cached at a time. If 0, caching is disabled. DEFAULT: Disabled.
--ifa | --ipfix-cache-active-timeout Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent. If 0, caching is disabled. DEFAULT: 60.
--el  | --ovn-empty-lb-events        Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled
--ii  | --install-ingress            Flag to install Ingress Components.
-                                    DEFAULT: Don't install ingress components.
--n4  | --no-ipv4                    Disable IPv4. DEFAULT: IPv4 Enabled.
--i6  | --ipv6                       Enable IPv6. DEFAULT: IPv6 Disabled.
--wk  | --num-workers                Number of worker nodes. DEFAULT: HA - 2 worker
-                                    nodes and no HA - 0 worker nodes.
--sw  | --allow-system-writes        Allow script to update system. Intended to allow
-                                    github CI to be updated with IPv6 settings.
-                                    DEFAULT: Don't allow.
--gm  | --gateway-mode               Enable 'shared' or 'local' gateway mode.
-                                    DEFAULT: shared.
--ov  | --ovn-image            	    Use the specified docker image instead of building locally. DEFAULT: local build.
--ml  | --master-loglevel            Log level for ovnkube (master), DEFAULT: 5.
--nl  | --node-loglevel              Log level for ovnkube (node), DEFAULT: 5
--dbl | --dbchecker-loglevel         Log level for ovn-dbchecker (ovnkube-db), DEFAULT: 5.
--ndl | --ovn-loglevel-northd        Log config for ovn northd, DEFAULT: '-vconsole:info -vfile:info'.
--nbl | --ovn-loglevel-nb            Log config for northbound DB DEFAULT: '-vconsole:info -vfile:info'.
--sbl | --ovn-loglevel-sb            Log config for southboudn DB DEFAULT: '-vconsole:info -vfile:info'.
--cl  | --ovn-loglevel-controller    Log config for ovn-controller DEFAULT: '-vconsole:info'.
--ep  | --experimental-provider      Use an experimental OCI provider such as podman, instead of docker. DEFAULT: Disabled.
--eb  | --egress-gw-separate-bridge  The external gateway traffic uses a separate bridge.
--nqe | --network-qos-enable         Enable network QoS. DEFAULT: Disabled.
--lr  |--local-kind-registry         Will start and connect a kind local registry to push/retrieve images
---delete                      	    Delete current cluster
---deploy                      	    Deploy ovn-kubernetes without restarting kind
+--delete                                      Delete current cluster
+-cf  | --config-file                          Name of the KIND configuration file
+-kt  | --keep-taint                           Do not remove taint components
+                                              DEFAULT: Remove taint components
+-me  | --multicast-enabled                    Enable multicast. DEFAULT: Disabled
+-ho  | --hybrid-enabled                       Enable hybrid overlay. DEFAULT: Disabled
+-obs | --observability                        Enable observability. DEFAULT: Disabled
+-el  | --ovn-empty-lb-events                  Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled
+-ii  | --install-ingress                      Flag to install Ingress Components.
+                                              DEFAULT: Don't install ingress components.
+-mlb | --install-metallb                      Install metallb to test service type LoadBalancer deployments
+-pl  | --install-cni-plugins                  Install CNI plugins
+-ikv | --install-kubevirt                     Install kubevirt
+-mne | --multi-network-enable                 Enable multi networks. DEFAULT: Disabled
+-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled
+-nce | --network-connect-enable               Enable network connect (requires network segmentation). DEFAULT: Disabled
+-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled
+-rae | --route-advertisements-enable          Enable route advertisements
+-evpn | --evpn-enable                         Enable EVPN
+-dudn | --dynamic-udn-allocation              Enable dynamic UDN allocation. DEFAULT: Disabled
+-dug | --dynamic-udn-removal-grace-period     Configure the grace period in seconds for dynamic UDN removal. DEFAULT: 120 seconds
+-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes
+-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict.
+-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled
+-noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled.
+-cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process. DEFAULT: Disabled
+-ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled
+-df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled
+--disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled
+-dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled
+-gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared
+-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled
+-n4  | --no-ipv4                              Disable IPv4. DEFAULT: IPv4 Enabled.
+-i6  | --ipv6                                 Enable IPv6. DEFAULT: IPv6 Disabled.
+-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers
+-ov  | --ovn-image                            Use the specified docker image instead of building locally. DEFAULT: local build.
+-ovr | --ovn-repo                             Specify the repository to build OVN from
+-ovg | --ovn-gitref                           Specify the branch, tag or commit id to build OVN from, it can be a pattern like 'branch-*' it will order results and use the first one
+-cn  | --cluster-name                         Configure the kind cluster's name
+-mip | --metrics-ip                           IP address to bind metrics endpoints. DEFAULT: K8S_NODE_IP or 0.0.0.0
+-mtu                                          Define the overlay mtu. DEFAULT: 1400 (1500 for no-overlay mode)
+--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled
+-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall.
+-ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)
+-npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero.
+-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network
+--allow-icmp-netpol                           Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules
+-ecp | --encap-port                           GENEVE UDP tunnel port.
+-dp  | --disable-pkt-mtu-check                Disable checking for packets mtu size. DEFAULT: false
+-is  | --ipsec                                Enable IPsec. DEFAULT: false
+-sm  | --scale-metrics                        Enable scale metrics. DEFAULT: false
+-ehp | --egress-ip-healthcheck-port           TCP port used for gRPC session by egress IP node check. DEFAULT: 9107 (Use "0" for legacy dial to port 9).
+-nf  | --netflow-targets                      A comma-separated set of NetFlow collectors to export flow data. DEFAULT: Disabled
+-sf  | --sflow-targets                        A comma-separated set of SFlow collectors to export flow data. DEFAULT: Disabled
+-if  | --ipfix-targets                        A comma-separated set of IPFIX collectors to export flow data. DEFAULT: Disabled
+-ifs | --ipfix-sampling                       Rate at which packets should be sampled and sent to each target collector. DEFAULT: 400
+-ifm | --ipfix-cache-max-flows                Maximum number of IPFIX flow records that can be cached at a time. DEFAULT: 0 (disabled)
+-ifa | --ipfix-cache-active-timeout           Maximum period in seconds for which an IPFIX flow record is cached. DEFAULT: 60
+-lcl | --libovsdb-client-logfile              Separate logs for libovsdb client into provided file. DEFAULT: do not separate.
+-eb  | --egress-gw-separate-bridge            The external gateway traffic uses a separate bridge (sets up xgw bridge and eth1).
+-lr  | --local-kind-registry                  Configure kind to use a local container registry for images.
+-ep  | --experimental-provider                Use an experimental OCI provider such as podman instead of docker.
+--deploy                                      Deploy ovn-kubernetes without restarting kind
+--add-nodes                                   Adds nodes to an existing cluster. Number of nodes set by --num-workers. Use -ic if the cluster uses interconnect.
+--isolated                                    After cluster creation, remove default route from nodes and publish kind node IPs as /etc/hosts entries for DNS-less isolation.
+-ml  | --master-loglevel                      Log level for ovnkube-master/cluster-manager pods (0..5). DEFAULT: 4
+-nl  | --node-loglevel                        Log level for ovnkube-node pods (0..5). DEFAULT: 4
+-dbl | --dbchecker-loglevel                   Log level for the ovn-dbchecker container (0..5). DEFAULT: 4
+-nbl | --ovn-loglevel-nb                      Log level for ovn-nbdb. DEFAULT: '-vconsole:info -vfile:info'
+-sbl | --ovn-loglevel-sb                      Log level for ovn-sbdb. DEFAULT: '-vconsole:info -vfile:info'
+-ndl | --ovn-loglevel-northd                  Log level for ovn-northd. DEFAULT: '-vconsole:info -vfile:info'
+-cl  | --ovn-loglevel-controller              Log level for ovn-controller. DEFAULT: '-vconsole:info'
+-dd  | --dns-domain                           Configure a custom dnsDomain for k8s services. DEFAULT: 'cluster.local'
+-inf | --num-infra                            Number of infra (tainted, not-ready) kind nodes. DEFAULT: 0
+-hns | --host-network-namespace               Namespace used to classify host-network traffic. DEFAULT: 'ovn-host-network'
+-prom | --install-prometheus                  Install Prometheus monitoring stack.
+-sw  | --allow-system-writes                  Allow the script to write to /etc/hosts and other system files when needed.
+-ric | --run-in-container                     Run the script from inside a docker container (adapts kubeconfig API URL).
+-kc  | --kubeconfig                           Output kubeconfig path. DEFAULT: $HOME/$KIND_CLUSTER_NAME.conf
+-nokvipam | --opt-out-kv-ipam                 Skip installing the KubeVirt IPAM controller (requires --install-kubevirt).
 ```
 
 As seen above, if you do not specify any options the script will assume the default values.

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containernetworking/cni/pkg/types"
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -118,7 +118,7 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName, role s
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network controller info %w", err)
 	}
-	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType, Role: role})
+	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: cnitypes.NetConf{Name: netName}, Topology: topoType, Role: role})
 	switch topoType {
 	case ovntypes.Layer3Topology:
 		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager,

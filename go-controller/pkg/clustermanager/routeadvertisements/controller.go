@@ -1156,7 +1156,7 @@ func vtepCIDRPrefixSelectors(cidrs []string) []frrtypes.PrefixSelector {
 		} else {
 			le = 32
 		}
-		selectors = append(selectors, frrtypes.PrefixSelector{Prefix: cidr, LE: le})
+		selectors = append(selectors, frrtypes.PrefixSelector{Prefix: cidr, LE: le, GE: le})
 	}
 	return selectors
 }

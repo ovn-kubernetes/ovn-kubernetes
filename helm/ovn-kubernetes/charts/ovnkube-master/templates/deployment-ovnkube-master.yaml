@@ -83,7 +83,7 @@ spec:
             memory: 300Mi
         env:
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVN_LOGLEVEL_NORTHD
           value: {{ default "-vconsole:info -vfile:info" .Values.northdLogLevel | quote }}
         - name: K8S_APISERVER
@@ -173,6 +173,9 @@ spec:
         - mountPath: /etc/ovn/
           name: host-var-lib-ovs
           readOnly: true
+        - mountPath: /var/lib/ovn/
+          name: host-var-lib-ovs
+          readOnly: true
         - mountPath: /var/run/ovn-kubernetes
           name: host-var-run-ovn-kubernetes
         {{- end }}
@@ -186,7 +189,7 @@ spec:
           value: "crash"
         {{ end -}}
         - name: OVN_DAEMONSET_VERSION
-          value: "1.2.0"
+          value: "1.3.0"
         - name: OVNKUBE_LOGLEVEL
           value: {{ default 4 .Values.logLevel | quote }}
         - name: OVNKUBE_LOGFILE_MAXSIZE

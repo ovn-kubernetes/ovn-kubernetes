@@ -84,14 +84,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 			app.Action = func(*cli.Context) error {
 				namespaceT := *util.NewNamespace("testns")
 				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
-				pod := corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "test-pod",
-						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
-					},
-					Status: corev1.PodStatus{Phase: corev1.PodRunning},
-				}
+				pod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod", "", "10.244.2.3", "l3-network", "10.132.2.4")
 
 				defaultEndpointSlice := discovery.EndpointSlice{
 					ObjectMeta: metav1.ObjectMeta{
@@ -191,15 +184,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 		ginkgo.It("should not create mirrored EndpointSlices in namespaces that are not using user defined networks as primary", func() {
 			app.Action = func(*cli.Context) error {
 				namespaceT := *util.NewNamespace("testns")
-
-				pod := corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "test-pod",
-						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"primary"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"secondary}}`},
-					},
-					Status: corev1.PodStatus{Phase: corev1.PodRunning},
-				}
+				pod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod", "", "10.244.2.3", "l3-network", "10.132.2.4")
 
 				defaultEndpointSlice := discovery.EndpointSlice{
 					ObjectMeta: metav1.ObjectMeta{
@@ -285,14 +270,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				namespaceT := *util.NewNamespace("testns")
 				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
 
-				pod := corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "test-pod",
-						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
-					},
-					Status: corev1.PodStatus{Phase: corev1.PodRunning},
-				}
+				pod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod", "", "10.244.2.3", "l3-network", "10.132.2.4")
 
 				defaultEndpointSlice := discovery.EndpointSlice{
 					ObjectMeta: metav1.ObjectMeta{
@@ -375,14 +353,8 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				gomega.Expect(mirroredEndpointSlices[0].Endpoints[0].Addresses).To(gomega.BeEquivalentTo([]string{"10.132.2.4"}))
 
 				ginkgo.By("when the EndpointSlice changes the mirrored one gets updated")
-				newPod := corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "test-pod-new",
-						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:04","ip_address":"10.244.2.4/24","primary":false},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:05","ip_address":"10.132.2.5/24","primary":true}}`},
-					},
-					Status: corev1.PodStatus{Phase: corev1.PodRunning},
-				}
+				newPod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod-new", "", "10.244.2.4", "l3-network", "10.132.2.5")
+
 				_, err = fakeClient.KubeClient.CoreV1().Pods(newPod.Namespace).Create(context.TODO(), &newPod, metav1.CreateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Eventually(func() error {
@@ -454,14 +426,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				namespaceT := *util.NewNamespace("testns")
 				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
 
-				pod := corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "test-pod",
-						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
-					},
-					Status: corev1.PodStatus{Phase: corev1.PodRunning},
-				}
+				pod := *testing.NewPodWithPrimaryNADIP(namespaceT.Name, "test-pod", "", "10.244.2.3", "l3-network", "10.132.2.4")
 				longName := strings.Repeat("a", 253)
 
 				defaultEndpointSlice := discovery.EndpointSlice{

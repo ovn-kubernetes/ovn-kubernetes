@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/mocks"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	cni_type_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/cni/pkg/types"
 	cni_ns_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/plugins/pkg/ns"
@@ -1194,7 +1194,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 		{
 			desc: "test code path when CNIConf.PrevResult == nil",
 			inpPodRequest: PodRequest{
-				CNIConf: &types.NetConf{
+				CNIConf: &ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{
 						PrevResult: nil,
 					},
@@ -1204,7 +1204,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 		{
 			desc: "test code path NewResultFromResult returns error",
 			inpPodRequest: PodRequest{
-				CNIConf: &types.NetConf{
+				CNIConf: &ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{
 						PrevResult: mockTypeResult,
 					},
@@ -1217,7 +1217,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 		{
 			desc: "test code path when ip.Interface != nil and path when Sandbox is empty value",
 			inpPodRequest: PodRequest{
-				CNIConf: &types.NetConf{
+				CNIConf: &ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{
 						PrevResult: mockTypeResult,
 					},
@@ -1232,7 +1232,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 		{
 			desc: "test code path when DeleteConntrack returns error",
 			inpPodRequest: PodRequest{
-				CNIConf: &types.NetConf{
+				CNIConf: &ovncnitypes.NetConf{
 					NetConf: cnitypes.NetConf{
 						PrevResult: mockTypeResult,
 					},

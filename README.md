@@ -45,6 +45,8 @@ Here are some links to help in your ovn-kubernetes journey:
 ## License
 
 Everything is distributed under the terms of the [Apache License] (version 2.0).
+See [LICENSES/README.md](LICENSES/README.md) for how third-party license files
+are determined for this repository.
 
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fovn-kubernetes%2Fovn-kubernetes.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fovn-kubernetes%2Fovn-kubernetes?ref=badge_large)

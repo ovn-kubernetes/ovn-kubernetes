@@ -84,7 +84,7 @@ In some cases, other changes may conflict with your PR. If this happens, you wil
 
 ## Development Environment Setup
 
-You can easily setup a developer environment by following the instructions [here](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/kind.md).
+You can easily setup a developer environment by following the instructions [here](https://ovn-kubernetes.io/installation/launching-ovn-kubernetes-on-kind/).
 
 ## Sign Your Commits
 

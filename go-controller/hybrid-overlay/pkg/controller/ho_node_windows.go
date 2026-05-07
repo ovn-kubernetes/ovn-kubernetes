@@ -17,7 +17,7 @@ import (
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -98,7 +98,7 @@ func ensureBaseNetwork() error {
 
 	const (
 		baseNetworkName = "BaseOVNKubernetesHybridOverlayNetwork"
-		fakeSubnetVNI   = types.HybridOverlayVNI + 1
+		fakeSubnetVNI   = hotypes.HybridOverlayVNI + 1
 	)
 
 	// Unused subnet and gateway IP required to create the base overlay network.
@@ -202,10 +202,10 @@ func (n *NodeController) AddNode(node *corev1.Node) error {
 	}
 
 	klog.Infof("Adding a remote subnet route for CIDR '%s' (node: '%s', remote node address: %s, distributed router MAC: %s, VNI: %v).",
-		cidr.String(), node.Name, nodeIP.String(), drMAC.String(), types.HybridOverlayVNI)
+		cidr.String(), node.Name, nodeIP.String(), drMAC.String(), hotypes.HybridOverlayVNI)
 	networkPolicySettings := hcn.RemoteSubnetRoutePolicySetting{
 		// VXLAN virtual network Identifier. Is expected to be 4097 or higher on Windows
-		IsolationId: types.HybridOverlayVNI,
+		IsolationId: hotypes.HybridOverlayVNI,
 		// Distributed router/gateway MAC address
 		DistributedRouterMacAddress: drMAC.String(),
 		// Host IP address of the node
@@ -286,7 +286,7 @@ func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) erro
 			Subnets: []SubnetInfo{{
 				AddressPrefix:  nodeSubnet,
 				GatewayAddress: gatewayAddress,
-				VSID:           types.HybridOverlayVNI,
+				VSID:           hotypes.HybridOverlayVNI,
 			}},
 			VXLANPort: uint16(config.HybridOverlay.VXLANPort),
 		}
@@ -339,7 +339,7 @@ func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) erro
 				return fmt.Errorf("error creating the network: no DRMAC address")
 			}
 			if err := n.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{
-				types.HybridOverlayDRMAC: policySettings.Address,
+				hotypes.HybridOverlayDRMAC: policySettings.Address,
 			}); err != nil {
 				klog.Errorf("Failed to set DRMAC annotation on node: %v", err)
 			}

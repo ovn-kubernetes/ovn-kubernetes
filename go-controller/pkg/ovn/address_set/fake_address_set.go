@@ -227,47 +227,29 @@ func (f *FakeAddressSetFactory) expectAddressSetWithAddresses(g gomega.Gomega, d
 	g.Expect(lenAddressSet).To(gomega.Equal(len(addresses)))
 }
 
-func (f *FakeAddressSetFactory) getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName any) *libovsdbops.DbObjectIDs {
-	var dbIDs *libovsdbops.DbObjectIDs
-	if nsName, ok := dbIDsOrNsName.(string); ok {
-		dbIDs = libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNamespace, f.ControllerName, map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.ObjectNameKey: nsName,
-		})
-	} else if dbIDs, ok = dbIDsOrNsName.(*libovsdbops.DbObjectIDs); !ok {
-		panic("unexpected type of argument passed to ExpectAddressSetWithAddresses")
-	}
-	return dbIDs
-}
-
 // ExpectAddressSetWithAddresses ensure address set exists with the given set of ips.
-// Address set is identified by dbIDsOrNsName, which may be a namespace name (string) or a *libovsdbops.DbObjectIDs.
-func (f *FakeAddressSetFactory) ExpectAddressSetWithAddresses(dbIDsOrNsName any, addresses []string) {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+func (f *FakeAddressSetFactory) ExpectAddressSetWithAddresses(dbIDs *libovsdbops.DbObjectIDs, addresses []string) {
 	g := gomega.Default
 	f.expectAddressSetWithAddresses(g, dbIDs, addresses)
 }
 
-func (f *FakeAddressSetFactory) EventuallyExpectAddressSetWithAddresses(dbIDsOrNsName any, addresses []string) {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+func (f *FakeAddressSetFactory) EventuallyExpectAddressSetWithAddresses(dbIDs *libovsdbops.DbObjectIDs, addresses []string) {
 	gomega.Eventually(func(g gomega.Gomega) {
 		f.expectAddressSetWithAddresses(g, dbIDs, addresses)
 	}).Should(gomega.Succeed())
 }
 
-// ExpectEmptyAddressSet ensures the address set owned by dbIDsOrNsName exists with no Addresses
-func (f *FakeAddressSetFactory) ExpectEmptyAddressSet(dbIDsOrNsName any) {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+// ExpectEmptyAddressSet ensures the address set owned by dbIDs exists with no Addresses
+func (f *FakeAddressSetFactory) ExpectEmptyAddressSet(dbIDs *libovsdbops.DbObjectIDs) {
 	f.ExpectAddressSetWithAddresses(dbIDs, nil)
 }
 
 // EventuallyExpectEmptyAddressSetExist ensures the named address set eventually exists with no Addresses
-func (f *FakeAddressSetFactory) EventuallyExpectEmptyAddressSetExist(dbIDsOrNsName any) {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+func (f *FakeAddressSetFactory) EventuallyExpectEmptyAddressSetExist(dbIDs *libovsdbops.DbObjectIDs) {
 	f.EventuallyExpectAddressSetWithAddresses(dbIDs, nil)
 }
 
-func (f *FakeAddressSetFactory) AddressSetExists(dbIDsOrNsName any) bool {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+func (f *FakeAddressSetFactory) AddressSetExists(dbIDs *libovsdbops.DbObjectIDs) bool {
 	name := getOvnAddressSetsName(dbIDs)
 	f.Lock()
 	defer f.Unlock()
@@ -276,21 +258,17 @@ func (f *FakeAddressSetFactory) AddressSetExists(dbIDsOrNsName any) bool {
 }
 
 // EventuallyExpectAddressSet ensures the named address set eventually exists
-func (f *FakeAddressSetFactory) EventuallyExpectAddressSet(dbIDsOrNsName any) {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+func (f *FakeAddressSetFactory) EventuallyExpectAddressSet(dbIDs *libovsdbops.DbObjectIDs) {
 	gomega.Eventually(func() bool {
 		return f.AddressSetExists(dbIDs)
 	}).Should(gomega.BeTrue())
 }
 
-// EventuallyExpectNoAddressSet ensures the named address set eventually does not exist
-// For namespaces address set deletion is delayed by 20 seconds, it is only tested once in namespace_test
-// to not slow down tests. Don't use for namespace-owned address sets
-func (f *FakeAddressSetFactory) EventuallyExpectNoAddressSet(dbIDsOrNsName any) {
-	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+// EventuallyExpectNoAddressSet ensures the address set eventually does not exist
+func (f *FakeAddressSetFactory) EventuallyExpectNoAddressSet(dbIDs *libovsdbops.DbObjectIDs) {
 	gomega.Eventually(func() bool {
 		return f.AddressSetExists(dbIDs)
-	}).Should(gomega.BeFalse())
+	}).Should(gomega.BeFalse(), "expected address set %s to eventually not exist", dbIDs.String())
 }
 
 // ExpectNumberOfAddressSets ensures the number of created address sets equals given number
