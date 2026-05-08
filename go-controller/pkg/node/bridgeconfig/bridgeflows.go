@@ -135,6 +135,39 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			}
 		}
 
+		// table 0, NodePort reply traffic from advertised no-overlay UDNs, Host -> OVN.
+		// In local gateway mode these packets re-enter breth0 from LOCAL with the
+		// UDN pod subnet as source and the OVN masquerade IP as destination. If they
+		// use the generic priority-500 OVN masquerade flow below, they reach table 2
+		// with skb_mark=0 and match the advertised-subnet isolation drop instead of
+		// the UDN pkt_mark dispatch flow. Restore the UDN packet mark before the
+		// existing OVN masquerade conntrack path. Priority 550 matches the advertised
+		// UDN Host -> Service exception used later in this function.
+		if config.Gateway.Mode == config.GatewayModeLocal && util.IsRouteAdvertisementsEnabled() {
+			for _, netConfig := range b.patchedNetConfigs() {
+				if netConfig.IsDefaultNetwork() || netConfig.Transport != types.NetworkTransportNoOverlay || !netConfig.Advertised.Load() {
+					continue
+				}
+				var udnAdvertisedSubnets []*net.IPNet
+				for _, clusterEntry := range netConfig.Subnets {
+					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+				}
+				matchingIPFamilySubnet, err := util.MatchFirstIPNetFamily(false, udnAdvertisedSubnets)
+				if err != nil {
+					klog.Infof("Unable to determine IPV4 UDN subnet for Host -> OVN reply SVC traffic: %v", err)
+					continue
+				}
+				// Example flow:
+				// table=0, priority=550, in_port=LOCAL, ip, nw_src=<UDN pod subnet>, nw_dst=<OVN masquerade IP>
+				// actions=set_field:<UDN pkt_mark>->pkt_mark,ct(zone=<OVN masq zone>,nat,table=5)
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s,"+
+						"actions=set_field:%s->pkt_mark,ct(zone=%d,nat,table=5)",
+						nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV4, protoPrefixV4,
+						matchingIPFamilySubnet.String(), protoPrefixV4, config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String(),
+						netConfig.PktMark, config.Default.OVNMasqConntrackZone))
+			}
+		}
 		// table 0, Reply SVC traffic from Host -> OVN, unSNAT and goto table 5
 		dftFlows = append(dftFlows,
 			fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s,"+
@@ -200,6 +233,34 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			}
 		}
 
+		// table 0, NodePort reply traffic from advertised no-overlay UDNs, Host -> OVN.
+		// See the IPv4 block above for why these packets need the UDN packet mark
+		// restored before entering the existing OVN masquerade conntrack path.
+		if config.Gateway.Mode == config.GatewayModeLocal && util.IsRouteAdvertisementsEnabled() {
+			for _, netConfig := range b.patchedNetConfigs() {
+				if netConfig.IsDefaultNetwork() || netConfig.Transport != types.NetworkTransportNoOverlay || !netConfig.Advertised.Load() {
+					continue
+				}
+				var udnAdvertisedSubnets []*net.IPNet
+				for _, clusterEntry := range netConfig.Subnets {
+					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+				}
+				matchingIPFamilySubnet, err := util.MatchFirstIPNetFamily(true, udnAdvertisedSubnets)
+				if err != nil {
+					klog.Infof("Unable to determine IPV6 UDN subnet for Host -> OVN reply SVC traffic: %v", err)
+					continue
+				}
+				// Example flow:
+				// table=0, priority=550, in_port=LOCAL, ipv6, ipv6_src=<UDN pod subnet>, ipv6_dst=<OVN masquerade IP>
+				// actions=set_field:<UDN pkt_mark>->pkt_mark,ct(zone=<OVN masq zone>,nat,table=5)
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s,"+
+						"actions=set_field:%s->pkt_mark,ct(zone=%d,nat,table=5)",
+						nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV6, protoPrefixV6,
+						matchingIPFamilySubnet.String(), protoPrefixV6, config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String(),
+						netConfig.PktMark, config.Default.OVNMasqConntrackZone))
+			}
+		}
 		// table 0, Reply SVC traffic from Host -> OVN, unSNAT and goto table 5
 		dftFlows = append(dftFlows,
 			fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s,"+
