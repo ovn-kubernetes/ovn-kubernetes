@@ -26,6 +26,7 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/observability"
@@ -139,7 +140,7 @@ func NewController(
 	c.anpLister = anpInformer.Lister()
 	c.anpCacheSynced = anpInformer.Informer().HasSynced
 	c.anpQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "adminNetworkPolicy"},
 	)
 	_, err := anpInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -157,7 +158,7 @@ func NewController(
 	c.banpLister = banpInformer.Lister()
 	c.banpCacheSynced = banpInformer.Informer().HasSynced
 	c.banpQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "baselineAdminNetworkPolicy"},
 	)
 	_, err = banpInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -173,7 +174,7 @@ func NewController(
 	c.anpNamespaceLister = namespaceInformer.Lister()
 	c.anpNamespaceSynced = namespaceInformer.Informer().HasSynced
 	c.anpNamespaceQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "anpNamespaces"},
 	)
 	_, err = namespaceInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -189,7 +190,7 @@ func NewController(
 	c.anpPodLister = podInformer.Lister()
 	c.anpPodSynced = podInformer.Informer().HasSynced
 	c.anpPodQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "anpPods"},
 	)
 	_, err = podInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -205,7 +206,7 @@ func NewController(
 	c.anpNodeLister = nodeInformer.Lister()
 	c.anpNodeSynced = podInformer.Informer().HasSynced
 	c.anpNodeQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "anpNodes"},
 	)
 	_, err = nodeInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{

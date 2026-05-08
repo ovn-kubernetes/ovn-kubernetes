@@ -26,6 +26,19 @@ const (
 	InfiniteAttempts   = math.MaxInt
 )
 
+// DefaultRateLimiter returns the default rate limiter for controller work
+// queues. It uses per-item exponential backoff starting at 5ms and capped at 1
+// minute. The delay doubles on each retry (5ms, 10ms, 20ms, 40ms, ...) until
+// reaching the cap.
+//
+// This is similar to the upstream DefaultTypedControllerRateLimiter but with a
+// lower max delay (1m vs ~17m) which is more appropriate for networking
+// controllers, and without the global token-bucket limiter since we already
+// rely on per-item backoff.
+func DefaultRateLimiter[T comparable]() workqueue.TypedRateLimiter[T] {
+	return workqueue.NewTypedItemExponentialFailureRateLimiter[T](5*time.Millisecond, 1*time.Minute)
+}
+
 // Reconciler is a basic level-driven controller that is fed externally of items
 // to reconcile through its Reconcile method
 type Reconciler interface {
@@ -104,11 +117,15 @@ func NewReconciler(name string, config *ReconcilerConfig) Reconciler {
 // NewController creates a new level-driven controller. It should be started and
 // stopped using Start/StartWithInitialSync/Stop functions.
 func NewController[T any](name string, config *ControllerConfig[T]) Controller {
+	rateLimiter := config.RateLimiter
+	if rateLimiter == nil {
+		rateLimiter = DefaultRateLimiter[string]()
+	}
 	c := &controller[T]{
 		name:   name,
 		config: config,
 		queue: workqueue.NewTypedRateLimitingQueueWithConfig(
-			config.RateLimiter,
+			rateLimiter,
 			workqueue.TypedRateLimitingQueueConfig[string]{
 				Name: name,
 			},

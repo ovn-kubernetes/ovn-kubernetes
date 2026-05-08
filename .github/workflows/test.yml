@@ -501,6 +501,7 @@ jobs:
           - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-disabled", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "local-kind-registry": "true"}
           - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
+          - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
           - {"target": "control-plane", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
@@ -547,7 +548,7 @@ jobs:
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
-      ENABLE_EVPN: "${{ matrix.target == 'evpn' }}"
+      ENABLE_EVPN: "${{ matrix.target == 'evpn' || matrix.evpn == 'enable-evpn' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
       ENABLE_NETWORK_CONNECT: "${{ startsWith(matrix.target, 'network-segmentation') }}"
       ENABLE_PRE_CONF_UDN_ADDR: "${{ matrix.ic == 'ic-single-node-zones' && (startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation') }}"

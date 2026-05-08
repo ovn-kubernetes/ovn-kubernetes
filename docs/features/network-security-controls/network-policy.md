@@ -13,11 +13,11 @@ Each NetworkPolicy object consists of four sections:
 3. `Ingress rules`: determines the sources that pods selected by the ingress rule can receive traffic from 
 4. `Egress rules`: determines the sinks that pods selected by the egress rule can send trafic to 
 
-# NetworkPolicy features 
+## NetworkPolicy features 
 
 These are described in order and are additive 
 
-## **Unicast default-deny**
+### **Unicast default-deny**
 
 When a pod is selected by one or more NetworkPolicies, the `policyTypes` is set to both `Ingress` and `Egress`, and if no rules are specified it becomes isolated and all unicast ingress and egress traffic is blocked for pods in the same namespce as the NetworkPolicy. 
 

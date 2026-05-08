@@ -267,7 +267,7 @@ pushd e2e
 
 go mod download
 
-if [ "$ENABLE_EVPN" = true ]; then
+if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
   # EVPN tests are parallel-safe (unique per-test resource names, randomized
   # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
   # processes — one per DescribeTable entry.  go test cannot drive Ginkgo

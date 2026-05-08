@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	egressserviceapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressserviceinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions/egressservice/v1"
 	egressservicelisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
@@ -105,7 +106,7 @@ func NewController(stopCh <-chan struct{}, returnMark, thisNode string,
 	c.egressServiceLister = esInformer.Lister()
 	c.egressServiceSynced = esInformer.Informer().HasSynced
 	c.egressServiceQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controller.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressservices"},
 	)
 	_, err := esInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{

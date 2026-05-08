@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/moby/sys/userns"
@@ -28,7 +27,6 @@ import (
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	kapi "k8s.io/kubernetes/pkg/apis/core"
 	"sigs.k8s.io/knftables"
@@ -88,7 +86,6 @@ func NewUDNHostIsolationManager(ipv4, ipv6 bool, podInformer coreinformers.PodIn
 		udnOpenPortsICMPv6: newNFTPodElementsSet(nftablesUDNOpenPortsICMPv6, false),
 	}
 	controllerConfig := &controller.ControllerConfig[corev1.Pod]{
-		RateLimiter:    workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
 		Informer:       podInformer.Informer(),
 		Lister:         podInformer.Lister().List,
 		ObjNeedsUpdate: podNeedsUpdate,

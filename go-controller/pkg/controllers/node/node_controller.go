@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/util/workqueue"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
@@ -105,7 +103,6 @@ func NewController(wf *factory.WatchFactory, name string, networkManager network
 	}
 
 	nodeControllerConfig := &controller.ControllerConfig[corev1.Node]{
-		RateLimiter:    workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
 		Informer:       nodeInformer.Informer(),
 		Lister:         nodeInformer.Lister().List,
 		MaxAttempts:    controller.InfiniteAttempts,

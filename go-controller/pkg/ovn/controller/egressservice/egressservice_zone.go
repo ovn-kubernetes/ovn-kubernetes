@@ -30,6 +30,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	egressserviceapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressserviceinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions/egressservice/v1"
 	egressservicelisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
@@ -153,7 +154,7 @@ func NewController(
 	c.egressServiceLister = esInformer.Lister()
 	c.egressServiceSynced = esInformer.Informer().HasSynced
 	c.egressServiceQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressservices"},
 	)
 	_, err := esInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -192,7 +193,7 @@ func NewController(
 	c.nodeLister = nodeInformer.Lister()
 	c.nodesSynced = nodeInformer.Informer().HasSynced
 	c.nodesQueue = workqueue.NewTypedRateLimitingQueueWithConfig(
-		workqueue.NewTypedItemFastSlowRateLimiter[string](1*time.Second, 5*time.Second, 5),
+		controllerutil.DefaultRateLimiter[string](),
 		workqueue.TypedRateLimitingQueueConfig[string]{Name: "egressservicenodes"},
 	)
 	_, err = nodeInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{

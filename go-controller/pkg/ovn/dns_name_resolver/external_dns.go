@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
-	"time"
 
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	ocpnetworklisterv1alpha1 "github.com/openshift/client-go/network/listers/network/v1alpha1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -67,7 +65,6 @@ func NewExternalEgressDNS(
 
 	extEgDNS.dnsLister = ocpnetworklisterv1alpha1.NewDNSNameResolverLister(dnsSharedIndexInformer.GetIndexer())
 	dnsConfig := &controller.ControllerConfig[ocpnetworkapiv1alpha1.DNSNameResolver]{
-		RateLimiter:    workqueue.NewTypedItemFastSlowRateLimiter[string](time.Second, 5*time.Second, 5),
 		Informer:       dnsSharedIndexInformer,
 		Lister:         extEgDNS.dnsLister.List,
 		ObjNeedsUpdate: dnsNeedsUpdate,

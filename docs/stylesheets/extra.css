@@ -95,6 +95,19 @@
   color: var(--text-emphasis);
 }
 
+.md-typeset h2 {
+  font-size: 1.5625em;
+  line-height: 1.4;
+  margin: 0.65rem 0 0 0;
+}
+.md-typeset h3 {
+  font-size: 1.25em;
+  font-weight: 400;
+  letter-spacing: -.01em;
+  line-height: 1.5;
+  margin: 0 0 0 0;
+}
+
 /* ANCHOR LINKS: Styles hoverable section links with smooth transitions and a temporary "copy confirmation" tooltip for better navigation UX. */
 .md-typeset :is(h1, h2, h3, h4, h5, h6):hover .headerlink,
 .md-typeset :is(h1, h2, h3, h4, h5, h6) .headerlink:focus {
