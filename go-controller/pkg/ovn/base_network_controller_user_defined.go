@@ -979,6 +979,9 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 			additionalSNATMatch := getClusterNodesDestinationBasedSNATMatch(ipFamily, nodeIPsAS, svcIPsAS)
 			if additionalSNATMatch != "" {
 				snatMatch = fmt.Sprintf("%s && %s", snatMatch, additionalSNATMatch)
+				if bsnc.GetNetInfo().Transport() == types.NetworkTransportNoOverlay {
+					snatMatch = fmt.Sprintf("%s && %s", snatMatch, getNoOverlayUDNReplyTrafficSNATExclusionMatch())
+				}
 			}
 		}
 
@@ -1024,6 +1027,14 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 
 func getMasqueradeManagementIPSNATMatch(dstMac string) string {
 	return fmt.Sprintf("eth.dst == %s", dstMac)
+}
+
+// getNoOverlayUDNReplyTrafficSNATExclusionMatch returns the NAT match fragment
+// that keeps marked NodePort/backend reply traffic out of UDN SNAT. Those
+// replies must keep the backend pod source IP so the NodePort node can match
+// its existing service conntrack reverse-NAT state.
+func getNoOverlayUDNReplyTrafficSNATExclusionMatch() string {
+	return fmt.Sprintf("pkt.mark != %d", types.UDNNodePortReplyTrafficConnectionMark)
 }
 
 // getClusterNodesDestinationBasedSNATMatch creates destination-based SNAT match

@@ -403,6 +403,13 @@ var QoSRuleEgressIP = newObjectIDsType(qos, EgressIPOwnerType, []ExternalIDKey{
 	IPFamilyKey,
 })
 
+var QoSAdvertisedNetwork = newObjectIDsType(qos, AdvertisedNetworkOwnerType, []ExternalIDKey{
+	ObjectNameKey,
+	NetworkKey,
+	NodeIDKey,
+	IPFamilyKey,
+})
+
 var NetworkQoS = newObjectIDsType(qos, NetworkQoSOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// rule index

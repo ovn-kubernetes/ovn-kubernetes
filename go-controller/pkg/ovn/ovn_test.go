@@ -85,6 +85,7 @@ type testNetInfo struct {
 	outboundSNAT string
 	subnets      []config.CIDRNetworkEntry
 	transport    string
+	userDefined  bool
 }
 
 func (ni *testNetInfo) TopologyType() string {
@@ -101,6 +102,16 @@ func (ni *testNetInfo) Transport() string {
 
 func (ni *testNetInfo) OutboundSNAT() string {
 	return ni.outboundSNAT
+}
+
+func (ni *testNetInfo) IsUserDefinedNetwork() bool {
+	if ni.userDefined {
+		return true
+	}
+	if ni.NetInfo == nil {
+		return false
+	}
+	return ni.NetInfo.IsUserDefinedNetwork()
 }
 
 type FakeOVN struct {

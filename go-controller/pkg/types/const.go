@@ -156,8 +156,10 @@ const (
 	LabelUserDefinedServiceName = "k8s.ovn.org/service-name"
 
 	// Packet marking
-	EgressIPNodeConnectionMark         = "1008"
-	EgressIPReplyTrafficConnectionMark = 42
+	EgressIPNodeConnectionMark            = "1008"
+	EgressIPReplyTrafficConnectionMark    = 42
+	UDNNodePortReplyTrafficConnectionMark = 43
+	UDNNodePortReplyQoSRulePriority       = EgressIPRerouteQoSRulePriority
 
 	// primary user defined network's default join subnet value
 	// users can configure custom values using NADs

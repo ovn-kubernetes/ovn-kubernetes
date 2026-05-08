@@ -265,6 +265,8 @@ func (oc *DefaultNetworkController) getUDNOpenPortDbIDs(podNamespacedName string
 // advertisedNetworkSubnetsKey is the object name key for the global advertised networks addressset and the global deny ACL
 const advertisedNetworkSubnetsKey = "advertised-network-subnets"
 
+const advertisedNetworkNodePortReplyQoSKey = "advertised-network-nodeport-reply"
+
 // GetAdvertisedNetworkSubnetsAddressSetDBIDs returns the DB IDs for the advertised network subnets addressset
 func GetAdvertisedNetworkSubnetsAddressSetDBIDs() *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetAdvertisedNetwork, types.DefaultNetworkControllerName, map[libovsdbops.ExternalIDKey]string{
@@ -288,6 +290,23 @@ func GetAdvertisedNetworkSubnetsPassACLdbIDs(controller, networkName string, net
 			libovsdbops.ObjectNameKey: networkName,
 			libovsdbops.NetworkKey:    strconv.Itoa(networkID),
 		})
+}
+
+// getAdvertisedNetworkNodePortReplyQoSDBIDs returns stable IDs for the QoS rows
+// that mark NodePort/backend replies on an advertised UDN node switch. The
+// owner type is AdvertisedNetwork because the rows are created only while the
+// node advertises this UDN. ipFamily may be empty when building a cleanup predicate for
+// both IPv4 and IPv6 rows.
+func getAdvertisedNetworkNodePortReplyQoSDBIDs(controller string, networkID int, nodeName string, ipFamily egressIPFamilyValue) *libovsdbops.DbObjectIDs {
+	objectIDs := map[libovsdbops.ExternalIDKey]string{
+		libovsdbops.ObjectNameKey: advertisedNetworkNodePortReplyQoSKey,
+		libovsdbops.NetworkKey:    strconv.Itoa(networkID),
+		libovsdbops.NodeIDKey:     nodeName,
+	}
+	if ipFamily != "" {
+		objectIDs[libovsdbops.IPFamilyKey] = string(ipFamily)
+	}
+	return libovsdbops.NewDbObjectIDs(libovsdbops.QoSAdvertisedNetwork, controller, objectIDs)
 }
 
 // BuildAdvertisedNetworkSubnetsDropACL builds the advertised network subnets drop ACL:

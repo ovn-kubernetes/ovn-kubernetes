@@ -2252,6 +2252,19 @@ var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
 				gomega.Expect(match).To(gomega.Equal(expectedMatch))
 			})
 
+			ginkgo.It("excludes marked reply traffic for advertised Layer3 no-overlay user-defined networks", func() {
+				netInfo.topology = types.Layer3Topology
+				netInfo.transport = types.NetworkTransportNoOverlay
+				netInfo.userDefined = true
+				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				v4Hash, _ := as.GetASHashNames()
+				expectedMatch := fmt.Sprintf("ip4.dst == $%s && pkt.mark != %d", v4Hash, types.UDNNodePortReplyTrafficConnectionMark)
+				gomega.Expect(match).To(gomega.Equal(expectedMatch))
+			})
+
 			ginkgo.It("returns destination match for Layer2 topology with transit router", func() {
 				originalValue := config.Layer2UsesTransitRouter
 				defer func() { config.Layer2UsesTransitRouter = originalValue }()

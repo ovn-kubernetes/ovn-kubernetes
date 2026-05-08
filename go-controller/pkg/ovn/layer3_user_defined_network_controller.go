@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
@@ -1022,6 +1024,101 @@ func (oc *Layer3UserDefinedNetworkController) addOrUpdateUDNNodeSubnetEgressSNAT
 	return nil
 }
 
+// buildAdvertisedUDNNodePortReplyQoS builds the per-node logical-switch QoS
+// rules used to identify backend reply traffic for advertised no-overlay UDNs.
+// hostSubnets are the UDN pod subnets allocated to nodeName. Matching tracked
+// replies from those subnets are marked so UDN SNAT rows can skip them and keep
+// the backend pod IP visible to the NodePort node.
+func (oc *Layer3UserDefinedNetworkController) buildAdvertisedUDNNodePortReplyQoS(nodeName string, hostSubnets []*net.IPNet) []*nbdb.QoS {
+	var v4SrcMatches, v6SrcMatches []string
+	for _, hostSubnet := range hostSubnets {
+		if utilnet.IsIPv6CIDR(hostSubnet) {
+			v6SrcMatches = append(v6SrcMatches, fmt.Sprintf("ip6.src == %s", hostSubnet))
+		} else {
+			v4SrcMatches = append(v4SrcMatches, fmt.Sprintf("ip4.src == %s", hostSubnet))
+		}
+	}
+
+	buildQoS := func(ipFamily egressIPFamilyValue, srcMatches []string) *nbdb.QoS {
+		match := srcMatches[0]
+		if len(srcMatches) > 1 {
+			match = fmt.Sprintf("(%s)", strings.Join(srcMatches, " || "))
+		}
+		return &nbdb.QoS{
+			Priority:    types.UDNNodePortReplyQoSRulePriority,
+			Action:      map[string]int{"mark": types.UDNNodePortReplyTrafficConnectionMark},
+			Direction:   nbdb.QoSDirectionFromLport,
+			Match:       fmt.Sprintf("%s && ct.trk && ct.rpl", match),
+			ExternalIDs: getAdvertisedNetworkNodePortReplyQoSDBIDs(oc.controllerName, oc.GetNetworkID(), nodeName, ipFamily).GetExternalIDs(),
+		}
+	}
+
+	qoses := make([]*nbdb.QoS, 0, 2)
+	if len(v4SrcMatches) > 0 {
+		qoses = append(qoses, buildQoS(IPFamilyValueV4, v4SrcMatches))
+	}
+	if len(v6SrcMatches) > 0 {
+		qoses = append(qoses, buildQoS(IPFamilyValueV6, v6SrcMatches))
+	}
+	return qoses
+}
+
+// syncAdvertisedUDNNodePortReplyQoS reconciles the reply-marker QoS rules for a
+// node's network-scoped switch. enabled means the UDN pod network is advertised
+// from nodeName; when it is false, or when the network is not no-overlay, any
+// existing reply-marker QoS rows for this node are removed.
+//
+// The QoS rows are tied to route-advertised no-overlay UDNs rather than generic
+// BGP state: BGP advertisement exposes the traffic path, while no-overlay makes
+// preserving backend reply tuples necessary for cross-node NodePort service
+// reverse NAT.
+func (oc *Layer3UserDefinedNetworkController) syncAdvertisedUDNNodePortReplyQoS(nodeName string, hostSubnets []*net.IPNet, enabled bool) error {
+	if oc.GetNetInfo().Transport() != types.NetworkTransportNoOverlay {
+		enabled = false
+	}
+
+	switchName := oc.GetNetworkScopedSwitchName(nodeName)
+	if enabled {
+		qoses := oc.buildAdvertisedUDNNodePortReplyQoS(nodeName, hostSubnets)
+		if len(qoses) == 0 {
+			return nil
+		}
+		ops, err := libovsdbops.CreateOrUpdateQoSesOps(oc.nbClient, nil, qoses...)
+		if err != nil {
+			return fmt.Errorf("failed to create or update advertised UDN NodePort reply QoS rules for network %q on node %q: %w", oc.GetNetworkName(), nodeName, err)
+		}
+		ops, err = libovsdbops.AddQoSesToLogicalSwitchOps(oc.nbClient, ops, switchName, qoses...)
+		if err != nil {
+			return fmt.Errorf("failed to add advertised UDN NodePort reply QoS rules to switch %q for network %q: %w", switchName, oc.GetNetworkName(), err)
+		}
+		if _, err = libovsdbops.TransactAndCheck(oc.nbClient, ops); err != nil {
+			return fmt.Errorf("failed to transact advertised UDN NodePort reply QoS rules for network %q on node %q: %w", oc.GetNetworkName(), nodeName, err)
+		}
+		return nil
+	}
+
+	qosIDs := getAdvertisedNetworkNodePortReplyQoSDBIDs(oc.controllerName, oc.GetNetworkID(), nodeName, "")
+	qoses, err := libovsdbops.FindQoSesWithPredicate(oc.nbClient, libovsdbops.GetPredicate[*nbdb.QoS](qosIDs, nil))
+	if err != nil {
+		return fmt.Errorf("failed to find advertised UDN NodePort reply QoS rules for network %q on node %q: %w", oc.GetNetworkName(), nodeName, err)
+	}
+	if len(qoses) == 0 {
+		return nil
+	}
+	ops, err := libovsdbops.RemoveQoSesFromLogicalSwitchOps(oc.nbClient, nil, switchName, qoses...)
+	if err != nil {
+		return fmt.Errorf("failed to remove advertised UDN NodePort reply QoS rules from switch %q for network %q: %w", switchName, oc.GetNetworkName(), err)
+	}
+	ops, err = libovsdbops.DeleteQoSesOps(oc.nbClient, ops, qoses...)
+	if err != nil {
+		return fmt.Errorf("failed to delete advertised UDN NodePort reply QoS rules for network %q on node %q: %w", oc.GetNetworkName(), nodeName, err)
+	}
+	if _, err = libovsdbops.TransactAndCheck(oc.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to transact advertised UDN NodePort reply QoS cleanup for network %q on node %q: %w", oc.GetNetworkName(), nodeName, err)
+	}
+	return nil
+}
+
 func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node) ([]*net.IPNet, error) {
 	// Node subnet for the layer3 UDN is allocated by cluster manager.
 	// Make sure that the node is allocated with the subnet before proceeding
@@ -1037,6 +1134,9 @@ func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node) ([]*net
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
 		isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
+		if err := oc.syncAdvertisedUDNNodePortReplyQoS(node.Name, hostSubnets, isUDNAdvertised); err != nil {
+			return nil, err
+		}
 		if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
 			return nil, err
 		}

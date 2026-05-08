@@ -1107,6 +1107,9 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 	if destinationMatch == "" {
 		return "", fmt.Errorf("could not build a destination based SNAT match because no addressSet %v exists for IP family %v", dbIDs, ipFamily)
 	}
+	if netInfo.IsUserDefinedNetwork() && netInfo.Transport() == types.NetworkTransportNoOverlay {
+		destinationMatch = fmt.Sprintf("%s && %s", destinationMatch, getNoOverlayUDNReplyTrafficSNATExclusionMatch())
+	}
 	if !layer2OldTopo {
 		return destinationMatch, nil
 	}
