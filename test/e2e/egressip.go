@@ -2982,44 +2982,38 @@ spec:
 	   The test simulates a full reboot of the egress node by stopping kubelet (making it NotReady).
 	   It verifies EgressIP failover to a secondary node and proper operation after the original node recovers.
 	*/
-	// Note: the test name intentionally omits the "[secondary-host-eip]" bracket prefix used by sibling
-	// tests. Brackets are regex metacharacters — ginkgo's --focus flag treats the string as a regexp, so
-	// brackets in a WHAT= make-target argument cause a "invalid character class range" panic. Using
-	// ginkgo.Label() achieves the same grouping without breaking focus-based invocation.
-	ginkgo.It("secondary-host-eip should failover EgressIP to secondary NIC when egress node is rebooted",
-		ginkgo.Label("secondary-host-eip"),
-		func() {
-			if isUserDefinedNetwork(netConfigParams) {
-				ginkgo.Skip("Unsupported for UDNs")
-			}
+	ginkgo.It("[secondary-host-eip] should failover EgressIP to secondary NIC when egress node is rebooted", func() {
+		if isUserDefinedNetwork(netConfigParams) {
+			ginkgo.Skip("Unsupported for UDNs")
+		}
 
-			// Choose an EgressIP from the secondary subnet based on IP family.
-			// Use unique addresses (.250) to avoid collision with other secondary-host-eip tests (.100, .220)
-			var egressIP1 string
-			isV6Node := utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP))
-			if isV6Node {
-				// Use .fa (250 in hex) for IPv6 to avoid collision
-				egressIP1 = "2001:db8:abcd:1234:c001::fa"
-			} else {
-				// Use .250 to avoid collision with .100 and .220
-				egressIP1 = "10.10.10.250"
-			}
+		// Choose an EgressIP from the secondary subnet based on IP family.
+		// Use unique addresses (.250) to avoid collision with other secondary-host-eip tests (.100, .220)
+		var egressIP1 string
+		isV6Node := utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP))
+		if isV6Node {
+			// Use .fa (250 in hex) for IPv6 to avoid collision
+			egressIP1 = "2001:db8:abcd:1234:c001::fa"
+		} else {
+			// Use .250 to avoid collision with .100 and .220
+			egressIP1 = "10.10.10.250"
+		}
 
-			egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
+		egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
 
-			ginkgo.By("1. Set egress1Node as the initial egress node")
-			egressNodeAvailabilityHandler.Enable(egress1Node.name)
-			defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
-			defer egressNodeAvailabilityHandler.Restore(egress2Node.name)
+		ginkgo.By("1. Set egress1Node as the initial egress node")
+		egressNodeAvailabilityHandler.Enable(egress1Node.name)
+		defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
+		defer egressNodeAvailabilityHandler.Restore(egress2Node.name)
 
-			podNamespace := f.Namespace
-			labels := map[string]string{
-				"name": f.Namespace.Name,
-			}
-			updateNamespaceLabels(f, podNamespace, labels)
+		podNamespace := f.Namespace
+		labels := map[string]string{
+			"name": f.Namespace.Name,
+		}
+		updateNamespaceLabels(f, podNamespace, labels)
 
-			ginkgo.By("2. Create an EgressIP object with one egress IP hosted on the secondary host network of egress1Node")
-			egressIPConfig := `apiVersion: k8s.ovn.org/v1
+		ginkgo.By("2. Create an EgressIP object with one egress IP hosted on the secondary host network of egress1Node")
+		egressIPConfig := `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -3033,118 +3027,118 @@ spec:
         matchLabels:
             name: ` + f.Namespace.Name + `
 `
-			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
-				framework.Failf("Unable to write CRD config to disk: %v", err)
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
 			}
-			defer func() {
-				if err := os.Remove(egressIPYaml); err != nil {
-					framework.Logf("Unable to remove the CRD config from disk: %v", err)
-				}
-			}()
-			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+		}()
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
 
-			ginkgo.By("3. Check that the EgressIP status is of length one and assigned to egress1Node")
-			statuses := verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, func(statuses []egressIPStatus) bool {
-				return statuses[0].Node == egress1Node.name
-			})
-			framework.Logf("EgressIP %s assigned to node %s (step 3 verified)", egressIP1, statuses[0].Node)
-
-			ginkgo.By("4. Create a pod matching the EgressIP, scheduled on pod1Node (non-egress node)")
-			createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
-			_, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
-			framework.ExpectNoError(err, "Step 4. Create a pod matching the EgressIP, failed, err: %v", err)
-
-			ginkgo.By("5. Verify the EgressIP SNAT rule is present on egress1Node's secondary NIC iptables chain")
-			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, 2*retryTimeout, true, func(ctx context.Context) (bool, error) {
-				iptablesCmd := "iptables-save"
-				if isV6Node {
-					iptablesCmd = "ip6tables-save"
-				}
-				out, execErr := infraprovider.Get().ExecK8NodeCommand(egress1Node.name, []string{iptablesCmd, "-t", "nat"})
-				if execErr != nil {
-					framework.Logf("%s failed on %s: %v", iptablesCmd, egress1Node.name, execErr)
-					return false, nil
-				}
-				hasChain := strings.Contains(out, "OVN-KUBE-EGRESS-IP-MULTI-NIC")
-				hasSNAT := strings.Contains(out, "--to-source "+egressIP1)
-				framework.Logf("Node %s %s check (attempt): chain=%v snat=%v", egress1Node.name, iptablesCmd, hasChain, hasSNAT)
-				return hasChain && hasSNAT, nil
-			})
-			framework.ExpectNoError(err, "Step 5. EgressIP SNAT rule not found on secondary NIC of %s for IP %s: %v", egress1Node.name, egressIP1, err)
-
-			ginkgo.By("6. Verify connectivity: pod traffic exits via the EgressIP on the secondary NIC (pre-reboot)")
-			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
-				podNamespace.Name, pod1Name, true, []string{egressIP1}))
-			framework.ExpectNoError(err, "Step 6. Check connectivity from pod to secondary host network external container "+
-				"and verify the expected EgressIP %s, failed: %v", egressIP1, err)
-			framework.Logf("EgressIP %s is working correctly via secondary NIC on node %s (pre-reboot)", egressIP1, egress1Node.name)
-
-			ginkgo.By("7. Label egress2Node as egress-assignable so it can receive the EgressIP on failover")
-			egressNodeAvailabilityHandler.Enable(egress2Node.name)
-			// Wait for the label to propagate before proceeding to avoid race condition
-			// where controller might see zero assignable nodes
-			e2enode.ExpectNodeHasLabel(context.TODO(), f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "")
-
-			ginkgo.By("8. Simulate reboot of egress1Node by making it NotReady (stop kubelet)")
-			// setNodeReady stops kubelet and waits for the node to transition to NotReady.
-			// A cleanup function is registered by setNodeReady to restart kubelet in AfterEach.
-			setNodeReady(providerCtx, egress1Node.name, false)
-			framework.Logf("egress1Node %s is now NotReady (simulated reboot)", egress1Node.name)
-
-			ginkgo.By("9. Verify the EgressIP fails over: status length is still 1, now assigned to egress2Node")
-			statuses = verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, func(statuses []egressIPStatus) bool {
-				return statuses[0].Node == egress2Node.name
-			})
-			framework.Logf("EgressIP %s failed over to node %s (step 9 verified)", egressIP1, statuses[0].Node)
-
-			ginkgo.By("10. Verify the EgressIP SNAT rule is present on egress2Node's secondary NIC iptables chain")
-			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-				iptablesCmd := "iptables-save"
-				if isV6Node {
-					iptablesCmd = "ip6tables-save"
-				}
-				out, execErr := infraprovider.Get().ExecK8NodeCommand(egress2Node.name, []string{iptablesCmd, "-t", "nat"})
-				if execErr != nil {
-					framework.Logf("%s failed on %s: %v", iptablesCmd, egress2Node.name, execErr)
-					return false, nil
-				}
-				hasChain := strings.Contains(out, "OVN-KUBE-EGRESS-IP-MULTI-NIC")
-				hasSNAT := strings.Contains(out, "--to-source "+egressIP1)
-				framework.Logf("Node %s %s check: chain=%v snat=%v", egress2Node.name, iptablesCmd, hasChain, hasSNAT)
-				return hasChain && hasSNAT, nil
-			})
-			framework.ExpectNoError(err, "Step 10. EgressIP SNAT rule not found on secondary NIC of failover node %s for IP %s: %v", egress2Node.name, egressIP1, err)
-
-			ginkgo.By("11. Verify connectivity still works after EgressIP failover to egress2Node's secondary NIC")
-			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
-				podNamespace.Name, pod1Name, true, []string{egressIP1}))
-			framework.ExpectNoError(err, "Step 11. Check connectivity from pod to secondary host network external container "+
-				"after failover to %s and verify the expected EgressIP %s, failed: %v", egress2Node.name, egressIP1, err)
-			framework.Logf("EgressIP %s is working correctly via secondary NIC on failover node %s (post-reboot)", egressIP1, egress2Node.name)
-
-			ginkgo.By("12. Restore egress1Node to Ready (simulate reboot complete)")
-			setNodeReady(providerCtx, egress1Node.name, true)
-			waitForNoTaint(egress1Node.name, "node.kubernetes.io/not-ready")
-			waitForNoTaint(egress1Node.name, "node.kubernetes.io/unreachable")
-			framework.Logf("egress1Node %s is Ready again", egress1Node.name)
-
-			ginkgo.By("13. Verify EgressIP remains on egress2Node after egress1Node recovery (no unnecessary re-balancing)")
-			// Verify the EgressIP stays on egress2Node to catch regressions where it might
-			// unnecessarily churn back to egress1Node on recovery
-			statuses = verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, func(statuses []egressIPStatus) bool {
-				if statuses[0].Node != egress2Node.name {
-					framework.Logf("Warning: EgressIP unexpectedly moved from %s to %s after recovery", egress2Node.name, statuses[0].Node)
-				}
-				return statuses[0].Node == egress2Node.name
-			})
-			framework.Logf("EgressIP %s is assigned to node %s after egress1Node recovery", egressIP1, statuses[0].Node)
-
-			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
-				podNamespace.Name, pod1Name, true, []string{egressIP1}))
-			framework.ExpectNoError(err, "Step 13. Check connectivity from pod to secondary host network external container "+
-				"after egress1Node %s recovered and verify the expected EgressIP %s, failed: %v", egress1Node.name, egressIP1, err)
-			framework.Logf("EgressIP %s remains functional after full failover/recovery cycle", egressIP1)
+		ginkgo.By("3. Check that the EgressIP status is of length one and assigned to egress1Node")
+		statuses := verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, func(statuses []egressIPStatus) bool {
+			return statuses[0].Node == egress1Node.name
 		})
+		framework.Logf("EgressIP %s assigned to node %s (step 3 verified)", egressIP1, statuses[0].Node)
+
+		ginkgo.By("4. Create a pod matching the EgressIP, scheduled on pod1Node (non-egress node)")
+		createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		_, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+		framework.ExpectNoError(err, "Step 4. Create a pod matching the EgressIP, failed, err: %v", err)
+
+		ginkgo.By("5. Verify the EgressIP SNAT rule is present on egress1Node's secondary NIC iptables chain")
+		err = wait.PollUntilContextTimeout(context.Background(), retryInterval, 2*retryTimeout, true, func(ctx context.Context) (bool, error) {
+			iptablesCmd := "iptables-save"
+			if isV6Node {
+				iptablesCmd = "ip6tables-save"
+			}
+			out, execErr := infraprovider.Get().ExecK8NodeCommand(egress1Node.name, []string{iptablesCmd, "-t", "nat"})
+			if execErr != nil {
+				framework.Logf("%s failed on %s: %v", iptablesCmd, egress1Node.name, execErr)
+				return false, nil
+			}
+			hasChain := strings.Contains(out, "OVN-KUBE-EGRESS-IP-MULTI-NIC")
+			hasSNAT := strings.Contains(out, "--to-source "+egressIP1)
+			framework.Logf("Node %s %s check (attempt): chain=%v snat=%v", egress1Node.name, iptablesCmd, hasChain, hasSNAT)
+			return hasChain && hasSNAT, nil
+		})
+		framework.ExpectNoError(err, "Step 5. EgressIP SNAT rule not found on secondary NIC of %s for IP %s: %v", egress1Node.name, egressIP1, err)
+
+		ginkgo.By("6. Verify connectivity: pod traffic exits via the EgressIP on the secondary NIC (pre-reboot)")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
+			podNamespace.Name, pod1Name, true, []string{egressIP1}))
+		framework.ExpectNoError(err, "Step 6. Check connectivity from pod to secondary host network external container "+
+			"and verify the expected EgressIP %s, failed: %v", egressIP1, err)
+		framework.Logf("EgressIP %s is working correctly via secondary NIC on node %s (pre-reboot)", egressIP1, egress1Node.name)
+
+		ginkgo.By("7. Label egress2Node as egress-assignable so it can receive the EgressIP on failover")
+		egressNodeAvailabilityHandler.Enable(egress2Node.name)
+		// Wait for the label to propagate before proceeding to avoid race condition
+		// where controller might see zero assignable nodes
+		e2enode.ExpectNodeHasLabel(context.TODO(), f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "")
+
+		ginkgo.By("8. Simulate reboot of egress1Node by making it NotReady (stop kubelet)")
+		// setNodeReady stops kubelet and waits for the node to transition to NotReady.
+		// A cleanup function is registered by setNodeReady to restart kubelet in AfterEach.
+		setNodeReady(providerCtx, egress1Node.name, false)
+		framework.Logf("egress1Node %s is now NotReady (simulated reboot)", egress1Node.name)
+
+		ginkgo.By("9. Verify the EgressIP fails over: status length is still 1, now assigned to egress2Node")
+		statuses = verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, func(statuses []egressIPStatus) bool {
+			return statuses[0].Node == egress2Node.name
+		})
+		framework.Logf("EgressIP %s failed over to node %s (step 9 verified)", egressIP1, statuses[0].Node)
+
+		ginkgo.By("10. Verify the EgressIP SNAT rule is present on egress2Node's secondary NIC iptables chain")
+		err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+			iptablesCmd := "iptables-save"
+			if isV6Node {
+				iptablesCmd = "ip6tables-save"
+			}
+			out, execErr := infraprovider.Get().ExecK8NodeCommand(egress2Node.name, []string{iptablesCmd, "-t", "nat"})
+			if execErr != nil {
+				framework.Logf("%s failed on %s: %v", iptablesCmd, egress2Node.name, execErr)
+				return false, nil
+			}
+			hasChain := strings.Contains(out, "OVN-KUBE-EGRESS-IP-MULTI-NIC")
+			hasSNAT := strings.Contains(out, "--to-source "+egressIP1)
+			framework.Logf("Node %s %s check: chain=%v snat=%v", egress2Node.name, iptablesCmd, hasChain, hasSNAT)
+			return hasChain && hasSNAT, nil
+		})
+		framework.ExpectNoError(err, "Step 10. EgressIP SNAT rule not found on secondary NIC of failover node %s for IP %s: %v", egress2Node.name, egressIP1, err)
+
+		ginkgo.By("11. Verify connectivity still works after EgressIP failover to egress2Node's secondary NIC")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
+			podNamespace.Name, pod1Name, true, []string{egressIP1}))
+		framework.ExpectNoError(err, "Step 11. Check connectivity from pod to secondary host network external container "+
+			"after failover to %s and verify the expected EgressIP %s, failed: %v", egress2Node.name, egressIP1, err)
+		framework.Logf("EgressIP %s is working correctly via secondary NIC on failover node %s (post-reboot)", egressIP1, egress2Node.name)
+
+		ginkgo.By("12. Restore egress1Node to Ready (simulate reboot complete)")
+		setNodeReady(providerCtx, egress1Node.name, true)
+		waitForNoTaint(egress1Node.name, "node.kubernetes.io/not-ready")
+		waitForNoTaint(egress1Node.name, "node.kubernetes.io/unreachable")
+		framework.Logf("egress1Node %s is Ready again", egress1Node.name)
+
+		ginkgo.By("13. Verify EgressIP remains on egress2Node after egress1Node recovery (no unnecessary re-balancing)")
+		// Verify the EgressIP stays on egress2Node to catch regressions where it might
+		// unnecessarily churn back to egress1Node on recovery
+		statuses = verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, func(statuses []egressIPStatus) bool {
+			if statuses[0].Node != egress2Node.name {
+				framework.Logf("Warning: EgressIP unexpectedly moved from %s to %s after recovery", egress2Node.name, statuses[0].Node)
+			}
+			return statuses[0].Node == egress2Node.name
+		})
+		framework.Logf("EgressIP %s is assigned to node %s after egress1Node recovery", egressIP1, statuses[0].Node)
+
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
+			podNamespace.Name, pod1Name, true, []string{egressIP1}))
+		framework.ExpectNoError(err, "Step 13. Check connectivity from pod to secondary host network external container "+
+			"after egress1Node %s recovered and verify the expected EgressIP %s, failed: %v", egress1Node.name, egressIP1, err)
+		framework.Logf("EgressIP %s remains functional after full failover/recovery cycle", egressIP1)
+	})
 
 	ginkgo.It("[secondary-host-eip] should send address advertisements for EgressIP", func() {
 		if isUserDefinedNetwork(netConfigParams) {
