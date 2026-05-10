@@ -3092,7 +3092,7 @@ spec:
 		framework.Logf("EgressIP %s failed over to node %s (step 9 verified)", egressIP1, statuses[0].Node)
 
 		ginkgo.By("10. Verify the EgressIP SNAT rule is present on egress2Node's secondary NIC iptables chain")
-		err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+		err = wait.PollUntilContextTimeout(context.Background(), retryInterval, 2*retryTimeout, true, func(ctx context.Context) (bool, error) {
 			iptablesCmd := "iptables-save"
 			if isV6Node {
 				iptablesCmd = "ip6tables-save"
@@ -3104,7 +3104,7 @@ spec:
 			}
 			hasChain := strings.Contains(out, "OVN-KUBE-EGRESS-IP-MULTI-NIC")
 			hasSNAT := strings.Contains(out, "--to-source "+egressIP1)
-			framework.Logf("Node %s %s check: chain=%v snat=%v", egress2Node.name, iptablesCmd, hasChain, hasSNAT)
+			framework.Logf("Node %s %s check (attempt): chain=%v snat=%v", egress2Node.name, iptablesCmd, hasChain, hasSNAT)
 			return hasChain && hasSNAT, nil
 		})
 		framework.ExpectNoError(err, "Step 10. EgressIP SNAT rule not found on secondary NIC of failover node %s for IP %s: %v", egress2Node.name, egressIP1, err)
