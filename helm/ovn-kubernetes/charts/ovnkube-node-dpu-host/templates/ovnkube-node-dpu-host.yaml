@@ -166,7 +166,11 @@ spec:
         - name: OVN_GATEWAY_MODE
           value: {{ default "shared" .Values.global.gatewayMode }}
         - name: OVN_GATEWAY_OPTS
-          value: {{ default "" .Values.global.gatewayOpts | quote }}
+          value: {{ .Values.gatewayOpts | default .Values.global.gatewayOpts | default "" | quote }}
+        - name: OVN_SIMULATE_DPU
+          value: {{ default "false" .Values.global.simulateDpu | quote }}
+        - name: OVN_DPU_HOST_GATEWAY_REPRESENTOR_INTERFACE
+          value: {{ default "" .Values.global.dpuHostGatewayRepresentorInterface | quote }}
         - name: OVN_HYBRID_OVERLAY_ENABLE
           value: {{ default "" .Values.global.enableHybridOverlay | quote }}
         - name: OVN_ADMIN_NETWORK_POLICY_ENABLE

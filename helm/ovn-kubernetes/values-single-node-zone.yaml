@@ -33,6 +33,10 @@ global:
   gatewayMode: shared
   # -- Optional extra gateway options
   gatewayOpts: ""
+  # -- Use simulated DPU operations instead of SR-IOV/switchdev hardware (for Kind/VM-based DPU simulation)
+  simulateDpu: false
+  # -- The DPU-side representor interface for the host's uplink (PF). Required for simulated environments where switchdev metadata is unavailable.
+  dpuHostGatewayRepresentorInterface: ""
   # -- This allows ovnkube-node to run without SYS_ADMIN capability, by performing interface setup in the CNI plugin
   unprivilegedMode: false
   # -- The v4 join subnet used for assigning join switch IPv4 addresses
@@ -161,7 +165,7 @@ global:
   # -- Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent
   # @default 60
   ipfixCacheActiveTimeout: ""
-  # -- OVN remote probe interval in ms 
+  # -- OVN remote probe interval in ms
   # @default 100000
   remoteProbeInterval: 100000
   # -- Enable monitoring all data from SB DB instead of conditionally monitoring the data relevant to this node only
@@ -170,7 +174,7 @@ global:
   # -- ovn-controller wait time in ms before clearing OpenFlow rules during start up
   # @default 0
   ofctrlWaitBeforeClear: ""
-  # -- Separate log file for libovsdb client 
+  # -- Separate log file for libovsdb client
   libovsdbClientLogFile: ""
   image:
     # -- Image repository for ovn-kubernetes components

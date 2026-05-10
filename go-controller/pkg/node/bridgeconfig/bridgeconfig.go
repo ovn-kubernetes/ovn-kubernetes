@@ -117,7 +117,7 @@ func NewBridgeConfiguration(intfName, nodeName,
 	// temp workaround for https://issues.redhat.com/browse/FDP-1537
 	// we need to ensure we continue dropping GARPs for any new bridge config if the run mode is ovnkube controller + ovnkube node + IC + single zone node
 	// FIXME: only add if run mode is ovnkube controller + node in single process
-	if config.OVNKubernetesFeature.EnableEgressIP && config.OVNKubernetesFeature.EnableInterconnect && config.OvnKubeNode.Mode == types.NodeModeFull {
+	if config.OVNKubernetesFeature.EnableEgressIP && config.OVNKubernetesFeature.EnableInterconnect && config.IsModeFull() {
 		// drop by default - set to false later when ovnkube controller has sync'd and changes propagated to OVN southbound database
 		// we should also match on run mode here to ensure ovnkube controller + ovnkube node are running in the same process
 		res.dropGARP = true
@@ -178,6 +178,17 @@ func NewBridgeConfiguration(intfName, nodeName,
 		if err != nil {
 			return nil, fmt.Errorf("nicToBridge failed for %s: %w", intfName, err)
 		}
+		if config.Gateway.DPUHostGatewayRepresentorInterface != "" {
+			_, stderr, repErr := util.RunOVSVsctl(
+				"--", "--may-exist", "add-port", bridgeName, config.Gateway.DPUHostGatewayRepresentorInterface,
+				"--", "set", "port", config.Gateway.DPUHostGatewayRepresentorInterface, "other-config:transient=true",
+			)
+			if repErr != nil {
+				return nil, fmt.Errorf("failed to add DPU host gateway representor %s to bridge %s: %w, stderr: %s",
+					config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName, repErr, stderr)
+			}
+			klog.Infof("Adding host representor interface %s to bridge %s", config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName)
+		}
 		res.bridgeName = bridgeName
 		res.gwIface = bridgeName
 		res.uplinkName = intfName
@@ -227,12 +238,8 @@ func NewBridgeConfiguration(intfName, nodeName,
 	defaultNetConfig.PatchPort = (&util.DefaultNetInfo{}).GetNetworkScopedPatchPortName(res.bridgeName, nodeName)
 
 	// for DPU we use the host MAC address for the Gateway configuration
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		hostRep, err := util.GetDPUHostInterface(res.bridgeName)
-		if err != nil {
-			return nil, err
-		}
-		res.macAddress, err = util.GetSriovnetOps().GetRepresentorPeerMacAddress(hostRep)
+	if config.IsModeDPU() {
+		res.macAddress, err = util.GetDPUOps().GetHostGatewayMACAddress(res.bridgeName, nodeName)
 		if err != nil {
 			return nil, err
 		}
@@ -265,7 +272,7 @@ func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*
 
 	// For DPU, here we need to use the DPU host's IP address which is the tenant cluster's
 	// host internal IP address instead of the DPU's external bridge IP address.
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		nodeIfAddr, err := util.GetNodePrimaryDPUHostAddrAnnotation(node)
 		if err != nil {
 			return nil, err
@@ -406,9 +413,9 @@ func (b *BridgeConfiguration) ConfigureBridgePorts() error {
 
 	// Get ofport representing the host. That is, host representor port in case of DPUs, ovsLocalPort otherwise.
 	var hostOVSInterfaceName string
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		var stderr string
-		hostRep, err := util.GetDPUHostInterface(b.bridgeName)
+		hostRep, err := util.GetDPUOps().GetDPUHostRepInterface(b.bridgeName)
 		if err != nil {
 			return err
 		}

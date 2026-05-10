@@ -307,6 +307,10 @@ ovn_enable_persistent_ips=${OVN_ENABLE_PERSISTENT_IPS:-false}
 
 # OVNKUBE_NODE_MODE - is the mode which ovnkube node operates
 ovnkube_node_mode=${OVNKUBE_NODE_MODE:-"full"}
+# OVN_SIMULATE_DPU - use simulated DPU operations instead of SR-IOV/switchdev hardware operations
+ovn_simulate_dpu=${OVN_SIMULATE_DPU:-"false"}
+# OVN_DPU_HOST_GATEWAY_REPRESENTOR_INTERFACE - the DPU-side representor interface for the host's uplink (PF)
+ovn_dpu_host_gateway_representor_interface=${OVN_DPU_HOST_GATEWAY_REPRESENTOR_INTERFACE:-""}
 # OVNKUBE_NODE_MGMT_PORT_NETDEV - is the net device to be used for management port
 ovnkube_node_mgmt_port_netdev=${OVNKUBE_NODE_MGMT_PORT_NETDEV:-}
 # OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME - is the device plugin resource name that has
@@ -2251,6 +2255,16 @@ ovnkube-controller-with-node() {
     ovnkube_node_mgmt_port_netdev_flag="--ovnkube-node-mgmt-port-dp-resource-name=${ovnkube_node_mgmt_port_dp_resource_name}"
   fi
 
+  ovn_simulate_dpu_flag=
+  if [[ ${ovn_simulate_dpu} == "true" ]]; then
+    ovn_simulate_dpu_flag="--simulate-dpu"
+  fi
+
+  ovn_dpu_host_gateway_representor_interface_flag=
+  if [[ ${ovn_dpu_host_gateway_representor_interface} != "" ]]; then
+    ovn_dpu_host_gateway_representor_interface_flag="--dpu-host-gateway-representor-interface=${ovn_dpu_host_gateway_representor_interface}"
+  fi
+
   ovn_unprivileged_flag="--unprivileged-mode"
   if test -z "${OVN_UNPRIVILEGED_MODE+x}" -o "x${OVN_UNPRIVILEGED_MODE}" = xno; then
     ovn_unprivileged_flag=""
@@ -2452,6 +2466,8 @@ ovnkube-controller-with-node() {
     ${ovnkube_metrics_tls_opts} \
     ${ovnkube_node_mgmt_port_netdev_flag} \
     ${ovnkube_node_mode_flag} \
+    ${ovn_simulate_dpu_flag} \
+    ${ovn_dpu_host_gateway_representor_interface_flag} \
     ${ovn_unprivileged_flag} \
     ${ovn_v4_join_subnet_opt} \
     ${ovn_v4_masquerade_subnet_opt} \
@@ -3015,6 +3031,16 @@ ovn-node() {
     ovnkube_node_mgmt_port_netdev_flag="--ovnkube-node-mgmt-port-dp-resource-name=${ovnkube_node_mgmt_port_dp_resource_name}"
   fi
 
+  ovn_simulate_dpu_flag=
+  if [[ ${ovn_simulate_dpu} == "true" ]]; then
+    ovn_simulate_dpu_flag="--simulate-dpu"
+  fi
+
+  ovn_dpu_host_gateway_representor_interface_flag=
+  if [[ ${ovn_dpu_host_gateway_representor_interface} != "" ]]; then
+    ovn_dpu_host_gateway_representor_interface_flag="--dpu-host-gateway-representor-interface=${ovn_dpu_host_gateway_representor_interface}"
+  fi
+
   # Get gateway options for DPUs
   if [[ ${ovnkube_node_mode} == "dpu" ]]; then
       get_dpu_gw_options
@@ -3165,6 +3191,8 @@ ovn-node() {
         ${ovnkube_node_certs_flags} \
         ${ovnkube_node_mgmt_port_netdev_flag} \
         ${ovnkube_node_mode_flag} \
+        ${ovn_simulate_dpu_flag} \
+        ${ovn_dpu_host_gateway_representor_interface_flag} \
         ${ovn_node_ssl_opts} \
         ${ovn_unprivileged_flag} \
         ${routable_mtu_flag} \

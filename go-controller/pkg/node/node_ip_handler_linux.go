@@ -74,7 +74,7 @@ func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtPort manag
 		syncPeriod:            30 * time.Second,
 	}
 	mgr.nodeAnnotator = kube.NewNodeAnnotator(k, nodeName)
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		if err := mgr.updateHostCIDRs(); err != nil {
 			klog.Errorf("Failed to update host-cidrs annotations on node %s: %v", nodeName, err)
 			return nil
@@ -160,7 +160,7 @@ func (c *addressManager) notifyAddressesChanged() {
 type subscribeFn func() (bool, chan netlink.AddrUpdate, error)
 
 func (c *addressManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) {
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		return
 	}
 
@@ -309,7 +309,7 @@ func (c *addressManager) handleNodePrimaryAddrChange() {
 		klog.Errorf("Address Manager failed to check node primary address change: %v", err)
 		return
 	}
-	if nodePrimaryAddrChanged && config.Default.EncapIP == "" && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if nodePrimaryAddrChanged && config.Default.EncapIP == "" && (config.IsModeDPU() || config.IsModeFull()) {
 		klog.Infof("Node primary address changed to %v. Updating OVN encap IP.", c.nodePrimaryAddr)
 		c.updateOVNEncapIPAndReconnect(c.nodePrimaryAddr)
 	}
@@ -367,7 +367,7 @@ func (c *addressManager) updateNodeAddressAnnotations() error {
 }
 
 func (c *addressManager) updateHostCIDRs() error {
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		// For DPU mode, we don't need to update the host-cidrs annotation.
 		return nil
 	}
@@ -534,7 +534,7 @@ func (c *addressManager) refreshGatewayIfIndex() {
 }
 
 func (c *addressManager) sync() {
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		return
 	}
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {

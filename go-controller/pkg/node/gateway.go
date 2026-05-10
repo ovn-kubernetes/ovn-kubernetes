@@ -247,7 +247,7 @@ func canHandleBridgeEgressIP() bool {
 	return util.IsNetworkSegmentationSupportEnabled() &&
 		config.OVNKubernetesFeature.EnableInterconnect &&
 		config.Gateway.Mode != config.GatewayModeDisabled &&
-		config.OvnKubeNode.Mode != types.NodeModeDPUHost
+		(config.IsModeDPU() || config.IsModeFull())
 }
 
 func (g *gateway) AddEgressIP(eip *egressipv1.EgressIP) error {
@@ -445,7 +445,7 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 		}
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		// Set static FDB entry for sharedGW MAC.
 		// If `GatewayIfaceRep` port is present, use it instead of LOCAL (bridge name).
 		gwport := gatewayBridge.GetBridgeName()                           // Default is LOCAL port for the bridge.
@@ -484,7 +484,7 @@ func (g *gateway) GetGatewayBridgeIface() string {
 }
 
 func (g *gateway) GetGatewayIface() string {
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		if g.openflowManager == nil {
 			return ""
 		}
@@ -496,7 +496,7 @@ func (g *gateway) GetGatewayIface() string {
 
 // SetDefaultGatewayBridgeMAC updates the mac address for the OFM used to render flows with
 func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		return
 	}
 	g.openflowManager.setDefaultBridgeMAC(macAddr)
@@ -504,14 +504,14 @@ func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
 }
 
 func (g *gateway) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		return
 	}
 	g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Store(isPodNetworkAdvertised)
 }
 
 func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		return false
 	}
 	return g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load()
@@ -520,7 +520,7 @@ func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
 // SetDefaultBridgeGARPDropFlows will enable flows to drop GARPs if the openflow
 // manager has been initialized.
 func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		return
 	}
 
@@ -533,7 +533,7 @@ func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
 // Reconcile handles triggering updates to different components of a gateway, like OFM, Services
 func (g *gateway) Reconcile() error {
 	klog.Info("Reconciling gateway with updates")
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		if g.openflowManager != nil {
 			if g.nodeIPManager == nil {
 				klog.V(5).Info("Skipping gateway OpenFlow reconcile because node IP manager is not initialized yet")
@@ -548,7 +548,7 @@ func (g *gateway) Reconcile() error {
 	}
 	// TBD updateSNATRules() gets node host-cidr by accessing gateway.nodeIPManager, which does not
 	// exist in dpu-host mode.
-	if config.OvnKubeNode.Mode == types.NodeModeFull {
+	if config.IsModeFull() {
 		err := g.updateSNATRules()
 		if err != nil {
 			return err

@@ -46,7 +46,7 @@ var OvnConflictBackoff = wait.Backoff{
 
 var (
 	rePciDeviceName = regexp.MustCompile(`^[0-9a-f]{4}:[0-9a-f]{2}:[01][0-9a-f]\.[0-7]$`)
-	reAuxDeviceName = regexp.MustCompile(`^\w+.\w+.\d+$`)
+	reAuxDeviceName = regexp.MustCompile(`^\w+\.\w+\.\d+$`)
 )
 
 // IsPCIDeviceName check if passed device id is a PCI device name

@@ -1,0 +1,129 @@
+name: DPU Offload
+
+on:
+  pull_request:
+    branches: [ master, release-* ]
+    paths-ignore:
+      - '**/*.md'
+      - 'mkdocs.yml'
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kind-dpu-offload-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  DPU_SIM_REF: main
+  OVN_KUBERNETES_PATH: ${{ github.workspace }}/ovn-kubernetes
+
+jobs:
+  kind-dpu-offload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout OVN-Kubernetes (PR/push)
+        uses: actions/checkout@v4
+        with:
+          path: ovn-kubernetes
+
+      - name: Checkout dpu-simulator
+        uses: actions/checkout@v4
+        with:
+          repository: ovn-kubernetes/dpu-simulator
+          ref: ${{ env.DPU_SIM_REF }}
+          path: dpu-simulator
+
+      - name: Set up Go from dpu-simulator
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: dpu-simulator/go.mod
+          cache: true
+
+      - name: Install libvirt development headers
+        run: sudo apt-get update && sudo apt-get install -y libvirt-dev
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Set up Python for traffic flow tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install kind
+        run: |
+          KIND_VERSION=v0.31.0
+          curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind-linux-amd64.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          (cd /tmp && sha256sum -c kind-linux-amd64.sha256sum)
+          chmod +x /tmp/kind-linux-amd64
+          sudo mv /tmp/kind-linux-amd64 /usr/local/bin/kind
+
+      - name: Build dpu-simulator
+        working-directory: dpu-simulator
+        run: make build
+
+      - name: Disable containerd image store
+        # Workaround for https://github.com/kubernetes-sigs/kind/issues/3795
+        run: |
+          sudo mkdir -p /etc/docker
+          [ -s "/etc/docker/daemon.json" ] && {
+            cat "/etc/docker/daemon.json" | jq '. + {"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+          } || {
+            echo '{"features":{"containerd-snapshotter": false}}' | sudo tee /etc/docker/daemon.$$
+          }
+          sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Deploy Kind clusters (OVN-Kubernetes from PR source)
+        working-directory: dpu-simulator
+        run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml --ovn-kubernetes-path "$OVN_KUBERNETES_PATH"
+
+      - name: Verify clusters are ready
+        working-directory: dpu-simulator
+        run: |
+          kubectl wait --for=condition=Ready nodes --all \
+            --kubeconfig kubeconfig/dpu-sim-host.kubeconfig --timeout=25m
+          kubectl wait --for=condition=Ready nodes --all \
+            --kubeconfig kubeconfig/dpu-sim-dpu.kubeconfig --timeout=25m
+
+      - name: TFT Python venv
+        working-directory: dpu-simulator
+        run: ./bin/dpu-sim tft venv --config config-kind-ovnk-offload.yaml
+
+      - name: Run traffic flow tests
+        working-directory: dpu-simulator
+        run: ./bin/dpu-sim tft run --config config-kind-ovnk-offload.yaml
+
+      - name: Export kind logs on failure
+        if: failure()
+        run: |
+          kind export logs /tmp/kind-offload-logs --name dpu-sim-host-kind 2>/dev/null || true
+          kind export logs /tmp/kind-offload-logs --name dpu-sim-dpu-kind 2>/dev/null || true
+
+      - name: Upload kind logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-dpu-offload-logs
+          path: /tmp/kind-offload-logs
+          if-no-files-found: ignore
+
+      - name: Upload TFT results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tft-results
+          path: dpu-simulator/kubernetes-traffic-flow-tests/ft-logs
+          if-no-files-found: ignore
+
+      - name: Cleanup
+        if: always()
+        working-directory: dpu-simulator
+        run: ./bin/dpu-sim --config config-kind-ovnk-offload.yaml --ovn-kubernetes-path "$OVN_KUBERNETES_PATH" --cleanup || true

@@ -89,6 +89,7 @@ require (
 	github.com/openshift/api v0.0.0-20260311143357-f6ee4c095675 // indirect
 	github.com/openshift/client-go v0.0.0-20260306160707-3935d929fc7d // indirect
 	github.com/openshift/custom-resource-status v1.1.2 // indirect
+	github.com/ovn-kubernetes/dpu-simulator/lib/dpusim v0.0.0-20260507161134-3aec48e5cb25 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

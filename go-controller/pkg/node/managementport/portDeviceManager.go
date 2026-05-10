@@ -81,7 +81,7 @@ func (mpdm *MgmtPortDeviceManager) Init() error {
 			// the device plugin still exposes the same port and that we should
 			// consume the same VF index.
 			for _, d := range allDeviceIDs {
-				mgmtDetails, err := util.GetNetworkDeviceDetails(d)
+				mgmtDetails, err := util.GetDPUOps().ResolveDeviceDetails(d)
 				if err == nil && mgmtDetails.PfId == annotatedMgmtPortDetails.PfId && mgmtDetails.FuncId == annotatedMgmtPortDetails.FuncId {
 					deviceId = d
 					break
@@ -104,7 +104,7 @@ func (mpdm *MgmtPortDeviceManager) Init() error {
 				return fmt.Errorf("failed to reserve manage port device %v of resource %s for network %s: %v",
 					deviceId, mpdm.deviceAllocator.ResourceName(), network, err)
 			}
-			curMgmtPortDetails, err := util.GetNetworkDeviceDetails(deviceId)
+			curMgmtPortDetails, err := util.GetDPUOps().ResolveDeviceDetails(deviceId)
 			if err != nil {
 				return fmt.Errorf("failed to get network manage port device details for device %s network %s: %v", deviceId, network, err)
 			}
@@ -168,7 +168,7 @@ func (mpdm *MgmtPortDeviceManager) AllocateDeviceIDForNetwork(network string) er
 			return fmt.Errorf("failed to get manage port device of resource %s for network %s: %v",
 				mpdm.deviceAllocator.ResourceName(), network, err)
 		}
-		mgmtPortDetails, err = util.GetNetworkDeviceDetails(deviceId)
+		mgmtPortDetails, err = util.GetDPUOps().ResolveDeviceDetails(deviceId)
 		if err != nil {
 			mpdm.deviceAllocator.ReleaseResourcesDeviceID(network)
 			return fmt.Errorf("failed to get network manage port device details for device %s: %v", deviceId, err)
@@ -197,7 +197,7 @@ func (mpdm *MgmtPortDeviceManager) AllocateDeviceIDForDefaultNetwork() (*util.Ne
 			return nil, fmt.Errorf("failed to get manage port device of resource %s for default network: %v",
 				mpdm.deviceAllocator.ResourceName(), err)
 		}
-		mgmtPortDetails, err = util.GetNetworkDeviceDetails(deviceId)
+		mgmtPortDetails, err = util.GetDPUOps().ResolveDeviceDetails(deviceId)
 		if err != nil {
 			mpdm.deviceAllocator.ReleaseResourcesDeviceID(ovntypes.DefaultNetworkName)
 			return nil, fmt.Errorf("failed to get network manage port device details for device %s: %v", deviceId, err)

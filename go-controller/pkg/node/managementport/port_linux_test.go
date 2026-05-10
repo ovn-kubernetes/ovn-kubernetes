@@ -1262,6 +1262,16 @@ var _ = Describe("Management Port tests", func() {
 			netdevImpl := mgmtPortImpl.ports[netdevPort].(*managementPortNetdev)
 			Expect(netdevImpl.deviceID).To(Equal("0000:03:00.2"))
 		})
+		It("Creates managementPortNetdev for dpu-host in simulated DPU when annotation is missing", func() {
+			config.OvnKubeNode.Mode = types.NodeModeDPUHost
+			config.OvnKubeNode.SimulateDPU = true
+			simNetdev := "eth0-1"
+			mgmtPort, err := NewManagementPortController(node, hostSubnets, simNetdev, rep, nil, netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			mgmtPortImpl := mgmtPort.(*managementPortController)
+			netdevImpl := mgmtPortImpl.ports[netdevPort].(*managementPortNetdev)
+			Expect(netdevImpl.deviceID).To(Equal(simNetdev))
+		})
 		It("Fails to create managementPortNetdev when PCI resolution fails and annotation is missing", func() {
 			config.OvnKubeNode.Mode = types.NodeModeDPUHost
 			util.SetFileSystemOps(origFsOps)

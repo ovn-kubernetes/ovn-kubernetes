@@ -133,7 +133,7 @@ func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork,
 		// primaryUDNPodRequest would be nil if no primary UDN interface is needed
 		primaryUDNPodRequest := pr.buildPrimaryUDNPodRequest(primaryUDN)
 		// DPU-Host: add DPU connection-details annotation to allow DPU performs the needed primary UDN interface plumbing.
-		if config.OvnKubeNode.Mode == types.NodeModeDPUHost &&
+		if config.IsModeDPUHost() &&
 			primaryUDNPodRequest != nil && primaryUDNPodRequest.CNIConf.DeviceID != "" {
 			netdevName := primaryUDN.NetworkDevice()
 			if err := primaryUDNPodRequest.addDPUConnectionDetailsAnnot(k, podLister, netdevName); err != nil {
@@ -192,7 +192,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 				return nil, fmt.Errorf("failed in cmdAdd while getting Netdevice name: %w", err)
 			}
 		}
-		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		if config.IsModeDPUHost() {
 			// Add DPU connection-details annotation so ovnkube-node running on DPU
 			// performs the needed network plumbing.
 			if err = pr.addDPUConnectionDetailsAnnot(kubecli, clientset.podLister, netdevName); err != nil {
@@ -214,7 +214,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	}
 
 	// now checks for default network's DPU connection status
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		if pr.CNIConf.DeviceID != "" {
 			annotCondFn = isDPUReady(annotCondFn, pr.nadKey)
 		}
@@ -258,7 +258,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 		}
 
 		// Skip checking bridge mapping on DPU hosts as OVS is not present
-		if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+		if config.IsModeDPU() || config.IsModeFull() {
 			if err := checkBridgeMapping(ovsClient, pr.CNIConf.Topology, netName); err != nil {
 				return nil, fmt.Errorf("failed bridge mapping validation: %w", err)
 			}
@@ -338,7 +338,7 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
-		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		if config.IsModeDPUHost() {
 			if pod == nil {
 				// no need to update DPU connection-details annotation if pod is already removed
 				klog.Warningf("Failed to get pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
@@ -415,7 +415,7 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 	}
 
 	podInterfaceInfo := &PodInterfaceInfo{
-		IsDPUHostMode: config.OvnKubeNode.Mode == types.NodeModeDPUHost,
+		IsDPUHostMode: config.IsModeDPUHost(),
 		NetdevName:    netdevName,
 	}
 	if !config.UnprivilegedMode {

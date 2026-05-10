@@ -378,6 +378,8 @@ github.com/openshift/client-go v0.0.0-20260306160707-3935d929fc7d h1:T+9HFgEEcnu
 github.com/openshift/client-go v0.0.0-20260306160707-3935d929fc7d/go.mod h1:tIA3XSb/WsC/Fg0YNRfs/JrMrloBKPGF+NKVutd7nMI=
 github.com/openshift/custom-resource-status v1.1.2 h1:C3DL44LEbvlbItfd8mT5jWrqPfHnSOQoQf/sypqA6A4=
 github.com/openshift/custom-resource-status v1.1.2/go.mod h1:DB/Mf2oTeiAmVVX1gN+NEqweonAPY0TKUwADizj8+ZA=
+github.com/ovn-kubernetes/dpu-simulator/lib/dpusim v0.0.0-20260507161134-3aec48e5cb25 h1:uujE+MtjuaWOz1+nt5uwj193CQEXOKR8qzhsRRV7t9o=
+github.com/ovn-kubernetes/dpu-simulator/lib/dpusim v0.0.0-20260507161134-3aec48e5cb25/go.mod h1:fkgl6NeQ4GO+DImnBM1MQKA5fT3BeALC+pOBaNvlVLs=
 github.com/peterbourgon/diskv v2.0.1+incompatible/go.mod h1:uqqh8zWWbv1HBMNONnaR/tNboyR3/BZd58JJSHlUSCU=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

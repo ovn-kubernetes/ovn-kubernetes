@@ -132,7 +132,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 		return nil, fmt.Errorf("unable to dereference default node network controller gateway object")
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && gw.openflowManager == nil {
+	if (config.IsModeDPU() || config.IsModeFull()) && gw.openflowManager == nil {
 		return nil, fmt.Errorf("openflow manager has not been provided for network: %s", netInfo.GetNetworkName())
 	}
 
@@ -215,7 +215,7 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 // AddNetwork will be responsible to create all plumbings
 // required by this UDN on the gateway side
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && udng.openflowManager == nil {
+	if (config.IsModeDPU() || config.IsModeFull()) && udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
 
@@ -239,7 +239,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 			udng.GetNetworkName(), err)
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 		mplink, err := util.LinkByName(mgmtPortName)
 		if err != nil {
@@ -267,7 +267,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 
 	udng.updateAdvertisementStatus()
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		// create the iprules for this network
 		if err = udng.updateUDNVRFIPRules(); err != nil {
 			return fmt.Errorf("failed to update IP rules for network %s: %w", udng.GetNetworkName(), err)
@@ -282,7 +282,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		}
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		var mgmtIPs []*net.IPNet
 		for _, subnet := range nodeSubnets {
 			mgmtIPs = append(mgmtIPs, udng.GetNodeManagementIP(subnet))
@@ -321,7 +321,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		}
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		if err := udng.addMarkChain(); err != nil {
 			return fmt.Errorf("failed to add the service masquerade chain: %w", err)
 		}
@@ -342,7 +342,7 @@ func (udng *UserDefinedNetworkGateway) GetNetworkRuleMetadata() string {
 // DelNetwork has returned succesfully.
 func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 	var errs []error
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 		// delete the iprules for this network
 		if err := udng.ruleManager.DeleteWithMetadata(udng.GetNetworkRuleMetadata()); err != nil {
@@ -353,19 +353,19 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 			errs = append(errs, fmt.Errorf("unable to delete VRF device %s for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err))
 		}
 	}
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		// delete the openflows for this network
 		if udng.openflowManager != nil {
 			udng.openflowManager.delNetwork(udng.NetInfo)
 		}
 	}
-	if udng.openflowManager != nil || config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if udng.openflowManager != nil || config.IsModeDPUHost() {
 		if err := udng.gateway.Reconcile(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		err := udng.deleteAdvertisedUDNIsolationRules()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err))
@@ -759,7 +759,7 @@ func (udng *UserDefinedNetworkGateway) Reconcile() {
 func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	klog.Infof("Reconciling gateway with updates for UDN %s", udng.GetNetworkName())
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		// shouldn't happen
 		if udng.openflowManager == nil || udng.openflowManager.defaultBridge == nil {
 			return fmt.Errorf("openflow manager with default bridge configuration has not been provided for network %s", udng.GetNetworkName())
@@ -768,7 +768,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 
 	udng.updateAdvertisementStatus()
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		// update bridge configuration
 		netConfig := udng.openflowManager.defaultBridge.GetNetworkConfig(udng.GetNetworkName())
 		if netConfig == nil {
@@ -777,7 +777,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		netConfig.Advertised.Store(udng.isNetworkAdvertised)
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		if err := udng.updateUDNVRFIPRules(); err != nil {
 			return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
 		}
@@ -787,7 +787,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		}
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		// add below OpenFlows based on the gateway mode and whether the network is advertised or not:
 		// table=1, n_packets=0, n_bytes=0, priority=16,ip,nw_dst=128.192.0.2 actions=LOCAL (Both gateway modes)
 		// table=1, n_packets=0, n_bytes=0, priority=15,ip,nw_dst=128.192.0.0/14 actions=output:3 (shared gateway mode)
@@ -799,7 +799,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		udng.openflowManager.requestFlowSync()
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		if err := udng.updateAdvertisedUDNIsolationRules(); err != nil {
 			return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
 		}

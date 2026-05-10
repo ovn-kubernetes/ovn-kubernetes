@@ -78,9 +78,9 @@ func NewManagementPortController(
 
 	var hasOVS, hasNetdev, hasRepresentor bool
 	switch {
-	case config.OvnKubeNode.Mode == types.NodeModeDPU:
+	case config.IsModeDPU():
 		hasRepresentor = true
-	case config.OvnKubeNode.Mode == types.NodeModeDPUHost:
+	case config.IsModeDPUHost():
 		hasNetdev = true
 	case config.OvnKubeNode.MgmtPortNetdev != "":
 		hasRepresentor = true
@@ -101,12 +101,20 @@ func NewManagementPortController(
 			}
 		}
 		if deviceID == "" {
-			var err error
-			deviceID, err = util.GetDeviceIDFromNetdevice(netdevDevName)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get PCI device ID for %s: %v", netdevDevName, err)
+			if util.IsSimulatedDPU() {
+				// Simulated DPUs use veth/virtio netdevices without a PCI sysfs link; the
+				// netdev name is the opaque device id (see SimulatedDPUOps.ResolveDeviceDetails).
+				// Annotation may not be visible on the in-memory node yet on first start.
+				deviceID = netdevDevName
+				klog.Infof("Management port device ID: %s (simulated DPU; netdev as opaque id)", deviceID)
+			} else {
+				var err error
+				deviceID, err = util.GetDeviceIDFromNetdevice(netdevDevName)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get PCI device ID for %s: %v", netdevDevName, err)
+				}
+				klog.Infof("Management port PCI device ID: %s (resolved from netdev %s)", deviceID, netdevDevName)
 			}
-			klog.Infof("Management port PCI device ID: %s (resolved from netdev %s)", deviceID, netdevDevName)
 		}
 		c.ports[netdevPort] = newManagementPortNetdev(deviceID, cfg, routeManager)
 	}
@@ -154,7 +162,7 @@ func (c *managementPortController) start(stopChan <-chan struct{}) error {
 	}
 
 	if config.Gateway.NodeportEnable {
-		if config.OvnKubeNode.Mode == types.NodeModeFull {
+		if config.IsModeFull() {
 			// (TODO): Internal Traffic Policy is not supported in DPU mode
 			if err := initMgmPortRoutingRules(c.cfg); err != nil {
 				return err
@@ -217,7 +225,7 @@ func tearDownManagementPortConfig(link netlink.Link) error {
 		return err
 	}
 
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		return nil
 	}
 	nft, err := nodenft.GetNFTablesHelper()
@@ -644,7 +652,7 @@ func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
 	}
 
 	savedName := ""
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		// Get original interface name saved at OVS database
 		stdout, stderr, err := util.RunOVSVsctl("--if-exists", "get", "Open_vSwitch", ".", "external-ids:ovn-orig-mgmt-port-netdev-name")
 		if err != nil {

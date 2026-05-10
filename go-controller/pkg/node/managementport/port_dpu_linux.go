@@ -173,7 +173,7 @@ func (mp *managementPortNetdev) create() error {
 		return err
 	}
 
-	if link.Attrs().Name != mp.ifName && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if link.Attrs().Name != mp.ifName && (config.IsModeDPU() || config.IsModeFull()) {
 		if _, stderr, err := util.RunOVSVsctl("set", "Open_vSwitch", ".",
 			"external-ids:ovn-orig-mgmt-port-netdev-name="+link.Attrs().Name); err != nil {
 			return fmt.Errorf("failed to store original mgmt port interface name: %s", stderr)

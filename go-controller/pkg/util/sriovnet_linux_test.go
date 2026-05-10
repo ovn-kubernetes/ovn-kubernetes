@@ -94,6 +94,11 @@ func TestIsAuxDeviceName(t *testing.T) {
 			aux:    "not an auxiliary device name",
 			expect: false,
 		},
+		{
+			desc:   "underscores only",
+			aux:    "abc_def_1",
+			expect: false,
+		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {

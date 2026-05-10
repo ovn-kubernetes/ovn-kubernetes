@@ -675,7 +675,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			fmt.Sprintf("ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add %s %s 0 %s", brphys, brphys, hostMAC),
 		})
-		// GetDPUHostInterface
+		// GetDPUHostRepInterface
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 list-ports " + brphys,
 			Output: hostRep,
@@ -697,7 +697,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 get interface " + uplinkPort + " ofport",
 			Output: "7",
 		})
-		// GetDPUHostInterface
+		// GetDPUHostRepInterface
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 list-ports " + brphys,
 			Output: hostRep,

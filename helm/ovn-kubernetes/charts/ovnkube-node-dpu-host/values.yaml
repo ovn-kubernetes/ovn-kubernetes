@@ -4,6 +4,10 @@ logFileMaxBackups: 5
 logFileMaxAge: 5
 ovnControllerLogLevel: 4
 
+# Optional gateway options override for the dpu-host daemonset.
+# When set, takes precedence over global.gatewayOpts.
+gatewayOpts: ""
+
 # The netdevice or deviceplugin resourcename that specifies pool of devices
 # that can be used for management ports has to be specified.
 # mgmtPortVFResourceName will override nodeMgmtPortNetdev if both are specified

@@ -27,6 +27,10 @@ global:
   gatewayMode: shared
   # -- Optional extra gateway options
   gatewayOpts: ""
+  # -- Use simulated DPU operations instead of SR-IOV/switchdev hardware (for Kind/VM-based DPU simulation)
+  simulateDpu: false
+  # -- The DPU-side representor interface for the host's uplink (PF). Required for simulated environments where switchdev metadata is unavailable.
+  dpuHostGatewayRepresentorInterface: ""
   # -- This allows ovnkube-node to run without SYS_ADMIN capability, by performing interface setup in the CNI plugin
   unprivilegedMode: false
   # -- The v4 join subnet used for assigning join switch IPv4 addresses

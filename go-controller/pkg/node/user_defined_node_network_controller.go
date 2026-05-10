@@ -17,7 +17,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -77,7 +76,7 @@ func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 	klog.Infof("Starting UDN node network controller for network %s", nc.GetNetworkName())
 
 	// enable adding ovs ports for dpu pods in both primary and secondary user-defined networks
-	if (config.OVNKubernetesFeature.EnableMultiNetwork || util.IsNetworkSegmentationSupportEnabled()) && config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if (config.OVNKubernetesFeature.EnableMultiNetwork || util.IsNetworkSegmentationSupportEnabled()) && config.IsModeDPU() {
 		handler, err := nc.watchPodsDPU()
 		if err != nil {
 			return err

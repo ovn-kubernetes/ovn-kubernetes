@@ -1,7 +1,7 @@
 ## DPU support
 
-With the emergence of [Data Processing Units](https://blogs.nvidia.com/blog/2020/05/20/whats-a-dpu-data-processing-unit/) (DPUs), 
-NIC vendors can now offer greater hardware acceleration capability, flexibility and security. 
+With the emergence of [Data Processing Units](https://blogs.nvidia.com/blog/2020/05/20/whats-a-dpu-data-processing-unit/) (DPUs),
+NIC vendors can now offer greater hardware acceleration capability, flexibility and security.
 
 It is desirable to leverage DPU in OVN-kubernetes to accelerate networking and secure the network control plane.
 
@@ -44,10 +44,18 @@ Always check the dependencies on the [Requirements page](../requirements.md)
 
 For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gateway Interface Configuration](dpu-gateway-interface.md).
 
+### Simulated DPU (`simulate-dpu`)
+
+Hardware DPUs rely on SR-IOV and switchdev metadata so OVN-Kubernetes can resolve representors, PCI relationships, and related details. For development and CI, the same code paths can run on **simulated** platforms (for example Kind or VMs using virtio instead of a real switchdev DPU NICs) where that metadata is absent or different.
+
+The ovnkube-node flag **`--simulate-dpu`** (config file `[OvnKubeNode]` key `simulate-dpu`, Helm `global.simulateDpu`) turns on **simulated DPU operations** instead of the default switchdev-based implementation. When the node mode is `dpu` or `dpu-host`, this selects the simulated `DPUOps` backend. Operational parameters such as representor naming, device addressing, and host-representor discovery follow the patterns used in simulated environments (for example `rep<pfId>-<funcId>` style names and netdev-based identifiers) rather than sysfs/sriovnet switchdev discovery.
+
+The flag has no effect in full (non-DPU) node mode. Use it together with the correct simulated topology (veth pairs, virtio links) and, on the DPU host, consider setting an explicit [`dpu-host-gateway-representor-interface`](dpu-gateway-interface.md#dpu-host-gateway-representor-interface) when nicstobridge is used (when there is no pre-provisioned OVS bridges).
+
 ### DPU Cluster
 
 #### OVN-Kubernetes components
-- local-nb-ovsdb 
+- local-nb-ovsdb
 - local-sb-ovsdb
 - run-ovn-northd
 - ovnkube-controller-with-node

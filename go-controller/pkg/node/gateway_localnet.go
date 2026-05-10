@@ -16,12 +16,11 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interface) error {
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+	if config.IsModeDPU() {
 		return nil
 	}
 
@@ -89,7 +88,7 @@ func getLocalAddrs() (map[string]net.IPNet, error) {
 }
 
 func cleanupLocalnetGateway(physnet string) error {
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	if config.IsModeDPUHost() {
 		return nil
 	}
 	stdout, stderr, err := util.RunOVSVsctl("--if-exists", "get", "Open_vSwitch", ".",

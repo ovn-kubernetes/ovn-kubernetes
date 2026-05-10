@@ -47,10 +47,45 @@ interface=derive-from-mgmt-port
 ovnkube-node:
   mode: dpu-host
   mgmtPortNetdev: pf0vf0
-  
+
 gateway:
   interface: derive-from-mgmt-port
 ```
+
+## DPU host gateway representor interface
+
+This setting is the `DPUHostGatewayRepresentorInterface` field in code and in the Gateway config section (`dpu-host-gateway-representor-interface`).
+
+On real switchdev DPUs, the DPU-side representor for the host uplink (the PF’s representor toward the embedded CPU) is often discovered automatically from switchdev metadata (for example via `phys_port_name`). Simulation environments do not expose that metadata: dpu-sim Kind clusters, dpu-sim virtio-based VMs, or other “simulated DPU” setups. There, OVN-Kubernetes cannot infer which netdev is the host-gateway representor, and you must set it explicitly.
+
+The optional gateway value (`--dpu-host-gateway-representor-interface`) names that DPU-side representor explicitly. When the node builds an OVS gateway bridge from a plain NIC (not an existing OVS bridge), and this value is non-empty, ovnkube adds that interface as a port on the gateway bridge and marks it `other-config:transient=true` so the host’s uplink path is wired through OVS correctly.
+
+Typical combinations:
+
+- **Production switchdev DPU**: Usually leave this unset; discovery via switchdev metadata handles the representor.
+- **Simulated DPU**: Set `--simulate-dpu` on the node (see [DPU support](dpu-support.md)) and set `--dpu-host-gateway-representor-interface` to the known representor netdev name (for example the veth or virtio peer your topology uses).
+
+### Command line
+
+```bash
+--dpu-host-gateway-representor-interface=<netdev>
+```
+
+### Configuration file
+
+```ini
+[Gateway]
+dpu-host-gateway-representor-interface=<netdev>
+```
+
+### Helm (`global` values)
+
+```yaml
+global:
+  dpuHostGatewayRepresentorInterface: <netdev>
+```
+
+If the representor name is wrong or the interface is missing, gateway bridge setup fails with an error when adding the port to the bridge.
 
 ## Example Scenario
 
@@ -207,4 +242,4 @@ Potential improvements to this feature could include:
 - Integration with device plugin resources
 - Support for multiple gateway interfaces
 - Enhanced error reporting and diagnostics
-- Support for non-SR-IOV hardware configurations 
+- Support for non-SR-IOV hardware configurations

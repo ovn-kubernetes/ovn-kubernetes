@@ -78,7 +78,7 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 		}
 	}
 	gatewayIntf := config.Gateway.Interface
-	if gatewayIntf != "" && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if gatewayIntf != "" && (config.IsModeDPU() || config.IsModeFull()) {
 		if bridgeName, _, err := util.RunOVSVsctl("port-to-br", gatewayIntf); err == nil {
 			// This is an OVS bridge's internal port
 			gatewayIntf = bridgeName
@@ -341,7 +341,7 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 	var portClaimWatcher *portClaimWatcher
 
 	var err error
-	if config.Gateway.NodeportEnable && config.OvnKubeNode.Mode == types.NodeModeFull {
+	if config.Gateway.NodeportEnable && config.IsModeFull() {
 		loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory)
 		portClaimWatcher, err = newPortClaimWatcher(nc.recorder)
 		if err != nil {
@@ -528,7 +528,7 @@ func CleanupClusterNode(name string) error {
 		klog.Errorf("Failed to cleanup Gateway, error: %v", err)
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	if config.IsModeDPU() || config.IsModeFull() {
 		stdout, stderr, err := util.RunOVSVsctl("--", "--if-exists", "remove", "Open_vSwitch", ".", "external_ids",
 			"ovn-bridge-mappings")
 		if err != nil {
@@ -536,7 +536,7 @@ func CleanupClusterNode(name string) error {
 		}
 	}
 
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if config.IsModeDPUHost() || config.IsModeFull() {
 		// Clean up legacy IPTables rules for management port
 		managementport.DelLegacyMgtPortIptRules()
 
@@ -551,7 +551,7 @@ func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) erro
 	// TBD-merge for dpu-host mode: if interface mac of the dpu-host interface that connects to the
 	// gateway bridge on the dpu changes, we need to update dpu's gatewayBridge.macAddress L3 gateway
 	// annotation (see BridgeForInterface)
-	if config.OvnKubeNode.Mode != types.NodeModeFull {
+	if config.IsModeDPU() || config.IsModeDPUHost() {
 		return nil
 	}
 

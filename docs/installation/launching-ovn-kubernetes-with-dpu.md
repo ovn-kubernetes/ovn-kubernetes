@@ -8,6 +8,12 @@ DPUs in the DPU cluster will watch DPU Host cluster for K8s resources such as Po
 
 Refer [DPU support](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/hardware-offload/dpu-support.md) for more details on the setup.
 
+## DPU simulation
+
+The SR-IOV, OVS offload, and bridge examples below assume **hardware** DPUs and DPU hosts with switchdev-capable DPU NICs. For **simulated** DPU topologies (for example Kind/VM cluster used in development and CI), the same two-cluster layout and Helm charts apply, but you should enable **`global.simulateDpu: true`** on the DPU and DPU-host ovnkube workloads so the containers pass **`--simulate-dpu`**. That selects the simulated DPU operations backend (representor naming, device IDs, and discovery) instead of real SR-IOV/switchdev metadata.
+
+For a full description of the flag and when it applies, see the **Simulated DPU (`simulate-dpu`)** subsection in [DPU support](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/hardware-offload/dpu-support.md). On the DPU host, if the host-gateway representor is not auto-discovered, set **`global.dpuHostGatewayRepresentorInterface`** as documented under [DPU host gateway representor interface](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/hardware-offload/dpu-gateway-interface.md#dpu-host-gateway-representor-interface).
+
 ## SR-IOV settings on DPU Host
 
 Follow [OVS Acceleration with Kernel datapath](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/hardware-offload/ovs-kernel.md) or [OVS Acceleration with DOCA datapath](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/docs/features/hardware-offload/ovs-doca.md) to enable Open vSwitch hardware offloading feature on DPU hosts.
