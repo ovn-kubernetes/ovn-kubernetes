@@ -30,6 +30,7 @@ import (
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
 	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -1258,6 +1259,51 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 		fakeOvn.shutdown()
 	})
 
+	It("fails to build local gateway SNAT when the exemption address set UUID is missing", func() {
+		config.Gateway.Mode = config.GatewayModeLocal
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableInterconnect = true
+		config.Default.Zone = nodeName
+		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
+
+		fakeOvn.start()
+
+		cudnNetInfo := userDefinedNetInfo{
+			netName:        userDefinedNetworkName,
+			nadName:        namespacedName(ns, nadName),
+			topology:       types.Layer3Topology,
+			clustersubnets: "10.100.0.0/16",
+			hostsubnets:    "10.100.1.0/24",
+			isPrimary:      true,
+			transport:      types.NetworkTransportNoOverlay,
+			outboundSNAT:   string(types.NoOverlaySNATEnabled),
+		}
+		netInfo, err := util.NewNetInfo(cudnNetInfo.netconf())
+		Expect(err).NotTo(HaveOccurred())
+		mutableNetInfo := util.NewMutableNetInfo(netInfo)
+		mutableNetInfo.SetNetworkID(2)
+
+		bsnc := &BaseUserDefinedNetworkController{
+			BaseNetworkController: BaseNetworkController{
+				controllerName:      getNetworkControllerName(userDefinedNetworkName),
+				ReconcilableNetInfo: util.NewReconcilableNetInfo(mutableNetInfo),
+				addressSetFactory:   fakeOvn.controller.addressSetFactory,
+			},
+		}
+
+		_, localPodSubnet, err := net.ParseCIDR("10.100.1.0/24")
+		Expect(err).NotTo(HaveOccurred())
+
+		snats, err := bsnc.buildUDNEgressSNAT(
+			[]*net.IPNet{localPodSubnet},
+			types.RouterToSwitchPrefix+bsnc.GetNetworkScopedName(nodeName),
+			false,
+		)
+		Expect(err).To(MatchError(ContainSubstring("missing no-overlay SNAT exemption address set UUID")))
+		Expect(snats).To(BeNil())
+	})
+
 	// Test 1: Verify SNAT with exempted_ext_ips is created on ovn_cluster_router in LOCAL gateway mode
 	It("creates SNAT with exempted address set in local gateway mode on ovn-cluster-router", func() {
 		// Step 1: Set config.Gateway.Mode = config.GatewayModeLocal
@@ -1328,6 +1374,26 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 
 			userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 			podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
+
+			nodeIPsAS, err := fakeOvn.controller.addressSetFactory.EnsureAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodeIPsAS.AddAddresses([]string{"192.168.126.202"})).To(Succeed())
+			svcIPsAS, err := fakeOvn.controller.addressSetFactory.EnsureAddressSet(udnenabledsvc.GetAddressSetDBIDs())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(svcIPsAS.AddAddresses([]string{"10.96.0.0/16"})).To(Succeed())
+
+			By("Verifying advertised no-overlay reply traffic is excluded from local gateway SNAT")
+			_, localPodSubnet, err := net.ParseCIDR("10.100.1.0/24")
+			Expect(err).NotTo(HaveOccurred())
+			snats, err := userDefinedNetController.bnc.buildUDNEgressSNAT(
+				[]*net.IPNet{localPodSubnet},
+				types.RouterToSwitchPrefix+userDefinedNetController.bnc.GetNetworkScopedName(nodeName),
+				true,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(snats).To(HaveLen(1))
+			Expect(snats[0].Match).To(Equal(fmt.Sprintf("pkt.mark != %d", types.UDNNodePortReplyTrafficConnectionMark)))
+			Expect(snats[0].ExemptedExtIPs).NotTo(BeNil())
 
 			// Step 4: Start watching nodes to trigger addUpdateLocalNodeEvent()
 			By("Starting node watch on L3 UDN controller")
