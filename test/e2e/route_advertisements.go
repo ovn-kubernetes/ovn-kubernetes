@@ -1161,6 +1161,26 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
 		ginkgo.Context("", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
+			expectLocalGatewayNodePortFailure := func(ipFamily utilnet.IPFamily) (string, bool) {
+				if !IsGatewayModeLocal(f.ClientSet) {
+					return "", false
+				}
+				if cudnATemplate.Spec.Network.Transport == udnv1.TransportOptionNoOverlay {
+					// No-overlay advertised UDNs have explicit reply marking, so the
+					// different-node ETP=Local NodePort paths should succeed instead
+					// of using the overlay local-gateway expected-failure path.
+					return "", false
+				}
+
+				// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
+				// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
+				// This should avoid the mentioned issue.
+				// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
+				// time out with curl 28. With the fwmark rule installed, IPv6 follows
+				// the same known-broken path as IPv4 and fails with curl 56.
+				return curlConnectionResetCode, true
+			}
+
 			ginkgo.BeforeAll(func() {
 				ginkgo.By("Configuring primary UDN namespaces")
 				var err error
@@ -1918,18 +1938,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						out := ""
-						errBool := false
-						// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
-						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
-						// This should avoid the mentioned issue.
-						if IsGatewayModeLocal(f.ClientSet) {
-							// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
-							// time out with curl 28. With the fwmark rule installed, IPv6
-							// follows the same known-broken path as IPv4 and fails with curl 56.
-							out = curlConnectionResetCode
-							errBool = true
-						}
+						out, errBool := expectLocalGatewayNodePortFailure(ipFamily)
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 					}),
 
@@ -1958,19 +1967,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						out := ""
-						errBool := false
-
-						// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
-						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
-						// This should avoid the mentioned issue.
-						if IsGatewayModeLocal(f.ClientSet) {
-							// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
-							// time out with curl 28. With the fwmark rule installed, IPv6
-							// follows the same known-broken path as IPv4 and fails with curl 56.
-							out = curlConnectionResetCode
-							errBool = true
-						}
+						out, errBool := expectLocalGatewayNodePortFailure(ipFamily)
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 					}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in default network should not work",
@@ -2029,19 +2026,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						out := ""
-						errBool := false
-
-						// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
-						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
-						// This should avoid the mentioned issue.
-						if IsGatewayModeLocal(f.ClientSet) {
-							// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
-							// time out with curl 28. With the fwmark rule installed, IPv6
-							// follows the same known-broken path as IPv4 and fails with curl 56.
-							out = curlConnectionResetCode
-							errBool = true
-						}
+						out, errBool := expectLocalGatewayNodePortFailure(ipFamily)
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 					}),
 			)
