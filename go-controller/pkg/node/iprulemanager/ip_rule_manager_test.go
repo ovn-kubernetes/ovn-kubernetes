@@ -8,6 +8,7 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
@@ -18,6 +19,42 @@ import (
 
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 )
+
+func TestAreNetlinkRulesEqualChecksFamily(t *testing.T) {
+	v4Rule := netlink.NewRule()
+	v4Rule.Priority = 2000
+	v4Rule.Table = 1020
+	v4Rule.Family = netlink.FAMILY_V4
+	v4Rule.Mark = 0x1003
+
+	v6Rule := netlink.NewRule()
+	v6Rule.Priority = v4Rule.Priority
+	v6Rule.Table = v4Rule.Table
+	v6Rule.Family = netlink.FAMILY_V6
+	v6Rule.Mark = v4Rule.Mark
+
+	if areNetlinkRulesEqual(v4Rule, v6Rule) {
+		t.Fatalf("expected IPv4 and IPv6 rules with the same mark/table to be different")
+	}
+}
+
+func TestAreNetlinkRulesEqualTreatsFamilyAllAsWildcard(t *testing.T) {
+	v4Rule := netlink.NewRule()
+	v4Rule.Priority = 2000
+	v4Rule.Table = 1020
+	v4Rule.Family = netlink.FAMILY_V4
+	v4Rule.Mark = 0x1003
+
+	anyFamilyRule := netlink.NewRule()
+	anyFamilyRule.Priority = v4Rule.Priority
+	anyFamilyRule.Table = v4Rule.Table
+	anyFamilyRule.Family = netlink.FAMILY_ALL
+	anyFamilyRule.Mark = v4Rule.Mark
+
+	if !areNetlinkRulesEqual(v4Rule, anyFamilyRule) {
+		t.Fatalf("expected FAMILY_ALL to match a specific rule family")
+	}
+}
 
 // FIXME(mk) - Within GH VM, if I need to create a new NetNs. I see the following error:
 // "failed to create new network namespace: mount --make-rshared /run/user/1001/netns failed: "operation not permitted""
