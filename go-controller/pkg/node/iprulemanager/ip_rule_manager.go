@@ -220,6 +220,9 @@ func areNetlinkRulesEqual(r1, r2 *netlink.Rule) bool {
 	if r1.Table != r2.Table {
 		return false
 	}
+	if !areRuleFamiliesEqual(r1.Family, r2.Family) {
+		return false
+	}
 	if r1.Type != r2.Type {
 		return false
 	}
@@ -228,6 +231,10 @@ func areNetlinkRulesEqual(r1, r2 *netlink.Rule) bool {
 	}
 
 	return areIPNetsEqual(r1.Src, r2.Src) && areIPNetsEqual(r1.Dst, r2.Dst)
+}
+
+func areRuleFamiliesEqual(f1, f2 int) bool {
+	return f1 == f2 || f1 == netlink.FAMILY_ALL || f2 == netlink.FAMILY_ALL
 }
 
 func areIPNetsEqual(n1, n2 *net.IPNet) bool {

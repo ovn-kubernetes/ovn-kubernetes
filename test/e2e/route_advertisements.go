@@ -1924,14 +1924,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
 						// This should avoid the mentioned issue.
 						if IsGatewayModeLocal(f.ClientSet) {
-							// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846
-							// its supposed to fail with 56 error code which is fine
-							// but due to this fwmark bug it ends up failing wtih 28 error code that's not expected.
-							out = curlConnectionTimeoutCode
+							// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
+							// time out with curl 28. With the fwmark rule installed, IPv6
+							// follows the same known-broken path as IPv4 and fails with curl 56.
+							out = curlConnectionResetCode
 							errBool = true
-							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-								out = curlConnectionResetCode
-							}
 						}
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 					}),
@@ -1968,14 +1965,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
 						// This should avoid the mentioned issue.
 						if IsGatewayModeLocal(f.ClientSet) {
-							// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846
-							// its supposed to fail with 56 error code which is fine
-							// but due to this fwmark bug it ends up failing wtih 28 error code that's not expected.
-							out = curlConnectionTimeoutCode
+							// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
+							// time out with curl 28. With the fwmark rule installed, IPv6
+							// follows the same known-broken path as IPv4 and fails with curl 56.
+							out = curlConnectionResetCode
 							errBool = true
-							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-								out = curlConnectionResetCode
-							}
 						}
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 					}),
@@ -2042,14 +2036,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
 						// This should avoid the mentioned issue.
 						if IsGatewayModeLocal(f.ClientSet) {
-							// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846
-							// its supposed to fail with 56 error code which is fine
-							// but due to this fwmark bug it ends up failing wtih 28 error code that's not expected.
-							out = curlConnectionTimeoutCode
+							// The IPv6 fwmark rule bug from issue #5846 made dual-stack IPv6
+							// time out with curl 28. With the fwmark rule installed, IPv6
+							// follows the same known-broken path as IPv4 and fails with curl 56.
+							out = curlConnectionResetCode
 							errBool = true
-							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-								out = curlConnectionResetCode
-							}
 						}
 						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
 					}),
