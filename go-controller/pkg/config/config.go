@@ -577,7 +577,7 @@ type GatewayConfig struct {
 	RouterSubnet string `gcfg:"router-subnet"`
 	// SingeNode indicates the cluster has only one node
 	SingleNode bool `gcfg:"single-node"`
-	// DisableForwarding (enabled by default) controls if forwarding is allowed on OVNK controlled interfaces
+	// DisableForwarding controls if forwarding is blocked on non-OVNK controlled interfaces
 	DisableForwarding bool `gcfg:"disable-forwarding"`
 	// AllowNoUplink (disabled by default) controls if the external gateway bridge without an uplink port is allowed in local gateway mode.
 	AllowNoUplink bool `gcfg:"allow-no-uplink"`
@@ -1620,7 +1620,7 @@ var OVNGatewayFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:        "disable-forwarding",
-		Usage:       "Disable forwarding on OVNK controlled interfaces.",
+		Usage:       "Disable forwarding except on OVNK controlled interfaces.",
 		Destination: &cliConfig.Gateway.DisableForwarding,
 	},
 	&cli.StringFlag{
