@@ -168,7 +168,7 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			// table0, Geneve packets coming from LOCAL. Skip conntrack and send to external
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, in_port=%s, udp6, udp_dst=%d, "+
-					"actions=output:%s", nodetypes.DefaultOpenFlowCookie, nodetypes.OvsLocalPort, config.Default.EncapPort, ofPortPhys))
+					"actions=output:%s", nodetypes.DefaultOpenFlowCookie, ofPortHost, config.Default.EncapPort, ofPortPhys))
 		}
 
 		physicalIP, err := util.MatchFirstIPNetFamily(true, bridgeIPs)
@@ -653,7 +653,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					// Allow (a) OVN->host traffic on the same node
 					// (b) host->host traffic on the same node
 					if config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal {
-						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, false)...)
+						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, ofPortHost, hostSubnets, false)...)
 					}
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
@@ -754,7 +754,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					// Allow (a) OVN->host traffic on the same node
 					// (b) host->host traffic on the same node
 					if config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal {
-						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, true)...)
+						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, ofPortHost, hostSubnets, true)...)
 					}
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
@@ -1044,7 +1044,7 @@ func getIPv(ipnet *net.IPNet) string {
 // when the localnet is mapped to breth0.
 // The expected srcMAC is the MAC address of breth0 and the expected hostSubnets is the host subnets found on the node
 // primary interface.
-func hostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC string, hostSubnets []*net.IPNet, isV6 bool) []string {
+func hostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC, ofPortHost string, hostSubnets []*net.IPNet, isV6 bool) []string {
 	var flows []string
 	var ipFamily, ipFamilyDest string
 
@@ -1088,7 +1088,7 @@ func hostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC stri
 		if utilnet.IsIPv6(hostSubnet.IP) != isV6 {
 			continue
 		}
-		flows = append(flows, formatFlow(nodetypes.OvsLocalPort, hostSubnet.String(), nodetypes.CtMarkHost))
+		flows = append(flows, formatFlow(ofPortHost, hostSubnet.String(), nodetypes.CtMarkHost))
 	}
 
 	if isV6 {
@@ -1116,7 +1116,7 @@ func hostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC stri
 
 			// Traffic path (a) for ICMP: OVN->localnet for local gw mode
 			// Traffic path (b) for ICMP: host->localnet for both gw modes
-			flows = append(flows, formatICMPFlow(nodetypes.OvsLocalPort, nodetypes.CtMarkHost, icmpType))
+			flows = append(flows, formatICMPFlow(ofPortHost, nodetypes.CtMarkHost, icmpType))
 		}
 	}
 	return flows
