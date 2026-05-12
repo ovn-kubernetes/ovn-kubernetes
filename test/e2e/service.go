@@ -2266,6 +2266,192 @@ spec:
 		framework.Logf("Confirmed traffic reached both target ports %d and %d", port1, port2)
 	})
 
+	// This test verifies that external NodePort traffic arriving at breth0
+	// (in_port=physical) is load-balanced across multiple host-network target
+	// ports via the OpenFlow select group. A host-network client on a
+	// different node ensures traffic traverses the physical network and
+	// enters the target node's OVS bridge from the external port, exercising
+	// the breth0 ETP=Local DNAT path rather than the OVN LB pipeline.
+	ginkgo.It("Distributes external traffic to multiple host-network endpoints with different named target ports", func() {
+		namespace := f.Namespace.Name
+		ctx := context.TODO()
+
+		const (
+			svcName  = "host-ext-multi-port-svc"
+			portName = "http"
+			svcPort  = int32(80)
+		)
+		port1 := int32(infraprovider.Get().GetK8HostPort())
+		port2 := int32(infraprovider.Get().GetK8HostPort())
+		gomega.Expect(port1).ToNot(gomega.Equal(port2),
+			"allocated host ports must differ")
+
+		ginkgo.By("Selecting 2 schedulable nodes")
+		nodeList, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+		framework.ExpectNoError(err)
+		gomega.Expect(len(nodeList.Items)).To(gomega.BeNumerically(">", 1),
+			"need at least 2 nodes so the client sends traffic via the physical network")
+		serverNodeName := nodeList.Items[0].Name
+		clientNodeName := nodeList.Items[1].Name
+
+		labels := map[string]string{"app": "host-ext-multi-port"}
+
+		ginkgo.By(fmt.Sprintf("Creating first host-network pod on %s listening on port %d", serverNodeName, port1))
+		pod1 := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "host-net-pod-1",
+				Namespace: namespace,
+				Labels:    labels,
+			},
+			Spec: v1.PodSpec{
+				NodeName:    serverNodeName,
+				HostNetwork: true,
+				Containers: []v1.Container{
+					{
+						Name:    "agnhost",
+						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Command: []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", port1), "--udp-port=-1"},
+						Ports: []v1.ContainerPort{
+							{
+								Name:          portName,
+								ContainerPort: port1,
+								Protocol:      v1.ProtocolTCP,
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err = cs.CoreV1().Pods(namespace).Create(ctx, pod1, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By(fmt.Sprintf("Creating second host-network pod on %s listening on port %d", serverNodeName, port2))
+		pod2 := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "host-net-pod-2",
+				Namespace: namespace,
+				Labels:    labels,
+			},
+			Spec: v1.PodSpec{
+				NodeName:    serverNodeName,
+				HostNetwork: true,
+				Containers: []v1.Container{
+					{
+						Name:    "agnhost",
+						Image:   imageutils.GetE2EImage(imageutils.Agnhost),
+						Command: []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", port2), "--udp-port=-1"},
+						Ports: []v1.ContainerPort{
+							{
+								Name:          portName,
+								ContainerPort: port2,
+								Protocol:      v1.ProtocolTCP,
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err = cs.CoreV1().Pods(namespace).Create(ctx, pod2, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Waiting for both pods to be running and ready")
+		err = e2epod.WaitForPodsRunningReady(ctx, cs, namespace, 2, 2*time.Minute)
+		framework.ExpectNoError(err)
+
+		ginkgo.By("Creating an ETP=Local NodePort service with a named target port")
+		svc := &v1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      svcName,
+				Namespace: namespace,
+			},
+			Spec: v1.ServiceSpec{
+				Selector: labels,
+				Type:     v1.ServiceTypeNodePort,
+				ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyLocal,
+				Ports: []v1.ServicePort{
+					{
+						Name:       portName,
+						Protocol:   v1.ProtocolTCP,
+						Port:       svcPort,
+						TargetPort: intstr.FromString(portName),
+					},
+				},
+			},
+		}
+		svc, err = cs.CoreV1().Services(namespace).Create(ctx, svc, metav1.CreateOptions{})
+		framework.ExpectNoError(err)
+		nodePort := svc.Spec.Ports[0].NodePort
+
+		ginkgo.By("Waiting for endpoint slices to contain both target ports")
+		err = wait.PollImmediate(framework.Poll, 1*time.Minute, func() (bool, error) {
+			ports, err := getReadyEndpointSlicePorts(cs, namespace, svcName)
+			if err != nil {
+				return false, nil
+			}
+			if ports.Has(port1) && ports.Has(port2) {
+				framework.Logf("Endpoint slices contain both ports: %v", ports.UnsortedList())
+				return true, nil
+			}
+			framework.Logf("Current endpoint slice ports: %v (waiting for both %d and %d)", ports.UnsortedList(), port1, port2)
+			return false, nil
+		})
+		framework.ExpectNoError(err, "timed out waiting for both target ports in endpoint slices")
+
+		ginkgo.By(fmt.Sprintf("Creating a host-network client pod on %s", clientNodeName))
+		clientPod := e2epod.NewAgnhostPod(namespace, "curl-host-client", nil, nil, nil)
+		clientPod.Spec.NodeName = clientNodeName
+		clientPod.Spec.HostNetwork = true
+		for k := range clientPod.Spec.Containers {
+			if clientPod.Spec.Containers[k].Name == "agnhost-container" {
+				clientPod.Spec.Containers[k].Command = []string{"sleep", "infinity"}
+				clientPod.Spec.Containers[k].SecurityContext.Privileged = pointer.Bool(true)
+			}
+		}
+		clientPod = e2epod.NewPodClient(f).CreateSync(ctx, clientPod)
+
+		serverNode := nodeList.Items[0]
+		serverNodeIPs := e2enode.GetAddresses(&serverNode, v1.NodeInternalIP)
+		gomega.Expect(serverNodeIPs).ToNot(gomega.BeEmpty())
+
+		for _, serverNodeIP := range serverNodeIPs {
+			addrLabel := "IPv4"
+			if utilnet.IsIPv6String(serverNodeIP) {
+				addrLabel = "IPv6"
+			}
+
+			ginkgo.By(fmt.Sprintf("Curling %s NodePort %d on %s (%s) to verify traffic reaches both target ports",
+				addrLabel, nodePort, serverNodeName, serverNodeIP))
+			curlCmd := fmt.Sprintf("curl -q -s --max-time 2 --connect-timeout 1 http://%s/serverport",
+				net.JoinHostPort(serverNodeIP, fmt.Sprintf("%d", nodePort)))
+
+			hitPort1 := false
+			hitPort2 := false
+			gomega.Eventually(func() error {
+				stdout, err := e2epodoutput.RunHostCmd(namespace, clientPod.Name, curlCmd)
+				if err != nil {
+					return fmt.Errorf("connection failed: %v", err)
+				}
+				resp := strings.TrimSpace(stdout)
+				if resp == "" {
+					return fmt.Errorf("empty response from service")
+				}
+				framework.Logf("[%s] Got response from server port: %s", addrLabel, resp)
+				if resp == fmt.Sprintf("%d", port1) {
+					hitPort1 = true
+				} else if resp == fmt.Sprintf("%d", port2) {
+					hitPort2 = true
+				}
+				if hitPort1 && hitPort2 {
+					return nil
+				}
+				return fmt.Errorf("have not yet hit both ports via %s: hitPort1=%v, hitPort2=%v", addrLabel, hitPort1, hitPort2)
+			}, 30*time.Second, 500*time.Millisecond).Should(gomega.Succeed(),
+				"external traffic via %s must reach both host-network endpoints (ports %d and %d) via breth0 OpenFlow group",
+				addrLabel, port1, port2)
+			framework.Logf("[%s] Confirmed traffic reached both target ports %d and %d", addrLabel, port1, port2)
+		}
+	})
+
 })
 
 // getReadyEndpointSlicePorts returns the set of target port numbers from endpoint
