@@ -4,7 +4,7 @@
 
 set -ex
 
-export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
+export KUBECONFIG="${KUBECONFIG:-${HOME}/${KIND_CLUSTER_NAME}.conf}"
 export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-fedora:pr}
 export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
 
