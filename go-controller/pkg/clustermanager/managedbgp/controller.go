@@ -6,9 +6,9 @@ package managedbgp
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"reflect"
 	"sort"
+	"strings"
 
 	frrtypes "github.com/metallb/frr-k8s/api/v1beta1"
 	frrclientset "github.com/metallb/frr-k8s/pkg/client/clientset/versioned"
@@ -43,45 +43,27 @@ const (
 	// Used with FieldManager in Create/Update options so that isOwnUpdate can
 	// filter out informer events that result from our own writes.
 	fieldManager = "clustermanager-managed-bgp-controller"
-	// frrConfigManagedLabel is the label used to identify FRRConfigurations managed by this controller
-	frrConfigManagedLabel = "k8s.ovn.org/managed-internal-fabric"
-	// frrConfigManagedValue is the value used for the frrConfigManagedLabel
-	frrConfigManagedValue = "bgp"
-	// managedRANetworkLabel is the label used to identify managed resources by network name.
-	// It is set on managed RouteAdvertisements and on CUDNs (to enable RA network selection).
-	managedRANetworkLabel = "k8s.ovn.org/managed-network"
-	// managedNamePrefix is the prefix for managed resource names
-	managedNamePrefix = "ovnk-managedbgp-"
-	// managedFRRConfigurationName is the static name for the managed base FRRConfiguration.
-	managedFRRConfigurationName = "ovnk-managedbgp-nooverlay"
+	// managedNetworkLabel is the label used to identify managed resources by network name.
+	// It is set on managed RouteAdvertisements, FRRConfigurations, and CUDNs.
+	managedNetworkLabel = "k8s.ovn.org/managed-bgp"
+	// managedNamePrefix is the name for the managed base FRRConfiguration and prefix for RouteAdvertisements
+	managedNamePrefix = "ovnk-managed-bgp"
 )
-
-func managedHashedName(s string) string {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(s))
-	return fmt.Sprintf("%s%x", managedNamePrefix, h.Sum64())
-}
-
-// managedRouteAdvertisementName returns the name of the managed RouteAdvertisement
-// for the given network name. The name follows the pattern "ovnk-managedbgp-<hash>"
-// where <hash> is derived from the network name.
-func managedRouteAdvertisementName(networkName string) string {
-	return managedHashedName(networkName)
-}
 
 // Controller manages the BGP topology for no-overlay networks with managed routing
 type Controller struct {
-	frrClient      frrclientset.Interface
-	frrLister      frrlisters.FRRConfigurationLister
-	raClient       raclientset.Interface
-	raLister       ralisters.RouteAdvertisementsLister
-	cudnClient     cudnclientset.Interface
-	cudnLister     cudnlisters.ClusterUserDefinedNetworkLister
-	nodeController controllerutil.Controller
-	raController   controllerutil.Controller
-	frrController  controllerutil.Controller
-	cudnController controllerutil.Controller
-	wf             *factory.WatchFactory
+	frrClient        frrclientset.Interface
+	frrLister        frrlisters.FRRConfigurationLister
+	raClient         raclientset.Interface
+	raLister         ralisters.RouteAdvertisementsLister
+	cudnClient       cudnclientset.Interface
+	cudnLister       cudnlisters.ClusterUserDefinedNetworkLister
+	nodeController   controllerutil.Controller
+	raController     controllerutil.Controller
+	frrController    controllerutil.Controller
+	cudnController   controllerutil.Controller
+	configReconciler controllerutil.Reconciler
+	wf               *factory.WatchFactory
 }
 
 // NewController creates a new managed BGP controller
@@ -100,9 +82,16 @@ func NewController(
 		wf:         wf,
 	}
 
+	configReconcilerCfg := &controllerutil.ReconcilerConfig{
+		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:   c.ensureManagedConfiguration,
+		Threadiness: 1,
+	}
+	c.configReconciler = controllerutil.NewReconciler(controllerName+"-config", configReconcilerCfg)
+
 	nodeConfig := &controllerutil.ControllerConfig[corev1.Node]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileNode,
+		Reconcile:      func(_ string) error { c.configReconciler.Reconcile(""); return nil },
 		Threadiness:    1,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         wf.NodeCoreInformer().Lister().List,
@@ -112,7 +101,7 @@ func NewController(
 
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileRA,
+		Reconcile:      func(_ string) error { c.configReconciler.Reconcile(""); return nil },
 		Threadiness:    1,
 		Informer:       wf.RouteAdvertisementsInformer().Informer(),
 		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
@@ -122,7 +111,7 @@ func NewController(
 
 	frrConfig := &controllerutil.ControllerConfig[frrtypes.FRRConfiguration]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileFRRConfiguration,
+		Reconcile:      func(_ string) error { c.configReconciler.Reconcile(""); return nil },
 		Threadiness:    1,
 		Informer:       wf.FRRConfigurationsInformer().Informer(),
 		Lister:         wf.FRRConfigurationsInformer().Lister().List,
@@ -134,7 +123,7 @@ func NewController(
 		c.cudnLister = wf.ClusterUserDefinedNetworkInformer().Lister()
 		cudnConfig := &controllerutil.ControllerConfig[userdefinednetworkv1.ClusterUserDefinedNetwork]{
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Reconcile:      c.reconcileNetwork,
+			Reconcile:      c.reconcileCUDN,
 			Threadiness:    1,
 			Informer:       wf.ClusterUserDefinedNetworkInformer().Informer(),
 			Lister:         wf.ClusterUserDefinedNetworkInformer().Lister().List,
@@ -164,6 +153,15 @@ func isCUDNManaged(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) bool {
 		cudn.Spec.Network.NoOverlay.Routing == userdefinednetworkv1.RoutingManaged
 }
 
+// managedRAName returns the fixed RA name for a given network.
+// CDN gets "ovnk-managed-bgp-default", CUDNs share "ovnk-managed-bgp-cudn"
+func managedRAName(networkName string) string {
+	if networkName == types.DefaultNetworkName {
+		return managedNamePrefix + "-default"
+	}
+	return managedNamePrefix + "-cudn"
+}
+
 // getManagedCUDNs returns all CUDNs that are configured for no-overlay with managed routing.
 func (c *Controller) getManagedCUDNs() ([]*userdefinednetworkv1.ClusterUserDefinedNetwork, error) {
 	if c.cudnLister == nil {
@@ -186,7 +184,12 @@ func (c *Controller) getManagedCUDNs() ([]*userdefinednetworkv1.ClusterUserDefin
 func (c *Controller) Start() error {
 	klog.Infof("Starting managed BGP controller")
 
-	controllers := []controllerutil.Reconciler{c.nodeController, c.raController, c.frrController}
+	controllers := []controllerutil.Reconciler{
+		c.configReconciler,
+		c.nodeController,
+		c.raController,
+		c.frrController,
+	}
 	if c.cudnController != nil {
 		controllers = append(controllers, c.cudnController)
 	}
@@ -198,16 +201,20 @@ func (c *Controller) Start() error {
 	if isCDNManaged() {
 		// Trigger initial reconciliation for the CDN managed RouteAdvertisement so
 		// it is created on startup even before any RA informer events arrive.
-		c.raController.Reconcile(managedRouteAdvertisementName(types.DefaultNetworkName))
+		c.configReconciler.Reconcile("")
 	}
-
 	return nil
 }
 
 // Stop stops the managed BGP controller
 func (c *Controller) Stop() {
 	klog.Infof("Stopping managed BGP controller")
-	controllers := []controllerutil.Reconciler{c.nodeController, c.raController, c.frrController}
+	controllers := []controllerutil.Reconciler{
+		c.configReconciler,
+		c.nodeController,
+		c.raController,
+		c.frrController,
+	}
 	if c.cudnController != nil {
 		controllers = append(controllers, c.cudnController)
 	}
@@ -235,15 +242,14 @@ func isManagedRA(ra *ratypes.RouteAdvertisements) bool {
 	if ra == nil {
 		return false
 	}
-	_, ok := ra.Labels[managedRANetworkLabel]
-	return ok
+	return strings.HasPrefix(ra.Name, managedNamePrefix+"-")
 }
 
 func isManagedBaseFRRConfiguration(cfg *frrtypes.FRRConfiguration) bool {
 	if cfg == nil {
 		return false
 	}
-	return cfg.Name == managedFRRConfigurationName
+	return cfg.Name == managedNamePrefix
 }
 
 func (c *Controller) cudnNeedsUpdate(oldCUDN, newCUDN *userdefinednetworkv1.ClusterUserDefinedNetwork) bool {
@@ -263,8 +269,9 @@ func (c *Controller) cudnNeedsUpdate(oldCUDN, newCUDN *userdefinednetworkv1.Clus
 		return false
 	}
 
-	// CUDN spec is immutable, only managedRANetworkLabel changes matter.
-	return oldCUDN.Labels[managedRANetworkLabel] != newCUDN.Labels[managedRANetworkLabel]
+	_, oldHasLabel := oldCUDN.Labels[managedNetworkLabel]
+	newVal, newHasLabel := newCUDN.Labels[managedNetworkLabel]
+	return oldHasLabel != newHasLabel || (newHasLabel && newVal != "")
 }
 
 func (c *Controller) raNeedsUpdate(oldRA, newRA *ratypes.RouteAdvertisements) bool {
@@ -276,13 +283,11 @@ func (c *Controller) raNeedsUpdate(oldRA, newRA *ratypes.RouteAdvertisements) bo
 	if newRA == nil || isOwnUpdate(newRA.ManagedFields) {
 		return false
 	}
-	return oldRA == nil ||
-		!reflect.DeepEqual(oldRA.Spec, newRA.Spec) ||
-		oldRA.Labels[managedRANetworkLabel] != newRA.Labels[managedRANetworkLabel]
+	return oldRA == nil || !reflect.DeepEqual(oldRA.Spec, newRA.Spec)
 }
 
 func (c *Controller) frrNeedsUpdate(oldFRR, newFRR *frrtypes.FRRConfiguration) bool {
-	if !isManagedBaseFRRConfiguration(oldFRR) && !isManagedBaseFRRConfiguration(newFRR) {
+	if !isManagedBaseFRRConfiguration(newFRR) {
 		return false
 	}
 	// Ignore events from our own writes.
@@ -290,134 +295,77 @@ func (c *Controller) frrNeedsUpdate(oldFRR, newFRR *frrtypes.FRRConfiguration) b
 	if newFRR == nil || isOwnUpdate(newFRR.ManagedFields) {
 		return false
 	}
-	return oldFRR == nil ||
-		!reflect.DeepEqual(oldFRR.Spec, newFRR.Spec) ||
-		oldFRR.Labels[frrConfigManagedLabel] != newFRR.Labels[frrConfigManagedLabel]
+	if oldFRR == nil {
+		return true
+	}
+	_, oldHasLabel := oldFRR.Labels[managedNetworkLabel]
+	_, newHasLabel := newFRR.Labels[managedNetworkLabel]
+	return !reflect.DeepEqual(oldFRR.Spec, newFRR.Spec) ||
+		oldHasLabel != newHasLabel
 }
 
-// reconcileNetwork reconciles managed resources for a network (CDN or CUDN).
-// For CUDNs, the key is the CUDN name from the informer. For the CDN, the key
-// is types.DefaultNetworkName, enqueued on startup.
-func (c *Controller) reconcileNetwork(key string) error {
-	var cudn *userdefinednetworkv1.ClusterUserDefinedNetwork
-	var managed bool
-
-	if key == types.DefaultNetworkName {
-		managed = isCDNManaged()
-	} else if c.cudnLister != nil {
-		var err error
-		cudn, err = c.cudnLister.Get(key)
-		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to get CUDN %s: %w", key, err)
-		}
-		if cudn == nil {
-			klog.Infof("CUDN %s was deleted, cleaning up managed RouteAdvertisement", key)
-		}
-		managed = isCUDNManaged(cudn)
+// reconcileCUDN handles CUDN events by ensuring the label is set and then
+// triggering a reconciliation of the managed configuration.
+func (c *Controller) reconcileCUDN(key string) error {
+	cudn, err := c.cudnLister.Get(key)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get CUDN %s: %w", key, err)
 	}
 
-	if managed {
-		return c.ensureManagedNetworkResources(key, cudn)
-	}
-	return c.cleanupManagedNetworkResources(key)
-}
-
-func (c *Controller) ensureManagedNetworkResources(networkName string, cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
-	networkType := "CDN"
-	if cudn != nil {
-		networkType = "CUDN"
-	}
-	if err := c.ensureBaseFRRConfiguration(); err != nil {
-		return fmt.Errorf("failed to ensure base FRRConfiguration for %s %s: %w", networkType, networkName, err)
-	}
-	if cudn != nil {
+	if cudn != nil && isCUDNManaged(cudn) {
 		if err := c.ensureManagedNetworkLabel(cudn); err != nil {
 			return err
 		}
 	}
-	return c.ensureManagedRouteAdvertisement(networkName)
-}
 
-func (c *Controller) cleanupManagedNetworkResources(networkName string) error {
-	if err := c.deleteManagedRA(networkName); err != nil {
-		return err
-	}
-	return c.cleanupBaseFRRConfigurationsIfUnused()
-}
-
-func (c *Controller) cleanupBaseFRRConfigurationsIfUnused() error {
-	managedCUDNs, err := c.getManagedCUDNs()
-	if err != nil {
-		return err
-	}
-	if !isCDNManaged() && len(managedCUDNs) == 0 {
-		return c.cleanupBaseFRRConfigurations()
-	}
+	c.configReconciler.Reconcile("")
 	return nil
 }
 
-func (c *Controller) reconcileRA(key string) error {
-	networkName, err := c.resolveNetworkForRA(key)
-	if err != nil {
-		return err
-	}
-	if networkName == "" {
-		return nil
-	}
-	return c.reconcileNetwork(networkName)
-}
-
-func (c *Controller) reconcileFRRConfiguration(_ string) error {
+// ensureManagedConfiguration configures:
+// - FRRConfiguration if default network or any CUDN transport is set to NoOverlay, deletes it if not
+// - Default network RA if transport is set to NoOverlay, deletes it if not
+// - CUDN RA if any CUDN transport is set to NoOverlay, deletes it if none are NoOverlay
+func (c *Controller) ensureManagedConfiguration(_ string) error {
+	cdnManaged := isCDNManaged()
 	managedCUDNs, err := c.getManagedCUDNs()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get managed CUDNs: %w", err)
 	}
-	if isCDNManaged() || len(managedCUDNs) > 0 {
-		return c.ensureBaseFRRConfiguration()
-	}
-	return c.cleanupBaseFRRConfigurations()
-}
 
-// resolveNetworkForRA resolves the network name for the given RA key.
-func (c *Controller) resolveNetworkForRA(key string) (string, error) {
-	// Get the network name from the RA label if it exists.
-	ra, err := c.raLister.Get(key)
-	if err == nil {
-		if networkName, ok := ra.Labels[managedRANetworkLabel]; ok {
-			return networkName, nil
+	hasManaged := cdnManaged || len(managedCUDNs) > 0
+
+	// Handle FRRConfiguration
+	if hasManaged {
+		if err := c.ensureBaseFRRConfiguration(); err != nil {
+			return fmt.Errorf("failed to ensure base FRRConfiguration: %w", err)
+		}
+	} else {
+		if err := c.cleanupBaseFRRConfigurations(); err != nil {
+			return fmt.Errorf("failed to cleanup base FRRConfiguration: %w", err)
 		}
 	}
 
-	// If the label is missing, determine the network name by matching the RA hash name.
-	if key == managedRouteAdvertisementName(types.DefaultNetworkName) {
-		return types.DefaultNetworkName, nil
-	}
-	if c.cudnLister != nil {
-		allCUDNs, err := c.cudnLister.List(labels.Everything())
-		if err != nil {
-			return "", fmt.Errorf("failed to list CUDNs: %w", err)
+	// Handle CDN RouteAdvertisement
+	if cdnManaged {
+		if err := c.ensureManagedRouteAdvertisement(true); err != nil {
+			return fmt.Errorf("failed to ensure CDN RouteAdvertisement: %w", err)
 		}
-		for _, cudn := range allCUDNs {
-			if key == managedRouteAdvertisementName(cudn.Name) {
-				return cudn.Name, nil
-			}
+	} else {
+		if err := c.deleteManagedRA(true); err != nil {
+			return fmt.Errorf("failed to delete CDN RouteAdvertisement: %w", err)
 		}
 	}
-	return "", nil
-}
 
-func (c *Controller) reconcileNode(_ string) error {
-	// Node IPs only affect the FRRConfiguration peer list.
-	managedCUDNs, err := c.getManagedCUDNs()
-	if err != nil {
-		return err
-	}
-	if !isCDNManaged() && len(managedCUDNs) == 0 {
-		return nil
-	}
-
-	if err := c.ensureBaseFRRConfiguration(); err != nil {
-		return fmt.Errorf("failed to ensure base FRRConfiguration: %w", err)
+	// Handle CUDN RouteAdvertisement
+	if len(managedCUDNs) > 0 {
+		if err := c.ensureManagedRouteAdvertisement(false); err != nil {
+			return fmt.Errorf("failed to ensure CUDN RouteAdvertisement: %w", err)
+		}
+	} else {
+		if err := c.deleteManagedRA(false); err != nil {
+			return fmt.Errorf("failed to delete CUDN RouteAdvertisement: %w", err)
+		}
 	}
 
 	return nil
@@ -466,7 +414,7 @@ func (c *Controller) ensureBaseFRRConfiguration() error {
 		},
 	}
 
-	frrConfigName := managedFRRConfigurationName
+	frrConfigName := managedNamePrefix
 	existing, err := c.frrLister.FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(frrConfigName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -477,26 +425,26 @@ func (c *Controller) ensureBaseFRRConfiguration() error {
 				Name:      frrConfigName,
 				Namespace: config.ManagedBGP.FRRNamespace,
 				Labels: map[string]string{
-					frrConfigManagedLabel: frrConfigManagedValue,
+					managedNetworkLabel: "",
 				},
 			},
 			Spec: desiredSpec,
 		}
 		klog.Infof("Creating base FRRConfiguration")
 		_, err = c.frrClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Create(context.TODO(), frrConfig, metav1.CreateOptions{FieldManager: fieldManager})
-		if err != nil {
+		if err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create base FRRConfiguration: %w", err)
 		}
 	} else {
-		needsUpdate := !reflect.DeepEqual(existing.Spec, desiredSpec) ||
-			existing.Labels[frrConfigManagedLabel] != frrConfigManagedValue
+		_, hasLabel := existing.Labels[managedNetworkLabel]
+		needsUpdate := !reflect.DeepEqual(existing.Spec, desiredSpec) || !hasLabel
 		if needsUpdate {
 			klog.Infof("Updating base FRRConfiguration %s", existing.Name)
 			updated := existing.DeepCopy()
 			if updated.Labels == nil {
 				updated.Labels = map[string]string{}
 			}
-			updated.Labels[frrConfigManagedLabel] = frrConfigManagedValue
+			updated.Labels[managedNetworkLabel] = ""
 			updated.Spec = desiredSpec
 			_, err = c.frrClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Update(context.TODO(), updated, metav1.UpdateOptions{FieldManager: fieldManager})
 			if err != nil {
@@ -508,54 +456,60 @@ func (c *Controller) ensureBaseFRRConfiguration() error {
 	return nil
 }
 
-// ensureManagedNetworkLabel sets managedRANetworkLabel=cudn.Name on the CUDN so that
-// the managed RA's ClusterUserDefinedNetworkSelector can match the CUDN's NADs by label.
-// The RA cannot select by CUDN name directly, so we stamp this label onto the CUDN and
-// reference it from the RA's NetworkSelector.
+// ensureManagedNetworkLabel sets managedNetworkLabel="" on the CUDN so that
+// the shared managed RA's ClusterUserDefinedNetworkSelector can match all managed CUDNs.
+// All managed CUDNs get the same label with empty value for unified selection.
 func (c *Controller) ensureManagedNetworkLabel(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) error {
-	if cudn.Labels != nil && cudn.Labels[managedRANetworkLabel] == cudn.Name {
+	if val, exists := cudn.Labels[managedNetworkLabel]; exists && val == "" {
 		return nil
 	}
-	patch := fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, managedRANetworkLabel, cudn.Name)
+	patch := fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, managedNetworkLabel, "")
 	_, err := c.cudnClient.K8sV1().ClusterUserDefinedNetworks().Patch(
 		context.TODO(), cudn.Name, k8stypes.MergePatchType, []byte(patch), metav1.PatchOptions{FieldManager: fieldManager})
 	if err != nil {
-		return fmt.Errorf("failed to set %s label on CUDN %s: %w", managedRANetworkLabel, cudn.Name, err)
+		return fmt.Errorf("failed to set %s label on CUDN %s: %w", managedNetworkLabel, cudn.Name, err)
 	}
-	klog.Infof("Set %s=%s label on CUDN %s", managedRANetworkLabel, cudn.Name, cudn.Name)
+	klog.Infof("Set %s=\"\" label on CUDN %s", managedNetworkLabel, cudn.Name)
 	return nil
 }
 
-// ensureManagedRouteAdvertisement ensures that the managed RouteAdvertisement for the given
-// network exists with the correct spec. It selects the base FRRConfiguration and advertises
-// pod networks for the specified network.
-func (c *Controller) ensureManagedRouteAdvertisement(networkName string) error {
+func (c *Controller) ensureManagedRouteAdvertisement(isCDN bool) error {
+	var raName string
 	var netSelector apitypes.NetworkSelectors
-	if networkName == types.DefaultNetworkName {
-		if !isCDNManaged() {
+	var networkType string
+
+	if isCDN {
+		raName = managedRAName(types.DefaultNetworkName)
+		networkType = "CDN"
+		netSelector = apitypes.NetworkSelectors{{
+			NetworkSelectionType: apitypes.DefaultNetwork,
+		}}
+	} else {
+		managedCUDNs, err := c.getManagedCUDNs()
+		if err != nil {
+			return err
+		}
+		if len(managedCUDNs) == 0 {
+			klog.V(5).Infof("No managed CUDNs found, skipping shared CUDN RA creation")
 			return nil
 		}
-		netSelector = apitypes.NetworkSelectors{{NetworkSelectionType: apitypes.DefaultNetwork}}
-	} else {
+		raName = managedRAName("cudn")
+		networkType = "CUDN"
 		netSelector = apitypes.NetworkSelectors{{
 			NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
 			ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
 				NetworkSelector: metav1.LabelSelector{
 					MatchLabels: map[string]string{
-						managedRANetworkLabel: networkName,
+						managedNetworkLabel: "",
 					},
 				},
 			},
 		}}
 	}
 
-	raName := managedRouteAdvertisementName(networkName)
 	ra := &ratypes.RouteAdvertisements{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: raName,
-			Labels: map[string]string{
-				managedRANetworkLabel: networkName,
-			},
 		},
 		Spec: ratypes.RouteAdvertisementsSpec{
 			NetworkSelectors: netSelector,
@@ -564,7 +518,7 @@ func (c *Controller) ensureManagedRouteAdvertisement(networkName string) error {
 			},
 			FRRConfigurationSelector: metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					frrConfigManagedLabel: frrConfigManagedValue,
+					managedNetworkLabel: "",
 				},
 			},
 			NodeSelector: metav1.LabelSelector{},
@@ -573,51 +527,76 @@ func (c *Controller) ensureManagedRouteAdvertisement(networkName string) error {
 
 	existing, err := c.raLister.Get(raName)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			klog.Infof("Creating managed RouteAdvertisement %s", raName)
-			_, err = c.raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{FieldManager: fieldManager})
-			if err != nil && !apierrors.IsAlreadyExists(err) {
-				return err
-			}
-			return nil
+		if !apierrors.IsNotFound(err) {
+			return err
 		}
-		return err
+		klog.Infof("Creating managed RouteAdvertisement %s for %s", raName, networkType)
+		_, err = c.raClient.K8sV1().RouteAdvertisements().Create(
+			context.TODO(), ra, metav1.CreateOptions{FieldManager: fieldManager})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		return nil
 	}
 
-	needsUpdate := !reflect.DeepEqual(existing.Spec, ra.Spec) ||
-		existing.Labels[managedRANetworkLabel] != networkName
+	needsUpdate := !reflect.DeepEqual(existing.Spec, ra.Spec)
 	if needsUpdate {
-		klog.Infof("Updating managed RouteAdvertisement %s", raName)
+		klog.Infof("Updating managed RouteAdvertisement %s for %s", raName, networkType)
 		updated := existing.DeepCopy()
-		if updated.Labels == nil {
-			updated.Labels = map[string]string{}
-		}
-		updated.Labels[managedRANetworkLabel] = networkName
 		updated.Spec = ra.Spec
-		_, err = c.raClient.K8sV1().RouteAdvertisements().Update(context.TODO(), updated, metav1.UpdateOptions{FieldManager: fieldManager})
+		_, err = c.raClient.K8sV1().RouteAdvertisements().Update(
+			context.TODO(), updated, metav1.UpdateOptions{FieldManager: fieldManager})
 		return err
 	}
 
 	return nil
 }
 
-// deleteManagedRA deletes the managed RouteAdvertisement for the given network name.
-func (c *Controller) deleteManagedRA(networkName string) error {
-	raName := managedRouteAdvertisementName(networkName)
-	err := c.raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), raName, metav1.DeleteOptions{})
+func (c *Controller) deleteManagedRA(isCDN bool) error {
+	var raName, networkType string
+	if isCDN {
+		raName = managedRAName(types.DefaultNetworkName)
+		networkType = "CDN"
+	} else {
+		raName = managedRAName("cudn")
+		networkType = "CUDN"
+	}
+
+	// Check if the RA exists before trying to delete it
+	_, err := c.raLister.Get(raName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Already deleted, nothing to do
+			return nil
+		}
+		return fmt.Errorf("failed to check existence of RouteAdvertisement %s: %w", raName, err)
+	}
+
+	klog.Infof("Deleting managed RouteAdvertisement %s for %s", raName, networkType)
+	err = c.raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), raName, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete managed RouteAdvertisement %s: %w", raName, err)
+		return fmt.Errorf("failed to delete managed RouteAdvertisement %s for %s: %w", raName, networkType, err)
 	}
 	return nil
 }
 
 // cleanupBaseFRRConfigurations deletes the managed base FRRConfiguration.
 func (c *Controller) cleanupBaseFRRConfigurations() error {
-	klog.Infof("Deleting managed base FRRConfiguration %s", managedFRRConfigurationName)
+	// Check if the FRRConfiguration exists before trying to delete it
+	_, err := c.frrLister.FRRConfigurations(config.ManagedBGP.FRRNamespace).Get(managedNamePrefix)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Already deleted, nothing to do
+			return nil
+		}
+		return fmt.Errorf("failed to check existence of FRRConfiguration %s: %w", managedNamePrefix, err)
+	}
+
+	klog.Infof("Deleting managed base FRRConfiguration %s", managedNamePrefix)
 	if err := c.frrClient.ApiV1beta1().FRRConfigurations(config.ManagedBGP.FRRNamespace).Delete(
-		context.TODO(), managedFRRConfigurationName, metav1.DeleteOptions{},
+		context.TODO(), managedNamePrefix, metav1.DeleteOptions{},
 	); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete base FRRConfiguration %s: %w", managedFRRConfigurationName, err)
+		return fmt.Errorf("failed to delete base FRRConfiguration %s: %w", managedNamePrefix, err)
 	}
 	return nil
 }
