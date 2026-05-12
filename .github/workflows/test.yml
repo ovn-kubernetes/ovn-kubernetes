@@ -40,8 +40,9 @@ env:
   # OVN_GITREF: main
 
 jobs:
-  # separate job for parallelism
+  # TEMPORARY: Disabled for SDN-3551 e2e verification
   lint:
+    if: false
     name: Lint
     runs-on: ubuntu-24.04
     steps:
@@ -67,6 +68,7 @@ jobs:
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
   build-base:
+    if: false
     name: Build-base
     runs-on: ubuntu-24.04
     steps:
@@ -249,6 +251,7 @@ jobs:
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
 
   test-pr:
+    if: false
     name: Test-PR
     runs-on: ubuntu-24.04
     steps:
@@ -297,8 +300,8 @@ jobs:
         GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
   ovn-upgrade-e2e:
+    if: false
     name: Upgrade OVN from Base to PR branch based image
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs:
@@ -469,14 +472,8 @@ jobs:
         # dns-name-resolver : ["", "enable-dns-name-resolver"]
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
+        # TEMPORARY: Full matrix minus conformance, all lanes run WHAT="target port" for SDN-3551 verification.
         include:
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default"}
-          - {"target": "shard-conformance", "ha": "HA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default"}
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "no-overlay": "true"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "managed", "no-overlay": "managed"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
@@ -693,37 +690,9 @@ jobs:
         # used by e2e diagnostics package
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
 
-        if [ "${{ matrix.target }}" == "multi-homing" ]; then
-          make -C test control-plane WHAT="Multi Homing"
-        elif [ "${{ matrix.target }}" == "node-ip-mac-migration" ]; then
-          make -C test control-plane WHAT="Node IP and MAC address migration"
-        elif [ "${{ matrix.target }}" == "external-gateway" ]; then
-          make -C test control-plane WHAT="External Gateway"
-        elif [ "${{ matrix.target }}" == "kv-live-migration" ]; then
-          make -C test control-plane WHAT="Kubevirt Virtual Machines"
-        elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
-          make -C test control-plane WHAT="Network Segmentation"
-          make -C test control-plane WHAT="ClusterNetworkConnect"
-        elif [ "${{ matrix.target }}" == "evpn" ]; then
-          make -C test control-plane WHAT="EVPN"
-        elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
-          make -C test control-plane
-        elif [ "${{ matrix.target }}" == "serial" ]; then
-          # Run only Serial tests with ginkgo focus
-          make -C test control-plane WHAT=Serial
-        elif [ "${{ matrix.target }}" == "tools" ]; then
-          make -C go-controller build
-          make -C test tools
-        elif [ "${{ matrix.target }}" == "traffic-flow-test-only" ]; then
-          # Traffic Flow Tests can be ran as part of a target, as an additional
-          # set of test, set via TRAFFIC_FLOW_TESTS. See below.
-          :
-        else
-          make -C test "${{ matrix.target }}"
-          if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
-            make -C test conformance
-          fi
-        fi
+        # TEMPORARY: All lanes run only the SDN-3551 "target port" tests.
+        # Lanes whose cluster config doesn't match any test will be no-ops.
+        make -C test control-plane WHAT="target port"
 
         # If target also specified traffic flow tests to run, do so now
         if [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
@@ -750,8 +719,8 @@ jobs:
         path: /tmp/kind/logs
 
   e2e-dual-conversion:
+    if: false
     name: e2e-dual-conversion
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:

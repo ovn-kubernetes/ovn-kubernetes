@@ -29,6 +29,7 @@ env:
 
 jobs:
   performance-job:
+    if: false
     name: performance
     runs-on: [oracle-vm-32cpu-128gb-x86-64]
     timeout-minutes: 240
@@ -402,23 +403,7 @@ jobs:
   build-pr:
     name: Build-PR
     runs-on: ubuntu-24.04
-    if: |
-      (github.event_name != 'issue_comment') ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test kubelet-density-cni')) ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test udn-density-l2-noPods')) ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test cudn-density-l2-noPods')) ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test udn-density-l2-pods')) ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test cudn-density-l2-pods-netpol')) ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test udn-density-l2-pods-netpol')) ||
-      (github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/perf-test udn-density-l3-pods-netpol')) ||
-      (github.event_name == 'workflow_dispatch')
+    if: false
     steps:
     - name: Restore PR image cache
       id: image_cache_pr
