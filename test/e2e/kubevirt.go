@@ -1935,19 +1935,19 @@ write_files:
 				}
 
 				By("Setting up EVPN infrastructure and external containers")
-			Expect(runEVPNNetworkAndServers(
-				fr,
-				providerCtx,
-				shortName,
-				ipFamilies,
-				&cudn.Spec.Network,
-				bgpAlloc,
-				bgpASN,
-				bgpASN,
-				"frr",
-				"br"+shortName,
-				"vx"+shortName,
-				sharedNodeIPsVTEPName,
+				Expect(runEVPNNetworkAndServers(
+					fr,
+					providerCtx,
+					shortName,
+					ipFamilies,
+					&cudn.Spec.Network,
+					bgpAlloc,
+					bgpASN,
+					bgpASN,
+					routerContainerName,
+					"br"+shortName,
+					"vx"+shortName,
+					sharedNodeIPsVTEPName,
 					&externalMACVRFContainer,
 					externalMACVRFContainer.Name,
 					&externalContainer,
