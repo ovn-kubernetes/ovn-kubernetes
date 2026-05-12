@@ -340,11 +340,10 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					if len(nodeportFlows) > 0 {
 						npw.ofm.updateFlowCacheEntry(key, nodeportFlows)
 						npw.ofm.updateGroupCacheEntry(key, nodeportGroups)
-						continue
+					} else {
+						npw.ofm.updateGroupCacheEntry(key, nil)
 					}
-					npw.ofm.updateGroupCacheEntry(key, nil)
-				}
-				if config.Gateway.Mode == config.GatewayModeShared {
+				} else if config.Gateway.Mode == config.GatewayModeShared {
 					// case2 (see function description for details)
 					npw.ofm.updateFlowCacheEntry(key, []string{
 						// table=0, matches on service traffic towards nodePort and sends it to OVN pipeline
@@ -524,7 +523,6 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 		// And then ensure that return traffic is UnDNATed correctly back
 		// to the ingress / external IP
 		isServiceTypeETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
-		hostNetworkFlowsAdded := false
 		if isServiceTypeETPLocal && hasLocalHostNetworkEp {
 			// Get the target port (this is important for named ports).
 			svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
@@ -558,12 +556,10 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 			externalIPFlows = append(externalIPFlows, hostNetworkFlows...)
 			if len(hostNetworkFlows) > 0 {
 				npw.ofm.updateGroupCacheEntry(key, hostNetworkGroups)
-				hostNetworkFlowsAdded = true
 			} else {
 				npw.ofm.updateGroupCacheEntry(key, nil)
 			}
-		}
-		if !hostNetworkFlowsAdded && config.Gateway.Mode == config.GatewayModeShared {
+		} else if config.Gateway.Mode == config.GatewayModeShared {
 			// add the ICMP Fragmentation flow for shared gateway mode.
 			icmpFlow := nodeutil.GenerateICMPFragmentationFlow(externalIPOrLBIngressIP, netConfig.OfPortPatch, npw.ofportPhys, cookie, 110)
 			externalIPFlows = append(externalIPFlows, icmpFlow)
