@@ -548,7 +548,7 @@ func setEncapPort(ctx context.Context) error {
 	return nil
 }
 
-func isOVNControllerReady() (bool, error) {
+func isOVNControllerReady(ovsClient client.Client) (bool, error) {
 	// check node's connection status
 	ret, _, err := util.RunOVNControllerAppCtl("connection-status")
 	if err != nil {
@@ -560,8 +560,7 @@ func isOVNControllerReady() (bool, error) {
 	}
 
 	// check whether br-int exists on node
-	_, _, err = util.RunOVSVsctl("--", "br-exists", "br-int")
-	if err != nil {
+	if _, err := ovsops.GetBridge(ovsClient, "br-int"); err != nil {
 		return false, nil
 	}
 
@@ -1050,8 +1049,8 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		if err := ovsops.DeleteBridge(nc.ovsClient, "br-ext"); err != nil {
 			klog.Errorf("Deletion of bridge br-ext failed: %v", err)
 		}
-		if _, stderr, err := util.RunOVSVsctl("--if-exists", "del-port", "br-int", "int"); err != nil {
-			klog.Errorf("Deletion of port int on  br-int failed: %v (%v)", err, stderr)
+		if err := ovsops.DeletePortWithInterfaces(nc.ovsClient, "br-int", "int"); err != nil {
+			klog.Errorf("Deletion of port int on br-int failed: %v", err)
 		}
 	}
 
