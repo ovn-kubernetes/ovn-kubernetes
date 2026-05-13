@@ -13,9 +13,11 @@ import (
 	"github.com/vishvananda/netlink"
 
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	mock_k8s_io_utils_exec "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/utils/exec"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 func TestGetNicName(t *testing.T) {
@@ -588,565 +590,148 @@ func TestBridgeToNic(t *testing.T) {
 	mockLink := new(netlink_mocks.Link)
 	// below is defined in net_linux.go
 	netLinkOps = mockNetLinkOps
+
+	bridgeUUID := "bridge-uuid"
+	patchPortUUID := "patch-port-uuid"
+	patchIfaceUUID := "patch-iface-uuid"
+	normalPortUUID := "normal-port-uuid"
+	normalIfaceUUID := "normal-iface-uuid"
+	brIntUUID := "br-int-uuid"
+	peerPortUUID := "peer-port-uuid"
+	peerIfaceUUID := "peer-iface-uuid"
+
+	bridgeWithPatch := func() []libovsdbtest.TestData {
+		return []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID, brIntUUID}},
+			&vswitchd.Bridge{UUID: bridgeUUID, Name: "breth0", Ports: []string{patchPortUUID, normalPortUUID}},
+			&vswitchd.Port{UUID: patchPortUUID, Name: "patch-breth0-to-br-int", Interfaces: []string{patchIfaceUUID}},
+			&vswitchd.Interface{UUID: patchIfaceUUID, Name: "patch-breth0-to-br-int", Type: "patch", Options: map[string]string{"peer": "patch-br-int-to-breth0"}},
+			&vswitchd.Port{UUID: normalPortUUID, Name: "eth0", Interfaces: []string{normalIfaceUUID}},
+			&vswitchd.Interface{UUID: normalIfaceUUID, Name: "eth0", Type: "system"},
+			&vswitchd.Bridge{UUID: brIntUUID, Name: "br-int", Ports: []string{peerPortUUID}},
+			&vswitchd.Port{UUID: peerPortUUID, Name: "patch-br-int-to-breth0", Interfaces: []string{peerIfaceUUID}},
+			&vswitchd.Interface{UUID: peerIfaceUUID, Name: "patch-br-int-to-breth0", Type: "patch", Options: map[string]string{"peer": "patch-breth0-to-br-int"}},
+		}
+	}
+
+	minimalOvs := func() []libovsdbtest.TestData {
+		return []libovsdbtest.TestData{&vswitchd.OpenvSwitch{UUID: "root-ovs"}}
+	}
+
+	// netlink prelude shared by tests that get past the early netlink-only failures.
+	netlinkPrelude := []ovntest.TestifyMockHelper{
+		// bridgeLink, err := netlink.LinkByName(bridge)
+		{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+		// addrs, err := netlink.AddrList(bridgeLink, ...)
+		{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
+		// routes, err := netlink.RouteList(bridgeLink, ...)
+		{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
+		// ifaceLink, err := netlink.LinkByName(nicName)
+		{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+		// saveIPAddress: AddrDel, AddrAdd, LinkSetUp
+		{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
+		{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
+		{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
+		// saveRoute: RouteDel, RouteAdd
+		{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
+		{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
+	}
+	linkAttrsPrelude := []ovntest.TestifyMockHelper{
+		// saveIPAddress's call to newLink.Attrs() (for addr.Label)
+		{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+		// saveRoute -> delAddRoute -> newLink.Attrs().Index
+		{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+	}
+	// GetNicName mock setup (three ovs-vsctl calls)
+	nicNameExec := []ovntest.TestifyMockHelper{
+		{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
+		{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
+		{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
+	}
+	nicNameKexec := []ovntest.TestifyMockHelper{
+		{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+		{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+		{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+	}
+
 	tests := []struct {
 		desc                     string
 		inpBridge                string
 		errExp                   bool
+		initialOvsData           []libovsdbtest.TestData
+		expectedOvsData          []libovsdbtest.TestData
 		onRetArgsExecUtilsIface  []ovntest.TestifyMockHelper
 		onRetArgsKexecIface      []ovntest.TestifyMockHelper
 		onRetArgsNetLinkLibOpers []ovntest.TestifyMockHelper
 		onRetArgsLinkIfaceOpers  []ovntest.TestifyMockHelper
 	}{
 		{
-			desc:      "invalid bridge name fails to return a link",
-			inpBridge: "brinvalid",
-			errExp:    true,
+			desc:           "invalid bridge name fails to return a link",
+			inpBridge:      "brinvalid",
+			errExp:         true,
+			initialOvsData: minimalOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
 		},
 		{
-			desc:      "IP address retrieval for link fails",
-			inpBridge: "breth0",
-			errExp:    true,
+			desc:           "IP address retrieval for link fails",
+			inpBridge:      "breth0",
+			errExp:         true,
+			initialOvsData: minimalOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
 		},
 		{
-			desc:      "Route retrieval for link fails",
-			inpBridge: "breth0",
-			errExp:    true,
+			desc:           "Route retrieval for link fails",
+			inpBridge:      "breth0",
+			errExp:         true,
+			initialOvsData: minimalOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
 				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
 		},
 		{
-			desc:      "Nic Name retrieval using bridge name fails",
-			inpBridge: "breth0",
-			errExp:    true,
-			// Below two entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below entry is for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below entry is for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
+			desc:           "retrieving interface link using nic name fails",
+			inpBridge:      "breth0",
+			errExp:         true,
+			initialOvsData: minimalOvs(),
+			onRetArgsExecUtilsIface: nicNameExec,
+			onRetArgsKexecIface:     nicNameKexec,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
 				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, nil}},
-			},
-		},
-		{
-			desc:      "retrieving interface link using nic name fails",
-			inpBridge: "breth0",
-			errExp:    true,
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
 		},
 		{
-			desc:      "saving IP address to iface fails",
-			inpBridge: "breth0",
-			errExp:    true,
-			// Below two entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}}},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three rows are to invoke the save ip adddress function
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
+			desc:                     "bridge not present in ovsdb cache returns an error",
+			inpBridge:                "breth0",
+			errExp:                   true,
+			initialOvsData:           minimalOvs(),
+			onRetArgsExecUtilsIface:  nicNameExec,
+			onRetArgsKexecIface:      nicNameKexec,
+			onRetArgsNetLinkLibOpers: netlinkPrelude,
+			onRetArgsLinkIfaceOpers:  linkAttrsPrelude,
 		},
 		{
-			desc:      "saving routes to iface fails",
-			inpBridge: "breth0",
-			errExp:    true,
-			// Below two entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
+			desc:                     "deletes bridge and removes patch peer from br-int; non-patch ports are ignored",
+			inpBridge:                "breth0",
+			errExp:                   false,
+			initialOvsData:           bridgeWithPatch(),
+			expectedOvsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{brIntUUID}},
+				&vswitchd.Bridge{UUID: brIntUUID, Name: "br-int"},
 			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "list-ifaces (via RunOVSVsctl) for given bridge errors out",
-			inpBridge: "breth0",
-			errExp:    true,
-			// Below two entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				//Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below entry is for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "determining iface type fails",
-			inpBridge: "breth0",
-			errExp:    true,
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("9d2bc35689fa975")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below rows are for mocking the three RunOVSVsctl executed inside the for loop that processes the interface list returned
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "test code path where the interface type IS NOT patch",
-			inpBridge: "breth0",
-			errExp:    true,
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("9d2bc35689fa975")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("internal")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below rows are for mocking the three RunOVSVsctl executed inside the for loop that processes the interface list returned
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "fails to get peer port for patch interface",
-			inpBridge: "breth0",
-			errExp:    true,
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("ovn-3e22f4-0")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("patch")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below rows are for mocking the three RunOVSVsctl executed inside the for loop that processes the interface list returned
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "failed to delete peer patch port on br-int",
-			inpBridge: "breth0",
-			errExp:    true,
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("ovn-3e22f4-0")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("patch")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below rows are for mocking the three RunOVSVsctl executed inside the for loop that processes the interface list returned
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "deleting the bridge fails",
-			inpBridge: "breth0",
-			errExp:    true,
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("ovn-3e22f4-0")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("patch")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below rows are for mocking the three RunOVSVsctl executed inside the for loop that processes the interface list returned
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
-		},
-		{
-			desc:      "delete bridge successfully",
-			inpBridge: "breth0",
-			onRetArgsExecUtilsIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 3, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("ovn-3e22f4-0")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("patch")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				//Below three entries are for mocking the `nicName, err := GetNicName(bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below rows are for mocking the three RunOVSVsctl executed inside the for loop that processes the interface list returned
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-				// Below row is for mocking the `stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)` code path
-				{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `bridgeLink, err := netlink.LinkByName(bridge)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below row entry is for mocking the `addrs, err := netlink.AddrList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
-				// Below row entry is for mocking the `routes, err := netlink.RouteList(bridgeLink, syscall.AF_INET)` code path
-				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Route{{Gw: ovntest.MustParseIP("10.10.10.1"), LinkIndex: 1}}, nil}},
-				// Below row entry is for mocking the `ifaceLink, err := netlink.LinkByName(nicName)` code path
-				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
-				// Below three row entries are for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "AddrDel", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path
-				{OnCallMethodName: "RouteDel", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
-			},
-			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
-				// Below row entry is for mocking the `if err = saveIPAddress(bridgeLink, ifaceLink, addrs); err != nil` code path
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-				// Below two row entries are for mocking the `if err = saveRoute(bridgeLink, ifaceLink, routes); err != nil` code path.
-				//The delAddRoute function is indirectly invoked and needs mocking of Attrs() function.
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
-			},
+			onRetArgsExecUtilsIface:  nicNameExec,
+			onRetArgsKexecIface:      nicNameKexec,
+			onRetArgsNetLinkLibOpers: netlinkPrelude,
+			onRetArgsLinkIfaceOpers:  linkAttrsPrelude,
 		},
 	}
 	for i, tc := range tests {
@@ -1156,12 +741,22 @@ func TestBridgeToNic(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
-			err := BridgeToNic(tc.inpBridge)
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: tc.initialOvsData})
+			require.NoError(t, err, "harness setup")
+			t.Cleanup(cleanup.Cleanup)
+
+			err = BridgeToNic(ovsClient, tc.inpBridge)
 			t.Log(err)
 			if tc.errExp {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
+			}
+			if tc.expectedOvsData != nil {
+				matcher := libovsdbtest.HaveData(tc.expectedOvsData)
+				ok, mErr := matcher.Match(ovsClient)
+				assert.True(t, ok, matcher.FailureMessage(ovsClient))
+				assert.NoError(t, mErr)
 			}
 			mockKexecIface.AssertExpectations(t)
 			mockExecRunner.AssertExpectations(t)

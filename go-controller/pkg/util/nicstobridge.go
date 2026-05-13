@@ -7,6 +7,7 @@
 package util
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,12 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 const (
@@ -279,8 +286,9 @@ func NicToBridge(iface string) (string, error) {
 }
 
 // BridgeToNic moves the IP address and routes of internal port of the bridge to
-// underlying NIC interface and deletes the OVS bridge.
-func BridgeToNic(bridge string) error {
+// underlying NIC interface and deletes the OVS bridge. Patch ports attached to
+// the bridge have their peers on br-int removed first.
+func BridgeToNic(ovsClient libovsdbclient.Client, bridge string) error {
 	// Internal port is named same as the bridge
 	bridgeLink, err := netLinkOps.LinkByName(bridge)
 	if err != nil {
@@ -317,43 +325,48 @@ func BridgeToNic(bridge string) error {
 		return err
 	}
 
-	// for every bridge interface that is of type "patch", find the peer
-	// interface and delete that interface from the integration bridge
-	stdout, stderr, err := RunOVSVsctl("list-ifaces", bridge)
+	// For every patch interface on the bridge, find its peer interface and
+	// delete the peer port from the integration bridge.
+	br, err := ovsops.GetBridge(ovsClient, bridge)
 	if err != nil {
-		klog.Errorf("Failed to get interfaces for OVS bridge: %q, "+
-			"stderr: %q, error: %v", bridge, stderr, err)
+		klog.Errorf("Failed to look up OVS bridge %q: %v", bridge, err)
 		return err
 	}
-	ifacesList := strings.Split(strings.TrimSpace(stdout), "\n")
-	for _, iface := range ifacesList {
-		stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "type")
+	for _, portUUID := range br.Ports {
+		port := &vswitchd.Port{UUID: portUUID}
+		ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+		err := ovsClient.Get(ctx, port)
+		cancel()
 		if err != nil {
-			klog.Warningf("Failed to determine the type of interface: %q, "+
-				"stderr: %q, error: %v", iface, stderr, err)
-			continue
-		} else if stdout != "patch" {
-			continue
-		}
-		stdout, stderr, err = RunOVSVsctl("get", "interface", iface, "options:peer")
-		if err != nil {
-			klog.Warningf("Failed to get the peer port for patch interface: %q, "+
-				"stderr: %q, error: %v", iface, stderr, err)
+			klog.Warningf("Failed to look up Port %s on bridge %q: %v", portUUID, bridge, err)
 			continue
 		}
-		// stdout has the peer interface, just delete it
-		peer := strings.TrimSpace(stdout)
-		_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)
-		if err != nil {
-			klog.Warningf("Failed to delete patch port %q on br-int, "+
-				"stderr: %q, error: %v", peer, stderr, err)
+		for _, ifaceUUID := range port.Interfaces {
+			iface := &vswitchd.Interface{UUID: ifaceUUID}
+			ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+			err := ovsClient.Get(ctx, iface)
+			cancel()
+			if err != nil {
+				klog.Warningf("Failed to look up Interface %s on port %q: %v", ifaceUUID, port.Name, err)
+				continue
+			}
+			if iface.Type != "patch" {
+				continue
+			}
+			peer := iface.Options["peer"]
+			if peer == "" {
+				klog.Warningf("Patch interface %q has no peer option", iface.Name)
+				continue
+			}
+			if err := ovsops.DeletePortWithInterfaces(ovsClient, "br-int", peer); err != nil {
+				klog.Warningf("Failed to delete patch port %q on br-int: %v", peer, err)
+			}
 		}
 	}
 
 	// Now delete the bridge
-	stdout, stderr, err = RunOVSVsctl("--", "--if-exists", "del-br", bridge)
-	if err != nil {
-		klog.Errorf("Failed to delete OVS bridge, stdout: %q, stderr: %q, error: %v", stdout, stderr, err)
+	if err := ovsops.DeleteBridge(ovsClient, bridge); err != nil {
+		klog.Errorf("Failed to delete OVS bridge %q: %v", bridge, err)
 		return err
 	}
 	klog.Infof("Successfully deleted OVS bridge %q", bridge)
