@@ -285,7 +285,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 
 	egressGWInterface := ""
 	if config.Gateway.EgressGWInterface != "" {
-		egressGWInterface = interfaceForEXGW(config.Gateway.EgressGWInterface)
+		egressGWInterface = interfaceForEXGW(nc.ovsClient, config.Gateway.EgressGWInterface)
 	}
 
 	// Get interface addresses based on node mode
@@ -345,7 +345,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 	}
 
 	readyGwFunc := func() (bool, error) {
-		controllerReady, err := isOVNControllerReady()
+		controllerReady, err := isOVNControllerReady(nc.ovsClient)
 		if err != nil || !controllerReady {
 			return false, err
 		}
@@ -412,14 +412,14 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 // and returns the name of the bridge if exists, or the interface itself
 // if the bridge needs to be created. In this last scenario, BridgeForInterface
 // will create the bridge.
-func interfaceForEXGW(intfName string) string {
-	if _, _, err := util.RunOVSVsctl("br-exists", intfName); err == nil {
+func interfaceForEXGW(ovsClient libovsdbclient.Client, intfName string) string {
+	if _, err := ovsops.GetBridge(ovsClient, intfName); err == nil {
 		// It's a bridge
 		return intfName
 	}
 
 	bridge := util.GetBridgeName(intfName)
-	if _, _, err := util.RunOVSVsctl("br-exists", bridge); err == nil {
+	if _, err := ovsops.GetBridge(ovsClient, bridge); err == nil {
 		// not a bridge, but the corresponding bridge was already created
 		return bridge
 	}
