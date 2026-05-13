@@ -37,6 +37,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
@@ -1046,12 +1047,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}(nc.stopChan)
 	} else if config.IsModeDPU() || config.IsModeFull() {
 		// attempt to cleanup the possibly stale bridge
-		_, stderr, err := util.RunOVSVsctl("--if-exists", "del-br", "br-ext")
-		if err != nil {
-			klog.Errorf("Deletion of bridge br-ext failed: %v (%v)", err, stderr)
+		if err := ovsops.DeleteBridge(nc.ovsClient, "br-ext"); err != nil {
+			klog.Errorf("Deletion of bridge br-ext failed: %v", err)
 		}
-		_, stderr, err = util.RunOVSVsctl("--if-exists", "del-port", "br-int", "int")
-		if err != nil {
+		if _, stderr, err := util.RunOVSVsctl("--if-exists", "del-port", "br-int", "int"); err != nil {
 			klog.Errorf("Deletion of port int on  br-int failed: %v (%v)", err, stderr)
 		}
 	}
