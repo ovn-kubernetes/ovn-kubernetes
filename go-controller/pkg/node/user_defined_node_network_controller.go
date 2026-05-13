@@ -11,6 +11,8 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -43,6 +45,7 @@ func NewUserDefinedNodeNetworkController(
 	ruleManager *iprulemanager.Controller,
 	mpdm *managementport.MgmtPortDeviceManager,
 	defaultNetworkGateway Gateway,
+	ovsClient client.Client,
 ) (*UserDefinedNodeNetworkController, error) {
 
 	snnc := &UserDefinedNodeNetworkController{
@@ -52,6 +55,7 @@ func NewUserDefinedNodeNetworkController(
 			stopChan:                        make(chan struct{}),
 			wg:                              &sync.WaitGroup{},
 			networkManager:                  networkManager,
+			ovsClient:                       ovsClient,
 		},
 		mpdm: mpdm,
 	}

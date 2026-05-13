@@ -78,6 +78,10 @@ type BaseNodeNetworkController struct {
 	// networkManager used for getting network information
 	networkManager networkmanager.Interface
 
+	// ovsClient is the libovsdb client connected to the local ovsdb-server.
+	// Used by DPU representor cleanup and other OVS-aware bookkeeping.
+	ovsClient client.Client
+
 	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
 	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
 	// is nadName; value is DPU_ConnectionDetails when VF representor is successfully configured for that
@@ -142,8 +146,6 @@ type DefaultNodeNetworkController struct {
 
 	nodeAddress net.IP
 	sbZone      string
-
-	ovsClient client.Client
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
@@ -156,9 +158,9 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 			networkManager:                  networkManager,
 			stopChan:                        stopChan,
 			wg:                              wg,
+			ovsClient:                       ovsClient,
 		},
 		routeManager: routeManager,
-		ovsClient:    ovsClient,
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && (config.IsModeDPUHost() || config.IsModeFull()) {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
