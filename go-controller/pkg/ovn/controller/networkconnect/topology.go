@@ -242,6 +242,13 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		}
 	}
 
+	// Pre-build the advertised network isolation override ACL (if strict isolation is enabled).
+	// Built once here and attached to each advertised network's switch inside the loop.
+	advertisedOverrideACL, err := c.prepareAdvertisedOverrideACL(cncName, allocatedSubnets)
+	if err != nil {
+		return fmt.Errorf("CNC %s: failed to prepare advertised override ACL: %w", cncName, err)
+	}
+
 	// Create/update the CNC's service LBG before the per-network loop (like partial connectivity ACLs).
 	// The LBG is created once (with UUID populated via lookup) and reused inside the loop for each network.
 	// If the LBG cannot be created, return early since per-network LBG ops require a valid LBG.
@@ -256,6 +263,11 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			return fmt.Errorf("CNC %s: failed to find LBG %s after creation: %v", cncName, lbgName, err)
 		}
 	}
+
+	// Track which switches should have the advertised override ACL.
+	// Populated at the top of each loop iteration (before error-prone mutations)
+	// so that transient errors don't cause a switch to appear "stale".
+	advertisedOverrideSwitches := sets.New[string]()
 
 	// Ensure ports, routing policies and static routes for ALL desired networks.
 	// All operations are idempotent (CreateOrUpdate), so we reconcile them on every sync.
@@ -281,6 +293,49 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		}
 		localActive := c.localZoneNode != nil && c.networkManager.NodeHasNetwork(c.localZoneNode.Name, netInfo.GetNetworkName())
 
+		klog.V(5).Infof("CNC %s: ensuring ACLs, ports, policies and routes for network %s (new=%v)", cncName, netInfo.GetNetworkName(), isNewNetwork)
+
+		// Build ops per network to keep transaction sizes bounded
+		var createOps []ovsdb.Operation
+
+		// If this network is advertised with strict isolation, attach the pre-built
+		// override ACL to this network's switch so the advertised isolation drop
+		// at priority 1050 doesn't block CNC-connected traffic.
+		// Also track the switch in the desired set so stale ACLs are cleaned up
+		// when a network stops being advertised.
+		// This block must run before other error-prone mutations so that
+		// advertisedOverrideSwitches is always populated for stale cleanup.
+		if advertisedOverrideACL != nil && localActive &&
+			util.IsPodNetworkAdvertisedAtNode(netInfo, c.localZoneNode.Name) {
+			advertisedSwitchName, err := c.getNetworkSwitchName(netInfo)
+			if err != nil {
+				errs = append(errs, fmt.Errorf(
+					"CNC %s: failed to get switch name "+
+						"for network %s: %w",
+					cncName, netInfo.GetNetworkName(), err))
+				continue
+			}
+			advertisedOverrideSwitches.Insert(advertisedSwitchName)
+			createOps, err = c.ensureAdvertisedOverrideACLOps(createOps, advertisedOverrideACL, advertisedSwitchName)
+			if err != nil {
+				errs = append(errs, fmt.Errorf(
+					"CNC %s: failed to ensure advertised "+
+						"override ACL for network %s: %w",
+					cncName, netInfo.GetNetworkName(), err))
+				continue
+			}
+		}
+
+		// Add partial connectivity ACLs to this network's switch (only if local).
+		// ACLs are attached to the switch, which only exists locally with dynamic UDN allocation.
+		if partialConnectivityDesired && localActive {
+			createOps, err = c.ensurePartialConnectivityACLsOps(createOps, partialConnState, networkID)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure partial connectivity ACLs for network %s: %w", cncName, netInfo.GetNetworkName(), err))
+				continue
+			}
+		}
+
 		// Check if the network router exists before trying to create ports on it.
 		// The network might be registered in the network manager but not yet created in OVN NB.
 		// If the router doesn't exist, skip this network and retry later.
@@ -290,21 +345,6 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			if err != nil {
 				klog.V(4).Infof("Network router %s for network %s does not exist yet, will retry: %v", networkRouterName, netInfo.GetNetworkName(), err)
 				errs = append(errs, fmt.Errorf("network router %s for network %s does not exist yet: %w", networkRouterName, netInfo.GetNetworkName(), err))
-				continue
-			}
-		}
-
-		klog.V(5).Infof("CNC %s: ensuring ports, policies and routes for network %s (new=%v)", cncName, netInfo.GetNetworkName(), isNewNetwork)
-
-		// Build ops per network to keep transaction sizes bounded
-		var createOps []ovsdb.Operation
-
-		// Add partial connectivity ACLs to this network's switch (only if local).
-		// ACLs are attached to the switch, which only exists locally with dynamic UDN allocation.
-		if partialConnectivityDesired && localActive {
-			createOps, err = c.ensurePartialConnectivityACLsOps(createOps, partialConnState, networkID)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("CNC %s: failed to ensure partial connectivity ACLs for network %s: %w", cncName, netInfo.GetNetworkName(), err))
 				continue
 			}
 		}
@@ -561,6 +601,19 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		if err := c.cleanupPartialConnectivity(cncName); err != nil {
 			errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup partial connectivity: %w", cncName, err))
 		}
+		// Only destroy the shared address set if advertised override also doesn't need it
+		if advertisedOverrideACL == nil {
+			if err := c.destroyConnectedSubnetsAddressSet(cncName); err != nil {
+				errs = append(errs, fmt.Errorf("CNC %s: failed to destroy address set: %w", cncName, err))
+			}
+		}
+	}
+
+	// Remove the advertised override ACL from switches where the network is no longer advertised.
+	// This handles the case where a RouteAdvertisement is deleted/modified, causing a network
+	// to stop being advertised while still connected by the CNC.
+	if err := c.cleanupStaleAdvertisedOverrideACLs(cncName, advertisedOverrideSwitches, partialConnectivityDesired); err != nil {
+		errs = append(errs, fmt.Errorf("CNC %s: failed to cleanup stale advertised override ACLs: %w", cncName, err))
 	}
 
 	// Only update state flags if no errors occurred, so that on the next reconcile
@@ -580,9 +633,10 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 // cleanupNetworkConnections removes all network connections for a CNC.
 // This is called when a CNC is being deleted.
 // 1. If ServiceNetwork was enabled, cleanup cross-network LB attachments for this CNC
-// 2. If partial connectivity was enabled (service && !pod), cleanup ACLs and address sets
-// 3. Then delete network router ports from the network routers for this CNC
-// 4. Then delete routing policies on the network routers for this CNC
+// 2. If partial connectivity was enabled (service && !pod), cleanup partial connectivity ACLs
+// 3. Cleanup advertised override ACLs (always, since they're independent of connectivity mode)
+// 4. Destroy the shared address set (safe since the CNC is being deleted)
+// 5. Then delete network router ports and routing policies from network routers for this CNC
 func (c *Controller) cleanupNetworkConnections(cncName string, serviceConnectivityWasEnabled, podConnectivityWasEnabled bool) error {
 	// Cleanup cross-network LB attachments if ServiceNetwork was enabled
 	if serviceConnectivityWasEnabled {
@@ -597,6 +651,16 @@ func (c *Controller) cleanupNetworkConnections(cncName string, serviceConnectivi
 		if err := c.cleanupPartialConnectivity(cncName); err != nil {
 			return fmt.Errorf("failed to cleanup partial connectivity for CNC %s: %v", cncName, err)
 		}
+	}
+
+	// Cleanup advertised override ACLs unconditionally — they're independent of connectivity mode
+	if err := c.cleanupAdvertisedOverrideACLs(cncName); err != nil {
+		return fmt.Errorf("failed to cleanup advertised override ACLs for CNC %s: %v", cncName, err)
+	}
+
+	// Destroy the shared address set — safe since the entire CNC is being deleted
+	if err := c.destroyConnectedSubnetsAddressSet(cncName); err != nil {
+		return fmt.Errorf("failed to destroy address set for CNC %s: %v", cncName, err)
 	}
 
 	return c.cleanupNetworkConnectivity(cncName)
@@ -1492,6 +1556,20 @@ type partialConnectivityState struct {
 	networkSwitches map[int]string    // networkID -> switch name
 }
 
+// ensureConnectedSubnetsAddressSet creates or updates the address set containing pod subnets
+// of all connected networks for a CNC. This is shared between partial connectivity ACLs and
+// the advertised network isolation override ACL.
+func (c *Controller) ensureConnectedSubnetsAddressSet(cncName string, allSubnets []string) (hashNameV4, hashNameV6 string, err error) {
+	dbIDs := getConnectedUDNSubnetsAddressSetDbIDs(cncName)
+	as, asErr := c.addressSetFactory.NewAddressSet(dbIDs, allSubnets)
+	if asErr != nil {
+		return "", "", fmt.Errorf("failed to create address set: %w", asErr)
+	}
+
+	hashNameV4, hashNameV6 = as.GetASHashNames()
+	return hashNameV4, hashNameV6, nil
+}
+
 // preparePartialConnectivityACLs creates the address set and builds the shared ACLs, and per-network ACLs.
 // This is called once before the network creation loop.
 // Returns nil if there are fewer than 2 networks (no partial connectivity needed).
@@ -1544,17 +1622,11 @@ func (c *Controller) preparePartialConnectivityACLs(cncName string, allocatedSub
 		}
 	}
 
-	// Create address set directly (not as ops) - this is simpler than passing ops around
-	dbIDs := getConnectedUDNSubnetsAddressSetDbIDs(cncName)
-	as, err := c.addressSetFactory.NewAddressSet(dbIDs, allSubnets)
+	hashNameV4, hashNameV6, err := c.ensureConnectedSubnetsAddressSet(cncName, allSubnets)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create address set: %w", err)
+		return nil, fmt.Errorf("failed to ensure connected subnets address set for CNC %s: %w", cncName, err)
 	}
 
-	// Get the hashed address set names for ACL matches
-	hashNameV4, hashNameV6 := as.GetASHashNames()
-
-	// Build shared ACLs (pass-service at 500, drop at 450)
 	state.sharedACLs = c.buildSharedPartialConnectivityACLs(cncName, hashNameV4, hashNameV6)
 
 	return state, nil
@@ -1751,29 +1823,51 @@ func (c *Controller) buildPassSameNetworkACL(cncName string, networkID int, subn
 		passMatch, nbdb.ACLActionPass, nil, libovsdbutil.LportEgress, 0)
 }
 
-// cleanupPartialConnectivity removes partial connectivity ACLs and address sets for a CNC.
+// cleanupPartialConnectivity removes partial connectivity ACLs for a CNC.
+// Only removes ACLs with partial connectivity types (pass-service, drop-pod, pass-same-network-*).
+// Does NOT destroy the shared address set — call destroyConnectedSubnetsAddressSet separately
+// when neither partial connectivity nor advertised override needs it.
 func (c *Controller) cleanupPartialConnectivity(cncName string) error {
-	// Find all ACLs owned by this CNC using proper DbObjectIDs predicate
+	return c.cleanupCNCACLsByType(cncName, func(aclType string) bool {
+		return aclType == "pass-service" || aclType == "drop-pod" || strings.HasPrefix(aclType, "pass-same-network-")
+	}, "partial connectivity")
+}
+
+// cleanupAdvertisedOverrideACLs removes advertised network isolation override ACLs for a CNC.
+// Does NOT destroy the shared address set — call destroyConnectedSubnetsAddressSet separately
+// when neither partial connectivity nor advertised override needs it.
+func (c *Controller) cleanupAdvertisedOverrideACLs(cncName string) error {
+	return c.cleanupCNCACLsByType(cncName, func(aclType string) bool {
+		return aclType == "pass-advertised"
+	}, "advertised override")
+}
+
+// cleanupCNCACLsByType removes CNC ACLs matching the given type filter from all switches.
+func (c *Controller) cleanupCNCACLsByType(cncName string, typeFilter func(string) bool, description string) error {
 	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: cncName,
 		})
 	aclPredicate := libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil)
-	acls, err := libovsdbops.FindACLsWithPredicate(c.nbClient, aclPredicate)
+	allACLs, err := libovsdbops.FindACLsWithPredicate(c.nbClient, aclPredicate)
 	if err != nil {
 		return fmt.Errorf("failed to find ACLs for CNC %s: %w", cncName, err)
 	}
 
-	if len(acls) == 0 {
-		// No ACLs to clean up, but still try to clean address sets
-		goto cleanupAddressSets
+	var acls []*nbdb.ACL
+	for _, acl := range allACLs {
+		aclType := acl.ExternalIDs[libovsdbops.TypeKey.String()]
+		if typeFilter(aclType) {
+			acls = append(acls, acl)
+		}
 	}
 
-	// Remove ACLs from all switches that have them
-	// ACLs are owned by switches, so removing from switches will garbage-collect the ACL rows
+	if len(acls) == 0 {
+		return nil
+	}
+
 	err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(c.nbClient,
 		func(sw *nbdb.LogicalSwitch) bool {
-			// Check if any of the ACLs are on this switch
 			for _, aclUUID := range sw.ACLs {
 				for _, acl := range acls {
 					if aclUUID == acl.UUID {
@@ -1784,16 +1878,147 @@ func (c *Controller) cleanupPartialConnectivity(cncName string) error {
 			return false
 		}, acls...)
 	if err != nil {
-		return fmt.Errorf("failed to remove ACLs from switches: %w", err)
+		return fmt.Errorf("failed to remove %s ACLs from switches: %w", description, err)
 	}
 
-cleanupAddressSets:
-	// Delete address sets using DestroyAddressSet which handles lookup+delete internally
-	err = c.addressSetFactory.DestroyAddressSet(getConnectedUDNSubnetsAddressSetDbIDs(cncName))
+	klog.V(4).Infof("CNC %s: cleaned up %s ACLs", cncName, description)
+	return nil
+}
+
+// cleanupStaleAdvertisedOverrideACLs removes the pass-advertised ACL from switches
+// that had it previously but are no longer in the desired set (e.g., the network stopped
+// being advertised due to a RouteAdvertisement change). If desiredSwitches is empty and
+// no advertised override ACL was built this sync, all pass-advertised ACLs are removed.
+func (c *Controller) cleanupStaleAdvertisedOverrideACLs(cncName string, desiredSwitches sets.Set[string], partialConnectivityActive bool) error {
+	predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: cncName,
+			libovsdbops.TypeKey:       "pass-advertised",
+		})
+	aclPredicate := libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil)
+	acls, err := libovsdbops.FindACLsWithPredicate(c.nbClient, aclPredicate)
+	if err != nil {
+		return fmt.Errorf("failed to find pass-advertised ACLs for CNC %s: %w", cncName, err)
+	}
+	if len(acls) == 0 {
+		return nil
+	}
+
+	// Find switches that have the ACL but are not in the desired set
+	err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(c.nbClient,
+		func(sw *nbdb.LogicalSwitch) bool {
+			if desiredSwitches.Has(sw.Name) {
+				return false
+			}
+			for _, aclUUID := range sw.ACLs {
+				for _, acl := range acls {
+					if aclUUID == acl.UUID {
+						return true
+					}
+				}
+			}
+			return false
+		}, acls...)
+	if err != nil {
+		return fmt.Errorf("failed to remove stale advertised override ACLs from switches: %w", err)
+	}
+
+	// If no switches need the ACL anymore, clean up the ACL rows and
+	// destroy the shared address set if partial connectivity also doesn't need it.
+	if desiredSwitches.Len() == 0 {
+		if err := c.cleanupAdvertisedOverrideACLs(cncName); err != nil {
+			return err
+		}
+		if !partialConnectivityActive {
+			return c.destroyConnectedSubnetsAddressSet(cncName)
+		}
+	}
+
+	return nil
+}
+
+// destroyConnectedSubnetsAddressSet removes the shared address set for a CNC.
+// Call this only when neither partial connectivity nor advertised override needs it.
+func (c *Controller) destroyConnectedSubnetsAddressSet(cncName string) error {
+	err := c.addressSetFactory.DestroyAddressSet(getConnectedUDNSubnetsAddressSetDbIDs(cncName))
 	if err != nil {
 		return fmt.Errorf("failed to delete address sets for CNC %s: %w", cncName, err)
 	}
-
-	klog.V(4).Infof("CNC %s: cleaned up partial connectivity ACLs", cncName)
 	return nil
+}
+
+// buildAdvertisedNetworkPassACL builds an ACL that allows CNC-connected traffic to pass before
+// the advertised network isolation drop ACL. This is needed because the isolation drop at
+// priority 1050 in LportEgressAfterLB blocks inter-advertised-network traffic, but CNC intends
+// to allow it for connected networks. This ACL sits at priority 1075 in the same stage/tier.
+func (c *Controller) buildAdvertisedNetworkPassACL(cncName, hashNameV4, hashNameV6 string) *nbdb.ACL {
+	var match string
+	switch {
+	case config.IPv4Mode && config.IPv6Mode:
+		match = fmt.Sprintf("(ip4.dst == $%s || ip6.dst == $%s)", hashNameV4, hashNameV6)
+	case config.IPv4Mode:
+		match = fmt.Sprintf("ip4.dst == $%s", hashNameV4)
+	case config.IPv6Mode:
+		match = fmt.Sprintf("ip6.dst == $%s", hashNameV6)
+	}
+
+	if match == "" {
+		return nil
+	}
+
+	dbIDs := buildACLDBIDs(cncName, "pass-advertised")
+	return libovsdbutil.BuildACL(dbIDs, ovntypes.NetworkConnectAdvertisedPassPriority,
+		match, nbdb.ACLActionPass, nil, libovsdbutil.LportEgressAfterLB, 0)
+}
+
+// prepareAdvertisedOverrideACL builds the advertised network isolation override ACL once,
+// before the per-network loop. Returns nil if strict isolation is not enabled or no ACL is needed.
+func (c *Controller) prepareAdvertisedOverrideACL(cncName string, allocatedSubnets map[string][]*net.IPNet) (*nbdb.ACL, error) {
+	if config.OVNKubernetesFeature.AdvertisedUDNIsolationMode != config.AdvertisedUDNIsolationModeStrict {
+		return nil, nil
+	}
+
+	var allSubnets []string
+	for owner := range allocatedSubnets {
+		_, networkID, parseErr := util.ParseNetworkOwner(owner)
+		if parseErr != nil {
+			klog.Warningf("Failed to parse owner key %s: %v", owner, parseErr)
+			continue
+		}
+
+		netInfo := c.networkManager.GetNetworkByID(networkID)
+		if netInfo == nil {
+			klog.Warningf("Network with ID %d not found", networkID)
+			continue
+		}
+
+		for _, subnet := range netInfo.Subnets() {
+			if subnet.CIDR != nil {
+				allSubnets = append(allSubnets, subnet.CIDR.String())
+			}
+		}
+	}
+
+	hashNameV4, hashNameV6, err := c.ensureConnectedSubnetsAddressSet(cncName, allSubnets)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure connected subnets address set: %w", err)
+	}
+
+	return c.buildAdvertisedNetworkPassACL(cncName, hashNameV4, hashNameV6), nil
+}
+
+// ensureAdvertisedOverrideACLOps builds ops to add the pre-built advertised override ACL
+// to a network's switch. The ACL is created/updated and then attached to the switch.
+func (c *Controller) ensureAdvertisedOverrideACLOps(ops []ovsdb.Operation, acl *nbdb.ACL, switchName string) ([]ovsdb.Operation, error) {
+	ops, err := libovsdbops.CreateOrUpdateACLsOps(c.nbClient, ops, nil, acl)
+	if err != nil {
+		return ops, fmt.Errorf("failed to create advertised override ACL ops: %w", err)
+	}
+
+	ops, err = libovsdbops.AddACLsToLogicalSwitchOps(c.nbClient, ops, switchName, acl)
+	if err != nil {
+		return ops, fmt.Errorf("failed to add advertised override ACL to switch %s: %w", switchName, err)
+	}
+
+	return ops, nil
 }

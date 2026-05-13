@@ -53,8 +53,8 @@ func (c *Controller) repairStaleCNCs() error {
 	return nil
 }
 
-// cleanupStaleACLs finds CNC names that have partial connectivity ACLs but are not in validCNCs,
-// and calls cleanupPartialConnectivity for each (removes ACLs from switches and destroys address sets).
+// cleanupStaleACLs finds CNC names that have ACLs (partial connectivity or advertised override)
+// but are not in validCNCs, and removes those ACLs from switches and destroys address sets.
 func (c *Controller) cleanupStaleACLs(validCNCs sets.Set[string]) error {
 	aclPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
 	aclPredicate := libovsdbops.GetPredicate[*nbdb.ACL](aclPredicateIDs, nil)
@@ -70,9 +70,15 @@ func (c *Controller) cleanupStaleACLs(validCNCs sets.Set[string]) error {
 		}
 	}
 	for _, cncName := range staleCNCNames.UnsortedList() {
-		klog.V(4).Infof("Cleaning up partial connectivity for stale CNC %s", cncName)
+		klog.V(4).Infof("Cleaning up ACLs for stale CNC %s", cncName)
 		if err := c.cleanupPartialConnectivity(cncName); err != nil {
 			klog.Warningf("Failed to cleanup partial connectivity for stale CNC %s: %v", cncName, err)
+		}
+		if err := c.cleanupAdvertisedOverrideACLs(cncName); err != nil {
+			klog.Warningf("Failed to cleanup advertised override ACLs for stale CNC %s: %v", cncName, err)
+		}
+		if err := c.destroyConnectedSubnetsAddressSet(cncName); err != nil {
+			klog.Warningf("Failed to destroy address set for stale CNC %s: %v", cncName, err)
 		}
 	}
 	return nil

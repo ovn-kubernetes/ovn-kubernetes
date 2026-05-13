@@ -92,10 +92,6 @@ const (
 	DefaultAllowPriority = 1001
 	// Default deny acl rule priority
 	DefaultDenyPriority = 1000
-	// Pass priority for isolated advertised networks
-	AdvertisedNetworkPassPriority = 1100
-	// Deny priority for isolated advertised networks
-	AdvertisedNetworkDenyPriority = 1050
 
 	// PrimaryACLTier Priorities
 
@@ -110,6 +106,14 @@ const (
 	NetworkConnectPassSameNetworkPriority = 475
 	// Priority for dropping pod-to-pod traffic between connected networks
 	NetworkConnectDropPodTrafficPriority = 450
+	// Pass priority for isolated advertised networks
+	AdvertisedNetworkPassPriority = 1100
+	// Pass priority for CNC-connected traffic to override advertised network isolation.
+	// Sits between AdvertisedNetworkPassPriority (1100, intra-network) and
+	// AdvertisedNetworkDenyPriority (1050, inter-network drop) in the LportEgressAfterLB stage.
+	NetworkConnectAdvertisedPassPriority = 1075
+	// Deny priority for isolated advertised networks
+	AdvertisedNetworkDenyPriority = 1050
 
 	// ACL Tiers
 	// Tier 0 is called Primary as it is evaluated before any other feature-related Tiers.

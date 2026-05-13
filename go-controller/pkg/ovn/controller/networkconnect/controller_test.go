@@ -3841,6 +3841,214 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 				})
 			})
 
+			// =============================================================================
+			// Context: Advertised Override ACLs (pass-advertised for CNC + advertised UDN)
+			// =============================================================================
+			Context("Advertised Networks Override", func() {
+				const (
+					advCNCName  = "adv-cnc"
+					advTunnelID = 300
+				)
+
+				// startAdvertisedNetworks reuses startBothNetworks and marks all networks
+				// as advertised on node1 so IsPodNetworkAdvertisedAtNode returns true.
+				startAdvertisedNetworks := func() string {
+					subnetAnnotation := startBothNetworks()
+
+					fakeNM.Lock()
+					for _, ni := range fakeNM.PrimaryNetworks {
+						ni.(util.MutableNetInfo).SetPodNetworkAdvertisedVRFs(map[string][]string{
+							"node1": {"vrf-blue"},
+						})
+					}
+					fakeNM.Unlock()
+
+					return subnetAnnotation
+				}
+
+				findAdvertisedACLs := func(cncName string) []*nbdb.ACL {
+					predicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName,
+						map[libovsdbops.ExternalIDKey]string{
+							libovsdbops.ObjectNameKey: cncName,
+							libovsdbops.TypeKey:       "pass-advertised",
+						})
+					acls, err := libovsdbops.FindACLsWithPredicate(nbClient,
+						libovsdbops.GetPredicate[*nbdb.ACL](predicateIDs, nil))
+					Expect(err).NotTo(HaveOccurred())
+					return acls
+				}
+
+				verifyAdvertisedACLsExist := func() {
+					Eventually(func() int {
+						return len(findAdvertisedACLs(advCNCName))
+					}).WithTimeout(5 * time.Second).Should(BeNumerically(">", 0))
+				}
+
+				verifyNoAdvertisedACLs := func() {
+					Eventually(func() int {
+						return len(findAdvertisedACLs(advCNCName))
+					}).WithTimeout(5 * time.Second).Should(Equal(0))
+				}
+
+				verifySwitchHasAdvertisedACL := func(switchName string, expected bool) {
+					Eventually(func() error {
+						sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+							return s.Name == switchName
+						})
+						if err != nil {
+							return err
+						}
+						if len(sw) != 1 {
+							return fmt.Errorf("expected 1 switch %s, got %d", switchName, len(sw))
+						}
+						acls := findAdvertisedACLs(advCNCName)
+						if len(acls) == 0 {
+							if expected {
+								return fmt.Errorf("no pass-advertised ACL found globally")
+							}
+							return nil
+						}
+						aclUUID := acls[0].UUID
+						hasACL := false
+						for _, uuid := range sw[0].ACLs {
+							if uuid == aclUUID {
+								hasACL = true
+								break
+							}
+						}
+						if hasACL != expected {
+							return fmt.Errorf("switch %s hasAdvertisedACL=%v, expected %v (switch ACLs: %v)",
+								switchName, hasACL, expected, sw[0].ACLs)
+						}
+						return nil
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+				}
+
+				It("should create pass-advertised ACLs on advertised network switches when CNC is created", func() {
+					subnetAnnotation := startAdvertisedNetworks()
+
+					cnc := createTestCNC(advCNCName, advTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					verifyAdvertisedACLsExist()
+					verifySwitchHasAdvertisedACL(redNetwork.SwitchName("node1"), true)
+					verifySwitchHasAdvertisedACL(blueNetwork.SwitchName("node1"), true)
+				})
+
+				It("should cleanup pass-advertised ACLs when CNC is deleted", func() {
+					subnetAnnotation := startAdvertisedNetworks()
+
+					cnc := createTestCNC(advCNCName, advTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					verifyAdvertisedACLsExist()
+
+					err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Delete(
+						context.Background(), advCNCName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					verifyNoAdvertisedACLs()
+				})
+
+				It("should remove pass-advertised ACL from switch when network stops being advertised", func() {
+					subnetAnnotation := startAdvertisedNetworks()
+
+					cnc := createTestCNC(advCNCName, advTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					verifySwitchHasAdvertisedACL(redNetwork.SwitchName("node1"), true)
+					verifySwitchHasAdvertisedACL(blueNetwork.SwitchName("node1"), true)
+
+					// Stop advertising the red network (clear its VRFs)
+					fakeNM.Lock()
+					fakeNM.PrimaryNetworks["red-ns"].(util.MutableNetInfo).SetPodNetworkAdvertisedVRFs(map[string][]string{})
+					fakeNM.Unlock()
+
+					// Trigger reconcile by updating the CNC annotation (simulates NAD change requeue)
+					cnc, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), advCNCName, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					if cnc.Annotations == nil {
+						cnc.Annotations = make(map[string]string)
+					}
+					cnc.Annotations["trigger-reconcile"] = "1"
+					_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Update(
+						context.Background(), cnc, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Red switch should no longer have the ACL, blue still should
+					verifySwitchHasAdvertisedACL(redNetwork.SwitchName("node1"), false)
+					verifySwitchHasAdvertisedACL(blueNetwork.SwitchName("node1"), true)
+				})
+
+				It("should create both partial connectivity and pass-advertised ACLs with ServiceNetwork only", func() {
+					subnetAnnotation := startAdvertisedNetworks()
+					seedBothNetworkLBs(fakeClientset, nbClient)
+
+					cnc := createTestCNC(advCNCName, advTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.ServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// pass-advertised ACL should exist
+					verifyAdvertisedACLsExist()
+
+					// Each switch should have partial ACLs (pass-service + drop-pod + pass-same-network)
+					// plus the pass-advertised ACL = 4 total
+					expectedPerSwitch := 3 + 1
+					verifySwitchACLCount := func(switchName string, expected int) {
+						Eventually(func() error {
+							sw, findErr := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+								return s.Name == switchName
+							})
+							if findErr != nil {
+								return findErr
+							}
+							if len(sw) != 1 {
+								return fmt.Errorf("expected 1 switch %s, got %d", switchName, len(sw))
+							}
+							if len(sw[0].ACLs) != expected {
+								return fmt.Errorf("switch %s has %d ACLs, expected %d", switchName, len(sw[0].ACLs), expected)
+							}
+							return nil
+						}).WithTimeout(5 * time.Second).Should(Succeed())
+					}
+					verifySwitchACLCount(redNetwork.SwitchName("node1"), expectedPerSwitch)
+					verifySwitchACLCount(blueNetwork.SwitchName("node1"), expectedPerSwitch)
+				})
+
+				It("should not create pass-advertised ACLs when isolation mode is not strict", func() {
+					config.OVNKubernetesFeature.AdvertisedUDNIsolationMode = "loose"
+					subnetAnnotation := startAdvertisedNetworks()
+
+					cnc := createTestCNC(advCNCName, advTunnelID, defaultConnectSubnets(), subnetAnnotation,
+						networkconnectv1.PodNetwork, networkconnectv1.ServiceNetwork)
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wait for reconcile to complete (connect router created = reconcile ran)
+					Eventually(func() error {
+						return verifyConnectRouter(nbClient, advCNCName, advTunnelID)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					// No pass-advertised ACLs should exist
+					Consistently(func() int {
+						return len(findAdvertisedACLs(advCNCName))
+					}).WithTimeout(2 * time.Second).Should(Equal(0))
+				})
+			})
+
 		}) // end Context for ipMode
 	}
 })

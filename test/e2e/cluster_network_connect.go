@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -370,6 +371,61 @@ func createLayer3PrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnNam
 // createLayer2PrimaryUDNWithSubnets creates a Layer2 primary UDN with custom subnets
 func createLayer2PrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName, v4Subnet, v6Subnet string) {
 	createPrimaryUDNWithSubnets(cs, namespace, udnName, "Layer2", v4Subnet, v6Subnet)
+}
+
+// ============================================================================
+// RouteAdvertisement Helpers
+// ============================================================================
+
+// createOrUpdateRouteAdvertisement creates or updates a RouteAdvertisement that advertises
+// PodNetwork for CUDNs matching the given label selector.
+// NOTE: route_advertisements.go has a typed createRouteAdvertisements helper, but it depends
+// on infraapi.Context for cleanup which this test file doesn't use.
+func createOrUpdateRouteAdvertisement(raName string, networkMatchLabels map[string]string) {
+	labelSelectorStr := ""
+	for k, v := range networkMatchLabels {
+		if labelSelectorStr != "" {
+			labelSelectorStr += "\n            "
+		}
+		labelSelectorStr += fmt.Sprintf("%s: \"%s\"", k, v)
+	}
+	manifest := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: %s
+spec:
+  networkSelectors:
+    - networkSelectionType: "ClusterUserDefinedNetworks"
+      clusterUserDefinedNetworkSelector:
+        networkSelector:
+          matchLabels:
+            %s
+  nodeSelector: {}
+  frrConfigurationSelector: {}
+  advertisements:
+    - PodNetwork
+`, raName, labelSelectorStr)
+	_, err := e2ekubectl.RunKubectlInput("", manifest, "apply", "-f", "-")
+	Expect(err).NotTo(HaveOccurred())
+}
+
+// deleteRouteAdvertisement deletes a RouteAdvertisement
+func deleteRouteAdvertisement(raName string) {
+	_, _ = e2ekubectl.RunKubectl("", "delete", "routeadvertisements", raName, "--wait", "--timeout=30s", "--ignore-not-found")
+}
+
+// waitForRouteAdvertisementAccepted waits for a RouteAdvertisement's Accepted condition
+func waitForRouteAdvertisementAccepted(raName string) {
+	Eventually(func() string {
+		out, err := e2ekubectl.RunKubectl("", "get", "routeadvertisements", raName,
+			"-o", `jsonpath={.status.conditions[?(@.type=="Accepted")].reason}`)
+		if err != nil {
+			return ""
+		}
+		return out
+	}, 30*time.Second, time.Second).Should(Equal("Accepted"),
+		fmt.Sprintf("waiting for RouteAdvertisement %s to be accepted", raName))
 }
 
 // getCNCAnnotations gets CNC annotations
@@ -4707,6 +4763,167 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 				}, 5*time.Second, 1*time.Second).Should(BeTrue(),
 					fmt.Sprintf("UDP connectivity from %s to blue service %s:9090", blackPod.Name, blueIP))
 			}
+		})
+	})
+
+	/*
+	   This test validates CNC's interaction with advertised network isolation:
+
+	   1. CNC override: the pass-advertised ACL (priority 1075 at LportEgressAfterLB)
+	      overrides the isolation drop (priority 1050), allowing cross-network connectivity.
+	   2. CNC lifecycle: deleting the CNC removes the override ACL, causing isolation to
+	      block connectivity; re-creating the CNC restores the override and connectivity.
+	   3. RA lifecycle: deleting the RA removes isolation ACLs and triggers cleanup of the
+	      stale override ACL; connectivity is maintained via basic CNC.
+
+	   Test Scenario:
+	   - Create two L3 primary CUDNs in separate namespaces, both labeled for RA + CNC selection
+	   - Create a RouteAdvertisement targeting both CUDNs (making them "advertised")
+	   - Create a CNC connecting both CUDNs with PodNetwork connectivity
+	   - Deploy one pod per network on different nodes
+	   - Verify pod-to-pod connectivity WORKS (CNC override ACL at 1075 > isolation drop at 1050)
+	   - Delete the CNC (override removed, isolation blocks)
+	   - Verify pod-to-pod connectivity is BLOCKED (isolation drop re-asserts)
+	   - Re-create the CNC (override re-added)
+	   - Verify connectivity WORKS again
+	   - Delete the RA (networks stop being advertised, stale override cleaned up)
+	   - Verify connectivity still WORKS (no isolation, basic CNC active)
+	*/
+	Context("Advertised UDN isolation with CNC", feature.RouteAdvertisements, func() {
+		const nodeHostnameKey = "kubernetes.io/hostname"
+
+		It("should allow connectivity with CNC override, block after CNC deletion, restore after CNC re-creation, and survive RA deletion", func() {
+			if os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" {
+				Skip("test requires strict advertised UDN isolation mode (ADVERTISED_UDN_ISOLATION_MODE != 'loose')")
+			}
+
+			testID := rand.String(5)
+			cncName := generateCNCName()
+			raName := fmt.Sprintf("test-ra-%s", testID)
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(nodes.Items)).To(BeNumerically(">=", 2), "test requires at least 2 schedulable nodes")
+			node1Name, node2Name := nodes.Items[0].Name, nodes.Items[1].Name
+
+			redCUDN := fmt.Sprintf("red-cudn-%s", testID)
+			blueCUDN := fmt.Sprintf("blue-cudn-%s", testID)
+			redNs := fmt.Sprintf("red-ns-%s", testID)
+			blueNs := fmt.Sprintf("blue-ns-%s", testID)
+
+			cudnLabel := map[string]string{"advertised-cnc-test": testID}
+			nextSubnets := newTestNetworkSubnetsAllocator()
+
+			pods := make(map[string]*corev1.Pod)
+			podIPs := make(map[string][]string)
+
+			DeferCleanup(func() {
+				By("Cleanup: Deleting all test resources")
+				deleteCNC(cncName)
+				deleteRouteAdvertisement(raName)
+				for _, pod := range pods {
+					_ = cs.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+				}
+				deleteCUDN(redCUDN)
+				deleteCUDN(blueCUDN)
+				deleteNamespace(cs, redNs)
+				deleteNamespace(cs, blueNs)
+			})
+
+			By("1. Creating namespaces for red and blue CUDNs")
+			createUDNNamespaceWithName(cs, redNs, nil)
+			createUDNNamespaceWithName(cs, blueNs, nil)
+
+			By("2. Creating red CUDN (L3) with advertised label")
+			v4, v6 := nextSubnets()
+			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, cudnLabel, v4, v6, redNs)
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("2. Creating blue CUDN (L3) with advertised label")
+			v4, v6 = nextSubnets()
+			createLayer3PrimaryCUDNWithSubnets(cs, blueCUDN, cudnLabel, v4, v6, blueNs)
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blueCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("3. Creating RouteAdvertisement targeting both CUDNs")
+			createOrUpdateRouteAdvertisement(raName, cudnLabel)
+			waitForRouteAdvertisementAccepted(raName)
+
+			By("4. Creating CNC connecting both advertised CUDNs")
+			createOrUpdateCNC(cs, cncName, cudnLabel, nil)
+
+			By("4. Waiting for CNC annotations")
+			verifyCNCHasBothAnnotations(cncName)
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			By("5. Deploying pods on each network (different nodes for cross-node testing)")
+			redPodConfig := httpServerPodConfig("red-pod", redNs)
+			redPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
+			pods["red-pod"] = runUDNPod(cs, redNs, redPodConfig, nil)
+			podIPs["red-pod"] = getPrimaryNetworkPodIPs(redNs, "red-pod", redCUDN)
+
+			bluePodConfig := httpServerPodConfig("blue-pod", blueNs)
+			bluePodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+			pods["blue-pod"] = runUDNPod(cs, blueNs, bluePodConfig, nil)
+			podIPs["blue-pod"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod", blueCUDN)
+
+			By("6. Verifying cross-network connectivity WORKS (CNC override ACL at 1075 overrides isolation drop at 1050)")
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"red-pod": pods["red-pod"]},
+				map[string][]string{"blue-pod": podIPs["blue-pod"]},
+				true,
+			)
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"blue-pod": pods["blue-pod"]},
+				map[string][]string{"red-pod": podIPs["red-pod"]},
+				true,
+			)
+
+			By("7. Deleting CNC to remove override ACLs")
+			deleteCNC(cncName)
+
+			By("8. Verifying cross-network connectivity is BLOCKED (advertised isolation drop re-asserts)")
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"red-pod": pods["red-pod"]},
+				map[string][]string{"blue-pod": podIPs["blue-pod"]},
+				false,
+			)
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"blue-pod": pods["blue-pod"]},
+				map[string][]string{"red-pod": podIPs["red-pod"]},
+				false,
+			)
+
+			By("9. Re-creating CNC (override ACL re-added)")
+			createOrUpdateCNC(cs, cncName, cudnLabel, nil)
+			verifyCNCHasBothAnnotations(cncName)
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			By("10. Verifying connectivity WORKS again (CNC override re-established)")
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"red-pod": pods["red-pod"]},
+				map[string][]string{"blue-pod": podIPs["blue-pod"]},
+				true,
+			)
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"blue-pod": pods["blue-pod"]},
+				map[string][]string{"red-pod": podIPs["red-pod"]},
+				true,
+			)
+
+			By("11. Deleting RouteAdvertisement (networks stop being advertised, stale override ACL cleaned up)")
+			deleteRouteAdvertisement(raName)
+
+			By("12. Verifying connectivity still WORKS (no isolation to block, basic CNC connectivity)")
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"red-pod": pods["red-pod"]},
+				map[string][]string{"blue-pod": podIPs["blue-pod"]},
+				true,
+			)
+			verifyCrossNetworkConnectivity(
+				map[string]*corev1.Pod{"blue-pod": pods["blue-pod"]},
+				map[string][]string{"red-pod": podIPs["red-pod"]},
+				true,
+			)
 		})
 	})
 })

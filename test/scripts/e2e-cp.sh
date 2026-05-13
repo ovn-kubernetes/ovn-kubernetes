@@ -145,10 +145,9 @@ if [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   skip $NETWORK_SEGMENTATION_TESTS
 fi
 
-# Only run cluster network connect tests if they are explicitly requested
-# To conserve CI resources, we run these tests as part of the network segmentation tests
+# Only run cluster network connect tests when the feature is enabled
 CLUSTER_NETWORK_CONNECT_TESTS="ClusterNetworkConnect"
-if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
+if [ "$ENABLE_NETWORK_CONNECT" != "true" ]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 

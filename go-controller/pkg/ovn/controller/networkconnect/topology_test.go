@@ -879,7 +879,8 @@ func TestCleanupNetworkConnections(t *testing.T) {
 			defer cleanup.Cleanup()
 
 			c := &Controller{
-				nbClient: nbClient,
+				nbClient:          nbClient,
+				addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, true, false),
 			}
 
 			err = c.cleanupNetworkConnections(tt.cncName, false, false)
@@ -3661,15 +3662,14 @@ func TestCleanupPartialConnectivityACLsOps(t *testing.T) {
 
 func TestCleanupPartialConnectivity(t *testing.T) {
 	tests := []struct {
-		name               string
-		cncName            string
-		initialDB          []libovsdbtest.TestData
-		expectACLsRemain   int // total ACLs remaining after cleanup
-		expectSwitchACLs   map[string]int
-		expectAddressSetGC bool // whether address set should be destroyed
+		name             string
+		cncName          string
+		initialDB        []libovsdbtest.TestData
+		expectACLsRemain int // total CNC ACLs remaining after cleanup
+		expectSwitchACLs map[string]int
 	}{
 		{
-			name:    "removes ACLs from all switches and destroys address set",
+			name:    "removes partial ACLs from all switches",
 			cncName: "test-cnc",
 			initialDB: []libovsdbtest.TestData{
 				&nbdb.ACL{
@@ -3714,10 +3714,9 @@ func TestCleanupPartialConnectivity(t *testing.T) {
 				"switch_netA": 0,
 				"switch_netB": 0,
 			},
-			expectAddressSetGC: true,
 		},
 		{
-			name:    "no ACLs to clean - only destroys address set",
+			name:    "no ACLs to clean - noop",
 			cncName: "empty-cnc",
 			initialDB: []libovsdbtest.TestData{
 				&nbdb.LogicalSwitch{
@@ -3725,9 +3724,8 @@ func TestCleanupPartialConnectivity(t *testing.T) {
 					Name: "switch_netA",
 				},
 			},
-			expectACLsRemain:   0,
-			expectSwitchACLs:   map[string]int{"switch_netA": 0},
-			expectAddressSetGC: true,
+			expectACLsRemain: 0,
+			expectSwitchACLs: map[string]int{"switch_netA": 0},
 		},
 		{
 			name:    "only cleans ACLs owned by specified CNC",
@@ -3757,9 +3755,38 @@ func TestCleanupPartialConnectivity(t *testing.T) {
 					ACLs: []string{"acl-cnca", "acl-cncb"},
 				},
 			},
-			expectACLsRemain:   1, // cnc-b's ACL remains
-			expectSwitchACLs:   map[string]int{"switch_netA": 1},
-			expectAddressSetGC: true,
+			expectACLsRemain: 1, // cnc-b's ACL remains
+			expectSwitchACLs: map[string]int{"switch_netA": 1},
+		},
+		{
+			name:    "does not remove pass-advertised ACLs",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-partial",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectPassServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-service").GetExternalIDs(),
+				},
+				&nbdb.ACL{
+					UUID:        "acl-advertised",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-partial", "acl-advertised"},
+				},
+			},
+			expectACLsRemain: 1, // pass-advertised remains
+			expectSwitchACLs: map[string]int{"switch_netA": 1},
 		},
 	}
 
@@ -3794,6 +3821,348 @@ func TestCleanupPartialConnectivity(t *testing.T) {
 				require.Len(t, sw, 1)
 				assert.Len(t, sw[0].ACLs, expectedCount,
 					"switch %s ACL count mismatch", switchName)
+			}
+		})
+	}
+}
+
+func TestBuildAdvertisedNetworkPassACL(t *testing.T) {
+	tests := []struct {
+		name          string
+		ipv4Mode      bool
+		ipv6Mode      bool
+		asNameV4      string
+		asNameV6      string
+		expectNil     bool
+		matchContains []string
+		matchExcludes []string
+	}{
+		{
+			name:          "IPv4 only",
+			ipv4Mode:      true,
+			ipv6Mode:      false,
+			asNameV4:      "as_v4_hash",
+			asNameV6:      "as_v6_hash",
+			matchContains: []string{"ip4.dst == $as_v4_hash"},
+			matchExcludes: []string{"ip6"},
+		},
+		{
+			name:          "IPv6 only",
+			ipv4Mode:      false,
+			ipv6Mode:      true,
+			asNameV4:      "as_v4_hash",
+			asNameV6:      "as_v6_hash",
+			matchContains: []string{"ip6.dst == $as_v6_hash"},
+			matchExcludes: []string{"ip4"},
+		},
+		{
+			name:          "dual-stack",
+			ipv4Mode:      true,
+			ipv6Mode:      true,
+			asNameV4:      "as_v4_hash",
+			asNameV6:      "as_v6_hash",
+			matchContains: []string{"ip4.dst == $as_v4_hash", "ip6.dst == $as_v6_hash"},
+		},
+		{
+			name:      "no IP mode",
+			ipv4Mode:  false,
+			ipv6Mode:  false,
+			asNameV4:  "as_v4_hash",
+			asNameV6:  "as_v6_hash",
+			expectNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := config.PrepareTestConfig()
+			require.NoError(t, err)
+
+			config.IPv4Mode = tt.ipv4Mode
+			config.IPv6Mode = tt.ipv6Mode
+
+			c := &Controller{}
+			acl := c.buildAdvertisedNetworkPassACL("test-cnc", tt.asNameV4, tt.asNameV6)
+
+			if tt.expectNil {
+				assert.Nil(t, acl)
+				return
+			}
+
+			require.NotNil(t, acl)
+			assert.Equal(t, nbdb.ACLActionPass, acl.Action)
+			assert.Equal(t, nbdb.ACLDirectionFromLport, acl.Direction)
+			assert.Equal(t, ovntypes.NetworkConnectAdvertisedPassPriority, acl.Priority)
+			assert.Equal(t, "test-cnc", acl.ExternalIDs[libovsdbops.ObjectNameKey.String()])
+
+			require.NotNil(t, acl.Options)
+			assert.Equal(t, "true", acl.Options["apply-after-lb"],
+				"ACL must be in the LportEgressAfterLB stage")
+
+			for _, s := range tt.matchContains {
+				assert.Contains(t, acl.Match, s)
+			}
+			for _, s := range tt.matchExcludes {
+				assert.NotContains(t, acl.Match, s)
+			}
+		})
+	}
+}
+
+func TestCleanupAdvertisedOverrideACLs(t *testing.T) {
+	tests := []struct {
+		name             string
+		cncName          string
+		initialDB        []libovsdbtest.TestData
+		expectACLsRemain int
+		expectSwitchACLs map[string]int
+	}{
+		{
+			name:    "removes only pass-advertised ACLs",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-partial",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectPassServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-service").GetExternalIDs(),
+				},
+				&nbdb.ACL{
+					UUID:        "acl-advertised",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-partial", "acl-advertised"},
+				},
+			},
+			expectACLsRemain: 1, // pass-service remains
+			expectSwitchACLs: map[string]int{"switch_netA": 1},
+		},
+		{
+			name:    "no pass-advertised ACLs - noop",
+			cncName: "test-cnc",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-partial",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "(ip4.dst == 172.16.1.0/24)",
+					Priority:    ovntypes.NetworkConnectPassServiceTrafficPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-service").GetExternalIDs(),
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-partial"},
+				},
+			},
+			expectACLsRemain: 1,
+			expectSwitchACLs: map[string]int{"switch_netA": 1},
+		},
+		{
+			name:    "does not touch other CNC's pass-advertised ACLs",
+			cncName: "cnc-a",
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-a",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $as_a",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("cnc-a", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.ACL{
+					UUID:        "acl-b",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $as_b",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("cnc-b", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-a", "acl-b"},
+				},
+			},
+			expectACLsRemain: 1, // cnc-b's ACL remains
+			expectSwitchACLs: map[string]int{"switch_netA": 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{nbClient: nbClient}
+
+			err = c.cleanupAdvertisedOverrideACLs(tt.cncName)
+			require.NoError(t, err)
+
+			allPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
+			acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](allPredicateIDs, nil))
+			require.NoError(t, err)
+			assert.Len(t, acls, tt.expectACLsRemain, "remaining ACL count mismatch")
+
+			for switchName, expectedCount := range tt.expectSwitchACLs {
+				sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+					return s.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, sw, 1)
+				assert.Len(t, sw[0].ACLs, expectedCount, "switch %s ACL count mismatch", switchName)
+			}
+		})
+	}
+}
+
+func TestCleanupStaleAdvertisedOverrideACLs(t *testing.T) {
+	tests := []struct {
+		name                      string
+		cncName                   string
+		desiredSwitches           sets.Set[string]
+		partialConnectivityActive bool
+		initialDB                 []libovsdbtest.TestData
+		expectACLsRemain          int
+		expectSwitchACLs          map[string]int
+	}{
+		{
+			name:            "removes ACL from stale switch, keeps on desired switch",
+			cncName:         "test-cnc",
+			desiredSwitches: sets.New[string]("switch_netA"),
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-adv",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-adv"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-B",
+					Name: "switch_netB",
+					ACLs: []string{"acl-adv"},
+				},
+			},
+			expectACLsRemain: 1,
+			expectSwitchACLs: map[string]int{
+				"switch_netA": 1,
+				"switch_netB": 0,
+			},
+		},
+		{
+			name:                      "all switches stale, partial active - removes ACLs, keeps address set",
+			cncName:                   "test-cnc",
+			desiredSwitches:           sets.New[string](),
+			partialConnectivityActive: true,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-adv",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-adv"},
+				},
+			},
+			expectACLsRemain: 0,
+			expectSwitchACLs: map[string]int{"switch_netA": 0},
+		},
+		{
+			name:                      "all switches stale, no partial - removes ACLs and destroys address set",
+			cncName:                   "test-cnc",
+			desiredSwitches:           sets.New[string](),
+			partialConnectivityActive: false,
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.ACL{
+					UUID:        "acl-adv",
+					Action:      nbdb.ACLActionPass,
+					Direction:   nbdb.ACLDirectionFromLport,
+					Match:       "ip4.dst == $some_as",
+					Priority:    ovntypes.NetworkConnectAdvertisedPassPriority,
+					ExternalIDs: buildACLDBIDs("test-cnc", "pass-advertised").GetExternalIDs(),
+					Options:     map[string]string{"apply-after-lb": "true"},
+				},
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+					ACLs: []string{"acl-adv"},
+				},
+			},
+			expectACLsRemain: 0,
+			expectSwitchACLs: map[string]int{"switch_netA": 0},
+		},
+		{
+			name:            "no ACLs exist - noop",
+			cncName:         "test-cnc",
+			desiredSwitches: sets.New[string](),
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{
+					UUID: "sw-A",
+					Name: "switch_netA",
+				},
+			},
+			expectACLsRemain: 0,
+			expectSwitchACLs: map[string]int{"switch_netA": 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{
+				nbClient:          nbClient,
+				addressSetFactory: addressset.NewOvnAddressSetFactory(nbClient, true, false),
+			}
+
+			err = c.cleanupStaleAdvertisedOverrideACLs(tt.cncName, tt.desiredSwitches, tt.partialConnectivityActive)
+			require.NoError(t, err)
+
+			allPredicateIDs := libovsdbops.NewDbObjectIDs(libovsdbops.ACLClusterNetworkConnect, controllerName, nil)
+			acls, err := libovsdbops.FindACLsWithPredicate(nbClient, libovsdbops.GetPredicate[*nbdb.ACL](allPredicateIDs, nil))
+			require.NoError(t, err)
+			assert.Len(t, acls, tt.expectACLsRemain, "remaining ACL count mismatch")
+
+			for switchName, expectedCount := range tt.expectSwitchACLs {
+				sw, err := libovsdbops.FindLogicalSwitchesWithPredicate(nbClient, func(s *nbdb.LogicalSwitch) bool {
+					return s.Name == switchName
+				})
+				require.NoError(t, err)
+				require.Len(t, sw, 1)
+				assert.Len(t, sw[0].ACLs, expectedCount, "switch %s ACL count mismatch", switchName)
 			}
 		})
 	}
