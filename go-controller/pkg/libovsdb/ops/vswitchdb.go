@@ -237,9 +237,12 @@ func CreateOrUpdatePortWithInterfaceOps(ovsClient libovsdbclient.Client, ops []o
 	return m.CreateOrUpdateOps(ops, ifaceModel, portModel, bridgeModel)
 }
 
-// DeletePortWithInterfaces deletes an OVS port and all its interfaces from a bridge.
-// This removes both the Port and Interface objects, and detaches the port from the bridge.
-// This function is idempotent - it's safe to call even if the port doesn't exist.
+// DeletePortWithInterfaces deletes an OVS port and all its interfaces from a
+// bridge. The deletion is scoped to bridgeName: a port that exists with the
+// given name but is attached to a different bridge is left untouched, matching
+// the semantics of `ovs-vsctl --if-exists del-port <bridge> <port>`. The
+// function is idempotent - a missing port, or a missing bridge, are both
+// no-ops.
 func DeletePortWithInterfaces(ovsClient libovsdbclient.Client, bridgeName, portName string) error {
 	port, err := GetOVSPort(ovsClient, portName)
 	if err != nil {
@@ -247,6 +250,23 @@ func DeletePortWithInterfaces(ovsClient libovsdbclient.Client, bridgeName, portN
 			return nil // Port doesn't exist, nothing to delete
 		}
 		return err
+	}
+	bridge, err := GetBridge(ovsClient, bridgeName)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return nil // Bridge gone; nothing to detach from
+		}
+		return err
+	}
+	onBridge := false
+	for _, uuid := range bridge.Ports {
+		if uuid == port.UUID {
+			onBridge = true
+			break
+		}
+	}
+	if !onBridge {
+		return nil // Port lives on a different bridge; out of scope
 	}
 	ops, err := DeletePortWithInterfacesOps(ovsClient, nil, port, bridgeName)
 	if err != nil {
@@ -265,18 +285,24 @@ func DeletePortWithInterfacesOps(ovsClient libovsdbclient.Client, ops []ovsdb.Op
 	bridge := &vswitchd.Bridge{Name: bridgeName}
 
 	m := newModelClient(ovsClient)
-	// Delete interfaces
-	for _, ifaceUUID := range port.Interfaces {
-		iface := &vswitchd.Interface{UUID: ifaceUUID}
-		ifaceModel := operationModel{
-			Model:       iface,
-			ErrNotFound: false,
-			BulkOp:      false,
+	if len(port.Interfaces) > 0 {
+		interfaceUUIDs := make(map[string]struct{}, len(port.Interfaces))
+		for _, ifaceUUID := range port.Interfaces {
+			interfaceUUIDs[ifaceUUID] = struct{}{}
 		}
-		var err error
-		ops, err = m.DeleteOps(ops, ifaceModel)
+		interfaces, err := FindInterfacesWithPredicate(ovsClient, func(iface *vswitchd.Interface) bool {
+			_, ok := interfaceUUIDs[iface.UUID]
+			return ok
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to build delete interface ops: %w", err)
+			return nil, fmt.Errorf("failed to find interfaces for port %q: %w", port.Name, err)
+		}
+		for _, iface := range interfaces {
+			ifaceOps, err := m.delete(iface)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build delete interface ops: %w", err)
+			}
+			ops = append(ops, ifaceOps...)
 		}
 	}
 

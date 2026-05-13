@@ -281,6 +281,46 @@ func TestDeletePortWithInterfaces(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc:      "is a no-op when the port lives on a different bridge",
+			portName:  "del-port",
+			expectErr: false,
+			initialOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID, "other-bridge-uuid"}},
+					&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int"},
+					&vswitchd.Bridge{UUID: "other-bridge-uuid", Name: "br-other", Ports: []string{portUUID}},
+					port.DeepCopy(), iface.DeepCopy(),
+				},
+			},
+			expectedOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID, "other-bridge-uuid"}},
+					&vswitchd.Bridge{UUID: bridgeUUID, Name: "br-int"},
+					&vswitchd.Bridge{UUID: "other-bridge-uuid", Name: "br-other", Ports: []string{portUUID}},
+					port.DeepCopy(), iface.DeepCopy(),
+				},
+			},
+		},
+		{
+			desc:      "is a no-op when the named bridge does not exist",
+			portName:  "del-port",
+			expectErr: false,
+			initialOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"other-bridge-uuid"}},
+					&vswitchd.Bridge{UUID: "other-bridge-uuid", Name: "br-other", Ports: []string{portUUID}},
+					port.DeepCopy(), iface.DeepCopy(),
+				},
+			},
+			expectedOvs: libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"other-bridge-uuid"}},
+					&vswitchd.Bridge{UUID: "other-bridge-uuid", Name: "br-other", Ports: []string{portUUID}},
+					port.DeepCopy(), iface.DeepCopy(),
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
