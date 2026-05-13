@@ -16,7 +16,7 @@ spec:
   - name: general.rules
     rules:
     - alert: OvnKubeNoRunningManager
-      expr: absent(up{job="ovnkube-master", namespace="ovn-kubernetes"} == 1)
+      expr: absent(up{job="ovnkube-cluster-manager", namespace="ovn-kubernetes"} == 1)
       for: 4m
       labels:
        severity: critical
@@ -373,8 +373,8 @@ spec:
 
     - alert: OVNKubeAllocatedV4SubnetsDoNotMatch
       expr: |
-        ovnkube_clustermanager_allocated_v4_host_subnets{job="ovnkube-master", namespace="ovn-kubernetes"} > 0 and
-        ovnkube_clustermanager_allocated_v4_host_subnets{job="ovnkube-master", namespace="ovn-kubernetes"} != scalar(sum(kube_node_info))
+        ovnkube_clustermanager_allocated_v4_host_subnets{job="ovnkube-cluster-manager", namespace="ovn-kubernetes"} > 0 and
+        ovnkube_clustermanager_allocated_v4_host_subnets{job="ovnkube-cluster-manager", namespace="ovn-kubernetes"} != scalar(sum(kube_node_info))
       for: 10m
       labels:
        severity: major
@@ -384,8 +384,8 @@ spec:
 
     - alert: OVNKubeAllocatedV6SubnetsDoNotMatch
       expr: |
-        ovnkube_clustermanager_allocated_v6_host_subnets{job="ovnkube-master", namespace="ovn-kubernetes"} > 0 and
-        ovnkube_clustermanager_allocated_v6_host_subnets{job="ovnkube-master", namespace="ovn-kubernetes"} != scalar(sum(kube_node_info))
+        ovnkube_clustermanager_allocated_v6_host_subnets{job="ovnkube-cluster-manager", namespace="ovn-kubernetes"} > 0 and
+        ovnkube_clustermanager_allocated_v6_host_subnets{job="ovnkube-cluster-manager", namespace="ovn-kubernetes"} != scalar(sum(kube_node_info))
       for: 10m
       labels:
        severity: major

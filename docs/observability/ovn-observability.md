@@ -128,8 +128,7 @@ Add more features support, for example, egress IP or load balancing.
 
 ## Known Limitations
 
-Current version of `ovnkube-observ` only works in OVN-IC mode, as it requires `nbdb` to be available locally via unix socket.
-In the future non-IC will also be supported with provided `nbdb` address and certificates.
+Current version of `ovnkube-observ` requires `nbdb` to be available locally via unix socket.
 
 Only default network observability is supported for now, secondary-network observability will be added later.
 

@@ -5,15 +5,11 @@
 tags:
   ovs-node: false
   ovn-ipsec: false
-  ovnkube-db: false
-  ovnkube-db-raft: false
-  ovnkube-master: false
   ovnkube-node: false
   ovnkube-control-plane: false
   ovnkube-node-dpu-host: false
   ovnkube-node-dpu: false
   ovnkube-single-node-zone: false
-  ovnkube-zone-controller: false
 
 # -- Whether or not call `lookup` Helm function, set it to `true` if you want to run `helm dry-run/template/lint`
 skipCallToK8s: false
@@ -91,9 +87,6 @@ global:
   enableIpsec: false
   # -- Use SSL transport to NB/SB db and northd
   enableSsl: false
-  # -- Configure to enable interconnecting multiple zones
-  # @default -- true
-  enableInterconnect: true
   # -- Configure to use AdminPolicyBasedExternalRoute CRD feature with ovn-kubernetes
   enableMultiExternalGateway: false
   # -- Configure to use stateless network policy feature with ovn-kubernetes
@@ -102,7 +95,7 @@ global:
   enableSvcTemplate: false
   # -- Enables metrics related to scaling
   enableMetricsScale: ""
-  # -- Enables monitoring OVN-Kubernetes master and OVN configuration duration
+  # -- Enables monitoring OVN-Kubernetes control plane and OVN configuration duration
   enableConfigDuration: ""
   # -- Indicates if ovn-controller should enable/disable the logical flow in-memory cache when processing Southbound database logical flow changes
   # @default -- true

@@ -457,7 +457,31 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			expectedOVNClusterRouter.Policies = append(expectedOVNClusterRouter.Policies, hybridSubnetLRP1.UUID, hybridSubnetLRP2.UUID)
 			expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, hybridSubnetStaticRoute1.UUID)
 
-			expectedDatabaseStateWithHybridNode := append([]libovsdbtest.TestData{hybridSubnetStaticRoute1, hybridSubnetLRP2, hybridSubnetLRP1, hybridLogicalSwitchPort, hybridLogicalRouterStaticRoute}, expectedDatabaseState...)
+			// IC handler always creates per-node transit-switch resources for the local zone:
+			// rtots-<node> LRP on ovn_cluster_router peered with tstor-<node> LSP on transit_switch.
+			rtotsLRP := &nbdb.LogicalRouterPort{
+				UUID:     types.RouterToTransitSwitchPrefix + node1.Name + "-UUID",
+				Name:     types.RouterToTransitSwitchPrefix + node1.Name,
+				MAC:      "0a:58:64:58:00:02",
+				Networks: []string{"100.88.0.2/16"},
+				Options:  map[string]string{"mcast_flood": "true"},
+			}
+			tstorLSP := &nbdb.LogicalSwitchPort{
+				UUID:        types.TransitSwitchToRouterPrefix + node1.Name + "-UUID",
+				Name:        types.TransitSwitchToRouterPrefix + node1.Name,
+				Type:        "router",
+				Addresses:   []string{"router"},
+				ExternalIDs: map[string]string{"node": node1.Name},
+				Options: map[string]string{
+					libovsdbops.RouterPort:      rtotsLRP.Name,
+					libovsdbops.RequestedTnlKey: "2",
+				},
+			}
+			transitSwitch := expectedTransitSwitch()
+			transitSwitch.Ports = []string{tstorLSP.UUID}
+			expectedOVNClusterRouter.Ports = append(expectedOVNClusterRouter.Ports, rtotsLRP.UUID)
+
+			expectedDatabaseStateWithHybridNode := append([]libovsdbtest.TestData{hybridSubnetStaticRoute1, hybridSubnetLRP2, hybridSubnetLRP1, hybridLogicalSwitchPort, hybridLogicalRouterStaticRoute, rtotsLRP, tstorLSP, transitSwitch}, expectedDatabaseState...)
 			expectedStaticMACBinding := &nbdb.StaticMACBinding{
 				UUID:               "MAC-binding-HO-UUID",
 				IP:                 nodeHOIP,
@@ -665,7 +689,31 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			expectedOVNClusterRouter.Policies = append(expectedOVNClusterRouter.Policies, hybridSubnetLRP1.UUID, hybridSubnetLRP2.UUID)
 			expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, hybridSubnetStaticRoute1.UUID)
 
-			expectedDatabaseStateWithHybridNode := append([]libovsdbtest.TestData{hybridSubnetStaticRoute1, hybridSubnetLRP2, hybridSubnetLRP1, hybridLogicalSwitchPort, hybridLogicalRouterStaticRoute}, expectedDatabaseState...)
+			// IC handler always creates per-node transit-switch resources for the local zone:
+			// rtots-<node> LRP on ovn_cluster_router peered with tstor-<node> LSP on transit_switch.
+			rtotsLRP := &nbdb.LogicalRouterPort{
+				UUID:     types.RouterToTransitSwitchPrefix + node1.Name + "-UUID",
+				Name:     types.RouterToTransitSwitchPrefix + node1.Name,
+				MAC:      "0a:58:64:58:00:02",
+				Networks: []string{"100.88.0.2/16"},
+				Options:  map[string]string{"mcast_flood": "true"},
+			}
+			tstorLSP := &nbdb.LogicalSwitchPort{
+				UUID:        types.TransitSwitchToRouterPrefix + node1.Name + "-UUID",
+				Name:        types.TransitSwitchToRouterPrefix + node1.Name,
+				Type:        "router",
+				Addresses:   []string{"router"},
+				ExternalIDs: map[string]string{"node": node1.Name},
+				Options: map[string]string{
+					libovsdbops.RouterPort:      rtotsLRP.Name,
+					libovsdbops.RequestedTnlKey: "2",
+				},
+			}
+			transitSwitch := expectedTransitSwitch()
+			transitSwitch.Ports = []string{tstorLSP.UUID}
+			expectedOVNClusterRouter.Ports = append(expectedOVNClusterRouter.Ports, rtotsLRP.UUID)
+
+			expectedDatabaseStateWithHybridNode := append([]libovsdbtest.TestData{hybridSubnetStaticRoute1, hybridSubnetLRP2, hybridSubnetLRP1, hybridLogicalSwitchPort, hybridLogicalRouterStaticRoute, rtotsLRP, tstorLSP, transitSwitch}, expectedDatabaseState...)
 			expectedStaticMACBinding := &nbdb.StaticMACBinding{
 				UUID:               "MAC-binding-HO-UUID",
 				IP:                 nodeHOIP,
@@ -932,7 +980,31 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			expectedOVNClusterRouter.Policies = append(expectedOVNClusterRouter.Policies, hybridSubnetLRP1.UUID, hybridSubnetLRP2.UUID)
 			expectedOVNClusterRouter.StaticRoutes = append(expectedOVNClusterRouter.StaticRoutes, hybridSubnetStaticRoute1.UUID)
 
-			expectedDatabaseStateWithHybridNode := append([]libovsdbtest.TestData{hybridSubnetStaticRoute1, hybridSubnetLRP2, hybridSubnetLRP1, hybridLogicalSwitchPort, hybridLogicalRouterStaticRoute}, expectedDatabaseState...)
+			// IC handler always creates per-node transit-switch resources for the local zone:
+			// rtots-<node> LRP on ovn_cluster_router peered with tstor-<node> LSP on transit_switch.
+			rtotsLRP := &nbdb.LogicalRouterPort{
+				UUID:     types.RouterToTransitSwitchPrefix + node1.Name + "-UUID",
+				Name:     types.RouterToTransitSwitchPrefix + node1.Name,
+				MAC:      "0a:58:64:58:00:02",
+				Networks: []string{"100.88.0.2/16"},
+				Options:  map[string]string{"mcast_flood": "true"},
+			}
+			tstorLSP := &nbdb.LogicalSwitchPort{
+				UUID:        types.TransitSwitchToRouterPrefix + node1.Name + "-UUID",
+				Name:        types.TransitSwitchToRouterPrefix + node1.Name,
+				Type:        "router",
+				Addresses:   []string{"router"},
+				ExternalIDs: map[string]string{"node": node1.Name},
+				Options: map[string]string{
+					libovsdbops.RouterPort:      rtotsLRP.Name,
+					libovsdbops.RequestedTnlKey: "2",
+				},
+			}
+			transitSwitch := expectedTransitSwitch()
+			transitSwitch.Ports = []string{tstorLSP.UUID}
+			expectedOVNClusterRouter.Ports = append(expectedOVNClusterRouter.Ports, rtotsLRP.UUID)
+
+			expectedDatabaseStateWithHybridNode := append([]libovsdbtest.TestData{hybridSubnetStaticRoute1, hybridSubnetLRP2, hybridSubnetLRP1, hybridLogicalSwitchPort, hybridLogicalRouterStaticRoute, rtotsLRP, tstorLSP, transitSwitch}, expectedDatabaseState...)
 			expectedStaticMACBinding := &nbdb.StaticMACBinding{
 				UUID:               "MAC-binding-HO-UUID",
 				IP:                 nodeHOIP,

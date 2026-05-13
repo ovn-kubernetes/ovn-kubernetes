@@ -181,7 +181,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Represents which ovnkube-master pod is leader ",
+      "description": "Represents which ovnkube-control-plane pod is leader ",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -462,7 +462,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Memory usage within ovnkube-master pod ",
+      "description": "Memory usage within ovnkube-control-plane pod ",
       "fieldConfig": {
         "defaults": {
           "unit": "decgbytes"
@@ -510,26 +510,12 @@
             "uid": "prometheus"
           },
           "exemplar": true,
-          "expr": "sum(container_memory_working_set_bytes{job=\"kubelet\", namespace=\"ovn-kubernetes\", pod=~\"$manager_pod\",container=\"ovnkube-master\"}) / 1024^3",
+          "expr": "sum(container_memory_working_set_bytes{job=\"kubelet\", namespace=\"ovn-kubernetes\", pod=~\"$manager_pod\",container=\"ovnkube-cluster-manager\"}) / 1024^3",
           "format": "time_series",
           "instant": false,
           "interval": "",
-          "legendFormat": "ovnkube-master",
+          "legendFormat": "ovnkube-cluster-manager",
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "exemplar": true,
-          "expr": "sum(container_memory_working_set_bytes{job=\"kubelet\", namespace=\"ovn-kubernetes\", pod=~\"$manager_pod\",container=\"nbctl-daemon\"}) / 1024^3",
-          "format": "time_series",
-          "hide": false,
-          "instant": false,
-          "interval": "",
-          "legendFormat": "nbctl-daemon",
-          "refId": "B"
         }
       ],
       "thresholds": [],
@@ -573,7 +559,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "CPU rates within ovnkube-master pod containers",
+      "description": "CPU rates within ovnkube-control-plane pod containers",
       "fieldConfig": {
         "defaults": {
           "unit": "cores"
@@ -621,22 +607,10 @@
             "uid": "prometheus"
           },
           "exemplar": true,
-          "expr": "sum(rate(container_cpu_usage_seconds_total{job=\"kubelet\", namespace=\"ovn-kubernetes\", pod=~\"$manager_pod\",container=\"ovnkube-master\"}[5m]))",
+          "expr": "sum(rate(container_cpu_usage_seconds_total{job=\"kubelet\", namespace=\"ovn-kubernetes\", pod=~\"$manager_pod\",container=\"ovnkube-cluster-manager\"}[5m]))",
           "interval": "",
-          "legendFormat": "ovnkube-master",
+          "legendFormat": "ovnkube-cluster-manager",
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "exemplar": true,
-          "expr": "sum(rate(container_cpu_usage_seconds_total{job=\"kubelet\", namespace=\"ovn-kubernetes\", pod=~\"$manager_pod\",container=\"nbctl-daemon\"}[5m]))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "nbctl-daemon",
-          "refId": "B"
         }
       ],
       "thresholds": [],
@@ -1536,7 +1510,7 @@
             "uid": "prometheus"
           },
           "exemplar": true,
-          "expr": "rate(ovnkube_controller_logfile_size_bytes{logfile_name=\"ovnkube-master.log\"}[$__rate_interval])",
+          "expr": "rate(ovnkube_controller_logfile_size_bytes{logfile_name=\"ovnkube-cluster-manager.log\"}[$__rate_interval])",
           "interval": "",
           "legendFormat": "{{pod}}",
           "queryType": "randomWalk",
@@ -2325,7 +2299,7 @@
                 "uid": "prometheus"
               },
               "exemplar": true,
-              "expr": "ALERTS{namespace=\"ovn-kubernetes\",deployment=\"ovnkube-master\", alertstate=\"firing\"}",
+              "expr": "ALERTS{namespace=\"ovn-kubernetes\",deployment=\"ovnkube-control-plane\", alertstate=\"firing\"}",
               "format": "table",
               "instant": false,
               "interval": "",
@@ -2431,7 +2405,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(kube_pod_info{namespace=\"ovn-kubernetes\",created_by_kind=\"ReplicaSet\",created_by_name=~\"ovnkube-master-.*\"}, pod)",
+        "definition": "label_values(kube_pod_info{namespace=\"ovn-kubernetes\",created_by_kind=\"ReplicaSet\",created_by_name=~\"ovnkube-control-plane-.*\"}, pod)",
         "hide": 0,
         "includeAll": true,
         "label": "Kube Manager Pod",
@@ -2439,7 +2413,7 @@
         "name": "manager_pod",
         "options": [],
         "query": {
-          "query": "label_values(kube_pod_info{namespace=\"ovn-kubernetes\",created_by_kind=\"ReplicaSet\",created_by_name=~\"ovnkube-master-.*\"}, pod)",
+          "query": "label_values(kube_pod_info{namespace=\"ovn-kubernetes\",created_by_kind=\"ReplicaSet\",created_by_name=~\"ovnkube-control-plane-.*\"}, pod)",
           "refId": "prometheus-manager_pod-Variable-Query"
         },
         "refresh": 2,

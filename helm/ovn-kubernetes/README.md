@@ -107,22 +107,13 @@ false
 			<td>Whether or not to use Admin Network Policy CRD feature with ovn-kubernetes</td>
 		</tr>
 		<tr>
-			<td>global.enableCompactMode</td>
-			<td>bool</td>
-			<td><pre lang="json">
-false
-</pre>
-</td>
-			<td>Indicate if ovnkube run master and node in one process</td>
-		</tr>
-		<tr>
 			<td>global.enableConfigDuration</td>
 			<td>string</td>
 			<td><pre lang="json">
 ""
 </pre>
 </td>
-			<td>Enables monitoring OVN-Kubernetes master and OVN configuration duration</td>
+			<td>Enables monitoring OVN-Kubernetes control plane and OVN configuration duration</td>
 		</tr>
 		<tr>
 			<td>global.enableDNSNameResolver</td>
@@ -177,15 +168,6 @@ true
 </pre>
 </td>
 			<td>Whether or not to enable hybrid overlay functionality</td>
-		</tr>
-		<tr>
-			<td>global.enableInterconnect</td>
-			<td>bool</td>
-			<td><pre lang="json">
-false
-</pre>
-</td>
-			<td>Configure to enable interconnecting multiple zones</td>
 		</tr>
 		<tr>
 			<td>global.enableIpsec</td>
@@ -599,13 +581,13 @@ false
 			<td>MTU of network interface in a Kubernetes pod</td>
 		</tr>
 		<tr>
-			<td>ovnkube-master.replicas</td>
+			<td>ovnkube-control-plane.replicas</td>
 			<td>int</td>
 			<td><pre lang="json">
 1
 </pre>
 </td>
-			<td>number of ovnkube-master pods</td>
+			<td>number of ovnkube-control-plane pods</td>
 		</tr>
 		<tr>
 			<td>podNetwork</td>
@@ -640,12 +622,8 @@ false
 			<td><pre lang="json">
 {
   "ovn-ipsec": false,
-  "ovnkube-control-plane": false,
-  "ovnkube-db-raft": false,
   "ovnkube-node-dpu": false,
-  "ovnkube-node-dpu-host": false,
-  "ovnkube-single-node-zone": false,
-  "ovnkube-zone-controller": false
+  "ovnkube-node-dpu-host": false
 }
 </pre>
 </td>
@@ -653,4 +631,3 @@ false
 		</tr>
 	</tbody>
 </table>
-

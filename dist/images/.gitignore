@@ -4,7 +4,6 @@ ovnkube
 ovnkube-trace
 ovnkube-identity
 ovnkube-observ
-ovndbchecker
 hybrid-overlay-node
 git_info
 ovnkube-ipsec

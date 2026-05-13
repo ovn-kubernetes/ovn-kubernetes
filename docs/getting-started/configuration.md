@@ -177,6 +177,19 @@ also enabled since it leverages the secondary networks feature.
 
 ## HA Config
 
+`ovnkube-cluster-manager` runs in the `ovnkube-control-plane` Deployment. The
+Helm chart pins it to control-plane-labeled nodes
+(`node-role.kubernetes.io/control-plane`) and enforces one pod per node via
+pod anti-affinity, but defaults to a single replica.
+
+For HA, set `replicas` on the `ovnkube-control-plane` chart to match the
+number of control-plane nodes:
+
+    helm install ovn-kubernetes . ... --set ovnkube-control-plane.replicas=3
+
+Cluster-manager uses Kubernetes lease-based leader election — only one replica
+is active at any time; the rest stand by and take over on failure.
+
 ## OVN Auth Config
 
 ## Hybrid Overlay Config

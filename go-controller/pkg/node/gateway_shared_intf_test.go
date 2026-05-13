@@ -258,7 +258,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 
 		// Initialize nodeIPManager (required for GetLocalEligibleEndpointAddresses)
 		k := &kube.Kube{KClient: fakeClient.KubeClient}
-		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, false)
+		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, nil, false)
 	})
 
 	AfterEach(func() {
@@ -379,7 +379,7 @@ var _ = Describe("SyncServices", func() {
 		npw.networkManager = networkmanager.Default().Interface()
 
 		k := &kube.Kube{KClient: fakeClient.KubeClient}
-		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, false)
+		npw.nodeIPManager = newAddressManagerInternal(nodeName, k, nil, watcher, nil, nil, false)
 	})
 
 	AfterEach(func() {

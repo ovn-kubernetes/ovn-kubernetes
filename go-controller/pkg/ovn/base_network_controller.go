@@ -521,39 +521,6 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		return err
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() &&
-		bnc.IsPrimaryNetwork() && !config.OVNKubernetesFeature.EnableInterconnect &&
-		(bnc.TopologyType() == types.Layer3Topology ||
-			bnc.TopologyType() == types.Layer2Topology) {
-		// since in nonIC the ovn_cluster_router is distributed, we must specify the gatewayPort for the
-		// conditional SNATs to signal OVN which gatewayport should be chosen if there are mutiple distributed
-		// gateway ports. Now that the LRP is created, let's update the NATs to reflect that.
-		lrp := nbdb.LogicalRouterPort{
-			Name: lrpName,
-		}
-		logicalRouterPort, err := libovsdbops.GetLogicalRouterPort(bnc.nbClient, &lrp)
-		if err != nil {
-			return fmt.Errorf("failed to fetch gatewayport %s for network %q on node %q, err: %w",
-				lrpName, bnc.GetNetworkName(), node.Name, err)
-		}
-		gatewayPort := logicalRouterPort.UUID
-		p := func(item *nbdb.NAT) bool {
-			return item.ExternalIDs[types.NetworkExternalID] == bnc.GetNetworkName() &&
-				item.LogicalPort != nil && *item.LogicalPort == lrpName && item.Match != ""
-		}
-		nonICConditonalSNATs, err := libovsdbops.FindNATsWithPredicate(bnc.nbClient, p)
-		if err != nil {
-			return fmt.Errorf("failed to fetch conditional NATs %s for network %q on node %q, err: %w",
-				lrpName, bnc.GetNetworkName(), node.Name, err)
-		}
-		for _, nat := range nonICConditonalSNATs {
-			nat.GatewayPort = &gatewayPort
-		}
-		if err := libovsdbops.CreateOrUpdateNATs(bnc.nbClient, &logicalRouter, nonICConditonalSNATs...); err != nil {
-			return fmt.Errorf("failed to fetch conditional NATs %s for network %q on node %q, err: %w",
-				lrpName, bnc.GetNetworkName(), node.Name, err)
-		}
-	}
 	return nil
 }
 
@@ -981,9 +948,6 @@ func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error
 // that have no overlay or that use EVPN, and this method would typically be
 // used to inhibit the configuration of interconnect resources in those cases.
 func (bnc *BaseNetworkController) hasInterconnectTransport() bool {
-	if !config.OVNKubernetesFeature.EnableInterconnect {
-		return false
-	}
 	switch bnc.Transport() {
 	case types.NetworkTransportEVPN, types.NetworkTransportNoOverlay:
 		return false

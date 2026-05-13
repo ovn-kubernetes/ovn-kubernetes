@@ -1284,7 +1284,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 	})
 
 	ginkgo.Context("Transit switch port IP allocations", func() {
-		ginkgo.It("Interconnect enabled", func() {
+		ginkgo.It("allocates transit switch port IPs", func() {
 			config.ClusterManager.V4TransitSubnet = "100.89.0.0/16"
 			config.ClusterManager.V6TransitSubnet = "fd99::/64"
 			app.Action = func(ctx *cli.Context) error {
@@ -1377,12 +1377,11 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				app.Name,
 				"-cluster-subnets=" + clusterCIDR + "," + clusterv6CIDR,
 				"-k8s-service-cidr=10.96.0.0/16,fd00:10:96::/112",
-				"--enable-interconnect",
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("Interconnect enabled - clear the transit switch port ips and check", func() {
+		ginkgo.It("reallocates missing transit switch port IPs", func() {
 			app.Action = func(ctx *cli.Context) error {
 				nodes := []corev1.Node{
 					{
@@ -1490,78 +1489,10 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 			err := app.Run([]string{
 				app.Name,
 				"-cluster-subnets=" + clusterCIDR,
-				"--enable-interconnect",
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("Interconnect disabled", func() {
-			app.Action = func(ctx *cli.Context) error {
-				nodes := []corev1.Node{
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node1",
-						},
-					},
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node2",
-						},
-					},
-					{
-						ObjectMeta: metav1.ObjectMeta{
-							Name: "node3",
-						},
-					},
-				}
-				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
-					Items: nodes,
-				})
-				fakeClient := &util.OVNClusterManagerClientset{
-					KubeClient: kubeFakeClient,
-				}
-
-				_, err := config.InitConfig(ctx, nil, nil)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				err = f.Start()
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				clusterManager, err := NewClusterManager(fakeClient, f, "identity", nil)
-				gomega.Expect(clusterManager).NotTo(gomega.BeNil())
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				err = clusterManager.Start(ctx.Context)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				defer clusterManager.Stop()
-
-				// Check that cluster manager has allocated id transit switch port ips for each node
-				for _, n := range nodes {
-					gomega.Eventually(func() error {
-						updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), n.Name, metav1.GetOptions{})
-						if err != nil {
-							return err
-						}
-
-						_, ok := updatedNode.Annotations[ovnTransitSwitchPortAddrAnnotation]
-						if ok {
-							return fmt.Errorf("not expected node annotation for node %s to have transit switch port ips allocated", n.Name)
-						}
-
-						return nil
-					}).ShouldNot(gomega.HaveOccurred())
-				}
-
-				return nil
-			}
-
-			err := app.Run([]string{
-				app.Name,
-				"-cluster-subnets=" + clusterCIDR,
-			})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		})
 	})
 
 	ginkgo.Context("starting the cluster manager", func() {

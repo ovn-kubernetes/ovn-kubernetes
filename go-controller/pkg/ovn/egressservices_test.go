@@ -366,7 +366,6 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
 				config.IPv6Mode = true
-				config.OVNKubernetesFeature.EnableInterconnect = true
 
 				nolongeregresssvc := corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{Name: "nolongeregresssvc", Namespace: "testns"},
@@ -570,11 +569,10 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 	ginkgo.Context("on egress service changes", func() {
 
-		ginkgo.DescribeTable("should create/update/delete OVN configuration", func(interconnectEnabled bool) {
+		ginkgo.It("should create/update/delete OVN configuration when node1 is in the local zone and node2 is remote", func() {
 			app.Action = func(*cli.Context) error {
 				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
-				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node1.Labels = map[string]string{"house": "Gryffindor"}
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
@@ -683,41 +681,23 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				if interconnectEnabled {
-					fakeOVN.controller.zone = node1Name
-				}
+				fakeOVN.controller.zone = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
-				v4lrp2 := egressServiceRouterPolicy("v4lrp2-UUID", "testns/svc1", "10.128.2.5", "10.128.1.2")
 				v6lrp1 := egressServiceRouterPolicy("v6lrp1-UUID", "testns/svc1", "fe00:10:128:1::5", "fe00:10:128:1::2")
-				v6lrp2 := egressServiceRouterPolicy("v6lrp2-UUID", "testns/svc1", "fe00:10:128:2::5", "fe00:10:128:1::2")
 				v4lrsr := egressServiceRouterPolicy("v4lrsr-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
 				v6lrsr := egressServiceRouterPolicy("v6lrsr-UUID", "testns/svc1:ic", "fe00:10:128:2::5", "fe00:10:128:1::2")
 
-				var expectedDatabaseState []libovsdbtest.TestData
-				var expectedEgressSvcAddrSet []string
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID", "v6lrp1-UUID", "v6lrp2-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						v4lrp1,
-						v4lrp2,
-						v6lrp1,
-						v6lrp2,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "10.128.2.5", "fe00:10:128:1::5", "fe00:10:128:2::5"}
-				} else {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						v4lrp1,
-						v6lrp1,
-						v4lrsr,
-						v6lrsr,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "fe00:10:128:1::5"}
+				clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
+				expectedDatabaseState := []libovsdbtest.TestData{
+					clusterRouter,
+					v4lrp1,
+					v6lrp1,
+					v4lrsr,
+					v6lrsr,
 				}
+				expectedEgressSvcAddrSet := []string{"10.128.1.5", "fe00:10:128:1::5"}
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -732,30 +712,14 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				_, err := fakeOVN.fakeClient.EgressServiceClient.K8sV1().EgressServices("testns").Update(context.TODO(), &esvc1, metav1.UpdateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-				if !interconnectEnabled {
-					v4lrp1.Nexthops[0] = "10.128.2.2"
-					v4lrp2.Nexthops[0] = "10.128.2.2"
-					v6lrp1.Nexthops[0] = "fe00:10:128:2::2"
-					v6lrp2.Nexthops[0] = "fe00:10:128:2::2"
+				v4lrp1 = egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", node2transitIPv4)
+				v6lrp1 = egressServiceRouterPolicy("v6lrp1-UUID", "testns/svc1", "fe00:10:128:1::5", node2transitIPv6)
+				clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID"}
 
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID", "v6lrp1-UUID", "v6lrp2-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						v4lrp1,
-						v4lrp2,
-						v6lrp1,
-						v6lrp2,
-					}
-				} else {
-					v4lrp1 = egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", node2transitIPv4)
-					v6lrp1 = egressServiceRouterPolicy("v6lrp1-UUID", "testns/svc1", "fe00:10:128:1::5", node2transitIPv6)
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID"}
-
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						v4lrp1,
-						v6lrp1,
-					}
+				expectedDatabaseState = []libovsdbtest.TestData{
+					clusterRouter,
+					v4lrp1,
+					v6lrp1,
 				}
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
@@ -781,16 +745,12 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 			}
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		},
-			ginkgo.Entry("IC Disabled, all nodes are in a single zone", false),
-			ginkgo.Entry("IC Enabled, node1 is in the local zone, node2 in remote", true),
-		)
+		})
 
-		ginkgo.DescribeTable("should delete resources when host changes to ALL", func(interconnectEnabled bool) {
+		ginkgo.It("should delete resources when host changes to ALL with node1 in the local zone and node2 remote", func() {
 			app.Action = func(*cli.Context) error {
 				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
-				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
 				clusterRouter := &nbdb.LogicalRouter{
@@ -889,39 +849,23 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				if interconnectEnabled {
-					fakeOVN.controller.zone = node1Name
-				}
+				fakeOVN.controller.zone = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
-				v4lrp2 := egressServiceRouterPolicy("v4lrp2-UUID", "testns/svc1", "10.128.2.5", "10.128.1.2")
 				v6lrp1 := egressServiceRouterPolicy("v6lrp1-UUID", "testns/svc1", "fe00:10:128:1::5", "fe00:10:128:1::2")
-				v6lrp2 := egressServiceRouterPolicy("v6lrp2-UUID", "testns/svc1", "fe00:10:128:2::5", "fe00:10:128:1::2")
 				v4lrpic := egressServiceRouterPolicy("v4lrsr-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
 				v6lrpic := egressServiceRouterPolicy("v6lrsr-UUID", "testns/svc1:ic", "fe00:10:128:2::5", "fe00:10:128:1::2")
 
-				clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID", "v6lrp1-UUID", "v6lrp2-UUID"}
+				clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
 				expectedDatabaseState := []libovsdbtest.TestData{
 					clusterRouter,
 					v4lrp1,
-					v4lrp2,
 					v6lrp1,
-					v6lrp2,
+					v4lrpic,
+					v6lrpic,
 				}
-				expectedEgressSvcAddrSet := []string{"10.128.1.5", "10.128.2.5", "fe00:10:128:1::5", "fe00:10:128:2::5"}
-
-				if interconnectEnabled {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						v4lrp1,
-						v6lrp1,
-						v4lrpic,
-						v6lrpic,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "fe00:10:128:1::5"}
-				}
+				expectedEgressSvcAddrSet := []string{"10.128.1.5", "fe00:10:128:1::5"}
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -948,17 +892,14 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 			}
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		},
-			ginkgo.Entry("IC Disabled, all nodes are in a single zone", false),
-			ginkgo.Entry("IC Enabled, node1 is in the local zone, node2 in remote", true))
+		})
 	})
 
 	ginkgo.Context("on endpointslices changes", func() {
-		ginkgo.DescribeTable("should create/update/delete OVN configuration", func(interconnectEnabled bool) {
+		ginkgo.It("should create/update/delete OVN configuration when node1 is in the local zone and node2 is remote", func() {
 			app.Action = func(*cli.Context) error {
 				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
-				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node1.Annotations[util.OvnNodeID] = "2"
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
@@ -1073,43 +1014,26 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				if interconnectEnabled {
-					fakeOVN.controller.zone = node1Name
-				}
+				fakeOVN.controller.zone = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
 				v4lrp1 := egressServiceRouterPolicy("v4lrp1-UUID", "testns/svc1", "10.128.1.5", "10.128.1.2")
-				v4lrp2 := egressServiceRouterPolicy("v4lrp2-UUID", "testns/svc1", "10.128.2.5", "10.128.1.2")
 				v4lrpic := egressServiceRouterPolicy("v4lrsr-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
-				var expectedDatabaseState []libovsdbtest.TestData
-				var expectedEgressSvcAddrSet []string
 				v4DefaultReRoute := getReRouteStaticRoute("10.128.0.0/16", nodeLogicalRouterIPv4[0])
 				v6DefaultReRoute := getReRouteStaticRoute("fe00::/16", nodeLogicalRouterIPv6[0])
 				v6DefaultReRoute.UUID = "reroute-static-route-UUID-v6"
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v4lrp1,
-						v4lrp2,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "10.128.2.5"}
-				} else {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrsr-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v4lrp1,
-						v4lrpic,
-						v4DefaultReRoute,
-						v6DefaultReRoute,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5"}
-					expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
+				clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrsr-UUID"}
+				expectedDatabaseState := []libovsdbtest.TestData{
+					clusterRouter,
+					gwRouter,
+					node1LRP,
+					v4lrp1,
+					v4lrpic,
+					v4DefaultReRoute,
+					v6DefaultReRoute,
 				}
+				expectedEgressSvcAddrSet := []string{"10.128.1.5"}
+				expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -1123,37 +1047,22 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 				v6lrp1 := egressServiceRouterPolicy("v6lrp1-UUID", "testns/svc1", "fe00:10:128:1::5", "fe00:10:128:1::2")
-				v6lrp2 := egressServiceRouterPolicy("v6lrp2-UUID", "testns/svc1", "fe00:10:128:2::5", "fe00:10:128:1::2")
 				v6lrpic := egressServiceRouterPolicy("v6lrsr-UUID", "testns/svc1:ic", "fe00:10:128:2::5", "fe00:10:128:1::2")
 
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID", "v6lrp1-UUID", "v6lrp2-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v4lrp1,
-						v4lrp2,
-						v6lrp1,
-						v6lrp2,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "10.128.2.5", "fe00:10:128:1::5", "fe00:10:128:2::5"}
-				} else {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v4lrp1,
-						v4lrpic,
-						v6lrp1,
-						v6lrpic,
-						v4DefaultReRoute,
-						v6DefaultReRoute,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "fe00:10:128:1::5"}
-					expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
+				clusterRouter.Policies = []string{"v4lrp1-UUID", "v6lrp1-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
+				expectedDatabaseState = []libovsdbtest.TestData{
+					clusterRouter,
+					gwRouter,
+					node1LRP,
+					v4lrp1,
+					v4lrpic,
+					v6lrp1,
+					v6lrpic,
+					v4DefaultReRoute,
+					v6DefaultReRoute,
 				}
+				expectedEgressSvcAddrSet = []string{"10.128.1.5", "fe00:10:128:1::5"}
+				expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
 					clusterRouter.Policies = append(clusterRouter.Policies, lrp.UUID)
@@ -1173,34 +1082,20 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 				v4lrp3 := egressServiceRouterPolicy("v4lrp3-UUID", "testns/svc1", "10.128.1.7", "10.128.1.2") // local to zone
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID", "v4lrp3-UUID", "v6lrp2-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v4lrp1,
-						v4lrp2,
-						v4lrp3,
-						v6lrp2,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "10.128.2.5", "10.128.1.7", "fe00:10:128:2::5"}
-				} else {
-					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp3-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v4lrp1,
-						v4lrpic,
-						v4lrp3,
-						v6lrpic,
-						v4DefaultReRoute,
-						v6DefaultReRoute,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.5", "10.128.1.7"}
-					expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
+				clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp3-UUID", "v4lrsr-UUID", "v6lrsr-UUID"}
+				expectedDatabaseState = []libovsdbtest.TestData{
+					clusterRouter,
+					gwRouter,
+					node1LRP,
+					v4lrp1,
+					v4lrpic,
+					v4lrp3,
+					v6lrpic,
+					v4DefaultReRoute,
+					v6DefaultReRoute,
 				}
+				expectedEgressSvcAddrSet = []string{"10.128.1.5", "10.128.1.7"}
+				expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -1212,28 +1107,17 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				ginkgo.By("deleting the v4 endpoints the corresponding entries will be deleted")
 				err = fakeOVN.fakeClient.KubeClient.DiscoveryV1().EndpointSlices("testns").Delete(context.TODO(), v4EpSlice.Name, metav1.DeleteOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"v6lrp2-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v6lrp2,
-					}
-					expectedEgressSvcAddrSet = []string{"fe00:10:128:2::5"}
-				} else {
-					clusterRouter.Policies = []string{"v6lrsr-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						gwRouter,
-						node1LRP,
-						v6lrpic,
-						v4DefaultReRoute,
-						v6DefaultReRoute,
-					}
-					expectedEgressSvcAddrSet = []string{}
-					expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
+				clusterRouter.Policies = []string{"v6lrsr-UUID"}
+				expectedDatabaseState = []libovsdbtest.TestData{
+					clusterRouter,
+					gwRouter,
+					node1LRP,
+					v6lrpic,
+					v4DefaultReRoute,
+					v6DefaultReRoute,
 				}
+				expectedEgressSvcAddrSet = []string{}
+				expectedDatabaseState[0].(*nbdb.LogicalRouter).StaticRoutes = []string{"reroute-static-route-UUID", "reroute-static-route-UUID-v6"}
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -1251,10 +1135,8 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					gwRouter,
 					node1LRP,
 				}
-				if interconnectEnabled {
-					expectedDatabaseState = append(expectedDatabaseState, v4DefaultReRoute)
-					expectedDatabaseState = append(expectedDatabaseState, v6DefaultReRoute)
-				}
+				expectedDatabaseState = append(expectedDatabaseState, v4DefaultReRoute)
+				expectedDatabaseState = append(expectedDatabaseState, v6DefaultReRoute)
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -1266,17 +1148,14 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 			}
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		},
-			ginkgo.Entry("IC Disabled, all nodes are in a single zone", false),
-			ginkgo.Entry("IC Enabled, node1 is in the local zone, node2 in remote", true))
+		})
 	})
 
 	ginkgo.Context("on nodes changes", func() {
-		ginkgo.DescribeTable("should create/update/delete logical router policies and address sets", func(interconnectEnabled bool) {
+		ginkgo.It("should create/update/delete logical router policies and address sets when node1 is in the local zone and node2 is remote", func() {
 			app.Action = func(*cli.Context) error {
 				namespaceT := *testing.NewNamespace("testns")
 				config.IPv6Mode = true
-				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node1.Labels = map[string]string{"home": "pineapple"}
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
@@ -1414,34 +1293,19 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					},
 				)
 
-				if interconnectEnabled {
-					fakeOVN.controller.zone = node1Name
-				}
+				fakeOVN.controller.zone = node1Name
 				fakeOVN.InitAndRunEgressSVCController()
 
-				svc1v4lrp1 := egressServiceRouterPolicy("svc1v4lrp1-UUID", "testns/svc1", "10.128.2.5", "10.128.1.2")
-				svc1v6lrp1 := egressServiceRouterPolicy("svc1v6lrp1-UUID", "testns/svc1", "fe00:10:128:2::5", "fe00:10:128:1::2")
 				svc1v4iclrp1 := egressServiceRouterPolicy("svc1v4lrsr1-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
 				svc1v6iclrp1 := egressServiceRouterPolicy("svc1v6lrsr1-UUID", "testns/svc1:ic", "fe00:10:128:2::5", "fe00:10:128:1::2")
 
-				var expectedDatabaseState []libovsdbtest.TestData
-				var expectedEgressSvcAddrSet []string
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"svc1v4lrp1-UUID", "svc1v6lrp1-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						svc1v4lrp1,
-						svc1v6lrp1,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.2.5", "fe00:10:128:2::5"}
-				} else {
-					clusterRouter.Policies = []string{"svc1v4lrsr1-UUID", "svc1v6lrsr1-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						svc1v4iclrp1,
-						svc1v6iclrp1,
-					}
+				clusterRouter.Policies = []string{"svc1v4lrsr1-UUID", "svc1v6lrsr1-UUID"}
+				expectedDatabaseState := []libovsdbtest.TestData{
+					clusterRouter,
+					svc1v4iclrp1,
+					svc1v6iclrp1,
 				}
+				var expectedEgressSvcAddrSet []string
 
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
@@ -1469,32 +1333,18 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				_, err := fakeOVN.fakeClient.EgressServiceClient.K8sV1().EgressServices("testns").Create(context.TODO(), &esvc2, metav1.CreateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-				svc2v4lrp1 := egressServiceRouterPolicy("svc2v4lrp1-UUID", "testns/svc2", "10.128.1.6", "10.128.2.2")
-				svc2v6lrp1 := egressServiceRouterPolicy("svc2v6lrp1-UUID", "testns/svc2", "fe00:10:128:1::6", "fe00:10:128:2::2")
 				svc2v4lrp1remote := egressServiceRouterPolicy("svc2v4lrp1remote-UUID", "testns/svc2", "10.128.1.6", node2transitIPv4)
 				svc2v6lrp1remote := egressServiceRouterPolicy("svc2v6lrp1remote-UUID", "testns/svc2", "fe00:10:128:1::6", node2transitIPv6)
 
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"svc1v4lrp1-UUID", "svc1v6lrp1-UUID", "svc2v4lrp1-UUID", "svc2v6lrp1-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						svc1v4lrp1,
-						svc1v6lrp1,
-						svc2v4lrp1,
-						svc2v6lrp1,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.2.5", "fe00:10:128:2::5", "10.128.1.6", "fe00:10:128:1::6"}
-				} else {
-					clusterRouter.Policies = []string{"svc2v4lrp1remote-UUID", "svc2v6lrp1remote-UUID", "svc1v4lrsr1-UUID", "svc1v6lrsr1-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						svc1v4iclrp1,
-						svc1v6iclrp1,
-						svc2v4lrp1remote,
-						svc2v6lrp1remote,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.6", "fe00:10:128:1::6"}
+				clusterRouter.Policies = []string{"svc2v4lrp1remote-UUID", "svc2v6lrp1remote-UUID", "svc1v4lrsr1-UUID", "svc1v6lrsr1-UUID"}
+				expectedDatabaseState = []libovsdbtest.TestData{
+					clusterRouter,
+					svc1v4iclrp1,
+					svc1v6iclrp1,
+					svc2v4lrp1remote,
+					svc2v6lrp1remote,
 				}
+				expectedEgressSvcAddrSet = []string{"10.128.1.6", "fe00:10:128:1::6"}
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
 					clusterRouter.Policies = append(clusterRouter.Policies, lrp.UUID)
@@ -1528,23 +1378,13 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 				fakeOVN.asf.EventuallyExpectAddressSetWithAddresses(nodeIPsASdbIDs, []string{node2IPv4, node2IPv6})
 
-				if !interconnectEnabled {
-					clusterRouter.Policies = []string{"svc2v4lrp1-UUID", "svc2v6lrp1-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						svc2v4lrp1,
-						svc2v6lrp1,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.6", "fe00:10:128:1::6"}
-				} else {
-					clusterRouter.Policies = []string{"svc2v4lrp1remote-UUID", "svc2v6lrp1remote-UUID"}
-					expectedDatabaseState = []libovsdbtest.TestData{
-						clusterRouter,
-						svc2v4lrp1remote,
-						svc2v6lrp1remote,
-					}
-					expectedEgressSvcAddrSet = []string{"10.128.1.6", "fe00:10:128:1::6"}
+				clusterRouter.Policies = []string{"svc2v4lrp1remote-UUID", "svc2v6lrp1remote-UUID"}
+				expectedDatabaseState = []libovsdbtest.TestData{
+					clusterRouter,
+					svc2v4lrp1remote,
+					svc2v6lrp1remote,
 				}
+				expectedEgressSvcAddrSet = []string{"10.128.1.6", "fe00:10:128:1::6"}
 				for _, lrp := range getDefaultNoReroutePolicies(controllerName) {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
 					clusterRouter.Policies = append(clusterRouter.Policies, lrp.UUID)
@@ -1571,9 +1411,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 			}
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		},
-			ginkgo.Entry("IC Disabled, all nodes are in a single zone", false),
-			ginkgo.Entry("IC Enabled, node1 is in the local zone, node2 in remote", true))
+		})
 	})
 
 })

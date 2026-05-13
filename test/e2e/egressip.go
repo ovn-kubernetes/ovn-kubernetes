@@ -109,18 +109,13 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) checkMode(restore bool) (s
 		return "", "", false
 	}
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
-	framework.Logf("Checking the ovnkube-node and ovnkube-master (ovnkube-cluster-manager if interconnect=true) healthcheck ports in use")
+	framework.Logf("Checking the ovnkube-node and ovnkube-cluster-manager healthcheck ports in use")
 	portNode := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
-	var portMaster string
-	if isInterconnectEnabled() {
-		portMaster = getTemplateContainerEnv(ovnKubeNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
-	} else {
-		portMaster = getTemplateContainerEnv(ovnKubeNamespace, "deployment/ovnkube-master", "ovnkube-master", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
-	}
+	portControlPlane := getTemplateContainerEnv(ovnKubeNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 
 	wantLegacy := (h.Legacy && !restore) || (h.modeWasLegacy && restore)
 	isLegacy := portNode == "" || portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV
-	outOfSync := portNode != portMaster
+	outOfSync := portNode != portControlPlane
 
 	if !h.modeWasChecked {
 		h.modeWasChecked = true
@@ -130,12 +125,12 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) checkMode(restore bool) (s
 
 	if wantLegacy {
 		// we want to change to legacy health check if we are not already in
-		// that mode or if node and master are out of sync
+		// that mode or if node and control plane are out of sync
 		return OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV, OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT, !isLegacy || outOfSync
 	}
 	if !wantLegacy && !isLegacy {
 		// we are is GRPC health check mode as we want but reset if node and
-		// master are out of sync
+		// control plane are out of sync
 		return portNode, portNode, outOfSync
 	}
 	// we are in legacy health check mode and we want to change to GRPC mode.
@@ -161,11 +156,7 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) setMode(nodeName string, r
 		ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 		setEnv := map[string]string{OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME: portEnv}
 		setUnsetTemplateContainerEnv(h.F.ClientSet, ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), setEnv)
-		if isInterconnectEnabled() {
-			setUnsetTemplateContainerEnv(h.F.ClientSet, ovnKubeNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", setEnv)
-		} else {
-			setUnsetTemplateContainerEnv(h.F.ClientSet, ovnKubeNamespace, "deployment/ovnkube-master", "ovnkube-master", setEnv)
-		}
+		setUnsetTemplateContainerEnv(h.F.ClientSet, ovnKubeNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", setEnv)
 	}
 	if port != "" {
 		op := "Allow"
@@ -639,9 +630,6 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		// user defined networks
 		if !isNetworkSegmentationEnabled() {
 			return false, "network segmentation is disabled. Environment variable 'ENABLE_NETWORK_SEGMENTATION' must have value true"
-		}
-		if !isInterconnectEnabled() {
-			return false, "interconnect is disabled. Environment variable 'OVN_ENABLE_INTERCONNECT' must have value true"
 		}
 		if netConfigParams.topology == types.LocalnetTopology {
 			return false, "unsupported network topology"
@@ -1564,11 +1552,8 @@ spec:
 
 		ginkgo.By("7. Check the OVN DB to ensure no SNATs are added for the standby egressIP")
 		ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
-		dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "name=ovnkube-db", "-o=jsonpath='{.items..metadata.name}'")
+		dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
 		dbContainerName := "nb-ovsdb"
-		if isInterconnectEnabled() {
-			dbPods, err = e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
-		}
 		if err != nil || len(dbPods) == 0 {
 			framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
 		}
@@ -1680,9 +1665,7 @@ spec:
 		})
 		framework.ExpectNoError(err, "Step 14. Ensure egressIP1 from egressIP object1 and egressIP3 from object2 is correctly transferred to egress2Node, failed: %v", err)
 
-		if isInterconnectEnabled() {
-			dbPods, err = e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress2Node.name), "-o=jsonpath='{.items..metadata.name}'")
-		}
+		dbPods, err = e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress2Node.name), "-o=jsonpath='{.items..metadata.name}'")
 		if err != nil || len(dbPods) == 0 {
 			framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
 		}

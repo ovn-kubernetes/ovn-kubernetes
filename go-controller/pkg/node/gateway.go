@@ -15,6 +15,8 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	"k8s.io/klog/v2"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -240,12 +242,10 @@ func (g *gateway) DeleteEndpointSlice(epSlice *discovery.EndpointSlice) error {
 // canHandleBridgeEgressIP returns true if this node should handle EgressIP
 // configuration on the bridge. Returns false if:
 // - Network segmentation (UDN) is not enabled
-// - Interconnect is not enabled
 // - Gateway mode is disabled
 // - Running in DPU-host mode (EgressIP is handled by ovnkube on the DPU where OVS runs)
 func canHandleBridgeEgressIP() bool {
 	return util.IsNetworkSegmentationSupportEnabled() &&
-		config.OVNKubernetesFeature.EnableInterconnect &&
 		config.Gateway.Mode != config.GatewayModeDisabled &&
 		(config.IsModeDPU() || config.IsModeFull())
 }
@@ -373,16 +373,16 @@ func setupUDPAggregationUplink(ifname string) error {
 	return nil
 }
 
-func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops []net.IP, nodeSubnets, gwIPs []*net.IPNet,
+func gatewayInitInternal(ovsClient libovsdbclient.Client, nodeName, gwIntf, egressGatewayIntf string, gwNextHops []net.IP, nodeSubnets, gwIPs []*net.IPNet,
 	advertised bool, nodeAnnotator kube.Annotator) (
 	*bridgeconfig.BridgeConfiguration, *bridgeconfig.BridgeConfiguration, error) {
-	gatewayBridge, err := bridgeconfig.NewBridgeConfiguration(gwIntf, nodeName, types.PhysicalNetworkName, nodeSubnets, gwIPs, advertised)
+	gatewayBridge, err := bridgeconfig.NewBridgeConfiguration(ovsClient, gwIntf, nodeName, types.PhysicalNetworkName, nodeSubnets, gwIPs, advertised)
 	if err != nil {
 		return nil, nil, fmt.Errorf("bridge for interface failed for %s: %w", gwIntf, err)
 	}
 	var egressGWBridge *bridgeconfig.BridgeConfiguration
 	if egressGatewayIntf != "" {
-		egressGWBridge, err = bridgeconfig.NewBridgeConfiguration(egressGatewayIntf, nodeName, types.PhysicalNetworkExGwName, nodeSubnets, nil, false)
+		egressGWBridge, err = bridgeconfig.NewBridgeConfiguration(ovsClient, egressGatewayIntf, nodeName, types.PhysicalNetworkExGwName, nodeSubnets, nil, false)
 		if err != nil {
 			return nil, nil, fmt.Errorf("bridge for interface failed for %s: %w", egressGatewayIntf, err)
 		}

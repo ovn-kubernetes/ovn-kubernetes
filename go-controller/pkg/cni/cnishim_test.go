@@ -184,8 +184,14 @@ func TestCmdAdd_UnprivilegedMode(t *testing.T) {
   "cniVersion": "1.1.0",
   "interfaces": [
     {
+      "name": "host_eth0"
+    },
+    {
       "name": "eth0",
       "sandbox": "/var/run/netns/test-ns_test-pod"
+    },
+    {
+      "name": "host_dummy1"
     },
     {
       "name": "dummy1",
@@ -195,8 +201,8 @@ func TestCmdAdd_UnprivilegedMode(t *testing.T) {
   "ips": [
     { "address": "100.10.10.3/24", "interface": 1 },
     { "address": "fd44::33/64", "interface": 1 },
-    { "address": "10.10.10.30/24", "interface": 2 },
-    { "address": "fd10::3/64", "interface": 2 }
+    { "address": "10.10.10.30/24", "interface": 3 },
+    { "address": "fd10::3/64", "interface": 3 }
   ]
 }`
 

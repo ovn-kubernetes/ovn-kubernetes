@@ -38,7 +38,6 @@ spec:
       hostPID: true
       {{- end }}
       containers:
-      {{- if eq (hasKey .Values.global "enableCompactMode" | ternary .Values.global.enableCompactMode false) false }}
       - name: ovnkube-node
         image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}
@@ -239,8 +238,6 @@ spec:
           value: {{ default "" .Values.global.lFlowCacheLimitKb | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
-        - name: OVN_ENABLE_INTERCONNECT
-          value: {{ hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false | quote }}
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: {{ hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false | quote }}
         - name: OVN_NETWORK_QOS_ENABLE
@@ -275,7 +272,6 @@ spec:
           initialDelaySeconds: 30
           timeoutSeconds: 5
           periodSeconds: 30
-      {{- end }}
       - name: ovn-controller
         image: {{ include "getDPUImage" . }}
         imagePullPolicy: {{ default "IfNotPresent" .Values.global.image.pullPolicy }}

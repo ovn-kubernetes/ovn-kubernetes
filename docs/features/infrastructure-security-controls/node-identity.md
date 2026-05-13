@@ -48,7 +48,7 @@ This is intentional as it helps ensure that the certificate rotation works seaml
 
 ## Validating Admission Webhook
 
-The feature introduces a validating webhook for updates to `pod/status` (Interconnect only) and `node/status`.\
+The feature introduces a validating webhook for updates to `pod/status` and `node/status`.\
 The `ovnkube-node` pod exclusively updates the status on both resources, so it is sufficient to verify only update requests.\
 The webhooks include the following checks for each `ovnkube-node` pod:
 - Modifying annotations on pods hosted on its own node.
@@ -57,9 +57,8 @@ The webhooks include the following checks for each `ovnkube-node` pod:
 - Not modifying anything other than annotations.
 
 The allowed annotations list contains both common and feature specific values:
- - By default, the webhook will verify a set of common node annotations used in all deployments.
- - When `enable-interconnect` parameter is provided the webhook will validate additional pod/node annotations set by the ovnkube-node component in interconnect environments.
- - When `enable-hybrid-overlay` parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component in interconnect environments.
+ - By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.
+ - When `enable-hybrid-overlay` parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.
 
 The specific annotation values can be found in `go-controller/pkg/ovnwebhook/nodeadmission.go` and `go-controller/pkg/ovnwebhook/podadmission.go` files.
 

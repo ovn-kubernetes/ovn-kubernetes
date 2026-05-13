@@ -278,7 +278,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		}
 
 		It("should skip source LSP re-enable when source pod is on a remote node", func() {
-			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 
@@ -296,7 +295,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		})
 
 		It("should skip source LSP re-enable when source pod LSP is not local", func() {
-			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 
@@ -311,7 +309,6 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		})
 
 		It("should re-enable source LSP when source pod is local and migration failed", func() {
-			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 

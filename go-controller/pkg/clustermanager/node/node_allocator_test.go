@@ -733,7 +733,6 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 	}
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableInterconnect = true
 
 	netConf := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{

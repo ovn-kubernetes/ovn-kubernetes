@@ -8,6 +8,7 @@
   * [Development Environment Setup](#development-environment-setup)
   * [Sign Your Commits](#sign-your-commits)
   * [Pull Request Checklist](#pull-request-checklist)
+  * [AI Guidelines](#ai-guidelines)
 
 Welcome! We are glad that you want to contribute to our project! 💖
 
@@ -195,3 +196,42 @@ make test
 * All modular changes must be accompanied by new unit tests if they don't exist already.
 
 * All functional changes and new features must be accompanied by extensive end-to-end test coverage
+
+## AI Guidelines
+
+You may use AI tools when preparing your contribution (issue, pull request etc...).
+As the author, you are responsible for understanding every change you submit.
+
+* Review and test AI-generated changes yourself before submitting. Do not rely
+  on reviewers to perform the first review.
+* Be prepared to explain any change in your PR. If you cannot explain why a
+  change was made, the PR may be closed.
+* Respond to review comments in your own words. Reviewers want to engage
+  directly with you, not with generated responses.
+* If you used AI tools when preparing your PR, disclose this (see
+  [Disclosure](#disclosure) below).
+* All contributions must follow this guide and use commit messages that align
+  with our [commit message guidelines](#commit-message-guidelines). Large
+  AI-generated PRs and AI-generated commit messages are discouraged.
+
+### Disclosure
+
+Disclose AI tool use when it has materially contributed to what you submit.
+You must still adhere to our [DCO](#dco) and sign off commits.
+
+**How to disclose:** Use the "Special notes for your reviewer" section in the
+PR, and optionally add a trailer to the commit. Acceptable commit trailer
+formats include:
+
+* `Assisted-by: Tool Name and/or Model Name <contact@example.com>`
+* `Co-authored-by: Tool Name and/or Model Name <contact@example.com>`
+
+Many AI tools add `Co-authored-by` automatically; that is acceptable.
+
+**Requires disclosure:** AI wrote or suggested code, tests, documentation, or
+commit messages that you used; AI suggested an approach or refactor that
+shaped the implementation.
+
+**Does not require disclosure:** General Q&A or learning, IDE autocomplete,
+using AI to explain existing code, asking AI to review your code, or
+spell-check and minor fixes. When in doubt, disclose.

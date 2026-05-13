@@ -916,7 +916,7 @@ func (eIPC *egressIPClusterController) deleteAllocatorEgressIPAssignmentIfExists
 }
 
 // addAllocatorEgressIPAssignments adds the allocation to the cache, so that
-// they are tracked during the life-cycle of ovnkube-master
+// they are tracked during the life-cycle of the cluster-manager controller.
 func (eIPC *egressIPClusterController) addAllocatorEgressIPAssignments(name string, statusAssignments []egressipv1.EgressIPStatusItem) {
 	eIPC.nodeAllocator.Lock()
 	defer eIPC.nodeAllocator.Unlock()
@@ -978,8 +978,8 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 	}
 
 	// Validate the status, on restart it could be the case that what might have
-	// been assigned when ovnkube-master last ran is not a valid assignment
-	// anymore (specifically if ovnkube-master has been crashing for a while).
+	// been assigned when ovnkube-cluster-manager last ran is not a valid assignment
+	// anymore (specifically if ovnkube-cluster-manager has been crashing for a while).
 	// Any invalid status at this point in time needs to be removed and assigned
 	// to a valid node.
 	validStatus, invalidStatus := eIPC.validateEgressIPStatus(name, status)
@@ -1021,7 +1021,7 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 		// on a cloud: we patch all validStatsuses below, we wait for the status
 		// on the CloudPrivateIPConfig(s) we create to be set before executing
 		// anything in the OVN DB (Note that the status will be set by this
-		// controller in cluster-manager and asynchronously the ovnkube-master
+		// controller in cluster-manager and asynchronously the ovnkube-controller
 		// will read the CRD change and do the necessary plumbing (ADD/UPDATE/DELETE)
 		// in the OVN DB).
 		// So, we need to make sure that we delete and
@@ -1083,7 +1083,7 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 			// Before updating the cloud private IP object, we need to remove the OVN configuration
 			// for these invalid statuses so that traffic is not blackholed to non-existing setup in the
 			// cloud. Thus we patch the egressIP status with the valid set of statuses which will
-			// trigger an event for the ovnkube-master to take action upon.
+			// trigger an event for the ovnkube-controller to take action upon.
 			// Note that once we figure out the statusToAdd parts below we will trigger an
 			// update to cloudPrivateIP object which will trigger another patch for the eIP object.
 			//

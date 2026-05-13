@@ -323,10 +323,7 @@ func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbte
 	}
 	testData = append(testData, copp)
 
-	dynamicNeighRouters := "true"
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		dynamicNeighRouters = "false"
-	}
+	dynamicNeighRouters := "false"
 
 	testData = append(testData, &nbdb.LogicalRouter{
 		UUID: GRName + "-UUID",
@@ -549,11 +546,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			}
 			GRName := "GR_" + nodeName
 
-			dynamicNeighRouters := "true"
-
-			if config.OVNKubernetesFeature.EnableInterconnect {
-				dynamicNeighRouters = "false"
-			}
+			dynamicNeighRouters := "false"
 
 			expectedOVNGatewayRouter := &nbdb.LogicalRouter{
 				UUID: GRName + "-UUID",
@@ -666,10 +659,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			}
 			GRName := "GR_" + nodeName
 
-			dynamicNeighRouters := "true"
-			if config.OVNKubernetesFeature.EnableInterconnect {
-				dynamicNeighRouters = "false"
-			}
+			dynamicNeighRouters := "false"
 
 			expectedOVNGatewayRouter := &nbdb.LogicalRouter{
 				UUID: GRName + "-UUID",

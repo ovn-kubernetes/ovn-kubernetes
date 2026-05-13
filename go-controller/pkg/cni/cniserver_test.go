@@ -20,13 +20,14 @@ import (
 	"testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
-	cni020 "github.com/containernetworking/cni/pkg/types/020"
+	current "github.com/containernetworking/cni/pkg/types/100"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	utiltesting "k8s.io/client-go/util/testing"
-
-	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -56,16 +57,7 @@ func clientDoCNI(t *testing.T, client *http.Client, req *Request) ([]byte, int) 
 	return body, resp.StatusCode
 }
 
-var expectedResult cnitypes.Result
-
-func serverHandleCNI(request *PodRequest, _ *ClientSet, _ *KubeAPIAuth, _ networkmanager.Interface, _ client.Client) ([]byte, error) {
-	if request.Command == CNIAdd {
-		return json.Marshal(&expectedResult)
-	} else if request.Command == CNIDel || request.Command == CNIUpdate || request.Command == CNICheck || request.Command == CNIStatus {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("unhandled CNI command %v", request.Command)
-}
+var expectedResult *current.Result
 
 func makeCNIArgs(namespace, name string) string {
 	return fmt.Sprintf("K8S_POD_NAMESPACE=%s;K8S_POD_NAME=%s", namespace, name)
@@ -87,11 +79,32 @@ func TestCNIServer(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 	socketPath := filepath.Join(tmpDir, serverSocketName)
-	fakeClient := fake.NewSimpleClientset()
+	// Pre-create the pod with the OVN pod-networks annotation so
+	// GetPodWithAnnotations resolves immediately during cmdAdd. The IP in the
+	// annotation flows through getCNIResult into the response we'll verify.
+	podObj := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			UID:       k8stypes.UID("test-pod-uid"),
+			Annotations: map[string]string{
+				"k8s.ovn.org/pod-networks": `{"default":{"ip_address":"10.0.0.2/24","mac_address":"0a:58:0a:00:00:02"}}`,
+			},
+		},
+		Spec: corev1.PodSpec{NodeName: nodeName},
+	}
+	fakeClient := fake.NewSimpleClientset(podObj)
 	err = config.PrepareTestConfig()
 	if err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
+
+	// Stub out the host-side interface ops so getCNIResult can run without
+	// touching real netns/OVS. Restore at end.
+	origInterfaceOps := podRequestInterfaceOps
+	podRequestInterfaceOps = &podRequestInterfaceOpsStub{}
+	defer func() { podRequestInterfaceOps = origInterfaceOps }()
+
 	fakeClientset := &util.OVNNodeClientset{
 		KubeClient: fakeClient,
 	}
@@ -112,7 +125,6 @@ func TestCNIServer(t *testing.T) {
 		t.Fatalf("error creating CNI server: %v", err)
 	}
 	// override request handler
-	s.handlePodRequestFunc = serverHandleCNI
 	if err := s.Start(tmpDir); err != nil {
 		t.Fatalf("error starting CNI server: %v", err)
 	}
@@ -125,20 +137,24 @@ func TestCNIServer(t *testing.T) {
 		},
 	}
 
+	// Build the expected Result that getCNIResult would return for the pod
+	// annotation above + the podRequestInterfaceOps.
 	expectedIP, expectedNet, _ := net.ParseCIDR("10.0.0.2/24")
-	expectedResult = &cni020.Result{
-		IP4: &cni020.IPConfig{
-			IP: net.IPNet{
-				IP:   expectedIP,
-				Mask: expectedNet.Mask,
-			},
+	expectedResult = &current.Result{
+		Interfaces: []*current.Interface{
+			{Name: "host_eth0"},
+			{Name: "eth0", Sandbox: "/var/run/netns/" + namespace + "_" + name},
 		},
+		IPs: []*current.IPConfig{{
+			Interface: current.Int(1),
+			Address:   net.IPNet{IP: expectedIP, Mask: expectedNet.Mask},
+		}},
 	}
 
 	type testcase struct {
 		name        string
 		request     *Request
-		result      cnitypes.Result
+		result      *current.Result
 		errorPrefix string
 	}
 
@@ -284,12 +300,12 @@ func TestCNIServer(t *testing.T) {
 				t.Fatalf("[%s] expected status %v but got %v", tc.name, http.StatusOK, code)
 			}
 			if tc.result != nil {
-				result := &cni020.Result{}
-				if err := json.Unmarshal(body, result); err != nil {
+				resp := &Response{}
+				if err := json.Unmarshal(body, resp); err != nil {
 					t.Fatalf("[%s] failed to unmarshal response '%s': %v", tc.name, string(body), err)
 				}
-				if !reflect.DeepEqual(result, tc.result) {
-					t.Fatalf("[%s] expected result %v but got %v", tc.name, tc.result, result)
+				if !reflect.DeepEqual(resp.Result, tc.result) {
+					t.Fatalf("[%s] expected result %v but got %v", tc.name, tc.result, resp.Result)
 				}
 			}
 		} else {

@@ -284,13 +284,6 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						netConfigParams *networkAttachmentConfigParams,
 						udnPodConfig podConfiguration,
 					) {
-						if !isInterconnectEnabled() {
-							const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4528"
-							e2eskipper.Skipf(
-								"These tests are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
-							)
-						}
-
 						By("ensure enough schedable nodes exist")
 						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 1)
 						Expect(err).NotTo(HaveOccurred())
@@ -1700,12 +1693,6 @@ spec:
 				DescribeTable(
 					"can be accessed to from the pods running in the Kubernetes cluster",
 					func(netConfigParams *networkAttachmentConfigParams, clientPodConfig podConfiguration) {
-						if netConfigParams.topology == "layer2" && !isInterconnectEnabled() {
-							const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4642"
-							e2eskipper.Skipf(
-								"Egress e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
-							)
-						}
 						clientPodConfig.namespace = f.Namespace.Name
 
 						By("creating the network")
@@ -1948,12 +1935,6 @@ spec:
 				clientPodConfig podConfiguration,
 				serverPodConfig podConfiguration,
 			) {
-				if netConfig.topology == "layer2" && !isInterconnectEnabled() {
-					const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4958"
-					e2eskipper.Skipf(
-						"Test skipped for layer2 topology due to known issue for non-IC deployments. Upstream issue: %s", upstreamIssue,
-					)
-				}
 				By("creating the network")
 				netConfig.namespace = f.Namespace.Name
 				udnManifest := generateUserDefinedNetworkManifest(&netConfig, f.ClientSet)

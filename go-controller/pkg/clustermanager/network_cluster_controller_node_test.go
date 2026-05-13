@@ -24,7 +24,6 @@ func TestShouldReconcileNodeIgnoresOtherNetworkTunnelIDChanges(t *testing.T) {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableInterconnect = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 
 	netInfo := mustClusterManagerNetInfo(t, &ovncnitypes.NetConf{
@@ -84,7 +83,6 @@ func TestShouldReconcileNodeWhenNetworkSpecificTunnelIDChanges(t *testing.T) {
 		t.Fatalf("failed to prepare test config: %v", err)
 	}
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableInterconnect = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 
 	netInfo := mustClusterManagerNetInfo(t, &ovncnitypes.NetConf{

@@ -101,7 +101,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 		gomega.Expect(config.PrepareTestConfig()).Should(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableEgressIP = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		config.OVNKubernetesFeature.EnableInterconnect = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.Gateway.Mode = config.GatewayModeShared
 		config.OVNKubernetesFeature.EgressIPNodeHealthCheckPort = 1234

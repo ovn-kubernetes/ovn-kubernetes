@@ -661,24 +661,21 @@ func AddRoutesGatewayIP(
 					nodeLRPMAC = util.IPAddrToHWAddr(gatewayIPnet.IP)
 				}
 			}
-			// Until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4876 is fixed, it is limited to IC only
-			if config.OVNKubernetesFeature.EnableInterconnect {
-				if _, isIPv6Mode := netinfo.IPMode(); isIPv6Mode {
-					var routerPortMac net.HardwareAddr
-					if !util.UDNLayer2NodeUsesTransitRouter(node) {
-						joinAddrs, err := udn.GetGWRouterIPs(node, netinfo.GetNetInfo())
-						if err != nil {
-							if util.IsAnnotationNotSetError(err) {
-								return types.NewSuppressedError(err)
-							}
-							return fmt.Errorf("failed parsing node gateway router join addresses, network %q, %w", netinfo.GetNetworkName(), err)
+			if _, isIPv6Mode := netinfo.IPMode(); isIPv6Mode {
+				var routerPortMac net.HardwareAddr
+				if !util.UDNLayer2NodeUsesTransitRouter(node) {
+					joinAddrs, err := udn.GetGWRouterIPs(node, netinfo.GetNetInfo())
+					if err != nil {
+						if util.IsAnnotationNotSetError(err) {
+							return types.NewSuppressedError(err)
 						}
-						routerPortMac = util.IPAddrToHWAddr(joinAddrs[0].IP)
-					} else {
-						routerPortMac = nodeLRPMAC
+						return fmt.Errorf("failed parsing node gateway router join addresses, network %q, %w", netinfo.GetNetworkName(), err)
 					}
-					podAnnotation.GatewayIPv6LLA = util.HWAddrToIPv6LLA(routerPortMac)
+					routerPortMac = util.IPAddrToHWAddr(joinAddrs[0].IP)
+				} else {
+					routerPortMac = nodeLRPMAC
 				}
+				podAnnotation.GatewayIPv6LLA = util.HWAddrToIPv6LLA(routerPortMac)
 			}
 			return nil
 		case types.Layer3Topology:

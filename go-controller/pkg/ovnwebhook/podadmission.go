@@ -25,7 +25,7 @@ import (
 // checkPodAnnot defines additional checks for the allowed annotations
 type checkPodAnnot func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error
 
-// interconnectPodAnnotationChecks holds annotations allowed for ovnkube-node:<nodeName> users in IC environments
+// interconnectPodAnnotations holds annotations allowed for ovnkube-node:<nodeName> users.
 var interconnectPodAnnotations = map[string]checkPodAnnot{
 	types.OvnPodAnnotationName: func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error {
 		// Ignore kubevirt pods with live migration, the IP can cross node-subnet boundaries

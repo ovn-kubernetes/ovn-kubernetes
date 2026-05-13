@@ -23,37 +23,31 @@ import (
 )
 
 func TestNewNodeAdmissionWebhook(t *testing.T) {
-	icAnnotations := make(map[string]checkNodeAnnot)
-	maps.Copy(icAnnotations, commonNodeAnnotationChecks)
-	maps.Copy(icAnnotations, interconnectNodeAnnotationChecks)
+	defaultAnnotations := make(map[string]checkNodeAnnot)
+	maps.Copy(defaultAnnotations, commonNodeAnnotationChecks)
+	maps.Copy(defaultAnnotations, interconnectNodeAnnotationChecks)
 	hoAnnotations := make(map[string]checkNodeAnnot)
-	maps.Copy(hoAnnotations, commonNodeAnnotationChecks)
+	maps.Copy(hoAnnotations, defaultAnnotations)
 	maps.Copy(hoAnnotations, hybridOverlayNodeAnnotationChecks)
 	tests := []struct {
 		name                string
-		enableInterconnect  bool
 		enableHybridOverlay bool
 
 		expectedKeys []string
 	}{
 		{
-			name:         "should only contain common annotation in non-IC",
-			expectedKeys: maps.Keys(commonNodeAnnotationChecks),
+			name:         "should contain common and interconnect annotations",
+			expectedKeys: maps.Keys(defaultAnnotations),
 		},
 		{
-			name:               "should contain common and IC annotations in IC",
-			enableInterconnect: true,
-			expectedKeys:       maps.Keys(icAnnotations),
-		},
-		{
-			name:                "should contain common and hybrid overlay annotations in hybrid overlay ",
+			name:                "should contain common, interconnect, and hybrid overlay annotations in hybrid overlay",
 			enableHybridOverlay: true,
 			expectedKeys:        maps.Keys(hoAnnotations),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NewNodeAdmissionWebhook(tt.enableInterconnect, tt.enableHybridOverlay); !got.annotationKeys.HasAll(tt.expectedKeys...) {
+			if got := NewNodeAdmissionWebhook(tt.enableHybridOverlay); !got.annotationKeys.HasAll(tt.expectedKeys...) {
 				t.Errorf("NewNodeAdmissionWebhook() = %v, want %v", got.annotationKeys, tt.expectedKeys)
 			}
 		})
@@ -66,7 +60,7 @@ var additionalNamePrefix = "system:foobar"
 var additionalUserName = fmt.Sprintf("%s:%s", additionalNamePrefix, nodeName)
 
 func TestNodeAdmission_ValidateUpdate(t *testing.T) {
-	adm := NewNodeAdmissionWebhook(false, false)
+	adm := NewNodeAdmissionWebhook(false)
 	tests := []struct {
 		name        string
 		ctx         context.Context
@@ -406,7 +400,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 	}
 }
 func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
-	adm := NewNodeAdmissionWebhook(false, true)
+	adm := NewNodeAdmissionWebhook(true)
 	tests := []struct {
 		name        string
 		ctx         context.Context

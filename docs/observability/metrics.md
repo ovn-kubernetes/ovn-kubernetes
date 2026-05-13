@@ -1,10 +1,10 @@
 # Metrics
-## OVN-Kubernetes master
-This includes a description of a selective set of metrics and to explore the exhausted set, see `go-controller/pkg/metrics/master.go`
+## OVN-Kubernetes control plane
+This includes a description of a selective set of metrics.
 ### Configuration duration recorder
 #### Setup
 Enabled by default with the `kind.sh` (in directory `$ROOT/contrib`) [Kind](https://kind.sigs.k8s.io/) setup script.
-Disabled by default for binary ovnkube-master and enabled with flag `--metrics-enable-config-duration`.
+Disabled by default for the ovnkube binary and enabled with flag `--metrics-enable-config-duration`.
 #### High-level description
 This set of metrics gives a result for the upper bound duration which means, it has taken at most this amount of seconds to apply the configuration to all nodes. It does not represent the exact accurate time to apply only this configuration.
 Measurement accuracy can be impacted by other parallel processing that might be occurring while the measurement is in progress therefore, the accuracy of the measurements should only indicate upper bound duration to roll out configuration changes.
@@ -20,7 +20,7 @@ This list is to help notify if there are additions, changes or removals to metri
 - Add metrics to track logfile size for ovnkube processes - ovnkube_node_logfile_size_bytes and ovnkube_controller_logfile_size_bytes
 - Remove ovnkube_controller_ovn_cli_latency_seconds metrics since we have moved most of the OVN DB operations to libovsdb.
 - Effect of OVN IC architecture:
-  - Move all the metrics from subsystem "ovnkube-master" to subsystem "ovnkube-controller". The non-IC and IC deployments will each continue to have their ovnkube-master and ovnkube-controller containers running inside the ovnkube-master and ovnkube-controller pods. The metrics scraping should work seemlessly. See https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3723 for details
+  - Move all the metrics from the legacy master subsystem to subsystem "ovnkube-controller". Metrics scraping continues through the controller and cluster-manager pods. See https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3723 for details
   - Move the following metrics from subsystem "master" to subsystem "clustermanager". Therefore, the follow metrics are renamed.
     - `ovnkube_master_num_v4_host_subnets` -> `ovnkube_clustermanager_num_v4_host_subnets`
     - `ovnkube_master_num_v6_host_subnets` -> `ovnkube_clustermanager_num_v6_host_subnets`

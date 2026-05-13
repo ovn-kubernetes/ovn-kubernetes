@@ -358,28 +358,27 @@ func (ncc *networkClusterController) clearScheduledNodeCleanup(nodeName string) 
 }
 
 func (ncc *networkClusterController) hasPodAllocation() bool {
-	// we only do pod allocation on L2 topologies with interconnect
+	// we only do pod allocation on L2 topologies and localnet topologies with IPAM
 	switch ncc.TopologyType() {
 	case types.Layer2Topology:
 		// We need to allocate the PodAnnotation
-		return config.OVNKubernetesFeature.EnableInterconnect
+		return true
 	case types.LocalnetTopology:
 		// We need to allocate the PodAnnotation if there is IPAM
-		return config.OVNKubernetesFeature.EnableInterconnect && len(ncc.Subnets()) > 0
+		return len(ncc.Subnets()) > 0
 	}
 	return false
 }
 
 func (ncc *networkClusterController) hasNodeAllocation() bool {
-	// we only do node allocation on L3 or default network, and L2 on
-	// interconnect
+	// we only do node allocation on L3, L2, or the default network
 	switch ncc.TopologyType() {
 	case types.Layer3Topology:
 		// we need to allocate network IDs and subnets
 		return true
 	case types.Layer2Topology:
 		// we need to allocate network IDs
-		return config.OVNKubernetesFeature.EnableInterconnect
+		return true
 	default:
 		// we need to allocate network IDs and subnets
 		return !ncc.IsUserDefinedNetwork()

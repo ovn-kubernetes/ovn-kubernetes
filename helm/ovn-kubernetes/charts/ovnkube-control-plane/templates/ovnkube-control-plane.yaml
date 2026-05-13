@@ -1,7 +1,7 @@
 # ovnkube-control-plane
 # daemonset version 3
 # starts ovnkube-cluster-manager
-# it is run on the master(s).  Should be used only if interconnect is enabled.
+# it is run on the control-plane node(s).
 kind: Deployment
 apiVersion: apps/v1
 metadata:
@@ -176,8 +176,6 @@ spec:
             configMapKeyRef:
               name: ovn-config
               key: host_network_namespace
-        - name: OVN_ENABLE_INTERCONNECT
-          value: {{ hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false | quote }}
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: {{ hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false | quote }}
         - name: OVN_NETWORK_QOS_ENABLE

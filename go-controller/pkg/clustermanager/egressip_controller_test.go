@@ -1006,7 +1006,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 		ginkgo.It("should skip populating egress node data for nodes that have incorrect IP address", func() {
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = true // no impact on global eIPC functions
 				nodeIPv4 := "192.168.126.510/24"
 				nodeIPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
 				node := corev1.Node{
@@ -1058,7 +1057,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 		ginkgo.It("should probe nodes using grpc", func() {
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = false // no impact on global eIPC functions
 				node1IPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
 				node2IPv4 := "192.168.126.51/24"
 
@@ -1394,7 +1392,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("should remove stale EgressIP setup when node label is removed while ovnkube-master is not running and assign to newly labelled node", func() {
+		ginkgo.It("should remove stale EgressIP setup when node label is removed while ovnkube-cluster-manager is not running and assign to newly labelled node", func() {
 			app.Action = func(*cli.Context) error {
 
 				egressIP1 := "192.168.126.25"
@@ -1609,7 +1607,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 		ginkgo.It("should re-balance EgressIPs when their node is removed", func() {
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = true // no impact on global eIPC functions
 				egressIP := "192.168.126.101"
 				node1IPv4 := "192.168.126.12/24"
 				node1IPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
@@ -1733,7 +1730,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			//  - make the node reachable and update a node
 			//  - verify that the egress IP was assigned by calling the periodic reachability check
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = true // no impact on global eIPC functions
 				egressIP := "192.168.126.101"
 				nodeIPv4 := "192.168.126.51/24"
 				node := corev1.Node{
@@ -3754,7 +3750,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 		ginkgo.It("ensure egressIP status is in sync with cloud private ip config", func() {
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = true
 				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
@@ -3865,7 +3860,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 		ginkgo.It("ensure failover egressIP status is updated properly while cloud private ip config update in progress", func() {
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = true
 				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
 
 				egressIP := "192.168.126.101"
@@ -3974,7 +3968,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 		ginkgo.It("ensure egressIP status is in sync with empty cloud private ip config", func() {
 			app.Action = func(*cli.Context) error {
-				config.OVNKubernetesFeature.EnableInterconnect = true
 				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"

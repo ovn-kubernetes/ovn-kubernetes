@@ -10,7 +10,6 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
     * `ovn-k8s-cni-overlay`: is the cni executable to be placed in /opt/cni/bin (or another directory in which kubernetes will look for the plugin) so that it can be invoked for each pod event by kubernetes
     * `hybrid-overlay-node`
     * `ovn-kube-util`: contains the Utils for ovn-kubernetes
-    * `ovndbchecker`
     * `ovnkube-trace`: is the binary that contains ovnkube-trace which is an abstraction used to invoke OVN/OVS packet tracing utils
     * `ovnkube-identity`: is the executable that is invoked to run ovn-kubernetes identity manager, which includes the admission webhook and the CertificateSigningRequest approver
 * `ovnkube` API configuration 

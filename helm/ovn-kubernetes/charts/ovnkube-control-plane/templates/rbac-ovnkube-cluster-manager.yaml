@@ -229,8 +229,7 @@ spec:
 
 ---
 # Prevent users from adding/modifying the egressip-mark annotation, which is managed by ovn-kubernetes.
-# Only the ovnkube service account that manages EgressIP (cluster-manager in IC mode, master in non-IC mode)
-# is permitted to set this annotation.
+# Only the ovnkube-cluster-manager service account is permitted to set this annotation.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -250,15 +249,9 @@ spec:
   - expression: 'request.operation != "UPDATE" || !has(oldObject.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations) || (has(object.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in object.metadata.annotations) && oldObject.metadata.annotations["k8s.ovn.org/egressip-mark"] == object.metadata.annotations["k8s.ovn.org/egressip-mark"])'
     message: 'The "k8s.ovn.org/egressip-mark" annotation cannot be modified or removed once set. This annotation is managed by the system.'
     reason: Invalid
-  {{- if eq (hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false) true }}
   - expression: 'request.operation != "UPDATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations) || (has(oldObject.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations)) || request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager"'
     message: 'A regular user must not add "k8s.ovn.org/egressip-mark" annotation to an EgressIP custom resource.'
     reason: Invalid
-  {{- else }}
-  - expression: 'request.operation != "UPDATE" || !has(object.metadata.annotations) || !("k8s.ovn.org/egressip-mark" in object.metadata.annotations) || (has(oldObject.metadata.annotations) && ("k8s.ovn.org/egressip-mark" in oldObject.metadata.annotations)) || request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-master"'
-    message: 'A regular user must not add "k8s.ovn.org/egressip-mark" annotation to an EgressIP custom resource.'
-    reason: Invalid
-  {{- end }}
 
 ---
 apiVersion: admissionregistration.k8s.io/v1

@@ -18,6 +18,52 @@ import (
 // OVS port predicates for filtering
 type ovsPortPredicate func(*vswitchd.Port) bool
 
+// UpdateOpenvSwitchExternalIDs merges the given map into the Open_vSwitch
+// row's external_ids. Every entry in the map is inserted or overwritten;
+// existing keys that are not in the map are left alone. Returns ErrNotFound
+// if the row does not exist.
+func UpdateOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, kv map[string]string) error {
+	if len(kv) == 0 {
+		return nil
+	}
+	ovs := &vswitchd.OpenvSwitch{ExternalIDs: kv}
+	opModel := operationModel{
+		Model:            ovs,
+		ModelPredicate:   func(*vswitchd.OpenvSwitch) bool { return true },
+		OnModelMutations: []interface{}{&ovs.ExternalIDs},
+		ErrNotFound:      true,
+		BulkOp:           false,
+	}
+	m := newModelClient(ovsClient)
+	_, err := m.CreateOrUpdate(opModel)
+	return err
+}
+
+// RemoveOpenvSwitchExternalIDs removes the given keys from the Open_vSwitch
+// row's external_ids. Keys that are not present, and a missing row, are both
+// no-ops.
+func RemoveOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// modelClient interprets a map field with empty string values as a
+	// delete-by-key mutation (see buildMutationsFromFields).
+	ids := make(map[string]string, len(keys))
+	for _, k := range keys {
+		ids[k] = ""
+	}
+	ovs := &vswitchd.OpenvSwitch{ExternalIDs: ids}
+	opModel := operationModel{
+		Model:            ovs,
+		ModelPredicate:   func(*vswitchd.OpenvSwitch) bool { return true },
+		OnModelMutations: []interface{}{&ovs.ExternalIDs},
+		ErrNotFound:      false,
+		BulkOp:           false,
+	}
+	m := newModelClient(ovsClient)
+	return m.Delete(opModel)
+}
+
 // FindOVSPortsWithPredicate returns all OVS ports matching the predicate.
 func FindOVSPortsWithPredicate(ovsClient libovsdbclient.Client, p ovsPortPredicate) ([]*vswitchd.Port, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)

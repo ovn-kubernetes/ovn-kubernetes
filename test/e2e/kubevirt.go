@@ -1863,12 +1863,6 @@ write_files:
 			if td.role == "" {
 				td.role = udnv1.NetworkRoleSecondary
 			}
-			if td.role == udnv1.NetworkRolePrimary && !isInterconnectEnabled() {
-				const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4528"
-				e2eskipper.Skipf(
-					"The egress check of tests are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
-				)
-			}
 
 			l := map[string]string{
 				"e2e-framework": fr.BaseName,
@@ -2123,7 +2117,7 @@ ip route add %[3]s via %[4]s
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 
 			if td.role == udnv1.NetworkRolePrimary {
-				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
+				if isIPv6Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
 					expectedIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(getCUDNSubnets(cudn))
@@ -2204,7 +2198,7 @@ ip route add %[3]s via %[4]s
 				}
 			}
 
-			if td.role == udnv1.NetworkRolePrimary && td.test.description == liveMigrate.description && isInterconnectEnabled() {
+			if td.role == udnv1.NetworkRolePrimary && td.test.description == liveMigrate.description {
 				if isIPv4Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())

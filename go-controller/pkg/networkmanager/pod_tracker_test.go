@@ -96,7 +96,6 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			err := config.PrepareTestConfig()
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
-			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 
@@ -239,7 +238,6 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 	err := config.PrepareTestConfig()
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableInterconnect = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 

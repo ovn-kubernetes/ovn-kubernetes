@@ -30,7 +30,6 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
-	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -103,13 +102,6 @@ var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, 
 				jig := e2eservice.NewTestJig(cs, namespace, "udn-service")
 
 				dynamicUDNEnabled := isDynamicUDNEnabled()
-
-				if netConfigParams.topology == "layer2" && !isInterconnectEnabled() {
-					const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4703"
-					e2eskipper.Skipf(
-						"Service e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
-					)
-				}
 
 				By("Selecting 3 schedulable nodes")
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)

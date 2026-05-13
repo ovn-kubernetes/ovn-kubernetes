@@ -216,16 +216,16 @@ func (h *nodeEventHandler) AddResource(obj interface{}, _ bool) error {
 func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.NamespaceExGwType:
-		// If interconnect is disabled OR interconnect is running in single-zone-mode,
-		// the ovnkube-master is responsible for patching ICNI managed namespaces with
-		// "k8s.ovn.org/external-gw-pod-ips". In that case, we need ovnkube-node to flush
-		// conntrack on every node. In multi-zone-interconnect case, we will handle the flushing
-		// directly on the ovnkube-controller code to avoid an extra namespace annotation
+		// This handler runs in single-zone deployments (default zone), where
+		// ovnkube-controller patches the "k8s.ovn.org/external-gw-pod-ips"
+		// namespace annotation and ovnkube-node reacts here to flush conntrack on
+		// every node. In multi-zone interconnect, ovnkube-controller flushes
+		// conntrack directly and this annotation is not used.
 		node, err := h.nc.watchFactory.GetNode(h.nc.name)
 		if err != nil {
 			return fmt.Errorf("error retrieving node %s: %v", h.nc.name, err)
 		}
-		if !config.OVNKubernetesFeature.EnableInterconnect || util.GetNodeZone(node) == types.OvnDefaultZone {
+		if util.GetNodeZone(node) == types.OvnDefaultZone {
 			newNs := newObj.(*corev1.Namespace)
 			return h.nc.syncConntrackForExternalGateways(newNs)
 		}

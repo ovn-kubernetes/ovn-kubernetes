@@ -62,7 +62,6 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 	ginkgo.BeforeEach(func() {
 		err := config.PrepareTestConfig()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		config.OVNKubernetesFeature.EnableInterconnect = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		app = cli.NewApp()

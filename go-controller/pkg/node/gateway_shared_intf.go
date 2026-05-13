@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -26,9 +27,12 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/egressip"
@@ -1681,6 +1685,7 @@ func newGateway(
 	linkManager *linkmanager.Controller,
 	networkManager networkmanager.Interface,
 	gatewayMode config.GatewayMode,
+	ovsClient libovsdbclient.Client,
 ) (*gateway, error) {
 	klog.Info("Creating new gateway")
 	gw := &gateway{
@@ -1695,7 +1700,7 @@ func newGateway(
 
 	advertised := util.IsPodNetworkAdvertisedAtNode(networkManager.GetNetwork(types.DefaultNetworkName), nodeName)
 	gwBridge, exGwBridge, err := gatewayInitInternal(
-		nodeName, gwIntf, egressGWIntf, gwNextHops, subnets, gwIPs, advertised, nodeAnnotator)
+		ovsClient, nodeName, gwIntf, egressGWIntf, gwNextHops, subnets, gwIPs, advertised, nodeAnnotator)
 	if err != nil {
 		return nil, err
 	}
@@ -1733,11 +1738,11 @@ func newGateway(
 				return err
 			}
 		}
-		if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect && config.Gateway.Mode != config.GatewayModeDisabled {
+		if util.IsNetworkSegmentationSupportEnabled() && config.Gateway.Mode != config.GatewayModeDisabled {
 			gw.bridgeEIPAddrManager = egressip.NewBridgeEIPAddrManager(nodeName, gwBridge.GetBridgeName(), linkManager, kube, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
 			gwBridge.SetEIPMarkIPs(gw.bridgeEIPAddrManager.GetCache())
 		}
-		gw.nodeIPManager = newAddressManager(nodeName, kube, mgmtPort, watchFactory, gwBridge)
+		gw.nodeIPManager = newAddressManager(nodeName, kube, mgmtPort, watchFactory, gwBridge, ovsClient)
 
 		if config.IsModeFull() {
 			// Delete stale masquerade resources if there are any. This is to make sure that there
@@ -1890,8 +1895,8 @@ func newNodePortWatcher(
 	return npw, nil
 }
 
-func cleanupSharedGateway() error {
-	if config.IsModeDPU() || config.IsModeFull() {
+func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
+	if (config.IsModeDPU() || config.IsModeFull()) && ovsClient != nil {
 		// NicToBridge() may be created before-hand, only delete the patch port here
 		stdout, stderr, err := util.RunOVSVsctl("--columns=name", "--no-heading", "find", "port",
 			"external_ids:ovn-localnet-port!=_")
@@ -1907,17 +1912,25 @@ func cleanupSharedGateway() error {
 		}
 
 		// Get the OVS bridge name from ovn-bridge-mappings
-		stdout, stderr, err = util.RunOVSVsctl("--if-exists", "get", "Open_vSwitch", ".",
-			"external_ids:ovn-bridge-mappings")
+		ovs, err := ovsops.GetOpenvSwitch(ovsClient)
 		if err != nil {
-			return fmt.Errorf("failed to get ovn-bridge-mappings stderr:%s (%v)", stderr, err)
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				return nil
+			}
+			return fmt.Errorf("failed to get Open_vSwitch row: %w", err)
+		}
+		mappings := ovs.ExternalIDs["ovn-bridge-mappings"]
+		if mappings == "" {
+			return nil
 		}
 
-		// skip the existing mapping setting for the specified physicalNetworkName
 		bridgeName := ""
-		bridgeMappings := strings.Split(stdout, ",")
-		for _, bridgeMapping := range bridgeMappings {
-			m := strings.Split(bridgeMapping, ":")
+		for _, bridgeMapping := range strings.Split(mappings, ",") {
+			m := strings.SplitN(bridgeMapping, ":", 2)
+			if len(m) != 2 {
+				klog.Warningf("Ignoring malformed ovn-bridge-mappings entry %q", bridgeMapping)
+				continue
+			}
 			if network := m[0]; network == types.PhysicalNetworkName {
 				bridgeName = m[1]
 				break

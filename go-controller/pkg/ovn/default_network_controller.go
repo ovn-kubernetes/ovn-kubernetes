@@ -196,12 +196,8 @@ func newDefaultNetworkControllerCommon(
 		return nil, fmt.Errorf("unable to create new service controller while creating new default network controller: %w", err)
 	}
 
-	var zoneICHandler *zoneic.ZoneInterconnectHandler
-	var zoneChassisHandler *zoneic.ZoneChassisHandler
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		zoneICHandler = zoneic.NewZoneInterconnectHandler(defaultNetInfo, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
-		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.sbClient)
-	}
+	zoneICHandler := zoneic.NewZoneInterconnectHandler(defaultNetInfo, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
+	zoneChassisHandler := zoneic.NewZoneChassisHandler(cnci.sbClient)
 	apbExternalRouteController, err := apbroutecontroller.NewExternalMasterController(
 		cnci.kube.APBRouteClient,
 		defaultStopChan,
@@ -505,7 +501,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 					syncMgmtPort:          true,
 					syncGw:                true,
 					syncHo:                config.HybridOverlay.Enabled || hoNeedsCleanup,
-					syncZoneIC:            config.OVNKubernetesFeature.EnableInterconnect,
+					syncZoneIC:            true,
 				}
 			}
 		} else if oc.isLocalZoneNode(oldNode) {
@@ -540,7 +536,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 				syncMgmtPort:          true,
 				syncGw:                true,
 				syncHo:                true,
-				syncZoneIC:            config.OVNKubernetesFeature.EnableInterconnect,
+				syncZoneIC:            true,
 			}
 		}
 		if err := oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam); err != nil {
@@ -549,7 +545,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 	} else {
 		_, syncZoneIC := oc.syncZoneICFailed.Load(newNode.Name)
 		if oldNode == nil {
-			syncZoneIC = config.OVNKubernetesFeature.EnableInterconnect
+			syncZoneIC = true
 		} else {
 			// Sync interconnect state when the node moved from local to remote, changed zone clusters,
 			// switched from hybrid-overlay to OVN management, or its remote reachability inputs changed.
@@ -791,11 +787,11 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 		if err = oc.apbExternalRouteController.Run(oc.wg, 1); err != nil {
 			return err
 		}
-		// If interconnect is enabled and it is a multi-zone setup, then we flush conntrack
-		// on ovnkube-controller side and not on ovnkube-node side, since they are run in the
+		// In a multi-zone setup, flush conntrack on the ovnkube-controller side and not
+		// on the ovnkube-node side, since they are run in the
 		// same process. TODO(tssurya): In upstream ovnk, its possible to run these as different processes
 		// in which case this flushing feature is not supported.
-		if config.OVNKubernetesFeature.EnableInterconnect && oc.zone != types.OvnDefaultZone {
+		if oc.zone != types.OvnDefaultZone {
 			// every minute cleanup stale conntrack entries if any
 			go wait.Until(func() {
 				oc.checkAndDeleteStaleConntrackEntries()

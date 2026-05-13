@@ -9,9 +9,6 @@ if [[ "${OVNKUBE_SH_VERBOSE:-}" == "true" ]]; then
   set -x
 fi
 
-# source the functions in ovndb-raft-functions.sh
-. /root/ovndb-raft-functions.sh
-
 # This script is the entrypoint to the image.
 # Supports version 1.3.0 daemonsets
 #    Keep the daemonset versioning aligned with the ovnkube release versions
@@ -20,7 +17,6 @@ fi
 #    run-ovn-northd Runs ovn-northd as a process does not run nb_ovsdb or sb_ovsdb (v3)
 #    nb-ovsdb       Runs nb_ovsdb as a process (no detach or monitor) (v3)
 #    sb-ovsdb       Runs sb_ovsdb as a process (no detach or monitor) (v3)
-#    ovn-master     Runs ovnkube in master mode (v3)
 #    ovn-identity   Runs ovnkube-identity (v3)
 #    ovn-controller Runs ovn controller (v3)
 #    ovn-node       Runs ovnkube in node mode (v3)
@@ -93,7 +89,7 @@ fi
 # OVN_DISABLE_FORWARDING - disable forwarding on OVNK controlled interfaces
 # OVN_ENABLE_MULTI_EXTERNAL_GATEWAY - enable multi external gateway for ovn-kubernetes
 # OVN_ENABLE_OVNKUBE_IDENTITY - enable per node certificate ovn-kubernetes
-# OVN_METRICS_MASTER_PORT - metrics port which will be exposed by ovnkube-master (default 9409)
+# OVN_METRICS_MASTER_PORT - metrics port which will be exposed by ovnkube control plane components (default 9409)
 # OVN_METRICS_WORKER_PORT - metrics port which will be exposed by ovnkube-node (default 9410)
 # OVN_METRICS_BIND_PORT - port for the OVN metrics server to serve on (default 9476)
 # OVN_METRICS_EXPORTER_PORT - ovs-metrics exporter port (default 9310)
@@ -105,9 +101,11 @@ fi
 # OVN_OBSERV_ENABLE - enable observability for ovnkube
 
 # The argument to the command is the operation to be performed
-# ovn-master ovn-controller ovn-node display display_env ovn_debug
+# ovn-controller ovn-node display display_env ovn_debug
 # a cmd must be provided, there is no default
 cmd=${1:-""}
+
+bracketify() { case "$1" in *:*) echo "[$1]" ;; *) echo "$1" ;; esac; }
 
 # ovn daemon log levels
 ovn_loglevel_northd=${OVN_LOGLEVEL_NORTHD:-"-vconsole:info"}
@@ -211,8 +209,7 @@ ovn_kubernetes_namespace=${OVN_KUBERNETES_NAMESPACE:-ovn-kubernetes}
 # namespace used for classifying host network traffic
 ovn_host_network_namespace=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
 
-# host on which ovnkube-db POD is running and this POD contains both
-# OVN NB and SB DB running in their own container.
+# host on which this zone's OVN DB pod is running.
 ovn_db_host=${K8S_NODE_IP:-""}
 
 # OVN_NB_PORT - ovn north db port (default 6641)
@@ -296,8 +293,6 @@ ovn_ipfix_cache_max_flows=${OVN_IPFIX_CACHE_MAX_FLOWS:-} \
 ovn_ipfix_cache_active_timeout=${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT:-} \
 #OVN_STATELESS_NETPOL_ENABLE - enable stateless network policy for ovn-kubernetes
 ovn_stateless_netpol_enable=${OVN_STATELESS_NETPOL_ENABLE:-false}
-#OVN_ENABLE_INTERCONNECT - enable interconnect with multiple zones
-ovn_enable_interconnect=${OVN_ENABLE_INTERCONNECT:-false}
 #OVN_ENABLE_MULTI_EXTERNAL_GATEWAY - enable multi external gateway
 ovn_enable_multi_external_gateway=${OVN_ENABLE_MULTI_EXTERNAL_GATEWAY:-false}
 #OVN_ENABLE_OVNKUBE_IDENTITY - enable per node cert
@@ -324,8 +319,6 @@ ovn_encap_ip=${OVN_ENCAP_IP:-}
 ovn_conntrack_zone=${OVN_KUBERNETES_CONNTRACK_ZONE:-64000}
 
 ovn_ex_gw_network_interface=${OVN_EX_GW_NETWORK_INTERFACE:-}
-# OVNKUBE_COMPACT_MODE_ENABLE indicate if ovnkube run master and node in one process
-ovnkube_compact_mode_enable=${OVNKUBE_COMPACT_MODE_ENABLE:-false}
 # OVN_NORTHD_BACKOFF_INTERVAL - northd backoff interval in ms
 # defualt is 300; no backoff delay if set to 0
 ovn_northd_backoff_interval=${OVN_NORTHD_BACKOFF_INTERVAL:-"300"}
@@ -343,7 +336,7 @@ ovn_observ_enable=${OVN_OBSERV_ENABLE:-false}
 # OVN_NOHOSTSUBNET_LABEL - node label indicating nodes managing their own network
 ovn_nohostsubnet_label=${OVN_NOHOSTSUBNET_LABEL:-""}
 # OVN_DISABLE_REQUESTEDCHASSIS - disable requested-chassis option during pod creation
-# should be set to true when dpu nodes are in the cluster for OVN Central mode
+# should be set to true when dpu nodes are in the cluster
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
 
 # external_ids:host-k8s-nodename is set on an Open_vSwitch enabled system if the ovnkube stack
@@ -449,8 +442,9 @@ wait_ovnkube_controller_with_node_done() {
   fi
 }
 
-# The ovnkube-db kubernetes service must be populated with OVN DB service endpoints
-# before various OVN K8s containers can come up. This functions checks for that.
+# The OVN DB service for this zone, ovnkube-db or ovnkube-db-$zone, must be
+# populated with endpoints before other OVN-Kubernetes containers can start.
+# This function checks for those endpoints.
 # If OVN dbs are configured to listen only on unix sockets, then there will not be
 # OVN DB service endpoints.
 ready_to_start_node() {
@@ -608,7 +602,7 @@ process_healthy() {
 check_health() {
   ctl_file=""
   case ${1} in
-  "ovnkube" | "ovnkube-master" | "ovn-dbchecker" | "ovnkube-cluster-manager" | "ovnkube-controller" | "ovnkube-controller-with-node" | "ovnkube-identity" )
+  "ovnkube" | "ovnkube-cluster-manager" | "ovnkube-controller" | "ovnkube-controller-with-node" | "ovnkube-identity" )
     # just check for presence of pid
     ;;
   "ovnnb_db" | "ovnsb_db")
@@ -687,16 +681,56 @@ display() {
   display_file "nb-ovsdb" ${OVN_RUNDIR}/ovnnb_db.pid ${OVN_LOGDIR}/ovsdb-server-nb.log
   display_file "sb-ovsdb" ${OVN_RUNDIR}/ovnsb_db.pid ${OVN_LOGDIR}/ovsdb-server-sb.log
   display_file "run-ovn-northd" ${OVN_RUNDIR}/ovn-northd.pid ${OVN_LOGDIR}/ovn-northd.log
-  display_file "ovn-master" ${OVN_RUNDIR}/ovnkube-master.pid ${ovnkubelogdir}/ovnkube-master.log
   display_file "ovs-vswitchd" ${OVS_RUNDIR}/ovs-vswitchd.pid ${OVS_LOGDIR}/ovs-vswitchd.log
   display_file "ovsdb-server" ${OVS_RUNDIR}/ovsdb-server.pid ${OVS_LOGDIR}/ovsdb-server.log
   display_file "ovn-controller" ${OVN_RUNDIR}/ovn-controller.pid ${OVN_LOGDIR}/ovn-controller.log
   display_file "ovnkube" ${OVN_RUNDIR}/ovnkube.pid ${ovnkubelogdir}/ovnkube.log
-  display_file "ovn-dbchecker" ${OVN_RUNDIR}/ovn-dbchecker.pid ${OVN_LOGDIR}/ovn-dbchecker.log
 }
 
 setup_cni() {
   cp -f /usr/libexec/cni/ovn-k8s-cni-overlay /opt/cni/bin/ovn-k8s-cni-overlay
+}
+
+check_ovnkube_db_ep() {
+  local dbaddr=${1}
+  local dbport=${2}
+
+  echo "======= checking [${dbaddr}]:${dbport} OVSDB instance ==============="
+  ovsdb-client ${ovndb_ctl_ssl_opts} list-dbs ${transport}:[${dbaddr}]:${dbport} >/dev/null
+  if [[ $? != 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+set_northd_probe_interval() {
+  # OVN_NORTHD_PROBE_INTERVAL - probe interval of northd for NB and SB DB
+  # connections in ms (default 5000)
+  northd_probe_interval=${OVN_NORTHD_PROBE_INTERVAL:-5000}
+
+  echo "setting northd probe interval to ${northd_probe_interval} ms"
+
+  output=$(ovn-nbctl --if-exists get NB_GLOBAL . options:northd_probe_interval)
+  if [[ $? == 0 ]]; then
+    output=$(echo ${output} | tr -d '\"')
+    echo "the current value of northd probe interval is ${output} ms"
+    if [[ "${output}" != "${northd_probe_interval}" ]]; then
+      ovn-nbctl set NB_GLOBAL . options:northd_probe_interval=${northd_probe_interval}
+      if [[ $? != 0 ]]; then
+        echo "Failed to set northd probe interval to ${northd_probe_interval}. Exiting....."
+        exit 13
+      fi
+      echo "successfully set northd probe interval to ${northd_probe_interval} ms"
+    fi
+  fi
+  return 0
+}
+
+ovsdb_cleanup() {
+  local db=${1}
+  ovs-appctl -t ${OVN_RUNDIR}/ovn${db}_db.ctl exit >/dev/null 2>&1
+  kill $(jobs -p) >/dev/null 2>&1
+  exit 0
 }
 
 display_version() {
@@ -959,11 +993,7 @@ EOF
 
   fi
   if [ -z "$zone" ]; then
-    if [[ ${ovn_enable_interconnect} == "true" ]]; then
-      zone="${K8S_NODE}"
-    else
-      zone="global"
-    fi
+    zone="${K8S_NODE}"
   fi
   echo "$zone"
 }
@@ -1055,7 +1085,7 @@ sb-ovsdb() {
   }
   ovn-sbctl --inactivity-probe=0 set-connection p${transport}:${ovn_sb_port}:$(bracketify ${ovn_db_host})
 
-  # create the ovnkube-db endpoints
+  # create the OVN DB service endpoint for this zone
   wait_for_event attempts=10 check_ovnkube_db_ep ${ovn_db_host} ${ovn_nb_port}
   set_ovnkube_db_ep ${ovn_db_host}
   if memory_trim_on_compaction_supported "sbdb"
@@ -1069,56 +1099,6 @@ sb-ovsdb() {
 
   process_healthy ovnsb_db ${ovn_tail_pid}
   echo "=============== run sb_ovsdb ========== terminated"
-}
-
-# v1.3.0 - Runs ovn-dbchecker on ovnkube-db pod.
-ovn-dbchecker() {
-  trap 'kill $(jobs -p); exit 0' TERM
-  check_ovn_daemonset_version "1.3.0"
-  rm -f ${OVN_RUNDIR}/ovn-dbchecker.pid
-
-  # wait for ready_to_start_node
-  echo "=============== ovn-dbchecker - (wait for ready_to_start_node)"
-  wait_for_event ready_to_start_node
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
-
-  # wait for nb-ovsdb and sb-ovsdb to start
-  echo "=============== ovn-dbchecker (wait for nb-ovsdb) ========== OVNKUBE_DB"
-  wait_for_event attempts=15 process_ready ovnnb_db
-
-  echo "=============== ovn-dbchecker (wait for sb-ovsdb) ========== OVNKUBE_DB"
-  wait_for_event attempts=15 process_ready ovnsb_db
-
-  local ovn_db_ssl_opts=""
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn_db_ssl_opts="
-        --nb-client-privkey ${ovn_controller_pk}
-        --nb-client-cert ${ovn_controller_cert}
-        --nb-client-cacert ${ovn_ca_cert}
-        --nb-cert-common-name ${ovn_controller_cname}
-        --sb-client-privkey ${ovn_controller_pk}
-        --sb-client-cert ${ovn_controller_cert}
-        --sb-client-cacert ${ovn_ca_cert}
-        --sb-cert-common-name ${ovn_controller_cname}
-      "
-  }
-
-  echo "=============== ovn-dbchecker ========== OVNKUBE_DB"
-  /usr/bin/ovndbchecker \
-    --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
-    ${ovn_db_ssl_opts} \
-    --loglevel=${ovnkube_loglevel} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --pidfile ${OVN_RUNDIR}/ovn-dbchecker.pid \
-    --logfile /var/log/ovn-kubernetes/ovn-dbchecker.log &
-
-  echo "=============== ovn-dbchecker ========== running"
-  wait_for_event attempts=3 process_ready ovn-dbchecker
-
-  process_healthy ovn-dbchecker
-  exit 11
 }
 
 # v1.0.0 - run nb_ovsdb in a separate container listening only on
@@ -1198,7 +1178,7 @@ run-ovn-northd() {
   echo "ovn_loglevel_northd=${ovn_loglevel_northd}"
 
   # no monitor (and no detach), start northd which connects to the
-  # ovnkube-db service
+  # OVN DB service endpoint for this zone
   local ovn_northd_ssl_opts=""
   [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
     ovn_northd_ssl_opts="
@@ -1240,352 +1220,20 @@ ovnkube-identity() {
     check_ovn_daemonset_version "1.3.0"
     rm -f ${OVN_RUNDIR}/ovnkube-identity.pid
 
-    ovnkube_enable_interconnect_flag=
-    if [[ ${ovn_enable_interconnect} == "true" ]]; then
-      ovnkube_enable_interconnect_flag="--enable-interconnect"
-    fi
-
     ovnkube_enable_hybrid_overlay_flag=
     if [[ ${ovn_hybrid_overlay_enable} == "true" ]]; then
       ovnkube_enable_hybrid_overlay_flag="--enable-hybrid-overlay"
     fi
 
     # extra-allowed-user:
-    #   ovnkube-master service account - required for compact mode
     #   ovnkube-cluster-manager service account - required for multi-homing
     exec /usr/bin/ovnkube-identity  --k8s-apiserver="${K8S_APISERVER}" \
     --webhook-cert-dir="/etc/webhook-cert" \
-    ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_enable_hybrid_overlay_flag} \
     --extra-allowed-user="system:serviceaccount:${ovn_kubernetes_namespace}:ovnkube-cluster-manager" \
-    --extra-allowed-user="system:serviceaccount:${ovn_kubernetes_namespace}:ovnkube-master" \
     --loglevel="${ovnkube_loglevel}"
 
     exit 9
-}
-
-# v1.3.0 - run ovnkube --master (both cluster-manager and ovnkube-controller)
-ovn-master() {
-  trap 'kill $(jobs -p); exit 0' TERM
-  check_ovn_daemonset_version "1.3.0"
-  rm -f ${OVN_RUNDIR}/ovnkube-master.pid
-
-  echo "=============== ovn-master (wait for ready_to_start_node) ========== MASTER ONLY"
-  wait_for_event ready_to_start_node
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
-
-  # wait for northd to start
-  wait_for_event process_ready ovn-northd
-
-  # wait for ovs-servers to start since ovn-master sets some fields in OVS DB
-  echo "=============== ovn-master - (wait for ovs)"
-  wait_for_event ovs_ready
-
-  hybrid_overlay_flags=
-  if [[ ${ovn_hybrid_overlay_enable} == "true" ]]; then
-    hybrid_overlay_flags="--enable-hybrid-overlay"
-    if [[ -n "${ovn_hybrid_overlay_net_cidr}" ]]; then
-      hybrid_overlay_flags="${hybrid_overlay_flags} --hybrid-overlay-cluster-subnets=${ovn_hybrid_overlay_net_cidr}"
-    fi
-  fi
-  disable_snat_multiple_gws_flag=
-  if [[ ${ovn_disable_snat_multiple_gws} == "true" ]]; then
-      disable_snat_multiple_gws_flag="--disable-snat-multiple-gws"
-  fi
-
-  disable_forwarding_flag=
-  if [[ ${ovn_disable_forwarding} == "true" ]]; then
-      disable_forwarding_flag="--disable-forwarding"
-  fi
-
-  disable_pkt_mtu_check_flag=
-  if [[ ${ovn_disable_pkt_mtu_check} == "true" ]]; then
-      disable_pkt_mtu_check_flag="--disable-pkt-mtu-check"
-  fi
-
-  empty_lb_events_flag=
-  if [[ ${ovn_empty_lb_events} == "true" ]]; then
-      empty_lb_events_flag="--ovn-empty-lb-events"
-  fi
-
-  ovn_v4_join_subnet_opt=
-  if [[ -n ${ovn_v4_join_subnet} ]]; then
-      ovn_v4_join_subnet_opt="--gateway-v4-join-subnet=${ovn_v4_join_subnet}"
-  fi
-
-  ovn_v6_join_subnet_opt=
-  if [[ -n ${ovn_v6_join_subnet} ]]; then
-      ovn_v6_join_subnet_opt="--gateway-v6-join-subnet=${ovn_v6_join_subnet}"
-  fi
-
-  ovn_v4_masquerade_subnet_opt=
-  if [[ -n ${ovn_v4_masquerade_subnet} ]]; then
-      ovn_v4_masquerade_subnet_opt="--gateway-v4-masquerade-subnet=${ovn_v4_masquerade_subnet}"
-  fi
-
-  ovn_v6_masquerade_subnet_opt=
-  if [[ -n ${ovn_v6_masquerade_subnet} ]]; then
-      ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
-  fi
-
-  local ovn_master_ssl_opts=""
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn_master_ssl_opts="
-        --nb-client-privkey ${ovn_controller_pk}
-        --nb-client-cert ${ovn_controller_cert}
-        --nb-client-cacert ${ovn_ca_cert}
-        --nb-cert-common-name ${ovn_controller_cname}
-        --sb-client-privkey ${ovn_controller_pk}
-        --sb-client-cert ${ovn_controller_cert}
-        --sb-client-cacert ${ovn_ca_cert}
-        --sb-cert-common-name ${ovn_controller_cname}
-      "
-  }
-
-  libovsdb_client_logfile_flag=
-  if [[ -n ${ovnkube_libovsdb_client_logfile} ]]; then
-      libovsdb_client_logfile_flag="--libovsdblogfile ${ovnkube_libovsdb_client_logfile}"
-  fi
-
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
-
-  multicast_enabled_flag=
-  if [[ ${ovn_multicast_enable} == "true" ]]; then
-      multicast_enabled_flag="--enable-multicast"
-  fi
-
-  anp_enabled_flag=
-  if [[ ${ovn_admin_network_policy_enable} == "true" ]]; then
-      anp_enabled_flag="--enable-admin-network-policy"
-  fi
-
-  egressip_enabled_flag=
-  if [[ ${ovn_egressip_enable} == "true" ]]; then
-      egressip_enabled_flag="--enable-egress-ip"
-  fi
-
-  egressip_healthcheck_port_flag=
-  if [[ -n "${ovn_egress_ip_healthcheck_port}" ]]; then
-      egressip_healthcheck_port_flag="--egressip-node-healthcheck-port=${ovn_egress_ip_healthcheck_port}"
-  fi
-
-  egressfirewall_enabled_flag=
-  if [[ ${ovn_egressfirewall_enable} == "true" ]]; then
-	  egressfirewall_enabled_flag="--enable-egress-firewall"
-  fi
-  echo "egressfirewall_enabled_flag=${egressfirewall_enabled_flag}"
-
-  egressqos_enabled_flag=
-  if [[ ${ovn_egressqos_enable} == "true" ]]; then
-	  egressqos_enabled_flag="--enable-egress-qos"
-  fi
-
-  multi_network_enabled_flag=
-  if [[ ${ovn_multi_network_enable} == "true" ]]; then
-	  multi_network_enabled_flag="--enable-multi-network --enable-multi-networkpolicy"
-  fi
-  echo "multi_network_enabled_flag=${multi_network_enabled_flag}"
-
-  network_segmentation_enabled_flag=
-  if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
-	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
-  fi
-  echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
-
-  route_advertisements_enabled_flag=
-  if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
-	  route_advertisements_enabled_flag="--enable-route-advertisements"
-  fi
-  echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
-
-  evpn_enabled_flag=
-  if [[ ${ovn_evpn_enable} == "true" ]]; then
-	  evpn_enabled_flag="--enable-evpn"
-  fi
-  echo "evpn_enabled_flag=${evpn_enabled_flag}"
-
-  advertised_udn_isolation_flag=
-  if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
-      advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
-  fi
-
-  dynamic_udn_allocation_flag=
-  if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
-    dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
-  fi
-  echo "dynamic_udn_allocation_flag=${dynamic_udn_allocation_flag}"
-
-  dynamic_udn_grace_period=
-  if [[ -n ${ovn_dynamic_udn_grace_period} ]]; then
-    dynamic_udn_grace_period="--udn-deletion-grace-period ${ovn_dynamic_udn_grace_period}"
-  fi
-  echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
-
-  ovnkube_config_file_flag="--config-file=/run/ovnkube-config/ovnkube.conf"
-  echo "ovnkube_config_file_flag=${ovnkube_config_file_flag}"
-
-  egressservice_enabled_flag=
-  if [[ ${ovn_egressservice_enable} == "true" ]]; then
-	  egressservice_enabled_flag="--enable-egress-service"
-  fi
-  echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
-
-  ovnkube_master_metrics_bind_address="${metrics_endpoint_ip}:${metrics_master_port}"
-  local ovnkube_metrics_tls_opts=""
-  if [[ ${OVNKUBE_METRICS_PK} != "" && ${OVNKUBE_METRICS_CERT} != "" ]]; then
-    ovnkube_metrics_tls_opts="
-        --node-server-privkey ${OVNKUBE_METRICS_PK}
-        --node-server-cert ${OVNKUBE_METRICS_CERT}
-      "
-  fi
-
-  ovnkube_config_duration_enable_flag=
-  if [[ ${ovnkube_config_duration_enable} == "true" ]]; then
-    ovnkube_config_duration_enable_flag="--metrics-enable-config-duration"
-  fi
-  echo "ovnkube_config_duration_enable_flag: ${ovnkube_config_duration_enable_flag}"
-
-  ovnkube_metrics_scale_enable_flag=
-  if [[ ${ovnkube_metrics_scale_enable} == "true" ]]; then
-    ovnkube_metrics_scale_enable_flag="--metrics-enable-scale --metrics-enable-pprof"
-  fi
-  echo "ovnkube_metrics_scale_enable_flag: ${ovnkube_metrics_scale_enable_flag}"
-
-  ovn_stateless_netpol_enable_flag=
-  if [[ ${ovn_stateless_netpol_enable} == "true" ]]; then
-          ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
-  fi
-  echo "ovn_stateless_netpol_enable_flag: ${ovn_stateless_netpol_enable_flag}"
-
-  ovnkube_enable_multi_external_gateway_flag=
-  if [[ ${ovn_enable_multi_external_gateway} == "true" ]]; then
-	  ovnkube_enable_multi_external_gateway_flag="--enable-multi-external-gateway"
-  fi
-  echo "ovnkube_enable_multi_external_gateway_flag=${ovnkube_enable_multi_external_gateway_flag}"
-
-  ovn_enable_svc_template_support_flag=
-  if [[ ${ovn_enable_svc_template_support} == "true" ]]; then
-	  ovn_enable_svc_template_support_flag="--enable-svc-template-support"
-  fi
-  echo "ovn_enable_svc_template_support_flag=${ovn_enable_svc_template_support_flag}"
-
-  ovn_observ_enable_flag=
-  if [[ ${ovn_observ_enable} == "true" ]]; then
-    ovn_observ_enable_flag="--enable-observability"
-  fi
-  echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
-
-  nohostsubnet_label_option=
-  if [[ ${ovn_nohostsubnet_label} != "" ]]; then
-	  nohostsubnet_label_option="--no-hostsubnet-nodes=${ovn_nohostsubnet_label}"
-  fi
-
-  ovn_disable_requestedchassis_flag=
-  if [[ ${ovn_disable_requestedchassis} == "true" ]]; then
-	  ovn_disable_requestedchassis_flag="--disable-requestedchassis"
-  fi
-  echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
-
-  network_qos_enabled_flag=
-  if [[ ${ovn_network_qos_enable} == "true" ]]; then
-	  network_qos_enabled_flag="--enable-network-qos"
-  fi
-  echo "network_qos_enabled_flag=${network_qos_enabled_flag}"
-
-  init_node_flags=
-  if [[ ${ovnkube_compact_mode_enable} == "true" ]]; then
-    init_node_flags="--init-node ${K8S_NODE} --nodeport"
-    echo "init_node_flags: ${init_node_flags}"
-    echo "=============== ovn-master ========== MASTER and NODE"
-  else
-    echo "=============== ovn-master ========== MASTER ONLY"
-  fi
-
-  persistent_ips_enabled_flag=
-  if [[ ${ovn_enable_persistent_ips} == "true" ]]; then
-	  persistent_ips_enabled_flag="--enable-persistent-ips"
-  fi
-  echo "persistent_ips_enabled_flag: ${persistent_ips_enabled_flag}"
-
-  ovn_enable_dnsnameresolver_flag=
-  if [[ ${ovn_enable_dnsnameresolver} == "true" ]]; then
-	  ovn_enable_dnsnameresolver_flag="--enable-dns-name-resolver"
-  fi
-  echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
-
-  ovn_allow_icmp_netpol_flag=
-  if [[ ${ovn_allow_icmp_netpol} == "true" ]]; then
-	  ovn_allow_icmp_netpol_flag="--allow-icmp-network-policy"
-  fi
-  echo "ovn_allow_icmp_netpol_flag=${ovn_allow_icmp_netpol_flag}"
-
-  /usr/bin/ovnkube --init-master ${K8S_NODE} \
-    ${anp_enabled_flag} \
-    ${disable_forwarding_flag} \
-    ${disable_snat_multiple_gws_flag} \
-    ${egressfirewall_enabled_flag} \
-    ${egressip_enabled_flag} \
-    ${egressip_healthcheck_port_flag} \
-    ${egressqos_enabled_flag} \
-    ${egressservice_enabled_flag} \
-    ${empty_lb_events_flag} \
-    ${hybrid_overlay_flags} \
-    ${init_node_flags} \
-    ${libovsdb_client_logfile_flag} \
-    ${multicast_enabled_flag} \
-    ${multi_network_enabled_flag} \
-    ${network_segmentation_enabled_flag} \
-    ${route_advertisements_enabled_flag} \
-    ${evpn_enabled_flag} \
-    ${advertised_udn_isolation_flag} \
-    ${ovnkube_config_file_flag} \
-    ${ovn_acl_logging_rate_limit_flag} \
-    ${ovn_enable_svc_template_support_flag} \
-    ${ovn_observ_enable_flag} \
-    ${ovnkube_config_duration_enable_flag} \
-    ${ovnkube_enable_multi_external_gateway_flag} \
-    ${ovnkube_metrics_scale_enable_flag} \
-    ${ovnkube_metrics_tls_opts} \
-    ${ovn_master_ssl_opts} \
-    ${ovn_stateless_netpol_enable_flag} \
-    ${ovn_v4_join_subnet_opt} \
-    ${ovn_v4_masquerade_subnet_opt} \
-    ${ovn_v6_join_subnet_opt} \
-    ${ovn_v6_masquerade_subnet_opt} \
-    ${persistent_ips_enabled_flag} \
-    ${network_qos_enabled_flag} \
-    ${ovn_enable_dnsnameresolver_flag} \
-    ${ovn_allow_icmp_netpol_flag} \
-    ${nohostsubnet_label_option} \
-    ${ovn_stateless_netpol_enable_flag} \
-    ${ovn_disable_requestedchassis_flag} \
-    ${dynamic_udn_allocation_flag} \
-    ${dynamic_udn_grace_period} \
-    --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
-    --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
-    --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-master.log \
-    --loglevel=${ovnkube_loglevel} \
-    --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
-    --metrics-enable-pprof \
-    --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
-    --ovn-config-namespace ${ovn_kubernetes_namespace} \
-    --pidfile ${OVN_RUNDIR}/ovnkube-master.pid &
-
-  echo "=============== ovn-master ========== running"
-  wait_for_event attempts=3 process_ready ovnkube-master
-  if [[ ${ovnkube_compact_mode_enable} == "true" ]] && [[ ${ovnkube_node_mode} != "dpu" ]]; then
-    setup_cni
-  fi
-
-  process_healthy ovnkube-master
-  exit 9
 }
 
 # v1.3.0 - run ovnkube --ovnkube-controller
@@ -1601,7 +1249,7 @@ ovnkube-controller() {
   # wait for northd to start
   wait_for_event process_ready ovn-northd
 
-  # wait for ovs-servers to start since ovn-master sets some fields in OVS DB
+  # wait for ovs-servers to start since ovnkube-controller sets some fields in OVS DB
   echo "=============== ovnkube-controller - (wait for ovs)"
   wait_for_event ovs_ready
 
@@ -1816,12 +1464,6 @@ ovnkube-controller() {
       ovn_dbs="${ovn_dbs} --sb-address=${ovn_sbdb}"
   fi
 
-  ovnkube_enable_interconnect_flag=
-  if [[ ${ovn_enable_interconnect} == "true" ]]; then
-    ovnkube_enable_interconnect_flag="--enable-interconnect"
-  fi
-  echo "ovnkube_enable_interconnect_flag: ${ovnkube_enable_interconnect_flag}"
-
   ovnkube_enable_multi_external_gateway_flag=
   if [[ ${ovn_enable_multi_external_gateway} == "true" ]]; then
 	  ovnkube_enable_multi_external_gateway_flag="--enable-multi-external-gateway"
@@ -1912,7 +1554,6 @@ ovnkube-controller() {
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
     ${ovnkube_config_duration_enable_flag} \
-    ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_local_cert_flags} \
     ${ovnkube_enable_multi_external_gateway_flag} \
     ${ovnkube_metrics_scale_enable_flag} \
@@ -1969,7 +1610,7 @@ ovnkube-controller-with-node() {
   # wait for northd to start
   wait_for_event process_ready ovn-northd
 
-  # wait for ovs-servers to start since ovn-master sets some fields in OVS DB
+  # wait for ovs-servers to start since ovnkube initialization sets some fields in OVS DB
   echo "=============== ovnkube-controller-with-node - (wait for ovs)"
   wait_for_event ovs_ready
 
@@ -1980,7 +1621,7 @@ ovnkube-controller-with-node() {
 
   # start temp work around
   # remove when https://issues.redhat.com/browse/FDP-1537 is avilable
-  if [[ ${ovnkube_node_mode} == "full" && ${ovn_enable_interconnect} == "true" && ${ovn_egressip_enable} == "true" ]]; then
+  if [[ ${ovnkube_node_mode} == "full" && ${ovn_egressip_enable} == "true" ]]; then
     echo "=============== ovnkube-controller-with-node - (add GARP drop flows if external bridge exists)"
     # bridge may not yet exist
     local bridge_name="$(get_bridge_name_for_physnet 'physnet')"
@@ -2301,12 +1942,6 @@ ovnkube-controller-with-node() {
       ovn_dbs="${ovn_dbs} --sb-address=${ovn_sbdb}"
   fi
 
-  ovnkube_enable_interconnect_flag=
-  if [[ ${ovn_enable_interconnect} == "true" ]]; then
-    ovnkube_enable_interconnect_flag="--enable-interconnect"
-  fi
-  echo "ovnkube_enable_interconnect_flag: ${ovnkube_enable_interconnect_flag}"
-
   ovnkube_enable_multi_external_gateway_flag=
   if [[ ${ovn_enable_multi_external_gateway} == "true" ]]; then
 	  ovnkube_enable_multi_external_gateway_flag="--enable-multi-external-gateway"
@@ -2459,7 +2094,6 @@ ovnkube-controller-with-node() {
     ${ovn_encap_ip_flag} \
     ${ovn_encap_port_flag} \
     ${ovnkube_config_duration_enable_flag} \
-    ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_local_cert_flags} \
     ${ovnkube_enable_multi_external_gateway_flag} \
     ${ovnkube_metrics_scale_enable_flag} \
@@ -2673,12 +2307,6 @@ ovn-cluster-manager() {
   fi
   echo "ovnkube_metrics_tls_opts: ${ovnkube_metrics_tls_opts}"
 
-  ovnkube_enable_interconnect_flag=
-  if [[ ${ovn_enable_interconnect} == "true" ]]; then
-    ovnkube_enable_interconnect_flag="--enable-interconnect"
-  fi
-  echo "ovnkube_enable_interconnect_flag: ${ovnkube_enable_interconnect_flag}"
-
   ovnkube_enable_multi_external_gateway_flag=
   if [[ ${ovn_enable_multi_external_gateway} == "true" ]]; then
 	  ovnkube_enable_multi_external_gateway_flag="--enable-multi-external-gateway"
@@ -2741,7 +2369,6 @@ ovn-cluster-manager() {
     ${advertised_udn_isolation_flag} \
     ${ovnkube_config_file_flag} \
     ${persistent_ips_enabled_flag} \
-    ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_enable_multi_external_gateway_flag} \
     ${ovnkube_metrics_tls_opts} \
     ${ovn_encap_port_flag} \
@@ -2825,14 +2452,10 @@ ovn-node() {
   rm -f ${OVN_RUNDIR}/ovnkube.pid
 
   # ready_to_start_node checks for the NB/SB readiness state.
-  # This is not available on the DPU host when interconnect is enabled,
-  # because the DBs will run locally on the DPU
+  # This is not available on the DPU host because the DBs run locally on the DPU.
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovn-node - (wait for ovs)"
     wait_for_event ovs_ready
-    echo "=============== ovn-node - (wait for ready_to_start_node)"
-    wait_for_event ready_to_start_node
-  elif [[ ${ovn_enable_interconnect} != "true" ]]; then
     echo "=============== ovn-node - (wait for ready_to_start_node)"
     wait_for_event ready_to_start_node
   fi
@@ -3086,12 +2709,6 @@ ovn-node() {
       "
   fi
 
-  ovnkube_enable_interconnect_flag=
-  if [[ ${ovn_enable_interconnect} == "true" ]]; then
-    ovnkube_enable_interconnect_flag="--enable-interconnect"
-  fi
-  echo "ovnkube_enable_interconnect_flag: ${ovnkube_enable_interconnect_flag}"
-
   ovn_zone=$(get_node_zone)
   echo "ovnkube-node's configured zone is ${ovn_zone}"
 
@@ -3183,7 +2800,6 @@ ovn-node() {
         ${ovn_encap_ip_flag} \
         ${ovn_encap_port_flag} \
         ${ovn_conntrack_zone_flag} \
-        ${ovnkube_enable_interconnect_flag} \
         ${ovnkube_enable_multi_external_gateway_flag} \
         ${ovn_v4_masquerade_subnet_opt} \
         ${ovn_v6_masquerade_subnet_opt} \
@@ -3288,22 +2904,17 @@ display_version
 # run-ovn-northd Runs ovn-northd as a process does not run nb_ovsdb or sb_ovsdb (v3)
 # nb-ovsdb       Runs nb_ovsdb as a process (no detach or monitor) (v3)
 # sb-ovsdb       Runs sb_ovsdb as a process (no detach or monitor) (v3)
-# ovn-dbchecker  Runs ovndb checker alongside nb-ovsdb and sb-ovsdb containers (v3)
-# ovn-master     - master only (v3)
 # ovn-identity     - master only (v3)
 # ovn-controller - all nodes (v3)
 # ovn-node       - all nodes (v3)
 # cleanup-ovn-node - all nodes (v3)
 
 case ${cmd} in
-"nb-ovsdb") # pod ovnkube-db container nb-ovsdb
+"nb-ovsdb") # zone DB container nb-ovsdb
   nb-ovsdb
   ;;
-"sb-ovsdb") # pod ovnkube-db container sb-ovsdb
+"sb-ovsdb") # zone DB container sb-ovsdb
   sb-ovsdb
-  ;;
-"ovn-dbchecker") # pod ovnkube-db container ovn-dbchecker
-  ovn-dbchecker
   ;;
 "local-nb-ovsdb")
   local-nb-ovsdb
@@ -3311,22 +2922,19 @@ case ${cmd} in
 "local-sb-ovsdb")
   local-sb-ovsdb
   ;;
-"run-ovn-northd") # pod ovnkube-master container run-ovn-northd
+"run-ovn-northd") # zone controller container run-ovn-northd
   run-ovn-northd
-  ;;
-"ovn-master") # pod ovnkube-master container ovnkube-master
-  ovn-master
   ;;
 "ovnkube-identity") # pod ovnkube-identity container ovnkube-identity
   ovnkube-identity
   ;;
-"ovnkube-controller") # pod ovnkube-master container ovnkube-controller
+"ovnkube-controller") # zone controller container ovnkube-controller
   ovnkube-controller
   ;;
 "ovnkube-controller-with-node")
   ovnkube-controller-with-node
   ;;
-"ovn-cluster-manager") # pod ovnkube-master container ovnkube-cluster-manager
+"ovn-cluster-manager") # control-plane container ovnkube-cluster-manager
   ovn-cluster-manager
   ;;
 "ovs-server") # pod ovnkube-node container ovs-daemons
@@ -3359,20 +2967,14 @@ case ${cmd} in
 "cleanup-ovn-node")
   cleanup-ovn-node
   ;;
-"nb-ovsdb-raft")
-  ovsdb-raft nb ${ovn_nb_port} ${ovn_nb_raft_port} ${ovn_nb_raft_election_timer}
-  ;;
-"sb-ovsdb-raft")
-  ovsdb-raft sb ${ovn_sb_port} ${ovn_sb_raft_port} ${ovn_sb_raft_election_timer}
-  ;;
 "ovs-metrics")
   ovs-metrics
   ;;
 *)
   echo "invalid command ${cmd}"
-  echo "valid v3 commands: ovs-server nb-ovsdb sb-ovsdb run-ovn-northd ovn-master " \
+  echo "valid v3 commands: ovs-server nb-ovsdb sb-ovsdb run-ovn-northd " \
     "ovnkube-identity ovn-controller ovn-node display_env display ovn_debug cleanup-ovs-server " \
-    "cleanup-ovn-node nb-ovsdb-raft sb-ovsdb-raft"
+    "cleanup-ovn-node"
   exit 0
   ;;
 esac

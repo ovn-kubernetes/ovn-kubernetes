@@ -1430,11 +1430,6 @@ func getSupportedIPFamiliesSlice(cs kubernetes.Interface) []utilnet.IPFamily {
 	return nil
 }
 
-func isInterconnectEnabled() bool {
-	val, present := os.LookupEnv("OVN_ENABLE_INTERCONNECT")
-	return present && val == "true"
-}
-
 func isDynamicUDNEnabled() bool {
 	val, present := os.LookupEnv("DYNAMIC_UDN_ALLOCATION")
 	return present && val == "true"
@@ -1910,57 +1905,9 @@ func getNetworkInterfaceName(pod *v1.Pod, podConfig podConfiguration, netConfigN
 	return iface, nil
 }
 
-// findOVNDBLeaderPod finds the ovnkube-db pod that is currently the northbound database leader
-func findOVNDBLeaderPod(f *framework.Framework, cs clientset.Interface, namespace string) (*v1.Pod, error) {
-	dbPods, err := cs.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: "ovn-db-pod=true"})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list ovnkube-db pods: %v", err)
-	}
-
-	if len(dbPods.Items) == 0 {
-		return nil, fmt.Errorf("no ovnkube-db pods found")
-	}
-
-	if len(dbPods.Items) == 1 {
-		return &dbPods.Items[0], nil
-	}
-
-	for i := range dbPods.Items {
-		pod := &dbPods.Items[i]
-		if pod.Status.Phase != v1.PodRunning {
-			continue
-		}
-
-		stdout, stderr, err := ExecCommandInContainerWithFullOutput(f, namespace, pod.Name, "nb-ovsdb",
-			"ovsdb-client", "query", "unix:/var/run/openvswitch/ovnnb_db.sock",
-			`["_Server", {"op":"select", "table":"Database", "where":[["name", "==", "OVN_Northbound"]], "columns": ["leader"]}]`)
-
-		if err != nil {
-			framework.Logf("Warning: Failed to query leader status on pod %s: %v, stderr: %s", pod.Name, err, stderr)
-			continue
-		}
-
-		// Parse the JSON response to check if this pod is the leader
-		// Expected: [{"rows":[{"leader":true}]}]
-		type dbResp struct {
-			Rows []struct {
-				Leader bool `json:"leader"`
-			} `json:"rows"`
-		}
-		var resp []dbResp
-		if err := json.Unmarshal([]byte(stdout), &resp); err == nil &&
-			len(resp) > 0 && len(resp[0].Rows) > 0 && resp[0].Rows[0].Leader {
-			framework.Logf("Found nbdb leader pod: %s", pod.Name)
-			return pod, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no nbdb leader pod found among %d ovnkube-db pods", len(dbPods.Items))
-}
-
 // waitOVNKubernetesHealthy waits for the ovn-kubernetes cluster to be healthy
 // This includes checking that all nodes are ready, all ovnkube-node pods are running,
-// and all ovnkube-master/control-plane pods are running
+// and ovnkube-control-plane pods are running
 func waitOVNKubernetesHealthy(f *framework.Framework) error {
 	return wait.PollImmediate(5*time.Second, 300*time.Second, func() (bool, error) {
 		// Check that all nodes are ready and schedulable
@@ -2001,51 +1948,40 @@ func waitOVNKubernetesHealthy(f *framework.Framework) error {
 			}
 		}
 
-		// Check ovnkube-master/control-plane pods
-		ovnMasterPods, err := podClient.List(context.Background(), metav1.ListOptions{
-			LabelSelector: "name=ovnkube-master",
+		// Check ovnkube-control-plane pods
+		ovnControlPlanePods, err := podClient.List(context.Background(), metav1.ListOptions{
+			LabelSelector: "name=ovnkube-control-plane",
 		})
 		if err != nil {
-			framework.Logf("Error listing ovnkube-master pods: %v", err)
+			framework.Logf("Error listing ovnkube-control-plane pods: %v", err)
 			return false, nil
 		}
 
-		// If no ovnkube-master pods, check for ovnkube-control-plane
-		if len(ovnMasterPods.Items) == 0 {
-			ovnMasterPods, err = podClient.List(context.Background(), metav1.ListOptions{
-				LabelSelector: "name=ovnkube-control-plane",
-			})
-			if err != nil {
-				framework.Logf("Error listing ovnkube-control-plane pods: %v", err)
-				return false, nil
-			}
-		}
-
-		if len(ovnMasterPods.Items) == 0 {
-			framework.Logf("No ovnkube-master or ovnkube-control-plane pods found")
+		if len(ovnControlPlanePods.Items) == 0 {
+			framework.Logf("No ovnkube-control-plane pods found")
 			return false, nil
 		}
 
-		// Check that at least one master/control-plane pod is running and ready
-		runningMasterPods := 0
-		for _, pod := range ovnMasterPods.Items {
+		// Check that at least one control-plane pod is running and ready
+		runningControlPlanePods := 0
+		for _, pod := range ovnControlPlanePods.Items {
 			isReady, err := testutils.PodRunningReady(&pod)
 			if err != nil {
-				framework.Logf("Error checking if ovnkube-master pod %s is ready: %v", pod.Name, err)
+				framework.Logf("Error checking if ovnkube-control-plane pod %s is ready: %v", pod.Name, err)
 				continue
 			}
 			if isReady {
-				runningMasterPods++
+				runningControlPlanePods++
 			}
 		}
 
-		if runningMasterPods == 0 {
-			framework.Logf("No ovnkube-master/control-plane pods are running")
+		if runningControlPlanePods == 0 {
+			framework.Logf("No ovnkube-control-plane pods are running")
 			return false, nil
 		}
 
-		framework.Logf("OVN-Kubernetes cluster is healthy: %d nodes, %d ovnkube-node pods, %d running master pods",
-			len(nodes.Items), len(ovnNodePods.Items), runningMasterPods)
+		framework.Logf("OVN-Kubernetes cluster is healthy: %d nodes, %d ovnkube-node pods, %d running control-plane pods",
+			len(nodes.Items), len(ovnNodePods.Items), runningControlPlanePods)
 		return true, nil
 	})
 }

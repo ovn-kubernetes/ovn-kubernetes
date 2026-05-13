@@ -32,9 +32,6 @@ webhooks:
         apiVersions: ["*"]
         resources: ["nodes/status"] # Using /status subresource doesn't protect from other users changing the annotations
         scope: "*"
-
-# in non-ic environments ovnkube-node doesn't have the permissions to update pods
-{{- if eq .Values.global.enableInterconnect true }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
@@ -56,5 +53,4 @@ webhooks:
         apiVersions: ["*"]
         resources: ["pods/status"] # Using /status subresource doesn't protect from other users changing the annotations
         scope: "*"
-{{- end }}
 {{- end }}

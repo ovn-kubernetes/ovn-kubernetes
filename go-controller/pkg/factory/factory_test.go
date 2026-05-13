@@ -594,7 +594,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		testExisting := func(objType reflect.Type, namespace string, sel labels.Selector, priority int) {
 			if objType == EndpointSliceType {
 				wf, err = NewNodeWatchFactory(ovnClientset.GetNodeClientset(), nodeName)
-			} else if objType == CloudPrivateIPConfigType {
+			} else if objType == CloudPrivateIPConfigType || objType == IPAMClaimsType {
 				wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
 			} else {
 				wf, err = NewMasterWatchFactory(ovnClientset)
@@ -618,7 +618,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		testExistingFilteredHandler := func(objType reflect.Type, realObj reflect.Type, namespace string, sel labels.Selector, priority int) {
 			if objType == EndpointSliceType {
 				wf, err = NewNodeWatchFactory(ovnClientset.GetNodeClientset(), nodeName)
-			} else if objType == CloudPrivateIPConfigType {
+			} else if objType == CloudPrivateIPConfigType || objType == IPAMClaimsType {
 				wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
 			} else {
 				wf, err = NewMasterWatchFactory(ovnClientset)
@@ -942,7 +942,7 @@ var _ = Describe("Watch Factory Operations", func() {
 
 	Context("when Persistent IPs feature is disabled", func() {
 		testExisting := func(objType reflect.Type) {
-			wf, err = NewMasterWatchFactory(ovnClientset)
+			wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
 			Expect(err).NotTo(HaveOccurred())
 			err = wf.Start()
 			Expect(err).NotTo(HaveOccurred())
@@ -2012,7 +2012,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		wf.RemoveBaselineAdminNetworkPolicyHandler(h)
 	})
 	It("responds to IPAMClaims add/update/delete events", func() {
-		wf, err = NewMasterWatchFactory(ovnClientset)
+		wf, err = NewClusterManagerWatchFactory(ovnCMClientset)
 		Expect(err).NotTo(HaveOccurred())
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())

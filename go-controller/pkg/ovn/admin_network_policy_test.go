@@ -298,7 +298,6 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 		// IC true or false does not really effect this feature
-		config.OVNKubernetesFeature.EnableInterconnect = true
 
 		app = cli.NewApp()
 		app.Name = "test"

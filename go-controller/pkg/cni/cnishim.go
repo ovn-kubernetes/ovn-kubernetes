@@ -248,13 +248,14 @@ func (p *Plugin) CmdAdd(args *skel.CmdArgs) error {
 		// plugging an interface into Pod is on the Shim.
 
 		// Use the IPAM details from ovnkube-node to configure the pod interface
-		pr, err := cniRequestToPodRequest(req)
+		ctx, cancel := context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+		defer cancel()
+		pr, err := cniRequestToPodRequest(req, ctx)
 		if err != nil {
 			err = fmt.Errorf("failed to create pod request: %v", err)
 			klog.Error(err.Error())
 			return err
 		}
-		defer pr.cancel()
 
 		if !response.PodIFInfo.IsDPUHostMode {
 			// Initialize OVS exec runner; find OVS binaries that the CNI code uses.
@@ -274,13 +275,14 @@ func (p *Plugin) CmdAdd(args *skel.CmdArgs) error {
 		}
 		if response.PrimaryUDNPodInfo != nil {
 			primaryUDNPodRequest := response.PrimaryUDNPodReq
-			primaryUDNPodRequest.ctx, primaryUDNPodRequest.cancel = context.WithCancel(pr.ctx)
-			defer primaryUDNPodRequest.cancel()
-			err = primaryUDNCmdAddGetCNIResultFunc(result, getCNIResult, primaryUDNPodRequest, clientset, response.PrimaryUDNPodInfo)
+			primaryUDNPodRequest.ctx = ctx
+
+			primaryUDNResult, err := getCNIResult(primaryUDNPodRequest, clientset, response.PrimaryUDNPodInfo)
 			if err != nil {
 				klog.Error(err.Error())
 				return err
 			}
+			mergePrimaryUDNResponse(&Response{Result: result}, &Response{Result: primaryUDNResult}, primaryUDNPodRequest)
 		}
 	}
 
@@ -325,12 +327,13 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 
 	// if Result is nil, then ovnkube-node is running in unprivileged mode so unconfigure the Interface from here.
 	if response.Result == nil {
-		pr, err = cniRequestToPodRequest(req)
+		ctx, cancel := context.WithTimeout(context.Background(), kubeletDefaultCRIOperationTimeout)
+		defer cancel()
+		pr, err = cniRequestToPodRequest(req, ctx)
 		if err != nil {
 			err = fmt.Errorf("failed to create pod request: %v", err)
 			return err
 		}
-		defer pr.cancel()
 
 		if !response.PodIFInfo.IsDPUHostMode {
 			// Initialize OVS exec runner; find OVS binaries that the CNI code uses.

@@ -37,6 +37,7 @@ import (
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
@@ -182,14 +183,8 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 mac_in_use",
 			Output: eth0MAC,
 		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge-mappings",
-			Output: "",
-		})
-		fexec.AddFakeCmdsNoOutputNoError([]string{
-			"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-bridge-mappings=" + types.PhysicalNetworkName + ":breth0",
-		})
-
+		// ovn-bridge-mappings get/set are now handled via libovsdb in
+		// bridgeconfig.bridgedGatewayNodeSetup; no fexec entries needed.
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
 			Output: systemID,
@@ -213,17 +208,6 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 get interface eth0 ofport",
 			Output: "7",
 		})
-		if setNodeIP {
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovs-vsctl --timeout=15 get Open_vSwitch . external_ids:ovn-encap-ip",
-			})
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-encap-ip=192.168.1.10",
-			})
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovn-appctl --timeout=5 -t ovn-controller exit --restart",
-			})
-		}
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ip route replace table 7 172.16.1.0/24 via 10.1.1.1 dev ovn-k8s-mp0",
 			Output: "0",
@@ -266,6 +250,15 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
 		Expect(util.SetupMockOVSPidFile()).To(Succeed())
 
+		if setNodeIP {
+			// addressManager.sync() will call updateOVNEncapIPAndReconnect,
+			// which writes ovn-encap-ip via libovsdb (asserted after Init)
+			// and asks ovn-controller to reconnect.
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: "ovn-appctl --timeout=5 -t ovn-controller exit --restart",
+			})
+		}
+
 		err = util.SetExec(fexec)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -291,6 +284,9 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
 		nft := nodenft.SetFakeNFTablesHelper()
 
+		ovsClient, ovsCleanup := newTestOVSClient()
+		defer ovsCleanup.Cleanup()
+
 		// Make Management port
 		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
 		rm := routemanager.NewController()
@@ -298,7 +294,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
 		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
 		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
-		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
+		mp, err := managementport.NewManagementPortController(ovsClient, &existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 
 		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -405,8 +401,12 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 				nil,
 				networkmanager.Default().Interface(),
 				config.GatewayModeShared,
+				ovsClient,
 			)
 			Expect(err).NotTo(HaveOccurred())
+			ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ovs.ExternalIDs).To(HaveKeyWithValue("ovn-bridge-mappings", types.PhysicalNetworkName+":breth0"))
 			err = sharedGw.initFunc()
 			Expect(err).NotTo(HaveOccurred())
 			err = sharedGw.Init(stop, wg)
@@ -418,6 +418,15 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			// Start does two things, starts nodeIPManager which spawns a go routine and also starts openflow manager by spawning a go routine
 			//sharedGw.Start()
 			sharedGw.nodeIPManager.sync()
+			if setNodeIP {
+				// updateOVNEncapIPAndReconnect should have written the
+				// node primary IP into Open_vSwitch.external_ids.
+				expectedAddr, perr := netlink.ParseAddr(eth0CIDR)
+				Expect(perr).NotTo(HaveOccurred())
+				ovs, gerr := ovsops.GetOpenvSwitch(ovsClient)
+				Expect(gerr).NotTo(HaveOccurred())
+				Expect(ovs.ExternalIDs).To(HaveKeyWithValue("ovn-encap-ip", expectedAddr.IP.String()))
+			}
 			// we cannot start openflow manager directly because it spawns a go routine
 			// FIXME: extract openflow manager func from the spawning of a go routine so it can be called directly below.
 			sharedGw.openflowManager.syncFlows()
@@ -582,6 +591,9 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 	brphys, hostMAC, hostCIDR, dpuIP string, gatewayVLANID uint) {
 	const mtu string = "1400"
 	const clusterCIDR string = "10.1.0.0/16"
+	// addressManager.sync() short-circuits when Mode == DPU, so the
+	// encap-update path never fires here. Keep the field empty to avoid
+	// polluting later tests.
 	app.Action = func(ctx *cli.Context) error {
 		const (
 			nodeName   string = "node1"
@@ -650,13 +662,8 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface " + brphys + " mac_in_use",
 			Output: uplinkMAC,
 		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge-mappings",
-			Output: "",
-		})
-		fexec.AddFakeCmdsNoOutputNoError([]string{
-			"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-bridge-mappings=" + types.PhysicalNetworkName + ":" + brphys,
-		})
+		// ovn-bridge-mappings get/set are now handled via libovsdb in
+		// bridgeconfig.bridgedGatewayNodeSetup; no fexec entries needed.
 		// GetNodeChassisID
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
@@ -811,6 +818,8 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
 			Expect(err).NotTo(HaveOccurred())
+			ovsClient, ovsCleanup := newTestOVSClient()
+			defer ovsCleanup.Cleanup()
 			sharedGw, err := newGateway(
 				nodeName,
 				ovntest.MustParseIPNets(nodeSubnet),
@@ -826,8 +835,12 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 				nil,
 				networkmanager.Default().Interface(),
 				config.GatewayModeShared,
+				ovsClient,
 			)
 			Expect(err).NotTo(HaveOccurred())
+			ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ovs.ExternalIDs).To(HaveKeyWithValue("ovn-bridge-mappings", types.PhysicalNetworkName+":"+brphys))
 			err = sharedGw.initFunc()
 			Expect(err).NotTo(HaveOccurred())
 			err = sharedGw.Init(stop, wg)
@@ -1134,14 +1147,8 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 mac_in_use",
 			Output: eth0MAC,
 		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge-mappings",
-			Output: "",
-		})
-		fexec.AddFakeCmdsNoOutputNoError([]string{
-			"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-bridge-mappings=" + types.PhysicalNetworkName + ":breth0",
-		})
-
+		// ovn-bridge-mappings get/set are now handled via libovsdb in
+		// bridgeconfig.bridgedGatewayNodeSetup; no fexec entries needed.
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
 			Output: systemID,
@@ -1165,11 +1172,8 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Cmd:    "ovs-vsctl --timeout=15 get interface eth0 ofport",
 			Output: "7",
 		})
-		// IP already configured, do not try to set it or restart ovn-controller
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Open_vSwitch . external_ids:ovn-encap-ip",
-			Output: "192.168.1.10",
-		})
+		// Encap IP reconciliation moved to libovsdb; addressManager.sync()
+		// is gated off via config.Default.EncapIP for this test.
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ip route replace table 7 172.16.1.0/24 via 10.1.1.1 dev ovn-k8s-mp0",
 			Output: "0",
@@ -1210,6 +1214,13 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
 		Expect(util.SetupMockOVSPidFile()).To(Succeed())
 
+		// addressManager.sync() will call updateOVNEncapIPAndReconnect,
+		// which writes ovn-encap-ip via libovsdb (asserted after Init) and
+		// asks ovn-controller to reconnect.
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: "ovn-appctl --timeout=5 -t ovn-controller exit --restart",
+		})
+
 		err := util.SetExec(fexec)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1242,6 +1253,9 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 
 		nft := nodenft.SetFakeNFTablesHelper()
 
+		ovsClient, ovsCleanup := newTestOVSClient()
+		defer ovsCleanup.Cleanup()
+
 		// Make Management port
 		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
 		rm := routemanager.NewController()
@@ -1249,7 +1263,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
 		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
 		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
-		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
+		mp, err := managementport.NewManagementPortController(ovsClient, &existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 
 		if util.IsNetworkSegmentationSupportEnabled() {
@@ -1334,8 +1348,12 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 				nil,
 				networkmanager.Default().Interface(),
 				config.GatewayModeLocal,
+				ovsClient,
 			)
 			Expect(err).NotTo(HaveOccurred())
+			ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ovs.ExternalIDs).To(HaveKeyWithValue("ovn-bridge-mappings", types.PhysicalNetworkName+":breth0"))
 			err = localGw.initFunc()
 			Expect(err).NotTo(HaveOccurred())
 			err = localGw.Init(stop, wg)
@@ -1348,6 +1366,11 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			// Start does two things, starts nodeIPManager which spawns a go routine and also starts openflow manager by spawning a go routine
 			// localGw.Start()
 			localGw.nodeIPManager.sync()
+			// updateOVNEncapIPAndReconnect should have written the node
+			// primary IP into Open_vSwitch.external_ids.
+			localOVS, lerr := ovsops.GetOpenvSwitch(ovsClient)
+			Expect(lerr).NotTo(HaveOccurred())
+			Expect(localOVS.ExternalIDs).To(HaveKeyWithValue("ovn-encap-ip", expectedAddr.IP.String()))
 			// we cannot start openflow manager directly because it spawns a go routine
 			// FIXME: extract openflow manager func from the spawning of a go routine so it can be called directly below.
 			localGw.openflowManager.syncFlows()

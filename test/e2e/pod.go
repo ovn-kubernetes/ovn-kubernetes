@@ -228,11 +228,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 						}
 						for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
 							framework.Logf("Flushing the ip route cache on %s", ovnKubeNodePod.Name)
-							containerName := "ovnkube-node"
-							if isInterconnectEnabled() {
-								containerName = "ovnkube-controller"
-							}
-							_, err := e2ekubectl.RunKubectl(deploymentconfig.Get().OVNKubernetesNamespace(), "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+							_, err := e2ekubectl.RunKubectl(deploymentconfig.Get().OVNKubernetesNamespace(), "exec", ovnKubeNodePod.Name, "--container", getNodeContainerName(), "--",
 								"ip", "route", "flush", "cache")
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 						}
@@ -402,11 +398,7 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 		}
 		for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
 			framework.Logf("Flushing the ip route cache on %s", ovnKubeNodePod.Name)
-			containerName := "ovnkube-node"
-			if isInterconnectEnabled() {
-				containerName = "ovnkube-controller"
-			}
-			_, err := e2ekubectl.RunKubectl(deploymentconfig.Get().OVNKubernetesNamespace(), "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+			_, err := e2ekubectl.RunKubectl(deploymentconfig.Get().OVNKubernetesNamespace(), "exec", ovnKubeNodePod.Name, "--container", getNodeContainerName(), "--",
 				"ip", "route", "flush", "cache")
 			framework.ExpectNoError(err, "Flushing the ip route cache failed")
 		}

@@ -1,9 +1,6 @@
 # SDN Dashboards
 
 This helm chart installs the dashboards for ovn-kubernetes. The dashboards are installed for the following SDN components:
-  - OVN Central / North Daemon
-  - OVN Central / Northbound DB
-  - OVN Central / Southbound DB
   - OVN Host / Controller
   - Host / OVS
   - OVN K8S / Node Agent

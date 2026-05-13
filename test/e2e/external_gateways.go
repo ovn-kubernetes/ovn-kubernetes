@@ -917,16 +917,6 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					annotatePodForGateway(gwPod, servingNamespace, f.Namespace.Name, networkIPs, false)
 				}
 
-				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
-					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-						ns := getNamespace(f, f.Namespace.Name)
-						return (ns.Annotations[externalGatewayPodIPsAnnotation] == fmt.Sprintf("%s,%s", addresses.gatewayIPs[0], addresses.gatewayIPs[1])), nil
-					})
-					framework.ExpectNoError(err, "Check if the k8s.ovn.org/external-gw-pod-ips got updated, failed: %v", err)
-				}
-
 				network, err := infraprovider.Get().PrimaryNetwork()
 				framework.ExpectNoError(err, "failed to get primary network information")
 				if overrideNetworkName, _, _ := getOverrideNetwork(); overrideNetworkName != "" {
@@ -959,16 +949,6 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					defer cleanUpFn()
 				}
 
-				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
-					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-						ns := getNamespace(f, f.Namespace.Name)
-						return (ns.Annotations[externalGatewayPodIPsAnnotation] == addresses.gatewayIPs[0]), nil
-					})
-					framework.ExpectNoError(err, "Check if the k8s.ovn.org/external-gw-pod-ips got updated, failed: %v", err)
-				}
-
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
@@ -978,16 +958,6 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 
 				ginkgo.By("Remove first external gateway pod's routing-namespace annotation")
 				annotatePodForGateway(gatewayPodName1, servingNamespace, "", addresses.gatewayIPs[0], false)
-
-				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
-					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-						ns := getNamespace(f, f.Namespace.Name)
-						return (ns.Annotations[externalGatewayPodIPsAnnotation] == ""), nil
-					})
-					framework.ExpectNoError(err, "Check if the k8s.ovn.org/external-gw-pod-ips got updated, failed: %v", err)
-				}
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -2833,15 +2803,6 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					annotatePodForGateway(gwPod, servingNamespace, f.Namespace.Name, networkIPs, false)
 				}
 				createAPBExternalRouteCRWithDynamicHop(defaultPolicyName, f.Namespace.Name, servingNamespace, false, addresses.gatewayIPs)
-				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
-					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
-						ns := getNamespace(f, f.Namespace.Name)
-						return ns.Annotations[externalGatewayPodIPsAnnotation] == fmt.Sprintf("%s,%s", addresses.gatewayIPs[0], addresses.gatewayIPs[1]), nil
-					})
-					framework.ExpectNoError(err, "Check if the k8s.ovn.org/external-gw-pod-ips got updated, failed: %v", err)
-				}
 				annotatePodForGateway(gatewayPodName2, servingNamespace, "", addresses.gatewayIPs[1], false)
 				annotatePodForGateway(gatewayPodName1, servingNamespace, "", addresses.gatewayIPs[0], false)
 				macAddressGW := make([]string, 2)

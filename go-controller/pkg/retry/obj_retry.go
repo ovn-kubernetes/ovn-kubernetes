@@ -575,7 +575,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 
 				r.DoWithLock(key, func(key string) {
 					// This only applies to pod watchers (pods + dynamic network policy handlers watching pods):
-					// if ovnkube-master is restarted, it will get all the add events with completed pods
+					// if the watching controller restarts, it will get all the add events with completed pods
 					if r.ResourceHandler.IsObjectInTerminalState(obj) {
 						r.processObjectInTerminalState(obj, key, resourceEventAdd)
 						return

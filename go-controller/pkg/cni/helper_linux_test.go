@@ -26,7 +26,6 @@ import (
 	kexec "k8s.io/utils/exec"
 	"sigs.k8s.io/knftables"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/mocks"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	cni_type_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/cni/pkg/types"
@@ -273,11 +272,8 @@ func TestSafeMoveIfToNetns(t *testing.T) {
 func TestSetupNetwork(t *testing.T) {
 	mockNetLinkOps := new(util_mocks.NetLinkOps)
 	mockLink := new(netlink_mocks.Link)
-	mockCNIPlugin := new(mocks.CNIPluginLibOps)
 	// below sets the `netLinkOps` in util/net_linux.go to a mock instance for purpose of unit tests execution
 	util.SetNetLinkOpMockInst(mockNetLinkOps)
-	// below `cniPluginLibOps` is defined in helper_linux.go
-	cniPluginLibOps = mockCNIPlugin
 
 	tests := []struct {
 		desc                 string
@@ -286,7 +282,6 @@ func TestSetupNetwork(t *testing.T) {
 		errMatch             error
 		netLinkOpsMockHelper []ovntest.TestifyMockHelper
 		linkMockHelper       []ovntest.TestifyMockHelper
-		cniPluginMockHelper  []ovntest.TestifyMockHelper
 	}{
 		{
 			desc:    "test code path when AddrAdd returns error",
@@ -321,12 +316,10 @@ func TestSetupNetwork(t *testing.T) {
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-			},
-			cniPluginMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			linkMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 2},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 3},
 			},
 		},
 		{
@@ -349,13 +342,11 @@ func TestSetupNetwork(t *testing.T) {
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-			},
-			cniPluginMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			linkMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 3},
 			},
 		},
 		{
@@ -377,13 +368,11 @@ func TestSetupNetwork(t *testing.T) {
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-			},
-			cniPluginMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
 			},
 			linkMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}, CallTimes: 3},
 			},
 		},
 		{
@@ -404,13 +393,11 @@ func TestSetupNetwork(t *testing.T) {
 			},
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-			},
-			cniPluginMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
 			},
 			linkMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName", Flags: net.FlagUp}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName", Flags: net.FlagUp}}, CallTimes: 3},
 			},
 		},
 		{
@@ -442,7 +429,6 @@ func TestSetupNetwork(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.netLinkOpsMockHelper)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.linkMockHelper)
-			ovntest.ProcessMockFnList(&mockCNIPlugin.Mock, tc.cniPluginMockHelper)
 
 			err := setupNetwork(tc.inpLink, tc.inpPodIfaceInfo)
 			t.Log(err)
@@ -453,19 +439,15 @@ func TestSetupNetwork(t *testing.T) {
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
-			mockCNIPlugin.AssertExpectations(t)
 		})
 	}
 }
 
 func TestSetupInterface(t *testing.T) {
 	mockNetLinkOps := new(util_mocks.NetLinkOps)
-	mockCNIPlugin := new(mocks.CNIPluginLibOps)
 	mockNS := new(cni_ns_mocks.NetNS)
 	// below sets the `netLinkOps` in util/net_linux.go to a mock instance for purpose of unit tests execution
 	util.SetNetLinkOpMockInst(mockNetLinkOps)
-	// `cniPluginLibOps` is defined in helper_linux.go
-	cniPluginLibOps = mockCNIPlugin
 
 	/* Need the below to test the Do() function that requires root and needs to be figured out
 	testOSNameSpace, err := ns.GetCurrentNS()
@@ -482,7 +464,6 @@ func TestSetupInterface(t *testing.T) {
 		inpPodIfaceInfo      *PodInterfaceInfo
 		errExp               bool
 		errMatch             error
-		cniPluginMockHelper  []ovntest.TestifyMockHelper
 		nsMockHelper         []ovntest.TestifyMockHelper
 		netLinkOpsMockHelper []ovntest.TestifyMockHelper
 	}{
@@ -520,7 +501,6 @@ func TestSetupInterface(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.netLinkOpsMockHelper)
-			ovntest.ProcessMockFnList(&mockCNIPlugin.Mock, tc.cniPluginMockHelper)
 			ovntest.ProcessMockFnList(&mockNS.Mock, tc.nsMockHelper)
 
 			hostIface, contIface, err := setupInterface(tc.inpNetNS, tc.inpContID, tc.inpIfaceName, tc.inpPodIfaceInfo)
@@ -533,7 +513,6 @@ func TestSetupInterface(t *testing.T) {
 				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
-			mockCNIPlugin.AssertExpectations(t)
 			mockNS.AssertExpectations(t)
 		})
 	}
@@ -541,7 +520,6 @@ func TestSetupInterface(t *testing.T) {
 
 func TestSetupSriovInterface(t *testing.T) {
 	mockNetLinkOps := new(util_mocks.NetLinkOps)
-	mockCNIPlugin := new(mocks.CNIPluginLibOps)
 	mockSriovnetOps := new(util_mocks.SriovnetOps)
 	mockNS := new(cni_ns_mocks.NetNS)
 	mockLink := new(netlink_mocks.Link)
@@ -549,8 +527,6 @@ func TestSetupSriovInterface(t *testing.T) {
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 	// below sets the `netLinkOps` in util/net_linux.go to a mock instance for purpose of unit tests execution
 	util.SetNetLinkOpMockInst(mockNetLinkOps)
-	// `cniPluginLibOps` is defined in helper_linux.go
-	cniPluginLibOps = mockCNIPlugin
 	// set `sriovnetOps` in util/sriovnet_linux.go to a mock instance for unit tests execution
 	util.SetSriovnetOpsInst(mockSriovnetOps)
 
@@ -580,7 +556,6 @@ func TestSetupSriovInterface(t *testing.T) {
 		inpPCIAddrs          string
 		errExp               bool
 		errMatch             error
-		cniPluginMockHelper  []ovntest.TestifyMockHelper
 		nsMockHelper         []ovntest.TestifyMockHelper
 		netLinkOpsMockHelper []ovntest.TestifyMockHelper
 		sriovOpsMockHelper   []ovntest.TestifyMockHelper
@@ -732,11 +707,16 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
 				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
 				{OnCallMethodName: "GetVfRepresentor", OnCallMethodArgType: []string{"string", "int"}, RetArgList: []interface{}{"VFRepresentor", nil}},
+				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
+				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
 			},
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				// The below two mock calls are needed for the moveIfToNetns() call that internally invokes them
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "LinkSetNsFd", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
+				// The below two mock calls are needed for SetVFHardwreAddress()
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "LinkSetVfHardwareAddr", OnCallMethodArgType: []string{"*mocks.Link", "int", "net.HardwareAddr"}, RetArgList: []interface{}{nil}},
 				// The below mock call is for the LinkByName() of the host representor
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
@@ -762,11 +742,16 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
 				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
 				{OnCallMethodName: "GetVfRepresentor", OnCallMethodArgType: []string{"string", "int"}, RetArgList: []interface{}{"VFRepresentor", nil}},
+				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
+				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
 			},
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				// The below two mock calls are needed for the moveIfToNetns() call that internally invokes them
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "LinkSetNsFd", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
+				// The below two mock calls are needed for SetVFHardwreAddress()
+				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
+				{OnCallMethodName: "LinkSetVfHardwareAddr", OnCallMethodArgType: []string{"*mocks.Link", "int", "net.HardwareAddr"}, RetArgList: []interface{}{nil}},
 				// The below mock call is for the LinkByName() of the host representor
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 			},
@@ -1087,12 +1072,10 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "LinkSetMTU", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-			},
-			cniPluginMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			linkMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Flags: net.FlagUp}}, CallTimes: 2},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Flags: net.FlagUp}}, CallTimes: 3},
 			},
 			nsMockHelper: []ovntest.TestifyMockHelper{},
 		},
@@ -1132,13 +1115,11 @@ func TestSetupSriovInterface(t *testing.T) {
 				{OnCallMethodName: "LinkSetMTU", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "LinkSetUp", OnCallMethodArgType: []string{"*mocks.Link"}, RetArgList: []interface{}{nil}},
 				{OnCallMethodName: "AddrAdd", OnCallMethodArgType: []string{"*mocks.Link", "*netlink.Addr"}, RetArgList: []interface{}{nil}},
-			},
-			cniPluginMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{nil}},
-				{OnCallMethodName: "AddRoute", OnCallMethodArgType: []string{"*net.IPNet", "net.IP", "*mocks.Link", "int", "int"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "RouteAdd", OnCallMethodArgType: []string{"*netlink.Route"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			linkMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Flags: net.FlagUp}}},
+				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Flags: net.FlagUp}}, CallTimes: 3},
 			},
 			nsMockHelper: []ovntest.TestifyMockHelper{},
 		},
@@ -1146,7 +1127,6 @@ func TestSetupSriovInterface(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.netLinkOpsMockHelper)
-			ovntest.ProcessMockFnList(&mockCNIPlugin.Mock, tc.cniPluginMockHelper)
 			ovntest.ProcessMockFnList(&mockNS.Mock, tc.nsMockHelper)
 			ovntest.ProcessMockFnList(&mockSriovnetOps.Mock, tc.sriovOpsMockHelper)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.linkMockHelper)
@@ -1169,7 +1149,6 @@ func TestSetupSriovInterface(t *testing.T) {
 				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
-			mockCNIPlugin.AssertExpectations(t)
 			mockNS.AssertExpectations(t)
 			mockSriovnetOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)

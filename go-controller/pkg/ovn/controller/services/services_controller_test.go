@@ -60,7 +60,6 @@ func newControllerWithDBSetupForNetwork(dbSetup libovsdbtest.TestSetup, netInfo 
 		return nil, err
 	}
 
-	config.OVNKubernetesFeature.EnableInterconnect = true
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 

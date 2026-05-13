@@ -404,8 +404,8 @@ subnet is assigned to a new node.
 On that case before assigning the subnet to the node the VMs ips need to be 
 reserved so they don't get assigned to new pods
 
-Another scenario is ovn-kubernetes pods restarting after live migration, on 
-that case ovnkube-master should discover to what IP pool the VM belongs.
+Another scenario is ovn-kubernetes controllers restarting after live migration.
+In that case, the zone's `ovnkube-controller` should discover which IP pool the VM belongs to.
 
 
 #### Detecting migratable VMs and changing point to point routes
@@ -415,7 +415,7 @@ has to be present and also the label `vm.kubevirt.io/name=vm1`, on that case
 the point to point routes will be created after live migration and also a 
 DHCPOptions will be configured to serve the ip configuration to the VM
 
-During live migration there are two virt-launcher pods with different names for the same VM (source and target). The ovn-k pod controller uses `CreationTimestamp` and `kubevirt.io/vm=vm1`
+During live migration there are two virt-launcher pods with different names for the same VM (source and target). The `ovnkube-controller` in each zone uses `CreationTimestamp` and `kubevirt.io/vm=vm1`
 to differentiate between them; it then watches the target pod `kubevirt.io/nodeName` and `kubevirt.io/migration-target-start-timestamp` annotation and label, with the following intent:
 - The `kubevirt.io/nodeName` is set after the VM finishes live migrating or when it becomes ready.
 - The `kubevirt.io/migration-target-start-timestamp` is set when live migration has not finished but migration-target pod is ready to receive traffic (this happens at post-copy live migration, where migration is taking too long).

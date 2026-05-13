@@ -4,7 +4,6 @@
 package metrics
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
@@ -387,32 +385,6 @@ func stopwatchShowMetricsUpdate(component string) {
 		metricInfo.metrics.longTermAvg.Set(longTermAvgMetricValue / 1000)
 	}
 
-}
-
-// The `keepTrying` boolean when set to true will not return an error if we can't find pods with one of the given labels.
-// This is so that the caller can re-try again to see if the pods have appeared in the k8s cluster.
-func CheckPodRunsOnGivenNode(clientset kubernetes.Interface, labels []string, k8sNodeName string,
-	keepTrying bool) (bool, error) {
-	for _, label := range labels {
-		pods, err := clientset.CoreV1().Pods(config.Kubernetes.OVNConfigNamespace).List(context.TODO(), metav1.ListOptions{
-			LabelSelector:   label,
-			ResourceVersion: "0",
-		})
-		if err != nil {
-			klog.V(5).Infof("Failed to list Pods with label %q: %v. Retrying..", label, err)
-			return false, nil
-		}
-		for _, pod := range pods.Items {
-			if pod.Spec.NodeName == k8sNodeName {
-				return true, nil
-			}
-		}
-	}
-	if keepTrying {
-		return false, nil
-	}
-	return false, fmt.Errorf("a Pod matching at least one of the labels %q doesn't exist on this node %s",
-		strings.Join(labels, ","), k8sNodeName)
 }
 
 // stringFlagSetterFunc is a func used for setting string type flag.

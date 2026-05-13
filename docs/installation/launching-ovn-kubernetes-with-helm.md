@@ -82,10 +82,6 @@ done
 # docker push <your-registry>/ovn-kube-ubuntu:<tag>
 ```
 
-## Alternative Configurations
-
-The deprecated central mode topology is available via `-f values-no-ic.yaml`.
-
 ## Values
 
 See the [helm chart README](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/helm/ovn-kubernetes/README.md#values)

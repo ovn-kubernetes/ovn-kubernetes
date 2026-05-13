@@ -10,8 +10,7 @@ sudo apt-get install python-six openssl -y
 sudo apt-get install openvswitch-switch openvswitch-common -y
 ```
 
-On the master, where you intend to start OVN's central components,
-run:
+On the node where you intend to start OVN database and northd components, run:
 
 ```
 sudo apt-get install ovn-central ovn-common ovn-host -y

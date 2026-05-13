@@ -88,6 +88,8 @@ func getUUID(model model.Model) string {
 		return t.UUID
 	case *vswitchd.Bridge:
 		return t.UUID
+	case *vswitchd.OpenvSwitch:
+		return t.UUID
 	default:
 		panic(fmt.Sprintf("getUUID: unknown model %T", t))
 	}
@@ -163,6 +165,8 @@ func setUUID(model model.Model, uuid string) {
 	case *vswitchd.Port:
 		t.UUID = uuid
 	case *vswitchd.Bridge:
+		t.UUID = uuid
+	case *vswitchd.OpenvSwitch:
 		t.UUID = uuid
 	default:
 		panic(fmt.Sprintf("setUUID: unknown model %T", t))
@@ -336,6 +340,8 @@ func copyIndexes(model model.Model) model.Model {
 		return &vswitchd.Port{UUID: t.UUID, Name: t.Name}
 	case *vswitchd.Bridge:
 		return &vswitchd.Bridge{UUID: t.UUID, Name: t.Name}
+	case *vswitchd.OpenvSwitch:
+		return &vswitchd.OpenvSwitch{UUID: t.UUID}
 	default:
 		panic(fmt.Sprintf("copyIndexes: unknown model %T", t))
 	}
@@ -409,6 +415,8 @@ func getListFromModel(model model.Model) interface{} {
 		return &[]*vswitchd.Port{}
 	case *vswitchd.Bridge:
 		return &[]*vswitchd.Bridge{}
+	case *vswitchd.OpenvSwitch:
+		return &[]*vswitchd.OpenvSwitch{}
 	default:
 		panic(fmt.Sprintf("getModelList: unknown model %T", t))
 	}

@@ -45,8 +45,6 @@ usage() {
     echo "       [ -n4  | --no-ipv4 ]"
     echo "       [ -i6  | --ipv6 ]"
     echo "       [ -wk  | --num-workers <num> ]"
-    echo "       [ -ic  | --enable-interconnect]"
-    echo "       [ -npz | --node-per-zone ]"
     echo "       [ -ov  | --ovn-image <image> ]"
     echo "       [ -ovr | --ovn-repo <repo> ]"
     echo "       [ -ovg | --ovn-gitref <ref> ]"
@@ -81,7 +79,6 @@ usage() {
     echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled."
-    echo "-cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process. DEFAULT: Disabled"
     echo "-ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled"
     echo "-df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled"
     echo "--disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled"
@@ -99,8 +96,6 @@ usage() {
     echo "-mtu                                          Define the overlay mtu. DEFAULT: 1400 (1500 for no-overlay mode)"
     echo "--enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
-    echo "-ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)"
-    echo "-npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
     echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
     echo "--allow-icmp-netpol                           Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules"
     echo "-ecp | --encap-port                           GENEVE UDP tunnel port."
@@ -119,11 +114,10 @@ usage() {
     echo "-lr  | --local-kind-registry                  Configure kind to use a local container registry for images."
     echo "-ep  | --experimental-provider                Use an experimental OCI provider such as podman instead of docker."
     echo "--deploy                                      Deploy ovn-kubernetes without restarting kind"
-    echo "--add-nodes                                   Adds nodes to an existing cluster. Number of nodes set by --num-workers. Use -ic if the cluster uses interconnect."
+    echo "--add-nodes                                   Adds nodes to an existing cluster. Number of nodes set by --num-workers."
     echo "--isolated                                    After cluster creation, remove default route from nodes and publish kind node IPs as /etc/hosts entries for DNS-less isolation."
-    echo "-ml  | --master-loglevel                      Log level for ovnkube-master/cluster-manager pods (0..5). DEFAULT: 4"
+    echo "-ml  | --master-loglevel                      Log level for ovnkube-control-plane pods (0..5). DEFAULT: 4"
     echo "-nl  | --node-loglevel                        Log level for ovnkube-node pods (0..5). DEFAULT: 4"
-    echo "-dbl | --dbchecker-loglevel                   Log level for the ovn-dbchecker container (0..5). DEFAULT: 4"
     echo "-nbl | --ovn-loglevel-nb                      Log level for ovn-nbdb. DEFAULT: '-vconsole:info -vfile:info'"
     echo "-sbl | --ovn-loglevel-sb                      Log level for ovn-sbdb. DEFAULT: '-vconsole:info -vfile:info'"
     echo "-ndl | --ovn-loglevel-northd                  Log level for ovn-northd. DEFAULT: '-vconsole:info -vfile:info'"
@@ -223,8 +217,6 @@ parse_args() {
                                                     ENABLE_NO_OVERLAY_MANAGED_ROUTING=false
                                                   fi
                                                   ;;
-            -cm | --compact-mode )                OVN_COMPACT_MODE=true
-                                                  ;;
             -ds | --disable-snat-multiple-gws )   OVN_DISABLE_SNAT_MULTIPLE_GWS=true
                                                   ;;
             -df | --disable-forwarding )          OVN_DISABLE_FORWARDING=true
@@ -265,24 +257,9 @@ parse_args() {
                                                   ;;
             -dns | --enable-dnsnameresolver )     OVN_ENABLE_DNSNAMERESOLVER=true
                                                   ;;
-            -ce | --enable-central )              echo "WARNING: --enable-central is deprecated. OVN Central (Legacy Architecture) will be removed in a future release." >&2
-                                                  OVN_ENABLE_INTERCONNECT=false
-                                                  CENTRAL_ARG_PROVIDED=true
-                                                  ;;
             --allow-icmp-netpol )                 OVN_ALLOW_ICMP_NETPOL=true
                                                   ;;
-            -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
-                                                  IC_ARG_PROVIDED=true
-                                                  ;;
             --disable-ovnkube-identity )          OVN_ENABLE_OVNKUBE_IDENTITY=false
-                                                  ;;
-            -npz | --nodes-per-zone )             shift
-                                                  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
-                                                      echo "Invalid num-nodes-per-zone: $1"
-                                                      usage
-                                                      exit 1
-                                                  fi
-                                                  KIND_NUM_NODES_PER_ZONE=$1
                                                   ;;
             -mps| --multi-pod-subnet )            MULTI_POD_SUBNET=true
                                                   ;;
@@ -350,9 +327,6 @@ parse_args() {
             -nl | --node-loglevel )               shift
                                                   NODE_LOG_LEVEL=$1
                                                   ;;
-            -dbl | --dbchecker-loglevel )         shift
-                                                  DBCHECKER_LOG_LEVEL=$1
-                                                  ;;
             -nbl | --ovn-loglevel-nb )            shift
                                                   OVN_LOG_LEVEL_NB=$1
                                                   ;;
@@ -396,10 +370,6 @@ parse_args() {
         shift
     done
 
-    if [[ -n "${CENTRAL_ARG_PROVIDED:-}" && -n "${IC_ARG_PROVIDED:-}" ]]; then
-      echo "Cannot specify both --enable-central and --enable-interconnect" >&2
-      exit 1
-    fi
 }
 
 print_params() {
@@ -445,7 +415,6 @@ print_params() {
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
      echo "MULTI_POD_SUBNET= $MULTI_POD_SUBNET"
      echo "OVN_ALLOW_ICMP_NETPOL= $OVN_ALLOW_ICMP_NETPOL"
-     echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      echo "DYNAMIC_UDN_ALLOCATION = $DYNAMIC_UDN_ALLOCATION"
      echo "DYNAMIC_UDN_GRACE_PERIOD =  $DYNAMIC_UDN_GRACE_PERIOD"
      echo "ENABLE_IPSEC = $ENABLE_IPSEC"
@@ -472,18 +441,10 @@ print_params() {
      echo "RUN_IN_CONTAINER = $RUN_IN_CONTAINER"
      echo "MASTER_LOG_LEVEL = $MASTER_LOG_LEVEL"
      echo "NODE_LOG_LEVEL = $NODE_LOG_LEVEL"
-     echo "DBCHECKER_LOG_LEVEL = $DBCHECKER_LOG_LEVEL"
      echo "OVN_LOG_LEVEL_NB = $OVN_LOG_LEVEL_NB"
      echo "OVN_LOG_LEVEL_SB = $OVN_LOG_LEVEL_SB"
      echo "OVN_LOG_LEVEL_NORTHD = $OVN_LOG_LEVEL_NORTHD"
      echo "OVN_LOG_LEVEL_CONTROLLER = $OVN_LOG_LEVEL_CONTROLLER"
-     if [[ $OVN_ENABLE_INTERCONNECT == true ]]; then
-       echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
-       if [ "${KIND_NUM_NODES_PER_ZONE}" -gt 1 ] && [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" = "true" ]; then
-         echo "multi_node_zone is not compatible with ovnkube_identity, disabling ovnkube_identity"
-         OVN_ENABLE_OVNKUBE_IDENTITY="false"
-       fi
-     fi
      echo ""
 }
 
@@ -504,21 +465,8 @@ helm_prereqs() {
 
 create_ovn_kubernetes() {
     cd ${DIR}/../helm/ovn-kubernetes
-    if [[ $KIND_NUM_NODES_PER_ZONE == 1 ]]; then
-      label_ovn_single_node_zones
-      value_file="values-single-node-zone.yaml"
-      ovnkube_db_options=""
-    elif [[ $KIND_NUM_NODES_PER_ZONE -gt 1 ]]; then
-      label_ovn_multiple_nodes_zones
-      value_file="values-multi-node-zone.yaml"
-      ovnkube_db_options=""
-    else
-      label_ovn_ha
-      value_file="values-no-ic.yaml"
-      ovnkube_db_options="--set tags.ovnkube-db-raft=$(if [ "${OVN_HA}" == "true" ]; then echo "true"; else echo "false"; fi) \
-                          --set tags.ovnkube-db=$(if [ "${OVN_HA}" == "false" ]; then echo "true"; else echo "false"; fi)"
-    fi
-    MASTER_REPLICAS=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l)
+    label_ovn_single_node_zones
+    value_file="values-single-node-zone.yaml"
     echo "value_file=${value_file}"
     # For multi-pod-subnet case, NET_CIDR_IPV4 is a list of CIDRs separated by comma.
     # When Helm encounters a comma within a string value in a --set argument, it attempts to parse the comma as a separator
@@ -532,7 +480,6 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set podNetwork="${ESCAPED_NET_CIDR}" \
           --set serviceNetwork="${ESCAPED_SVC_CIDR}" \
           --set mtu=${OVN_MTU} \
-          --set ovnkube-master.replicas=${MASTER_REPLICAS} \
           --set global.image.repository=${OVN_IMAGE%:*} \
           --set global.image.tag=${OVN_IMAGE##*:} \
           --set-string global.v4JoinSubnet="${JOIN_SUBNET_IPV4}" \
@@ -574,7 +521,6 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           --set global.unprivilegedMode=false \
           --set global.metricsIp="${METRICS_IP:-}" \
           --set ovs-node.updateStrategy="${OVS_NODE_UPDATE_STRATEGY:-RollingUpdate}" \
-          --set global.enableCompactMode=$(if [ "${OVN_COMPACT_MODE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.dummyGatewayBridge=$(if [ "${OVN_DUMMY_GATEWAY_BRIDGE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           $( [ -n "${OVN_ENCAP_PORT}" ] && echo "--set global.encapPort=${OVN_ENCAP_PORT}" ) \
           --set global.disablePacketMtuCheck=$(if [ "${OVN_DISABLE_PKT_MTU_CHECK}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -592,26 +538,14 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" \
           $( [ -n "${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT}" ] && echo "--set global.ipfixCacheActiveTimeout=${OVN_IPFIX_CACHE_ACTIVE_TIMEOUT}" ) \
           $( [ -n "${LIBOVSDB_CLIENT_LOGFILE}" ] && echo "--set global.libovsdbClientLogFile=${LIBOVSDB_CLIENT_LOGFILE}" ) \
           --set hostNetworkNamespace=${OVN_HOST_NETWORK_NAMESPACE} \
-          --set ovnkube-master.logLevel=${MASTER_LOG_LEVEL} \
           --set ovnkube-control-plane.logLevel=${MASTER_LOG_LEVEL} \
           --set ovnkube-node.logLevel=${NODE_LOG_LEVEL} \
           --set ovnkube-single-node-zone.ovnkubeNodeLogLevel=${NODE_LOG_LEVEL} \
-          --set ovnkube-zone-controller.ovnkubeLocalLogLevel=${NODE_LOG_LEVEL} \
-          --set ovnkube-db-raft.dbCheckerLogLevel=${DBCHECKER_LOG_LEVEL} \
-          --set-string ovnkube-db.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
-          --set-string ovnkube-db-raft.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
           --set-string ovnkube-single-node-zone.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
-          --set-string ovnkube-zone-controller.nbLogLevel="${OVN_LOG_LEVEL_NB}" \
-          --set-string ovnkube-db.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
-          --set-string ovnkube-db-raft.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
           --set-string ovnkube-single-node-zone.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
-          --set-string ovnkube-zone-controller.sbLogLevel="${OVN_LOG_LEVEL_SB}" \
-          --set-string ovnkube-master.northdLogLevel="${OVN_LOG_LEVEL_NORTHD}" \
           --set-string ovnkube-single-node-zone.northdLogLevel="${OVN_LOG_LEVEL_NORTHD}" \
-          --set-string ovnkube-zone-controller.northdLogLevel="${OVN_LOG_LEVEL_NORTHD}" \
           --set-string ovnkube-node.ovnControllerLogLevel="${OVN_LOG_LEVEL_CONTROLLER}" \
-          --set-string ovnkube-single-node-zone.ovnControllerLogLevel="${OVN_LOG_LEVEL_CONTROLLER}" \
-          ${ovnkube_db_options}
+          --set-string ovnkube-single-node-zone.ovnControllerLogLevel="${OVN_LOG_LEVEL_CONTROLLER}"
 EOF
        )
     echo "${cmd}"
@@ -747,5 +681,3 @@ if [ "$ENABLE_IPSEC" == true ]; then
   set_openssl_binary
   install_ipsec
 fi
-
-interconnect_arg_check

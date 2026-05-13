@@ -135,9 +135,9 @@ needs to be passed in for TLS server certificate verification using the
 
 ## One time setup.
 
-As explained [here](../design/architecture.md), OVN architecture has a central component which
-stores your networking intent in a database.  You start this central component
-on the node where you intend to start your k8s central daemons by running:
+As explained [here](../design/architecture.md), OVN stores networking intent
+in its Northbound and Southbound databases. Start ovn-northd on the node where
+you intend to run the OVN database daemons by running:
 
 ```
 /usr/share/openvswitch/scripts/ovn-ctl start_northd
@@ -162,15 +162,14 @@ file.  For e.g. on Ubuntu, if you installed ovn-controller via the package
 ```
 OVN_CTL_OPTS="--ovn-controller-ssl-key=/etc/openvswitch/ovncontroller-privkey.pem  --ovn-controller-ssl-cert=/etc/openvswitch/ovncontroller-cert.pem --ovn-controller-ssl-ca-cert=/etc/openvswitch/cacert.pem"
 ```
-If you start the ovnkube utility on master with "--init-master"
-or with "--init-network-control-manager",
-you should pass the SSL certificates to it. For e.g:
+If you start the ovnkube utility with "--init-ovnkube-controller", you should
+pass the SSL certificates to it. For e.g:
 
 ```
 sudo ovnkube -k8s-kubeconfig kubeconfig.yaml -loglevel=4 \
  -k8s-apiserver="http://$CENTRAL_IP:8080" \
  -logfile="/var/log/ovn-kubernetes/ovnkube.log" \
- -init-master="$NODE_NAME" -cluster-subnets=$CLUSTER_IP_SUBNET \
+ -init-ovnkube-controller="$NODE_NAME" -cluster-subnets=$CLUSTER_IP_SUBNET \
  -k8s-service-cidr=$SERVICE_IP_SUBNET \
  -nodeport \
  -nb-address="ssl:$CENTRAL_IP:6641" \

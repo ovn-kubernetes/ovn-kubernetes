@@ -395,24 +395,22 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		return fmt.Errorf("failed to sync chassis: error: %v", err)
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		// Chassis cleanup should happen regardless of transport mode to cleanup
-		// any stale remote chassis entries (e.g., from overlay->no-overlay migration)
-		if err := oc.zoneChassisHandler.SyncNodes(kNodes); err != nil {
-			return fmt.Errorf("zoneChassisHandler failed to sync nodes: error: %w", err)
-		}
+	// Chassis cleanup should happen regardless of transport mode to cleanup
+	// any stale remote chassis entries (e.g., from overlay->no-overlay migration)
+	if err := oc.zoneChassisHandler.SyncNodes(kNodes); err != nil {
+		return fmt.Errorf("zoneChassisHandler failed to sync nodes: error: %w", err)
+	}
 
-		// Interconnect resource sync depends on transport mode:
-		// - For overlay: ensure transit switch exists and cleanup stale resources
-		// - For no-overlay: cleanup all interconnect resources (nodes and transit switch)
-		if oc.Transport() == types.NetworkTransportNoOverlay {
-			if err := oc.zoneICHandler.Cleanup(); err != nil {
-				return fmt.Errorf("zoneICHandler failed to cleanup: error: %w", err)
-			}
-		} else {
-			if err := oc.zoneICHandler.CleanupStaleNodes(kNodes); err != nil {
-				return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
-			}
+	// Interconnect resource sync depends on transport mode:
+	// - For overlay: ensure transit switch exists and cleanup stale resources
+	// - For no-overlay: cleanup all interconnect resources (nodes and transit switch)
+	if oc.Transport() == types.NetworkTransportNoOverlay {
+		if err := oc.zoneICHandler.Cleanup(); err != nil {
+			return fmt.Errorf("zoneICHandler failed to cleanup: error: %w", err)
+		}
+	} else {
+		if err := oc.zoneICHandler.CleanupStaleNodes(kNodes); err != nil {
+			return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
 		}
 	}
 
@@ -666,7 +664,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		}
 	}
 
-	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
+	if nSyncs.syncZoneIC {
 		// Always call zone chassis handler's AddLocalZoneNode function to mark
 		// this node's chassis record in Southbound db as a local zone chassis.
 		// This is required even when the default network uses no-overlay transport,
@@ -735,7 +733,7 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 	}
 
 	var err error
-	if syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
+	if syncZoneIC {
 		// Always create remote chassis entry with geneve encapsulation.
 		// This is needed even when the default network uses no-overlay transport,
 		// because user-defined networks may still use overlay transport and require
@@ -790,17 +788,15 @@ func (oc *DefaultNetworkController) deleteOVNNodeEvent(node *corev1.Node) error 
 		return err
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+	if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+		return err
+	}
+	if !oc.isLocalZoneNode(node) {
+		if err := oc.zoneChassisHandler.DeleteRemoteZoneNode(node); err != nil {
 			return err
 		}
-		if !oc.isLocalZoneNode(node) {
-			if err := oc.zoneChassisHandler.DeleteRemoteZoneNode(node); err != nil {
-				return err
-			}
-		}
-		oc.syncZoneICFailed.Delete(node.Name)
 	}
+	oc.syncZoneICFailed.Delete(node.Name)
 
 	oc.lsManager.DeleteSwitch(node.Name)
 	oc.addNodeFailed.Delete(node.Name)

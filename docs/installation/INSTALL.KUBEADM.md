@@ -469,11 +469,16 @@ Before starting OVN-Kubernetes, work around an issue where `br-int` is added by 
 ovs-vsctl add-br br-int
 ~~~
 
+Single-node-zone interconnect requires every node to be labeled with its zone name **before** the Helm install:
+~~~
+for n in node1 node2 node3; do kubectl label node $n k8s.ovn.org/zone-name=$n --overwrite; done
+~~~
+
 Next, install OVN-Kubernetes with the Helm chart, pointing `global.image.repository` at the image you just pushed (or use the public `ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu` image to skip the build steps above). If `helm` isn't already on the master, install it with `curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash`.
 ~~~
 cd $HOME/work/src/github.com/ovn-kubernetes/ovn-kubernetes/helm/ovn-kubernetes
 helm install ovn-kubernetes . \
-    -f values-no-ic.yaml \
+    -f values-single-node-zone.yaml \
     --set k8sAPIServer="https://192.168.123.1:6443" \
     --set global.image.repository=192.168.123.254:5000/ovn-daemonset-fedora \
     --set global.image.tag=latest
@@ -481,12 +486,12 @@ helm install ovn-kubernetes . \
 
 > **CEL CRD note:** Several OVN-Kubernetes CRDs use CEL `x-kubernetes-validations` rules that don't install cleanly on older Kubernetes versions — the per-CRD cost budget rejects four of them on Kubernetes 1.31, and the indexed `all(i, v, …)` macro used by `vteps` and `routeadvertisements` is rejected on 1.32. Use Kubernetes 1.33 or newer (the example above pins to v1.35) and the chart's CRDs install cleanly via `helm install`.
 
-For interconnect (IC) mode — recommended for new production deployments — use `-f values-single-node-zone.yaml` instead of `-f values-no-ic.yaml`, and label every node with its zone name **before** running `helm install`:
+The Helm chart does not remove kube-proxy. Since the `kubeadm init` command above installs kube-proxy by default, delete the kube-proxy DaemonSet:
 ~~~
-for n in node1 node2 node3; do kubectl label node $n k8s.ovn.org/zone-name=$n --overwrite; done
+kubectl delete ds -n kube-system kube-proxy
 ~~~
 
-The Helm chart deploys the namespace, the OVN database, the master, and the ovnkube-node pods in one step. Watch them come up:
+The Helm chart deploys the namespace, the cluster manager (`ovnkube-control-plane`), and the per-node pods (`ovnkube-single-node-zone` + `ovnkube-node` + `ovs-node`) in one step. Watch them come up:
 ~~~
 kubectl get pods -n ovn-kubernetes -o wide -w
 ~~~
@@ -508,9 +513,9 @@ kube-system      etcd-node1                       1/1     Running   1          7
 kube-system      kube-apiserver-node1             1/1     Running   1          74m     192.168.122.205   node1   <none>           <none>
 kube-system      kube-controller-manager-node1    1/1     Running   1          74m     192.168.122.205   node1   <none>           <none>
 kube-system      kube-scheduler-node1             1/1     Running   1          74m     192.168.122.205   node1   <none>           <none>
-ovn-kubernetes   ovnkube-db-7767c6b7c5-25drn      2/2     Running   2          11m     192.168.122.205   node1   <none>           <none>
-ovn-kubernetes   ovnkube-master-775d45fd5-mzkcb   3/3     Running   3          10m     192.168.122.205   node1   <none>           <none>
-ovn-kubernetes   ovnkube-node-xmgrj               3/3     Running   3          8m49s   192.168.122.205   node1   <none>           <none>
+ovn-kubernetes   ovnkube-control-plane-6f44d456df-bv2x8  1/1   Running   0          11m     192.168.122.205   node1   <none>           <none>
+ovn-kubernetes   ovnkube-node-xmgrj                      3/3   Running   0          8m49s   192.168.122.205   node1   <none>           <none>
+ovn-kubernetes   ovs-node-jl7lh                          1/1   Running   0          8m49s   192.168.122.205   node1   <none>           <none>
 ~~~
 
 ### Verifying the deployment 
@@ -642,7 +647,7 @@ kubectl exec test-n2 -- nslookup kubernetes.default.svc.cluster.local 10.96.0.10
 
 ### Uninstalling OVN-Kubernetes
 
-In order to uninstall OVN-Kubernetes:
+If you deployed OVN-Kubernetes with Helm as described above, uninstall it with:
 ~~~
 helm uninstall ovn-kubernetes
 ~~~
@@ -659,7 +664,7 @@ The best workaroud is to pre-create br-int before the OVN-Kubernetes installatio
 ovs-vsctl add-br br-int
 ~~~
 
-`br-ex` disappears from the OVS database whenever the OVN-Kubernetes Helm release is uninstalled and reinstalled (or upgraded across modes — for example switching from `values-no-ic.yaml` to `values-single-node-zone.yaml`). The `ovs-node` container resets the OVS DB on startup, removing any user-managed bridges. NetworkManager keeps the `br-ex` connection profile but cannot recreate it because the OVS DB is now under container control. The simplest recovery is to reboot each affected node — NetworkManager re-establishes `br-ex` from its persisted profile during boot, and ovn-kubernetes reconciles the patch port back to `br-int`. Plan for a per-node reboot whenever the chart is reinstalled.
+`br-ex` disappears from the OVS database whenever the OVN-Kubernetes Helm release is uninstalled and reinstalled. The `ovs-node` container resets the OVS DB on startup, removing any user-managed bridges. NetworkManager keeps the `br-ex` connection profile but cannot recreate it because the OVS DB is now under container control. The simplest recovery is to reboot each affected node — NetworkManager re-establishes `br-ex` from its persisted profile during boot, and ovn-kubernetes reconciles the patch port back to `br-int`. Plan for a per-node reboot whenever the chart is reinstalled.
 
 ## Joining worker nodes to the environment
 
@@ -683,4 +688,3 @@ systemctl restart openvswitch
 systemctl restart NetworkManager
 nmcli conn up ovs-if-${IF2}
 ~~~
-

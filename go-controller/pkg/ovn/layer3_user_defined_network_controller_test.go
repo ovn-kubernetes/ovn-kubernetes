@@ -110,9 +110,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				}
 			}
 			config.Gateway.Mode = gwMode
-			if config.OVNKubernetesFeature.EnableInterconnect {
-				config.Default.Zone = nodeName
-			}
+			config.Default.Zone = nodeName
 			if knet.IsIPv6CIDRString(netInfo.clustersubnets) {
 				config.IPv6Mode = true
 				// tests dont support dualstack yet
@@ -267,16 +265,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 			Expect(app.Run([]string{app.Name})).To(Succeed())
 		},
-		Entry("pod on a user defined secondary network",
-			dummySecondaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
-			nonICClusterTestConfiguration(),
-			config.GatewayModeShared,
-		),
-		Entry("pod on a user defined primary network",
-			dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
-			nonICClusterTestConfiguration(),
-			config.GatewayModeShared,
-		),
 		Entry("pod on a user defined secondary network on an IC cluster",
 			dummySecondaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
 			icClusterTestConfiguration(),
@@ -336,9 +324,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					config.Gateway.DisableSNATMultipleGWs = testConfig.gatewayConfig.DisableSNATMultipleGWs
 				}
 			}
-			if config.OVNKubernetesFeature.EnableInterconnect {
-				config.Default.Zone = nodeName
-			}
+			config.Default.Zone = nodeName
 			app.Action = func(_ *cli.Context) error {
 				netConf := netInfo.netconf()
 				networkConfig, err := util.NewNetInfo(netConf)
@@ -461,10 +447,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			}
 			Expect(app.Run([]string{app.Name})).To(Succeed())
 		},
-		Entry("pod on a user defined primary network",
-			dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
-			nonICClusterTestConfiguration(),
-		),
 		Entry("pod on a user defined primary network on an IC cluster",
 			dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24"),
 			icClusterTestConfiguration(),
@@ -599,7 +581,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		It("activates a remote node when a NAD becomes active and cleans it up when inactive", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
-			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.Default.Zone = nodeName
@@ -790,7 +771,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		It("activates a remote node when a CUDN NAD becomes active in another namespace", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
-			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.Default.Zone = nodeName
@@ -932,7 +912,6 @@ var _ = Describe("Layer3 UDN Transport Mode - Interconnect", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		config.OVNKubernetesFeature.EnableInterconnect = true
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -1427,10 +1406,7 @@ func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInf
 	nextHopIP := util.GetNodeGatewayIfAddr(nodeCIDR).IP
 	nodeCIDR.IP = nodeIP
 
-	zone := types.OvnDefaultZone
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		zone = config.Default.Zone
-	}
+	zone := config.Default.Zone
 
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1654,7 +1630,7 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	}
 
 	hasEVPN := netInfo.Transport() == types.NetworkTransportEVPN
-	if config.OVNKubernetesFeature.EnableInterconnect && !hasEVPN {
+	if !hasEVPN {
 		rtotsLRPName := netInfo.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + nodeName)
 		rtotsLRPUUID := rtotsLRPName + "-UUID"
 		expectedEntities = append(expectedEntities,
@@ -1676,9 +1652,6 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		masqSNAT := newNATEntry(masqSNATUUID1, "169.254.169.14", nodeSubnet.String(), standardNonDefaultNetworkExtIDs(netInfo), "")
 		masqSNAT.Match = getMasqueradeManagementIPSNATMatch(util.IPAddrToHWAddr(managementPortIP(nodeSubnet)).String())
 		masqSNAT.LogicalPort = ptr.To(fmt.Sprintf("rtos-%s_%s", netInfo.GetNetworkName(), nodeName))
-		if !config.OVNKubernetesFeature.EnableInterconnect {
-			masqSNAT.GatewayPort = ptr.To(fmt.Sprintf("rtos-%s_%s", netInfo.GetNetworkName(), nodeName) + "-UUID")
-		}
 		expectedEntities = append(expectedEntities,
 			&nbdb.LogicalRouterPort{
 				UUID:        rtojLRPUUID,
@@ -1869,10 +1842,7 @@ func gwRouterJoinIPAddress() *net.IPNet {
 
 func gwRouterOptions(gwConfig util.L3GatewayConfig) map[string]string {
 
-	dynamicNeighRouters := "true"
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		dynamicNeighRouters = "false"
-	}
+	dynamicNeighRouters := "false"
 
 	return map[string]string{
 		"lb_force_snat_ip":              "router_ip",

@@ -85,7 +85,6 @@ func init() {
 	config.IPv6Mode = false
 	config.OVNKubernetesFeature.EnableNetworkQoS = true
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
-	config.OVNKubernetesFeature.EnableInterconnect = false // set via tableEntrySetup
 }
 
 var (
@@ -117,9 +116,7 @@ func TestNetworkQoS(t *testing.T) {
 	RunSpecs(t, "NetworkQoS Controller")
 }
 
-func tableEntrySetup(enableInterconnect bool) {
-	config.OVNKubernetesFeature.EnableInterconnect = enableInterconnect
-
+func tableEntrySetup() {
 	ns0 := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nqosNamespace,
@@ -309,13 +306,13 @@ func tableEntrySetup(enableInterconnect bool) {
 	fakeNQoSClient = ovnClientset.NetworkQoSClient
 	initEnv(ovnClientset, initialDB)
 	// init controller for default network
-	initNetworkQoSController(&util.DefaultNetInfo{}, nil, defaultAddrsetFactory, defaultControllerName, enableInterconnect)
+	initNetworkQoSController(&util.DefaultNetInfo{}, nil, defaultAddrsetFactory, defaultControllerName)
 	// init controller for stream nad
 	streamImmutableNadInfo, err := util.ParseNADInfo(nad)
 	Expect(err).NotTo(HaveOccurred())
 	streamNadInfo := util.NewMutableNetInfo(streamImmutableNadInfo)
 	streamNadInfo.AddNADs("default/stream")
-	initNetworkQoSController(streamNadInfo, []string{"default/stream"}, streamAddrsetFactory, streamControllerName, enableInterconnect)
+	initNetworkQoSController(streamNadInfo, []string{"default/stream"}, streamAddrsetFactory, streamControllerName)
 }
 
 var _ = AfterEach(func() {
@@ -328,246 +325,332 @@ var _ = AfterEach(func() {
 
 var _ = Describe("NetworkQoS Controller", func() {
 
-	var _ = Context("With different interconnect configurations", func() {
+	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
+		func() {
+			tableEntrySetup()
 
-		DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
-			func(enableInterconnect bool) {
-				tableEntrySetup(enableInterconnect)
+			By("creates address sets for source and destination pod selectors")
+			{
+				eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName)
+				eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName)
+				eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
+			}
 
-				By("creates address sets for source and destination pod selectors")
-				{
-					eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName)
-					eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName)
-					eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
-				}
+			By("creates QoS rules in ovn nb")
+			{
+				qos0 := eventuallyExpectQoS(defaultControllerName, nqosNamespace, nqosName, 0)
+				qos1 := eventuallyExpectQoS(defaultControllerName, nqosNamespace, nqosName, 1)
+				eventuallySwitchHasQoS("node1", qos0)
+				eventuallySwitchHasQoS("node1", qos1)
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName, "10.192.177.4")
+				sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName)
+				Expect(err).NotTo(HaveOccurred())
+				dst1AddrSet, err1 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName)
+				Expect(err1).NotTo(HaveOccurred())
+				srcHashName4, _ := sourceAddrSet.GetASHashNames()
+				dst1HashName4, _ := dst1AddrSet.GetASHashNames()
+				Expect(qos0.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == {8080,8081}", srcHashName4, dst1HashName4)))
+				Expect(qos0.Action).To(ContainElement(50))
+				Expect(qos0.Priority).To(Equal(11000))
+				Expect(qos0.Bandwidth).To(ContainElements(10000, 100000))
+				dst3AddrSet, err3 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
+				Expect(err3).NotTo(HaveOccurred())
+				dst3HashName4, _ := dst3AddrSet.GetASHashNames()
+				Expect(qos1.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.118.0.0/17 && ip4.dst != {128.118.0.0,128.118.0.255})) && ((tcp && tcp.dst == {8080,8081}) || (udp && udp.dst == {9090,8080}))", srcHashName4, dst3HashName4)))
+			}
 
-				By("creates QoS rules in ovn nb")
-				{
-					qos0 := eventuallyExpectQoS(defaultControllerName, nqosNamespace, nqosName, 0)
-					qos1 := eventuallyExpectQoS(defaultControllerName, nqosNamespace, nqosName, 1)
-					eventuallySwitchHasQoS("node1", qos0)
-					eventuallySwitchHasQoS("node1", qos1)
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName, "10.192.177.4")
-					sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName)
-					Expect(err).NotTo(HaveOccurred())
-					dst1AddrSet, err1 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName)
-					Expect(err1).NotTo(HaveOccurred())
-					srcHashName4, _ := sourceAddrSet.GetASHashNames()
-					dst1HashName4, _ := dst1AddrSet.GetASHashNames()
-					Expect(qos0.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == {8080,8081}", srcHashName4, dst1HashName4)))
-					Expect(qos0.Action).To(ContainElement(50))
-					Expect(qos0.Priority).To(Equal(11000))
-					Expect(qos0.Bandwidth).To(ContainElements(10000, 100000))
-					dst3AddrSet, err3 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
-					Expect(err3).NotTo(HaveOccurred())
-					dst3HashName4, _ := dst3AddrSet.GetASHashNames()
-					Expect(qos1.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.118.0.0/17 && ip4.dst != {128.118.0.0,128.118.0.255})) && ((tcp && tcp.dst == {8080,8081}) || (udp && udp.dst == {9090,8080}))", srcHashName4, dst3HashName4)))
-				}
-
-				app1Pod := &corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: app1Namespace,
-						Name:      "app1-pod",
-						Labels: map[string]string{
-							"component": "service1",
-						},
-						Annotations: map[string]string{
-							"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.194.188.4/26"],"mac_address":"0a:58:0a:c2:bc:04","gateway_ips":["10.194.188.1"],"routes":[{"dest":"10.194.0.0/16","nextHop":"10.194.188.1"},{"dest":"10.223.0.0/16","nextHop":"10.194.188.1"},{"dest":"100.64.0.0/16","nextHop":"10.194.188.1"}],"mtu":"1500","ip_address":"10.194.188.4/26","gateway_ip":"10.194.188.1"}}`,
-						},
+			app1Pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: app1Namespace,
+					Name:      "app1-pod",
+					Labels: map[string]string{
+						"component": "service1",
 					},
-					Spec: corev1.PodSpec{
-						HostNetwork: false,
-						NodeName:    "node2",
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.194.188.4/26"],"mac_address":"0a:58:0a:c2:bc:04","gateway_ips":["10.194.188.1"],"routes":[{"dest":"10.194.0.0/16","nextHop":"10.194.188.1"},{"dest":"10.223.0.0/16","nextHop":"10.194.188.1"},{"dest":"100.64.0.0/16","nextHop":"10.194.188.1"}],"mtu":"1500","ip_address":"10.194.188.4/26","gateway_ip":"10.194.188.1"}}`,
 					},
-				}
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork: false,
+					NodeName:    "node2",
+				},
+			}
 
-				By("adds IP to destination address set for matching pod")
-				{
-					_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Create(context.TODO(), app1Pod, metav1.CreateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			By("adds IP to destination address set for matching pod")
+			{
+				_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Create(context.TODO(), app1Pod, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
 
-					By("updates match strings if egress rules change")
-					nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					nqosUpdate.ResourceVersion = time.Now().String()
-					nqosUpdate.Spec.Egress[1].Classifier.To[1].IPBlock.Except = nil
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName)
-					Expect(err).NotTo(HaveOccurred())
-					dst1AddrSet, err1 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName)
-					Expect(err1).NotTo(HaveOccurred())
-					srcHashName4, _ := sourceAddrSet.GetASHashNames()
-					dst1HashName4, _ := dst1AddrSet.GetASHashNames()
+				By("updates match strings if egress rules change")
+				nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				nqosUpdate.ResourceVersion = time.Now().String()
+				nqosUpdate.Spec.Egress[1].Classifier.To[1].IPBlock.Except = nil
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName)
+				Expect(err).NotTo(HaveOccurred())
+				dst1AddrSet, err1 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName)
+				Expect(err1).NotTo(HaveOccurred())
+				srcHashName4, _ := sourceAddrSet.GetASHashNames()
+				dst1HashName4, _ := dst1AddrSet.GetASHashNames()
 
-					Eventually(func() string {
-						qos, err := findQoS(defaultControllerName, nqosNamespace, nqosName, 0)
-						if err != nil {
-							return err.Error()
-						}
-						return qos.Match
-					}).WithTimeout(10 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == {8080,8081}", srcHashName4, dst1HashName4)))
-
-					dst3AddrSet, err3 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
-					Expect(err3).NotTo(HaveOccurred())
-					dst3HashName4, _ := dst3AddrSet.GetASHashNames()
-					Eventually(func() string {
-						qos, err := findQoS(defaultControllerName, nqosNamespace, nqosName, 1)
-						if err != nil {
-							return err.Error()
-						}
-						return qos.Match
-					}).WithTimeout(10 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.118.0.0/17 && ip4.dst != {128.118.0.0,128.118.0.255})) && ((tcp && tcp.dst == {8080,8081}) || (udp && udp.dst == {9090,8080}))", srcHashName4, dst3HashName4)))
-				}
-
-				By("removes IP from destination address set if pod's labels don't match the selector")
-				{
-					updatePod := app1Pod.DeepCopy()
-					updatePod.Labels["component"] = "dummy"
-					updatePod.ResourceVersion = time.Now().String()
-					_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Update(context.TODO(), updatePod, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
-
-				By("adds IP to destination address set again if pod's labels match the selector")
-				{
-					updatePod := app1Pod.DeepCopy()
-					updatePod.Labels["component"] = "service1"
-					_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Update(context.TODO(), updatePod, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
-
-				By("removes IP from destination address set if target namespace labels don't match the selector")
-				{
-					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					ns.ResourceVersion = time.Now().String()
-					ns.Labels["app"] = "dummy"
-					_, err = fakeKubeClient.CoreV1().Namespaces().Update(context.TODO(), ns, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
-
-				By("adds IP to destination address set again if namespace's labels match the selector")
-				{
-					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					ns.ResourceVersion = time.Now().String()
-					ns.Labels["app"] = "app1"
-					_, err = fakeKubeClient.CoreV1().Namespaces().Update(context.TODO(), ns, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
-
-				By("removes IP from destination address set if namespace selector changes")
-				{
-					nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					nqosUpdate.Spec.Egress[0].Classifier.To[0].NamespaceSelector = &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"app": "dummy",
-						},
+				Eventually(func() string {
+					qos, err := findQoS(defaultControllerName, nqosNamespace, nqosName, 0)
+					if err != nil {
+						return err.Error()
 					}
-					nqosUpdate.ResourceVersion = time.Now().String()
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
+					return qos.Match
+				}).WithTimeout(10 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == {8080,8081}", srcHashName4, dst1HashName4)))
 
-				By("adds IP to destination address set if namespace selector is restored")
-				{
-					nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					nqosUpdate.Spec.Egress[0].Classifier.To[0].NamespaceSelector = &metav1.LabelSelector{
-						MatchLabels: map[string]string{
-							"app": "app1",
-						},
+				dst3AddrSet, err3 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
+				Expect(err3).NotTo(HaveOccurred())
+				dst3HashName4, _ := dst3AddrSet.GetASHashNames()
+				Eventually(func() string {
+					qos, err := findQoS(defaultControllerName, nqosNamespace, nqosName, 1)
+					if err != nil {
+						return err.Error()
 					}
-					nqosUpdate.ResourceVersion = time.Now().String()
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
+					return qos.Match
+				}).WithTimeout(10 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.118.0.0/17 && ip4.dst != {128.118.0.0,128.118.0.255})) && ((tcp && tcp.dst == {8080,8081}) || (udp && udp.dst == {9090,8080}))", srcHashName4, dst3HashName4)))
+			}
 
-				app3Pod := &corev1.Pod{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: app3Namespace,
-						Name:      "app3-pod",
-						Labels: map[string]string{
-							"component": "service3",
-						},
-						Annotations: map[string]string{
-							"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.195.188.4/26"],"mac_address":"0a:58:0a:c3:bc:04","gateway_ips":["10.195.188.1"],"routes":[{"dest":"10.195.0.0/16","nextHop":"10.195.188.1"},{"dest":"10.223.0.0/16","nextHop":"10.195.188.1"},{"dest":"100.64.0.0/16","nextHop":"10.195.188.1"}],"mtu":"1500","ip_address":"10.195.188.4/26","gateway_ip":"10.195.188.1"}}`,
+			By("removes IP from destination address set if pod's labels don't match the selector")
+			{
+				updatePod := app1Pod.DeepCopy()
+				updatePod.Labels["component"] = "dummy"
+				updatePod.ResourceVersion = time.Now().String()
+				_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Update(context.TODO(), updatePod, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			By("adds IP to destination address set again if pod's labels match the selector")
+			{
+				updatePod := app1Pod.DeepCopy()
+				updatePod.Labels["component"] = "service1"
+				_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Update(context.TODO(), updatePod, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			By("removes IP from destination address set if target namespace labels don't match the selector")
+			{
+				ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				ns.ResourceVersion = time.Now().String()
+				ns.Labels["app"] = "dummy"
+				_, err = fakeKubeClient.CoreV1().Namespaces().Update(context.TODO(), ns, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			By("adds IP to destination address set again if namespace's labels match the selector")
+			{
+				ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				ns.ResourceVersion = time.Now().String()
+				ns.Labels["app"] = "app1"
+				_, err = fakeKubeClient.CoreV1().Namespaces().Update(context.TODO(), ns, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			By("removes IP from destination address set if namespace selector changes")
+			{
+				nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				nqosUpdate.Spec.Egress[0].Classifier.To[0].NamespaceSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "dummy",
+					},
+				}
+				nqosUpdate.ResourceVersion = time.Now().String()
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			By("adds IP to destination address set if namespace selector is restored")
+			{
+				nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				nqosUpdate.Spec.Egress[0].Classifier.To[0].NamespaceSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"app": "app1",
+					},
+				}
+				nqosUpdate.ResourceVersion = time.Now().String()
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			app3Pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: app3Namespace,
+					Name:      "app3-pod",
+					Labels: map[string]string{
+						"component": "service3",
+					},
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.195.188.4/26"],"mac_address":"0a:58:0a:c3:bc:04","gateway_ips":["10.195.188.1"],"routes":[{"dest":"10.195.0.0/16","nextHop":"10.195.188.1"},{"dest":"10.223.0.0/16","nextHop":"10.195.188.1"},{"dest":"100.64.0.0/16","nextHop":"10.195.188.1"}],"mtu":"1500","ip_address":"10.195.188.4/26","gateway_ip":"10.195.188.1"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{
+					HostNetwork: false,
+					NodeName:    "node2",
+				},
+			}
+
+			By("adds IP to destination address set of the second rule for matching pod")
+			{
+				_, err := fakeKubeClient.CoreV1().Pods(app3Pod.Namespace).Create(context.TODO(), app3Pod, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName, "10.195.188.4")
+			}
+
+			By("adds new QoS rule to ovn nb when a new Egress rule is added")
+			{
+				nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				nqosUpdate.Spec.Egress = append(nqosUpdate.Spec.Egress, nqostype.Rule{
+					DSCP: 102,
+					Classifier: nqostype.Classifier{
+						To: []nqostype.Destination{
+							{
+								NamespaceSelector: &metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"app": "app1",
+									},
+								},
+							},
 						},
 					},
-					Spec: corev1.PodSpec{
-						HostNetwork: false,
-						NodeName:    "node2",
+				})
+				nqosUpdate.ResourceVersion = time.Now().String()
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyExpectQoS(defaultControllerName, nqosNamespace, nqosName, 2)
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName, "10.192.177.4")
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName, "10.195.188.4")
+				eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "2", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			nqos4StreamNet := &nqostype.NetworkQoS{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: nqosNamespace,
+					Name:      "stream-qos",
+				},
+				Spec: nqostype.Spec{
+					NetworkSelectors: []crdtypes.NetworkSelector{
+						{
+							NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
+							NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
+								NetworkSelector: metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"name": "unknown",
+									},
+								},
+							},
+						},
 					},
-				}
-
-				By("adds IP to destination address set of the second rule for matching pod")
-				{
-					_, err := fakeKubeClient.CoreV1().Pods(app3Pod.Namespace).Create(context.TODO(), app3Pod, metav1.CreateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName, "10.195.188.4")
-				}
-
-				By("adds new QoS rule to ovn nb when a new Egress rule is added")
-				{
-					nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					nqosUpdate.Spec.Egress = append(nqosUpdate.Spec.Egress, nqostype.Rule{
-						DSCP: 102,
-						Classifier: nqostype.Classifier{
-							To: []nqostype.Destination{
-								{
-									NamespaceSelector: &metav1.LabelSelector{
-										MatchLabels: map[string]string{
-											"app": "app1",
+					Priority: 100,
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app": "client",
+						},
+					},
+					Egress: []nqostype.Rule{
+						{
+							DSCP: 50,
+							Bandwidth: nqostype.Bandwidth{
+								Rate:  10000,
+								Burst: 100000,
+							},
+							Classifier: nqostype.Classifier{
+								To: []nqostype.Destination{
+									{
+										IPBlock: &networkingv1.IPBlock{
+											CIDR: "128.115.0.0/17",
+											Except: []string{
+												"128.115.0.0",
+												"128.115.0.255",
+											},
 										},
 									},
 								},
 							},
 						},
-					})
-					nqosUpdate.ResourceVersion = time.Now().String()
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyExpectQoS(defaultControllerName, nqosNamespace, nqosName, 2)
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "src", "0", defaultControllerName, "10.192.177.4")
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName, "10.195.188.4")
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "2", "0", defaultControllerName, "10.194.188.4")
-				}
+					},
+				},
+			}
 
-				nqos4StreamNet := &nqostype.NetworkQoS{
+			By("will not handle NetworkQos with unknown NetworkAttachmentDefinition in spec")
+			{
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqos4StreamNet, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "stream-qos", 0)
+			}
+
+			By("will not populate source address set NetworkQos with incorrect namespace selector in spec")
+			{
+				nqos4StreamNet.Spec.NetworkSelectors = []crdtypes.NetworkSelector{
+					{
+						NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
+						NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"name": "unknown",
+								},
+							},
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"name": "stream",
+								},
+							},
+						},
+					},
+				}
+				nqos4StreamNet.ResourceVersion = time.Now().String()
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqos4StreamNet, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHasNo(streamAddrsetFactory, nqosNamespace, "stream-qos", "src", "0", streamControllerName, "10.128.2.3")
+			}
+
+			By("handles NetworkQos on secondary network")
+			{
+				nqos4StreamNet.Spec.NetworkSelectors = []crdtypes.NetworkSelector{
+					{
+						NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
+						NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"name": "stream",
+								},
+							},
+						},
+					},
+				}
+				nqos4StreamNet.ResourceVersion = time.Now().String()
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqos4StreamNet, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				qos := eventuallyExpectQoS(streamControllerName, nqosNamespace, "stream-qos", 0)
+				eventuallySwitchHasQoS("stream_node1", qos)
+				eventuallyAddressSetHas(streamAddrsetFactory, nqosNamespace, "stream-qos", "src", "0", streamControllerName, "10.128.2.3")
+			}
+
+			By("uses NetworkQoS source address set if pod selector is not provided in source")
+			{
+				nqosWithoutSrcSelector := &nqostype.NetworkQoS{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace: nqosNamespace,
-						Name:      "stream-qos",
+						Name:      "no-source-selector",
 					},
 					Spec: nqostype.Spec{
-						NetworkSelectors: []crdtypes.NetworkSelector{
-							{
-								NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
-								NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
-									NetworkSelector: metav1.LabelSelector{
-										MatchLabels: map[string]string{
-											"name": "unknown",
-										},
-									},
-								},
-							},
-						},
 						Priority: 100,
-						PodSelector: metav1.LabelSelector{
-							MatchLabels: map[string]string{
-								"app": "client",
-							},
-						},
 						Egress: []nqostype.Rule{
 							{
 								DSCP: 50,
@@ -582,7 +665,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 												CIDR: "128.115.0.0/17",
 												Except: []string{
 													"128.115.0.0",
-													"128.115.0.255",
+													"123.123.123.123",
 												},
 											},
 										},
@@ -592,86 +675,38 @@ var _ = Describe("NetworkQoS Controller", func() {
 						},
 					},
 				}
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosWithoutSrcSelector, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, "no-source-selector", 0)
+				eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
+				sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(sourceAddrSet).NotTo(BeNil())
+				v4HashName, _ := sourceAddrSet.GetASHashNames()
+				Expect(qos.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 128.115.0.0/17 && ip4.dst != {128.115.0.0,123.123.123.123}", v4HashName)))
+			}
 
-				By("will not handle NetworkQos with unknown NetworkAttachmentDefinition in spec")
-				{
-					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqos4StreamNet, metav1.CreateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "stream-qos", 0)
-				}
-
-				By("will not populate source address set NetworkQos with incorrect namespace selector in spec")
-				{
-					nqos4StreamNet.Spec.NetworkSelectors = []crdtypes.NetworkSelector{
-						{
-							NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
-							NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
-								NamespaceSelector: metav1.LabelSelector{
-									MatchLabels: map[string]string{
-										"name": "unknown",
-									},
-								},
-								NetworkSelector: metav1.LabelSelector{
-									MatchLabels: map[string]string{
-										"name": "stream",
-									},
-								},
-							},
-						},
-					}
-					nqos4StreamNet.ResourceVersion = time.Now().String()
-					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqos4StreamNet, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(streamAddrsetFactory, nqosNamespace, "stream-qos", "src", "0", streamControllerName, "10.128.2.3")
-				}
-
-				By("handles NetworkQos on secondary network")
-				{
-					nqos4StreamNet.Spec.NetworkSelectors = []crdtypes.NetworkSelector{
-						{
-							NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
-							NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
-								NetworkSelector: metav1.LabelSelector{
-									MatchLabels: map[string]string{
-										"name": "stream",
-									},
-								},
-							},
-						},
-					}
-					nqos4StreamNet.ResourceVersion = time.Now().String()
-					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqos4StreamNet, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					qos := eventuallyExpectQoS(streamControllerName, nqosNamespace, "stream-qos", 0)
-					eventuallySwitchHasQoS("stream_node1", qos)
-					eventuallyAddressSetHas(streamAddrsetFactory, nqosNamespace, "stream-qos", "src", "0", streamControllerName, "10.128.2.3")
-				}
-
-				By("uses NetworkQoS source address set if pod selector is not provided in source")
-				{
-					nqosWithoutSrcSelector := &nqostype.NetworkQoS{
-						ObjectMeta: metav1.ObjectMeta{
-							Namespace: nqosNamespace,
-							Name:      "no-source-selector",
-						},
-						Spec: nqostype.Spec{
-							Priority: 100,
-							Egress: []nqostype.Rule{
-								{
-									DSCP: 50,
-									Bandwidth: nqostype.Bandwidth{
-										Rate:  10000,
-										Burst: 100000,
-									},
-									Classifier: nqostype.Classifier{
-										To: []nqostype.Destination{
-											{
-												IPBlock: &networkingv1.IPBlock{
-													CIDR: "128.115.0.0/17",
-													Except: []string{
-														"128.115.0.0",
-														"123.123.123.123",
-													},
+			By("clear QoS attributes of existing NetworkQoS and make sure that is proper")
+			{
+				nqosWithoutSrcSelector := &nqostype.NetworkQoS{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: nqosNamespace,
+						Name:      "no-source-selector",
+					},
+					Spec: nqostype.Spec{
+						Priority: 1,
+						Egress: []nqostype.Rule{
+							{
+								DSCP: 50,
+								// Bandwidth: nqostype.Bandwidth{},
+								Classifier: nqostype.Classifier{
+									To: []nqostype.Destination{
+										{
+											IPBlock: &networkingv1.IPBlock{
+												CIDR: "128.115.0.0/17",
+												Except: []string{
+													"128.115.0.0",
+													"123.123.123.123",
 												},
 											},
 										},
@@ -679,234 +714,320 @@ var _ = Describe("NetworkQoS Controller", func() {
 								},
 							},
 						},
-					}
-					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosWithoutSrcSelector, metav1.CreateOptions{})
+					},
+				}
+				nqosWithoutSrcSelector.ResourceVersion = time.Now().String()
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosWithoutSrcSelector, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(sourceAddrSet).NotTo(BeNil())
+				v4HashName, _ := sourceAddrSet.GetASHashNames()
+
+				// Ensure that QoS priority and Bandwidth have been properly changed by OVN
+				var qos *nbdb.QoS
+				Eventually(func() bool {
+					qos, err = findQoS(defaultControllerName, nqosNamespace, "no-source-selector", 0)
 					Expect(err).NotTo(HaveOccurred())
-					qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, "no-source-selector", 0)
-					eventuallyExpectAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
-					sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(sourceAddrSet).NotTo(BeNil())
-					v4HashName, _ := sourceAddrSet.GetASHashNames()
-					Expect(qos.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 128.115.0.0/17 && ip4.dst != {128.115.0.0,123.123.123.123}", v4HashName)))
+					Expect(qos).NotTo(BeNil())
+					return qos.Priority == 10010 && len(qos.Bandwidth) == 0
+				}).WithTimeout(10 * time.Second).WithPolling(1 * time.Second).Should(BeTrue())
+				Expect(qos.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 128.115.0.0/17 && ip4.dst != {128.115.0.0,123.123.123.123}", v4HashName)))
+			}
+
+			By("removes IP from destination address set if pod is deleted")
+			{
+				err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Delete(context.TODO(), app1Pod.Name, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+			}
+
+			By("removes IP from destination address set of the second rule if namespace is deleted")
+			{
+				err := fakeKubeClient.CoreV1().Namespaces().Delete(context.TODO(), app3Pod.Namespace, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName, "10.195.188.4")
+				err = fakeKubeClient.CoreV1().Pods(app3Pod.Namespace).Delete(context.TODO(), app3Pod.Name, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("deletes stale QoS from ovn nb when Egress rule is deleted")
+			{
+				qos2, err1 := findQoS(defaultControllerName, nqosNamespace, nqosName, 2)
+				Expect(err1).NotTo(HaveOccurred())
+				nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				nqosUpdate.ResourceVersion = time.Now().String()
+				nqosUpdate.Spec.Egress = slices.Delete(nqosUpdate.Spec.Egress, 1, 2)
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallySwitchHasNoQoS("node1", qos2)
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, nqosName, 2)
+			}
+
+			By("unbinds QoS rule from logical switch when no source pods is selected")
+			{
+				qos0, err0 := findQoS(defaultControllerName, nqosNamespace, nqosName, 0)
+				Expect(err0).NotTo(HaveOccurred())
+				qos1, err1 := findQoS(defaultControllerName, nqosNamespace, nqosName, 1)
+				Expect(err1).NotTo(HaveOccurred())
+				// qos should be present, as pod is not yet deleted
+				eventuallySwitchHasQoS("node1", qos0)
+				eventuallySwitchHasQoS("node1", qos1)
+				err := fakeKubeClient.CoreV1().Pods(nqosNamespace).Delete(context.TODO(), clientPodName, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				// qos should be unbound from switch
+				eventuallySwitchHasNoQoS("node1", qos0)
+				eventuallySwitchHasNoQoS("node1", qos1)
+			}
+
+			By("deletes QoS after NetworkQoS object is deleted")
+			{
+				err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), nqosName, metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, nqosName, 0)
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, nqosName, 1)
+			}
+
+			By("generates correct logical switch name for localnet topology")
+			{
+				localnetNad := ovnk8stesting.GenerateNAD("netwk1", "netwk1", "default", types.LocalnetTopology, "10.129.0.0/16", types.NetworkRoleSecondary)
+				localnetImmutableNadInfo, err := util.ParseNADInfo(localnetNad)
+				Expect(err).NotTo(HaveOccurred())
+				localnetNadInfo := util.NewMutableNetInfo(localnetImmutableNadInfo)
+				localnetNadInfo.AddNADs("default/netwk1")
+				ctrl := initNetworkQoSController(localnetNadInfo, []string{"default/netwk1"}, addressset.NewFakeAddressSetFactory("netwk1-controller"), "netwk1-controller")
+				lsName := ctrl.getLogicalSwitchName("dummy")
+				Expect(lsName).To(Equal("netwk1_ovn_localnet_switch"))
+			}
+
+			By("generates correct logical switch name for layer2 topology")
+			{
+				layer2Nad := ovnk8stesting.GenerateNAD("netwk2", "netwk2", "default", types.Layer2Topology, "10.130.0.0/16", types.NetworkRoleSecondary)
+				layer2ImmutableNadInfo, err := util.ParseNADInfo(layer2Nad)
+				Expect(err).NotTo(HaveOccurred())
+				layer2NadInfo := util.NewMutableNetInfo(layer2ImmutableNadInfo)
+				layer2NadInfo.AddNADs("default/netwk2")
+				ctrl := initNetworkQoSController(layer2NadInfo, []string{"default/netwk2"}, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller")
+				lsName := ctrl.getLogicalSwitchName("dummy")
+				Expect(lsName).To(Equal("netwk2_ovn_layer2_switch"))
+			}
+
+			By("handles NetworkQoS with PrimaryUserDefinedNetworks selector")
+			{
+				// Create a NetworkQoS targeting primary networks
+				nqosPrimaryNet := &nqostype.NetworkQoS{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: nqosNamespace,
+						Name:      "primary-network-qos",
+					},
+					Spec: nqostype.Spec{
+						NetworkSelectors: []crdtypes.NetworkSelector{
+							{
+								NetworkSelectionType: crdtypes.PrimaryUserDefinedNetworks,
+								PrimaryUserDefinedNetworkSelector: &crdtypes.PrimaryUserDefinedNetworkSelector{
+									NamespaceSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{
+											"app": "app1",
+										},
+									},
+								},
+							},
+						},
+						Priority: 200,
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"app": "client",
+							},
+						},
+						Egress: []nqostype.Rule{
+							{
+								DSCP: 40,
+								Bandwidth: nqostype.Bandwidth{
+									Rate:  20000,
+									Burst: 200000,
+								},
+								Classifier: nqostype.Classifier{
+									To: []nqostype.Destination{
+										{
+											IPBlock: &networkingv1.IPBlock{
+												CIDR: "192.168.0.0/24",
+											},
+										},
+									},
+									Ports: []*nqostype.Port{
+										{
+											Protocol: "TCP",
+											Port:     &port8080,
+										},
+									},
+								},
+							},
+						},
+					},
 				}
 
-				By("clear QoS attributes of existing NetworkQoS and make sure that is proper")
-				{
-					nqosWithoutSrcSelector := &nqostype.NetworkQoS{
+				// Create primary network controller
+				primaryNad := ovnk8stesting.GenerateNAD("primary", "primary", "default", types.Layer3Topology, "10.140.0.0/16", types.NetworkRolePrimary)
+				primaryImmutableNadInfo, err := util.ParseNADInfo(primaryNad)
+				Expect(err).NotTo(HaveOccurred())
+				primaryNadInfo := util.NewMutableNetInfo(primaryImmutableNadInfo)
+				primaryNadInfo.AddNADs("default/primary")
+
+				// Create the primary network logical switch
+				primarySwitch := &nbdb.LogicalSwitch{
+					Name: "primary_node1",
+				}
+				err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, primarySwitch)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Wrap the NetInfo with our custom implementation that returns true for IsPrimaryNetwork()
+				primNetWrapper := &primaryNetInfoWrapper{NetInfo: primaryNadInfo}
+				initNetworkQoSController(primNetWrapper, nil, addressset.NewFakeAddressSetFactory("primary-controller"), "primary-controller")
+
+				// Ensure app1 namespace exists before testing primary networks
+				ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
+				if err != nil || ns == nil {
+					klog.Infof("Creating app1 namespace for primary networks test")
+					ns = &corev1.Namespace{
 						ObjectMeta: metav1.ObjectMeta{
-							Namespace: nqosNamespace,
-							Name:      "no-source-selector",
+							Name: app1Namespace,
+							Labels: map[string]string{
+								"app": "app1",
+							},
 						},
-						Spec: nqostype.Spec{
-							Priority: 1,
-							Egress: []nqostype.Rule{
-								{
-									DSCP: 50,
-									// Bandwidth: nqostype.Bandwidth{},
-									Classifier: nqostype.Classifier{
-										To: []nqostype.Destination{
-											{
-												IPBlock: &networkingv1.IPBlock{
-													CIDR: "128.115.0.0/17",
-													Except: []string{
-														"128.115.0.0",
-														"123.123.123.123",
-													},
-												},
-											},
+					}
+					_, err = fakeKubeClient.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				// Create a client pod in the network QoS namespace
+				clientPod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: nqosNamespace,
+						Name:      clientPodName,
+						Labels: map[string]string{
+							"app": "client",
+						},
+						Annotations: map[string]string{
+							"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.192.177.4/26"],"mac_address":"0a:58:0a:c2:bc:04","gateway_ips":["10.192.177.1"],"routes":[{"dest":"10.192.0.0/16","nextHop":"10.192.177.1"},{"dest":"10.223.0.0/16","nextHop":"10.192.177.1"},{"dest":"100.64.0.0/16","nextHop":"10.192.177.1"}],"mtu":"1500","ip_address":"10.192.177.4/26","gateway_ip":"10.192.177.1"}}`,
+						},
+					},
+					Spec: corev1.PodSpec{
+						HostNetwork: false,
+						NodeName:    "node1",
+					},
+				}
+				_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Create(context.TODO(), clientPod, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create and verify NetworkQoS
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosPrimaryNet, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				// We've successfully exercised the code path for PrimaryUserDefinedNetworks
+				klog.Infof("Code path for PrimaryUserDefinedNetworks has been successfully tested")
+
+				// Confirm the primary controller is processing this NetworkQoS and not the default controller
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "primary-network-qos", 0)
+
+				// Clean up
+				err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), "primary-network-qos", metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("handles NetworkQoS with SecondaryUserDefinedNetworks selector")
+			{
+				// Create a NetworkQoS targeting secondary networks
+				nqosSecondaryNet := &nqostype.NetworkQoS{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: nqosNamespace,
+						Name:      "secondary-network-qos",
+					},
+					Spec: nqostype.Spec{
+						NetworkSelectors: []crdtypes.NetworkSelector{
+							{
+								NetworkSelectionType: crdtypes.SecondaryUserDefinedNetworks,
+								SecondaryUserDefinedNetworkSelector: &crdtypes.SecondaryUserDefinedNetworkSelector{
+									NamespaceSelector: metav1.LabelSelector{
+										MatchLabels: map[string]string{
+											"app": "app3",
 										},
 									},
 								},
 							},
 						},
-					}
-					nqosWithoutSrcSelector.ResourceVersion = time.Now().String()
-					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosWithoutSrcSelector, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-
-					sourceAddrSet, err := findAddressSet(defaultAddrsetFactory, nqosNamespace, "no-source-selector", "src", "0", defaultControllerName)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(sourceAddrSet).NotTo(BeNil())
-					v4HashName, _ := sourceAddrSet.GetASHashNames()
-
-					// Ensure that QoS priority and Bandwidth have been properly changed by OVN
-					var qos *nbdb.QoS
-					Eventually(func() bool {
-						qos, err = findQoS(defaultControllerName, nqosNamespace, "no-source-selector", 0)
-						Expect(err).NotTo(HaveOccurred())
-						Expect(qos).NotTo(BeNil())
-						return qos.Priority == 10010 && len(qos.Bandwidth) == 0
-					}).WithTimeout(10 * time.Second).WithPolling(1 * time.Second).Should(BeTrue())
-					Expect(qos.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && ip4.dst == 128.115.0.0/17 && ip4.dst != {128.115.0.0,123.123.123.123}", v4HashName)))
+						Priority: 300,
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"app": "client",
+							},
+						},
+						Egress: []nqostype.Rule{
+							{
+								DSCP: 30,
+								Bandwidth: nqostype.Bandwidth{
+									Rate:  30000,
+									Burst: 300000,
+								},
+								Classifier: nqostype.Classifier{
+									To: []nqostype.Destination{
+										{
+											IPBlock: &networkingv1.IPBlock{
+												CIDR: "172.16.0.0/24",
+											},
+										},
+									},
+									Ports: []*nqostype.Port{
+										{
+											Protocol: "UDP",
+											Port:     &port9090,
+										},
+									},
+								},
+							},
+						},
+					},
 				}
 
-				By("removes IP from destination address set if pod is deleted")
-				{
-					err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Delete(context.TODO(), app1Pod.Name, metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
-				}
+				// Create secondary network controller
+				secondaryNad := ovnk8stesting.GenerateNAD("secondary", "secondary", "default", types.Layer3Topology, "10.150.0.0/16", types.NetworkRoleSecondary)
+				secondaryImmutableNadInfo, err := util.ParseNADInfo(secondaryNad)
+				Expect(err).NotTo(HaveOccurred())
+				secondaryNadInfo := util.NewMutableNetInfo(secondaryImmutableNadInfo)
+				secondaryNadInfo.AddNADs("default/secondary")
 
-				By("removes IP from destination address set of the second rule if namespace is deleted")
-				{
-					err := fakeKubeClient.CoreV1().Namespaces().Delete(context.TODO(), app3Pod.Namespace, metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName, "10.195.188.4")
-					err = fakeKubeClient.CoreV1().Pods(app3Pod.Namespace).Delete(context.TODO(), app3Pod.Name, metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
+				// Create the secondary network logical switch
+				secondarySwitch := &nbdb.LogicalSwitch{
+					Name: "secondary_node1",
 				}
+				err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, secondarySwitch)
+				Expect(err).NotTo(HaveOccurred())
 
-				By("deletes stale QoS from ovn nb when Egress rule is deleted")
-				{
-					qos2, err1 := findQoS(defaultControllerName, nqosNamespace, nqosName, 2)
-					Expect(err1).NotTo(HaveOccurred())
-					nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					nqosUpdate.ResourceVersion = time.Now().String()
-					nqosUpdate.Spec.Egress = slices.Delete(nqosUpdate.Spec.Egress, 1, 2)
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallySwitchHasNoQoS("node1", qos2)
-					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, nqosName, 2)
-				}
+				// Wrap the NetInfo with our custom implementation that returns true for IsUserDefinedNetwork()
+				secNetWrapper := &secondaryNetInfoWrapper{NetInfo: secondaryNadInfo}
+				initNetworkQoSController(secNetWrapper, []string{"default/secondary"}, addressset.NewFakeAddressSetFactory("secondary-controller"), "secondary-controller")
 
-				By("unbinds QoS rule from logical switch when no source pods is selected")
-				{
-					qos0, err0 := findQoS(defaultControllerName, nqosNamespace, nqosName, 0)
-					Expect(err0).NotTo(HaveOccurred())
-					qos1, err1 := findQoS(defaultControllerName, nqosNamespace, nqosName, 1)
-					Expect(err1).NotTo(HaveOccurred())
-					// qos should be present, as pod is not yet deleted
-					eventuallySwitchHasQoS("node1", qos0)
-					eventuallySwitchHasQoS("node1", qos1)
-					err := fakeKubeClient.CoreV1().Pods(nqosNamespace).Delete(context.TODO(), clientPodName, metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					// qos should be unbound from switch
-					eventuallySwitchHasNoQoS("node1", qos0)
-					eventuallySwitchHasNoQoS("node1", qos1)
-				}
-
-				By("deletes QoS after NetworkQoS object is deleted")
-				{
-					err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), nqosName, metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
-					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, nqosName, 0)
-					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, nqosName, 1)
-				}
-
-				By("generates correct logical switch name for localnet topology")
-				{
-					localnetNad := ovnk8stesting.GenerateNAD("netwk1", "netwk1", "default", types.LocalnetTopology, "10.129.0.0/16", types.NetworkRoleSecondary)
-					localnetImmutableNadInfo, err := util.ParseNADInfo(localnetNad)
-					Expect(err).NotTo(HaveOccurred())
-					localnetNadInfo := util.NewMutableNetInfo(localnetImmutableNadInfo)
-					localnetNadInfo.AddNADs("default/netwk1")
-					ctrl := initNetworkQoSController(localnetNadInfo, []string{"default/netwk1"}, addressset.NewFakeAddressSetFactory("netwk1-controller"), "netwk1-controller", enableInterconnect)
-					lsName := ctrl.getLogicalSwitchName("dummy")
-					Expect(lsName).To(Equal("netwk1_ovn_localnet_switch"))
-				}
-
-				By("generates correct logical switch name for layer2 topology")
-				{
-					layer2Nad := ovnk8stesting.GenerateNAD("netwk2", "netwk2", "default", types.Layer2Topology, "10.130.0.0/16", types.NetworkRoleSecondary)
-					layer2ImmutableNadInfo, err := util.ParseNADInfo(layer2Nad)
-					Expect(err).NotTo(HaveOccurred())
-					layer2NadInfo := util.NewMutableNetInfo(layer2ImmutableNadInfo)
-					layer2NadInfo.AddNADs("default/netwk2")
-					ctrl := initNetworkQoSController(layer2NadInfo, []string{"default/netwk2"}, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller", enableInterconnect)
-					lsName := ctrl.getLogicalSwitchName("dummy")
-					Expect(lsName).To(Equal("netwk2_ovn_layer2_switch"))
-				}
-
-				By("handles NetworkQoS with PrimaryUserDefinedNetworks selector")
-				{
-					// Create a NetworkQoS targeting primary networks
-					nqosPrimaryNet := &nqostype.NetworkQoS{
+				// Ensure app3 namespace exists before testing secondary networks
+				ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app3Namespace, metav1.GetOptions{})
+				if err != nil || ns == nil {
+					klog.Infof("Creating app3 namespace for secondary networks test")
+					ns = &corev1.Namespace{
 						ObjectMeta: metav1.ObjectMeta{
-							Namespace: nqosNamespace,
-							Name:      "primary-network-qos",
-						},
-						Spec: nqostype.Spec{
-							NetworkSelectors: []crdtypes.NetworkSelector{
-								{
-									NetworkSelectionType: crdtypes.PrimaryUserDefinedNetworks,
-									PrimaryUserDefinedNetworkSelector: &crdtypes.PrimaryUserDefinedNetworkSelector{
-										NamespaceSelector: metav1.LabelSelector{
-											MatchLabels: map[string]string{
-												"app": "app1",
-											},
-										},
-									},
-								},
-							},
-							Priority: 200,
-							PodSelector: metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"app": "client",
-								},
-							},
-							Egress: []nqostype.Rule{
-								{
-									DSCP: 40,
-									Bandwidth: nqostype.Bandwidth{
-										Rate:  20000,
-										Burst: 200000,
-									},
-									Classifier: nqostype.Classifier{
-										To: []nqostype.Destination{
-											{
-												IPBlock: &networkingv1.IPBlock{
-													CIDR: "192.168.0.0/24",
-												},
-											},
-										},
-										Ports: []*nqostype.Port{
-											{
-												Protocol: "TCP",
-												Port:     &port8080,
-											},
-										},
-									},
-								},
+							Name: app3Namespace,
+							Labels: map[string]string{
+								"app": "app3",
 							},
 						},
 					}
-
-					// Create primary network controller
-					primaryNad := ovnk8stesting.GenerateNAD("primary", "primary", "default", types.Layer3Topology, "10.140.0.0/16", types.NetworkRolePrimary)
-					primaryImmutableNadInfo, err := util.ParseNADInfo(primaryNad)
+					_, err = fakeKubeClient.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					primaryNadInfo := util.NewMutableNetInfo(primaryImmutableNadInfo)
-					primaryNadInfo.AddNADs("default/primary")
+				}
 
-					// Create the primary network logical switch
-					primarySwitch := &nbdb.LogicalSwitch{
-						Name: "primary_node1",
-					}
-					err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, primarySwitch)
-					Expect(err).NotTo(HaveOccurred())
-
-					// Wrap the NetInfo with our custom implementation that returns true for IsPrimaryNetwork()
-					primNetWrapper := &primaryNetInfoWrapper{NetInfo: primaryNadInfo}
-					initNetworkQoSController(primNetWrapper, nil, addressset.NewFakeAddressSetFactory("primary-controller"), "primary-controller", enableInterconnect)
-
-					// Ensure app1 namespace exists before testing primary networks
-					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
-					if err != nil || ns == nil {
-						klog.Infof("Creating app1 namespace for primary networks test")
-						ns = &corev1.Namespace{
-							ObjectMeta: metav1.ObjectMeta{
-								Name: app1Namespace,
-								Labels: map[string]string{
-									"app": "app1",
-								},
-							},
-						}
-						_, err = fakeKubeClient.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{})
-						Expect(err).NotTo(HaveOccurred())
-					}
-
+				// Make sure client pod exists
+				_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Get(context.TODO(), clientPodName, metav1.GetOptions{})
+				if err != nil {
 					// Create a client pod in the network QoS namespace
 					clientPod := &corev1.Pod{
 						ObjectMeta: metav1.ObjectMeta{
@@ -926,153 +1047,25 @@ var _ = Describe("NetworkQoS Controller", func() {
 					}
 					_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Create(context.TODO(), clientPod, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-
-					// Create and verify NetworkQoS
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosPrimaryNet, metav1.CreateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-
-					// We've successfully exercised the code path for PrimaryUserDefinedNetworks
-					klog.Infof("Code path for PrimaryUserDefinedNetworks has been successfully tested")
-
-					// Confirm the primary controller is processing this NetworkQoS and not the default controller
-					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "primary-network-qos", 0)
-
-					// Clean up
-					err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), "primary-network-qos", metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
 				}
 
-				By("handles NetworkQoS with SecondaryUserDefinedNetworks selector")
-				{
-					// Create a NetworkQoS targeting secondary networks
-					nqosSecondaryNet := &nqostype.NetworkQoS{
-						ObjectMeta: metav1.ObjectMeta{
-							Namespace: nqosNamespace,
-							Name:      "secondary-network-qos",
-						},
-						Spec: nqostype.Spec{
-							NetworkSelectors: []crdtypes.NetworkSelector{
-								{
-									NetworkSelectionType: crdtypes.SecondaryUserDefinedNetworks,
-									SecondaryUserDefinedNetworkSelector: &crdtypes.SecondaryUserDefinedNetworkSelector{
-										NamespaceSelector: metav1.LabelSelector{
-											MatchLabels: map[string]string{
-												"app": "app3",
-											},
-										},
-									},
-								},
-							},
-							Priority: 300,
-							PodSelector: metav1.LabelSelector{
-								MatchLabels: map[string]string{
-									"app": "client",
-								},
-							},
-							Egress: []nqostype.Rule{
-								{
-									DSCP: 30,
-									Bandwidth: nqostype.Bandwidth{
-										Rate:  30000,
-										Burst: 300000,
-									},
-									Classifier: nqostype.Classifier{
-										To: []nqostype.Destination{
-											{
-												IPBlock: &networkingv1.IPBlock{
-													CIDR: "172.16.0.0/24",
-												},
-											},
-										},
-										Ports: []*nqostype.Port{
-											{
-												Protocol: "UDP",
-												Port:     &port9090,
-											},
-										},
-									},
-								},
-							},
-						},
-					}
+				// Create and verify NetworkQoS
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosSecondaryNet, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
 
-					// Create secondary network controller
-					secondaryNad := ovnk8stesting.GenerateNAD("secondary", "secondary", "default", types.Layer3Topology, "10.150.0.0/16", types.NetworkRoleSecondary)
-					secondaryImmutableNadInfo, err := util.ParseNADInfo(secondaryNad)
-					Expect(err).NotTo(HaveOccurred())
-					secondaryNadInfo := util.NewMutableNetInfo(secondaryImmutableNadInfo)
-					secondaryNadInfo.AddNADs("default/secondary")
+				// We've successfully exercised the code path for SecondaryUserDefinedNetworks
+				klog.Infof("Code path for SecondaryUserDefinedNetworks has been successfully tested")
 
-					// Create the secondary network logical switch
-					secondarySwitch := &nbdb.LogicalSwitch{
-						Name: "secondary_node1",
-					}
-					err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, secondarySwitch)
-					Expect(err).NotTo(HaveOccurred())
+				// Confirm the secondary controller is processing this NetworkQoS and not the default controller
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "secondary-network-qos", 0)
 
-					// Wrap the NetInfo with our custom implementation that returns true for IsUserDefinedNetwork()
-					secNetWrapper := &secondaryNetInfoWrapper{NetInfo: secondaryNadInfo}
-					initNetworkQoSController(secNetWrapper, []string{"default/secondary"}, addressset.NewFakeAddressSetFactory("secondary-controller"), "secondary-controller", enableInterconnect)
-
-					// Ensure app3 namespace exists before testing secondary networks
-					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app3Namespace, metav1.GetOptions{})
-					if err != nil || ns == nil {
-						klog.Infof("Creating app3 namespace for secondary networks test")
-						ns = &corev1.Namespace{
-							ObjectMeta: metav1.ObjectMeta{
-								Name: app3Namespace,
-								Labels: map[string]string{
-									"app": "app3",
-								},
-							},
-						}
-						_, err = fakeKubeClient.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{})
-						Expect(err).NotTo(HaveOccurred())
-					}
-
-					// Make sure client pod exists
-					_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Get(context.TODO(), clientPodName, metav1.GetOptions{})
-					if err != nil {
-						// Create a client pod in the network QoS namespace
-						clientPod := &corev1.Pod{
-							ObjectMeta: metav1.ObjectMeta{
-								Namespace: nqosNamespace,
-								Name:      clientPodName,
-								Labels: map[string]string{
-									"app": "client",
-								},
-								Annotations: map[string]string{
-									"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.192.177.4/26"],"mac_address":"0a:58:0a:c2:bc:04","gateway_ips":["10.192.177.1"],"routes":[{"dest":"10.192.0.0/16","nextHop":"10.192.177.1"},{"dest":"10.223.0.0/16","nextHop":"10.192.177.1"},{"dest":"100.64.0.0/16","nextHop":"10.192.177.1"}],"mtu":"1500","ip_address":"10.192.177.4/26","gateway_ip":"10.192.177.1"}}`,
-								},
-							},
-							Spec: corev1.PodSpec{
-								HostNetwork: false,
-								NodeName:    "node1",
-							},
-						}
-						_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Create(context.TODO(), clientPod, metav1.CreateOptions{})
-						Expect(err).NotTo(HaveOccurred())
-					}
-
-					// Create and verify NetworkQoS
-					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosSecondaryNet, metav1.CreateOptions{})
-					Expect(err).NotTo(HaveOccurred())
-
-					// We've successfully exercised the code path for SecondaryUserDefinedNetworks
-					klog.Infof("Code path for SecondaryUserDefinedNetworks has been successfully tested")
-
-					// Confirm the secondary controller is processing this NetworkQoS and not the default controller
-					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "secondary-network-qos", 0)
-
-					// Clean up
-					err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), "secondary-network-qos", metav1.DeleteOptions{})
-					Expect(err).NotTo(HaveOccurred())
-				}
-			},
-			Entry("Interconnect Disabled", false),
-			Entry("Interconnect Enabled", true),
-		)
-	})
+				// Clean up
+				err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), "secondary-network-qos", metav1.DeleteOptions{})
+				Expect(err).NotTo(HaveOccurred())
+			}
+		},
+		Entry("Interconnect enabled"),
+	)
 })
 
 func eventuallyExpectAddressSet(addrsetFactory addressset.AddressSetFactory, nqosNamespace, nqosName, qosRuleIndex, ipBlockIndex, controllerName string) {
@@ -1204,7 +1197,7 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	streamAddrsetFactory = addressset.NewFakeAddressSetFactory("stream-network-controller")
 }
 
-func initNetworkQoSController(netInfo util.NetInfo, nadKeys []string, addrsetFactory addressset.AddressSetFactory, controllerName string, enableInterconnect bool) *Controller {
+func initNetworkQoSController(netInfo util.NetInfo, nadKeys []string, addrsetFactory addressset.AddressSetFactory, controllerName string) *Controller {
 	var networkMgr networkmanager.Interface
 	if netInfo.IsUserDefinedNetwork() {
 		if len(nadKeys) == 0 {
@@ -1232,7 +1225,7 @@ func initNetworkQoSController(netInfo util.NetInfo, nadKeys []string, addrsetFac
 		networkMgr,
 		addrsetFactory,
 		func(pod *corev1.Pod) bool {
-			return pod.Spec.NodeName == "node1" || !enableInterconnect
+			return pod.Spec.NodeName == "node1"
 		}, "node1")
 	Expect(err).NotTo(HaveOccurred())
 	err = watchFactory.Start()

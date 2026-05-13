@@ -618,7 +618,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
-				if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect &&
+				if util.IsNetworkSegmentationSupportEnabled() &&
 					config.Gateway.Mode != config.GatewayModeDisabled && b.eipMarkIPs != nil {
 					if netConfig.MasqCTMark != nodetypes.CtMarkOVN {
 						for mark, eip := range b.eipMarkIPs.GetIPv4() {
@@ -719,7 +719,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
-				if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect &&
+				if util.IsNetworkSegmentationSupportEnabled() &&
 					config.Gateway.Mode != config.GatewayModeDisabled && b.eipMarkIPs != nil {
 					if netConfig.MasqCTMark != nodetypes.CtMarkOVN {
 						for mark, eip := range b.eipMarkIPs.GetIPv6() {

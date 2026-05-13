@@ -3,7 +3,7 @@
 
 # build image for ovn overlay network cni plugin
 
-# ovnkube-db.yaml, ovnkube-node.yaml, and onvkube-master.yaml use this image.
+# OVN-Kubernetes deployment components use this image.
 # This image is built from files in this directory and pushed to
 # a docker registry that is accesseble on each node.
 

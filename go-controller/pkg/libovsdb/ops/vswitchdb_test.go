@@ -4,8 +4,11 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 	"testing"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
@@ -302,6 +305,156 @@ func TestDeletePortWithInterfaces(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(fmt.Errorf("test: \"%s\" encountered error: %v", tt.desc, err))
+			}
+		})
+	}
+}
+
+func TestUpdateOpenvSwitchExternalIDs(t *testing.T) {
+	tests := []struct {
+		desc                string
+		initialExternalIDs  map[string]string
+		update              map[string]string
+		expectedExternalIDs map[string]string
+		setupNoOpenvSwitch  bool
+		expectErrIs         error
+	}{
+		{
+			desc:                "sets a new key on empty external_ids",
+			initialExternalIDs:  nil,
+			update:              map[string]string{"ovn-encap-ip": "10.0.0.1"},
+			expectedExternalIDs: map[string]string{"ovn-encap-ip": "10.0.0.1"},
+		},
+		{
+			desc:                "overwrites an existing key, preserves unrelated keys",
+			initialExternalIDs:  map[string]string{"ovn-encap-ip": "10.0.0.1", "system-id": "node-a"},
+			update:              map[string]string{"ovn-encap-ip": "10.0.0.2"},
+			expectedExternalIDs: map[string]string{"ovn-encap-ip": "10.0.0.2", "system-id": "node-a"},
+		},
+		{
+			desc:                "no-op for empty update",
+			initialExternalIDs:  map[string]string{"system-id": "node-a"},
+			update:              nil,
+			expectedExternalIDs: map[string]string{"system-id": "node-a"},
+		},
+		{
+			desc:               "returns ErrNotFound when no Open_vSwitch row exists",
+			update:             map[string]string{"ovn-encap-ip": "10.0.0.1"},
+			setupNoOpenvSwitch: true,
+			expectErrIs:        libovsdbclient.ErrNotFound,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			setup := libovsdbtest.TestSetup{}
+			if !tt.setupNoOpenvSwitch {
+				setup.OVSData = []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", ExternalIDs: tt.initialExternalIDs},
+				}
+			}
+
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(setup)
+			if err != nil {
+				t.Fatalf("failed to set up test harness: %v", err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+
+			err = UpdateOpenvSwitchExternalIDs(ovsClient, tt.update)
+			if tt.expectErrIs != nil {
+				if !errors.Is(err, tt.expectErrIs) {
+					t.Fatalf("expected error %v, got %v", tt.expectErrIs, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("UpdateOpenvSwitchExternalIDs() error = %v", err)
+			}
+
+			expected := []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", ExternalIDs: tt.expectedExternalIDs},
+			}
+			matcher := libovsdbtest.HaveData(expected)
+			success, err := matcher.Match(ovsClient)
+			if !success {
+				t.Fatalf("post-condition mismatch: %v", matcher.FailureMessage(ovsClient))
+			}
+			if err != nil {
+				t.Fatalf("matcher encountered error: %v", err)
+			}
+		})
+	}
+}
+
+func TestRemoveOpenvSwitchExternalIDs(t *testing.T) {
+	tests := []struct {
+		desc                string
+		initialExternalIDs  map[string]string
+		removeKeys          []string
+		expectedExternalIDs map[string]string
+		setupNoOpenvSwitch  bool
+	}{
+		{
+			desc:                "removes a single existing key, preserves unrelated keys",
+			initialExternalIDs:  map[string]string{"ovn-bridge-mappings": "physnet1:br1", "system-id": "node-a"},
+			removeKeys:          []string{"ovn-bridge-mappings"},
+			expectedExternalIDs: map[string]string{"system-id": "node-a"},
+		},
+		{
+			desc:                "removes multiple keys",
+			initialExternalIDs:  map[string]string{"a": "1", "b": "2", "c": "3"},
+			removeKeys:          []string{"a", "c"},
+			expectedExternalIDs: map[string]string{"b": "2"},
+		},
+		{
+			desc:                "removing a non-existent key is a no-op",
+			initialExternalIDs:  map[string]string{"system-id": "node-a"},
+			removeKeys:          []string{"ovn-bridge-mappings"},
+			expectedExternalIDs: map[string]string{"system-id": "node-a"},
+		},
+		{
+			desc:                "no-op for empty key list",
+			initialExternalIDs:  map[string]string{"system-id": "node-a"},
+			removeKeys:          nil,
+			expectedExternalIDs: map[string]string{"system-id": "node-a"},
+		},
+		{
+			desc:               "missing Open_vSwitch row is not an error (matches --if-exists)",
+			removeKeys:         []string{"ovn-bridge-mappings"},
+			setupNoOpenvSwitch: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			setup := libovsdbtest.TestSetup{}
+			if !tt.setupNoOpenvSwitch {
+				setup.OVSData = []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", ExternalIDs: tt.initialExternalIDs},
+				}
+			}
+
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(setup)
+			if err != nil {
+				t.Fatalf("failed to set up test harness: %v", err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+
+			if err := RemoveOpenvSwitchExternalIDs(ovsClient, tt.removeKeys...); err != nil {
+				t.Fatalf("RemoveOpenvSwitchExternalIDs() error = %v", err)
+			}
+
+			if tt.setupNoOpenvSwitch {
+				return
+			}
+			expected := []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", ExternalIDs: tt.expectedExternalIDs},
+			}
+			matcher := libovsdbtest.HaveData(expected)
+			success, err := matcher.Match(ovsClient)
+			if !success {
+				t.Fatalf("post-condition mismatch: %v", matcher.FailureMessage(ovsClient))
+			}
+			if err != nil {
+				t.Fatalf("matcher encountered error: %v", err)
 			}
 		})
 	}

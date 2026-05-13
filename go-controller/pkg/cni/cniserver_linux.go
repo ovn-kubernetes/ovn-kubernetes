@@ -18,7 +18,7 @@ import (
 )
 
 // Start the Server's local HTTP server on a root-owned Unix domain socket.
-// handlePodRequestFunc will be called to handle pod setup/teardown operations on each
+// handleCNIRequest will be called to handle pod setup/teardown operations on each
 // request to the Server's HTTP server, and should return the response bytes,
 // or an error when the operation has completed.
 func (s *Server) Start(rundir string) error {

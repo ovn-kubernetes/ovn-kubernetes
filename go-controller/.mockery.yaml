@@ -11,11 +11,6 @@ packages:
       ObjectCacheInterface:
     config:
       dir: pkg/factory/mocks/
-  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni:
-    interfaces:
-      CNIPluginLibOps:
-    config:
-      dir: pkg/cni/mocks
   github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube:
     config:
       all: true

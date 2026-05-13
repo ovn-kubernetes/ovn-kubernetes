@@ -208,7 +208,7 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 	podDesc := fmt.Sprintf("pod %s/%s/%s", nadKey, pod.Namespace, pod.Name)
 	logicalPort = bnc.GetLogicalPortName(pod, nadKey)
 	if portInfo == nil {
-		// If ovnkube-master restarts, it is also possible the Pod's logical switch port
+		// If ovnkube-controller restarts, it is also possible the Pod's logical switch port
 		// is not re-added into the cache. Delete logical switch port anyway.
 		annotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 		if err != nil {
@@ -554,10 +554,9 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	}
 
 	// Bind the port to the node's chassis.
-	// For IC this is required for Layer 2 networks with remote ports.
-	// For Legacy with OVN Central Mode it prevents ping-ponging between
-	// chassis if ovnkube-node isn't running correctly and hasn't cleared
-	// out iface-id for an old instance of this pod, and the pod got
+	// This is required for Layer 2 networks with remote ports. It also prevents
+	// chassis ping-ponging if ovnkube-node isn't running correctly, hasn't
+	// cleared iface-id for an old instance of this pod, and the pod got
 	// rescheduled.
 	var node *corev1.Node
 	if !config.Kubernetes.DisableRequestedChassis {
@@ -779,13 +778,10 @@ func (bnc *BaseNetworkController) isPodScheduledinLocalZone(pod *corev1.Pod) boo
 		return false
 	}
 
-	// With interconnect enabled, only trust informer fallback when zone
-	// information is explicit. Missing zone annotation defaults to "local" and
-	// can misclassify remote pods.
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		if _, ok := node.Annotations[util.OvnNodeZoneName]; !ok {
-			return false
-		}
+	// Only trust informer fallback when zone information is explicit. Missing
+	// zone annotation defaults to "local" and can misclassify remote pods.
+	if _, ok := node.Annotations[util.OvnNodeZoneName]; !ok {
+		return false
 	}
 	return bnc.isLocalZoneNode(node)
 }
@@ -1073,11 +1069,11 @@ func (bnc *BaseNetworkController) allocatesPodAnnotation() bool {
 	case ovntypes.Layer2Topology:
 		// on layer2 topologies, cluster manager allocates tunnel IDs, allocates
 		// IPs if the network has IPAM, and sets the PodAnnotation
-		return !config.OVNKubernetesFeature.EnableInterconnect
+		return false
 	case ovntypes.LocalnetTopology:
 		// on localnet topologies with IPAM, cluster manager allocates IPs and
 		// sets the PodAnnotation
-		return !config.OVNKubernetesFeature.EnableInterconnect || !bnc.doesNetworkRequireIPAM()
+		return !bnc.doesNetworkRequireIPAM()
 	}
 	return true
 }

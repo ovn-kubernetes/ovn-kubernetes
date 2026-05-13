@@ -185,11 +185,9 @@ func injectStaticRoutesViaExternalContainer(f *framework.Framework, cs clientset
 
 // injectStaticRoutesIntoNodes adds routes for externalNetworkSubnetV4/V6
 // via the external container IPs on the primary provider network.
-// The type of routes differs according to the OVNK architecture (interconnect vs centralized)
-// and the gateway mode:
-// |        | Local GW                  | Shared GW                                                                  |
-// | IC     | linux route on all node   | linux routes on all nodes; OVN routes on all nodes for the local GW router |
-// | non-IC | linux routes on all nodes | linux routes on all nodes; OVN routes on NBDB leader for all GW routers    |
+// Route injection differs by gateway mode:
+// | Local GW  | linux route on all nodes                                                 |
+// | Shared GW | linux routes on all nodes; OVN routes on all nodes for the local GW router |
 func injectStaticRoutesIntoNodes(f *framework.Framework, cs clientset.Interface, externalContainerName string) error {
 	framework.Logf("Injecting Linux kernel routes for host-networked pods (and for OVN pods when in local gateway mode)")
 	if err := injectRoutesWithCommandBuilder(f, cs, externalContainerName, hostRoutingTableCommandBuilder{}); err != nil {
@@ -246,7 +244,7 @@ func (b hostRoutingTableCommandBuilder) buildRouteCommand(nodeName, cidr, nextHo
 
 // getOvnKubePodsForRouteInjection determines which pods to use for route injection based on the command builder type
 // and cluster configuration.
-func getOvnKubePodsForRouteInjection(f *framework.Framework, cs clientset.Interface, cmdBuilder routeCommandBuilder) (*v1.PodList, error) {
+func getOvnKubePodsForRouteInjection(cs clientset.Interface, cmdBuilder routeCommandBuilder) (*v1.PodList, error) {
 	ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 
 	var podList *v1.PodList
@@ -255,16 +253,9 @@ func getOvnKubePodsForRouteInjection(f *framework.Framework, cs clientset.Interf
 	if _, isHostRoutingCommand := cmdBuilder.(hostRoutingTableCommandBuilder); isHostRoutingCommand {
 		framework.Logf("Host routing command: selecting all ovnkube-node pods")
 		podList, err = cs.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{LabelSelector: "name=ovnkube-node"})
-	} else if isInterconnectEnabled() {
-		framework.Logf("OVN command with interconnect: selecting all OVN DB pods")
-		podList, err = cs.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{LabelSelector: "ovn-db-pod=true"})
 	} else {
-		framework.Logf("OVN command without interconnect: selecting DB leader pod")
-		leaderPod, findErr := findOVNDBLeaderPod(f, cs, ovnKubernetesNamespace)
-		if findErr != nil {
-			return nil, fmt.Errorf("failed to find OVN DB leader pod: %w", findErr)
-		}
-		podList = &v1.PodList{Items: []v1.Pod{*leaderPod}}
+		framework.Logf("OVN command: selecting all OVN DB pods")
+		podList, err = cs.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{LabelSelector: "ovn-db-pod=true"})
 	}
 
 	if err != nil {
@@ -280,28 +271,14 @@ func getOvnKubePodsForRouteInjection(f *framework.Framework, cs clientset.Interf
 
 // getTargetNodesForRouteInjection determines which nodes should be targeted for route injection
 // based on the command builder type and cluster configuration.
-func getTargetNodesForRouteInjection(cs clientset.Interface, cmdBuilder routeCommandBuilder, nodeName string) ([]string, error) {
+func getTargetNodesForRouteInjection(cmdBuilder routeCommandBuilder, nodeName string) ([]string, error) {
 	// For host routing commands, always target the current pod's node
 	if _, isHostRoutingCommand := cmdBuilder.(hostRoutingTableCommandBuilder); isHostRoutingCommand {
 		return []string{nodeName}, nil
 	}
 
-	// OVN routes
-	if isInterconnectEnabled() {
-		return []string{nodeName}, nil // each pod targets its own gateway router
-	}
-
-	// non-interconnect mode: DB pod targets all gateway routers
-	allNodes, err := cs.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list nodes: %w", err)
-	}
-
-	var targetNodeNames []string
-	for _, node := range allNodes.Items {
-		targetNodeNames = append(targetNodeNames, node.Name)
-	}
-	return targetNodeNames, nil
+	// Each OVN DB pod targets its own gateway router.
+	return []string{nodeName}, nil
 }
 
 // routeInfo represents a route destination and next-hop pair
@@ -343,8 +320,8 @@ type podExecutionContext struct {
 	cmdBuilder    routeCommandBuilder
 }
 
-func newPodExecutionContext(cs clientset.Interface, cmdBuilder routeCommandBuilder, pod v1.Pod) (*podExecutionContext, error) {
-	targetNodes, err := getTargetNodesForRouteInjection(cs, cmdBuilder, pod.Spec.NodeName)
+func newPodExecutionContext(cmdBuilder routeCommandBuilder, pod v1.Pod) (*podExecutionContext, error) {
+	targetNodes, err := getTargetNodesForRouteInjection(cmdBuilder, pod.Spec.NodeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target nodes for pod %s: %w", pod.Name, err)
 	}
@@ -410,14 +387,14 @@ func injectRoutesWithCommandBuilder(f *framework.Framework, cs clientset.Interfa
 	}
 
 	// Get target pods for route injection
-	ovnkubePods, err := getOvnKubePodsForRouteInjection(f, cs, cmdBuilder)
+	ovnkubePods, err := getOvnKubePodsForRouteInjection(cs, cmdBuilder)
 	if err != nil {
 		return fmt.Errorf("failed to select target pods: %w", err)
 	}
 
 	// Execute route commands for each pod
 	for _, pod := range ovnkubePods.Items {
-		podCtx, err := newPodExecutionContext(cs, cmdBuilder, pod)
+		podCtx, err := newPodExecutionContext(cmdBuilder, pod)
 		if err != nil {
 			return err
 		}

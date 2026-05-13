@@ -307,9 +307,7 @@ func NewLayer2UserDefinedNetworkController(
 		}
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		oc.zoneICHandler = zoneinterconnect.NewZoneInterconnectHandler(oc.GetNetInfo(), oc.nbClient, oc.sbClient, oc.watchFactory)
-	}
+	oc.zoneICHandler = zoneinterconnect.NewZoneInterconnectHandler(oc.GetNetInfo(), oc.nbClient, oc.sbClient, oc.watchFactory)
 
 	if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
 		var err error
@@ -616,7 +614,7 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(oldNode, newNode *co
 	}
 
 	if oldNode == nil {
-		return oc.addUpdateRemoteNodeEvent(newNode, config.OVNKubernetesFeature.EnableInterconnect, newState)
+		return oc.addUpdateRemoteNodeEvent(newNode, true, newState)
 	}
 
 	_, syncZoneIC := oc.syncZoneICFailed.Load(newNode.Name)

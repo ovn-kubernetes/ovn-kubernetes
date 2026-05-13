@@ -33,14 +33,10 @@ convert_cni() {
   echo "Patched OVN config:"
   echo "${FIXED_OVNCONFIG}"
   printf '%s' "${FIXED_OVNCONFIG}" | kubectl apply -f -
-  # restart ovnkube-master
+  # restart OVN-Kubernetes control plane components
   # FIXME: kubectl rollout restart deployment leaves the old pod hanging 
-  # as workaround we delete the master directly. When deployed with
-  # OVN_INTERCONNECT_ENABLE=true, the db and cm pods need that too.
+  # as workaround we delete the control plane pods directly.
   # Depending on how kind was deployed, the pods have different labels.
-  kubectl -n ovn-kubernetes delete pod -l name=ovnkube-db ||:
-  kubectl -n ovn-kubernetes delete pod -l name=ovnkube-zone-controller ||:
-  kubectl -n ovn-kubernetes delete pod -l name=ovnkube-master ||:
   kubectl -n ovn-kubernetes delete pod -l name=ovnkube-control-plane ||:
   kubectl -n ovn-kubernetes delete pod -l name=ovnkube-identity ||:
 

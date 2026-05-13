@@ -54,7 +54,7 @@ export NOROOT
 #       (disables symbol table and DWARF generation when building ovnk binaries)
 
 all build:
-	hack/build-go.sh cmd/ovnkube cmd/ovn-k8s-cni-overlay cmd/ovn-kube-util hybrid-overlay/cmd/hybrid-overlay-node cmd/ovndbchecker cmd/ovnkube-trace cmd/ovnkube-identity cmd/ovnkube-observ
+	hack/build-go.sh cmd/ovnkube cmd/ovn-k8s-cni-overlay cmd/ovn-kube-util hybrid-overlay/cmd/hybrid-overlay-node cmd/ovnkube-trace cmd/ovnkube-identity cmd/ovnkube-observ
 
 windows:
 	WINDOWS_BUILD="yes" hack/build-go.sh hybrid-overlay/cmd/hybrid-overlay-node
@@ -82,7 +82,6 @@ install:
 	install -D -m 755 ${OUT_DIR}/go/bin/ovnkube ${BINDIR}/
 	install -D -m 755 ${OUT_DIR}/go/bin/ovn-kube-util ${BINDIR}/
 	install -D -m 755 ${OUT_DIR}/go/bin/ovn-k8s-cni-overlay -t ${CNIBINDIR}/
-	install -D -m 755 ${OUT_DIR}/go/bin/ovndbchecker ${BINDIR}/
 
 clean:
 	rm -rf ${OUT_DIR}

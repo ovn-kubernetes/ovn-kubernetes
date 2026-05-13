@@ -161,7 +161,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -202,7 +201,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -254,7 +252,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -302,7 +299,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -355,7 +351,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -416,7 +411,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -463,7 +457,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
@@ -530,7 +523,6 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			"-cluster-subnets=" + clusterCIDR,
 			"-init-cluster-manager",
 			"-zone-join-switch-subnets=" + joinSubnetCIDR,
-			"-enable-interconnect",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})

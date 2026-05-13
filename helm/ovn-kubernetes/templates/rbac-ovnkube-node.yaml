@@ -66,9 +66,8 @@ subjects:
       namespace: ovn-kubernetes
     {{- end }}
 
-# In IC ovnkube-node pod needs configmap access in ovn-k ns for topology version:
+# ovnkube-node needs configmap access in ovn-k ns for topology version:
 # https://github.com/ovn-kubernetes/ovn-kubernetes/blob/e1e7d40f9a6c6038b52696c1b8f8915a4d73160e/go-controller/pkg/ovn/topology_version.go#L28
-{{- if eq (hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false) true }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -89,7 +88,6 @@ subjects:
       name: ovnkube-node
       namespace: ovn-kubernetes
     {{- end }}
-{{- end }}
 
 # even when ovn_enable_ovnkube_identity is enabled, an ovnkube-node service account
 # is used in the ovnkube-node pod during initialization:
@@ -143,7 +141,6 @@ rules:
       resources:
           - network-attachment-definitions
       verbs: ["list", "get", "watch"]
-    {{- if eq (hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false) true }}
     - apiGroups: ["networking.k8s.io"]
       resources:
           - networkpolicies
@@ -170,7 +167,6 @@ rules:
           - adminnetworkpolicies/status
           - baselineadminnetworkpolicies/status
       verbs: [ "patch", "update" ]
-    {{- end }}
     - apiGroups: ["policy.networking.k8s.io"]
       resources:
           - adminnetworkpolicies
@@ -211,10 +207,8 @@ rules:
       verbs: ["create", "patch", "update"]
     - apiGroups: [""]
       resources:
-          {{- if eq (hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false) true }}
           - namespaces/status #TODO(kyrtapz) all of the nodes update the exgw annotation on namespaces, we might need to change that
-          {{- end }}
-          - pods/status # In IC ovnkube-controller, and ovnkube-node in DPU mode updates pod annotations for local pods
+          - pods/status # ovnkube-controller, and ovnkube-node in DPU mode updates pod annotations for local pods
           - nodes/status
       verbs: [ "patch", "update" ]
     {{- if eq (hasKey .Values.global "enableDNSNameResolver" | ternary .Values.global.enableDNSNameResolver false) true }}
@@ -224,8 +218,7 @@ rules:
       verbs: [ "get", "list", "watch" ]
     {{- end }}
 
-# Without IC endpoints are read by ovnkube-node on startup
-# With IC endpoints are created by ovnkube-zone-controller/sb-ovsdb startup script in multinode-zone for IC
+# Endpoints are read by ovnkube-node on startup.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -238,9 +231,7 @@ rules:
           - endpoints
       verbs:
           - get
-          {{- if eq (hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false) true }}
           - create
-          {{- end }}
 
 {{- $tags := (.Values.tags | default dict) }}
 {{- if (index $tags "ovnkube-node-dpu-host") }}

@@ -72,7 +72,6 @@ details)
 (... details on what changes will be made to ovnkube to achieve the
 proposal; go as deep as possible; use diagrams wherever it makes sense)
 
-* add details for differences between default mode and interconnect mode if any
 * add details for differences between lgw and sgw modes if any
 * add config knob details if any
 

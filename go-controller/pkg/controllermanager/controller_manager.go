@@ -304,9 +304,6 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 	cm.nodeController = nodecontroller.NewNodeController(cm.watchFactory, cm.networkManager.Interface())
 
 	if util.IsRouteAdvertisementsEnabled() {
-		if !config.OVNKubernetesFeature.EnableInterconnect {
-			return nil, fmt.Errorf("RouteAdvertisements can only be used if Interconnect is enabled")
-		}
 		cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient)
 	}
 	cm.addressSetManager = addresssetmanager.NewAddressSetManager(cm.watchFactory.PodCoreInformer(),

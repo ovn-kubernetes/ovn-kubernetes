@@ -29,9 +29,9 @@ should all be unique.
 
 ## Hosts should have unique node names.
 
-When you run 'ovnkube -init-node', 'ovnkube -init-master',
-'ovnkube -init-network-control-manager' or 'ovnkube -init-cluster-manager'
-commands, it will ask for node names.  This should all be unique.
+When you run 'ovnkube -init-node', 'ovnkube -init-ovnkube-controller'
+or 'ovnkube -init-cluster-manager' commands, it will ask for node names.
+This should all be unique.
 This should also be the same as used by "kubelet" on each node.
 So the names you see when you run the below command should be the same
 ones that you supply to ovnkube:
@@ -85,8 +85,8 @@ You can use the following command to achieve it via iptables.
 
 ### Check ovn-northd's log file.
 
-On the master, look at /var/log/openvswitch/ovn-northd.log to see
-for any errors with the setup of the OVN central node.
+On the node running ovn-northd, look at /var/log/openvswitch/ovn-northd.log
+for any errors with the OVN database and northd setup.
 
 ## Runtime issues
 

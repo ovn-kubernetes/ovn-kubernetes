@@ -65,8 +65,6 @@ type Interface interface {
 	PatchNode(old, new *corev1.Node) error
 	UpdateNodeStatus(node *corev1.Node) error
 	PatchPodStatusAnnotations(oldPod, newPod *corev1.Pod) error
-	// GetPodsForDBChecker should only be used by legacy DB checker. Use watchFactory instead to get pods.
-	GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([]*corev1.Pod, error)
 	// GetNodeForWindows should only be used for windows hybrid overlay binary and never in linux code
 	GetNodeForWindows(name string) (*corev1.Node, error)
 	GetNodesForWindows() ([]*corev1.Node, error)
@@ -391,19 +389,6 @@ func (k *Kube) UpdateNodeStatus(node *corev1.Node) error {
 	klog.Infof("Updating status on node %s", node.Name)
 	_, err := k.KClient.CoreV1().Nodes().UpdateStatus(context.TODO(), node, metav1.UpdateOptions{})
 	return err
-}
-
-// GetPodsForDBChecker returns the list of all Pod objects in a namespace matching the options. Only used by the legacy db checker.
-func (k *Kube) GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([]*corev1.Pod, error) {
-	list := []*corev1.Pod{}
-	opts.ResourceVersion = "0"
-	err := pager.New(func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
-		return k.KClient.CoreV1().Pods(namespace).List(ctx, opts)
-	}).EachListItem(context.TODO(), opts, func(obj runtime.Object) error {
-		list = append(list, obj.(*corev1.Pod))
-		return nil
-	})
-	return list, err
 }
 
 // GetNodesForWindows returns the list of all Node objects from kubernetes. Only used by windows binary.

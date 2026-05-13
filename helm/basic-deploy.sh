@@ -14,9 +14,8 @@ function usage() {
   echo ""
   echo "Options:"
   echo "  BUILD_IMAGE=${BUILD_IMAGE:-false}      Set to true to build the OVN-Kubernetes image locally instead of pulling from ghcr.io."
-  echo "  OVN_INTERCONNECT=${OVN_INTERCONNECT:-true}  Set to false to use the legacy non-interconnect (central) deployment (deprecated)."
   echo ""
-  echo "Example: BUILD_IMAGE=true OVN_INTERCONNECT=false $0"
+  echo "Example: BUILD_IMAGE=true $0"
   echo ""
   echo "To create a Kind cluster *and* install OVN-Kubernetes in one step, see"
   echo "contrib/kind-helm.sh."
@@ -25,19 +24,13 @@ function usage() {
 
 # Default values for flags
 BUILD_IMAGE=${BUILD_IMAGE:-false}
-OVN_INTERCONNECT=${OVN_INTERCONNECT:-true}
 
 # Show usage and exit before running any preflight checks.
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   usage
 fi
 
-# Determine the values file based on OVN_INTERCONNECT
-if [[ "$OVN_INTERCONNECT" == "true" ]]; then
-  VALUES_FILE="values-single-node-zone.yaml"
-else
-  VALUES_FILE="values-no-ic.yaml"
-fi
+VALUES_FILE="values-single-node-zone.yaml"
 
 # Verify dependencies
 check_command() {
@@ -79,12 +72,9 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
   docker tag ovn-kube-ubuntu:latest "$IMG"
 fi
 
-# Node labeling for interconnect mode
-if [[ "$OVN_INTERCONNECT" == "true" ]]; then
-  for n in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
-    kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
-  done
-fi
+for n in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
+  kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
+done
 
 # Deploy OVN-Kubernetes using Helm
 cd ${DIR}/ovn-kubernetes

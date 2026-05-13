@@ -43,14 +43,6 @@ BuildRequires: golang
 %description
 This allows kubernetes to use Open Virtual Networking (OVN)
 
-%package master
-Summary: ovn-kubernetes systemd for master
-License: ASL 2.0
-#Requires: openvswitch-ovn-kubernetes systemd openvswitch
-
-%description master
-This allows systemd to control ovn on the master
-
 %package node
 Summary: ovn-kubernetes systemd for node
 License: ASL 2.0
@@ -85,11 +77,8 @@ install -p -m 644 docs/ovn-k8s-overlay.1 %{buildroot}%{_mandir}/man1
 install -d -m 0750 %{buildroot}%{_mandir}/man5
 install -p -m 644 docs/ovn_k8s.conf.5 %{buildroot}%{_mandir}/man5
 
-install -p -D -m 0644 dist/files/ovn-kubernetes-master.service \
-                   %{buildroot}%{_unitdir}/ovn-kubernetes-master.service
 install -p -D -m 0644 dist/files/ovn-kubernetes-node.service \
                    %{buildroot}%{_unitdir}/ovn-kubernetes-node.service
-install -p -m 755 dist/files/ovn-kubernetes-master.sh %{buildroot}%{_bindir}
 install -p -m 755 dist/files/ovn-kubernetes-node.sh %{buildroot}%{_bindir}
 install -p -D -m 0644 dist/files/ovn-kubernetes.sysconfig \
                    %{buildroot}%{_sysconfdir}/sysconfig/ovn-kubernetes
@@ -97,15 +86,8 @@ install -p -D -m 0644 dist/files/ovn-kubernetes.sysconfig \
 %preun node
     %systemd_preun openvswitch-ovn-kubernetes-node
 
-%preun master
-    %systemd_preun openvswitch-ovn-kubernetes-master
-
 %post node
     %systemd_post openvswitch-ovn-kubernetes-node
-
-%post master
-    %systemd_post openvswitch-ovn-kubernetes-master
-
 
 %files
 %defattr(-,root,root)
@@ -127,11 +109,6 @@ install -p -D -m 0644 dist/files/ovn-kubernetes.sysconfig \
 %{_bindir}/ovn-kubernetes-node.sh
 %config(noreplace) %{_sysconfdir}/sysconfig/ovn-kubernetes
 
-%files master
-%{_unitdir}/ovn-kubernetes-master.service
-%{_bindir}/ovn-kubernetes-master.sh
-
-
 %changelog
 * Wed May 9 2018 Phil Cameron <pcameron@redhat.com> - 0.3.0-1
 - Added support for containers
@@ -146,4 +123,3 @@ install -p -D -m 0644 dist/files/ovn-kubernetes.sysconfig \
 
 * Fri Jan 12 2018 Phil Cameron <pcameron@redhat.com> - 0.1.0-1
 - Initial package for Fedora
-

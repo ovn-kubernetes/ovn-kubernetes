@@ -241,7 +241,6 @@ enable-network-connect=false
 enable-preconfigured-udn-addresses=false
 enable-route-advertisements=false
 advertised-udn-isolation-mode=strict
-enable-interconnect=false
 enable-multi-external-gateway=false
 enable-admin-network-policy=false
 enable-persistent-ips=false
@@ -355,7 +354,6 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeFalse())
-			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableAdminNetworkPolicy).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnablePersistentIPs).To(gomega.BeFalse())
@@ -617,7 +615,6 @@ var _ = Describe("Config Operations", func() {
 			"enable-preconfigured-udn-addresses=true",
 			"enable-route-advertisements=true",
 			"advertised-udn-isolation-mode=loose",
-			"enable-interconnect=true",
 			"enable-multi-external-gateway=true",
 			"enable-admin-network-policy=true",
 			"enable-persistent-ips=true",
@@ -714,7 +711,6 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeLoose))
-			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableAdminNetworkPolicy).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePersistentIPs).To(gomega.BeTrue())
@@ -827,7 +823,6 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeLoose))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeTrue())
-			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableAdminNetworkPolicy).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePersistentIPs).To(gomega.BeTrue())
@@ -904,7 +899,6 @@ var _ = Describe("Config Operations", func() {
 			"-enable-preconfigured-udn-addresses=true",
 			"-enable-route-advertisements=true",
 			"-advertised-udn-isolation-mode=loose",
-			"-enable-interconnect=true",
 			"-enable-multi-external-gateway=true",
 			"-enable-admin-network-policy=true",
 			"-enable-persistent-ips=true",

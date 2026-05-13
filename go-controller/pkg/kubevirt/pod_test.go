@@ -51,7 +51,6 @@ var _ = Describe("Kubevirt Pod", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
-		config.OVNKubernetesFeature.EnableInterconnect = true
 
 		fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
 		wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)

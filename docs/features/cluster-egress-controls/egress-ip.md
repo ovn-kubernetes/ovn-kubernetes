@@ -234,8 +234,8 @@ kubectl label nodes <node_name> k8s.ovn.org/egress-assignable=""
 
 ## Egress IP reachability
 
-Once a node has been labeled with `k8s.ovn.org/egress-assignable`, the EgressIP operator in the leader ovnkube-master pod will periodically check if that node is
-usable. EgressIPs assigned to a node that is no longer reachable will get revalidated and moved to another useable node.
+Once a node has been labeled with `k8s.ovn.org/egress-assignable`, the EgressIP controller in `ovnkube-cluster-manager` will periodically check if that node is
+usable. EgressIPs assigned to a node that is no longer reachable will get revalidated and moved to another usable node.
 
 Egress nodes normally have multiple IP addresses. For sake of Egress IP reachability, [the management](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/2495) (aka internal SDN) addresses of the node are the ones used. In deployments of ovn-kubernetes this is known to be the `ovn-k8s-mp0` interface of a node.
 
@@ -279,4 +279,3 @@ egressip-node-healthcheck-port=9107
 - If available, the session uses the [same TLS certs](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/egressip_healthcheck.go#L78) used by ovnkube to connect to the northbound OVSDB server. Conversely, an insecure gRPC session is used when no certs are specified.
 - The [message used for probing](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/health.proto#L6) is the [standard service health](https://github.com/grpc/grpc/blob/master/src/proto/grpc/health/v1/health.proto) specified in gRPC.
 - [Special care was taken into consideration](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/82f167a3920c8c3cd0687ceb3e7a5ba64372be69/go-controller/pkg/ovn/healthcheck/egressip_healthcheck.go#L193-L195) to handle cases when the gRPC session bounced for normal reasons. EgressIP implementation will not declare a node unreachable under these circumstances.
-

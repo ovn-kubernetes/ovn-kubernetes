@@ -160,8 +160,8 @@ func (c *Controller) syncNode(key string) error {
 		return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", n.Name, err)
 	}
 
-	// At this point the node exists and is ready
-	if config.OVNKubernetesFeature.EnableInterconnect && c.zone != types.OvnDefaultZone && c.isNodeInLocalZone(n) {
+	// At this point the node exists and is ready.
+	if c.zone != types.OvnDefaultZone && c.isNodeInLocalZone(n) {
 		if err := c.createDefaultRouteToExternalForIC(c.nbClient, c.GetNetworkScopedClusterRouterName(),
 			c.GetNetworkScopedGWRouterName(nodeName), c.Subnets(), gatewayIPs); err != nil {
 			return err
@@ -231,18 +231,16 @@ func (c *Controller) nodeStateFor(name string) (*nodeState, error) {
 		v6IP = ip
 	}
 
+	transitSwitchIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch router transit IP for node %s: %w", node, err)
+	}
 	var transitIPV4, transitIPV6 net.IP
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		transitSwitchIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
-		if err != nil {
-			return nil, fmt.Errorf("unable to fetch router transit IP for node %s: %w", node, err)
-		}
-		for _, ip := range transitSwitchIPs {
-			if utilnet.IsIPv4(ip.IP) {
-				transitIPV4 = ip.IP
-			} else if utilnet.IsIPv6(ip.IP) {
-				transitIPV6 = ip.IP
-			}
+	for _, ip := range transitSwitchIPs {
+		if utilnet.IsIPv4(ip.IP) {
+			transitIPV4 = ip.IP
+		} else if utilnet.IsIPv6(ip.IP) {
+			transitIPV6 = ip.IP
 		}
 	}
 

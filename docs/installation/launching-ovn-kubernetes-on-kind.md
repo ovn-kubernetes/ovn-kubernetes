@@ -107,11 +107,13 @@ kube-system          kube-apiserver-ovn-control-plane            1/1     Running
 kube-system          kube-controller-manager-ovn-control-plane   1/1     Running   0          5h12m
 kube-system          kube-scheduler-ovn-control-plane            1/1     Running   0          5h11m
 local-path-storage   local-path-provisioner-7745554f7f-9r8dz     1/1     Running   0          5h13m
-ovn-kubernetes       ovnkube-db-5588bd699c-kb8h7                 2/2     Running   0          5h11m
-ovn-kubernetes       ovnkube-master-6f44d456df-bv2x8             2/2     Running   0          5h11m
+ovn-kubernetes       ovnkube-control-plane-6f44d456df-bv2x8      1/1     Running   0          5h11m
 ovn-kubernetes       ovnkube-node-2t6m2                          3/3     Running   0          5h11m
 ovn-kubernetes       ovnkube-node-hhsmk                          3/3     Running   0          5h11m
 ovn-kubernetes       ovnkube-node-xvqh4                          3/3     Running   0          5h11m
+ovn-kubernetes       ovs-node-8r77t                              1/1     Running   0          5h11m
+ovn-kubernetes       ovs-node-jl7lh                              1/1     Running   0          5h11m
+ovn-kubernetes       ovs-node-s9gxp                              1/1     Running   0          5h11m
 ```
 
 The `kind.sh` script defaults the cluster to HA disabled. There are numerous
@@ -145,8 +147,6 @@ usage: kind-helm.sh [--delete]
        [ -n4  | --no-ipv4 ]
        [ -i6  | --ipv6 ]
        [ -wk  | --num-workers <num> ]
-       [ -ic  | --enable-interconnect]
-       [ -npz | --node-per-zone ]
        [ -ov  | --ovn-image <image> ]
        [ -ovr | --ovn-repo <repo> ]
        [ -ovg | --ovn-gitref <ref> ]
@@ -181,7 +181,6 @@ usage: kind-helm.sh [--delete]
 -rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict.
 -nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled
 -noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled.
--cm  | --compact-mode                         Enable compact mode, ovnkube master and node run in the same process. DEFAULT: Disabled
 -ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled
 -df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled
 --disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled
@@ -199,8 +198,6 @@ usage: kind-helm.sh [--delete]
 -mtu                                          Define the overlay mtu. DEFAULT: 1400 (1500 for no-overlay mode)
 --enable-coredumps                            Enable coredump collection on kind nodes. DEFAULT: Disabled
 -dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall.
--ce  | --enable-central                       [DEPRECATED] Deploy with OVN Central (Legacy Architecture)
--npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero.
 -mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network
 --allow-icmp-netpol                           Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules
 -ecp | --encap-port                           GENEVE UDP tunnel port.
@@ -219,11 +216,10 @@ usage: kind-helm.sh [--delete]
 -lr  | --local-kind-registry                  Configure kind to use a local container registry for images.
 -ep  | --experimental-provider                Use an experimental OCI provider such as podman instead of docker.
 --deploy                                      Deploy ovn-kubernetes without restarting kind
---add-nodes                                   Adds nodes to an existing cluster. Number of nodes set by --num-workers. Use -ic if the cluster uses interconnect.
+--add-nodes                                   Adds nodes to an existing cluster. Number of nodes set by --num-workers.
 --isolated                                    After cluster creation, remove default route from nodes and publish kind node IPs as /etc/hosts entries for DNS-less isolation.
--ml  | --master-loglevel                      Log level for ovnkube-master/cluster-manager pods (0..5). DEFAULT: 4
+-ml  | --master-loglevel                      Log level for ovnkube-control-plane/cluster-manager pods (0..5). DEFAULT: 4
 -nl  | --node-loglevel                        Log level for ovnkube-node pods (0..5). DEFAULT: 4
--dbl | --dbchecker-loglevel                   Log level for the ovn-dbchecker container (0..5). DEFAULT: 4
 -nbl | --ovn-loglevel-nb                      Log level for ovn-nbdb. DEFAULT: '-vconsole:info -vfile:info'
 -sbl | --ovn-loglevel-sb                      Log level for ovn-sbdb. DEFAULT: '-vconsole:info -vfile:info'
 -ndl | --ovn-loglevel-northd                  Log level for ovn-northd. DEFAULT: '-vconsole:info -vfile:info'
@@ -568,11 +564,13 @@ kube-system        kube-apiserver-ovn-control-plane          1/1   Running  0   
 kube-system        kube-controller-manager-ovn-control-plane 1/1   Running  0        2m56s  172.17.0.2  ovn-control-plane
 kube-system        kube-scheduler-ovn-control-plane          1/1   Running  0        2m56s  172.17.0.2  ovn-control-plane
 local-path-storage local-path-provisioner-774f7f8fdb-msmd2   0/1   Pending  0        2m45s  <none>      <none>
-ovn-kubernetes     ovnkube-db-cf4cc89b7-8d4xq                2/2   Running  0        107s   172.17.0.2  ovn-control-plane
-ovn-kubernetes     ovnkube-master-87fb56d6d-7qmnb            2/2   Running  0        107s   172.17.0.2  ovn-control-plane
+ovn-kubernetes     ovnkube-control-plane-87fb56d6d-7qmnb     1/1   Running  0        107s   172.17.0.2  ovn-control-plane
 ovn-kubernetes     ovnkube-node-278l9                        2/3   Running  0        107s   172.17.0.3  ovn-worker2
 ovn-kubernetes     ovnkube-node-bm7v6                        2/3   Running  0        107s   172.17.0.2  ovn-control-plane
 ovn-kubernetes     ovnkube-node-p4k4t                        2/3   Running  0        107s   172.17.0.4  ovn-worker
+ovn-kubernetes     ovs-node-8r77t                            1/1   Running  0        107s   172.17.0.3  ovn-worker2
+ovn-kubernetes     ovs-node-jl7lh                            1/1   Running  0        107s   172.17.0.2  ovn-control-plane
+ovn-kubernetes     ovs-node-s9gxp                            1/1   Running  0        107s   172.17.0.4  ovn-worker
 ```
 
 ### Known issues

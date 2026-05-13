@@ -420,9 +420,8 @@ to BANP as well.
 For the ANP created above, let us look at how these OVN constructs would
 look like using the following commands:
 
-NOTE: All commands must be run inside the ovnkube-node pod for
-interconnect mode and ovnkube-master pod for default mode since
-that is where the NBDB container is running.
+NOTE: All commands must be run inside the ovnkube-node pod because that is
+where the NBDB container is running.
 
 `nbdb.ACL`: These can be listed using `ovn-nbctl list acl`
 

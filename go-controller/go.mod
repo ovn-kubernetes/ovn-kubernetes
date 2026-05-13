@@ -7,7 +7,6 @@ toolchain go1.25.1
 require (
 	github.com/Microsoft/hcsshim v0.13.0
 	github.com/alexflint/go-filemutex v1.3.0
-	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
 	github.com/bhendo/go-powershell v0.0.0-20190719160123-219e7fb4e41e
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/containernetworking/cni v1.3.0

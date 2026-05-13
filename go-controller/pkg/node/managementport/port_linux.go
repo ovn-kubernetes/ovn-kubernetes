@@ -8,6 +8,7 @@ package managementport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -21,7 +22,10 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -57,6 +61,7 @@ type managementPortController struct {
 
 // NewManagementPortController creates a new ManagementPorts
 func NewManagementPortController(
+	ovsClient libovsdbclient.Client,
 	node *corev1.Node,
 	hostSubnets []*net.IPNet,
 	netdevDevName string,
@@ -90,7 +95,7 @@ func NewManagementPortController(
 	}
 
 	if hasOVS {
-		c.ports[ovsPort] = newManagementPortOVS(cfg, routeManager)
+		c.ports[ovsPort] = newManagementPortOVS(cfg, routeManager, ovsClient)
 	}
 	if hasNetdev {
 		var deviceID string
@@ -116,14 +121,14 @@ func NewManagementPortController(
 				klog.Infof("Management port PCI device ID: %s (resolved from netdev %s)", deviceID, netdevDevName)
 			}
 		}
-		c.ports[netdevPort] = newManagementPortNetdev(deviceID, cfg, routeManager)
+		c.ports[netdevPort] = newManagementPortNetdev(deviceID, cfg, routeManager, ovsClient)
 	}
 	if hasRepresentor {
 		ifName := types.K8sMgmtIntfName
 		if hasNetdev {
 			ifName += "_0"
 		}
-		c.ports[representorPort] = newManagementPortRepresentor(ifName, repDevName, cfg)
+		c.ports[representorPort] = newManagementPortRepresentor(ifName, repDevName, cfg, ovsClient)
 	}
 
 	// setup NFT sets early as gateway initialization depends on it
@@ -176,19 +181,21 @@ func (c *managementPortController) start(stopChan <-chan struct{}) error {
 type managementPortOVS struct {
 	cfg          *managementPortConfig
 	routeManager *routemanager.Controller
+	ovsClient    libovsdbclient.Client
 }
 
 // newManagementPort creates a new newManagementPort
-func newManagementPortOVS(cfg *managementPortConfig, routeManager *routemanager.Controller) *managementPortOVS {
+func newManagementPortOVS(cfg *managementPortConfig, routeManager *routemanager.Controller, ovsClient libovsdbclient.Client) *managementPortOVS {
 	return &managementPortOVS{
 		cfg:          cfg,
 		routeManager: routeManager,
+		ovsClient:    ovsClient,
 	}
 }
 
 func (mp *managementPortOVS) create() error {
 	for _, mgmtPortName := range []string{types.K8sMgmtIntfName, types.K8sMgmtIntfName + "_0"} {
-		if err := syncMgmtPortInterface(mgmtPortName, true); err != nil {
+		if err := syncMgmtPortInterface(mp.ovsClient, mgmtPortName, true); err != nil {
 			return fmt.Errorf("failed to sync management port: %v", err)
 		}
 	}
@@ -593,7 +600,7 @@ func createPlatformManagementPort(interfaceName string, cfg *managementPortConfi
 // syncMgmtPortInterface verifies if no other interface configured as management port. This may happen if another
 // interface had been used as management port or Node was running in different mode.
 // If old management port is found, its IP configuration is flushed and interface renamed.
-func syncMgmtPortInterface(mgmtPortName string, isExpectedToBeInternal bool) error {
+func syncMgmtPortInterface(ovsClient libovsdbclient.Client, mgmtPortName string, isExpectedToBeInternal bool) error {
 	// Query both type and name, because with type only stdout will be empty for both non-existing port and representor netdevice
 	stdout, _, _ := util.RunOVSVsctl("--no-headings",
 		"--data", "bare",
@@ -602,7 +609,7 @@ func syncMgmtPortInterface(mgmtPortName string, isExpectedToBeInternal bool) err
 		"find", "Interface", "name="+mgmtPortName)
 	if stdout == "" {
 		// Not found on the bridge. But could be that interface with the same name exists
-		return unconfigureMgmtNetdevicePort(mgmtPortName)
+		return unconfigureMgmtNetdevicePort(ovsClient, mgmtPortName)
 	}
 
 	// Found existing port. Check its type
@@ -636,7 +643,7 @@ func unconfigureMgmtRepresentorPort(mgmtPortName string) error {
 	return DeleteManagementPortRepInterface(types.DefaultNetworkName, mgmtPortName, savedName)
 }
 
-func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
+func unconfigureMgmtNetdevicePort(ovsClient libovsdbclient.Client, mgmtPortName string) error {
 	link, err := util.GetNetLinkOps().LinkByName(mgmtPortName)
 	if err != nil {
 		if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
@@ -654,11 +661,13 @@ func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
 	savedName := ""
 	if config.IsModeDPU() || config.IsModeFull() {
 		// Get original interface name saved at OVS database
-		stdout, stderr, err := util.RunOVSVsctl("--if-exists", "get", "Open_vSwitch", ".", "external-ids:ovn-orig-mgmt-port-netdev-name")
+		ovs, err := ovsops.GetOpenvSwitch(ovsClient)
 		if err != nil {
-			klog.Warningf("Failed to get external-ds:ovn-orig-mgmt-port-netdev-name: %s", stderr)
+			if !errors.Is(err, libovsdbclient.ErrNotFound) {
+				klog.Warningf("Failed to get Open_vSwitch row: %v", err)
+			}
 		} else {
-			savedName = stdout
+			savedName = ovs.ExternalIDs["ovn-orig-mgmt-port-netdev-name"]
 		}
 	}
 

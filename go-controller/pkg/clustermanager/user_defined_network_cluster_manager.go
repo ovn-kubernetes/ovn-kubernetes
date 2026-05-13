@@ -11,7 +11,6 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -88,13 +87,11 @@ func (sncm *userDefinedNetworkClusterManager) isTopologyManaged(nInfo util.NetIn
 		// we need to allocate subnets to each node regardless of configuration
 		return true
 	case ovntypes.Layer2Topology:
-		// for IC, pod IPs and tunnel IDs need to be allocated
-		// in non IC config, this is done from ovnkube-master network controller
-		return config.OVNKubernetesFeature.EnableInterconnect
+		// pod IPs and tunnel IDs are allocated by cluster-manager
+		return true
 	case ovntypes.LocalnetTopology:
-		// for IC, pod IPs need to be allocated
-		// in non IC config, this is done from ovnkube-master network controller
-		return config.OVNKubernetesFeature.EnableInterconnect && len(nInfo.Subnets()) > 0
+		// pod IPs are allocated by cluster-manager if there is IPAM
+		return len(nInfo.Subnets()) > 0
 	}
 	return false
 }

@@ -56,7 +56,6 @@ type config struct {
 	certDir                    string
 	metricsAddress             string
 	leaseNamespace             string
-	enableInterconnect         bool
 	enableHybridOverlay        bool
 	disableWebhook             bool
 	disableApprover            bool
@@ -240,12 +239,6 @@ func main() {
 			Destination: &cliCfg.metricsAddress,
 		},
 		&cli.BoolFlag{
-			Name:        "enable-interconnect",
-			Usage:       "Configure to enable ovn interconnect checks",
-			Destination: &cliCfg.enableInterconnect,
-			Value:       false,
-		},
-		&cli.BoolFlag{
 			Name:        "enable-hybrid-overlay",
 			Usage:       "Configure to enable hybrid overlay checks",
 			Destination: &cliCfg.enableHybridOverlay,
@@ -330,7 +323,7 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 
 	nodeWebhook := admission.WithValidator(
 		scheme.Scheme,
-		ovnwebhook.NewNodeAdmissionWebhook(cliCfg.enableInterconnect, cliCfg.enableHybridOverlay, cliCfg.extraAllowedUsers.Value()...),
+		ovnwebhook.NewNodeAdmissionWebhook(cliCfg.enableHybridOverlay, cliCfg.extraAllowedUsers.Value()...),
 	).WithRecoverPanic(true)
 
 	nodeHandler, err := admission.StandaloneWebhook(
@@ -345,31 +338,28 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 	}
 	webhookMux.Handle("/node", nodeHandler)
 
-	// in non-ic ovnkube-node without additional conditions does not have the permissions to update pods
-	if cliCfg.enableInterconnect || len(cliCfg.csrAcceptanceConditions) > 1 {
-		informerFactory := informers.NewSharedInformerFactory(client, 10*time.Minute)
-		nodeInformer := informerFactory.Core().V1().Nodes().Informer()
-		informerFactory.Start(stopCh)
-		klog.Infof("Waiting for caches to sync")
-		cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced)
+	informerFactory := informers.NewSharedInformerFactory(client, 10*time.Minute)
+	nodeInformer := informerFactory.Core().V1().Nodes().Informer()
+	informerFactory.Start(stopCh)
+	klog.Infof("Waiting for caches to sync")
+	cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced)
 
-		nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
-		podWebhook := admission.WithValidator(
-			scheme.Scheme,
-			ovnwebhook.NewPodAdmissionWebhook(nodeLister, cliCfg.podAdmissionConditions, cliCfg.extraAllowedUsers.Value()...),
-		).WithRecoverPanic(true)
-		podHandler, err := admission.StandaloneWebhook(
-			podWebhook,
-			admission.StandaloneOptions{
-				Logger:      logger.WithName("pod.network-identity"),
-				MetricsPath: "pod.network-identity",
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("failed to setup the pod admission webhook: %w", err)
-		}
-		webhookMux.Handle("/pod", podHandler)
+	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
+	podWebhook := admission.WithValidator(
+		scheme.Scheme,
+		ovnwebhook.NewPodAdmissionWebhook(nodeLister, cliCfg.podAdmissionConditions, cliCfg.extraAllowedUsers.Value()...),
+	).WithRecoverPanic(true)
+	podHandler, err := admission.StandaloneWebhook(
+		podWebhook,
+		admission.StandaloneOptions{
+			Logger:      logger.WithName("pod.network-identity"),
+			MetricsPath: "pod.network-identity",
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to setup the pod admission webhook: %w", err)
 	}
+	webhookMux.Handle("/pod", podHandler)
 
 	cfg := &tls.Config{
 		NextProtos: []string{"h2"},

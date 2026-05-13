@@ -41,7 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         # Valid options are:
-        # target: ["shard-conformance", "control-plane", "multi-homing", "multi-node-zones", "node-ip-mac-migration", "compact-mode", "serial"]
+        # target: ["shard-conformance", "control-plane", "multi-homing", "node-ip-mac-migration", "serial"]
         #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
         #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
         # perf-test: ["all","kubelet-density-cni", "udn-density-l2-noPods", "cudn-density-l2-noPods", "udn-density-l2-pods", "cudn-density-l2-pods-netpol", "udn-density-l2-pods-netpol", "udn-density-l3-pods-netpol"]
@@ -50,9 +50,8 @@ jobs:
         # ipfamily: ["ipv4", "ipv6", "dualstack"]
         # disable-snat-multiple-gws: ["noSnatGW", "snatGW"]
         # second-bridge: ["2br", "1br"]
-        # ic: ["ic-disabled", "ic-single-node-zones", "ic-multi-node-zones"]
+        # ic: ["ic-single-node-zones"]
         # num-workers : "<integer value>"
-        # num-nodes-per-zone : "<integer value>"
         # forwarding : ["", "disable-forwarding"]
         # dns-name-resolver : ["", "enable-dns-name-resolver"]
         # network-segmentation : ["", "enable-network-segmentation"]
@@ -81,11 +80,7 @@ jobs:
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
-      OVN_COMPACT_MODE: "${{ matrix.target == 'compact-mode' }}"
-      OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'compact-mode' }}"
-      OVN_ENABLE_INTERCONNECT: "${{ matrix.ic == 'ic-single-node-zones' ||  matrix.ic == 'ic-multi-node-zones'}}"
       KIND_NUM_WORKER: "${{ matrix.num-workers }}"
-      KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
       OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
       OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'control-plane-helm' }}"

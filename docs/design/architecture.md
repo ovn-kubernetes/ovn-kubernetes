@@ -1,84 +1,11 @@
 # OVN-Kubernetes Architecture
 
-There are two deployment modes for ovn-kubernetes depending on
-which the architecture is drastically different:
+OVN-Kubernetes uses interconnect mode, a distributed control plane
+architecture. The control-plane components run in the
+`ovnkube-control-plane` pod, while OVN databases, northd, and node-local
+controllers run per zone in the `ovnkube-node` pods.
 
-* central mode (centralized control plane architecture) -- is DEPRECATED starting 1.2 release
-* interconnect mode (distributed control plane architecture) -- is the default mode
-
-End users are recommended to pick interconnect mode to deploy
-new clusters since central mode will be removed in future releases.
-Many of the new features already don't have support on central mode
-and are only available in interconnect mode.
-
-Let's look at these two modes in depth from architecture standpoint:
-
-## OVN-Kubernetes Components - Central Mode (DEPRECATED!!)
-
-![ovn-kubernetes-centralized-components](../images/ovnkube-centralized-components.png)
-
-The control plane has the `ovnkube-master` pod in the `ovn-kubernetes` namespace
-which are running only on the control plane nodes in your cluster:
-
-* ovnkube-master pod
-    * ovnkube-master container:
-        * OVN-Kubernetes component
-        * Watches K8s API for objects - namespaces, pods, services, endpoints,
-        network policies, CRs
-        * Translates K8s objects into OVN logical entities
-        * Stores OVN entities in NorthBound Database (NBDB)
-        * Manages pod subnet allocation to nodes (pod IPAM)
-    * nbdb container:
-        * Native OVN component
-        * Runs the OVN NBDB database
-        * Stores the logical elements created by ovnkube-master
-        * 3 replicas across control plane nodes running using RAFT leadership
-        algorithm in HA mode
-    * northd container:
-        * Native OVN component
-        * Converts the OVN logical elements from NBDB to OVN logical flows in SBDB
-    * sbdb container:
-        * Native OVN component
-        * Stores the logical flows created by northd
-        * 3 replicas across control plane nodes running using RAFT leadership algorithm
-        in HA mode
-
-The data plane includes the `ovnkube-node` and `ovs-node` pods in the `ovn-kubernetes`
-namespace which are running on all your nodes in the cluster.
-
-* ovnkube-node pod
-    * ovnkube-node container:
-        * OVN-Kubernetes component
-        * Runs the CNI executable (CNI ADD/DEL)
-        * Digests the IPAM annotation set on pod by ovnkube-master
-        * Creates the veth pair for the pod
-        * Creates the ovs port on bridge
-        * Programs the necessary iptables and gateway service flows on a per-node basis.
-    * ovn-controller container:
-        * Native OVN component
-        * Connects to SBDB running in control plane using TLS
-        * Converts SBDB logical flows into openflows
-        * Write them to OVS
-* ovs-node pod
-    * ovs-daemons container:
-        * OVS Native component
-        * OVS daemon and database running as a container
-        * virtual switch that pushes the network plumbing to the edge on the node
-
-## Central Mode Architecture (DEPRECATED!!)
-
-Now that we know the pods and components running in the central mode, let's tie up
-loose ends and show how these components run on a standard HA Kubernetes cluster.
-
-### Control Plane Nodes:
-
-![ovn-kubernetes-centralized-components-control-plane](../images/ovnkube-centralized-arch-cp.png)
-
-### Worker Nodes:
-
-![ovn-kubernetes-centralized-components-data-plane](../images/ovnkube-centralized-arch-dp.png)
-
-## OVN-Kubernetes Components - Interconnect mode (DEFAULT)
+## OVN-Kubernetes Components
 
 ![ovn-kubernetes-distributed-components](../images/ovnkube-distributed-components.png)
 
@@ -139,7 +66,7 @@ and more distributed.
 As we can see, the databases, northd and ovn-kubernetes controller components
 now run per zone rather than only on the control-plane.
 
-## Interconnect Mode Architecture (DEFAULT)
+## Interconnect Mode Architecture
 
 ### What is Interconnect?
 
@@ -180,8 +107,7 @@ simpler customer escalation resolution.
 * Scale: As seen in the above diagram, the ovn-controller container connects to the
 local Southbound database for logical flow information. On large clusters with N nodes,
 this means each Southbound database is handling only one connection from its own local
-ovn-controller. This has removed the scale bottlenecks that were present in the centralized
-model helping us to scale horizontally with node count.
+ovn-controller. This helps OVN-Kubernetes scale horizontally with node count.
 * Performance: The OVN-Kubernetes brain is now local to each node in the cluster, and it is
 storing and processing changes to only those Kubernetes pods, services, endpoints objects
 that are relevant for that node (note: some features like NetworkPolicies need to process
@@ -191,9 +117,3 @@ stack is now lighter-weight.
 * Security: Since the infrastructure network traffic between ovn-controller and OVN Southbound
 database is now contained within each node, overall cross-node and cross-cluster
 (HostedControlPlane, ManagedSaaS) chatter is decreased and traffic security can be increased.
-
-## Central Mode versus Interconnect Mode
-
-* When you want your databases to stay centralized and do not require linear scaling with node count, choose Central Mode
-* Note that there is no difference to OVS between the two deployment modes.
-* FIXME: This section needs to be written well

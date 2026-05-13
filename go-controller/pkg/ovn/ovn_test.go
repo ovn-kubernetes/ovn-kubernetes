@@ -591,7 +591,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 		if err != nil {
 			nbZoneFailed = true
 			zone := types.OvnDefaultZone
-			if config.OVNKubernetesFeature.EnableInterconnect && config.Default.Zone != "" {
+			if config.Default.Zone != "" {
 				zone = config.Default.Zone
 			}
 			err = createTestNBGlobal(o.nbClient, zone)

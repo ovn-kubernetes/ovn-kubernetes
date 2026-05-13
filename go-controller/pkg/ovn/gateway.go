@@ -271,14 +271,9 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 
 func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.LogicalRouter, error) {
 	// Create a gateway router.
-	dynamicNeighRouters := "true"
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		dynamicNeighRouters = "false"
-	}
-
 	logicalRouterOptions := map[string]string{
 		"always_learn_from_arp_request": "false",
-		"dynamic_neigh_routers":         dynamicNeighRouters,
+		"dynamic_neigh_routers":         "false",
 		"chassis":                       gwConfig.annoConfig.ChassisID,
 		"lb_force_snat_ip":              "router_ip",
 		"mac_binding_age_threshold":     types.GRMACBindingAgeThreshold,

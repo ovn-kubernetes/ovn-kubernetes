@@ -1906,8 +1906,7 @@ func DoesNetworkRequireIPAM(netInfo NetInfo) bool {
 }
 
 func DoesNetworkRequireTunnelIDs(netInfo NetInfo) bool {
-	// Layer2Topology with IC require that we allocate tunnel IDs for each pod
-	return netInfo.TopologyType() == types.Layer2Topology && config.OVNKubernetesFeature.EnableInterconnect
+	return netInfo.TopologyType() == types.Layer2Topology
 }
 
 func AllowsPersistentIPs(netInfo NetInfo) bool {

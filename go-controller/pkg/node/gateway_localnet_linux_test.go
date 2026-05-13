@@ -72,7 +72,7 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 	}
 
 	k := &kube.Kube{KClient: fakeClient.KubeClient}
-	n.nodeIPManager = newAddressManagerInternal(fakeNodeName, k, nil, n.watchFactory, nil, false)
+	n.nodeIPManager = newAddressManagerInternal(fakeNodeName, k, nil, n.watchFactory, nil, nil, false)
 	localHostNetEp := "192.168.18.15/32"
 	ip, ipnet, _ := net.ParseCIDR(localHostNetEp)
 	ipFullNet := net.IPNet{IP: ip, Mask: ipnet.Mask}
@@ -122,7 +122,7 @@ func startNodePortWatcherWithRetry(n *nodePortWatcher, fakeClient *util.OVNNodeC
 	}
 
 	k := &kube.Kube{KClient: fakeClient.KubeClient}
-	n.nodeIPManager = newAddressManagerInternal(fakeNodeName, k, nil, n.watchFactory, nil, false)
+	n.nodeIPManager = newAddressManagerInternal(fakeNodeName, k, nil, n.watchFactory, nil, nil, false)
 	localHostNetEp := "192.168.18.15/32"
 	ip, ipnet, _ := net.ParseCIDR(localHostNetEp)
 	ipFullNet := net.IPNet{IP: ip, Mask: ipnet.Mask}
