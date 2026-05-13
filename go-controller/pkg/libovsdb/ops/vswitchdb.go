@@ -73,6 +73,97 @@ func FindOVSPortsWithPredicate(ovsClient libovsdbclient.Client, p ovsPortPredica
 	return ports, err
 }
 
+// GetBridge looks up an OVS bridge by name.
+func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, error) {
+	found := []*vswitchd.Bridge{}
+	opModel := operationModel{
+		Model:          &vswitchd.Bridge{Name: name},
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(ovsClient)
+	if err := m.Lookup(opModel); err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
+
+// DeleteBridge deletes an OVS bridge along with all its ports and interfaces
+// and detaches it from the Open_vSwitch root row. It is idempotent: a missing
+// bridge is not an error.
+func DeleteBridge(ovsClient libovsdbclient.Client, bridgeName string) error {
+	ops, err := DeleteBridgeOps(ovsClient, nil, bridgeName)
+	if err != nil {
+		return err
+	}
+	if len(ops) == 0 {
+		return nil
+	}
+	_, err = TransactAndCheck(ovsClient, ops)
+	return err
+}
+
+// DeleteBridgeOps returns operations to delete an OVS bridge and all its ports
+// and interfaces, and to detach the bridge from the Open_vSwitch root row's
+// bridges set. A missing bridge yields zero operations.
+func DeleteBridgeOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, bridgeName string) ([]ovsdb.Operation, error) {
+	bridge, err := GetBridge(ovsClient, bridgeName)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return ops, nil
+		}
+		return nil, err
+	}
+
+	m := newModelClient(ovsClient)
+
+	// Cascade-delete each port's interfaces and the port itself. We hydrate
+	// each Port from cache via ovsClient.Get to learn its Interfaces UUIDs.
+	for _, portUUID := range bridge.Ports {
+		port := &vswitchd.Port{UUID: portUUID}
+		ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+		err := ovsClient.Get(ctx, port)
+		cancel()
+		if err != nil {
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to look up Port %s on bridge %s: %w", portUUID, bridgeName, err)
+		}
+		for _, ifaceUUID := range port.Interfaces {
+			iface := &vswitchd.Interface{UUID: ifaceUUID}
+			ops, err = m.DeleteOps(ops, operationModel{Model: iface, ErrNotFound: false, BulkOp: false})
+			if err != nil {
+				return nil, fmt.Errorf("failed to build delete ops for Interface %s: %w", ifaceUUID, err)
+			}
+		}
+		ops, err = m.DeleteOps(ops, operationModel{Model: port, ErrNotFound: false, BulkOp: false})
+		if err != nil {
+			return nil, fmt.Errorf("failed to build delete ops for Port %s: %w", portUUID, err)
+		}
+	}
+
+	// Detach the bridge from Open_vSwitch.bridges and delete the bridge row.
+	ovs := &vswitchd.OpenvSwitch{Bridges: []string{bridge.UUID}}
+	return m.DeleteOps(ops,
+		operationModel{
+			Model:            ovs,
+			ModelPredicate:   func(*vswitchd.OpenvSwitch) bool { return true },
+			OnModelMutations: []interface{}{&ovs.Bridges},
+			ErrNotFound:      false,
+			BulkOp:           false,
+		},
+		operationModel{
+			Model:       bridge,
+			ErrNotFound: false,
+			BulkOp:      false,
+		},
+	)
+}
+
 // GetOVSPort looks up an OVS port by name.
 func GetOVSPort(ovsClient libovsdbclient.Client, name string) (*vswitchd.Port, error) {
 	found := []*vswitchd.Port{}
