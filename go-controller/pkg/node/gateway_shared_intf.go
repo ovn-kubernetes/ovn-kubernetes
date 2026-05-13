@@ -583,7 +583,10 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 
 func (npw *nodePortWatcher) hostNetworkServiceOpenFlows(service *corev1.Service, key, cookie, flowProtocol, match, gatewayAddress string,
 	lbe util.LBEndpoints, nodeIPs []net.IP) ([]string, []string) {
-	targetPorts := hostNetworkTargetPorts(lbe, nodeIPs, strings.Contains(flowProtocol, "6"))
+	isIPv6 := strings.Contains(flowProtocol, "6")
+	targetPorts := hostNetworkTargetPorts(lbe, nodeIPs, isIPv6)
+	klog.Infof("SDN-3551-DEBUG: hostNetworkServiceOpenFlows svc=%s/%s isIPv6=%v flowProtocol=%s lbe=%+v nodeIPs=%v targetPorts=%v",
+		service.Namespace, service.Name, isIPv6, flowProtocol, lbe, nodeIPs, targetPorts)
 	if len(targetPorts) == 0 {
 		return nil, nil
 	}
@@ -1387,6 +1390,8 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	// hasLocalHostNetworkEp or localEndpoints state (for LB svc where NPs=0) changed, to prevent flow churn
 	out, exists := npw.getServiceInfo(*svcNamespacedName)
 	if !exists {
+		klog.Infof("SDN-3551-DEBUG: Endpointslice %s/%s ADD event (first time): hasLocalHostNetworkEp=%v, localEndpoints=%+v",
+			epSlice.Namespace, epSlice.Name, hasLocalHostNetworkEp, localEndpoints)
 		klog.V(5).Infof("Endpointslice %s ADD event in namespace %s is creating rules", epSlice.Name, epSlice.Namespace)
 		if err = addServiceRules(svc, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
 			return err
@@ -1398,6 +1403,9 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	if out.hasLocalHostNetworkEp != hasLocalHostNetworkEp ||
 		(hasLocalHostNetworkEp && !reflect.DeepEqual(out.localEndpoints, localEndpoints)) ||
 		(!util.LoadBalancerServiceHasNodePortAllocation(svc) && !reflect.DeepEqual(out.localEndpoints, localEndpoints)) {
+		klog.Infof("SDN-3551-DEBUG: Endpointslice %s/%s ADD triggers flow regeneration: hasLocalHostNetworkEp old=%v new=%v, localEndpoints changed=%v, old=%+v new=%+v",
+			epSlice.Namespace, epSlice.Name, out.hasLocalHostNetworkEp, hasLocalHostNetworkEp,
+			!reflect.DeepEqual(out.localEndpoints, localEndpoints), out.localEndpoints, localEndpoints)
 		klog.V(5).Infof("Endpointslice %s ADD event in namespace %s is updating rules", epSlice.Name, epSlice.Namespace)
 		if err = delServiceRules(svc, out.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
@@ -1409,6 +1417,9 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 		}
 		return utilerrors.Join(errors...)
 	}
+	klog.Infof("SDN-3551-DEBUG: Endpointslice %s/%s ADD event - NO flow regeneration: hasLocalHostNetworkEp old=%v new=%v, localEndpoints equal=%v, hasNodePort=%v",
+		epSlice.Namespace, epSlice.Name, out.hasLocalHostNetworkEp, hasLocalHostNetworkEp,
+		reflect.DeepEqual(out.localEndpoints, localEndpoints), util.LoadBalancerServiceHasNodePortAllocation(svc))
 	return nil
 
 }
