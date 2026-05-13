@@ -73,6 +73,39 @@ func FindOVSPortsWithPredicate(ovsClient libovsdbclient.Client, p ovsPortPredica
 	return ports, err
 }
 
+// GetBridgeContainingPort returns the OVS bridge that owns the named port.
+// Returns ErrNotFound if the port does not exist or no bridge references it
+// in its ports column. This is the libovsdb equivalent of
+// `ovs-vsctl port-to-br <port>`.
+func GetBridgeContainingPort(ovsClient libovsdbclient.Client, portName string) (*vswitchd.Bridge, error) {
+	port, err := GetOVSPort(ovsClient, portName)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+	defer cancel()
+	bridges := []*vswitchd.Bridge{}
+	if err := ovsClient.List(ctx, &bridges); err != nil {
+		return nil, err
+	}
+	var matchingBridge *vswitchd.Bridge
+	for _, bridge := range bridges {
+		for _, uuid := range bridge.Ports {
+			if uuid == port.UUID {
+				if matchingBridge != nil {
+					return nil, fmt.Errorf("OVSDB corruption: port %q is referenced by multiple bridges: %w", portName, errMultipleResults)
+				}
+				matchingBridge = bridge
+				break
+			}
+		}
+	}
+	if matchingBridge != nil {
+		return matchingBridge, nil
+	}
+	return nil, fmt.Errorf("no bridge contains port %q: %w", portName, libovsdbclient.ErrNotFound)
+}
+
 // GetBridge looks up an OVS bridge by name.
 func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, error) {
 	found := []*vswitchd.Bridge{}

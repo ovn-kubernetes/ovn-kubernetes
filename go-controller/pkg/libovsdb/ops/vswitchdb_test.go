@@ -14,6 +14,92 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
+func TestGetBridgeContainingPort(t *testing.T) {
+	bridgeAUUID := buildNamedUUID()
+	bridgeBUUID := buildNamedUUID()
+	portUUID := buildNamedUUID()
+	orphanPortUUID := buildNamedUUID()
+
+	bridgeA := &vswitchd.Bridge{UUID: bridgeAUUID, Name: "br-a", Ports: []string{portUUID}}
+	bridgeB := &vswitchd.Bridge{UUID: bridgeBUUID, Name: "br-b"}
+	port := &vswitchd.Port{UUID: portUUID, Name: "p1"}
+	orphan := &vswitchd.Port{UUID: orphanPortUUID, Name: "orphan"}
+	ovs := &vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeAUUID, bridgeBUUID}}
+
+	tests := []struct {
+		desc       string
+		portName   string
+		expectErr  error
+		expectName string
+		initialOvs libovsdbtest.TestSetup
+	}{
+		{
+			desc:       "returns the bridge that owns the port",
+			portName:   "p1",
+			expectName: "br-a",
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				ovs.DeepCopy(), bridgeA.DeepCopy(), bridgeB.DeepCopy(), port.DeepCopy(),
+			}},
+		},
+		{
+			desc:      "returns ErrNotFound when no bridge owns the port",
+			portName:  "orphan",
+			expectErr: libovsdbclient.ErrNotFound,
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeBUUID}},
+				bridgeB.DeepCopy(),
+				orphan.DeepCopy(),
+			}},
+		},
+		{
+			desc:      "returns ErrNotFound when the port does not exist",
+			portName:  "no-such-port",
+			expectErr: libovsdbclient.ErrNotFound,
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeBUUID}},
+				bridgeB.DeepCopy(),
+			}},
+		},
+		{
+			desc:      "returns error when multiple bridges own the port",
+			portName:  "p1",
+			expectErr: errMultipleResults,
+			initialOvs: libovsdbtest.TestSetup{OVSData: []libovsdbtest.TestData{
+				ovs.DeepCopy(),
+				bridgeA.DeepCopy(),
+				&vswitchd.Bridge{UUID: bridgeBUUID, Name: "br-b", Ports: []string{portUUID}},
+				port.DeepCopy(),
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(tt.initialOvs)
+			if err != nil {
+				t.Fatalf("test: %q failed to set up harness: %v", tt.desc, err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+
+			got, err := GetBridgeContainingPort(ovsClient, tt.portName)
+			if tt.expectErr != nil {
+				if err == nil {
+					t.Fatalf("expected error, got bridge %v", got)
+				}
+				if !errors.Is(err, tt.expectErr) {
+					t.Fatalf("expected %v, got %v", tt.expectErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetBridgeContainingPort() error = %v", err)
+			}
+			if got.Name != tt.expectName {
+				t.Fatalf("expected bridge %q, got %q", tt.expectName, got.Name)
+			}
+		})
+	}
+}
+
 func TestGetOVSPort(t *testing.T) {
 	bridgeUUID := buildNamedUUID()
 	portUUID := buildNamedUUID()

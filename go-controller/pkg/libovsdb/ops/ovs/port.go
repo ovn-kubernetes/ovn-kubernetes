@@ -21,6 +21,13 @@ func GetOVSPort(ovsClient libovsdbclient.Client, name string) (*vswitchd.Port, e
 	return libovsdbops.GetOVSPort(ovsClient, name)
 }
 
+// GetBridgeContainingPort returns the OVS bridge that owns the named port,
+// the libovsdb equivalent of `ovs-vsctl port-to-br <port>`. Returns
+// ErrNotFound if the port does not exist or no bridge references it.
+func GetBridgeContainingPort(ovsClient libovsdbclient.Client, portName string) (*vswitchd.Bridge, error) {
+	return libovsdbops.GetBridgeContainingPort(ovsClient, portName)
+}
+
 // FindOVSPortsWithPredicate returns all OVS ports matching the predicate.
 func FindOVSPortsWithPredicate(ovsClient libovsdbclient.Client, p portPredicate) ([]*vswitchd.Port, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)

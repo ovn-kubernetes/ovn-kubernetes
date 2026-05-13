@@ -31,7 +31,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-func getGatewayNextHops() ([]net.IP, string, error) {
+func getGatewayNextHops(ovsClient libovsdbclient.Client) ([]net.IP, string, error) {
 	var gatewayNextHops []net.IP
 	var needIPv4NextHop bool
 	var needIPv6NextHop bool
@@ -83,9 +83,9 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 	}
 	gatewayIntf := config.Gateway.Interface
 	if gatewayIntf != "" && (config.IsModeDPU() || config.IsModeFull()) {
-		if bridgeName, _, err := util.RunOVSVsctl("port-to-br", gatewayIntf); err == nil {
+		if bridge, err := ovsops.GetBridgeContainingPort(ovsClient, gatewayIntf); err == nil {
 			// This is an OVS bridge's internal port
-			gatewayIntf = bridgeName
+			gatewayIntf = bridge.Name
 		}
 	}
 
@@ -278,7 +278,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 
 	waiter := newStartupWaiter()
 
-	gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+	gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nc.ovsClient)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +499,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 		return fmt.Errorf("failed to update masquerade subnet annotation on node: %s, error: %v", nc.name, err)
 	}
 
-	gatewayNextHops, _, err := getGatewayNextHops()
+	gatewayNextHops, _, err := getGatewayNextHops(nc.ovsClient)
 	if err != nil {
 		return err
 	}
