@@ -8,11 +8,17 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 type interfacePredicate func(*vswitchd.Interface) bool
+
+// GetOVSInterface looks up an OVS interface by name.
+func GetOVSInterface(ovsClient libovsdbclient.Client, name string) (*vswitchd.Interface, error) {
+	return libovsdbops.GetOVSInterface(ovsClient, name)
+}
 
 // ListInterfaces looks up all ovs interfaces from the cache
 func ListInterfaces(ovsClient libovsdbclient.Client) ([]*vswitchd.Interface, error) {

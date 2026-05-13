@@ -197,7 +197,29 @@ func DeleteBridgeOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, bri
 	)
 }
 
-// GetOVSPort looks up an OVS port by name.
+// GetOVSInterface looks up an OVS interface by name. Returns ErrNotFound if no
+// interface with that name exists. This is the libovsdb equivalent of
+// `ovs-vsctl find Interface name=<name>`.
+func GetOVSInterface(ovsClient libovsdbclient.Client, name string) (*vswitchd.Interface, error) {
+	found := []*vswitchd.Interface{}
+	opModel := operationModel{
+		Model:          &vswitchd.Interface{Name: name},
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(ovsClient)
+	if err := m.Lookup(opModel); err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
+
+// GetOVSPort looks up an OVS port by name. Returns ErrNotFound if no port with
+// that name exists. This is the libovsdb equivalent of
+// `ovs-vsctl find Port name=<name>`.
 func GetOVSPort(ovsClient libovsdbclient.Client, name string) (*vswitchd.Port, error) {
 	found := []*vswitchd.Port{}
 	opModel := operationModel{
@@ -259,6 +281,82 @@ func CreateOrUpdatePortWithInterfaceOps(ovsClient libovsdbclient.Client, ops []o
 	}
 
 	// Bridge model - mutates Ports to add our port
+	bridgeModel := operationModel{
+		Model:            bridge,
+		OnModelMutations: []interface{}{&bridge.Ports},
+		ErrNotFound:      true,
+		BulkOp:           false,
+	}
+
+	m := newModelClient(ovsClient)
+	return m.CreateOrUpdateOps(ops, ifaceModel, portModel, bridgeModel)
+}
+
+// CreateOrUpdatePodPort creates or updates an OVS port and its single backing
+// interface on bridgeName in one transaction. The helper updates these
+// columns from the caller-supplied models:
+//   - Port: OtherConfig, ExternalIDs
+//   - Interface: Type, Options, MTURequest, ExternalIDs
+//
+// Both port.Name and iface.Name are forced to portName for consistency.
+// On create, the model is written as-is; on update, only the listed columns
+// are touched. This is the libovsdb equivalent of an `ovs-vsctl --may-exist
+// add-port BRIDGE PORT -- set Interface PORT key=value ...` chain.
+func CreateOrUpdatePodPort(ovsClient libovsdbclient.Client, bridgeName, portName string, port *vswitchd.Port, iface *vswitchd.Interface) error {
+	ops, err := CreateOrUpdatePodPortOps(ovsClient, nil, bridgeName, portName, port, iface)
+	if err != nil {
+		return err
+	}
+	_, err = TransactAndCheck(ovsClient, ops)
+	return err
+}
+
+// CreateOrUpdatePodPortOps returns the operations to create or update a pod's
+// OVS port and interface for chaining into a larger transaction. See
+// CreateOrUpdatePodPort for semantics.
+func CreateOrUpdatePodPortOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, bridgeName, portName string, port *vswitchd.Port, iface *vswitchd.Interface) ([]ovsdb.Operation, error) {
+	if port == nil {
+		return nil, fmt.Errorf("CreateOrUpdatePodPortOps: nil port")
+	}
+	if iface == nil {
+		return nil, fmt.Errorf("CreateOrUpdatePodPortOps: nil iface")
+	}
+	// Reject ports that already live on a different bridge. OVS's schema
+	// does not enforce one-bridge-per-port (Bridge.ports is a strong-set
+	// with no Port back-reference), so without this check the mutation
+	// below would leave the same Port UUID in two Bridges' ports lists.
+	// This matches the user-space safety check that `ovs-vsctl
+	// --may-exist add-port BRIDGE PORT` performs.
+	existing, err := GetBridgeContainingPort(ovsClient, portName)
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return nil, err
+	}
+	if existing != nil && existing.Name != bridgeName {
+		return nil, fmt.Errorf("port %q is already attached to bridge %q", portName, existing.Name)
+	}
+
+	iface.Name = portName
+	port.Name = portName
+	bridge := &vswitchd.Bridge{Name: bridgeName}
+
+	ifaceModel := operationModel{
+		Model:          iface,
+		OnModelUpdates: []interface{}{&iface.Type, &iface.Options, &iface.MTURequest, &iface.ExternalIDs},
+		DoAfter: func() {
+			port.Interfaces = []string{iface.UUID}
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+	portModel := operationModel{
+		Model:          port,
+		OnModelUpdates: []interface{}{&port.OtherConfig, &port.ExternalIDs},
+		DoAfter: func() {
+			bridge.Ports = append(bridge.Ports, port.UUID)
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
 	bridgeModel := operationModel{
 		Model:            bridge,
 		OnModelMutations: []interface{}{&bridge.Ports},
