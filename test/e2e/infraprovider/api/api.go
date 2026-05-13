@@ -75,10 +75,14 @@ type Underlay struct {
 	VlanID int
 }
 
+type ContextCleanUp interface {
+	AddCleanUpFn(func() error)
+}
+
 type Context interface {
+	ContextCleanUp
 	ExternalContainerContextProvider
 	ClusterContextProvider
-	AddCleanUpFn(func() error)
 }
 
 type ExternalContainerContextProvider interface {

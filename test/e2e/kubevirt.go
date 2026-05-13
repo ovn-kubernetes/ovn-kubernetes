@@ -24,6 +24,7 @@ import (
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -48,7 +49,6 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/kubernetes/test/e2e/framework"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
@@ -1661,9 +1661,6 @@ passwd:
 			bgpASN = 64512
 		)
 		var (
-			// EVPN parameters: use random values for parallel test isolation.
-			macVRFVNI               = randomVNI()
-			ipVRFVNI                = randomVNI()
 			cudn                    *udnv1.ClusterUserDefinedNetwork
 			vm                      *kubevirtv1.VirtualMachine
 			vmi                     *kubevirtv1.VirtualMachineInstance
@@ -1671,7 +1668,6 @@ passwd:
 			staticIPv4, staticIPv6  string
 			staticMAC               = "02:00:00:00:00:01"
 			externalMACVRFContainer = infraapi.ExternalContainer{
-				Name:    fmt.Sprintf("iperf3-macvrf-%d", macVRFVNI),
 				Image:   images.Netshoot(),
 				CmdArgs: []string{"sleep", "infinity"},
 			}
@@ -1875,11 +1871,14 @@ write_files:
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 
+			bgpAlloc, err := allocators.AllocateBGP(fr, providerCtx)
+			Expect(err).NotTo(HaveOccurred())
+
 			networkName := ""
 			// Each entry gets its own random subnet to avoid BGP route
 			// conflicts between entries (prior routed tests create RAs
 			// whose BGP routes may persist in FRR after async cleanup).
-			cidrIPv4, cidrIPv6 = randomCUDNSubnets()
+			cidrIPv4, cidrIPv6 = bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6
 			staticIPv4 = subnetOffsetIP(cidrIPv4, 101)
 			staticIPv6 = subnetOffsetIP(cidrIPv6, 101)
 			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
@@ -1888,14 +1887,9 @@ write_files:
 			var externalContainer infraapi.ExternalContainer
 			var macVRFContainerIPs []string
 			if td.evpn != nil {
-				// Regenerate VNIs per attempt to avoid FRR zebra crashes
-				// when a flake-retry reuses VNIs before full cleanup
-				// (zebra_vxlan_if_vni_up assertion failure).
-				macVRFVNI = randomVNI()
-				ipVRFVNI = randomVNI()
-				td.evpn.MACVRF.VNI = macVRFVNI
-				td.evpn.IPVRF.VNI = ipVRFVNI
-				externalMACVRFContainer.Name = fmt.Sprintf("iperf3-macvrf-%d", macVRFVNI)
+				td.evpn.MACVRF.VNI = int32(bgpAlloc.MACVRFVNI)
+				td.evpn.IPVRF.VNI = int32(bgpAlloc.IPVRFVNI)
+				externalMACVRFContainer.Name = fmt.Sprintf("iperf3-macvrf-%d", bgpAlloc.MACVRFVNI)
 				// Shorten the CUDN name to fit Linux interface name limits.
 				// The name is used as testName for runEVPNNetworkAndServers which
 				// derives bridge/SVI names: worst-case SVI is "br<name>.4094"
@@ -1927,20 +1921,12 @@ write_files:
 
 				ipFamilies := sets.New(getSupportedIPFamiliesSlice(fr.ClientSet)...)
 
-				ipVRFAgnhostIPv4, ipVRFAgnhostIPv6 := randomIPVRFAgnhostSubnets()
-				ipVRFAgnhostSubnets := []string{ipVRFAgnhostIPv4, ipVRFAgnhostIPv6}
-				framework.Logf("Networks allocated for EVPN Agnhost servers: %v", ipVRFAgnhostSubnets)
 				// Use the kind network CIDRs as VTEP subnets for Unmanaged mode.
-				// In Unmanaged mode the node controller discovers each node's VTEP IP
-				// by matching its host-cidrs annotation against these CIDRs, so they
-				// must cover the existing node IPs. The external FRR container is also
-				// on the kind network, so VXLAN tunnels between nodes and FRR work
-				// without any additional routing.
-				kindNetwork, err := infraprovider.Get().GetNetwork("kind")
+				kindNetwork, err := infraprovider.Get().PrimaryNetwork()
 				Expect(err).NotTo(HaveOccurred())
-				vtepIPv4Subnet, _, err := kindNetwork.IPv4IPv6Subnets()
+				bgpAlloc.VTEPSubnet, _, err = kindNetwork.IPv4IPv6Subnets()
 				Expect(err).NotTo(HaveOccurred())
-				vtepSubnets := []string{vtepIPv4Subnet}
+				bgpAlloc.VTEPSubnet6 = ""
 
 				externalContainer = infraapi.ExternalContainer{
 					Name:    namespace + "-iperf",
@@ -1956,12 +1942,11 @@ write_files:
 					shortName,
 					ipFamilies,
 					&cudn.Spec.Network,
-					ipVRFAgnhostSubnets,
-					vtepSubnets,
+					bgpAlloc,
 					bgpASN,
 					"br"+shortName,
 					"vx"+shortName,
-					shortName+"-vtep",
+					sharedNodeIPsVTEPName,
 					&externalMACVRFContainer,
 					externalMACVRFContainer.Name,
 					&externalContainer,
@@ -2309,12 +2294,8 @@ ip route add %[3]s via %[4]s
 				role:     udnv1.NetworkRolePrimary,
 				ingress:  "routed",
 				evpn: &udnv1.EVPNConfig{
-					MACVRF: &udnv1.VRFConfig{
-						VNI: macVRFVNI,
-					},
-					IPVRF: &udnv1.VRFConfig{
-						VNI: ipVRFVNI,
-					},
+					MACVRF: &udnv1.VRFConfig{},
+					IPVRF:  &udnv1.VRFConfig{},
 				},
 			}),
 			Entry(nil, testData{
