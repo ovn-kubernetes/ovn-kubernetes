@@ -2194,6 +2194,7 @@ spec:
 			Spec: v1.ServiceSpec{
 				Selector: labels,
 				Type:     v1.ServiceTypeNodePort,
+				IPFamilyPolicy:        ptr.To(v1.IPFamilyPolicyPreferDualStack),
 				ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyLocal,
 				Ports: []v1.ServicePort{
 					{
@@ -2367,6 +2368,7 @@ spec:
 			Spec: v1.ServiceSpec{
 				Selector: labels,
 				Type:     v1.ServiceTypeNodePort,
+				IPFamilyPolicy:        ptr.To(v1.IPFamilyPolicyPreferDualStack),
 				ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyLocal,
 				Ports: []v1.ServicePort{
 					{
