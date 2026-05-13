@@ -46,6 +46,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 const (
@@ -1948,16 +1949,23 @@ func newNodePortWatcher(
 func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 	if (config.IsModeDPU() || config.IsModeFull()) && ovsClient != nil {
 		// NicToBridge() may be created before-hand, only delete the patch port here
-		stdout, stderr, err := util.RunOVSVsctl("--columns=name", "--no-heading", "find", "port",
-			"external_ids:ovn-localnet-port!=_")
+		ports, err := ovsops.FindOVSPortsWithPredicate(ovsClient, func(p *vswitchd.Port) bool {
+			_, ok := p.ExternalIDs["ovn-localnet-port"]
+			return ok
+		})
 		if err != nil {
-			return fmt.Errorf("failed to get ovn-localnet-port port stderr:%s (%v)", stderr, err)
+			return fmt.Errorf("failed to list ovn-localnet-port ports: %w", err)
 		}
-		ports := strings.Fields(strings.Trim(stdout, "\""))
 		for _, port := range ports {
-			_, stderr, err := util.RunOVSVsctl("--if-exists", "del-port", strings.Trim(port, "\""))
+			bridge, err := ovsops.GetBridgeContainingPort(ovsClient, port.Name)
 			if err != nil {
-				return fmt.Errorf("failed to delete port %s stderr:%s (%v)", port, stderr, err)
+				if errors.Is(err, libovsdbclient.ErrNotFound) {
+					continue
+				}
+				return fmt.Errorf("failed to find bridge for port %s: %w", port.Name, err)
+			}
+			if err := ovsops.DeletePortWithInterfaces(ovsClient, bridge.Name, port.Name); err != nil {
+				return fmt.Errorf("failed to delete port %s: %w", port.Name, err)
 			}
 		}
 
@@ -1990,7 +1998,7 @@ func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 			return nil
 		}
 
-		_, stderr, err = util.AddOFFlowWithSpecificAction(bridgeName, util.NormalAction)
+		_, stderr, err := util.AddOFFlowWithSpecificAction(bridgeName, util.NormalAction)
 		if err != nil {
 			return fmt.Errorf("failed to replace-flows on bridge %q stderr:%s (%v)", bridgeName, stderr, err)
 		}
