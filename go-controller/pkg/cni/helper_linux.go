@@ -25,8 +25,12 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-kubernetes/libovsdb/client"
+
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 func addRoute(ipn *net.IPNet, gw net.IP, dev netlink.Link, mtu, table int) error {
@@ -477,27 +481,36 @@ func setupSriovInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 	return hostIface, contIface, nil
 }
 
-func getPfEncapIP(deviceID string) (string, error) {
+func getPfEncapIP(ovsClient client.Client, deviceID string) (string, error) {
+	ovs, err := ovsops.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		return "", fmt.Errorf("failed to get Open_vSwitch row: %v", err)
+	}
+	return parsePfEncapIPMapping(ovs.ExternalIDs["ovn-pf-encap-ip-mapping"], deviceID)
+}
+
+// getPfEncapIPShellOut is the shell-out variant used by the unprivileged CNI
+// shim, which has no libovsdb client.
+func getPfEncapIPShellOut(deviceID string) (string, error) {
 	stdout, err := ovsGet("Open_vSwitch", ".", "external_ids", "ovn-pf-encap-ip-mapping")
 	if err != nil {
 		return "", fmt.Errorf("failed to get ovn-pf-encap-ip-mapping, error: %v", err)
 	}
+	return parsePfEncapIPMapping(stdout, deviceID)
+}
 
-	if len(stdout) == 0 {
+func parsePfEncapIPMapping(mapping, deviceID string) (string, error) {
+	if mapping == "" {
 		return "", nil
 	}
-
 	encapIpMapping := map[string]string{}
-	mappings := strings.Split(stdout, ",")
-	for _, mapping := range mappings {
-		tokens := strings.Split(mapping, ":")
+	for _, entry := range strings.Split(mapping, ",") {
+		tokens := strings.Split(entry, ":")
 		if len(tokens) != 2 {
-			return "", fmt.Errorf("bad ovn-pf-encap-ip-mapping config: %s", stdout)
+			return "", fmt.Errorf("bad ovn-pf-encap-ip-mapping config: %s", mapping)
 		}
-
 		encapIpMapping[tokens[0]] = tokens[1]
 	}
-
 	uplinkRepName, err := util.GetUplinkRepresentorName(deviceID)
 	if err != nil {
 		// FIXME(leih): unlikely to happen, treat this as a valid case and ignore for now.
@@ -505,13 +518,204 @@ func getPfEncapIP(deviceID string) (string, error) {
 			deviceID, err)
 		return "", nil
 	}
-
-	encapIP := encapIpMapping[uplinkRepName]
-	return encapIP, nil
+	return encapIpMapping[uplinkRepName], nil
 }
 
-// ConfigureOVS performs OVS configurations in order to set up Pod networking
-func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceName string,
+// ConfigureOVS performs OVS configurations in order to set up Pod networking.
+// When ovsClient is non-nil (ovnkube-node privileged-mode path) it uses
+// libovsdb; when nil (unprivileged CNI shim path) it falls back to ovs-vsctl
+// shell-outs.
+func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podName, podIfName, hostIfaceName string,
+	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, isVFIO bool, getter PodInfoGetter) error {
+	if ovsClient == nil {
+		return configureOVSShellOut(ctx, namespace, podName, podIfName, hostIfaceName, ifInfo, sandboxID, deviceID, isVFIO, getter)
+	}
+	return configureOVSLibovsdb(ctx, ovsClient, namespace, podName, podIfName, hostIfaceName, ifInfo, sandboxID, deviceID, isVFIO, getter)
+}
+
+// configureOVSLibovsdb is the libovsdb-based implementation of ConfigureOVS.
+// Used by the privileged ovnkube-node path where the cache-coherence with
+// subsequent reads/deletes through the same libovsdb client matters.
+func configureOVSLibovsdb(ctx context.Context, ovsClient client.Client, namespace, podName, podIfName, hostIfaceName string,
+	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, isVFIO bool, getter PodInfoGetter) error {
+
+	ifaceID := util.GetIfaceId(namespace, podName)
+	if ifInfo.NetName != types.DefaultNetworkName {
+		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADKey)
+	}
+	initialPodUID := ifInfo.PodUID
+	ipStrs := make([]string, len(ifInfo.IPs))
+	for i, ip := range ifInfo.IPs {
+		ipStrs[i] = ip.String()
+	}
+
+	brInt, err := ovsops.GetBridge(ovsClient, "br-int")
+	if err != nil {
+		return fmt.Errorf("failed to get bridge br-int: %v", err)
+	}
+
+	klog.Infof("ConfigureOVS: namespace: %s, podName: %s, hostIfaceName: %s, network: %s, NAD %s, SandboxID: %q, PCI device ID: %s, UID: %q, MAC: %s, IPs: %v",
+		namespace, podName, hostIfaceName, ifInfo.NetName, ifInfo.NADKey, sandboxID, deviceID, initialPodUID, ifInfo.MAC, ipStrs)
+
+	// Find and remove any existing OVS port with this iface-id. Pods can
+	// have multiple sandboxes if some are waiting for garbage collection,
+	// but only the latest one should have the iface-id set.
+	staleIfaces, err := ovsops.FindInterfacesWithPredicate(ovsClient, func(i *vswitchd.Interface) bool {
+		return i.ExternalIDs["iface-id"] == ifaceID
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list interfaces with iface-id %s: %v", ifaceID, err)
+	}
+	for _, stale := range staleIfaces {
+		if stale.Name == hostIfaceName {
+			// this may be result of restarting ovnkube-node, and it is trying to add the same VF representor to
+			// br-int for the same pod; do not delete port in this case.
+			continue
+		}
+		if err := ovsops.DeletePortWithInterfaces(ovsClient, "br-int", stale.Name); err != nil {
+			klog.Warningf("Failed to delete stale OVS port %q with iface-id %q from br-int: %v",
+				stale.Name, ifaceID, err)
+		}
+	}
+
+	// if the specified port was created for other Pod/NAD, return error
+	if existing, err := ovsops.GetOVSInterface(ovsClient, hostIfaceName); err == nil {
+		existingIfaceID := existing.ExternalIDs["iface-id"]
+		existingNADKey := existing.ExternalIDs[types.NADExternalID]
+		// if NADExternalID does not exist, it is default network
+		if existingNADKey == "" {
+			existingNADKey = types.DefaultNetworkName
+		}
+		if existingIfaceID != ifaceID {
+			return fmt.Errorf("OVS port %s was added for iface-id (%s), now readding it for (%s)", hostIfaceName, existingIfaceID, ifaceID)
+		}
+		if existingNADKey != ifInfo.NADKey {
+			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, existingNADKey, ifInfo.NADKey)
+		}
+	}
+
+	// Add the new sandbox's OVS port, tag the port as transient so stale
+	// pod ports are scrubbed on hard reboot
+	ifaceExtIDs := map[string]string{
+		"attached_mac": ifInfo.MAC.String(),
+		"iface-id":     ifaceID,
+		"iface-id-ver": initialPodUID,
+		"sandbox":      sandboxID,
+	}
+
+	// pod interface name, used to identify CNI request with the same NAD
+	if podIfName != "" {
+		ifaceExtIDs["pod-if-name"] = podIfName
+	}
+
+	// In case of multi-vtep, host has multipe NICs and each NIC has a VTEP interface, the mapping
+	// of VTEP IP to NIC is stored in Open_vSwitch table's `external_ids:ovn-pf-encap-ip-mapping`,
+	// the value's format is:
+	//   enp1s0f0:<vtep-ip1>,enp193s0f0:<vtep-ip2>,enp197s0f0:<vtep-ip3>
+	// Here configure the OVS Interface's encap-ip according to the mapping.
+	if deviceID != "" {
+		encapIP, err := getPfEncapIP(ovsClient, deviceID)
+		if err != nil {
+			return err
+		}
+		if len(encapIP) > 0 {
+			ifaceExtIDs["encap-ip"] = encapIP
+		}
+	}
+
+	// IPAM is optional for secondary flatL2 networks; thus, the ifaces may not
+	// have IP addresses.
+	if len(ifInfo.IPs) > 0 {
+		ifaceExtIDs["ip_addresses"] = strings.Join(ipStrs, ",")
+	}
+
+	iface := &vswitchd.Interface{ExternalIDs: ifaceExtIDs}
+	if brInt.DatapathType == types.DatapathUserspace {
+		if _, err := util.GetSriovnetOps().GetRepresentorPortFlavour(hostIfaceName); err != nil {
+			// The error is not important: the given port is not a switchdev one and won't
+			// be used with DPDK. It can happen for legitimate reason. Keep a trace of the
+			// event and continue configuring OVS.
+			klog.Infof("Port %s cannot be used with DPDK, will use netlink interface in OVS",
+				hostIfaceName)
+		} else {
+			iface.Type = "dpdk"
+			mtu := ifInfo.MTU
+			iface.MTURequest = &mtu
+		}
+	}
+
+	if len(ifInfo.NetdevName) != 0 {
+		// NOTE: For SF representor same external_id is used due to https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3054
+		// Review this line when upgrade mechanism will be implemented
+		ifaceExtIDs["vf-netdev-name"] = ifInfo.NetdevName
+	}
+	if isVFIO {
+		// VFIO case
+		ifaceExtIDs["vf-is-vfio"] = "true"
+	}
+
+	if ifInfo.NetName != types.DefaultNetworkName {
+		ifaceExtIDs[types.NetworkExternalID] = ifInfo.NetName
+		ifaceExtIDs[types.NADExternalID] = ifInfo.NADKey
+	}
+	// For the default network NetworkExternalID/NADExternalID are absent
+	// from ifaceExtIDs; CreateOrUpdatePodPort writes ExternalIDs wholesale
+	// so stale keys from a previous owner are dropped, matching the
+	// original `--if-exists remove` shell-out semantics.
+
+	port := &vswitchd.Port{OtherConfig: map[string]string{"transient": "true"}}
+	if err := ovsops.CreateOrUpdatePodPort(ovsClient, "br-int", hostIfaceName, port, iface); err != nil {
+		return fmt.Errorf("failure in plugging pod interface: %v", err)
+	}
+
+	if err := clearPodBandwidth(sandboxID); err != nil {
+		return err
+	}
+
+	var link netlink.Link
+	if deviceID != "" || (ifInfo.Ingress > 0 || ifInfo.Egress > 0) {
+		if link, err = util.GetNetLinkOps().LinkByName(hostIfaceName); err != nil {
+			return fmt.Errorf("failed to find interface %s: %v", hostIfaceName, err)
+		}
+	}
+
+	if deviceID != "" {
+		// 4. set MTU on the representor
+		if err = util.GetNetLinkOps().LinkSetMTU(link, ifInfo.MTU); err != nil {
+			return fmt.Errorf("failed to set MTU on %s: %v", hostIfaceName, err)
+		}
+		// 5. if the interface is not up, set it to up
+		err = util.GetNetLinkOps().LinkSetUp(link)
+		if err != nil {
+			return fmt.Errorf("failed to set link UP on %s: %v", hostIfaceName, err)
+		}
+	}
+
+	if ifInfo.Ingress > 0 || ifInfo.Egress > 0 {
+		err = netlink.LinkSetTxQLen(link, 1000)
+		if err != nil {
+			return fmt.Errorf("failed to set host veth txqlen: %v", err)
+		}
+
+		if err := setPodBandwidth(sandboxID, hostIfaceName, ifInfo.Ingress, ifInfo.Egress); err != nil {
+			return err
+		}
+	}
+
+	if err := waitForPodInterface(ctx, ifInfo, hostIfaceName, ifaceID, getter,
+		namespace, podName, initialPodUID); err != nil {
+		// Ensure the error shows up in node logs, rather than just
+		// being reported back to the runtime.
+		klog.Warningf("[%s/%s %s] pod uid %s: %v", namespace, podName, sandboxID, initialPodUID, err)
+		return err
+	}
+	return nil
+}
+
+// configureOVSShellOut is the ovs-vsctl-based implementation of ConfigureOVS.
+// Used by the unprivileged CNI shim path which has no libovsdb client and is
+// in-process for the whole CNI invocation (no cache-coherence concern).
+func configureOVSShellOut(ctx context.Context, namespace, podName, podIfName, hostIfaceName string,
 	ifInfo *PodInterfaceInfo, sandboxID, deviceID string, isVFIO bool, getter PodInfoGetter) error {
 
 	ifaceID := util.GetIfaceId(namespace, podName)
@@ -588,7 +792,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 	//   enp1s0f0:<vtep-ip1>,enp193s0f0:<vtep-ip2>,enp197s0f0:<vtep-ip3>
 	// Here configure the OVS Interface's encap-ip according to the mapping.
 	if deviceID != "" {
-		encapIP, err := getPfEncapIP(deviceID)
+		encapIP, err := getPfEncapIPShellOut(deviceID)
 		if err != nil {
 			return err
 		}
@@ -685,7 +889,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 }
 
 type PodRequestInterfaceOps interface {
-	ConfigureInterface(pr *PodRequest, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
+	ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error)
 	UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error
 }
 
@@ -694,7 +898,7 @@ type defaultPodRequestInterfaceOps struct{}
 var podRequestInterfaceOps PodRequestInterfaceOps = &defaultPodRequestInterfaceOps{}
 
 // ConfigureInterface sets up the container interface
-func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error) {
+func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error) {
 	netns, err := ns.GetNS(pr.Netns)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open netns %q: %v", pr.Netns, err)
@@ -721,7 +925,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 	}
 
 	if !ifInfo.IsDPUHostMode {
-		err = ConfigureOVS(pr.ctx, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, pr.IsVFIO, getter)
+		err = ConfigureOVS(pr.ctx, ovsClient, pr.PodNamespace, pr.PodName, pr.IfName, hostIface.Name, ifInfo, pr.SandboxID, pr.CNIConf.DeviceID, pr.IsVFIO, getter)
 		if err != nil {
 			pr.deletePort(hostIface.Name, pr.PodNamespace, pr.PodName)
 			return nil, err

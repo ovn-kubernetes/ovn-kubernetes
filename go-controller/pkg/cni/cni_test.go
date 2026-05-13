@@ -40,7 +40,7 @@ type podRequestInterfaceOpsStub struct {
 	unconfiguredInterfaces []*PodInterfaceInfo
 }
 
-func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ PodInfoGetter, pii *PodInterfaceInfo) ([]*current.Interface, error) {
+func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, _ client.Client, _ PodInfoGetter, pii *PodInterfaceInfo) ([]*current.Interface, error) {
 	if len(pii.IPs) > 0 {
 		return []*current.Interface{
 			{

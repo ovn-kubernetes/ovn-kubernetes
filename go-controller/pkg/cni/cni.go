@@ -205,7 +205,7 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 			}
 		}
 
-		response.Result, err = getCNIResult(pr, clientset, podInterfaceInfo)
+		response.Result, err = getCNIResult(pr, ovsClient, clientset, podInterfaceInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -342,8 +342,8 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 // PodInfoGetter is used to check if sandbox is still valid for the current
 // instance of the pod in the apiserver, see checkCancelSandbox for more info.
 // If kube api is not available from the CNI, pass nil to skip this check.
-func getCNIResult(pr *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
-	interfacesArray, err := podRequestInterfaceOps.ConfigureInterface(pr, getter, podInterfaceInfo)
+func getCNIResult(pr *PodRequest, ovsClient client.Client, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
+	interfacesArray, err := podRequestInterfaceOps.ConfigureInterface(pr, ovsClient, getter, podInterfaceInfo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure pod interface: %v", err)
 	}
