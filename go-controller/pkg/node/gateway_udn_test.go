@@ -695,7 +695,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
@@ -929,7 +929,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
@@ -1129,7 +1129,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
@@ -1371,7 +1371,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface

@@ -157,7 +157,7 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 	}
 
 	if isGWAcclInterface {
-		bridgeName, _, err := util.RunOVSVsctl("port-to-br", intfRep)
+		bridge, err := ovsops.GetBridgeContainingPort(ovsClient, intfRep)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find bridge that has port %s: %w", intfRep, err)
 		}
@@ -165,25 +165,25 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 		if err != nil {
 			return nil, fmt.Errorf("failed to get netdevice link for %s: %w", gwIntf, err)
 		}
-		uplinkName, err := util.GetNicName(bridgeName)
+		uplinkName, err := util.GetNicName(bridge.Name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridgeName, err)
+			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridge.Name, err)
 		}
-		res.bridgeName = bridgeName
+		res.bridgeName = bridge.Name
 		res.uplinkName = uplinkName
 		res.gwIfaceRep = intfRep
 		res.gwIface = gwIntf
 		res.macAddress = link.Attrs().HardwareAddr
-	} else if bridgeName, _, err := util.RunOVSVsctl("port-to-br", intfName); err == nil {
+	} else if bridge, err := ovsops.GetBridgeContainingPort(ovsClient, intfName); err == nil {
 		// This is an OVS bridge's internal port
-		uplinkName, err := util.GetNicName(bridgeName)
+		uplinkName, err := util.GetNicName(bridge.Name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridgeName, err)
+			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridge.Name, err)
 		}
-		res.bridgeName = bridgeName
-		res.gwIface = bridgeName
+		res.bridgeName = bridge.Name
+		res.gwIface = bridge.Name
 		res.uplinkName = uplinkName
-		gwIntf = bridgeName
+		gwIntf = bridge.Name
 	} else if _, err := ovsops.GetBridge(ovsClient, intfName); errors.Is(err, libovsdbclient.ErrNotFound) {
 		// This is not a OVS bridge. We need to create a OVS bridge
 		// and add cluster.GatewayIntf as a port of that bridge.
