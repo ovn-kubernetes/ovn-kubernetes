@@ -639,35 +639,6 @@ func createEVPNExternalContainer(ictx infraapi.Context, container infraapi.Exter
 // MAC-VRF External Container Utilities
 // =============================================================================
 
-// secondToLastIP returns the second-to-last usable IP in the given subnet.
-// Using the high end of the range avoids collisions with both OVN IPAM
-// (which allocates from lower end onwards) and Docker IPAM (which allocates from lower end onwards).
-// This assumes OVN-K CUDN IPAM won't allocate IPs from the top of the subnet range
-// for pods in these e2e tests.
-// Example: "10.100.0.0/24" -> 10.100.0.253, "fd00:100::/64" -> fd00:100::ffff:ffff:ffff:fffe
-func secondToLastIP(ipNet *net.IPNet) net.IP {
-	// Compute broadcast: network OR inverted mask
-	broadcast := make(net.IP, len(ipNet.IP))
-	for i := range ipNet.IP {
-		broadcast[i] = ipNet.IP[i] | ^ipNet.Mask[i]
-	}
-	// Subtract 2 from broadcast to get second-to-last usable IP
-	result := make(net.IP, len(broadcast))
-	copy(result, broadcast)
-	borrow := byte(2)
-	for i := len(result) - 1; i >= 0 && borrow > 0; i-- {
-		diff := int(result[i]) - int(borrow)
-		if diff < 0 {
-			result[i] = byte(diff + 256)
-			borrow = 1
-		} else {
-			result[i] = byte(diff)
-			borrow = 0
-		}
-	}
-	return result
-}
-
 // getMACVRFAgnhostIPsFromSubnets derives MAC-VRF agnhost IPs from CUDN subnets.
 // For each subnet, it returns an IP with host portion set to the high end address.
 // Example: "10.100.0.0/16" -> "10.100.0.253/16", "fd00:100::/64" -> "fd00:100::ffff:ffff:ffff:fffe"
@@ -1313,4 +1284,21 @@ func runEVPNNetworkAndServers(
 	}
 
 	return nil
+}
+
+
+// evpnType2MACIPNLRI is the FRR/BGP print form of a Type-2 (MAC/IP) EVPN route NLRI.
+func evpnType2MACIPNLRI(mac, hostIP string, fam utilnet.IPFamily) string {
+	if fam == utilnet.IPv4 {
+		return fmt.Sprintf("[2]:[0]:[48]:[%s]:[32]:[%s]", mac, hostIP)
+	}
+	return fmt.Sprintf("[2]:[0]:[48]:[%s]:[128]:[%s]", mac, hostIP)
+}
+
+// evpnType3MulticastNLRI is the FRR/BGP print form of a Type-3 (Inclusive Multicast) EVPN route NLRI.
+func evpnType3MulticastNLRI(vtepIP string) string {
+	if utilnet.IsIPv6String(vtepIP) {
+		return fmt.Sprintf("[3]:[0]:[128]:[%s]", vtepIP)
+	}
+	return fmt.Sprintf("[3]:[0]:[32]:[%s]", vtepIP)
 }
