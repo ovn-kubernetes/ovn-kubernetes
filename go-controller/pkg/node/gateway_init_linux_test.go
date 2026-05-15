@@ -43,12 +43,14 @@ import (
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	mgmtportmock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	linkMock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilMock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -148,19 +150,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 		})
 
-		// gateway commands
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
-			Err: fmt.Errorf(""),
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
-			Err: fmt.Errorf(""),
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 br-exists eth0",
-			Err: fmt.Errorf(""),
-		})
+		// gateway commands (port-to-br / br-exists now go through libovsdb)
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 -- --may-exist add-br breth0 -- br-set-external-id breth0 bridge-id breth0 -- br-set-external-id breth0 bridge-uplink eth0 -- set bridge breth0 fail-mode=standalone other_config:hwaddr=" + eth0MAC + " -- --may-exist add-port breth0 eth0 -- set port eth0 other-config:transient=true",
 			Action: func() error {
@@ -383,7 +373,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Expect(err).NotTo(HaveOccurred())
 			Expect(r).NotTo(BeNil())
 
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
@@ -408,6 +398,19 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			ovs, err := ovsops.GetOpenvSwitch(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ovs.ExternalIDs).To(HaveKeyWithValue("ovn-bridge-mappings", types.PhysicalNetworkName+":breth0"))
+			// The libovsdb add-br equivalent should have created breth0 with
+			// the bridge metadata previously asserted via the ovs-vsctl
+			// command sequence (fail-mode, bridge-id/bridge-uplink external_ids,
+			// transient uplink port).
+			gwBr, err := ovsops.GetBridge(ovsClient, "breth0")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gwBr.FailMode).NotTo(BeNil())
+			Expect(*gwBr.FailMode).To(Equal("standalone"))
+			Expect(gwBr.ExternalIDs).To(HaveKeyWithValue("bridge-id", "breth0"))
+			Expect(gwBr.ExternalIDs).To(HaveKeyWithValue("bridge-uplink", "eth0"))
+			uplinkPort, err := ovsops.GetOVSPort(ovsClient, "eth0")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(uplinkPort.OtherConfig).To(HaveKeyWithValue("transient", "true"))
 			err = sharedGw.initFunc()
 			Expect(err).NotTo(HaveOccurred())
 			err = sharedGw.Init(stop, wg)
@@ -612,21 +615,8 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		sriovnetMock.On("GetRepresentorPeerMacAddress", hostRep).Return(ovntest.MustParseMAC(hostMAC), nil)
 		// exec Mocks
 		fexec := ovntest.NewLooseCompareFakeExec()
-		// gatewayInitInternal
-		// BridgeForInterface
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 port-to-br " + brphys,
-			Err: fmt.Errorf(""),
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 port-to-br " + brphys,
-			Err:    fmt.Errorf(""),
-			Output: brphys,
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 br-exists " + brphys,
-			Err: nil,
-		})
+		// gatewayInitInternal — port-to-br / br-exists for brphys are now
+		// served by the libovsdb harness (seeded with Bridge{Name: brphys}).
 		// getIntfName
 		// GetNicName
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -817,10 +807,18 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			// Seed brphys as an existing bridge so bridgeconfig's
+			// libovsdb lookup matches the old "br-exists" success path.
+			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{
+					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"brphys-uuid"}},
+					&vswitchd.Bridge{UUID: "brphys-uuid", Name: brphys},
+				},
+			})
 			Expect(err).NotTo(HaveOccurred())
-			ovsClient, ovsCleanup := newTestOVSClient()
 			defer ovsCleanup.Cleanup()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
+			Expect(err).NotTo(HaveOccurred())
 			sharedGw, err := newGateway(
 				nodeName,
 				ovntest.MustParseIPNets(nodeSubnet),
@@ -1104,19 +1102,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 		})
 
-		// gateway commands
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
-			Err: fmt.Errorf(""),
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
-			Err: fmt.Errorf(""),
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 br-exists eth0",
-			Err: fmt.Errorf(""),
-		})
+		// gateway commands (port-to-br / br-exists now go through libovsdb)
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 -- --may-exist add-br breth0 -- br-set-external-id breth0 bridge-id breth0 -- br-set-external-id breth0 bridge-uplink eth0 -- set bridge breth0 fail-mode=standalone other_config:hwaddr=" + eth0MAC + " -- --may-exist add-port breth0 eth0 -- set port eth0 other-config:transient=true",
 			Action: func() error {
@@ -1332,7 +1318,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(configureGlobalForwarding()).To(Succeed())
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
 			localGw, err := newGateway(
@@ -1989,7 +1975,9 @@ var _ = Describe("Gateway unit tests", func() {
 			netlinkMock.On("LinkByName", mock.Anything).Return(lnk, nil)
 			netlinkMock.On("LinkByIndex", mock.Anything).Return(lnk, nil)
 			netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{*defaultRoute}, nil)
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			ovsClient, ovsCleanup := newTestOVSClient()
+			defer ovsCleanup.Cleanup()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(gatewayIntf).To(Equal(lnkAttr.Name))
 			Expect(gatewayNextHops[0]).To(Equal(gwIPs[0]))
@@ -1999,19 +1987,13 @@ var _ = Describe("Gateway unit tests", func() {
 			ifName := "enf1f0"
 			nextHopCfg := "10.0.0.11"
 
-			fexec := ovntest.NewLooseCompareFakeExec()
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
-				Err: fmt.Errorf(""),
-			})
-			err := util.SetExec(fexec)
-			Expect(err).NotTo(HaveOccurred())
-
 			gwIPs := []net.IP{net.ParseIP(nextHopCfg)}
 			config.Gateway.Interface = ifName
 			config.Gateway.NextHop = nextHopCfg
 
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			ovsClient, ovsCleanup := newTestOVSClient()
+			defer ovsCleanup.Cleanup()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(gatewayIntf).To(Equal(ifName))
 			Expect(gatewayNextHops[0]).To(Equal(gwIPs[0]))
@@ -2021,14 +2003,6 @@ var _ = Describe("Gateway unit tests", func() {
 			ifName := "enf1f0"
 			nextHopCfg := "10.0.0.11,fc00:f853:ccd:e793::1"
 
-			fexec := ovntest.NewLooseCompareFakeExec()
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
-				Err: fmt.Errorf(""),
-			})
-			err := util.SetExec(fexec)
-			Expect(err).NotTo(HaveOccurred())
-
 			nextHops := strings.Split(nextHopCfg, ",")
 			gwIPs := []net.IP{net.ParseIP(nextHops[0]), net.ParseIP(nextHops[1])}
 			config.Gateway.Interface = ifName
@@ -2036,7 +2010,9 @@ var _ = Describe("Gateway unit tests", func() {
 			config.IPv4Mode = true
 			config.IPv6Mode = true
 
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			ovsClient, ovsCleanup := newTestOVSClient()
+			defer ovsCleanup.Cleanup()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(gatewayIntf).To(Equal(ifName))
 			Expect(gatewayNextHops).To(Equal(gwIPs))
@@ -2046,20 +2022,13 @@ var _ = Describe("Gateway unit tests", func() {
 			ifName := "enf1f0"
 			nextHopCfg := "10.0.0.11"
 
-			fexec := ovntest.NewLooseCompareFakeExec()
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
-				Err:    fmt.Errorf(""),
-				Output: "br" + ifName,
-			})
-			err := util.SetExec(fexec)
-			Expect(err).NotTo(HaveOccurred())
-
 			gwIPs := []net.IP{net.ParseIP(nextHopCfg)}
 			config.Gateway.Interface = ifName
 			config.Gateway.NextHop = nextHopCfg
 
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			ovsClient, ovsCleanup := newTestOVSClient()
+			defer ovsCleanup.Cleanup()
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(gatewayIntf).To(Equal(ifName))
 			Expect(gatewayNextHops[0]).To(Equal(gwIPs[0]))
@@ -2089,21 +2058,14 @@ var _ = Describe("Gateway unit tests", func() {
 				netlinkMock.On("LinkByIndex", mock.Anything).Return(lnk, nil)
 				netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{*defaultRoute}, nil)
 
-				fexec := ovntest.NewLooseCompareFakeExec()
-				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
-					Err:    fmt.Errorf(""),
-					Output: "",
-				})
-				err = util.SetExec(fexec)
-				Expect(err).NotTo(HaveOccurred())
-
 				gwIPs := []net.IP{config.Gateway.MasqueradeIPs.V4DummyNextHopMasqueradeIP}
 				config.Gateway.Interface = dummyBridgeName
 				config.Gateway.Mode = config.GatewayModeLocal
 				config.Gateway.AllowNoUplink = true
 
-				gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+				ovsClient, ovsCleanup := newTestOVSClient()
+				defer ovsCleanup.Cleanup()
+				gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(gatewayIntf).To(Equal(dummyBridgeName))
 				Expect(gatewayNextHops[0]).To(Equal(gwIPs[0]))
@@ -2123,20 +2085,13 @@ var _ = Describe("Gateway unit tests", func() {
 				netlinkMock.On("LinkByIndex", mock.Anything).Return(lnk, nil)
 				netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{}, nil)
 
-				fexec := ovntest.NewLooseCompareFakeExec()
-				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
-					Err:    fmt.Errorf(""),
-					Output: "",
-				})
-				err := util.SetExec(fexec)
-				Expect(err).NotTo(HaveOccurred())
-
 				gwIPs := []net.IP{config.Gateway.MasqueradeIPs.V4DummyNextHopMasqueradeIP}
 				config.Gateway.Interface = dummyBridgeName
 				config.Gateway.Mode = config.GatewayModeLocal
 
-				gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+				ovsClient, ovsCleanup := newTestOVSClient()
+				defer ovsCleanup.Cleanup()
+				gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(gatewayIntf).To(Equal(dummyBridgeName))
 				Expect(gatewayNextHops[0]).To(Equal(gwIPs[0]))
@@ -2165,19 +2120,12 @@ var _ = Describe("Gateway unit tests", func() {
 				netlinkMock.On("LinkByIndex", mock.Anything).Return(lnk, nil)
 				netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{*defaultRoute}, nil)
 
-				fexec := ovntest.NewLooseCompareFakeExec()
-				fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
-					Err:    fmt.Errorf(""),
-					Output: "",
-				})
-				err = util.SetExec(fexec)
-				Expect(err).NotTo(HaveOccurred())
-
 				config.Gateway.Interface = dummyBridgeName
 				config.Gateway.Mode = config.GatewayModeLocal
 
-				gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+				ovsClient, ovsCleanup := newTestOVSClient()
+				defer ovsCleanup.Cleanup()
+				gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 				Expect(errors.As(err, new(*GatewayInterfaceMismatchError))).To(BeTrue())
 				Expect(gatewayIntf).To(Equal(""))
 				Expect(gatewayNextHops).To(BeEmpty())
