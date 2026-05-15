@@ -106,6 +106,129 @@ func GetBridgeContainingPort(ovsClient libovsdbclient.Client, portName string) (
 	return nil, fmt.Errorf("no bridge contains port %q: %w", portName, libovsdbclient.ErrNotFound)
 }
 
+// CreateOrUpdateNicBridge creates (or reconfigures) an OVS bridge for an
+// uplink NIC. It sets fail-mode=standalone, the supplied hardware address,
+// and external_ids bridge-id/bridge-uplink on the bridge; attaches the
+// uplink port with other_config:transient=true; and references the bridge
+// from the Open_vSwitch root row.
+//
+// Like `ovs-vsctl add-br`, this also creates the bridge's same-named
+// internal Port/Interface (type=internal); without it, ovs-vswitchd never
+// materialises the kernel netdev and the bridge's `mac_in_use` stays empty.
+//
+// external_ids/other_config are merged key-by-key, so any pre-existing
+// metadata on the bridge or uplink port is preserved. If the uplink port
+// (or the bridge's same-named internal port) already exists on a different
+// bridge the call fails, matching `ovs-vsctl add-port`'s cross-bridge
+// behaviour.
+func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplinkName, hwaddr string) error {
+	// Refuse to silently re-parent any port that's already attached to a
+	// different bridge — ovs-vsctl add-port errors out in that case. This
+	// applies to both the uplink port and the bridge's same-named internal
+	// port.
+	for _, portName := range []string{bridgeName, uplinkName} {
+		if portName == "" {
+			continue
+		}
+		existing, err := GetBridgeContainingPort(ovsClient, portName)
+		if err != nil {
+			if errors.Is(err, libovsdbclient.ErrNotFound) {
+				continue
+			}
+			return fmt.Errorf("failed to check existing bridge for port %q: %w", portName, err)
+		}
+		if existing.Name != bridgeName {
+			return fmt.Errorf("port %q is already attached to bridge %q", portName, existing.Name)
+		}
+	}
+
+	failMode := vswitchd.BridgeFailModeStandalone
+	bridge := &vswitchd.Bridge{
+		Name:     bridgeName,
+		FailMode: &failMode,
+		ExternalIDs: map[string]string{
+			"bridge-id":     bridgeName,
+			"bridge-uplink": uplinkName,
+		},
+		OtherConfig: map[string]string{
+			"hwaddr": hwaddr,
+		},
+	}
+	// Internal bridge port/interface (named after the bridge).
+	internalIface := &vswitchd.Interface{Name: bridgeName, Type: "internal"}
+	internalPort := &vswitchd.Port{Name: bridgeName}
+	// Uplink port/interface.
+	uplinkIface := &vswitchd.Interface{Name: uplinkName}
+	uplinkPort := &vswitchd.Port{
+		Name:        uplinkName,
+		OtherConfig: map[string]string{"transient": "true"},
+	}
+
+	internalIfaceModel := operationModel{
+		Model:          internalIface,
+		OnModelUpdates: []interface{}{&internalIface.Type},
+		DoAfter: func() {
+			internalPort.Interfaces = []string{internalIface.UUID}
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+	internalPortModel := operationModel{
+		Model: internalPort,
+		DoAfter: func() {
+			bridge.Ports = append(bridge.Ports, internalPort.UUID)
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+	uplinkIfaceModel := operationModel{
+		Model: uplinkIface,
+		DoAfter: func() {
+			uplinkPort.Interfaces = []string{uplinkIface.UUID}
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+	uplinkPortModel := operationModel{
+		Model:            uplinkPort,
+		OnModelMutations: []interface{}{&uplinkPort.OtherConfig},
+		DoAfter: func() {
+			bridge.Ports = append(bridge.Ports, uplinkPort.UUID)
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+	ovs := &vswitchd.OpenvSwitch{}
+	bridgeModel := operationModel{
+		Model:            bridge,
+		OnModelUpdates:   []interface{}{&bridge.FailMode},
+		OnModelMutations: []interface{}{&bridge.ExternalIDs, &bridge.OtherConfig, &bridge.Ports},
+		DoAfter: func() {
+			ovs.Bridges = []string{bridge.UUID}
+		},
+		ErrNotFound: false,
+		BulkOp:      false,
+	}
+	ovsModel := operationModel{
+		Model:            ovs,
+		ModelPredicate:   func(*vswitchd.OpenvSwitch) bool { return true },
+		OnModelMutations: []interface{}{&ovs.Bridges},
+		ErrNotFound:      true,
+		BulkOp:           false,
+	}
+
+	m := newModelClient(ovsClient)
+	ops, err := m.CreateOrUpdateOps(nil,
+		internalIfaceModel, internalPortModel,
+		uplinkIfaceModel, uplinkPortModel,
+		bridgeModel, ovsModel)
+	if err != nil {
+		return err
+	}
+	_, err = TransactAndCheck(ovsClient, ops)
+	return err
+}
+
 // GetBridge looks up an OVS bridge by name.
 func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, error) {
 	found := []*vswitchd.Bridge{}

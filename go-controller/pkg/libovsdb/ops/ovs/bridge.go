@@ -28,6 +28,20 @@ func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, 
 	return libovsdbops.GetBridge(ovsClient, name)
 }
 
+// CreateOrUpdateNicBridge: the libovsdb equivalent of the composite
+//
+//	ovs-vsctl -- --may-exist add-br <bridge>
+//	          -- br-set-external-id <bridge> bridge-id <bridge>
+//	          -- br-set-external-id <bridge> bridge-uplink <uplink>
+//	          -- set bridge <bridge> fail-mode=standalone other_config:hwaddr=<hwaddr>
+//	          -- --may-exist add-port <bridge> <uplink>
+//	          -- set port <uplink> other-config:transient=true
+//
+// See libovsdbops.CreateOrUpdateNicBridge for behavioural details.
+func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplinkName, hwaddr string) error {
+	return libovsdbops.CreateOrUpdateNicBridge(ovsClient, bridgeName, uplinkName, hwaddr)
+}
+
 // DeleteBridge deletes an OVS bridge and all its ports/interfaces, and
 // detaches it from the Open_vSwitch root row. It is idempotent: a missing
 // bridge is not an error. This is the libovsdb equivalent of

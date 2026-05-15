@@ -21,19 +21,21 @@ var NicsToBridgeCommand = cli.Command{
 	Name:  "nics-to-bridge",
 	Usage: "Create ovs bridge for nic interfaces",
 	Flags: []cli.Flag{},
-	Action: func(context *cli.Context) error {
-		args := context.Args()
+	Action: func(ctx *cli.Context) error {
+		args := ctx.Args()
 		if args.Len() == 0 {
 			return fmt.Errorf("please specify list of nic interfaces")
 		}
 
-		if err := util.SetSpecificExec(kexec.New(), "ovs-vsctl"); err != nil {
+		ovsClient, err := libovsdb.NewOVSClient(ctx.Context.Done())
+		if err != nil {
+			klog.Errorf("Error initializing ovs client: %v", err)
 			return err
 		}
 
 		var errorList []error
 		for _, nic := range args.Slice() {
-			if _, err := util.NicToBridge(nic); err != nil {
+			if _, err := util.NicToBridge(ovsClient, nic); err != nil {
 				errorList = append(errorList, err)
 			}
 		}

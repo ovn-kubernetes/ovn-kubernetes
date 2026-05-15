@@ -8,13 +8,16 @@ package util
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/vishvananda/netlink"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -236,25 +239,15 @@ func setupDefaultFile() {
 
 // NicToBridge creates a OVS bridge for the 'iface' and also moves the IP
 // address and routes of 'iface' to OVS bridge.
-func NicToBridge(iface string) (string, error) {
+func NicToBridge(ovsClient libovsdbclient.Client, iface string) (string, error) {
 	ifaceLink, err := netLinkOps.LinkByName(iface)
 	if err != nil {
 		return "", err
 	}
 
 	bridge := GetBridgeName(iface)
-	ovsArgs := []string{
-		"--", "--may-exist", "add-br", bridge,
-		"--", "br-set-external-id", bridge, "bridge-id", bridge,
-		"--", "br-set-external-id", bridge, "bridge-uplink", iface,
-		"--", "set", "bridge", bridge, "fail-mode=standalone",
-		fmt.Sprintf("other_config:hwaddr=%s", ifaceLink.Attrs().HardwareAddr),
-		"--", "--may-exist", "add-port", bridge, iface,
-		"--", "set", "port", iface, "other-config:transient=true",
-	}
-	stdout, stderr, err := RunOVSVsctl(ovsArgs...)
-	if err != nil {
-		klog.Errorf("Failed to create OVS bridge, stdout: %q, stderr: %q, error: %v", stdout, stderr, err)
+	if err := ovsops.CreateOrUpdateNicBridge(ovsClient, bridge, iface, ifaceLink.Attrs().HardwareAddr.String()); err != nil {
+		klog.Errorf("Failed to create OVS bridge %q: %v", bridge, err)
 		return "", err
 	}
 	klog.Infof("Successfully created OVS bridge %q", bridge)
@@ -272,9 +265,26 @@ func NicToBridge(iface string) (string, error) {
 		return "", err
 	}
 
-	bridgeLink, err := netLinkOps.LinkByName(bridge)
-	if err != nil {
-		return "", err
+	// Unlike `ovs-vsctl add-br`, the libovsdb transaction returns as soon as
+	// the OVSDB row is committed — ovs-vswitchd may not yet have materialised
+	// the kernel netdev. Poll briefly so callers see the same "bridge ready
+	// for use" semantics as the legacy shell-out.
+	var bridgeLink netlink.Link
+	if err := wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
+		bridgeLink, err = netLinkOps.LinkByName(bridge)
+		if err != nil {
+			var notFound netlink.LinkNotFoundError
+			if errors.As(err, &notFound) {
+				// netdev hasn't materialised yet; keep polling.
+				return false, nil
+			}
+			// Any other error (netlink socket issue, etc.) is not
+			// going to be fixed by waiting — exit immediately.
+			return false, err
+		}
+		return true, nil
+	}); err != nil {
+		return "", fmt.Errorf("bridge %q netdev did not appear: %w", bridge, err)
 	}
 
 	// save ip addresses to bridge.

@@ -150,18 +150,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 		})
 
-		// gateway commands (port-to-br / br-exists now go through libovsdb)
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 -- --may-exist add-br breth0 -- br-set-external-id breth0 bridge-id breth0 -- br-set-external-id breth0 bridge-uplink eth0 -- set bridge breth0 fail-mode=standalone other_config:hwaddr=" + eth0MAC + " -- --may-exist add-port breth0 eth0 -- set port eth0 other-config:transient=true",
-			Action: func() error {
-				return testNS.Do(func(ns.NetNS) error {
-					defer GinkgoRecover()
-					_, err = netlink.LinkByName("br" + eth0Name)
-					Expect(err).NotTo(HaveOccurred())
-					return nil
-				})
-			},
-		})
+		// gateway commands (port-to-br / br-exists / add-br now go through libovsdb)
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd:    "sysctl -w net.ipv4.conf.breth0.forwarding = 1",
@@ -1071,27 +1060,18 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 		})
 
-		// gateway commands (port-to-br / br-exists now go through libovsdb)
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 -- --may-exist add-br breth0 -- br-set-external-id breth0 bridge-id breth0 -- br-set-external-id breth0 bridge-uplink eth0 -- set bridge breth0 fail-mode=standalone other_config:hwaddr=" + eth0MAC + " -- --may-exist add-port breth0 eth0 -- set port eth0 other-config:transient=true",
-			Action: func() error {
-				return testNS.Do(func(ns.NetNS) error {
-					defer GinkgoRecover()
-
-					// Create breth0 as a dummy link
-					err := netlink.LinkAdd(&netlink.Dummy{
-						LinkAttrs: netlink.LinkAttrs{
-							Name:         "br" + eth0Name,
-							HardwareAddr: ovntest.MustParseMAC(eth0MAC),
-						},
-					})
-					Expect(err).NotTo(HaveOccurred())
-					_, err = netlink.LinkByName("br" + eth0Name)
-					Expect(err).NotTo(HaveOccurred())
-					return nil
-				})
-			},
-		})
+		// gateway commands (port-to-br / br-exists / add-br now go through libovsdb).
+		// NicToBridge no longer creates the kernel bridge link as a shell-out
+		// side effect; pre-create the dummy directly.
+		Expect(testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			return netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name:         "br" + eth0Name,
+					HardwareAddr: ovntest.MustParseMAC(eth0MAC),
+				},
+			})
+		})).To(Succeed())
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd:    "sysctl -w net.ipv4.conf.breth0.forwarding = 1",

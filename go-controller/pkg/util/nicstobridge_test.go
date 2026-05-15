@@ -4,7 +4,6 @@
 package util
 
 import (
-	"bytes"
 	"fmt"
 	"testing"
 
@@ -15,7 +14,6 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
-	mock_k8s_io_utils_exec "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/utils/exec"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
@@ -343,42 +341,40 @@ func TestSaveRoute(t *testing.T) {
 }
 
 func TestNicToBridge(t *testing.T) {
-	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
-	mockExecRunner := new(mocks.ExecRunner)
-	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-	// below is defined in ovs.go
-	RunCmdExecRunner = mockExecRunner
-	// note runner is defined in ovs.go file
-	runner = &execHelper{exec: mockKexecIface}
-
 	mockNetLinkOps := new(mocks.NetLinkOps)
 	mockLink := new(netlink_mocks.Link)
 	// below is defined in net_linux.go
 	netLinkOps = mockNetLinkOps
+
+	rootOvs := func() []libovsdbtest.TestData {
+		return []libovsdbtest.TestData{&vswitchd.OpenvSwitch{UUID: "root-ovs"}}
+	}
+
 	tests := []struct {
 		desc                     string
 		inpIface                 string
 		outBridge                string
 		errExp                   bool
-		onRetArgsExecUtilsIface  *ovntest.TestifyMockHelper
-		onRetArgsKexecIface      *ovntest.TestifyMockHelper
+		initialOvsData           []libovsdbtest.TestData
 		onRetArgsNetLinkLibOpers []ovntest.TestifyMockHelper
 		onRetArgsLinkIfaceOpers  []ovntest.TestifyMockHelper
 	}{
 		{
-			desc:     "invalid interface name fails to return a link",
-			inpIface: "",
-			errExp:   true,
+			desc:           "invalid interface name fails to return a link",
+			inpIface:       "",
+			errExp:         true,
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
 		},
 		{
-			desc:                    "RunOVSVsctl fails to create OVS bridge",
-			inpIface:                "eth0",
-			errExp:                  true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("RunOVSVsctl error")}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:     "bridge creation fails when Open_vSwitch root row is missing",
+			inpIface: "eth0",
+			errExp:   true,
+			// No Open_vSwitch root row → CreateOrUpdateNicBridge mutates a
+			// non-existent row and fails.
+			initialOvsData: []libovsdbtest.TestData{},
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 			},
@@ -387,11 +383,10 @@ func TestNicToBridge(t *testing.T) {
 			},
 		},
 		{
-			desc:                    "IP address retrieval for link fails",
-			inpIface:                "eth0",
-			errExp:                  true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:           "IP address retrieval for link fails",
+			inpIface:       "eth0",
+			errExp:         true,
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
@@ -401,11 +396,10 @@ func TestNicToBridge(t *testing.T) {
 			},
 		},
 		{
-			desc:                    "Route retrieval for link fails",
-			inpIface:                "eth0",
-			errExp:                  true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:           "Route retrieval for link fails",
+			inpIface:       "eth0",
+			errExp:         true,
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
@@ -416,10 +410,9 @@ func TestNicToBridge(t *testing.T) {
 			},
 		},
 		{
-			desc:                    "Retrieving link by bridge name fails",
-			errExp:                  true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:           "Retrieving link by bridge name fails",
+			errExp:         true,
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
@@ -431,10 +424,9 @@ func TestNicToBridge(t *testing.T) {
 			},
 		},
 		{
-			desc:                    "Saving IP address to bridge fails",
-			errExp:                  true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:           "Saving IP address to bridge fails",
+			errExp:         true,
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{}, nil}},
@@ -447,10 +439,9 @@ func TestNicToBridge(t *testing.T) {
 			},
 		},
 		{
-			desc:                    "Saving routes to bridge fails",
-			errExp:                  true,
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:           "Saving routes to bridge fails",
+			errExp:         true,
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{}, nil}},
@@ -465,9 +456,10 @@ func TestNicToBridge(t *testing.T) {
 			},
 		},
 		{
-			desc:                    "IP address and Routes of interface to OVS bridge succeeds",
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 31, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 32, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
+			desc:           "IP address and Routes of interface to OVS bridge succeeds",
+			inpIface:       "eth0",
+			outBridge:      "breth0",
+			initialOvsData: rootOvs(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{}, nil}},
@@ -485,26 +477,22 @@ func TestNicToBridge(t *testing.T) {
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			if tc.onRetArgsExecUtilsIface != nil {
-				ovntest.ProcessMockFn(&mockExecRunner.Mock, *tc.onRetArgsExecUtilsIface)
-			}
-			if tc.onRetArgsKexecIface != nil {
-				ovntest.ProcessMockFn(&mockKexecIface.Mock, *tc.onRetArgsKexecIface)
-			}
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
-			res, err := NicToBridge(tc.inpIface)
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: tc.initialOvsData})
+			require.NoError(t, err, "harness setup")
+			t.Cleanup(cleanup.Cleanup)
+
+			res, err := NicToBridge(ovsClient, tc.inpIface)
 			t.Log(res, err)
 			if tc.errExp {
 				require.Error(t, err)
 				assert.Empty(t, res)
 			} else {
 				require.NoError(t, err)
-				assert.NotEmpty(t, res)
+				assert.Equal(t, tc.outBridge, res)
 			}
-			mockKexecIface.AssertExpectations(t)
-			mockExecRunner.AssertExpectations(t)
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
 		})
@@ -620,10 +608,10 @@ func TestBridgeToNic(t *testing.T) {
 			},
 		},
 		{
-			desc:                     "deletes bridge and removes patch peer from br-int; non-patch ports are ignored",
-			inpBridge:                "breth0",
-			errExp:                   false,
-			initialOvsData:           bridgeWithPatch(),
+			desc:           "deletes bridge and removes patch peer from br-int; non-patch ports are ignored",
+			inpBridge:      "breth0",
+			errExp:         false,
+			initialOvsData: bridgeWithPatch(),
 			expectedOvsData: []libovsdbtest.TestData{
 				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{brIntUUID}},
 				&vswitchd.Bridge{UUID: brIntUUID, Name: "br-int"},
@@ -652,7 +640,7 @@ func TestBridgeToNic(t *testing.T) {
 				matcher := libovsdbtest.HaveData(tc.expectedOvsData)
 				ok, mErr := matcher.Match(ovsClient)
 				assert.True(t, ok, matcher.FailureMessage(ovsClient))
-				assert.NoError(t, mErr)
+				require.NoError(t, mErr)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
