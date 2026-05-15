@@ -328,6 +328,40 @@ func TestCreateOrUpdatePodPort(t *testing.T) {
 	})
 }
 
+func TestCreateOrUpdateNicBridge(t *testing.T) {
+	t.Run("creates bridge with hwaddr, fail-mode, and bridge-id/bridge-uplink external_ids", func(t *testing.T) {
+		ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{&vswitchd.OpenvSwitch{UUID: "root-ovs"}},
+		})
+		if err != nil {
+			t.Fatalf("harness setup: %v", err)
+		}
+		t.Cleanup(cleanup.Cleanup)
+
+		const hwaddr = "aa:bb:cc:dd:ee:ff"
+		if err := CreateOrUpdateNicBridge(ovsClient, "breth0", "eth0", hwaddr); err != nil {
+			t.Fatalf("CreateOrUpdateNicBridge: %v", err)
+		}
+
+		br, err := GetBridge(ovsClient, "breth0")
+		if err != nil {
+			t.Fatalf("GetBridge breth0: %v", err)
+		}
+		if br.FailMode == nil || *br.FailMode != "standalone" {
+			t.Errorf("FailMode = %v, want standalone", br.FailMode)
+		}
+		if br.ExternalIDs["bridge-id"] != "breth0" {
+			t.Errorf("ExternalIDs[bridge-id] = %q, want breth0", br.ExternalIDs["bridge-id"])
+		}
+		if br.ExternalIDs["bridge-uplink"] != "eth0" {
+			t.Errorf("ExternalIDs[bridge-uplink] = %q, want eth0", br.ExternalIDs["bridge-uplink"])
+		}
+		if got := br.OtherConfig["hwaddr"]; got != hwaddr {
+			t.Errorf("OtherConfig[hwaddr] = %q, want %q", got, hwaddr)
+		}
+	})
+}
+
 func TestGetOVSPort(t *testing.T) {
 	bridgeUUID := buildNamedUUID()
 	portUUID := buildNamedUUID()

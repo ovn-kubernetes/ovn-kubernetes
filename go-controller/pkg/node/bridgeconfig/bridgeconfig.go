@@ -189,7 +189,7 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 	} else if _, err := ovsops.GetBridge(ovsClient, intfName); errors.Is(err, libovsdbclient.ErrNotFound) {
 		// This is not a OVS bridge. We need to create a OVS bridge
 		// and add cluster.GatewayIntf as a port of that bridge.
-		bridgeName, err := util.NicToBridge(intfName)
+		bridgeName, err := util.NicToBridge(ovsClient, intfName)
 		if err != nil {
 			return nil, fmt.Errorf("nicToBridge failed for %s: %w", intfName, err)
 		}
