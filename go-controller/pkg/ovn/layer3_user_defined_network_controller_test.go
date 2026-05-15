@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	udngenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -1498,10 +1500,14 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	sr1 := expectedGRStaticRoute(staticRoute1, netInfo.Subnets()[0].CIDR.String(), dummyMasqueradeIP().IP.String(), nil, nil, netInfo)
 	if netInfo.TopologyType() == types.Layer2Topology {
 		gwRouterLRPUUID = fmt.Sprintf("%s%s-UUID", types.RouterToTransitRouterPrefix, gwRouterName)
-		grOptions["lb_force_snat_ip"] = gwRouterJoinIPAddress().IP.String()
 		transitRouteOutputPort := types.RouterToTransitRouterPrefix + netInfo.GetNetworkScopedGWRouterName(nodeName)
 		trInfo := getTestTransitRouterInfo(netInfo)
 		sr1 = expectedGRStaticRoute(staticRoute1, netInfo.Subnets()[0].CIDR.String(), trInfo.transitRouterNets[0].IP.String(), nil, &transitRouteOutputPort, netInfo)
+	}
+	if netInfo.IsUserDefinedNetwork() {
+		grOptions = expectedUDNGWRouterOptions(netInfo, gwConfig)
+	} else if netInfo.TopologyType() == types.Layer2Topology {
+		grOptions["lb_force_snat_ip"] = gwRouterJoinIPAddress().IP.String()
 	}
 	nextHopIP := gwConfig.NextHops[0].String()
 	nextHopMasqIP := nextHopMasqueradeIP().String()
@@ -1530,6 +1536,27 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	expectedEntities = append(expectedEntities, newNATEntry(nat1, dummyMasqueradeIP().IP.String(), gwRouterJoinIPAddress().IP.String(), standardNonDefaultNetworkExtIDs(netInfo), ""))
 	expectedEntities = append(expectedEntities, newNATEntry(nat2, dummyMasqueradeIP().IP.String(), netInfo.Subnets()[0].CIDR.String(), standardNonDefaultNetworkExtIDs(netInfo), ""))
 	return expectedEntities
+}
+
+func expectedUDNGatewayRouterMasqueradeIPString(netInfo util.NetInfo) string {
+	networkID := netInfo.GetNetworkID()
+	if networkID == types.InvalidID {
+		// Some test expectations still build NetInfo directly from NetConf; real
+		// UDN controllers get the network ID from the annotated NAD.
+		var err error
+		networkID, err = strconv.Atoi(userDefinedNetworkID)
+		Expect(err).NotTo(HaveOccurred())
+	}
+	masqIPs, err := udngenerator.GetUDNGatewayMasqueradeIPs(networkID)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(masqIPs).NotTo(BeEmpty())
+	return strings.Join(util.IPNetsIPToStringSlice(masqIPs), " ")
+}
+
+func expectedUDNGWRouterOptions(netInfo util.NetInfo, gwConfig util.L3GatewayConfig) map[string]string {
+	options := gwRouterOptions(gwConfig)
+	options["lb_force_snat_ip"] = expectedUDNGatewayRouterMasqueradeIPString(netInfo)
+	return options
 }
 
 func expectedStaticMACBindings(gwRouterName string, ips []net.IP) []libovsdbtest.TestData {
