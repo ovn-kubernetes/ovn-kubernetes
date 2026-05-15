@@ -347,6 +347,9 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				netConf := netInfo.netconf()
 				networkConfig, err := util.NewNetInfo(netConf)
 				Expect(err).NotTo(HaveOccurred())
+				mutableNetworkConfig := util.NewMutableNetInfo(networkConfig)
+				mutableNetworkConfig.SetNetworkID(2)
+				networkConfig = mutableNetworkConfig
 
 				fakeNetworkManager := &testnm.FakeNetworkManager{
 					PrimaryNetworks: map[string]util.NetInfo{},
@@ -676,6 +679,9 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			netConf := netInfo.netconf()
 			networkConfig, err := util.NewNetInfo(netConf)
 			Expect(err).NotTo(HaveOccurred())
+			mutableNetworkConfig := util.NewMutableNetInfo(networkConfig)
+			mutableNetworkConfig.SetNetworkID(2)
+			networkConfig = mutableNetworkConfig
 
 			nad, err := newNetworkAttachmentDefinition(
 				ns,
