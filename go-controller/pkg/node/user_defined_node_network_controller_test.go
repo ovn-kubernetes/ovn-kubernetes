@@ -41,6 +41,7 @@ import (
 	v1mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -191,7 +192,20 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		// Skip the encap-update path inside addressManager.sync() — these tests
 		// don't fake ovn-appctl and aren't exercising encap reconciliation.
 		config.Default.EncapIP = "test-encap-ip"
-		ovsClient, ovsCleanup = newTestOVSClient()
+		var ovsErr error
+		ovsClient, ovsCleanup, ovsErr = libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"breth0-uuid"}},
+				&vswitchd.Bridge{
+					UUID:  "breth0-uuid",
+					Name:  "breth0",
+					Ports: []string{"breth0-port-uuid", "eth0-port-uuid"},
+				},
+				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0"},
+				&vswitchd.Port{UUID: "eth0-port-uuid", Name: "eth0"},
+			},
+		})
+		Expect(ovsErr).NotTo(HaveOccurred())
 		// Use a larger masq subnet to allow OF manager to allocate IPs for UDNs.
 		config.Gateway.V6MasqueradeSubnet = "fd69::/112"
 		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
@@ -375,11 +389,6 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			// need this for getGatewayNextHops
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
-				Output: "breth0",
-			})
 			setManagementPortFakeCommands(fexec, nodeName)
 			setUpGatewayFakeOVSCommands(fexec)
 			deleteStaleManagementPortFakeCommands(fexec, mgtPort)
@@ -388,7 +397,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 			setUpUDNOpenflowManagerFakeOVSCommands(fexec)
 			getDeletionFakeOVSCommands(fexec, mgtPort)
 
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface

@@ -49,6 +49,7 @@ import (
 	v1mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -137,10 +138,6 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 }
 
 func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 port-to-br breth0",
-		Output: "breth0",
-	})
 	// getIntfName
 	// GetNicName
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -332,7 +329,20 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// Skip the encap-update path inside addressManager.sync() — these tests
 		// don't fake ovn-appctl and aren't exercising encap reconciliation.
 		config.Default.EncapIP = "test-encap-ip"
-		ovsClient, ovsCleanup = newTestOVSClient()
+		var ovsErr error
+		ovsClient, ovsCleanup, ovsErr = libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+			OVSData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"breth0-uuid"}},
+				&vswitchd.Bridge{
+					UUID:  "breth0-uuid",
+					Name:  "breth0",
+					Ports: []string{"breth0-port-uuid", "eth0-port-uuid"},
+				},
+				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0"},
+				&vswitchd.Port{UUID: "eth0-port-uuid", Name: "eth0"},
+			},
+		})
+		Expect(ovsErr).NotTo(HaveOccurred())
 		// Ensure gateway tests never rely on host iptables binaries.
 		util.SetFakeIPTablesHelpers()
 
@@ -617,12 +627,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
 
-		// need this for getGatewayNextHops
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
-			Output: "breth0",
-		})
-
 		setManagementPortFakeCommands(fexec, nodeName)
 		setUpGatewayFakeOVSCommands(fexec)
 		deleteStaleManagementPortFakeCommands(fexec, mgtPort)
@@ -695,7 +699,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
@@ -855,12 +859,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
 
-		// need this for getGatewayNextHops
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
-			Output: "breth0",
-		})
-
 		setManagementPortFakeCommands(fexec, nodeName)
 		setUpGatewayFakeOVSCommands(fexec)
 		deleteStaleManagementPortFakeCommands(fexec, mgtPort)
@@ -929,7 +927,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
@@ -1057,12 +1055,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 
-		// need this for getGatewayNextHops
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
-			Output: "breth0",
-		})
-
 		setManagementPortFakeCommands(fexec, nodeName)
 		setUpGatewayFakeOVSCommands(fexec)
 		deleteStaleManagementPortFakeCommands(fexec, mgtPort)
@@ -1129,7 +1121,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
@@ -1292,12 +1284,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mutableNetInfo := util.NewMutableNetInfo(netInfo)
 		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{node.Name: {netName}})
-		// need this for getGatewayNextHops
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
-			Output: "breth0",
-		})
-
 		setManagementPortFakeCommands(fexec, nodeName)
 		setUpGatewayFakeOVSCommands(fexec)
 		deleteStaleManagementPortFakeCommands(fexec, mgtPort)
@@ -1371,7 +1357,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(nil)
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			// create dummy management interface
