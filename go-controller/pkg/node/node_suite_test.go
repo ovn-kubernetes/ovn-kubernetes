@@ -6,7 +6,11 @@ package node
 import (
 	"testing"
 
+	"github.com/spf13/afero"
+
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,3 +30,7 @@ func TestNodeSuite(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Node Suite")
 }
+
+var _ = BeforeEach(func() {
+	util.AppFs = afero.NewMemMapFs()
+})

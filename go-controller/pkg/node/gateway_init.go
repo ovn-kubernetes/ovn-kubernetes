@@ -374,19 +374,18 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 	return nc.validateVTEPInterfaceMTU()
 }
 
-// interfaceForEXGW takes the interface requested to act as exgw bridge
-// and returns the name of the bridge if exists, or the interface itself
-// if the bridge needs to be created. In this last scenario, BridgeForInterface
-// will create the bridge.
+// interfaceForEXGW returns the name of the bridge if it exists and is correctly configured,
+// otherwise it returns the interface name to trigger NicToBridge repair logic.
 func interfaceForEXGW(intfName string) string {
 	if _, _, err := util.RunOVSVsctl("br-exists", intfName); err == nil {
-		// It's a bridge
 		return intfName
 	}
 
 	bridge := util.GetBridgeName(intfName)
 	if _, _, err := util.RunOVSVsctl("br-exists", bridge); err == nil {
-		// not a bridge, but the corresponding bridge was already created
+		if actualBridge, _, err := util.RunOVSVsctl("port-to-br", intfName); err != nil || strings.TrimSpace(actualBridge) != bridge {
+			return intfName
+		}
 		return bridge
 	}
 	return intfName
