@@ -14,7 +14,8 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
-// ListBridges looks up all ovs bridges from the cache
+// ListBridges looks up all ovs bridges from the cache.
+// Equivalent: `ovs-vsctl list-br`.
 func ListBridges(ovsClient libovsdbclient.Client) ([]*vswitchd.Bridge, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 	defer cancel()
@@ -24,11 +25,15 @@ func ListBridges(ovsClient libovsdbclient.Client) ([]*vswitchd.Bridge, error) {
 }
 
 // GetBridge looks up an OVS bridge by name.
+// Equivalent: `ovs-vsctl br-exists <name>` + `ovs-vsctl list Bridge <name>`.
 func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, error) {
 	return libovsdbops.GetBridge(ovsClient, name)
 }
 
-// CreateOrUpdateNicBridge: the libovsdb equivalent of the composite
+// CreateOrUpdateNicBridge ensures an OVS bridge exists with the given uplink
+// port and configuration. See libovsdbops.CreateOrUpdateNicBridge for the
+// columns touched and edge-case semantics.
+// Equivalent:
 //
 //	ovs-vsctl -- --may-exist add-br <bridge>
 //	          -- br-set-external-id <bridge> bridge-id <bridge>
@@ -36,8 +41,6 @@ func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, 
 //	          -- set bridge <bridge> fail-mode=standalone other_config:hwaddr=<hwaddr>
 //	          -- --may-exist add-port <bridge> <uplink>
 //	          -- set port <uplink> other-config:transient=true
-//
-// See libovsdbops.CreateOrUpdateNicBridge for behavioural details.
 func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplinkName, hwaddr string) error {
 	return libovsdbops.CreateOrUpdateNicBridge(ovsClient, bridgeName, uplinkName, hwaddr)
 }
