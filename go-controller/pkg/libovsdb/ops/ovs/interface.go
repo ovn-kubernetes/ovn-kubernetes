@@ -16,11 +16,13 @@ import (
 type interfacePredicate func(*vswitchd.Interface) bool
 
 // GetOVSInterface looks up an OVS interface by name.
+// Equivalent: `ovs-vsctl find Interface name=<name>`.
 func GetOVSInterface(ovsClient libovsdbclient.Client, name string) (*vswitchd.Interface, error) {
 	return libovsdbops.GetOVSInterface(ovsClient, name)
 }
 
-// ListInterfaces looks up all ovs interfaces from the cache
+// ListInterfaces looks up all ovs interfaces from the cache.
+// Equivalent: `ovs-vsctl list Interface`.
 func ListInterfaces(ovsClient libovsdbclient.Client) ([]*vswitchd.Interface, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 	defer cancel()
@@ -30,7 +32,8 @@ func ListInterfaces(ovsClient libovsdbclient.Client) ([]*vswitchd.Interface, err
 }
 
 // FindInterfacesWithPredicate returns all the ovs interfaces in the cache
-// that matches the lookup function
+// that matches the lookup function.
+// Equivalent: `ovs-vsctl find Interface <conditions>`.
 func FindInterfacesWithPredicate(ovsClient libovsdbclient.Client, p interfacePredicate) ([]*vswitchd.Interface, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 	defer cancel()

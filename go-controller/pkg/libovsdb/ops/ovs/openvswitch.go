@@ -17,6 +17,7 @@ import (
 // GetOpenvSwitch returns the singleton Open_vSwitch row from the cache.
 // When no row exists, the returned error wraps libovsdbclient.ErrNotFound so
 // callers can detect that case via errors.Is.
+// Equivalent: `ovs-vsctl list Open_vSwitch`.
 func GetOpenvSwitch(ovsClient libovsdbclient.Client) (*vswitchd.OpenvSwitch, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 	defer cancel()
