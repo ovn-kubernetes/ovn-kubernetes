@@ -11,7 +11,11 @@ case $(uname -m) in
 esac
 
 # from https://github.com/kubernetes-sigs/kind/releases
-KIND_URL=https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-${ARCH}
+# Use a KIND release that supports building and running the Kubernetes 1.36.2
+# node image used by CI. KIND v0.31.0 also includes containerd 2.1.1+, which
+# the Kubernetes 1.36 ImageVolume e2e coverage requires.
+# See: https://kubernetes.io/blog/2025/04/29/kubernetes-v1-33-image-volume-beta/
+KIND_URL=https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-${ARCH}
 KIND_SHA_URL=$KIND_URL.sha256sum
 KIND_SHA="$( curl -L -s ${KIND_SHA_URL}| awk '{ print $1 }')"
 KIND_DOWNLOAD_RETRIES=5
@@ -72,7 +76,9 @@ rm helm-linux-${ARCH}.tar.gz
 install_kind
 popd # go out of $TMP_DIR
 
-# Build custom kind node image for K8s 1.36 until official images are available
+# Build the Kubernetes v1.36.2 kind node image until official kindest/node
+# images are available. Use KIND v0.31.0 so the generated node
+# image has runtime support for the current conformance test surface.
 # See: https://github.com/kubernetes-sigs/kind/issues/4157
 echo "Building custom kind node image for Kubernetes ${K8S_VERSION}..."
 kind build node-image --image kindest/node:${K8S_VERSION} ${K8S_VERSION}
