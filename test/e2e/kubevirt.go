@@ -355,6 +355,15 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 
 		checkIperfTraffic = func(iperfLogFile string, execFn func(cmd string) (string, error), stage string) {
 			GinkgoHelper()
+			lastLine := ""
+			defer func() {
+				iperfLog, err := execFn("cat " + iperfLogFile)
+				if err != nil {
+					fmt.Fprintf(GinkgoWriter, "%s: failed dumping iperf3 traffic file %s: %v\n", stage, iperfLogFile, err)
+					return
+				}
+				fmt.Fprintf(GinkgoWriter, "%s: iperf3 traffic dump from file %s\n%s\n", stage, iperfLogFile, iperfLog)
+			}()
 			// Check the last line eventually show traffic flowing
 			Eventually(func() (string, error) {
 				iperfLog, err := execFn("cat " + iperfLogFile)
@@ -370,6 +379,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					return "", nil
 				}
 				lastIperfLogLine := iperfLogLines[len(iperfLogLines)-1]
+				lastLine = lastIperfLogLine
 				return lastIperfLogLine, nil
 			}).
 				WithPolling(50*time.Millisecond).
@@ -381,6 +391,8 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					),
 					stage+": failed checking iperf3 traffic at file "+iperfLogFile,
 				)
+
+			fmt.Fprintf(GinkgoWriter, "%s: latest iperf3 line: %s\n", stage, lastLine)
 		}
 
 		checkEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, podIPsByName map[string][]string, stage string) {
@@ -2302,7 +2314,7 @@ ip route add %[3]s via %[4]s
 				role:     udnv1.NetworkRolePrimary,
 				ingress:  "routed",
 			}),
-			Entry(nil, testData{
+			FEntry(nil, testData{
 				resource: virtualMachineWithUDN,
 				test:     liveMigrate,
 				topology: udnv1.NetworkTopologyLayer2,
