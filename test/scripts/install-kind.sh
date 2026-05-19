@@ -11,7 +11,7 @@ case $(uname -m) in
 esac
 
 # from https://github.com/kubernetes-sigs/kind/releases
-KIND_URL=https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-${ARCH}
+KIND_URL=https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-${ARCH}
 KIND_SHA_URL=$KIND_URL.sha256sum
 KIND_SHA="$( curl -L -s ${KIND_SHA_URL}| awk '{ print $1 }')"
 KIND_DOWNLOAD_RETRIES=5
@@ -72,9 +72,10 @@ rm helm-linux-${ARCH}.tar.gz
 install_kind
 popd # go out of $TMP_DIR
 
-# Build custom kind node image for K8s 1.36 until official images are available
+# Build the Kubernetes node image until official kindest/node images are
+# available.
 # See: https://github.com/kubernetes-sigs/kind/issues/4157
-echo "Building custom kind node image for Kubernetes ${K8S_VERSION}..."
+echo "Building kind node image for Kubernetes ${K8S_VERSION}..."
 kind build node-image --image kindest/node:${K8S_VERSION} ${K8S_VERSION}
 
 pushd $SCRIPT_DIR/../../contrib
