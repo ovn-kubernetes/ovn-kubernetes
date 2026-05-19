@@ -20,6 +20,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	nbdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -104,10 +105,10 @@ type controller struct {
 
 func (c *controller) AddNetwork(network util.NetInfo) error {
 	c.Lock()
-	defer c.Unlock()
 
 	networkID := network.GetNetworkID()
 	if c.networkIDs[networkID] != "" {
+		c.Unlock()
 		return fmt.Errorf("already tracking network %q with ID %d",
 			c.networkIDs[networkID],
 			networkID,
@@ -119,6 +120,7 @@ func (c *controller) AddNetwork(network util.NetInfo) error {
 		// this shouldn't happen as the network ID is correlated uniquely with
 		// the network name, but do the check anyway in case this is not being
 		// handled correctly
+		c.Unlock()
 		return fmt.Errorf("already tracking network name %q", name)
 	}
 
@@ -127,9 +129,16 @@ func (c *controller) AddNetwork(network util.NetInfo) error {
 	if network.IsDefault() {
 		c.tables[unix.RT_TABLE_MAIN] = networkID
 	}
+	networks := make([]string, 0, len(c.networks))
+	for name := range c.networks {
+		networks = append(networks, name)
+	}
+	c.Unlock()
 
 	c.log.V(5).Info("Started tracking network", "name", name, "id", networkID)
-	c.reconcile(name)
+	for _, name := range networks {
+		c.reconcile(name)
+	}
 
 	return nil
 }
@@ -154,12 +163,13 @@ func (c *controller) NeedsReconciliation(network util.NetInfo) bool {
 	c.RLock()
 	defer c.RUnlock()
 
-	if c.networks[network.GetNetworkName()] == nil {
+	current := c.networks[network.GetNetworkName()]
+	if current == nil {
 		return false
 	}
 
-	// TODO check if overlay mode changed
-	return false
+	return util.IsPodNetworkAdvertisedAtNode(current, c.node) != util.IsPodNetworkAdvertisedAtNode(network, c.node) ||
+		current.Transport() != network.Transport()
 }
 
 func (c *controller) ReconcileNetwork(name string) error {
@@ -248,8 +258,7 @@ func (c *controller) syncRouteUpdate(update *netlink.RouteUpdate) {
 	}
 
 	table := update.Table
-	network := c.getNetworkForTable(table)
-	if network != nil {
+	for _, network := range c.getNetworksForTable(table) {
 		c.reconcile(network.GetNetworkName())
 	}
 }
@@ -322,40 +331,46 @@ func (c *controller) syncNetwork(network string) error {
 		return nil
 	}
 
-	// get the table from the network VRF. Note we go to netlink for this as
-	// source of truth instead of using c.tables cache which is just a hint for
-	// syncRouteUpdate. This avoids implementing a more complicated logic to
-	// mantain c.tables
-	table, err := c.getRoutingTableForNetwork(network)
-	if err != nil {
-		return fmt.Errorf("failed to get VRF table from network: %w", err)
-	}
-	if table == noTable {
-		// no VRF exists yet for the network
-		return nil
-	}
-
-	// sneakily set the hint for syncRouteUpdate. Handles this sequence of events:
-	// 1. link create event
-	// 2. add Network
-	// 3. Route update event <- we wouldn't know the network of a table to add
-	//    routes to
-	c.Lock()
-	c.setTableForNetworkUnlocked(info.GetNetworkID(), table)
-	c.Unlock()
-
-	var ignoreSubnets []*net.IPNet
-	if info.Transport() != types.NetworkTransportNoOverlay {
-		// if the network is overlay mode, skip routes to the pod network
-		ignoreSubnets = make([]*net.IPNet, len(info.Subnets()))
-		for i, subnet := range info.Subnets() {
-			ignoreSubnets[i] = subnet.CIDR
+	expected := sets.New[route]()
+	if util.IsPodNetworkAdvertisedAtNode(info, c.node) {
+		// get the table from the network VRF. Note we go to netlink for this as
+		// source of truth instead of using c.tables cache which is just a hint for
+		// syncRouteUpdate. This avoids implementing a more complicated logic to
+		// mantain c.tables
+		table, err := c.getRoutingTableForNetwork(network)
+		if err != nil {
+			return fmt.Errorf("failed to get VRF table from network: %w", err)
 		}
-	}
+		if table == noTable {
+			// no VRF exists yet for the network
+			return nil
+		}
 
-	expected, err := c.getBGPRoutes(table, ignoreSubnets)
-	if err != nil {
-		return err
+		// sneakily set the hint for syncRouteUpdate. Handles this sequence of events:
+		// 1. link create event
+		// 2. add Network
+		// 3. Route update event <- we wouldn't know the network of a table to add
+		//    routes to
+		c.Lock()
+		if !isDPUMainTableFallback(info, table) {
+			c.setTableForNetworkUnlocked(info.GetNetworkID(), table)
+		}
+		c.Unlock()
+
+		var ignoreSubnets []*net.IPNet
+		if info.Transport() != types.NetworkTransportNoOverlay {
+			// if the network is overlay mode, skip routes to the pod network
+			ignoreSubnets = make([]*net.IPNet, len(info.Subnets()))
+			for i, subnet := range info.Subnets() {
+				ignoreSubnets[i] = subnet.CIDR
+			}
+		}
+		ignoreSubnets = append(ignoreSubnets, c.getOtherNetworkSubnets(info.GetNetworkName())...)
+
+		expected, err = c.getBGPRoutes(table, ignoreSubnets)
+		if err != nil {
+			return err
+		}
 	}
 
 	router := info.GetNetworkScopedGWRouterName(c.node)
@@ -433,6 +448,9 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet) (sets.S
 
 	routes := sets.New[route]()
 	for _, nlroute := range nlroutes {
+		if nlroute.Dst == nil {
+			continue
+		}
 		if util.IsContainedInAnyCIDR(nlroute.Dst, ignoreSubnets...) {
 			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
 			continue
@@ -486,6 +504,11 @@ func (c *controller) getRoutingTableForNetwork(name string) (int, error) {
 	vrf := util.GetNetworkVRFName(network)
 	link, err := c.netlink.LinkByName(vrf)
 	if c.netlink.IsLinkNotFoundError(err) {
+		if config.IsModeDPU() {
+			// DPU mode may not have a per-network VRF even when the network is
+			// advertised. FRR learns those routes in the main table instead.
+			return unix.RT_TABLE_MAIN, nil
+		}
 		// unknown link, will reconcile later if link is updated
 		return noTable, nil
 	}
@@ -502,13 +525,70 @@ func (c *controller) getRoutingTableForNetwork(name string) (int, error) {
 	return int(vrfLink.Table), nil
 }
 
-func (c *controller) getNetworkForTable(table int) util.NetInfo {
+func (c *controller) getNetworksForTable(table int) []util.NetInfo {
 	c.RLock()
 	defer c.RUnlock()
+	if table == unix.RT_TABLE_MAIN && config.IsModeDPU() {
+		// In DPU mode, advertised networks that do not have a known VRF table
+		// use the main table as the source of BGP-learned routes.
+		networks := make([]util.NetInfo, 0, len(c.networks))
+		for _, network := range c.networks {
+			if !util.IsPodNetworkAdvertisedAtNode(network, c.node) {
+				continue
+			}
+			if network.IsDefault() || !c.hasTableForNetworkUnlocked(network.GetNetworkID()) {
+				networks = append(networks, network)
+			}
+		}
+		return networks
+	}
 	if network, known := c.tables[table]; known {
-		return c.networks[c.networkIDs[network]]
+		if network := c.networks[c.networkIDs[network]]; network != nil {
+			if util.IsPodNetworkAdvertisedAtNode(network, c.node) {
+				return []util.NetInfo{network}
+			}
+		}
 	}
 	return nil
+}
+
+func (c *controller) hasTableForNetworkUnlocked(networkID int) bool {
+	for _, id := range c.tables {
+		if id == networkID {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *controller) getOtherNetworkSubnets(networkName string) []*net.IPNet {
+	c.RLock()
+	defer c.RUnlock()
+
+	var subnets []*net.IPNet
+	for name, network := range c.networks {
+		if name == networkName {
+			continue
+		}
+		subnets = append(subnets, cidrsFromNetworkEntries(network.Subnets())...)
+	}
+	return subnets
+}
+
+func cidrsFromNetworkEntries(entries []config.CIDRNetworkEntry) []*net.IPNet {
+	subnets := make([]*net.IPNet, 0, len(entries))
+	for _, entry := range entries {
+		if entry.CIDR != nil {
+			subnets = append(subnets, entry.CIDR)
+		}
+	}
+	return subnets
+}
+
+func isDPUMainTableFallback(network util.NetInfo, table int) bool {
+	return config.IsModeDPU() &&
+		!network.IsDefault() &&
+		table == unix.RT_TABLE_MAIN
 }
 
 // setTableForNetworkUnlocked needs to be called with lock

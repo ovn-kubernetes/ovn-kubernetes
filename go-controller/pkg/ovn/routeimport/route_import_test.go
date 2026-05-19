@@ -6,6 +6,7 @@ package routeimport
 import (
 	"errors"
 	"net"
+	"sort"
 	"sync"
 	"testing"
 
@@ -38,6 +39,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 
 	defaultNetwork := &util.DefaultNetInfo{}
+	defaultNetwork.SetPodNetworkAdvertisedVRFs(map[string][]string{node: []string{types.DefaultNetworkName}})
 	defaultNetworkRouter := defaultNetwork.GetNetworkScopedGWRouterName(node)
 	defaultNetworkRouterPort := types.GWRouterToExtSwitchPrefix + defaultNetworkRouter
 
@@ -58,6 +60,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	udn.On("Subnets").Return(nil)
 	udn.On("GetNetworkScopedGWRouterName", node).Return("router")
 	udn.On("Transport").Return("")
+	udn.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 
 	cudn := &multinetworkmocks.NetInfo{}
 	cudn.On("IsDefault").Return(false)
@@ -66,6 +69,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	cudn.On("Subnets").Return(nil)
 	cudn.On("GetNetworkScopedGWRouterName", node).Return("router")
 	cudn.On("Transport").Return("")
+	cudn.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 
 	// Create CUDN with subnets for overlay mode testing
 	cudnOverlay := &multinetworkmocks.NetInfo{}
@@ -83,8 +87,28 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	cudnOverlay.On("GetNetworkScopedGWRouterName", node).Return("cudn-overlay-router")
 	cudnOverlay.On("Transport").Return("") // Empty means overlay (geneve)
+	cudnOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 	cudnOverlayRouter := cudnOverlay.GetNetworkScopedGWRouterName(node)
 	cudnOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnOverlayRouter
+
+	cudnUnadvertised := &multinetworkmocks.NetInfo{}
+	cudnUnadvertised.On("IsDefault").Return(false)
+	cudnUnadvertised.On("GetNetworkName").Return(types.CUDNPrefix + "cudn-unadvertised")
+	cudnUnadvertised.On("GetNetworkID").Return(6)
+	cudnUnadvertised.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(192, 169, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+	})
+	cudnUnadvertised.On("GetNetworkScopedGWRouterName", node).Return("cudn-unadvertised-router")
+	cudnUnadvertised.On("Transport").Return("")
+	cudnUnadvertised.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(nil)
+	cudnUnadvertisedRouter := cudnUnadvertised.GetNetworkScopedGWRouterName(node)
+	cudnUnadvertisedRouterPort := types.GWRouterToExtSwitchPrefix + cudnUnadvertisedRouter
 
 	// Create CUDN with subnets for no-overlay mode testing
 	cudnNoOverlay := &multinetworkmocks.NetInfo{}
@@ -102,8 +126,26 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	cudnNoOverlay.On("GetNetworkScopedGWRouterName", node).Return("cudn-nooverlay-router")
 	cudnNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	cudnNoOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 	cudnNoOverlayRouter := cudnNoOverlay.GetNetworkScopedGWRouterName(node)
 	cudnNoOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnNoOverlayRouter
+
+	otherCUDNNoOverlay := &multinetworkmocks.NetInfo{}
+	otherCUDNNoOverlay.On("IsDefault").Return(false)
+	otherCUDNNoOverlay.On("GetNetworkName").Return(types.CUDNPrefix + "other-cudn-nooverlay")
+	otherCUDNNoOverlay.On("GetNetworkID").Return(5)
+	otherCUDNNoOverlay.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(172, 16, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+	})
+	otherCUDNNoOverlay.On("GetNetworkScopedGWRouterName", node).Return("other-cudn-nooverlay-router")
+	otherCUDNNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	otherCUDNNoOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 
 	type fields struct {
 		networkIDs map[int]string
@@ -121,6 +163,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 		routes           []netlink.Route
 		link             netlink.Link
 		noOverlayEnabled bool
+		dpuMode          bool
 		linkErr          bool
 		routesErr        bool
 		wantErr          bool
@@ -275,6 +318,35 @@ func Test_controller_syncNetwork(t *testing.T) {
 			},
 		},
 		{
+			name:             "ignores other network routes on the default network",
+			noOverlayEnabled: true,
+			args:             args{"default"},
+			fields: fields{
+				networkIDs: map[int]string{0: "default", 4: types.CUDNPrefix + "cudn-nooverlay"},
+				networks: map[string]util.NetInfo{
+					"default":                           defaultNetwork,
+					types.CUDNPrefix + "cudn-nooverlay": cudnNoOverlay,
+				},
+			},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("10.128.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+				{Dst: ovntesting.MustParseIPNet("192.168.1.0/24"), Gw: ovntesting.MustParseIP("3.3.3.1")},
+				{Dst: ovntesting.MustParseIPNet("172.30.1.0/24"), Gw: ovntesting.MustParseIP("4.4.4.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1", "add-1", "add-2"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "10.128.1.0/24", Nexthop: "2.2.2.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-2", IPPrefix: "172.30.1.0/24", Nexthop: "4.4.4.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
 			name: "ignores CUDN pod subnet routes in overlay mode",
 			args: args{types.CUDNPrefix + "cudn-overlay"},
 			fields: fields{
@@ -296,11 +368,33 @@ func Test_controller_syncNetwork(t *testing.T) {
 			},
 		},
 		{
+			name: "removes imported routes when network is not advertised",
+			args: args{types.CUDNPrefix + "cudn-unadvertised"},
+			fields: fields{
+				networkIDs: map[int]string{6: types.CUDNPrefix + "cudn-unadvertised"},
+				networks:   map[string]util.NetInfo{types.CUDNPrefix + "cudn-unadvertised": cudnUnadvertised},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: cudnUnadvertisedRouter, StaticRoutes: []string{"remove"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "remove", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &cudnUnadvertisedRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: cudnUnadvertisedRouter},
+			},
+		},
+		{
 			name: "adds CUDN pod subnet routes in no-overlay mode",
 			args: args{types.CUDNPrefix + "cudn-nooverlay"},
 			fields: fields{
-				networkIDs: map[int]string{4: types.CUDNPrefix + "cudn-nooverlay"},
-				networks:   map[string]util.NetInfo{types.CUDNPrefix + "cudn-nooverlay": cudnNoOverlay},
+				networkIDs: map[int]string{0: "default", 4: types.CUDNPrefix + "cudn-nooverlay", 5: types.CUDNPrefix + "other-cudn-nooverlay"},
+				networks: map[string]util.NetInfo{
+					"default":                                 defaultNetwork,
+					types.CUDNPrefix + "cudn-nooverlay":       cudnNoOverlay,
+					types.CUDNPrefix + "other-cudn-nooverlay": otherCUDNNoOverlay,
+				},
 			},
 			link: &netlink.Vrf{Table: 4},
 			initial: []libovsdb.TestData{
@@ -309,12 +403,69 @@ func Test_controller_syncNetwork(t *testing.T) {
 			},
 			routes: []netlink.Route{
 				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("10.128.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
 				{Dst: ovntesting.MustParseIPNet("192.168.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+				{Dst: ovntesting.MustParseIPNet("172.16.1.0/24"), Gw: ovntesting.MustParseIP("3.3.3.1")},
+				{Dst: ovntesting.MustParseIPNet("172.30.1.0/24"), Gw: ovntesting.MustParseIP("4.4.4.1")},
 			},
 			expected: []libovsdb.TestData{
-				&nbdb.LogicalRouter{UUID: "router", Name: cudnNoOverlayRouter, StaticRoutes: []string{"keep-1", "add-1"}},
+				&nbdb.LogicalRouter{UUID: "router", Name: cudnNoOverlayRouter, StaticRoutes: []string{"keep-1", "add-1", "add-2"}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "192.168.1.0/24", Nexthop: "2.2.2.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-2", IPPrefix: "172.30.1.0/24", Nexthop: "4.4.4.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
+			name:    "imports overlay CUDN external routes from the main table in DPU mode",
+			dpuMode: true,
+			args:    args{types.CUDNPrefix + "cudn-overlay"},
+			fields: fields{
+				networkIDs: map[int]string{0: "default", 3: types.CUDNPrefix + "cudn-overlay", 5: types.CUDNPrefix + "other-cudn-nooverlay"},
+				networks: map[string]util.NetInfo{
+					"default":                                 defaultNetwork,
+					types.CUDNPrefix + "cudn-overlay":         cudnOverlay,
+					types.CUDNPrefix + "other-cudn-nooverlay": otherCUDNNoOverlay,
+				},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: cudnOverlayRouter},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("10.128.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("192.168.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+				{Dst: ovntesting.MustParseIPNet("172.16.1.0/24"), Gw: ovntesting.MustParseIP("3.3.3.1")},
+				{Dst: ovntesting.MustParseIPNet("172.30.1.0/24"), Gw: ovntesting.MustParseIP("4.4.4.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: cudnOverlayRouter, StaticRoutes: []string{"add-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "172.30.1.0/24", Nexthop: "4.4.4.1", OutputPort: &cudnOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
+			name:    "imports no-overlay CUDN routes from the main table in DPU mode",
+			dpuMode: true,
+			args:    args{types.CUDNPrefix + "cudn-nooverlay"},
+			fields: fields{
+				networkIDs: map[int]string{0: "default", 4: types.CUDNPrefix + "cudn-nooverlay", 5: types.CUDNPrefix + "other-cudn-nooverlay"},
+				networks: map[string]util.NetInfo{
+					"default":                                 defaultNetwork,
+					types.CUDNPrefix + "cudn-nooverlay":       cudnNoOverlay,
+					types.CUDNPrefix + "other-cudn-nooverlay": otherCUDNNoOverlay,
+				},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: cudnNoOverlayRouter},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("10.128.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("192.168.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+				{Dst: ovntesting.MustParseIPNet("172.16.1.0/24"), Gw: ovntesting.MustParseIP("3.3.3.1")},
+				{Dst: ovntesting.MustParseIPNet("172.30.1.0/24"), Gw: ovntesting.MustParseIP("4.4.4.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: cudnNoOverlayRouter, StaticRoutes: []string{"add-1", "add-2"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "192.168.1.0/24", Nexthop: "2.2.2.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-2", IPPrefix: "172.30.1.0/24", Nexthop: "4.4.4.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 			},
 		},
 	}
@@ -324,8 +475,10 @@ func Test_controller_syncNetwork(t *testing.T) {
 
 			// Capture and restore global config value for this subtest
 			origTransport := config.Default.Transport
+			origNodeMode := config.OvnKubeNode.Mode
 			t.Cleanup(func() {
 				config.Default.Transport = origTransport
+				config.OvnKubeNode.Mode = origNodeMode
 			})
 
 			testError := errors.New("test forced error or incorrect test arguments")
@@ -340,13 +493,19 @@ func Test_controller_syncNetwork(t *testing.T) {
 				nlmock.On("LinkByName", util.GetNetworkVRFName(network)).Return(tt.link, nil)
 			}
 
+			table := noTable
+			if tt.link != nil && tt.link.Type() == "vrf" {
+				table = int(tt.link.(*netlink.Vrf).Table)
+			}
+			if tt.dpuMode && network != nil && tt.link == nil && !tt.linkErr {
+				table = unix.RT_TABLE_MAIN
+			}
 			switch {
-			case tt.link == nil || tt.link.Type() != "vrf" || tt.routesErr:
+			case table == noTable || tt.routesErr:
 				nlmock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, testError)
 			default:
-				vrf := tt.link.(*netlink.Vrf)
 				matchFilter := func(r *netlink.Route) bool {
-					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: int(vrf.Table)})
+					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: table})
 				}
 				nlmock.On("RouteListFiltered", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE).
 					Return(tt.routes, nil)
@@ -369,6 +528,9 @@ func Test_controller_syncNetwork(t *testing.T) {
 			if tt.noOverlayEnabled {
 				config.Default.Transport = types.NetworkTransportNoOverlay
 			}
+			if tt.dpuMode {
+				config.OvnKubeNode.Mode = types.NodeModeDPU
+			}
 
 			err = c.syncNetwork(tt.args.network)
 			if tt.wantErr {
@@ -383,7 +545,30 @@ func Test_controller_syncNetwork(t *testing.T) {
 }
 
 func Test_controller_syncRouteUpdate(t *testing.T) {
+	node := "testnode"
 	defaultNetwork := &util.DefaultNetInfo{}
+	defaultNetwork.SetPodNetworkAdvertisedVRFs(map[string][]string{node: []string{types.DefaultNetworkName}})
+	cudnNoOverlay := &multinetworkmocks.NetInfo{}
+	cudnNoOverlay.On("IsDefault").Return(false)
+	cudnNoOverlay.On("GetNetworkName").Return(types.CUDNPrefix + "cudn-nooverlay")
+	cudnNoOverlay.On("GetNetworkID").Return(1)
+	cudnNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	cudnNoOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
+
+	cudnOverlay := &multinetworkmocks.NetInfo{}
+	cudnOverlay.On("IsDefault").Return(false)
+	cudnOverlay.On("GetNetworkName").Return(types.CUDNPrefix + "cudn-overlay")
+	cudnOverlay.On("GetNetworkID").Return(2)
+	cudnOverlay.On("Transport").Return("")
+	cudnOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
+
+	cudnUnadvertised := &multinetworkmocks.NetInfo{}
+	cudnUnadvertised.On("IsDefault").Return(false)
+	cudnUnadvertised.On("GetNetworkName").Return(types.CUDNPrefix + "cudn-unadvertised")
+	cudnUnadvertised.On("GetNetworkID").Return(3)
+	cudnUnadvertised.On("Transport").Return("")
+	cudnUnadvertised.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(nil)
+
 	type fields struct {
 		networkIDs map[int]string
 		networks   map[string]util.NetInfo
@@ -397,6 +582,7 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 		fields   fields
 		args     args
 		expected []string
+		dpuMode  bool
 	}{
 		{
 			name: "ignores route updates with protocol != BGP",
@@ -421,6 +607,22 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			args:     args{&netlink.RouteUpdate{Route: netlink.Route{Protocol: unix.RTPROT_BGP, Table: unix.RT_TABLE_MAIN}}},
 			expected: []string{"default"},
 		},
+		{
+			name:    "processes main table route updates for DPU networks without tables",
+			dpuMode: true,
+			fields: fields{
+				networkIDs: map[int]string{0: "default", 1: types.CUDNPrefix + "cudn-nooverlay", 2: types.CUDNPrefix + "cudn-overlay", 3: types.CUDNPrefix + "cudn-unadvertised"},
+				networks: map[string]util.NetInfo{
+					"default":                              defaultNetwork,
+					types.CUDNPrefix + "cudn-nooverlay":    cudnNoOverlay,
+					types.CUDNPrefix + "cudn-overlay":      cudnOverlay,
+					types.CUDNPrefix + "cudn-unadvertised": cudnUnadvertised,
+				},
+				tables: map[int]int{unix.RT_TABLE_MAIN: 0},
+			},
+			args:     args{&netlink.RouteUpdate{Route: netlink.Route{Protocol: unix.RTPROT_BGP, Table: unix.RT_TABLE_MAIN}}},
+			expected: []string{"default", types.CUDNPrefix + "cudn-nooverlay", types.CUDNPrefix + "cudn-overlay"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -437,13 +639,18 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			matchReconcile := func(g gomega.Gomega, expected []string) {
 				m.Lock()
 				defer m.Unlock()
-				g.Expect(reconciled).To(gomega.Equal(expected))
+				got := append([]string(nil), reconciled...)
+				want := append([]string(nil), expected...)
+				sort.Strings(got)
+				sort.Strings(want)
+				g.Expect(got).To(gomega.Equal(want))
 			}
 			r := controllerutil.NewReconciler(
 				"test",
 				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](0, 0)})
 			c := &controller{
 				log:        testr.New(t),
+				node:       node,
 				networkIDs: tt.fields.networkIDs,
 				networks:   tt.fields.networks,
 				tables:     tt.fields.tables,
@@ -451,6 +658,13 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			}
 			err := controllerutil.Start(r)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
+			origNodeMode := config.OvnKubeNode.Mode
+			t.Cleanup(func() {
+				config.OvnKubeNode.Mode = origNodeMode
+			})
+			if tt.dpuMode {
+				config.OvnKubeNode.Mode = types.NodeModeDPU
+			}
 
 			c.syncRouteUpdate(tt.args.update)
 
@@ -458,6 +672,41 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			g.Consistently(matchReconcile).WithArguments(tt.expected).Should(gomega.Succeed())
 		})
 	}
+}
+
+func Test_controller_NeedsReconciliation(t *testing.T) {
+	node := "testnode"
+	advertised := []string{types.DefaultNetworkName}
+
+	current := &multinetworkmocks.NetInfo{}
+	current.On("GetNetworkName").Return("network")
+	current.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(advertised)
+	current.On("Transport").Return("")
+
+	same := &multinetworkmocks.NetInfo{}
+	same.On("GetNetworkName").Return("network")
+	same.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(advertised)
+	same.On("Transport").Return("")
+
+	notAdvertised := &multinetworkmocks.NetInfo{}
+	notAdvertised.On("GetNetworkName").Return("network")
+	notAdvertised.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(nil)
+	notAdvertised.On("Transport").Return("")
+
+	noOverlay := &multinetworkmocks.NetInfo{}
+	noOverlay.On("GetNetworkName").Return("network")
+	noOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(advertised)
+	noOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+
+	c := &controller{
+		node:     node,
+		networks: map[string]util.NetInfo{"network": current},
+	}
+
+	g := gomega.NewWithT(t)
+	g.Expect(c.NeedsReconciliation(same)).To(gomega.BeFalse())
+	g.Expect(c.NeedsReconciliation(notAdvertised)).To(gomega.BeTrue())
+	g.Expect(c.NeedsReconciliation(noOverlay)).To(gomega.BeTrue())
 }
 
 func Test_controller_syncLinkUpdate(t *testing.T) {
