@@ -436,9 +436,23 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 	for _, subnet := range networkLocalSubnets {
 		if config.IPv6Mode && utilnet.IsIPv6CIDR(subnet) || config.IPv4Mode && utilnet.IsIPv4CIDR(subnet) {
 			ip := udng.GetNodeManagementIP(subnet)
-			var err error
-			var exists bool
-			if exists, err = util.LinkAddrExist(mpLink, ip); err == nil && !exists {
+			if udng.useHostPrefixManagementPortIPs() {
+				ip = util.GetIPNetFullMaskFromIP(ip.IP)
+			}
+			existingIP, err := util.LinkAddrGetIPNet(mpLink, ip.IP)
+			if err != nil {
+				return fmt.Errorf("failed to find management port IP from subnet %s on netdevice %s for network %s, err: %v",
+					subnet, mpLink.Attrs().Name, udng.GetNetworkName(), err)
+			}
+			if existingIP != nil && existingIP.String() != ip.String() {
+				err = util.LinkAddrDel(mpLink, existingIP)
+				if err != nil {
+					return fmt.Errorf("failed to delete stale management port IP %s from netdevice %s for network %s, err: %v",
+						existingIP, mpLink.Attrs().Name, udng.GetNetworkName(), err)
+				}
+				existingIP = nil
+			}
+			if existingIP == nil {
 				err = util.LinkAddrAdd(mpLink, ip, 0, 0, 0)
 			}
 			if err != nil {
@@ -448,6 +462,12 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 		}
 	}
 	return nil
+}
+
+func (udng *UserDefinedNetworkGateway) useHostPrefixManagementPortIPs() bool {
+	return config.Gateway.Mode == config.GatewayModeLocal &&
+		udng.TopologyType() == types.Layer3Topology &&
+		udng.Transport() == types.NetworkTransportNoOverlay
 }
 
 // computeRoutesForUDN returns a list of routes programmed into a given UDN's VRF
@@ -520,6 +540,13 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 	if err != nil {
 		return nil, err
 	}
+	gatewayNextHopRouteFlags := 0
+	if udng.useHostPrefixManagementPortIPs() {
+		// The management port IP is installed with a host prefix to avoid a
+		// connected route for the local pod subnet. Mark routes via the UDN
+		// gateway as on-link so Linux accepts that next hop on this device.
+		gatewayNextHopRouteFlags = int(netlink.FLAG_ONLINK)
+	}
 	for _, localSubnet := range networkLocalSubnets {
 		gwIP := udng.GetNodeGatewayIP(localSubnet)
 		if gwIP == nil {
@@ -537,6 +564,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 			},
 			Gw:    gwIP.IP,
 			Table: udng.vrfTableId,
+			Flags: gatewayNextHopRouteFlags,
 		})
 		if udng.NetInfo.TopologyType() == types.Layer3Topology {
 			for _, clusterSubnet := range udng.Subnets() {
@@ -546,6 +574,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 						Dst:       clusterSubnet.CIDR,
 						Gw:        gwIP.IP,
 						Table:     udng.vrfTableId,
+						Flags:     gatewayNextHopRouteFlags,
 					})
 				}
 			}

@@ -263,6 +263,44 @@ func getDummyOpenflowManager() *openflowManager {
 	return ofm
 }
 
+func generateNoOverlayNAD(networkName, name, namespace, topology, cidr, role, outboundSNAT string) *nadapi.NetworkAttachmentDefinition {
+	return ovntest.GenerateNADWithConfig(name, namespace, fmt.Sprintf(
+		`
+{
+        "cniVersion": "1.1.0",
+        "name": %q,
+        "type": "ovn-k8s-cni-overlay",
+        "topology": %q,
+        "subnets": %q,
+        "mtu": 1300,
+        "netAttachDefName": %q,
+        "role": %q,
+        "transport": %q,
+        "outboundSNAT": %q
+}
+`,
+		networkName,
+		topology,
+		cidr,
+		fmt.Sprintf("%s/%s", namespace, name),
+		role,
+		types.NetworkTransportNoOverlay,
+		outboundSNAT,
+	))
+}
+
+func noOverlayLayer3NetInfo(t *testing.T) util.NetInfo {
+	t.Helper()
+	nad := generateNoOverlayNAD("bluenet", "rednad", "greenamespace",
+		types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary, types.NoOverlaySNATDisabled)
+	ovntest.AnnotateNADWithNetworkID("3", nad)
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		t.Fatalf("failed to parse NAD: %v", err)
+	}
+	return netInfo
+}
+
 var _ = Describe("UserDefinedNetworkGateway", func() {
 	var (
 		netName               = "bluenet"
@@ -1785,6 +1823,124 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(fNPW.SyncServices(services)).NotTo(HaveOccurred(), "must sync services")
 	})
 })
+
+func prepareNoOverlayLocalGatewayTestConfig(t *testing.T) {
+	t.Helper()
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.PrepareTestConfig()
+	})
+	config.Gateway.Mode = config.GatewayModeLocal
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+	config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("172.16.1.0/24", "fd02::/112")
+	config.Gateway.V6MasqueradeSubnet = "fd69::/112"
+	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+}
+
+func TestNoOverlayLocalGatewayUsesHostPrefixManagementPortIPs(t *testing.T) {
+	prepareNoOverlayLocalGatewayTestConfig(t)
+	g := NewWithT(t)
+
+	udnGateway := &UserDefinedNetworkGateway{
+		NetInfo: noOverlayLayer3NetInfo(t),
+	}
+
+	g.Expect(udnGateway.useHostPrefixManagementPortIPs()).To(BeTrue())
+
+	config.Gateway.Mode = config.GatewayModeShared
+	g.Expect(udnGateway.useHostPrefixManagementPortIPs()).To(BeFalse())
+}
+
+func TestNoOverlayLocalGatewayUDNGatewayRoutesUseOnLink(t *testing.T) {
+	prepareNoOverlayLocalGatewayTestConfig(t)
+	g := NewWithT(t)
+
+	udnGateway := &UserDefinedNetworkGateway{
+		NetInfo: noOverlayLayer3NetInfo(t),
+		node: &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker1",
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": `{"bluenet":["100.128.0.0/24", "ae70::/64"]}`,
+				},
+			},
+		},
+		gateway:          &gateway{},
+		vrfTableId:       1007,
+		gwInterfaceIndex: 11,
+	}
+	mpLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "ovn-k8s-mp3", Index: 23}}
+
+	routes, err := udnGateway.computeRoutesForUDN(mpLink)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(routes).To(HaveLen(10))
+	// routes[0]: IPv4 service CIDR route.
+	g.Expect(routes[0].Flags).To(Equal(0))
+
+	// routes[4]: IPv4 ETP/local service masquerade IP route.
+	g.Expect(*routes[4].Dst).To(Equal(*ovntest.MustParseIPNet("169.254.169.3/32")))
+	g.Expect(routes[4].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
+	g.Expect(routes[4].Flags).To(Equal(int(netlink.FLAG_ONLINK)))
+
+	// routes[5]: IPv4 pod CIDR route.
+	g.Expect(*routes[5].Dst).To(Equal(*ovntest.MustParseIPNet("100.128.0.0/16")))
+	g.Expect(routes[5].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
+	g.Expect(routes[5].Flags).To(Equal(int(netlink.FLAG_ONLINK)))
+
+	// routes[6]: IPv6 ETP/local service masquerade IP route.
+	g.Expect(*routes[6].Dst).To(Equal(*ovntest.MustParseIPNet("fd69::3/128")))
+	g.Expect(routes[6].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+	g.Expect(routes[6].Flags).To(Equal(int(netlink.FLAG_ONLINK)))
+
+	// routes[7]: IPv6 pod CIDR route.
+	g.Expect(*routes[7].Dst).To(Equal(*ovntest.MustParseIPNet("ae70::/60")))
+	g.Expect(routes[7].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+	g.Expect(routes[7].Flags).To(Equal(int(netlink.FLAG_ONLINK)))
+
+	config.Gateway.Mode = config.GatewayModeShared
+	routes, err = udnGateway.computeRoutesForUDN(mpLink)
+	g.Expect(err).NotTo(HaveOccurred())
+	// routes[4-7]: same routes are not on-link in shared gateway mode.
+	g.Expect(routes[4].Flags).To(Equal(0))
+	g.Expect(routes[5].Flags).To(Equal(0))
+	g.Expect(routes[6].Flags).To(Equal(0))
+	g.Expect(routes[7].Flags).To(Equal(0))
+}
+
+func TestAdvertisedNoOverlayLocalGatewayRoutesDoNotUseConnectedSubnetPrefix(t *testing.T) {
+	prepareNoOverlayLocalGatewayTestConfig(t)
+	g := NewWithT(t)
+
+	udnGateway := &UserDefinedNetworkGateway{
+		NetInfo: noOverlayLayer3NetInfo(t),
+		node: &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "worker1",
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": `{"bluenet":["100.128.0.0/24", "ae70::/64"]}`,
+				},
+			},
+		},
+		gateway:             &gateway{},
+		vrfTableId:          1007,
+		gwInterfaceIndex:    11,
+		isNetworkAdvertised: true,
+	}
+
+	mpLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "ovn-k8s-mp3", Index: 23}}
+	routes, err := udnGateway.computeRoutesForUDN(mpLink)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(routes).To(HaveLen(10))
+	g.Expect(*routes[5].Dst).To(Equal(*ovntest.MustParseIPNet("100.128.0.0/16")))
+	g.Expect(routes[5].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
+	g.Expect(routes[5].Flags).To(Equal(int(netlink.FLAG_ONLINK)))
+	g.Expect(*routes[7].Dst).To(Equal(*ovntest.MustParseIPNet("ae70::/60")))
+	g.Expect(routes[7].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+	g.Expect(routes[7].Flags).To(Equal(int(netlink.FLAG_ONLINK)))
+}
 
 func TestConstructUDNVRFIPRules(t *testing.T) {
 	if ovntest.NoRoot() {
