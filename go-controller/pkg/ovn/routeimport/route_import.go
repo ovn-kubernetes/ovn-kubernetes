@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -106,6 +107,15 @@ func (c *controller) AddNetwork(network util.NetInfo) error {
 	c.Lock()
 	defer c.Unlock()
 
+	// This controller only imports routes for networks advertised on the
+	// default VRF, which is the VRF the OVN GW is on. EVPN networks are
+	// immutable and never advertise on the default VRF, so skip tracking
+	// them to avoid noop reconciliations.
+	if network.Transport() == types.NetworkTransportEVPN {
+		c.log.V(5).Info("Not tracking EVPN network", "name", network.GetNetworkName())
+		return nil
+	}
+
 	networkID := network.GetNetworkID()
 	if c.networkIDs[networkID] != "" {
 		return fmt.Errorf("already tracking network %q with ID %d",
@@ -154,12 +164,12 @@ func (c *controller) NeedsReconciliation(network util.NetInfo) bool {
 	c.RLock()
 	defer c.RUnlock()
 
-	if c.networks[network.GetNetworkName()] == nil {
+	old := c.networks[network.GetNetworkName()]
+	if old == nil {
 		return false
 	}
 
-	// TODO check if overlay mode changed
-	return false
+	return c.isAdvertisedOnDefaultVRF(network) != c.isAdvertisedOnDefaultVRF(old)
 }
 
 func (c *controller) ReconcileNetwork(name string) error {
@@ -344,18 +354,23 @@ func (c *controller) syncNetwork(network string) error {
 	c.setTableForNetworkUnlocked(info.GetNetworkID(), table)
 	c.Unlock()
 
-	var ignoreSubnets []*net.IPNet
-	if info.Transport() != types.NetworkTransportNoOverlay {
-		// if the network is overlay mode, skip routes to the pod network
-		ignoreSubnets = make([]*net.IPNet, len(info.Subnets()))
-		for i, subnet := range info.Subnets() {
-			ignoreSubnets[i] = subnet.CIDR
+	// we only import routes if network imports default VRF since that is the
+	// only VRF the OVN gateway can use
+	var expected sets.Set[route]
+	if c.isAdvertisedOnDefaultVRF(info) {
+		var ignoreSubnets []*net.IPNet
+		if info.Transport() != types.NetworkTransportNoOverlay {
+			// ignore routes to the pod network unless it is no-overlay mode
+			ignoreSubnets = make([]*net.IPNet, len(info.Subnets()))
+			for i, subnet := range info.Subnets() {
+				ignoreSubnets[i] = subnet.CIDR
+			}
 		}
-	}
 
-	expected, err := c.getBGPRoutes(table, ignoreSubnets)
-	if err != nil {
-		return err
+		expected, err = c.getBGPRoutes(table, ignoreSubnets)
+		if err != nil {
+			return err
+		}
 	}
 
 	router := info.GetNetworkScopedGWRouterName(c.node)
@@ -465,6 +480,10 @@ func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]str
 	}
 	c.log.V(5).Info("Listed OVN routes", "router", router, "routes", stringer{routes}, "took", time.Since(start))
 	return routes, uuids, nil
+}
+
+func (c *controller) isAdvertisedOnDefaultVRF(network util.NetInfo) bool {
+	return slices.Contains(network.GetPodNetworkAdvertisedOnNodeVRFs(c.node), types.DefaultNetworkName)
 }
 
 func (c *controller) getNetwork(network string) util.NetInfo {

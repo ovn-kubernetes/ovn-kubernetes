@@ -37,7 +37,10 @@ func Test_controller_syncNetwork(t *testing.T) {
 		config.Default.ClusterSubnets = origClusterSubnets
 	})
 
+	advertisedOnDefaultVRF := map[string][]string{node: {types.DefaultNetworkName}}
+
 	defaultNetwork := &util.DefaultNetInfo{}
+	defaultNetwork.SetPodNetworkAdvertisedVRFs(advertisedOnDefaultVRF)
 	defaultNetworkRouter := defaultNetwork.GetNetworkScopedGWRouterName(node)
 	defaultNetworkRouterPort := types.GWRouterToExtSwitchPrefix + defaultNetworkRouter
 
@@ -58,6 +61,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	udn.On("Subnets").Return(nil)
 	udn.On("GetNetworkScopedGWRouterName", node).Return("router")
 	udn.On("Transport").Return("")
+	udn.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 
 	cudn := &multinetworkmocks.NetInfo{}
 	cudn.On("IsDefault").Return(false)
@@ -66,6 +70,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	cudn.On("Subnets").Return(nil)
 	cudn.On("GetNetworkScopedGWRouterName", node).Return("router")
 	cudn.On("Transport").Return("")
+	cudn.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 
 	// Create CUDN with subnets for overlay mode testing
 	cudnOverlay := &multinetworkmocks.NetInfo{}
@@ -83,6 +88,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	cudnOverlay.On("GetNetworkScopedGWRouterName", node).Return("cudn-overlay-router")
 	cudnOverlay.On("Transport").Return("") // Empty means overlay (geneve)
+	cudnOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 	cudnOverlayRouter := cudnOverlay.GetNetworkScopedGWRouterName(node)
 	cudnOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnOverlayRouter
 
@@ -102,8 +108,20 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	cudnNoOverlay.On("GetNetworkScopedGWRouterName", node).Return("cudn-nooverlay-router")
 	cudnNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	cudnNoOverlay.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return([]string{types.DefaultNetworkName})
 	cudnNoOverlayRouter := cudnNoOverlay.GetNetworkScopedGWRouterName(node)
 	cudnNoOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnNoOverlayRouter
+
+	udnNotOnDefaultVRF := &multinetworkmocks.NetInfo{}
+	udnNotOnDefaultVRF.On("IsDefault").Return(false)
+	udnNotOnDefaultVRF.On("GetNetworkName").Return("udn-not-default-vrf")
+	udnNotOnDefaultVRF.On("GetNetworkID").Return(5)
+	udnNotOnDefaultVRF.On("Subnets").Return(nil)
+	udnNotOnDefaultVRF.On("GetNetworkScopedGWRouterName", node).Return("not-default-vrf-router")
+	udnNotOnDefaultVRF.On("Transport").Return("")
+	udnNotOnDefaultVRF.On("GetPodNetworkAdvertisedOnNodeVRFs", node).Return(nil)
+	udnNotOnDefaultVRFRouter := udnNotOnDefaultVRF.GetNetworkScopedGWRouterName(node)
+	udnNotOnDefaultVRFRouterPort := types.GWRouterToExtSwitchPrefix + udnNotOnDefaultVRFRouter
 
 	type fields struct {
 		networkIDs map[int]string
@@ -315,6 +333,24 @@ func Test_controller_syncNetwork(t *testing.T) {
 				&nbdb.LogicalRouter{UUID: "router", Name: cudnNoOverlayRouter, StaticRoutes: []string{"keep-1", "add-1"}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "192.168.1.0/24", Nexthop: "2.2.2.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
+			name: "removes routes for network not advertised on default VRF",
+			args: args{"udn-not-default-vrf"},
+			fields: fields{
+				networkIDs: map[int]string{5: "udn-not-default-vrf"},
+				networks:   map[string]util.NetInfo{"udn-not-default-vrf": udnNotOnDefaultVRF},
+			},
+			link: &netlink.Vrf{Table: 5},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: udnNotOnDefaultVRFRouter, StaticRoutes: []string{"remove-1", "keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "remove-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &udnNotOnDefaultVRFRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "5.5.5.0/24", Nexthop: "5.5.5.1"},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: udnNotOnDefaultVRFRouter, StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "5.5.5.0/24", Nexthop: "5.5.5.1"},
 			},
 		},
 	}
