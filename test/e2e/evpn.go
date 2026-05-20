@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1757,6 +1758,33 @@ func verifyBFDState(containerName string, peerIPs []string, expectUp bool) error
 		}
 	}
 	return nil
+}
+
+// getNeighborPfxRcd returns the PfxRcd (received prefix count) for a BGP
+// neighbor from "show bgp l2vpn evpn summary" output on an FRR-K8s pod.
+// Returns 0 if the neighbor is present but not established (e.g. "Idle").
+// Returns an error if the neighbor IP is not found in the summary at all.
+func getNeighborPfxRcd(namespace, podName, containerName, neighborIP string) (int, error) {
+	cmd := vtyshCommand("show bgp l2vpn evpn summary")
+	out, err := e2ekubectl.RunKubectl(namespace,
+		append([]string{"exec", podName, "-c", containerName, "--"}, cmd...)...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get EVPN summary on pod %s: %w", podName, err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != neighborIP {
+			continue
+		}
+		lastField := fields[len(fields)-1]
+		count, parseErr := strconv.Atoi(lastField)
+		if parseErr != nil {
+			// Non-numeric last field means not established (e.g. "Idle", "Active")
+			return 0, nil
+		}
+		return count, nil
+	}
+	return 0, fmt.Errorf("neighbor %s not found in EVPN summary on pod %s", neighborIP, podName)
 }
 
 // setK8NodeLinkDown sets a node's interface down, simulating a link failure.

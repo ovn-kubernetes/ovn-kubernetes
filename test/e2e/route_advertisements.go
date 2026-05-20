@@ -3369,6 +3369,22 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 							fmt.Sprintf("EVPN routes should be present on pod %s before failure injection", pod.Name))
 					}
 
+					ginkgo.By("Verifying spine2 is providing EVPN routes (PfxRcd > 0)")
+					spine2NeighborIP := dualSpine.spine2IPs[0]
+					for _, pod := range frrk8sPods.Items {
+						gomega.Eventually(func() error {
+							pfxRcd, err := getNeighborPfxRcd(frrk8sNamespace, pod.Name, frrK8sContainerName, spine2NeighborIP)
+							if err != nil {
+								return err
+							}
+							if pfxRcd == 0 {
+								return fmt.Errorf("spine2 neighbor %s has PfxRcd=0 on pod %s", spine2NeighborIP, pod.Name)
+							}
+							return nil
+						}).WithTimeout(30*time.Second).WithPolling(2*time.Second).Should(gomega.Succeed(),
+							fmt.Sprintf("spine2 (%s) should have PfxRcd > 0 on pod %s before failure injection", spine2NeighborIP, pod.Name))
+					}
+
 					// ── Step 2: Bring down spine2 ──
 					ginkgo.By("Bringing down spine2 links on all nodes")
 					nodeList, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
@@ -3417,6 +3433,22 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						gomega.Succeed(),
 						"spine1 BFD should remain up while spine2 fails",
 					)
+
+					ginkgo.By("Verifying spine2 EVPN routes are withdrawn (PfxRcd = 0)")
+					for _, pod := range frrk8sPods.Items {
+						gomega.Eventually(func() error {
+							pfxRcd, err := getNeighborPfxRcd(frrk8sNamespace, pod.Name, frrK8sContainerName, spine2NeighborIP)
+							if err != nil {
+								// Neighbor gone from summary entirely is also acceptable
+								return nil
+							}
+							if pfxRcd > 0 {
+								return fmt.Errorf("spine2 neighbor %s still has PfxRcd=%d on pod %s", spine2NeighborIP, pfxRcd, pod.Name)
+							}
+							return nil
+						}).WithTimeout(30*time.Second).WithPolling(2*time.Second).Should(gomega.Succeed(),
+							fmt.Sprintf("spine2 (%s) should have PfxRcd=0 on pod %s after failure", spine2NeighborIP, pod.Name))
+					}
 
 					// ── Step 3: Verify connectivity AFTER failover ──
 					ginkgo.By("Verifying intra-VPN connectivity continues after failover")
