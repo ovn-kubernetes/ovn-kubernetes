@@ -211,6 +211,51 @@ jobs:
         sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
         sudo systemctl restart docker
 
+    - name: Tune system for performance stability
+      run: |
+        echo "=== Applying system tuning for performance test stability ==="
+
+        # CPU governor -> performance (prevent frequency scaling jitter)
+        if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+          for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance | sudo tee "$gov" > /dev/null 2>&1 || true
+          done
+          echo "CPU governor: performance"
+        else
+          echo "No cpufreq interface, skipping governor"
+        fi
+
+        # Disable Transparent Huge Pages (compaction causes latency spikes)
+        if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/enabled > /dev/null
+          echo never | sudo tee /sys/kernel/mm/transparent_hugepage/defrag > /dev/null
+          echo "THP: disabled"
+        fi
+
+        # Disable swap entirely
+        sudo swapoff -a 2>/dev/null || true
+        sudo sysctl -w vm.swappiness=0 2>/dev/null || true
+        echo "Swap: off"
+
+        # Disable ASLR (reduces memory layout variance between runs)
+        sudo sysctl -w kernel.randomize_va_space=0 2>/dev/null || true
+
+        # Tune scheduler for lower jitter
+        sudo sysctl -w kernel.sched_min_granularity_ns=1000000 2>/dev/null || true
+        sudo sysctl -w kernel.sched_wakeup_granularity_ns=1500000 2>/dev/null || true
+
+        # Tune dirty page writeback (prevent I/O storms)
+        sudo sysctl -w vm.dirty_ratio=40 2>/dev/null || true
+        sudo sysctl -w vm.dirty_background_ratio=10 2>/dev/null || true
+
+        echo "=== System tuning applied ==="
+        echo "  swappiness=$(cat /proc/sys/vm/swappiness)"
+        echo "  ASLR=$(cat /proc/sys/kernel/randomize_va_space)"
+        echo "  sched_min_granularity=$(cat /proc/sys/kernel/sched_min_granularity_ns)"
+        if [ -f /sys/kernel/mm/transparent_hugepage/enabled ]; then
+          echo "  THP=$(cat /sys/kernel/mm/transparent_hugepage/enabled)"
+        fi
+
     - name: Download test-image-pr
       uses: actions/download-artifact@v8
       with:
@@ -260,6 +305,11 @@ jobs:
             exit 1
           fi
         done
+
+    - name: Apply CPU pinning and memory limits for KIND nodes
+      run: |
+        source contrib/kind-common.sh
+        setup_perf_isolation
 
     - name: Label 2 random worker nodes for Prometheus
       run: |
