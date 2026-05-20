@@ -1759,9 +1759,8 @@ func verifyBFDState(containerName string, peerIPs []string, expectUp bool) error
 	return nil
 }
 
-// bringDownSpineLink sets a node's interface to the given spine network down,
-// simulating a link failure that triggers BFD fast detection.
-func bringDownSpineLink(nodeName, ifaceName string) error {
+// setK8NodeLinkDown sets a node's interface down, simulating a link failure.
+func setK8NodeLinkDown(nodeName, ifaceName string) error {
 	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
 		[]string{"ip", "link", "set", ifaceName, "down"})
 	if err != nil {
@@ -1771,8 +1770,8 @@ func bringDownSpineLink(nodeName, ifaceName string) error {
 	return nil
 }
 
-// bringUpSpineLink restores a node's interface to the given spine network.
-func bringUpSpineLink(nodeName, ifaceName string) error {
+// setK8NodeLinkUp restores a node's interface.
+func setK8NodeLinkUp(nodeName, ifaceName string) error {
 	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName,
 		[]string{"ip", "link", "set", ifaceName, "up"})
 	if err != nil {

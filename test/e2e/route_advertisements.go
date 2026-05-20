@@ -3381,13 +3381,15 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 							if ifaceName == "" {
 								continue
 							}
-							_ = bringUpSpineLink(node.Name, ifaceName)
+							if err := setK8NodeLinkUp(node.Name, ifaceName); err != nil {
+								framework.Logf("cleanup: failed to restore link %s on %s: %v", ifaceName, node.Name, err)
+							}
 						}
 						return nil
 					})
 					for _, node := range nodeList.Items {
 						ifaceName := dualSpine.nodeSpine2Ifaces[node.Name]
-						gomega.Expect(bringDownSpineLink(node.Name, ifaceName)).To(gomega.Succeed())
+						gomega.Expect(setK8NodeLinkDown(node.Name, ifaceName)).To(gomega.Succeed())
 					}
 
 					// Verify BFD detects the failure. The 5s timeout is well under
@@ -3445,7 +3447,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					ginkgo.By("Restoring spine2 links on all nodes")
 					for _, node := range nodeList.Items {
 						ifaceName := dualSpine.nodeSpine2Ifaces[node.Name]
-						gomega.Expect(bringUpSpineLink(node.Name, ifaceName)).To(gomega.Succeed())
+						gomega.Expect(setK8NodeLinkUp(node.Name, ifaceName)).To(gomega.Succeed())
 					}
 
 					ginkgo.By("Verifying BFD re-establishes on spine2 after restore")
