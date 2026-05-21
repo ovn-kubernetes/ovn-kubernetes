@@ -2226,7 +2226,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				),
 			).To(gomega.Succeed())
 			servers = append(servers, agnhostName)
-		case cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP:
+		case cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP, cudnAdvertisedEVPNOverlappingCIDRSharedVTEP:
 			ginkgo.By("Running an external EVPN network")
 
 			bridgeName := "br" + networkName
@@ -2243,6 +2243,11 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				bgpAlloc.VTEPSubnet = kindV4Subnet
 				vtepName = sharedNodeIPsVTEPName
+				// All networks sharing the same VTEP also share the same bridge and
+				// VXLAN interface on the external FRR; derive names from testName so
+				// every network in the test lands on the same device.
+				bridgeName = "br" + testName
+				vxlanName = "vx" + testName
 			}
 
 			macVRFContainer := infraapi.ExternalContainer{
@@ -2273,6 +2278,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					macVRFNetworkName,
 					&ipVRFContainer,
 					ipVRFNetworkName,
+					networkType == cudnAdvertisedEVPNOverlappingCIDRSharedVTEP,
 				),
 			).To(gomega.Succeed())
 			if networkSpec.EVPN.MACVRF != nil {
@@ -2632,6 +2638,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			var testPod *corev1.Pod
 			var vrfLiteNodeInterfaces map[string]infraapi.NetworkInterface
 			var networkSpec *udnv1.NetworkSpec
+			var testNetworkSpec *udnv1.NetworkSpec
 
 			expectedSNATSourceIP := func(family utilnet.IPFamily, node *corev1.Node) string {
 				ginkgo.GinkgoHelper()
@@ -2652,6 +2659,18 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				}
 				gomega.Expect(expectedNodeIPs).NotTo(gomega.BeEmpty(), "Expected node %s to have an InternalIP for %v", node.Name, family)
 				return expectedNodeIPs[0]
+			}
+
+			getExternalServerIPForFamily := func(server string, family utilnet.IPFamily) string {
+				ginkgo.GinkgoHelper()
+				bgpServerNetwork, err := infraprovider.Get().GetNetwork(server)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+					infraapi.ExternalContainer{Name: server},
+					bgpServerNetwork,
+				)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				return getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
 			}
 
 			getSameNode := func() string {
@@ -2682,6 +2701,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				case networkSpec.Layer2 != nil:
 					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
 				}
+				testNetworkSpec = networkSpec
 
 				testNamespace, externalServers, vrfLiteNodeInterfaces = configureNetworkWithInfra(
 					f,
@@ -2727,14 +2747,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 							ginkgo.By("Ensuring a request from the pod can reach the external servers without being SNATed")
 						}
 						for _, externalServer := range externalServers {
-							bgpServerNetwork, err := infraprovider.Get().GetNetwork(externalServer)
-							gomega.Expect(err).NotTo(gomega.HaveOccurred())
-							iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-								infraapi.ExternalContainer{Name: externalServer},
-								bgpServerNetwork,
-							)
-							gomega.Expect(err).NotTo(gomega.HaveOccurred())
-							serverIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
+							serverIP := getExternalServerIPForFamily(externalServer, family)
 							gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
 							framework.Logf("Checking request from pod reaches server %q", externalServer)
 							testPodToHostnameAndExpect(testPod, serverIP, externalServer)
@@ -2784,14 +2797,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						}
 						ginkgo.By("Ensuring a request from the external servers can reach the pod")
 						for _, externalServer := range externalServers {
-							bgpServerNetwork, err := infraprovider.Get().GetNetwork(externalServer)
-							gomega.Expect(err).NotTo(gomega.HaveOccurred())
-							iface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-								infraapi.ExternalContainer{Name: externalServer},
-								bgpServerNetwork,
-							)
-							gomega.Expect(err).NotTo(gomega.HaveOccurred())
-							serverIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
+							serverIP := getExternalServerIPForFamily(externalServer, family)
 							gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
 							podIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
 								f.ClientSet,
@@ -2978,6 +2984,23 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						return nil
 					}
 
+					// overlappingSpecGen reuses the tested network's topology and subnets
+					// with fresh VNIs to prove VPN-level isolation with overlapping IP
+					// address space. Only appended to otherNetworksToTest when the outer
+					// tested network is cudnAdvertisedEVPNUnmanagedSharedVTEP, so
+					// testNetworkSpec is guaranteed to have an EVPN config here.
+					overlappingSpecGen := func(_ string, _ string, bgpAlloc allocators.BGPAllocation) *udnv1.NetworkSpec {
+						spec := testNetworkSpec.DeepCopy()
+						if spec.EVPN.MACVRF != nil {
+							spec.EVPN.MACVRF.VNI = int32(bgpAlloc.MACVRFVNI)
+						}
+						if spec.EVPN.IPVRF != nil {
+							spec.EVPN.IPVRF.VNI = int32(bgpAlloc.IPVRFVNI)
+						}
+						spec.EVPN.VTEP = ""
+						return spec
+					}
+
 					otherNetworksToTest := []ginkgo.TableEntry{
 						ginkgo.Entry("Default", defaultNetwork, nilNetworkSpecGen),
 						ginkgo.Entry("Layer 3 CUDN VRF-Lite", cudnAdvertisedVRFLite, layer3NetworkSpecGen),
@@ -2992,6 +3015,11 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer3IPVRFNetworkSpecGen),
 						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer2MACVRFNetworkSpecGen),
 						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer2MACVRFIPVRFNetworkSpecGen),
+					}
+					if testedNetworkType == cudnAdvertisedEVPNUnmanagedSharedVTEP {
+						otherNetworksToTest = append(otherNetworksToTest,
+							ginkgo.Entry("CUDN EVPN overlapping subnet shared VTEP", feature.EVPN, cudnAdvertisedEVPNOverlappingCIDRSharedVTEP, overlappingSpecGen),
+						)
 					}
 
 					ginkgo.DescribeTableSubtree("Of type",
@@ -3009,7 +3037,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 
 								otherNetworkSpec := otherNetworkSpecGen(otherUDNIPv4, otherUDNIPv6, otherBGPAlloc)
 								switch {
-								case otherNetworkSpec == nil:
+								case otherNetworkSpec == nil && networkType == defaultNetwork:
 									otherNetworkName = "default"
 								case otherNetworkSpec.Layer3 != nil:
 									otherNetworkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, otherNetworkSpec.Layer3.Subnets...)
@@ -3102,7 +3130,24 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											)
 											gomega.Expect(err).NotTo(gomega.HaveOccurred())
 											gomega.Expect(otherPodIP).ToNot(gomega.BeEmpty())
-											testPodToClientIPNOK(testPod, otherPodIP)
+											testPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+												f.ClientSet,
+												testPod.Namespace,
+												testPod.Name,
+												testNetworkName,
+												family,
+											)
+											gomega.Expect(err).NotTo(gomega.HaveOccurred())
+											gomega.Expect(testPodIP).ToNot(gomega.BeEmpty())
+											if testPodIP == otherPodIP {
+												// Overlapping CUDNs assigned the same IP; verify the tested pod
+												// reaches itself (its own hostname), proving traffic stays within
+												// its own CUDN.
+												framework.Logf("Tested pod and other pod share IP %s; verifying hostname to confirm per-CUDN isolation", otherPodIP)
+												testPodToHostnameAndExpect(testPod, otherPodIP, testPod.Name)
+											} else {
+												testPodToClientIPNOK(testPod, otherPodIP)
+											}
 										},
 									)
 								}
@@ -3123,7 +3168,49 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											)
 											gomega.Expect(err).NotTo(gomega.HaveOccurred())
 											gomega.Expect(testPodIP).ToNot(gomega.BeEmpty())
-											testPodToClientIPNOK(source, testPodIP)
+											sourcePodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+												f.ClientSet,
+												source.Namespace,
+												source.Name,
+												otherNetworkName,
+												family,
+											)
+											gomega.Expect(err).NotTo(gomega.HaveOccurred())
+											gomega.Expect(sourcePodIP).ToNot(gomega.BeEmpty())
+											if sourcePodIP == testPodIP {
+												// Overlapping CUDNs assigned the same IP; verify the other pod
+												// reaches itself (its own hostname) to confirm per-CUDN isolation.
+												framework.Logf("Other pod %s and tested pod share IP %s; verifying hostname to confirm per-CUDN isolation", source.Name, testPodIP)
+												testPodToHostnameAndExpect(source, testPodIP, source.Name)
+											} else {
+												// Source pod has a different IP from the tested pod. In the
+												// overlapping CIDR case, the source's same-network peer may
+												// share the tested pod's IP. If so, when the source curls
+												// testPodIP, routing within the other network delivers the
+												// packet to that peer — not to the tested pod. Determine
+												// which pod is the peer and check its IP.
+												var peerPod *corev1.Pod
+												if source == otherPodSameNode {
+													peerPod = otherPodDiffNode
+												} else {
+													peerPod = otherPodSameNode
+												}
+												peerPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
+													f.ClientSet,
+													peerPod.Namespace,
+													peerPod.Name,
+													otherNetworkName,
+													family,
+												)
+												gomega.Expect(err).NotTo(gomega.HaveOccurred())
+												gomega.Expect(peerPodIP).ToNot(gomega.BeEmpty())
+												if peerPodIP == testPodIP {
+													framework.Logf("Other network peer pod %s and tested pod share IP %s; verifying pod %s reaches its same-network peer, not the tested pod", peerPod.Name, testPodIP, source.Name)
+													testPodToHostnameAndExpect(source, testPodIP, peerPod.Name)
+												} else {
+													testPodToClientIPNOK(source, testPodIP)
+												}
+											}
 										},
 									)
 								}
@@ -3172,6 +3259,29 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											testPodToClientIPNOK(testPod, clusterIP)
 										},
 									)
+								}
+
+								if networkType == cudnAdvertisedEVPNOverlappingCIDRSharedVTEP {
+									// The outer "It can reach external servers on the same network" block already
+									// tests north-south connectivity for the tested network in isolation.
+									// This additional check runs within the "other network is set up" context,
+									// verifying that VNI isolation holds for north-south traffic: even when
+									// the other network shares the same VTEP IP and its external server is
+									// reachable at the same IP, the tested pod still reaches only its own
+									// external server (identified by hostname) rather than the other network's.
+									ginkgo.By("Ensuring the tested network pod reaches its own external servers at the shared IP (north-south VNI isolation)")
+									for _, externalServer := range externalServers {
+										testForIPFamilies(
+											ipFamilySet,
+											func(family utilnet.IPFamily) {
+												ginkgo.GinkgoHelper()
+												serverIP := getExternalServerIPForFamily(externalServer, family)
+												gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
+												framework.Logf("Ensuring testPod reaches its external server %q at shared IP %s (IPv%v)", externalServer, serverIP, family)
+												testPodToHostnameAndExpect(testPod, serverIP, externalServer)
+											},
+										)
+									}
 								}
 							})
 						},
@@ -3799,13 +3909,14 @@ func runBGPNetworkAndServer(
 type networkType string
 
 const (
-	defaultNetwork                        networkType = "DEFAULT"
-	udn                                   networkType = "UDN"
-	cudn                                  networkType = "CUDN"
-	cudnAdvertised                        networkType = "CUDN_ADVERTISED"
-	cudnAdvertisedVRFLite                 networkType = "CUDN_ADVERTISED_VRFLITE"
-	cudnAdvertisedEVPNUnmanagedSharedVTEP networkType = "CUDN_ADVERTISED_EVPN_UNMANAGED_SHARED_VTEP"
-	cudnAdvertisedEVPNUnmanagedRandomVTEP networkType = "CUDN_ADVERTISED_EVPN_UNMANAGED_RANDOM_VTEP"
+	defaultNetwork                              networkType = "DEFAULT"
+	udn                                         networkType = "UDN"
+	cudn                                        networkType = "CUDN"
+	cudnAdvertised                              networkType = "CUDN_ADVERTISED"
+	cudnAdvertisedVRFLite                       networkType = "CUDN_ADVERTISED_VRFLITE"
+	cudnAdvertisedEVPNUnmanagedSharedVTEP       networkType = "CUDN_ADVERTISED_EVPN_UNMANAGED_SHARED_VTEP"
+	cudnAdvertisedEVPNUnmanagedRandomVTEP       networkType = "CUDN_ADVERTISED_EVPN_UNMANAGED_RANDOM_VTEP"
+	cudnAdvertisedEVPNOverlappingCIDRSharedVTEP networkType = "CUDN_ADVERTISED_EVPN_OVERLAPPING_CIDR_SHARED_VTEP"
 )
 
 // createNamespaceWithPrimaryNetworkOfType helper function configures a
@@ -3828,7 +3939,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 	case cudnAdvertised:
 		networkLabels = map[string]string{"advertise": networkName}
 		frrConfigurationLabels = map[string]string{"name": "receive-all"}
-	case cudnAdvertisedVRFLite, cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP:
+	case cudnAdvertisedVRFLite, cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP, cudnAdvertisedEVPNOverlappingCIDRSharedVTEP:
 		targetVRF = networkName
 		networkLabels = map[string]string{"advertise": networkName}
 		frrConfigurationLabels = map[string]string{"network": networkName}
