@@ -1836,9 +1836,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in same UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-						if cudnATemplate.Spec.Network.Transport == udnv1.TransportOptionNoOverlay {
-							e2eskipper.Skipf("ETP=Cluster cross-node NodePort not supported for NoOverlay networks, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6316")
-						}
 						clientPod := podsNetA[0]
 						// The service is backed by pods in podsNetA.
 						// We want to hit the nodeport on a different node.
@@ -1881,9 +1878,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to a different node nodeport service in different UDN network should work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-						if cudnATemplate.Spec.Network.Transport == udnv1.TransportOptionNoOverlay {
-							e2eskipper.Skipf("ETP=Cluster cross-node NodePort not supported for NoOverlay networks, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6316")
-						}
 						clientPod := podsNetA[0]
 						// The service is backed by podNetB.
 						// We want to hit the nodeport on a different node from the client.
