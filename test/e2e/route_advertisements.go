@@ -2216,6 +2216,16 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		curlMaxTime    = 1
 		curlMaxTimeStr = "1"
 	)
+	// Used for cross-network connectivity checks after route leaking is already
+	// configured for EVPN loose mode. Default follows loose-mode helper polling on
+	// external FRR (~30s) plus cluster propagation slack; override with
+	// EVPN_ROUTE_LEAKING_TIMEOUT (Go duration syntax, e.g. 90s) for slow CI.
+	timeoutRouteLeaking := 60 * time.Second
+	if override := os.Getenv("EVPN_ROUTE_LEAKING_TIMEOUT"); override != "" {
+		if parsed, err := time.ParseDuration(override); err == nil && parsed > 0 {
+			timeoutRouteLeaking = parsed
+		}
+	}
 	var netexecPortStr = fmt.Sprintf("%d", netexecPort)
 	testPodToHostnameAndExpect := func(src *corev1.Pod, dstIP, expect string) {
 		ginkgo.GinkgoHelper()
@@ -2412,6 +2422,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		func(testedNetworkType networkType, networkSpecGen func() *udnv1.NetworkSpec) {
 			var testNamespace *corev1.Namespace
 			var testPod *corev1.Pod
+			var capturedNetworkSpec *udnv1.NetworkSpec
 
 			getSameNode := func() string {
 				return testPod.Spec.NodeName
@@ -2437,6 +2448,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				case networkSpec.Layer2 != nil:
 					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
 				}
+				capturedNetworkSpec = networkSpec
 
 				testNamespace, externalServers = configureNetworkWithInfra(
 					f,
@@ -2720,6 +2732,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						func(networkType networkType, otherNetworkSpecGen func() *udnv1.NetworkSpec) {
 							var otherNamespace *corev1.Namespace
 							var otherNetworkName string
+							var capturedOtherNetworkSpec *udnv1.NetworkSpec
 
 							ginkgo.BeforeEach(func() {
 								otherNetworkName = testBaseName + "o"
@@ -2734,6 +2747,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								case otherNetworkSpec.Layer2 != nil:
 									otherNetworkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, otherNetworkSpec.Layer2.Subnets...)
 								}
+								capturedOtherNetworkSpec = otherNetworkSpec
 
 								otherNamespace, _ = configureNetworkWithInfra(
 									f,
@@ -2746,7 +2760,42 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								)
 							})
 
-							ginkgo.It("Both networks are isolated", func() {
+							// Probe the spec generators at tree-building time to determine the It
+							// description. We only inspect structural properties (transport type,
+							// IP-VRF presence); the actual specs used by the test are generated
+							// freshly in BeforeEach via capturedNetworkSpec/capturedOtherNetworkSpec.
+							// Only pure IP-VRF networks (no MAC-VRF) support inter-VRF route leaking;
+							// networks with a MAC-VRF component are excluded even if they also have an IP-VRF.
+							const (
+								isolationItDescStrict = "Both networks are isolated in strict mode"
+								isolationItDescLoose  = "Both networks communication is allowed in loose mode"
+							)
+							probeIsIPVRFOnly := func(spec *udnv1.NetworkSpec) bool {
+								return spec != nil && spec.EVPN != nil && spec.EVPN.IPVRF != nil && spec.EVPN.MACVRF == nil
+							}
+							outerProbe := networkSpecGen()
+							innerProbe := otherNetworkSpecGen()
+							probeBothEVPN := outerProbe != nil && outerProbe.Transport == udnv1.TransportOptionEVPN &&
+								innerProbe != nil && innerProbe.Transport == udnv1.TransportOptionEVPN
+							isolationItDesc := isolationItDescStrict
+							if os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && probeBothEVPN &&
+								probeIsIPVRFOnly(outerProbe) && probeIsIPVRFOnly(innerProbe) {
+								isolationItDesc = isolationItDescLoose
+							}
+
+							ginkgo.It(isolationItDesc, func() {
+								outerSpec := capturedNetworkSpec
+								innerSpec := capturedOtherNetworkSpec
+								bothEVPN := outerSpec != nil && outerSpec.Transport == udnv1.TransportOptionEVPN &&
+									innerSpec != nil && innerSpec.Transport == udnv1.TransportOptionEVPN
+								runtimeLoose := os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && bothEVPN &&
+									isEVPNIPVRFOnly(outerSpec) && isEVPNIPVRFOnly(innerSpec)
+								probeLoose := isolationItDesc == isolationItDescLoose
+								if runtimeLoose != probeLoose {
+									framework.Failf("isolation It description does not match runtime loose mode: descLoose=%v runtimeLoose=%v (it=%q)",
+										probeLoose, runtimeLoose, isolationItDesc)
+								}
+
 								ginkgo.By("Running two pods on the other network namespace on different nodes")
 								var otherPodSameNode, otherPodDiffNode *corev1.Pod
 								wg := sync.WaitGroup{}
@@ -2803,13 +2852,37 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									},
 								)
 
-								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network pods")
+								looseIsolationMode := os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" && bothEVPN &&
+									isEVPNIPVRFOnly(outerSpec) && isEVPNIPVRFOnly(innerSpec)
+								if looseIsolationMode {
+									ginkgo.By("Configuring loose EVPN inter-VRF route leaking on external FRR")
+									configured, err := addLooseEVPNInterVRFRouting(ictx, bgpASN, outerSpec, innerSpec)
+									gomega.Expect(err).NotTo(gomega.HaveOccurred())
+									gomega.Expect(configured).To(gomega.BeTrue(), "loose mode expects inter-VRF import vrf to be applied for pure IP-VRF EVPN pair")
+								}
+								crossNetworkPodConnectivity := func(src *corev1.Pod, dstIP string) {
+									ginkgo.GinkgoHelper()
+									if looseIsolationMode {
+										gomega.Eventually(func(g gomega.Gomega) {
+											_, err := e2epodoutput.RunHostCmd(
+												src.Namespace,
+												src.Name,
+												fmt.Sprintf("curl --max-time %d -g -q -s http://%s/clientip", curlMaxTime, net.JoinHostPort(dstIP, netexecPortStr)),
+											)
+											g.Expect(err).NotTo(gomega.HaveOccurred())
+										}).WithTimeout(timeoutRouteLeaking).WithPolling(polling).Should(gomega.Succeed())
+									} else {
+										testPodToClientIPNOK(src, dstIP)
+									}
+								}
+
+								ginkgo.By("Verifying cross-network pod connectivity from the tested network pod to other network pods")
 								for _, target := range []*corev1.Pod{otherPodSameNode, otherPodDiffNode} {
 									testForIPFamilies(
 										ipFamilySet,
 										func(family utilnet.IPFamily) {
 											ginkgo.GinkgoHelper()
-											framework.Logf("Ensuring a request from the tested network pod cannot reach the other network pod %s on IPv%v", target.Name, family)
+											framework.Logf("Verifying cross-network pod connectivity from the tested network pod to %s on IPv%v (looseMode=%v)", target.Name, family, looseIsolationMode)
 											otherPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
 												f.ClientSet,
 												target.Namespace,
@@ -2819,18 +2892,18 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											)
 											gomega.Expect(err).NotTo(gomega.HaveOccurred())
 											gomega.Expect(otherPodIP).ToNot(gomega.BeEmpty())
-											testPodToClientIPNOK(testPod, otherPodIP)
+											crossNetworkPodConnectivity(testPod, otherPodIP)
 										},
 									)
 								}
 
-								ginkgo.By("Ensuring a request from the other network pods on the same node cannot reach the tested network pod")
+								ginkgo.By("Verifying cross-network pod connectivity from the other network pods to the tested network pod")
 								for _, source := range []*corev1.Pod{otherPodSameNode, otherPodDiffNode} {
 									testForIPFamilies(
 										ipFamilySet,
 										func(family utilnet.IPFamily) {
 											ginkgo.GinkgoHelper()
-											framework.Logf("Ensuring a request from the other network pod %s on the same node cannot reach the tested network pod on IPv%v", source.Name, family)
+											framework.Logf("Verifying cross-network pod connectivity from %s to the tested network pod on IPv%v (looseMode=%v)", source.Name, family, looseIsolationMode)
 											testPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
 												f.ClientSet,
 												testPod.Namespace,
@@ -2840,7 +2913,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 											)
 											gomega.Expect(err).NotTo(gomega.HaveOccurred())
 											gomega.Expect(testPodIP).ToNot(gomega.BeEmpty())
-											testPodToClientIPNOK(source, testPodIP)
+											crossNetworkPodConnectivity(source, testPodIP)
 										},
 									)
 								}
@@ -2877,7 +2950,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									)
 								}
 
-								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network services")
+								ginkgo.By("Ensuring a request from the tested network pod cannot reach the other network services (service ClusterIP access is always isolated regardless of pod connectivity mode)")
 								for _, service := range services {
 									testForIPFamilies(
 										ipFamilySet,

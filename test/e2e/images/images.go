@@ -23,7 +23,10 @@ var (
 	nginx                 = "nginx:1"
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
-	frr                   = "quay.io/frrouting/frr:10.5.3"
+	// FRR image for per-network sidecar containers in route-advertisement e2e.
+	// Keep this aligned with FRR_DEPLOYED_IMAGE in contrib/kind-common.sh so local
+	// runs match CI/KIND. Release notes: https://github.com/FRRouting/frr/blob/stable/10.6/doc/user/release-notes-10.6.rst
+	frr = "quay.io/frrouting/frr:10.6.0"
 
 	extraImages []string
 )

@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
@@ -32,6 +33,11 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	utilnet "k8s.io/utils/net"
 )
+
+// looseEVPNInterVRFFRRMutex serializes vtysh sessions against the shared external
+// FRR container for loose-mode inter-VRF setup/teardown. Concurrent tests could
+// otherwise interleave configure blocks and corrupt BGP state.
+var looseEVPNInterVRFFRRMutex sync.Mutex
 
 // =============================================================================
 // EVPN E2E Test Infrastructure
@@ -94,6 +100,14 @@ const (
 	// first test that needs it; never deleted by per-test cleanup.
 	sharedNodeIPsVTEPName = "e2e-evpn-shared-vtep-node-cidr-range-do-not-use-this-name-anywhere-else"
 )
+
+// isEVPNIPVRFOnly reports whether the given network spec is a pure IP-VRF
+// EVPN network (has an IP-VRF but no MAC-VRF). Networks with a MAC-VRF
+// component do not have a Linux VRF on the external FRR that can participate
+// in VRF route leaking, even if they also have an IP-VRF.
+func isEVPNIPVRFOnly(spec *udnv1.NetworkSpec) bool {
+	return spec != nil && spec.EVPN != nil && spec.EVPN.IPVRF != nil && spec.EVPN.MACVRF == nil
+}
 
 // setupEVPNBridgeOnExternalFRR creates a Linux bridge and VXLAN device on the external FRR
 // container. This is the foundation for both MAC-VRF and IP-VRF tests.
@@ -530,6 +544,172 @@ func setupIPVRFBGPOnExternalFRR(ictx infraapi.Context, vrfName string, asn, vni 
 
 	framework.Logf("IP-VRF BGP setup complete on %s (VRF %s, ASN %d, VNI %d, RT %s, families %v)", externalFRRContainerName, vrfName, asn, vni, rt, ipFamilies.UnsortedList())
 	return nil
+}
+
+// addLooseEVPNInterVRFRouting configures bidirectional VRF route leaking between
+// two IP-VRF networks on the external FRR container to enable cross-network pod
+// connectivity in loose isolation mode.
+//
+// For each IP-VRF network, "import vrf <peerVRF>" is added to both the ipv4 unicast
+// and ipv6 unicast address-families. This imports pod CIDRs from the peer VRF as
+// regular unicast routes (not EVPN-derived), bypassing FRR's loop-prevention logic
+// that would otherwise suppress re-advertisement of EVPN-learned routes. Combined
+// with the "advertise ipv4/ipv6 unicast" directives in address-family l2vpn evpn
+// already owned by setupIPVRFBGPOnExternalFRR, FRR re-originates those imported
+// routes as fresh type-5 EVPN UPDATEs (VTEP = FRR's own IP). Cluster nodes receive
+// them via FRR-K8s and OVN-K programs the necessary flows so cross-UDN pods can
+// reach each other (hairpinning through FRR in the data plane).
+//
+// Networks with only a MAC-VRF (no IP-VRF) do not create a Linux VRF on the
+// external FRR and cannot participate in VRF route leaking; those pairs are skipped.
+//
+// This helper only manages "import vrf" / "no import vrf" commands. The l2vpn evpn
+// advertise directives are owned by setupIPVRFBGPOnExternalFRR and are not touched here.
+// Cleanup is registered via ictx.AddCleanUpFn().
+//
+// The first return is false when route leaking was skipped (non-IP-VRF pair), or
+// true when import vrf was applied. The second return is non-nil on failure.
+func addLooseEVPNInterVRFRouting(ictx infraapi.Context, asn int, specA, specB *udnv1.NetworkSpec) (bool, error) {
+	if !isEVPNIPVRFOnly(specA) || !isEVPNIPVRFOnly(specB) {
+		framework.Logf("Skipping loose EVPN inter-VRF routing: one or both networks are not pure IP-VRF (specA isIPVRFOnly=%v, specB isIPVRFOnly=%v)",
+			isEVPNIPVRFOnly(specA), isEVPNIPVRFOnly(specB))
+		return false, nil
+	}
+
+	looseEVPNInterVRFFRRMutex.Lock()
+	defer looseEVPNInterVRFFRRMutex.Unlock()
+
+	vniA := int(specA.EVPN.IPVRF.VNI)
+	vniB := int(specB.EVPN.IPVRF.VNI)
+	vrfNameA := fmt.Sprintf("vrf%d", vniA)
+	vrfNameB := fmt.Sprintf("vrf%d", vniB)
+
+	frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+
+	// Use FRR's VRF route leaking (import vrf) in the unicast address-families
+	// instead of route-target import in l2vpn evpn.  The key difference is that
+	// "import vrf" brings pod CIDRs from the other VRF's routing table as regular
+	// unicast routes (not as EVPN-derived entries), which sidesteps FRR's
+	// loop-prevention logic that would otherwise suppress re-advertisement of
+	// EVPN-learned routes.  Combined with the "advertise ipv4/ipv6 unicast"
+	// already configured by setupIPVRFBGPOnExternalFRR, FRR re-originates those
+	// imported routes as fresh type-5 EVPN UPDATEs (VTEP = FRR's own IP) and
+	// sends them to the cluster nodes.  Cluster nodes then install the cross-VRF
+	// pod CIDRs into their VRF routing tables via FRR-K8s, and OVN-K programs
+	// the necessary flows so cross-UDN pods can reach each other (hairpinning
+	// through FRR in the data plane).
+	//
+	// NOTE: This helper only manages "import vrf" / "no import vrf" commands.
+	// The l2vpn evpn advertise directives are owned by setupIPVRFBGPOnExternalFRR
+	// and must not be touched here.
+	args := []string{
+		"configure terminal",
+		fmt.Sprintf("router bgp %d vrf %s", asn, vrfNameA),
+		"address-family ipv4 unicast",
+		fmt.Sprintf("import vrf %s", vrfNameB),
+		"exit-address-family",
+		"address-family ipv6 unicast",
+		fmt.Sprintf("import vrf %s", vrfNameB),
+		"exit-address-family",
+		fmt.Sprintf("router bgp %d vrf %s", asn, vrfNameB),
+		"address-family ipv4 unicast",
+		fmt.Sprintf("import vrf %s", vrfNameA),
+		"exit-address-family",
+		"address-family ipv6 unicast",
+		fmt.Sprintf("import vrf %s", vrfNameA),
+		"exit-address-family",
+		"end",
+	}
+	if _, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(args...)); err != nil {
+		// Best-effort rollback: vtysh may have partially applied import vrf
+		// commands before failing on a later one, so attempt to undo them.
+		rollbackArgs := []string{
+			"configure terminal",
+			fmt.Sprintf("router bgp %d vrf %s", asn, vrfNameA),
+			"address-family ipv4 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameB),
+			"exit-address-family",
+			"address-family ipv6 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameB),
+			"exit-address-family",
+			fmt.Sprintf("router bgp %d vrf %s", asn, vrfNameB),
+			"address-family ipv4 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameA),
+			"exit-address-family",
+			"address-family ipv6 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameA),
+			"exit-address-family",
+			"end",
+		}
+		if _, rbErr := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(rollbackArgs...)); rbErr != nil {
+			framework.Logf("rollback failed after partial import vrf - external FRR may be inconsistent (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, rbErr)
+			return false, fmt.Errorf("loose EVPN inter-VRF config failed and rollback failed (FRR may be inconsistent): config_err=%w, rollback_err=%v", err, rbErr)
+		}
+		framework.Logf("Rolled back partial import vrf after vtysh failure (VRF %s <-> VRF %s)", vrfNameA, vrfNameB)
+		return false, fmt.Errorf("failed to configure loose EVPN inter-VRF routing (rollback succeeded): %w", err)
+	}
+
+	ictx.AddCleanUpFn(func() error {
+		looseEVPNInterVRFFRRMutex.Lock()
+		defer looseEVPNInterVRFFRRMutex.Unlock()
+
+		frr := infraapi.ExternalContainer{Name: externalFRRContainerName}
+		cleanupArgs := []string{
+			"configure terminal",
+			fmt.Sprintf("router bgp %d vrf %s", asn, vrfNameA),
+			"address-family ipv4 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameB),
+			"exit-address-family",
+			"address-family ipv6 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameB),
+			"exit-address-family",
+			fmt.Sprintf("router bgp %d vrf %s", asn, vrfNameB),
+			"address-family ipv4 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameA),
+			"exit-address-family",
+			"address-family ipv6 unicast",
+			fmt.Sprintf("no import vrf %s", vrfNameA),
+			"exit-address-family",
+			"end",
+		}
+		if _, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(cleanupArgs...)); err != nil {
+			framework.Logf("Warning: failed to remove loose EVPN inter-VRF routing (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, err)
+		}
+		framework.Logf("Loose EVPN inter-VRF routing cleanup complete (VRF %s <-> VRF %s)", vrfNameA, vrfNameB)
+		return nil
+	})
+
+	// Trigger a BGP soft outbound reset so FRR immediately re-advertises the
+	// newly re-originated type-5 UPDATEs to cluster nodes, rather than waiting
+	// for the next BGP UPDATE cycle.
+	softResetArgs := []string{
+		fmt.Sprintf("clear bgp vrf %s l2vpn evpn soft out", vrfNameA),
+		fmt.Sprintf("clear bgp vrf %s l2vpn evpn soft out", vrfNameB),
+	}
+	if _, err := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(softResetArgs...)); err != nil {
+		// Non-fatal: the routes will still propagate, just more slowly.
+		framework.Logf("Warning: BGP soft reset after inter-VRF import vrf failed (VRF %s <-> VRF %s): %v", vrfNameA, vrfNameB, err)
+	}
+
+	vrfShowsType5EVPN := func(vrf string) bool {
+		out, execErr := infraprovider.Get().ExecExternalContainerCommand(frr, vtyshCommand(fmt.Sprintf("show bgp vrf %s l2vpn evpn", vrf)))
+		if execErr != nil {
+			return false
+		}
+		return strings.Contains(out, "Route Distinguisher") && strings.Contains(out, "[5]")
+	}
+	if pollErr := wait.PollImmediate(2*time.Second, 30*time.Second, func() (bool, error) {
+		if vrfShowsType5EVPN(vrfNameA) && vrfShowsType5EVPN(vrfNameB) {
+			return true, nil
+		}
+		framework.Logf("Waiting for type-5 EVPN routes on external FRR after inter-VRF import (VRF %s <-> %s)...", vrfNameA, vrfNameB)
+		return false, nil
+	}); pollErr != nil {
+		return true, fmt.Errorf("timeout waiting for type-5 EVPN routes on external FRR after inter-VRF import (VRF %s <-> %s): %w", vrfNameA, vrfNameB, pollErr)
+	}
+
+	framework.Logf("Configured loose EVPN inter-VRF routing: VRF %s <-> VRF %s (import vrf)", vrfNameA, vrfNameB)
+	return true, nil
 }
 
 // =============================================================================
