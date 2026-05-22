@@ -912,7 +912,8 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				framework.Logf("Client pod node IP addresses=%v", expectedSNATSourceIPs)
 			}
 			for _, serverContainerIP := range serverContainerIPs {
-				podIP, err := getPodAnnotationIPsForAttachmentByIndex(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 0)
+				podIP, err := getPodAnnotationIPsForAttachmentByIPFamily(
+					f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), utilnet.IPFamilyOfString(serverContainerIP))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
 				framework.Logf("Client pod IP address=%s", podIP)

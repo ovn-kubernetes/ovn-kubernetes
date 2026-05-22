@@ -865,6 +865,21 @@ func getPodAnnotationIPsForAttachmentByIndex(k8sClient clientset.Interface, podN
 	return ipnets[index].IP.String(), nil
 }
 
+func getPodAnnotationIPsForAttachmentByIPFamily(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, family utilnet.IPFamily) (string, error) {
+	ipnets, err := getPodAnnotationIPsForAttachment(k8sClient, podNamespace, podName, attachmentName)
+	if err != nil {
+		return "", err
+	}
+	if len(ipnets) > 2 {
+		return "", fmt.Errorf("attachment for network %q with more than two IPs", attachmentName)
+	}
+	ipnet := getFirstCIDROfFamily(family, ipnets)
+	if ipnet == nil {
+		return "", fmt.Errorf("no %s IP for attachment %s on pod %s", family, attachmentName, namespacedName(podNamespace, podName))
+	}
+	return ipnet.IP.String(), nil
+}
+
 // generateIPsFromSubnets generates IP addresses from the given subnets with the specified offset
 func generateIPsFromSubnets(subnets []string, offset int) ([]string, error) {
 	var addrs []string
