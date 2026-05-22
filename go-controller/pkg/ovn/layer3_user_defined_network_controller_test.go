@@ -1995,13 +1995,18 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	clusterRouterExternalIDs := standardNonDefaultNetworkExtIDs(netInfo)
 	clusterRouterExternalIDs["k8s-cluster-router"] = "yes"
 
+	clusterRouterOptions := map[string]string{"always_learn_from_arp_request": "false"}
+	if config.Gateway.Mode == config.GatewayModeLocal {
+		clusterRouterOptions["ct-commit-all"] = "true"
+	}
+
 	clusterRouter := &nbdb.LogicalRouter{
 		Name:        clusterRouterName,
 		UUID:        clusterRouterName + "-UUID",
 		Ports:       []string{rtosLRPUUID},
 		ExternalIDs: clusterRouterExternalIDs,
 		Copp:        ptr.To(string(coppUUID)),
-		Options:     map[string]string{"always_learn_from_arp_request": "false"},
+		Options:     clusterRouterOptions,
 	}
 
 	expectedEntities := []libovsdbtest.TestData{

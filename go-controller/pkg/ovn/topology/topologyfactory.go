@@ -9,6 +9,7 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -67,6 +68,15 @@ func (gtf *GatewayTopologyFactory) newClusterRouter(
 		},
 		Options: routerOptions,
 		Copp:    &coopUUID,
+	}
+	if netInfo.IsUserDefinedNetwork() &&
+		config.Gateway.Mode == config.GatewayModeLocal &&
+		netInfo.TopologyType() == types.Layer3Topology &&
+		clusterRouterName == netInfo.GetNetworkScopedClusterRouterName() {
+		// The LGW UDN cluster router owns the conditional UDN subnet SNAT. Commit
+		// all traffic in that router's CT zone so replies do not enter the SNAT
+		// zone as new flows and hit that SNAT before service reverse NAT.
+		logicalRouter.Options["ct-commit-all"] = "true"
 	}
 	if netInfo.IsUserDefinedNetwork() {
 		logicalRouter.ExternalIDs[types.NetworkExternalID] = netInfo.GetNetworkName()

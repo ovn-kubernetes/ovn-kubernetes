@@ -102,6 +102,77 @@ var _ = Describe("Topology factory", func() {
 			)
 		})
 
+		It("sets ct-commit-all on local gateway UDN cluster routers", func() {
+			config.Gateway.Mode = config.GatewayModeLocal
+			DeferCleanup(func() {
+				Expect(config.PrepareTestConfig()).To(Succeed())
+			})
+
+			clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
+			clusterRouter, err := factory.NewClusterRouter(clusterRouterName, netInfo, coopUUID)
+			Expect(err).NotTo(HaveOccurred())
+			expectedExternalIDs := map[string]string{
+				ovntypes.NetworkExternalID:  networkName,
+				ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
+				"k8s-cluster-router":        "yes",
+			}
+			expectedOptions := map[string]string{
+				"always_learn_from_arp_request": "false",
+				"ct-commit-all":                 "true",
+			}
+			Expect(clusterRouter).To(
+				WithTransform(
+					removeUUID,
+					Equal(
+						expectedClusterRouter(clusterRouterName, coopUUID, expectedOptions, expectedExternalIDs),
+					),
+				),
+			)
+		})
+
+		It("does not set ct-commit-all on shared gateway UDN cluster routers", func() {
+			config.Gateway.Mode = config.GatewayModeShared
+			DeferCleanup(func() {
+				Expect(config.PrepareTestConfig()).To(Succeed())
+			})
+			clusterRouterName := netInfo.GetNetworkScopedClusterRouterName()
+			clusterRouter, err := factory.NewClusterRouter(clusterRouterName, netInfo, coopUUID)
+			Expect(err).NotTo(HaveOccurred())
+			expectedExternalIDs := map[string]string{
+				ovntypes.NetworkExternalID:  networkName,
+				ovntypes.TopologyExternalID: ovntypes.Layer3Topology,
+				"k8s-cluster-router":        "yes",
+			}
+			expectedOptions := map[string]string{"always_learn_from_arp_request": "false"}
+			Expect(clusterRouter).To(
+				WithTransform(
+					removeUUID,
+					Equal(
+						expectedClusterRouter(clusterRouterName, coopUUID, expectedOptions, expectedExternalIDs),
+					),
+				),
+			)
+		})
+
+		It("does not set ct-commit-all on default network cluster routers", func() {
+			config.Gateway.Mode = config.GatewayModeLocal
+			DeferCleanup(func() {
+				Expect(config.PrepareTestConfig()).To(Succeed())
+			})
+
+			defaultNetInfo := &util.DefaultNetInfo{}
+			clusterRouter, err := factory.NewClusterRouter(defaultNetInfo.GetNetworkScopedClusterRouterName(), defaultNetInfo, coopUUID)
+			Expect(err).NotTo(HaveOccurred())
+			expectedExternalIDs := map[string]string{"k8s-cluster-router": "yes"}
+			expectedOptions := map[string]string{"always_learn_from_arp_request": "false"}
+			Expect(clusterRouter).To(
+				WithTransform(
+					removeUUID,
+					Equal(expectedClusterRouter(ovntypes.OVNClusterRouter, coopUUID, expectedOptions, expectedExternalIDs)),
+				),
+			)
+		})
+
 		It("creating a join switch for a layer3 primary network fails", func() {
 			clusterRouter := expectedClusterRouter(
 				routerName,
