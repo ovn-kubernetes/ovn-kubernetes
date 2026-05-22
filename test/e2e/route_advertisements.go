@@ -903,6 +903,14 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			} else {
 				ginkgo.By("queries to the external server are not SNATed (uses podIP)")
 			}
+			var expectedSNATSourceIPs []string
+			if expectSNAT {
+				clientPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+				framework.ExpectNoError(err, fmt.Sprintf("Getting node %s failed: %v", clientPod.Spec.NodeName, err))
+				expectedSNATSourceIPs = e2enode.GetAddresses(clientPodNode, corev1.NodeInternalIP)
+				gomega.Expect(expectedSNATSourceIPs).NotTo(gomega.BeEmpty(), "Expected node %s to have an InternalIP", clientPod.Spec.NodeName)
+				framework.Logf("Client pod node IP addresses=%v", expectedSNATSourceIPs)
+			}
 			for _, serverContainerIP := range serverContainerIPs {
 				podIP, err := getPodAnnotationIPsForAttachmentByIndex(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 0)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -923,34 +931,21 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 
+				sourceIP, _, err := net.SplitHostPort(strings.TrimSpace(stdout))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(),
+					fmt.Sprintf("Failed to parse client address from output %q", stdout))
 				if expectSNAT {
 					// When OutboundSNAT is enabled, traffic to external destinations
 					// is masqueraded to the node IP. Verify the source is NOT the pod IP.
-					sourceIP := strings.Split(stdout, ":")[0]
-					if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
-						sourceIP = strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
-					}
-					gomega.Expect(sourceIP).NotTo(gomega.Equal(podIP),
-						fmt.Sprintf("Expected SNAT for pod %s but traffic was not SNATed, output: %v", echoClientPodName, stdout))
+					expectedSourceIP := getFirstIPStringOfFamily(utilnet.IPFamilyOfString(serverContainerIP), expectedSNATSourceIPs)
+					gomega.Expect(expectedSourceIP).NotTo(gomega.BeEmpty(),
+						"Expected node %s to have an InternalIP for the external server IP family %s",
+						clientPod.Spec.NodeName, serverContainerIP)
+					gomega.Expect(sourceIP).To(gomega.Equal(expectedSourceIP),
+						fmt.Sprintf("Expected SNAT for pod %s to use %s, output: %v", echoClientPodName, expectedSourceIP, stdout))
 				} else {
-					if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
-						if isIPv4Supported(f.ClientSet) && isIPv6Supported(f.ClientSet) {
-							// for dualstack we need to fetch the IP at index1
-							// if singlestack IPV6 the original podIP at index0 is the correct one
-							// FIXME: This util call assumes the first index will always be the IPv4 address
-							// and second index will always be the IPv6 address
-							// which is not always the case.
-							podIP, err = getPodAnnotationIPsForAttachmentByIndex(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 1)
-						}
-						// For IPv6 addresses, need to handle the brackets in the output
-						outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
-						gomega.Expect(outputIP).To(gomega.Equal(podIP),
-							fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
-					} else {
-						// Original IPv4 handling
-						gomega.Expect(strings.Split(stdout, ":")[0]).To(gomega.Equal(podIP),
-							fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
-					}
+					gomega.Expect(sourceIP).To(gomega.Equal(podIP),
+						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
 				}
 			}
 		},
@@ -2216,12 +2211,13 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		networkType networkType,
 		networkSpec *udnv1.NetworkSpec,
 		bgpAlloc allocators.BGPAllocation,
-	) (*corev1.Namespace, []string) {
+	) (*corev1.Namespace, []string, map[string]infraapi.NetworkInterface) {
 		ginkgo.GinkgoHelper()
 
 		framework.Logf("Configuring the infra for network %s of type %s with allocations %#v", networkName, networkType, bgpAlloc)
 
 		var servers []string
+		vrfLiteNodeInterfaces := map[string]infraapi.NetworkInterface{}
 		switch networkType {
 		case cudnAdvertisedVRFLite:
 			ginkgo.By("Running an external BGP network")
@@ -2314,6 +2310,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			for _, node := range nodeList.Items {
 				iface, err := infraprovider.Get().GetK8NodeNetworkInterface(node.Name, network)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				vrfLiteNodeInterfaces[node.Name] = iface
 				if ipFamilySet.Has(utilnet.IPv6) {
 					// prevent the IPv6 address of the interface from being removed when attaching to VRF
 					_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"sysctl", "-w", "net.ipv6.conf." + iface.InfName + ".keep_addr_on_down=1"})
@@ -2324,7 +2321,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			}
 		}
 
-		return testNamespace, servers
+		return testNamespace, servers, vrfLiteNodeInterfaces
 	}
 
 	// testing helpers used throughout this testing node
@@ -2569,7 +2566,29 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		func(testedNetworkType networkType, networkSpecGen func(string, string, allocators.BGPAllocation) *udnv1.NetworkSpec) {
 			var testNamespace *corev1.Namespace
 			var testPod *corev1.Pod
+			var vrfLiteNodeInterfaces map[string]infraapi.NetworkInterface
 			var networkSpec *udnv1.NetworkSpec
+
+			expectedSNATSourceIP := func(family utilnet.IPFamily, node *corev1.Node) string {
+				ginkgo.GinkgoHelper()
+				// In LGW VRF-Lite, host nftables masquerade picks the source IP
+				// from the node's egress interface in the target VRF when no-overlay
+				// outbound SNAT is enabled.
+				if networkSpec.NoOverlay != nil && networkSpec.NoOverlay.OutboundSNAT == udnv1.SNATEnabled &&
+					testedNetworkType == cudnAdvertisedVRFLite && IsGatewayModeLocal(f.ClientSet) {
+					iface, ok := vrfLiteNodeInterfaces[node.Name]
+					gomega.Expect(ok).To(gomega.BeTrue(), "Expected VRF-Lite egress interface for node %s", node.Name)
+					expectedIP := getFirstIPStringOfFamily(family, []string{iface.IPv4, iface.IPv6})
+					gomega.Expect(expectedIP).NotTo(gomega.BeEmpty(), "Expected VRF-Lite egress interface for node %s to have an IP for %v", node.Name, family)
+					return expectedIP
+				}
+				expectedNodeIPs := e2enode.GetAddressesByTypeAndFamily(node, corev1.NodeInternalIP, corev1.IPv4Protocol)
+				if family == utilnet.IPv6 {
+					expectedNodeIPs = e2enode.GetAddressesByTypeAndFamily(node, corev1.NodeInternalIP, corev1.IPv6Protocol)
+				}
+				gomega.Expect(expectedNodeIPs).NotTo(gomega.BeEmpty(), "Expected node %s to have an InternalIP for %v", node.Name, family)
+				return expectedNodeIPs[0]
+			}
 
 			getSameNode := func() string {
 				return testPod.Spec.NodeName
@@ -2600,7 +2619,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
 				}
 
-				testNamespace, externalServers = configureNetworkWithInfra(
+				testNamespace, externalServers, vrfLiteNodeInterfaces = configureNetworkWithInfra(
 					f,
 					ictx,
 					testBaseName,
@@ -2624,6 +2643,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 							p.Spec.Containers[0].Args = []string{"netexec"}
 						},
 					)
+					var err error
+					testPod, err = f.ClientSet.CoreV1().Pods(testPod.Namespace).Get(context.Background(), testPod.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(testPod.Spec.NodeName).NotTo(gomega.BeEmpty())
 				})
 
 				ginkgo.DescribeTable("It can reach external servers on the same network",
@@ -2668,13 +2691,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 								gomega.Expect(err).NotTo(gomega.HaveOccurred())
 								testPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), testPod.Spec.NodeName, metav1.GetOptions{})
 								gomega.Expect(err).NotTo(gomega.HaveOccurred())
-								expectedNodeIPs := e2enode.GetAddressesByTypeAndFamily(testPodNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
-								if family == utilnet.IPv6 {
-									expectedNodeIPs = e2enode.GetAddressesByTypeAndFamily(testPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
-								}
-								gomega.Expect(expectedNodeIPs).NotTo(gomega.BeEmpty(), "Expected node %s to have an InternalIP for %v", testPodNode.Name, family)
-								gomega.Expect(sourceIP).To(gomega.Equal(expectedNodeIPs[0]),
-									fmt.Sprintf("Expected SNAT for pod %s to use node IP %s, output: %v", testPod.Name, expectedNodeIPs[0], ip))
+								expectedSourceIP := expectedSNATSourceIP(family, testPodNode)
+								gomega.Expect(sourceIP).To(gomega.Equal(expectedSourceIP),
+									fmt.Sprintf("Expected SNAT for pod %s to use node egress IP %s, output: %v", testPod.Name, expectedSourceIP, ip))
 							} else {
 								testPodIP, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(
 									f.ClientSet,
@@ -2934,7 +2953,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									otherNetworkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, otherNetworkSpec.Layer2.Subnets...)
 								}
 
-								otherNamespace, _ = configureNetworkWithInfra(
+								otherNamespace, _, _ = configureNetworkWithInfra(
 									f,
 									ictx,
 									testBaseName,
