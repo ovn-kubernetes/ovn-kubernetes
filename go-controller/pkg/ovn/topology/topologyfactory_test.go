@@ -130,6 +130,36 @@ var _ = Describe("Topology factory", func() {
 			)
 		})
 
+		It("sets ct-commit-all on local gateway layer2 UDN transit routers", func() {
+			config.Gateway.Mode = config.GatewayModeLocal
+			DeferCleanup(func() {
+				Expect(config.PrepareTestConfig()).To(Succeed())
+			})
+
+			layer2NetInfo, err := util.NewNetInfo(newLayer2PrimaryNetworkConf(networkName, networkSubnets))
+			Expect(err).NotTo(HaveOccurred())
+			clusterRouterName := layer2NetInfo.GetNetworkScopedClusterRouterName()
+			clusterRouter, err := factory.NewTransitRouter(clusterRouterName, layer2NetInfo, coopUUID, "42")
+			Expect(err).NotTo(HaveOccurred())
+			expectedExternalIDs := map[string]string{
+				ovntypes.NetworkExternalID:  networkName,
+				ovntypes.TopologyExternalID: ovntypes.Layer2Topology,
+				"k8s-cluster-router":        "yes",
+			}
+			expectedOptions := map[string]string{
+				libovsdbops.RequestedTnlKey: "42",
+				"ct-commit-all":             "true",
+			}
+			Expect(clusterRouter).To(
+				WithTransform(
+					removeUUID,
+					Equal(
+						expectedClusterRouter(clusterRouterName, coopUUID, expectedOptions, expectedExternalIDs),
+					),
+				),
+			)
+		})
+
 		It("does not set ct-commit-all on shared gateway UDN cluster routers", func() {
 			config.Gateway.Mode = config.GatewayModeShared
 			DeferCleanup(func() {
@@ -254,6 +284,15 @@ func newLayer3PrimaryNetworkConf(name, subnets string) *ovncnitypes.NetConf {
 	return &ovncnitypes.NetConf{
 		NetConf:  cnitypes.NetConf{Name: name},
 		Topology: ovntypes.Layer3Topology,
+		Subnets:  subnets,
+		Role:     ovntypes.NetworkRolePrimary,
+	}
+}
+
+func newLayer2PrimaryNetworkConf(name, subnets string) *ovncnitypes.NetConf {
+	return &ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: name},
+		Topology: ovntypes.Layer2Topology,
 		Subnets:  subnets,
 		Role:     ovntypes.NetworkRolePrimary,
 	}

@@ -1281,6 +1281,9 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	} else {
 		clusterRouter.Options = map[string]string{"always_learn_from_arp_request": "false"}
 	}
+	if config.Gateway.Mode == config.GatewayModeLocal {
+		clusterRouter.Options["ct-commit-all"] = "true"
+	}
 
 	expectedEntities := []libovsdbtest.TestData{
 		clusterRouter,

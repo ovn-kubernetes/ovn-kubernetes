@@ -71,7 +71,6 @@ func (gtf *GatewayTopologyFactory) newClusterRouter(
 	}
 	if netInfo.IsUserDefinedNetwork() &&
 		config.Gateway.Mode == config.GatewayModeLocal &&
-		netInfo.TopologyType() == types.Layer3Topology &&
 		clusterRouterName == netInfo.GetNetworkScopedClusterRouterName() {
 		// The LGW UDN cluster router owns the conditional UDN subnet SNAT. Commit
 		// all traffic in that router's CT zone so replies do not enter the SNAT
