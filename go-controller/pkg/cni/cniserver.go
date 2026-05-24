@@ -79,6 +79,9 @@ func NewCNIServer(
 	if config.IsModeDPU() {
 		return nil, fmt.Errorf("unsupported ovnkube-node mode for CNI server: %s", config.OvnKubeNode.Mode)
 	}
+	if !config.UnprivilegedMode && ovsClient == nil && !config.IsModeDPUHost() {
+		return nil, fmt.Errorf("OVS client is required in privileged mode")
+	}
 
 	router := mux.NewRouter()
 
