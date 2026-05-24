@@ -25,6 +25,11 @@ global:
   extGatewayNetworkInterface: ""
   # -- GENEVE UDP port (default 6081)
   encapPort: 6081
+  # -- Host interface from which to derive OVN_ENCAP_IP per node (e.g. "ovn-int").
+  # If set, the global-scope v4 (and v6, dual-joined with a comma) of this
+  # interface is used as --encap-ip for ovnkube-node. Leave empty to keep the
+  # ovnkube-node auto-detection (uses the node's primary IP).
+  encapInterface: ""
   # -- The gateway mode (shared or local), if not given, gateway functionality is disabled
   gatewayMode: shared
   # -- Optional extra gateway options

@@ -190,6 +190,8 @@ spec:
           value: {{ default "" .Values.global.disableForwarding | quote }}
         - name: OVN_ENCAP_PORT
           value: {{ default 6081 .Values.global.encapPort | quote }}
+        - name: OVN_ENCAP_INTERFACE
+          value: {{ default "" .Values.global.encapInterface | quote }}
         - name: OVN_DISABLE_PKT_MTU_CHECK
           value: {{ default "" .Values.global.disablePacketMtuCheck | quote }}
         - name: OVN_NETFLOW_TARGETS

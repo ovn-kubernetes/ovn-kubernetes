@@ -279,6 +279,29 @@ ovnkube_node_mgmt_port_netdev=${OVNKUBE_NODE_MGMT_PORT_NETDEV:-}
 ovnkube_node_mgmt_port_dp_resource_name=${OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME:-}
 ovnkube_config_duration_enable=${OVNKUBE_CONFIG_DURATION_ENABLE:-false}
 ovnkube_metrics_scale_enable=${OVNKUBE_METRICS_SCALE_ENABLE:-false}
+# OVN_ENCAP_INTERFACE - if set and OVN_ENCAP_IP is empty, derive OVN_ENCAP_IP
+# from this host interface (global-scope IPv4 + IPv6, comma-joined for
+# dual-stack). Lets the chart drive a per-node encap IP from values without
+# having to annotate every Node out-of-band.
+ovn_encap_interface=${OVN_ENCAP_INTERFACE:-}
+if [[ -n "${ovn_encap_interface}" && -z "${OVN_ENCAP_IP:-}" ]]; then
+    encap_v4=$(ip -4 -o addr show "${ovn_encap_interface}" scope global 2>/dev/null \
+               | awk '{split($4,a,"/"); print a[1]; exit}')
+    encap_v6=$(ip -6 -o addr show "${ovn_encap_interface}" scope global 2>/dev/null \
+               | awk '{split($4,a,"/"); print a[1]; exit}')
+    if [[ -n "${encap_v4}" && -n "${encap_v6}" ]]; then
+        OVN_ENCAP_IP="${encap_v4},${encap_v6}"
+    elif [[ -n "${encap_v4}" ]]; then
+        OVN_ENCAP_IP="${encap_v4}"
+    elif [[ -n "${encap_v6}" ]]; then
+        OVN_ENCAP_IP="${encap_v6}"
+    fi
+    if [[ -n "${OVN_ENCAP_IP}" ]]; then
+        echo "Derived OVN_ENCAP_IP=${OVN_ENCAP_IP} from interface ${ovn_encap_interface}"
+    else
+        echo "WARN: interface ${ovn_encap_interface} has no global-scope IP; OVN_ENCAP_IP left unset"
+    fi
+fi
 # OVN_ENCAP_IP - encap IP to be used for OVN traffic on the node
 ovn_encap_ip=${OVN_ENCAP_IP:-}
 # OVN_KUBERNETES_CONNTRACK_ZONE - conntrack zone number used for openflow rules (default 64000)
