@@ -193,6 +193,10 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, ovsCli
 
 	response := &Response{KubeAuth: kubeAuth}
 	if !config.UnprivilegedMode {
+		if ovsClient == nil && !config.IsModeDPUHost() {
+			return nil, fmt.Errorf("OVS client is required in privileged mode")
+		}
+
 		netName := pr.netName
 		if pr.CNIConf.PhysicalNetworkName != "" {
 			netName = pr.CNIConf.PhysicalNetworkName

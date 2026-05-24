@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/model"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
@@ -51,6 +52,55 @@ func (f *failOnceClient) Transact(ctx context.Context, ops ...ovsdb.Operation) (
 		return nil, fmt.Errorf("injected transient ovsdb failure")
 	}
 	return f.Client.Transact(ctx, ops...)
+}
+
+type ovnInstalledClient struct {
+	libovsdbclient.Client
+	ifaceName string
+}
+
+func (c *ovnInstalledClient) Where(models ...model.Model) libovsdbclient.ConditionalAPI {
+	return &ovnInstalledConditional{
+		ConditionalAPI: c.Client.Where(models...),
+		ifaceName:      c.ifaceName,
+	}
+}
+
+type ovnInstalledConditional struct {
+	libovsdbclient.ConditionalAPI
+	ifaceName string
+}
+
+func (c *ovnInstalledConditional) List(ctx context.Context, result any) error {
+	err := c.ConditionalAPI.List(ctx, result)
+	if err != nil {
+		return err
+	}
+	markOVNInstalled(result, c.ifaceName)
+	return nil
+}
+
+func markOVNInstalled(result any, ifaceName string) {
+	switch ifaces := result.(type) {
+	case *[]*vswitchd.Interface:
+		for _, iface := range *ifaces {
+			markInterfaceOVNInstalled(iface, ifaceName)
+		}
+	case *[]vswitchd.Interface:
+		for i := range *ifaces {
+			markInterfaceOVNInstalled(&(*ifaces)[i], ifaceName)
+		}
+	}
+}
+
+func markInterfaceOVNInstalled(iface *vswitchd.Interface, ifaceName string) {
+	if iface == nil || iface.Name != ifaceName {
+		return
+	}
+	if iface.ExternalIDs == nil {
+		iface.ExternalIDs = map[string]string{}
+	}
+	iface.ExternalIDs["ovn-installed"] = "true"
 }
 
 func genOVSFindCmd(timeout, table, column, condition string) string {
@@ -308,22 +358,14 @@ var _ = Describe("Node DPU tests", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 				ovsCleanup = ctx
-				dnnc.ovsClient = ovsClient
+				dnnc.ovsClient = &ovnInstalledClient{
+					Client:    ovsClient,
+					ifaceName: vfRep,
+				}
 
-				// clearPodBandwidth — still shell-out in the libovsdb path
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: genOVSFindCmd("30", "interface", "name",
-						"external-ids:sandbox=a8d09931"),
-				})
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: genOVSFindCmd("30", "qos", "_uuid",
-						"external-ids:sandbox=a8d09931"),
-				})
-				// waitForPodInterface — still shell-out in the libovsdb path
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genOVSGetCmd("Interface", "pf0vf9", "external-ids", "iface-id") + " " + "external-ids:ovn-installed",
-					Output: genIfaceID(pod.Namespace, pod.Name) + "\n" + "true",
-				})
+				// waitForPodInterface reads the libovsdb cache. The test client
+				// marks the created interface as installed to model OVN setting
+				// external_ids:ovn-installed=true.
 				// ConfigureOVS calls LinkByName/LinkSetMTU/LinkSetUp when deviceID != ""
 				netlinkOpsMock.On("LinkByName", vfRep).Return(vfLink, nil)
 				netlinkOpsMock.On("LinkSetMTU", vfLink, ifInfo.MTU).Return(nil)
