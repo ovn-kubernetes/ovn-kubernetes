@@ -15,7 +15,23 @@ import (
 )
 
 // GetNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
+//
+// If iface turns out to be an OVS port on a bridge -- which is what happens
+// once OVS has taken over a physical gateway interface in shared/local mode
+// (the host IP migrates from the slave port to the bridge's internal port) --
+// translate to the bridge name first. Every caller of this function wants
+// "the IPs the host has on this gateway path", which after takeover live on
+// the bridge, not on the slave port. Doing the translation here covers all
+// callers at once and matches the translation that initGatewayPreStart
+// already does for `config.Gateway.Interface` in gateway_init.go:84-90.
+//
+// `port-to-br` returns an error when iface is not an OVS port (e.g. a plain
+// Linux netdev like the kubernetes node interface), in which case we keep
+// the original iface -- preserving the historical behaviour.
 func GetNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
+	if bridgeName, _, err := pkgutil.RunOVSVsctl("port-to-br", iface); err == nil && bridgeName != "" {
+		iface = bridgeName
+	}
 	allIPs, err := pkgutil.GetFilteredInterfaceV4V6IPs(iface)
 	if err != nil {
 		return nil, fmt.Errorf("could not find IP addresses: %v", err)
