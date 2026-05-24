@@ -165,6 +165,39 @@ ovn_gateway_mode=${OVN_GATEWAY_MODE:-"shared"}
 ovn_gateway_opts=${OVN_GATEWAY_OPTS:-""}
 ovn_gateway_router_subnet=${OVN_GATEWAY_ROUTER_SUBNET:-""}
 
+# OVN_GATEWAY_NEXTHOP_INTERFACE - if set and --gateway-nexthop is not already
+# in OVN_GATEWAY_OPTS, derive the next-hop(s) from the routes attached to
+# this host interface (first IPv4 `via` and first IPv6 `via`, comma-joined
+# for dual-stack). Lets racks each have their own gateway IP without a
+# cluster-wide static --gateway-nexthop. Works even when the interface has
+# no default route on it (e.g. an OVN-dedicated VLAN with only a /11 route
+# via the rack router); v4-only and v6-only deployments are supported.
+ovn_gateway_nexthop_interface=${OVN_GATEWAY_NEXTHOP_INTERFACE:-}
+if [[ -n "${ovn_gateway_nexthop_interface}" ]]; then
+    if [[ "${ovn_gateway_opts}" == *--gateway-nexthop* ]]; then
+        echo "OVN_GATEWAY_NEXTHOP_INTERFACE=${ovn_gateway_nexthop_interface} ignored: --gateway-nexthop already set in OVN_GATEWAY_OPTS"
+    else
+        nh_v4=$(ip -4 route show dev "${ovn_gateway_nexthop_interface}" 2>/dev/null \
+                | awk '{for(i=1;i<NF;i++) if($i=="via"){print $(i+1); exit}}')
+        nh_v6=$(ip -6 route show dev "${ovn_gateway_nexthop_interface}" 2>/dev/null \
+                | awk '{for(i=1;i<NF;i++) if($i=="via"){print $(i+1); exit}}')
+        nexthops=""
+        if [[ -n "${nh_v4}" && -n "${nh_v6}" ]]; then
+            nexthops="${nh_v4},${nh_v6}"
+        elif [[ -n "${nh_v4}" ]]; then
+            nexthops="${nh_v4}"
+        elif [[ -n "${nh_v6}" ]]; then
+            nexthops="${nh_v6}"
+        fi
+        if [[ -n "${nexthops}" ]]; then
+            ovn_gateway_opts="${ovn_gateway_opts} --gateway-nexthop=${nexthops}"
+            echo "Derived --gateway-nexthop=${nexthops} from interface ${ovn_gateway_nexthop_interface}"
+        else
+            echo "WARN: interface ${ovn_gateway_nexthop_interface} has no 'via' route; --gateway-nexthop not appended (ovnkube-node will attempt netlink auto-detect)"
+        fi
+    fi
+fi
+
 net_cidr=${OVN_NET_CIDR:-10.128.0.0/14/23}
 svc_cidr=${OVN_SVC_CIDR:-172.30.0.0/16}
 mtu=${OVN_MTU:-1400}

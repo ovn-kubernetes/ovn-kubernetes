@@ -23,6 +23,14 @@ global:
   gatewayMode: shared
   # -- Optional extra gateway options
   gatewayOpts: ""
+  # -- Host interface from which to derive --gateway-nexthop per node. If set,
+  # ovnkube.sh resolves the first IPv4 `via` route and first IPv6 `via` route
+  # on that interface and appends them comma-joined to --gateway-nexthop.
+  # Useful for multi-rack clusters where each rack's gateway IP is different
+  # so a static cluster-wide --gateway-nexthop in gatewayOpts won't fit.
+  # Leave empty to defer to gatewayOpts or to ovnkube-node's auto-detection.
+  # Skipped when --gateway-nexthop is already present in gatewayOpts.
+  gatewayNexthopInterface: ""
   # -- Use simulated DPU operations instead of SR-IOV/switchdev hardware (for Kind/VM-based DPU simulation)
   simulateDpu: false
   # -- The DPU-side representor interface for the host's uplink (PF). Required for simulated environments where switchdev metadata is unavailable.
