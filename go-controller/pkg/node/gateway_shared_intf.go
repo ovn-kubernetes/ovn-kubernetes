@@ -2196,6 +2196,19 @@ func (r *masqueradeReconciler) ensure() error {
 	if gwIface == "" || gwIface == types.DeriveFromMgmtPort {
 		return nil
 	}
+	// If gwIface is an OVS port (which is what happens after OVS takes
+	// over a physical interface like ovn-ext -- the host IP migrates to
+	// the bridge), translate to the bridge name. Otherwise both paths in
+	// this reconciler deadlock: the slow path's
+	// GetNetworkInterfaceIPAddresses(<port>) fails because the port has
+	// no IPv4, the fast path's lastLinkIndex is only set on slow-path
+	// success, and link.Attrs().Index then never matches the slave port.
+	// Mirrors the same translation done in initGatewayPreStart.
+	if config.IsModeDPU() || config.IsModeFull() {
+		if bridgeName, _, err := util.RunOVSVsctl("port-to-br", gwIface); err == nil && bridgeName != "" {
+			gwIface = bridgeName
+		}
+	}
 	if !r.mu.TryLock() {
 		return nil
 	}
