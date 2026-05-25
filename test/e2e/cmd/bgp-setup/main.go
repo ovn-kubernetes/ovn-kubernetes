@@ -31,7 +31,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/containerengine"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/frr"
 	k8simage "k8s.io/kubernetes/test/utils/image"
@@ -192,13 +191,10 @@ func main() {
 	controlPlaneNodeName = deriveControlPlaneNodeName(cfg.ClusterName)
 	fmt.Printf("Using control plane node: %s\n", controlPlaneNodeName)
 
-	// Set container engine based on config
-	// NOTE: This must be set before any calls to containerengine.Get() since
-	// the containerengine package caches the runtime value on first access.
+	// Set container runtime for use by containerRuntime() throughout the program.
 	if cfg.ContainerRuntime != "" {
-		os.Setenv("CONTAINER_RUNTIME", cfg.ContainerRuntime)
+		runtimeBin = cfg.ContainerRuntime
 	}
-
 	// Get control plane IP for direct API server access
 	// Only enabled when --use-direct-api=true, as it requires Docker bridge network to be routable
 	if cfg.UseDirectAPI {
@@ -408,9 +404,12 @@ func nodeNames(nodes []corev1.Node) []string {
 	return names
 }
 
+// runtimeBin stores the container runtime binary name (docker or podman)
+var runtimeBin = "docker"
+
 // containerRuntime returns the container runtime command
 func containerRuntime() string {
-	return containerengine.Get().String()
+	return runtimeBin
 }
 
 func runCmd(name string, args ...string) error {
