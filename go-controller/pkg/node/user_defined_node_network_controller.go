@@ -134,9 +134,13 @@ func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 func (nc *UserDefinedNodeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
 
 func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
-	wasUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(old, nc.name)
-	isUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(new, nc.name)
-	return wasUDNNetworkAdvertisedAtNode != isUDNNetworkAdvertisedAtNode
+	switch {
+	case util.IsPodNetworkAdvertisedAtNode(old, nc.name) != util.IsPodNetworkAdvertisedAtNode(new, nc.name):
+		return true
+	case util.IsPodNetworkAdvertisedAtNodeDefaultVRF(old, nc.name) != util.IsPodNetworkAdvertisedAtNodeDefaultVRF(new, nc.name):
+		return true
+	}
+	return false
 }
 
 // Reconcile function reconciles three entities based on whether UDN network is advertised

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"slices"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -983,7 +982,6 @@ func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules() error
 }
 
 func (udng *UserDefinedNetworkGateway) updateAdvertisementStatus() {
-	vrfs := udng.GetPodNetworkAdvertisedOnNodeVRFs(udng.node.Name)
-	udng.isNetworkAdvertised = len(vrfs) > 0
-	udng.isNetworkAdvertisedToDefaultVRF = slices.Contains(vrfs, types.DefaultNetworkName)
+	udng.isNetworkAdvertised = util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
+	udng.isNetworkAdvertisedToDefaultVRF = util.IsPodNetworkAdvertisedAtNodeDefaultVRF(udng.NetInfo, udng.node.Name)
 }

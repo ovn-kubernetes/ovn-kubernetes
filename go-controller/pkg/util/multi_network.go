@@ -1938,8 +1938,29 @@ func AllowsPersistentIPs(netInfo NetInfo) bool {
 	}
 }
 
+// IsPodNetworkAdvertisedAtNode returns true if the pod network is advertised at
+// the given node. For networks with NoOverlay or EVPN transport this always
+// returns true as those networks should always be advertised.
 func IsPodNetworkAdvertisedAtNode(netInfo NetInfo, node string) bool {
-	return len(netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node)) > 0
+	switch netInfo.Transport() {
+	case types.NetworkTransportNoOverlay, types.NetworkTransportEVPN:
+		return true
+	default:
+		return len(netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node)) > 0
+	}
+}
+
+// IsPodNetworkAdvertisedAtNodeDefaultVRF returns true if the pod network is
+// advertised at the given node in the default VRF. For networks with EVPN
+// transport this always returns false as those networks should not be
+// advertised in the default VRF.
+func IsPodNetworkAdvertisedAtNodeDefaultVRF(netInfo NetInfo, node string) bool {
+	switch netInfo.Transport() {
+	case types.NetworkTransportEVPN:
+		return false
+	default:
+		return slices.Contains(netInfo.GetPodNetworkAdvertisedOnNodeVRFs(node), types.DefaultNetworkName)
+	}
 }
 
 func GetNetworkVRFName(netInfo NetInfo) string {
