@@ -1994,6 +1994,168 @@ var _ = Describe("Gateway unit tests", func() {
 			Expect(gatewayNextHops).To(Equal(gwIPs))
 		})
 
+		It("Resolves --gateway-nexthop=self from the first `via` route on the gateway interface", func() {
+			ifName := "enf1f0"
+			gwIP := net.ParseIP("10.0.0.11")
+			lnk := &linkMock.Link{}
+			lnkAttr := &netlink.LinkAttrs{Name: ifName, Index: 5}
+			_, specificDst, err := net.ParseCIDR("10.128.0.0/11")
+			Expect(err).ToNot(HaveOccurred())
+			// non-default route with via — multi-rack VLAN case
+			rackRoute := netlink.Route{Dst: specificDst, LinkIndex: 5, Gw: gwIP}
+			lnk.On("Attrs").Return(lnkAttr)
+			netlinkMock.On("LinkByName", ifName).Return(lnk, nil)
+			netlinkMock.On("RouteList", lnk, netlink.FAMILY_V4).Return([]netlink.Route{rackRoute}, nil)
+
+			fexec := ovntest.NewLooseCompareFakeExec()
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
+				Err: fmt.Errorf(""),
+			})
+			Expect(util.SetExec(fexec)).To(Succeed())
+
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Gateway.Interface = ifName
+			config.Gateway.NextHop = "self"
+
+			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gatewayIntf).To(Equal(ifName))
+			Expect(gatewayNextHops).To(HaveLen(1))
+			Expect(gatewayNextHops[0]).To(Equal(gwIP))
+		})
+
+		It("Skips link-local via routes (e.g. OVN-K service masquerade) when resolving --gateway-nexthop=self", func() {
+			ifName := "brovn-ext"
+			rackGw := net.ParseIP("10.128.0.1")
+			masqGw := net.ParseIP("169.254.0.4")
+			lnk := &linkMock.Link{}
+			lnkAttr := &netlink.LinkAttrs{Name: ifName, Index: 5}
+			_, rackDst, err := net.ParseCIDR("10.128.0.0/11")
+			Expect(err).ToNot(HaveOccurred())
+			_, masqDst, err := net.ParseCIDR("254.52.0.0/16")
+			Expect(err).ToNot(HaveOccurred())
+			// Masquerade route listed FIRST to reproduce the production
+			// bug where RouteList ordering put it ahead of the rack route.
+			routes := []netlink.Route{
+				{Dst: masqDst, LinkIndex: 5, Gw: masqGw},
+				{Dst: rackDst, LinkIndex: 5, Gw: rackGw},
+			}
+			lnk.On("Attrs").Return(lnkAttr)
+			netlinkMock.On("LinkByName", ifName).Return(lnk, nil)
+			netlinkMock.On("RouteList", lnk, netlink.FAMILY_V4).Return(routes, nil)
+
+			fexec := ovntest.NewLooseCompareFakeExec()
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
+				Err: fmt.Errorf(""),
+			})
+			Expect(util.SetExec(fexec)).To(Succeed())
+
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Gateway.Interface = ifName
+			config.Gateway.NextHop = "self"
+
+			gatewayNextHops, _, err := getGatewayNextHops()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gatewayNextHops).To(HaveLen(1))
+			Expect(gatewayNextHops[0]).To(Equal(rackGw))
+		})
+
+		It("Accepts --gateway-nexthop=SELF case-insensitively", func() {
+			ifName := "enf1f0"
+			gwIP := net.ParseIP("10.0.0.11")
+			lnk := &linkMock.Link{}
+			lnkAttr := &netlink.LinkAttrs{Name: ifName, Index: 5}
+			_, dst, err := net.ParseCIDR("10.128.0.0/11")
+			Expect(err).ToNot(HaveOccurred())
+			lnk.On("Attrs").Return(lnkAttr)
+			netlinkMock.On("LinkByName", ifName).Return(lnk, nil)
+			netlinkMock.On("RouteList", lnk, netlink.FAMILY_V4).Return(
+				[]netlink.Route{{Dst: dst, LinkIndex: 5, Gw: gwIP}}, nil)
+
+			fexec := ovntest.NewLooseCompareFakeExec()
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
+				Err: fmt.Errorf(""),
+			})
+			Expect(util.SetExec(fexec)).To(Succeed())
+
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Gateway.Interface = ifName
+			config.Gateway.NextHop = "SELF"
+
+			gatewayNextHops, _, err := getGatewayNextHops()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gatewayNextHops[0]).To(Equal(gwIP))
+		})
+
+		It("Errors when --gateway-nexthop=self but the gateway interface has no via route", func() {
+			ifName := "enf1f0"
+			lnk := &linkMock.Link{}
+			lnkAttr := &netlink.LinkAttrs{Name: ifName, Index: 5}
+			lnk.On("Attrs").Return(lnkAttr)
+			netlinkMock.On("LinkByName", ifName).Return(lnk, nil)
+			// connected-scope route only, no Gw
+			netlinkMock.On("RouteList", lnk, netlink.FAMILY_V4).Return(
+				[]netlink.Route{{LinkIndex: 5}}, nil)
+
+			fexec := ovntest.NewLooseCompareFakeExec()
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 port-to-br %s", ifName),
+				Err: fmt.Errorf(""),
+			})
+			Expect(util.SetExec(fexec)).To(Succeed())
+
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Gateway.Interface = ifName
+			config.Gateway.NextHop = "self"
+
+			_, _, err := getGatewayNextHops()
+			Expect(err).To(MatchError(ContainSubstring("--gateway-nexthop=self")))
+			Expect(err).To(MatchError(ContainSubstring("no via route")))
+		})
+
+		It("Errors when --gateway-nexthop=self but no --gateway-interface is set", func() {
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Gateway.Interface = ""
+			config.Gateway.NextHop = "self"
+
+			_, _, err := getGatewayNextHops()
+			Expect(err).To(MatchError(ContainSubstring("--gateway-nexthop=self requires --gateway-interface")))
+		})
+
+		It("Resolves --gateway-nexthop=default from the system default route", func() {
+			defaultGwIP := net.ParseIP("10.32.0.1")
+			_, defaultDst, err := net.ParseCIDR("0.0.0.0/0")
+			Expect(err).ToNot(HaveOccurred())
+			lnk := &linkMock.Link{}
+			lnkAttr := &netlink.LinkAttrs{Name: "k8s-ctl", Index: 7}
+			defaultRoute := netlink.Route{
+				Dst: defaultDst, LinkIndex: 7, Scope: netlink.SCOPE_UNIVERSE,
+				Gw: defaultGwIP, MTU: config.Default.MTU,
+			}
+			lnk.On("Attrs").Return(lnkAttr)
+			netlinkMock.On("LinkByIndex", mock.Anything).Return(lnk, nil)
+			netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(
+				[]netlink.Route{defaultRoute}, nil)
+
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			config.Gateway.Interface = ""
+			config.Gateway.NextHop = "default"
+
+			gatewayNextHops, _, err := getGatewayNextHops()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gatewayNextHops).To(HaveLen(1))
+			Expect(gatewayNextHops[0]).To(Equal(defaultGwIP))
+		})
+
 		ovntest.OnSupportedPlatformsIt("Finds correct gateway interface and nexthops when gateway bridge is created", func() {
 			ifName := "enf1f0"
 			nextHopCfg := "10.0.0.11"
