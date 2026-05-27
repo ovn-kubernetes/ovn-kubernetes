@@ -2704,6 +2704,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					}
 
 					ginkgo.BeforeEach(func() {
+						if peering.externalASN != peering.clusterASN && testedNetworkType == cudnAdvertisedEVPNUnmanagedRandomVTEP {
+							e2eskipper.Skipf("Random VTEP tests are skipped in eBGP mode")
+						}
+
 						bgpAlloc, err := allocators.AllocateBGP(f, ictx)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						udnIPv4, udnIPv6 := bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6
