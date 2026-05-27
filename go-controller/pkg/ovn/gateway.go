@@ -518,15 +518,17 @@ func (gw *GatewayManager) createGWRouterPort(gwConfig *GatewayConfig,
 	return nil
 }
 
-// shouldUseRAlessNoOverlayHostSubnetRoutes returns true when the gateway router
-// should route only local host subnets through OVN. The external default route
-// is programmed separately from the gateway next hops.
-func (gw *GatewayManager) shouldUseRAlessNoOverlayHostSubnetRoutes() bool {
+// shouldUseNoOverlayHostSubnetRoutesWithoutAdvertisements returns true when the
+// gateway router should route only local host subnets through OVN. The external
+// default route is programmed separately from the gateway next hops.
+func (gw *GatewayManager) shouldUseNoOverlayHostSubnetRoutesWithoutAdvertisements() bool {
 	if gw.netInfo.Transport() != types.NetworkTransportNoOverlay {
 		return false
 	}
 	if !gw.netInfo.IsDefault() {
-		return false // TODO: implement it for CUDNs
+		return gw.netInfo.IsPrimaryNetwork() &&
+			gw.netInfo.NoOverlayRouting() == config.NoOverlayRoutingUnmanaged &&
+			len(gw.netInfo.GetPodNetworkAdvertisedVRFs()) == 0
 	}
 	if config.NoOverlay.Routing != config.NoOverlayRoutingUnmanaged {
 		return false
@@ -536,7 +538,7 @@ func (gw *GatewayManager) shouldUseRAlessNoOverlayHostSubnetRoutes() bool {
 	}
 	ras, err := gw.watchFactory.RouteAdvertisementsInformer().Lister().List(labels.Everything())
 	if err != nil {
-		klog.Errorf("Failed to list RouteAdvertisements while checking RA-less no-overlay routing: %v", err)
+		klog.Errorf("Failed to list RouteAdvertisements while checking unmanaged no-overlay routing without advertisements: %v", err)
 		return false
 	}
 	for _, ra := range ras {
@@ -565,7 +567,7 @@ func (gw *GatewayManager) deleteGWRouterClusterSubnetRoutes(clusterSubnets []*ne
 			item.OutputPort == nil
 	}
 	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(gw.nbClient, gw.gwRouterName, p); err != nil {
-		return fmt.Errorf("failed to delete gateway router cluster subnet routes for RA-less no-overlay: %w", err)
+		return fmt.Errorf("failed to delete gateway router cluster subnet routes for no-overlay without advertisements: %w", err)
 	}
 	return nil
 }
@@ -574,7 +576,7 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(gwConfig *GatewayConfig, ex
 	gwRouter *nbdb.LogicalRouter) error {
 	if len(gwConfig.ovnClusterLRPToJoinIfAddrs) > 0 {
 		routeSubnets := gwConfig.clusterSubnets
-		if gw.shouldUseRAlessNoOverlayHostSubnetRoutes() {
+		if gw.shouldUseNoOverlayHostSubnetRoutesWithoutAdvertisements() {
 			routeSubnets = gwConfig.hostSubnets
 			// We want to route only this node's local pod subnets through OVN.
 			// Remove routes for the cluster pod subnets left from an RA-backed

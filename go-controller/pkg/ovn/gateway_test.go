@@ -446,7 +446,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 		fakeOvn.shutdown()
 	})
 
-	ginkgo.DescribeTable("uses expected gateway routes for RA-less default no-overlay",
+	ginkgo.DescribeTable("uses expected gateway routes for unmanaged no-overlay without RouteAdvertisements",
 		func(enableRouteAdvertisementsFeature bool, routeAdvertisements []*ratypes.RouteAdvertisements, expectHostSubnetRoute bool) {
 			config.Default.Transport = types.NetworkTransportNoOverlay
 			config.NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
@@ -518,7 +518,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 	)
 
 	ginkgo.DescribeTable("programs expected GR static routes for CUDN no-overlay",
-		func(podNetworkAdvertisements map[string][]string, hasStaleClusterSubnetRoute, expectHostSubnetRoute bool) {
+		func(noOverlayRouting string, podNetworkAdvertisements map[string][]string, hasStaleClusterSubnetRoute, expectHostSubnetRoute bool) {
 			networkName := util.GenerateCUDNNetworkName("blue")
 			gwRouterName := types.GWRouterPrefix + nodeName
 			gwRouter := &nbdb.LogicalRouter{
@@ -548,11 +548,12 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 					Name: networkName,
 					Type: "ovn-k8s-cni-overlay",
 				},
-				Topology:     types.Layer3Topology,
-				Role:         types.NetworkRolePrimary,
-				Subnets:      "10.128.0.0/16/24",
-				Transport:    types.NetworkTransportNoOverlay,
-				OutboundSNAT: types.NoOverlaySNATEnabled,
+				Topology:         types.Layer3Topology,
+				Role:             types.NetworkRolePrimary,
+				Subnets:          "10.128.0.0/16/24",
+				Transport:        types.NetworkTransportNoOverlay,
+				OutboundSNAT:     types.NoOverlaySNATEnabled,
+				NoOverlayRouting: noOverlayRouting,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			netInfo.(util.MutableNetInfo).SetPodNetworkAdvertisedVRFs(podNetworkAdvertisements)
@@ -593,9 +594,10 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			}
 			gomega.Expect(prefixes).To(gomega.HaveKey("0.0.0.0/0"))
 		},
-		ginkgo.Entry("uses host-subnet routes without pod-network advertisements", map[string][]string{}, false, true),
-		ginkgo.Entry("removes stale cluster-subnet routes without pod-network advertisements", map[string][]string{}, true, true),
-		ginkgo.Entry("uses cluster-subnet routes with pod-network advertisements", map[string][]string{nodeName: {types.DefaultNetworkName}}, false, false),
+		ginkgo.Entry("uses host-subnet routes for unmanaged routing without pod-network advertisements", config.NoOverlayRoutingUnmanaged, map[string][]string{}, false, true),
+		ginkgo.Entry("removes stale cluster-subnet routes for unmanaged routing without pod-network advertisements", config.NoOverlayRoutingUnmanaged, map[string][]string{}, true, true),
+		ginkgo.Entry("uses cluster-subnet routes for unmanaged routing with pod-network advertisements", config.NoOverlayRoutingUnmanaged, map[string][]string{nodeName: {types.DefaultNetworkName}}, false, false),
+		ginkgo.Entry("uses cluster-subnet routes for managed routing without pod-network advertisements", config.NoOverlayRoutingManaged, map[string][]string{}, false, false),
 	)
 
 	ginkgo.Context("Gateway Creation Operations Shared Gateway Mode", func() {
