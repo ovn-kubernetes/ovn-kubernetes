@@ -33,7 +33,10 @@ const (
 	ReasonNoOverlayTransportAccepted              = "NoOverlayTransportAccepted"
 	ReasonNoOverlayRouteAdvertisementsIsMissing   = "NoOverlayRouteAdvertisementsIsMissing"
 	ReasonNoOverlayRouteAdvertisementsNotAccepted = "NoOverlayRouteAdvertisementsNotAccepted"
+	ReasonNoOverlayRouteAdvertisementsNotRequired = "NoOverlayRouteAdvertisementsNotRequired"
 	ReasonRouteAdvertisementsNotEnabled           = "RouteAdvertisementsNotEnabled"
+
+	MessageNoOverlayRouteAdvertisementsNotRequired = "Transport has been configured as no-overlay with unmanaged routing. RouteAdvertisements are not required; external routing is responsible for returning traffic to node pod subnets."
 )
 
 // setTransportStatusCondition validates the transport configuration for a CUDN and sets its TransportAccepted status condition.
@@ -44,6 +47,9 @@ const (
 // the error is surfaced as a TransportAccepted=False condition (VTEP or config issue).
 // For no-overlay and EVPN transports (when EVPN validation passes), it validates that a
 // RouteAdvertisements CR exists and is accepted.
+// No-overlay CUDNs with unmanaged routing can be accepted without
+// RouteAdvertisements only when no RouteAdvertisements object selects the CUDN
+// and advertises PodNetwork.
 //
 // This function only SETS the condition on the provided CUDN object; it does NOT apply status.
 // The actual status update is handled by updateClusterUDNStatus() to ensure a single status update.
@@ -90,12 +96,33 @@ func (c *Controller) setTransportStatusCondition(cudn *userdefinednetworkv1.Clus
 	return false, nil
 }
 
+// allowsNoOverlayWithoutRouteAdvertisements returns true for primary layer 3
+// no-overlay CUDNs that do not require RouteAdvertisements because routing is
+// unmanaged. In this mode, the external network is responsible for returning
+// traffic to node pod subnets.
+func allowsNoOverlayWithoutRouteAdvertisements(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork) bool {
+	if cudn == nil {
+		return false
+	}
+	network := cudn.Spec.Network
+	noOverlay := network.NoOverlay
+	return network.GetTransport() == userdefinednetworkv1.TransportOptionNoOverlay &&
+		network.Topology == userdefinednetworkv1.NetworkTopologyLayer3 &&
+		network.Layer3 != nil &&
+		network.Layer3.Role == userdefinednetworkv1.NetworkRolePrimary &&
+		noOverlay != nil &&
+		noOverlay.Routing == userdefinednetworkv1.RoutingUnmanaged
+}
+
 // validateTransportWithRouteAdvertisements validates that a CUDN with no-overlay or EVPN transport has proper RouteAdvertisements configuration.
 // This function is used for both NoOverlay and EVPN transports as they both require RouteAdvertisements validation.
-// This function updates the cudn object status then reconcileCUDN() goes ahead and update the CR to reflect actual CUDN transport status.
+// This function updates the cudn object status then reconcileCUDN() goes ahead and updates the CR to reflect actual CUDN transport status.
 // Returns true if the TransportAccepted condition was updated (changed from previous value).
 func (c *Controller) validateTransportWithRouteAdvertisements(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, transport userdefinednetworkv1.TransportOption) (bool, error) {
 	if c.raLister == nil {
+		if allowsNoOverlayWithoutRouteAdvertisements(cudn) {
+			return c.setTransportCondition(cudn, metav1.ConditionTrue, ReasonNoOverlayRouteAdvertisementsNotRequired, MessageNoOverlayRouteAdvertisementsNotRequired), nil
+		}
 		// RouteAdvertisements feature not enabled
 		updated := c.setTransportCondition(cudn, metav1.ConditionFalse, ReasonRouteAdvertisementsNotEnabled,
 			fmt.Sprintf("RouteAdvertisements feature is not enabled but required for %s transport.", transport))
@@ -103,6 +130,7 @@ func (c *Controller) validateTransportWithRouteAdvertisements(cudn *userdefinedn
 	}
 
 	klog.V(5).Infof("Validating %s ClusterUserDefinedNetwork %q", transport, cudn.Name)
+	allowsNoRAAcceptance := allowsNoOverlayWithoutRouteAdvertisements(cudn)
 
 	// Get all RouteAdvertisements CRs
 	ras, err := c.raLister.List(labels.Everything())
@@ -164,7 +192,11 @@ func (c *Controller) validateTransportWithRouteAdvertisements(cudn *userdefinedn
 		updated = c.setTransportCondition(cudn, metav1.ConditionTrue, acceptedReason, acceptedMessage)
 	} else if !foundCUDNRA {
 		// No RouteAdvertisements CR advertising this CUDN
-		updated = c.setTransportCondition(cudn, metav1.ConditionFalse, missingReason, "No RouteAdvertisements CR is advertising the pod networks.")
+		if allowsNoRAAcceptance {
+			updated = c.setTransportCondition(cudn, metav1.ConditionTrue, ReasonNoOverlayRouteAdvertisementsNotRequired, MessageNoOverlayRouteAdvertisementsNotRequired)
+		} else {
+			updated = c.setTransportCondition(cudn, metav1.ConditionFalse, missingReason, "No RouteAdvertisements CR is advertising the pod networks.")
+		}
 	} else {
 		// Found RAs advertising this CUDN, but none are accepted
 		raNamesList := strings.Join(notAcceptedRANames, ", ")
