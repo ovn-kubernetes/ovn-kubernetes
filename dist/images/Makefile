@@ -22,8 +22,11 @@ ifeq ($(ARCH),arm64)
 endif
 IMAGE ?= ovn-daemonset-fedora
 
-OVN_REPO ?= https://github.com/ovn-org/ovn
-OVN_GITREF ?=
+# HACK: force OVN builds to pick up the ct commit all fix until it lands upstream.
+DEFAULT_OVN_REPO := https://github.com/trozet/ovn
+DEFAULT_OVN_GITREF := fix_commit_all
+override OVN_REPO := $(or $(OVN_REPO),$(DEFAULT_OVN_REPO))
+override OVN_GITREF := $(or $(OVN_GITREF),$(DEFAULT_OVN_GITREF))
 ifeq ($(OVN_GITREF),)
 OVN_FROM := koji
 else
@@ -37,7 +40,11 @@ OCI_BIN ?= docker
 
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
 ubuntu-image: bld
-	${OCI_BIN} build -t ovn-kube-ubuntu$(IMAGE_ARCH) -f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
+	${OCI_BIN} build \
+		--build-arg OVN_REPO=${OVN_REPO} \
+		--build-arg OVN_GITREF=${OVN_GITSHA} \
+		-t ovn-kube-ubuntu$(IMAGE_ARCH) \
+		-f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
 ifeq ($(ARCH),amd64)
 	${OCI_BIN} tag "ovn-kube-ubuntu$(IMAGE_ARCH):latest" \
               "ovn-kube-ubuntu:latest"

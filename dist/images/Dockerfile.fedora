@@ -11,7 +11,8 @@
 # This is for a development build where the ovn-kubernetes utilities
 # are built locally and included in the image (instead of the rpm)
 #
-ARG OVN_FROM=koji
+# HACK: force OVN builds to pick up the ct commit all fix until it lands upstream.
+ARG OVN_FROM=source
 ARG BUILDER_IMAGE
 ARG OVN_KUBERNETES_DIR=.
 
@@ -44,8 +45,8 @@ RUN INSTALL_PKGS="git rpm-build dnf-plugins-core" && \
     dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS
 
 # Clone OVN Source Code.
-ARG OVN_REPO=https://github.com/ovn-org/ovn.git
-ARG OVN_GITREF=main
+ARG OVN_REPO=https://github.com/trozet/ovn.git
+ARG OVN_GITREF=fix_commit_all
 WORKDIR /root
 RUN mkdir ovn && pushd ovn && \
     git init && \
