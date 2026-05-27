@@ -17,12 +17,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	ralisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
@@ -56,11 +58,9 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		networkConfig,
 	)
 
-	// we don't care about route advertisements in cluster manager
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
-		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
 		// ra controller
 		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -75,6 +75,10 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 			nc.name,
 			raConfig,
 		)
+	}
+
+	if nc.hasRouteAdvertisements() || config.IsDefaultNetworkUnmanagedNoOverlay() {
+		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
 		// node controller
 		nodeConfig := &controller.ControllerConfig[corev1.Node]{
@@ -522,38 +526,53 @@ func (c *networkController) setAdvertisements(network util.MutableNetInfo) error
 	if !network.IsDefault() && !network.IsPrimaryNetwork() {
 		return nil
 	}
+	if network.IsDefault() && config.IsDefaultNetworkUnmanagedNoOverlay() {
+		return c.setDefaultNetworkUnmanagedNoOverlayVRFs(network)
+	}
+
 	if !c.hasRouteAdvertisements() {
 		return nil
 	}
-	if c.getNADKeysForNetwork == nil {
-		return fmt.Errorf("missing NAD resolver for network %q", network.GetNetworkName())
+	raNames, err := c.routeAdvertisementNamesForNetwork(network)
+	if err != nil {
+		return err
 	}
+	return c.setAdvertisementsFromRAs(network, raNames)
+}
 
+func (c *networkController) routeAdvertisementNamesForNetwork(network util.MutableNetInfo) (sets.Set[string], error) {
+	if c.getNADKeysForNetwork == nil {
+		return nil, fmt.Errorf("missing NAD resolver for network %q", network.GetNetworkName())
+	}
 	raNames := sets.New[string]()
 	for _, nadNamespacedName := range c.getNADKeysForNetwork(network.GetNetworkName()) {
 		namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		var nadRANames []string
 		if nad.Annotations[types.OvnRouteAdvertisementsKey] != "" {
 			err = json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsKey]), &nadRANames)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
 		raNames.Insert(nadRANames...)
 	}
+	return raNames, nil
+}
 
+func (c *networkController) setAdvertisementsFromRAs(network util.MutableNetInfo, raNames sets.Set[string]) error {
 	podAdvertisements := map[string][]string{}
 	eipAdvertisements := map[string][]string{}
+
 	for raName := range raNames {
 		ra, err := c.raLister.Get(raName)
 		if err != nil {
@@ -605,6 +624,81 @@ func (c *networkController) setAdvertisements(network util.MutableNetInfo) error
 	}
 	network.SetPodNetworkAdvertisedVRFs(podAdvertisements)
 	network.SetEgressIPAdvertisedVRFs(eipAdvertisements)
+	return nil
+}
+
+func (c *networkController) setDefaultNetworkUnmanagedNoOverlayVRFs(network util.MutableNetInfo) error {
+	if !c.hasRouteAdvertisements() {
+		// RouteAdvertisements are disabled, so unmanaged no-overlay default
+		// network cannot get RA-backed VRF state.
+		return c.setDefaultNetworkVRFsWithoutRouteAdvertisements(network)
+	}
+
+	raNames, err := c.routeAdvertisementNamesForNetwork(network)
+	if err != nil {
+		return err
+	}
+	defaultNADReferencesDefaultNetworkRA, err := c.raNamesAdvertiseDefaultNetwork(raNames)
+	if err != nil {
+		return err
+	}
+	if defaultNADReferencesDefaultNetworkRA {
+		// The default NAD already references an RA that advertises the default
+		// pod network, so use the normal RA-backed path.
+		return c.setAdvertisementsFromRAs(network, raNames)
+	}
+
+	ras, err := c.raLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	for _, ra := range ras {
+		if util.RAAdvertisesDefaultNetwork(ra) {
+			// A default-network RA exists, but the default NAD does not
+			// reference it yet. Do not infer the no-RA path while the RA
+			// controller may still be updating the NAD annotation; once the
+			// annotation is written, the NAD update requeues this network and
+			// the RA-backed path above handles it.
+			return nil
+		}
+	}
+	// No RA advertises the default pod network. Populate the internal per-node
+	// pod-network VRF state that downstream gateway code needs for unmanaged
+	// no-overlay without RouteAdvertisements; this does not create RAs or BGP
+	// config.
+	return c.setDefaultNetworkVRFsWithoutRouteAdvertisements(network)
+}
+
+func (c *networkController) raNamesAdvertiseDefaultNetwork(raNames sets.Set[string]) (bool, error) {
+	for raName := range raNames {
+		ra, err := c.raLister.Get(raName)
+		if err != nil {
+			return false, err
+		}
+		if util.RAAdvertisesDefaultNetwork(ra) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *networkController) setDefaultNetworkVRFsWithoutRouteAdvertisements(network util.MutableNetInfo) error {
+	if c.nodeLister == nil {
+		return fmt.Errorf("missing node lister for unmanaged no-overlay default network %q", network.GetNetworkName())
+	}
+	podVRFs := map[string][]string{}
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if c.isNodeManaged(node) {
+			podVRFs[node.Name] = []string{types.DefaultNetworkName}
+		}
+	}
+	network.SetPodNetworkAdvertisedVRFs(podVRFs)
+	// EgressIP is not supported with no-overlay.
+	network.SetEgressIPAdvertisedVRFs(map[string][]string{})
 	return nil
 }
 

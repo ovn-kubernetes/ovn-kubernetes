@@ -42,6 +42,7 @@ import (
 	egressqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/fake"
 	egressservice "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	routeadvertisementsfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	udnclientfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -203,19 +204,20 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 		}
 	}
 	o.fakeClient = &util.OVNKubeControllerClientset{
-		KubeClient:               fake.NewSimpleClientset(v1Objects...),
-		ANPClient:                anpfake.NewSimpleClientset(anpObjects...),
-		EgressIPClient:           egressipfake.NewSimpleClientset(egressIPObjects...),
-		EgressFirewallClient:     egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),
-		OCPNetworkClient:         ocpnetworkfake.NewSimpleClientset(dnsNameResolverObjects...),
-		EgressQoSClient:          egressqosfake.NewSimpleClientset(egressQoSObjects...),
-		MultiNetworkPolicyClient: mnpfake.NewSimpleClientset(multiNetworkPolicyObjects...),
-		EgressServiceClient:      egressservicefake.NewSimpleClientset(egressServiceObjects...),
-		AdminPolicyRouteClient:   adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...),
-		IPAMClaimsClient:         fakeipamclaimclient.NewSimpleClientset(ipamClaimObjects...),
-		NetworkAttchDefClient:    nadClient,
-		UserDefinedNetworkClient: udnclientfake.NewSimpleClientset(),
-		VTEPClient:               vtepfake.NewSimpleClientset(),
+		KubeClient:                fake.NewSimpleClientset(v1Objects...),
+		ANPClient:                 anpfake.NewSimpleClientset(anpObjects...),
+		EgressIPClient:            egressipfake.NewSimpleClientset(egressIPObjects...),
+		EgressFirewallClient:      egressfirewallfake.NewSimpleClientset(egressFirewallObjects...),
+		OCPNetworkClient:          ocpnetworkfake.NewSimpleClientset(dnsNameResolverObjects...),
+		EgressQoSClient:           egressqosfake.NewSimpleClientset(egressQoSObjects...),
+		MultiNetworkPolicyClient:  mnpfake.NewSimpleClientset(multiNetworkPolicyObjects...),
+		EgressServiceClient:       egressservicefake.NewSimpleClientset(egressServiceObjects...),
+		AdminPolicyRouteClient:    adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...),
+		IPAMClaimsClient:          fakeipamclaimclient.NewSimpleClientset(ipamClaimObjects...),
+		NetworkAttchDefClient:     nadClient,
+		RouteAdvertisementsClient: routeadvertisementsfake.NewSimpleClientset(),
+		UserDefinedNetworkClient:  udnclientfake.NewSimpleClientset(),
+		VTEPClient:                vtepfake.NewSimpleClientset(),
 	}
 	o.init(nads)
 }

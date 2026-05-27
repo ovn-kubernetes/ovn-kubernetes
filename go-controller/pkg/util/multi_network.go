@@ -28,6 +28,8 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -1921,6 +1923,18 @@ func IsRouteAdvertisementsEnabled() bool {
 	// for now, we require multi-network to be enabled because we rely on NADs,
 	// even for the default network
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
+}
+
+func RAAdvertisesDefaultNetwork(ra *ratypes.RouteAdvertisements) bool {
+	if ra == nil || !slices.Contains(ra.Spec.Advertisements, ratypes.PodNetwork) {
+		return false
+	}
+	for _, networkSelector := range ra.Spec.NetworkSelectors {
+		if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
+			return true
+		}
+	}
+	return false
 }
 
 func IsEVPNEnabled() bool {
