@@ -122,6 +122,11 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 			return
 
 		case <-ticker.C:
+			isFeatureEnabled, err = isFileNotEmpty(featureEnablerFile)
+			if err != nil {
+				klog.Warningf("Error while reading [%s]: %v", featureEnablerFile, err)
+				continue
+			}
 			if !isFeatureEnabled {
 				continue
 			}
