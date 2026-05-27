@@ -235,14 +235,29 @@ func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
 		return fmt.Errorf("can't get process (PID:%d) CPU affinity: %w", targetPID, err)
 	}
 
-	if desiredProcessCPUs == targetProcessCPUs {
-		klog.V(5).Infof("Process[%d] CPU affinity already matches desired process affinity %s", targetPID, printCPUSet(desiredProcessCPUs))
-		return nil
-	}
-
 	taskIDs, err := getThreadsOfProcess(targetPID)
 	if err != nil {
 		return fmt.Errorf("can't get tasks of PID(%d):%w", targetPID, err)
+	}
+
+	if desiredProcessCPUs == targetProcessCPUs {
+		allTasksMatch := true
+		for _, taskID := range taskIDs {
+			var taskCPUs unix.CPUSet
+			err = unix.SchedGetaffinity(taskID, &taskCPUs)
+			if err != nil {
+				klog.Warningf("Error while getting CPU affinity of task(%d) PID(%d): %v", taskID, targetPID, err)
+				continue
+			}
+			if taskCPUs != desiredProcessCPUs {
+				allTasksMatch = false
+				break
+			}
+		}
+		if allTasksMatch {
+			klog.V(5).Infof("Process[%d] and its tasks already match desired process affinity %s", targetPID, printCPUSet(desiredProcessCPUs))
+			return nil
+		}
 	}
 
 	klog.Infof("Setting CPU affinity of PID(%d) (ntasks=%d) to %s, was %s", targetPID, len(taskIDs), printCPUSet(desiredProcessCPUs), printCPUSet(targetProcessCPUs))
