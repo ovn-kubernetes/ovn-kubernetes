@@ -1787,22 +1787,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						out := ""
-						errBool := false
-						// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
-						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
-						// This should avoid the mentioned issue.
-						if IsGatewayModeLocal(f.ClientSet) {
-							// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846
-							// its supposed to fail with 56 error code which is fine
-							// but due to this fwmark bug it ends up failing wtih 28 error code that's not expected.
-							out = curlConnectionTimeoutCode
-							errBool = true
-							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-								out = curlConnectionResetCode
-							}
-						}
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", "", false
 					}),
 
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in different UDN network should not work",
@@ -1830,23 +1815,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						out := ""
-						errBool := false
-
-						// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
-						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
-						// This should avoid the mentioned issue.
-						if IsGatewayModeLocal(f.ClientSet) {
-							// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846
-							// its supposed to fail with 56 error code which is fine
-							// but due to this fwmark bug it ends up failing wtih 28 error code that's not expected.
-							out = curlConnectionTimeoutCode
-							errBool = true
-							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-								out = curlConnectionResetCode
-							}
-						}
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", "", false
 					}),
 				ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in default network should not work",
 					func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1904,23 +1873,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							nodeIP = nodeIPv6
 						}
 						nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-						out := ""
-						errBool := false
-
-						// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531#issuecomment-3749407414
-						// There is a new option on ovn 25.03 and further called "ct-commit-all" that can be set for each LR.
-						// This should avoid the mentioned issue.
-						if IsGatewayModeLocal(f.ClientSet) {
-							// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5846
-							// its supposed to fail with 56 error code which is fine
-							// but due to this fwmark bug it ends up failing wtih 28 error code that's not expected.
-							out = curlConnectionTimeoutCode
-							errBool = true
-							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
-								out = curlConnectionResetCode
-							}
-						}
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", out, errBool
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)) + "/hostname", "", false
 					}),
 			)
 		})
