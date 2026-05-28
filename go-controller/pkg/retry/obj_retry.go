@@ -359,7 +359,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			initObj = entry.oldObj
 		}
 
-		klog.Infof("%s: retry object setup: %s %s", r.name, r.ResourceHandler.ObjType, objKey)
+		klog.V(5).Infof("%s: retry object setup: %s %s (attempt %d, backoff %s)", r.name, r.ResourceHandler.ObjType, objKey, entry.failedAttempts, entry.backoff)
 
 		if entry.newObj != nil {
 			// get the latest version of the object from the informer;
@@ -423,7 +423,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 
 			// create new object if needed
 			if entry.newObj != nil {
-				klog.Infof("%s: adding new object: %s %s", r.name, r.ResourceHandler.ObjType, objKey)
+				klog.V(5).Infof("%s: adding new object: %s %s", r.name, r.ResourceHandler.ObjType, objKey)
 				if !r.ResourceHandler.IsResourceScheduled(entry.newObj) {
 					// unscheduled resources (pods) will be retried again later we do not track these as failures, and should not retry.
 					// we should avoid queuing objects to the retry handler that are not scheduled. Thus treat this as an error.
@@ -795,7 +795,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 					// See: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3318#issuecomment-1349804450
 					if _, loaded := r.terminatedObjects.LoadAndDelete(key); loaded {
 						// object was already terminated
-						klog.Infof("%s: ignoring delete event for resource in terminal state %s %s",
+						klog.V(5).Infof("%s: ignoring delete event for resource in terminal state %s %s",
 							r.name, r.ResourceHandler.ObjType, key)
 						return
 					}
