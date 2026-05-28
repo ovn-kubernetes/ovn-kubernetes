@@ -227,7 +227,6 @@ func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.Net
 		errs = append(errs, err)
 	}
 
-	// in DPU mode, vrfManager would be nil
 	if ncm.vrfManager != nil {
 		validVRFDevices := make(sets.Set[string])
 		for _, network := range validNetworks {
@@ -299,8 +298,14 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		}
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+	if util.IsNetworkSegmentationSupportEnabled() {
+		// DPU-host mode uses the VRF manager for management-port VRFs,
+		// IP rules, and host kernel traffic. DPU mode only needs the VRF
+		// device as the table anchor for reflecting FRR-learned BGP
+		// routes into OVN. Full mode uses one VRF manager for both.
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
+	}
+	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
 
@@ -538,8 +543,8 @@ func (ncm *NodeControllerManager) checkForStaleOVSPodInterfaces() {
 	for _, pod := range pods {
 		if pod.Spec.NodeName == ncm.name && !util.PodWantsHostNetwork(pod) {
 			// Note: wf (WatchFactory) *usually* returns pods assigned to this node, however we dont rely on it
-			// and add this check to filter out pods assigned to other nodes. (e.g when ovnkube master and node
-			// share the same process)
+			// and add this check to filter out pods assigned to other nodes. (e.g when ovnkube controller and
+			// node share the same process)
 			expectedPodUIDs[string(pod.UID)] = struct{}{}
 		}
 	}

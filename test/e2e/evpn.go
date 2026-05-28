@@ -5,9 +5,7 @@ package e2e
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	"math/big"
 	"net"
 	"os"
 	"strings"
@@ -17,6 +15,7 @@ import (
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -1044,59 +1043,6 @@ func waitForVTEPAccepted(f *framework.Framework, vtepName string) error {
 	})
 }
 
-// =============================================================================
-// EVPN VID Utilities
-// =============================================================================
-
-func randomN(n int) int {
-	r, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
-	if err != nil {
-		panic(fmt.Sprintf("crypto/rand.Int failed: %v", err))
-	}
-	return int(r.Int64())
-}
-
-// randomVID generates a random VLAN ID in the valid range (2-4094).
-// VIDs 0, 1, and 4095 are reserved and should not be used.
-func randomVID() int {
-	return randomN(4093) + 2 // 2-4094
-}
-
-// randomVNI generates a random VXLAN Network Identifier in the valid 24-bit range (1-16777215).
-func randomVNI() int32 {
-	return int32(randomN(16777215)) + 1
-}
-
-// randomCUDNSubnets generates random non-overlapping CUDN subnets for parallel test isolation.
-// Uses /20 (4096 addresses) instead of /16 to allow randomizing both second and third octets,
-// giving ~4016 possible subnets within 10.0.0.0/8 while avoiding collisions with:
-//   - 10.88.0.0/16  (podman default network)
-//   - 10.96.0.0/16  (Kubernetes services)
-//   - 10.128.0.0/14 (default cluster network pod CIDRs)
-//   - 10.132.0.0/16 (UDN perf tests)
-//   - 10.243.0.0/16, 10.244.0.0/16 (pod CIDRs)
-//
-// Note: /20 supports up to 16 nodes with /24 per-node subnets for Layer3 topology.
-// This is sufficient for KIND e2e clusters.
-//
-// Returns IPv4 (/20) and IPv6 (/52) subnets.
-func randomCUDNSubnets() (ipv4, ipv6 string) {
-	// 4096 possible /20 subnets in 10.0.0.0/8 (256 second octets * 16 /20-aligned third octets)
-	// Exclude blocks overlapping known reservations (16 /20 blocks per second octet):
-	//   10.88, 10.96, 10.128-131 (10.128.0.0/14), 10.132, 10.243, 10.244 = 112 excluded → ~3952 usable
-	for {
-		second := randomN(256)
-		// 16 /20-aligned slots per second octet (256/16)
-		third := randomN(16) * 16 // 0, 16, 32, ..., 240
-		switch second {
-		case 88, 96, 128, 129, 130, 131, 132, 243, 244:
-			continue
-		}
-		n := second*16 + third/16
-		return fmt.Sprintf("10.%d.%d.0/20", second, third), fmt.Sprintf("fd00:%x::/52", n)
-	}
-}
-
 // subnetOffsetIP returns an IP at the given offset from the base of the subnet.
 // For example, subnetOffsetIP("10.199.128.0/20", 101) returns "10.199.128.101".
 func subnetOffsetIP(cidr string, offset int) string {
@@ -1114,52 +1060,6 @@ func subnetOffsetIP(cidr string, offset int) string {
 		return ip.To4().String()
 	}
 	return ip.String()
-}
-
-func randomL3CUDNSubnets() []udnv1.Layer3Subnet {
-	cudnIPv4, cudnIPv6 := randomCUDNSubnets()
-	return []udnv1.Layer3Subnet{{CIDR: udnv1.CIDR(cudnIPv4)}, {CIDR: udnv1.CIDR(cudnIPv6)}}
-}
-
-func randomL2CUDNSubnets() udnv1.DualStackCIDRs {
-	cudnIPv4, cudnIPv6 := randomCUDNSubnets()
-	return udnv1.DualStackCIDRs{udnv1.CIDR(cudnIPv4), udnv1.CIDR(cudnIPv6)}
-}
-
-// randomIPVRFAgnhostSubnets generates random IP-VRF agnhost subnets for parallel test isolation.
-// Uses /29 (8 IPs, 6 usable) which is sufficient for provider gateway + agnhost + FRR,
-// giving 8192 possible subnets within 172.27.0.0/16 to minimize collision probability.
-// The 172.27.0.0/16 space avoids collisions with:
-//   - 172.18.0.0/16 (KIND primary network)
-//   - 172.19.0.0/16 (XGW network)
-//   - 172.22.0.0/16 (MetalLB client network)
-//   - 172.26.0.0/16 (BGP server network)
-//
-// Returns IPv4 (/29) and IPv6 (/112) subnets.
-func randomIPVRFAgnhostSubnets() (ipv4, ipv6 string) {
-	// 8192 possible /29 subnets in 172.27.0.0/16
-	n := randomN(8192)
-	// 32 /29-aligned slots per third octet (256/8), so divide to get octet pair
-	third := n / 32
-	fourth := (n % 32) * 8
-	return fmt.Sprintf("172.27.%d.%d/29", third, fourth), fmt.Sprintf("fd01:%x::/112", n)
-}
-
-// randomVTEPSubnets generates random VTEP subnets for parallel test isolation.
-// Uses /24 (254 usable IPs)
-// Randomizes both second and third octets within RFC 6598 shared address space
-// (100.64.0.0/10), giving 15,872 possible /24 subnets while avoiding:
-//   - 100.64.0.0/16 (default join subnet)
-//   - 100.65.0.0/16 (UDN primary join subnet)
-//
-// 100.88.0.0/16 (transit subnet) is NOT excluded because transit IPs are purely
-// internal to OVN's logical network and never appear on physical interfaces.
-// Safe second octets: 66-127 (62 values).
-// Returns IPv4 (/24) and IPv6 (/112) subnets.
-func randomVTEPSubnets() (ipv4, ipv6 string) {
-	second := randomN(62) + 66 // 66-127
-	third := randomN(256)      // 0-255
-	return fmt.Sprintf("100.%d.%d.0/24", second, third), fmt.Sprintf("fd02:%x%02x::/112", second, third)
 }
 
 // =============================================================================
@@ -1295,8 +1195,7 @@ func runEVPNNetworkAndServers(
 	testName string,
 	ipFamilySet sets.Set[utilnet.IPFamily],
 	networkSpec *udnv1.NetworkSpec,
-	ipVRFAgnhostSubnets []string,
-	vtepSubnets []string,
+	bgpAlloc allocators.BGPAllocation,
 	bgpASN int,
 	bridgeName string,
 	vxlanName string,
@@ -1310,8 +1209,8 @@ func runEVPNNetworkAndServers(
 	hasMACVRF := networkSpec.EVPN != nil && networkSpec.EVPN.MACVRF != nil
 	hasIPVRF := networkSpec.EVPN != nil && networkSpec.EVPN.IPVRF != nil
 
-	ipVRFAgnhostSubnets = matchCIDRStringsByIPFamilySet(ipVRFAgnhostSubnets, ipFamilySet)
-	vtepSubnets = matchCIDRStringsByIPFamilySet(vtepSubnets, ipFamilySet)
+	ipVRFAgnhostSubnets := matchCIDRStringsByIPFamilySet([]string{bgpAlloc.IPVRFSubnet, bgpAlloc.IPVRFSubnet6}, ipFamilySet)
+	vtepSubnets := matchCIDRStringsByIPFamilySet([]string{bgpAlloc.VTEPSubnet, bgpAlloc.VTEPSubnet6}, ipFamilySet)
 
 	// Extract subnets from networkSpec for MAC-VRF agnhost IP derivation
 	cudnSubnetsFromSpec := getNetworkSubnetsFromSpec(networkSpec)
@@ -1336,8 +1235,8 @@ func runEVPNNetworkAndServers(
 
 	var macVRFVID int
 	if hasMACVRF {
-		macVRFVID = randomVID()
-		framework.Logf("Generated random VIDs for external FRR: MAC-VRF VID=%d", macVRFVID)
+		macVRFVID = bgpAlloc.MACVRFVID
+		framework.Logf("Allocated VIDs for external FRR: MAC-VRF VID=%d", macVRFVID)
 		framework.Logf("Setting up MAC-VRF on external FRR")
 		err = setupMACVRFOnExternalFRR(ictx, int(networkSpec.EVPN.MACVRF.VNI), macVRFVID, bridgeName, vxlanName)
 		if err != nil {
@@ -1361,11 +1260,8 @@ func runEVPNNetworkAndServers(
 	if hasIPVRF {
 		// Derive VRF name from VNI (unique per IP-VRF)
 		ipVRFName := fmt.Sprintf("vrf%d", networkSpec.EVPN.IPVRF.VNI)
-		ipVRFVID := randomVID()
-		for macVRFVID == ipVRFVID {
-			ipVRFVID = randomVID()
-		}
-		framework.Logf("Generated random VIDs for external FRR: IP-VRF VID=%d", ipVRFVID)
+		ipVRFVID := bgpAlloc.IPVRFVID
+		framework.Logf("Allocated VIDs for external FRR: IP-VRF VID=%d", ipVRFVID)
 		framework.Logf("Setting up IP-VRF on external FRR")
 		err = setupIPVRFOnExternalFRR(ictx, ipVRFName, int(networkSpec.EVPN.IPVRF.VNI), ipVRFVID, bridgeName, vxlanName)
 		if err != nil {

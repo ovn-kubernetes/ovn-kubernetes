@@ -39,6 +39,24 @@ func joinStrings(vals ...string) string {
 	return strings.Join(vals, ",")
 }
 
+func primaryLayer3MultiCIDRs() string {
+	return joinStrings(primaryLayer3MultiIPv4CIDRs(), primaryLayer3MultiIPv6CIDRs())
+}
+
+func primaryLayer3MultiIPv4CIDRs() string {
+	return joinStrings(
+		"172.31.0.0/23/24",
+		"172.30.0.0/16/24",
+	)
+}
+
+func primaryLayer3MultiIPv6CIDRs() string {
+	return joinStrings(
+		"2014:100:200::0/63/64",
+		"2014:100:100::0/48/64",
+	)
+}
+
 func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
 	if cidrs == "" {
 		return "" // we may not always set CIDR - i.e. CDN
@@ -49,6 +67,9 @@ func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
 func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
 	var supportedCIDRs []string
 	for _, cidr := range cidrs {
+		if strings.TrimSpace(cidr) == "" {
+			continue
+		}
 		if !isCIDRIPFamilySupported(cs, cidr) {
 			continue
 		}
@@ -202,7 +223,7 @@ type podConfiguration struct {
 	nodeSelector           map[string]string
 	isPrivileged           bool
 	labels                 map[string]string
-	annotations                  map[string]string
+	annotations            map[string]string
 	requiresExtraNamespace bool
 	hostNetwork            bool
 	ipRequestFromSubnet    string
@@ -309,6 +330,58 @@ func inRange(cidr string, ip string) error {
 	}
 
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
+}
+
+func inAnyConfiguredSubnet(cidrs string, ip string) error {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return fmt.Errorf("invalid IP %q", ip)
+	}
+	ipv4 := parsedIP.To4() != nil
+
+	var sameFamilyCIDRs []string
+	for _, cidr := range strings.Split(cidrs, ",") {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		subnet, err := getNetCIDRSubnet(cidr)
+		if err != nil {
+			return err
+		}
+		_, ipnet, err := net.ParseCIDR(subnet)
+		if err != nil {
+			return err
+		}
+		if (ipnet.IP.To4() != nil) != ipv4 {
+			continue
+		}
+		sameFamilyCIDRs = append(sameFamilyCIDRs, subnet)
+		if ipnet.Contains(parsedIP) {
+			return nil
+		}
+	}
+	if len(sameFamilyCIDRs) == 0 {
+		return fmt.Errorf("no configured subnet for IP %q", ip)
+	}
+	return fmt.Errorf("ip [%s] is NOT in any configured subnet %s", ip, strings.Join(sameFamilyCIDRs, ","))
+}
+
+func cidrsContainIPFamily(cidrs string, ipv6 bool) bool {
+	for _, cidr := range strings.Split(cidrs, ",") {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		subnet, err := getNetCIDRSubnet(cidr)
+		if err != nil {
+			continue
+		}
+		if utilnet.IsIPv6CIDRString(subnet) == ipv6 {
+			return true
+		}
+	}
+	return false
 }
 
 func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16, args ...string) error {

@@ -6,7 +6,6 @@ package e2e
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
@@ -117,24 +116,17 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
 
-				var serverIP string
-				for i, cidr := range strings.Split(netConfig.cidr, ",") {
-					if cidr != "" {
-						ginkgo.By("asserting the server pod has an IP from the configured range")
-						serverIP, err = getPodAnnotationIPsForAttachmentByIndex(
-							cs,
-							f.Namespace.Name,
-							serverPodConfig.name,
-							namespacedName(f.Namespace.Name, netConfig.name),
-							i,
-						)
-						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						ginkgo.By(fmt.Sprintf("asserting the server pod IP %v is from the configured range %v", serverIP, cidr))
-						subnet, err := getNetCIDRSubnet(cidr)
-						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						gomega.Expect(inRange(subnet, serverIP)).To(gomega.Succeed())
-					}
+				serverIPNets, err := getPodAnnotationIPsForAttachment(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				var serverIPs []string
+				for _, serverIP := range serverIPNets {
+					ginkgo.By("asserting the server pod has an IP from the configured range")
+					gomega.Expect(inAnyConfiguredSubnet(netConfig.cidr, serverIP.IP.String())).To(gomega.Succeed())
+					serverIPs = append(serverIPs, serverIP.IP.String())
+				}
+				gomega.Expect(serverIPs).NotTo(gomega.BeEmpty())
 
+				for _, serverIP := range serverIPs {
 					ginkgo.By("asserting the *client* pod can contact the server pod exposed endpoint")
 					gomega.Eventually(func() error {
 						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
@@ -146,9 +138,11 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("asserting the *client* pod can not contact the server pod exposed endpoint")
-				gomega.Eventually(func() error {
-					return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
-				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+				for _, serverIP := range serverIPs {
+					gomega.Eventually(func() error {
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+					}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+				}
 
 			},
 			ginkgo.Entry(
@@ -195,7 +189,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     primaryLayer3MultiCIDRs(),
 					role:     "primary",
 				},
 				*podConfig(
@@ -249,20 +243,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				_, err = makeDenyAllPolicy(f, f.Namespace.Name, "deny-all")
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+				serverIPNets, err := getPodAnnotationIPsForAttachment(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				var serverIPs []string
-				for i, cidr := range strings.Split(netConfig.cidr, ",") {
-					if cidr == "" {
-						continue
-					}
-					serverIP, err := getPodAnnotationIPsForAttachmentByIndex(
-						cs,
-						f.Namespace.Name,
-						serverPodConfig.name,
-						namespacedName(f.Namespace.Name, netConfig.name),
-						i,
-					)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					serverIPs = append(serverIPs, serverIP)
+				for _, serverIP := range serverIPNets {
+					gomega.Expect(inAnyConfiguredSubnet(netConfig.cidr, serverIP.IP.String())).To(gomega.Succeed())
+					serverIPs = append(serverIPs, serverIP.IP.String())
 				}
 				gomega.Expect(serverIPs).NotTo(gomega.BeEmpty())
 
@@ -309,7 +295,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     primaryLayer3MultiCIDRs(),
 					role:     "primary",
 				},
 				*podConfig(
@@ -349,6 +335,9 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					networkName: fmt.Sprintf("%s-%s", "green", rand.String(randomStringLength)),
 					role:        "primary",
 				}
+				if topology == "layer3" {
+					nad.cidr = primaryLayer3MultiCIDRs()
+				}
 				filterSupportedNetworkConfig(f.ClientSet, &nad)
 
 				// Use random suffix in net conf name to avoid race between tests.
@@ -376,24 +365,16 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				runUDNPod(cs, namespaceBlue, clientPodConfig, nil)
 
 				ginkgo.By("asserting the server pods have an IP from the configured range")
-				var allowServerPodIP, denyServerPodIP string
-				for i, cidr := range strings.Split(nad.cidr, ",") {
-					if cidr == "" {
-						continue
-					}
-					subnet, err := getNetCIDRSubnet(cidr)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					allowServerPodIP, err = getPodAnnotationIPsForAttachmentByIndex(cs, namespaceYellow, allowServerPodConfig.name,
-						namespacedName(namespaceYellow, netConfName), i)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					ginkgo.By(fmt.Sprintf("asserting the allow server pod IP %v is from the configured range %v", allowServerPodIP, cidr))
-					gomega.Expect(inRange(subnet, allowServerPodIP)).To(gomega.Succeed())
-					denyServerPodIP, err = getPodAnnotationIPsForAttachmentByIndex(cs, namespaceYellow, denyServerPodConfig.name,
-						namespacedName(namespaceYellow, netConfName), i)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					ginkgo.By(fmt.Sprintf("asserting the deny server pod IP %v is from the configured range %v", denyServerPodIP, cidr))
-					gomega.Expect(inRange(subnet, denyServerPodIP)).To(gomega.Succeed())
-				}
+				allowServerPodIPs, err := getPodAnnotationIPsForAttachment(cs, namespaceYellow, allowServerPodConfig.name, namespacedName(namespaceYellow, netConfName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				denyServerPodIPs, err := getPodAnnotationIPsForAttachment(cs, namespaceYellow, denyServerPodConfig.name, namespacedName(namespaceYellow, netConfName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(allowServerPodIPs).NotTo(gomega.BeEmpty())
+				gomega.Expect(denyServerPodIPs).NotTo(gomega.BeEmpty())
+				allowServerPodIP := allowServerPodIPs[0].IP.String()
+				denyServerPodIP := denyServerPodIPs[0].IP.String()
+				gomega.Expect(inAnyConfiguredSubnet(nad.cidr, allowServerPodIP)).To(gomega.Succeed())
+				gomega.Expect(inAnyConfiguredSubnet(nad.cidr, denyServerPodIP)).To(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
@@ -406,7 +387,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("creating a \"default deny\" network policy")
-				_, err := makeDenyAllPolicy(f, namespaceYellow, "deny-all")
+				_, err = makeDenyAllPolicy(f, namespaceYellow, "deny-all")
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("asserting the *client* pod can not contact the allow server pod exposed endpoint")

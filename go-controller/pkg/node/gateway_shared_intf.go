@@ -1900,11 +1900,6 @@ func newNodePortWatcher(
 				return nil, fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
-		if util.IsRouteAdvertisementsEnabled() {
-			if err := configureAdvertisedUDNIsolationNFTables(); err != nil {
-				return nil, fmt.Errorf("unable to configure UDN isolation nftables: %w", err)
-			}
-		}
 
 		var subnets []*net.IPNet
 		for _, subnet := range config.Default.ClusterSubnets {

@@ -189,7 +189,6 @@ conf-dir=/etc/cni/net.d22
 plugin=ovn-k8s-cni-overlay22
 
 [ovnnorth]
-address=ssl:1.2.3.4:6641
 client-privkey=/path/to/nb-client-private.key
 client-cert=/path/to/nb-client.crt
 client-cacert=/path/to/nb-client-ca.crt
@@ -198,7 +197,6 @@ run-dir=/custom/ovn/run/
 db-location=/custom/ovn/nb.db
 
 [ovnsouth]
-address=ssl:1.2.3.4:6642
 client-privkey=/path/to/sb-client-private.key
 client-cert=/path/to/sb-client.crt
 client-cacert=/path/to/sb-client-ca.crt
@@ -360,157 +358,12 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeStrict))
 
 			for _, a := range []OvnAuthConfig{OvnNorth, OvnSouth} {
-				gomega.Expect(a.Scheme).To(gomega.Equal(OvnDBSchemeUnix))
 				gomega.Expect(a.PrivKey).To(gomega.Equal(""))
 				gomega.Expect(a.Cert).To(gomega.Equal(""))
 				gomega.Expect(a.CACert).To(gomega.Equal(""))
-				gomega.Expect(a.Address).To(gomega.MatchRegexp("unix:/var/run/ovn/ovn[sn]b_db.sock"))
+				gomega.Expect(a.GetURL()).To(gomega.MatchRegexp("unix:/var/run/ovn/ovn[sn]b_db.sock"))
 				gomega.Expect(a.CertCommonName).To(gomega.Equal(""))
 			}
-			return nil
-		}
-		err := app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	It("reads defaults from ovs-vsctl external IDs", func() {
-		app.Action = func(ctx *cli.Context) error {
-			fexec := ovntest.NewFakeExec()
-
-			// k8s-api-server
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-server",
-				Output: "https://somewhere.com:8081",
-			})
-
-			// k8s-api-token
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-token",
-				Output: "asadfasdfasrw3atr3r3rf33fasdaa3233",
-			})
-			// k8s-api-token-file
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-token-file",
-				Output: "/new/path/to/token",
-			})
-			// k8s-ca-certificate
-			fname, fdata, err := createTempFile("ca.crt")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-ca-certificate",
-				Output: fname,
-			})
-			// ovn-nb address
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-nb",
-				Output: "tcp:1.1.1.1:6441",
-			})
-
-			cfgPath, err := InitConfigSa(ctx, fexec, tmpDir, &Defaults{
-				OvnNorthAddress: true,
-				K8sAPIServer:    true,
-				K8sToken:        true,
-				K8sTokenFile:    true,
-				K8sCert:         true,
-			})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-
-			gomega.Expect(Kubernetes.APIServer).To(gomega.Equal("https://somewhere.com:8081"))
-			gomega.Expect(Kubernetes.CACert).To(gomega.Equal(fname))
-			gomega.Expect(Kubernetes.CAData).To(gomega.Equal(fdata))
-			gomega.Expect(Kubernetes.Token).To(gomega.Equal("asadfasdfasrw3atr3r3rf33fasdaa3233"))
-			gomega.Expect(Kubernetes.TokenFile).To(gomega.Equal("/new/path/to/token"))
-			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeTCP))
-			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal(""))
-			gomega.Expect(OvnNorth.Cert).To(gomega.Equal(""))
-			gomega.Expect(OvnNorth.CACert).To(gomega.Equal(""))
-			gomega.Expect(OvnNorth.Address).To(gomega.Equal("tcp:1.1.1.1:6441"))
-			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal(""))
-
-			gomega.Expect(OvnSouth.Scheme).To(gomega.Equal(OvnDBSchemeUnix))
-			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.Cert).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.CACert).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.Address).To(gomega.Equal("unix:/var/run/ovn/ovnsb_db.sock"))
-			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal(""))
-
-			return nil
-		}
-		err := app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	It("reads defaults (multiple master) from ovs-vsctl external IDs", func() {
-		app.Action = func(ctx *cli.Context) error {
-			fexec := ovntest.NewFakeExec()
-
-			// k8s-api-server
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-server",
-				Output: "https://somewhere.com:8081",
-			})
-
-			// k8s-api-token
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-token",
-				Output: "asadfasdfasrw3atr3r3rf33fasdaa3233",
-			})
-			// k8s-api-token-file
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-token-file",
-				Output: "/new/path/to/token",
-			})
-			// k8s-ca-certificate
-			fname, fdata, err := createTempFile("kube-cacert.pem")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-ca-certificate",
-				Output: fname,
-			})
-			// ovn-nb address
-			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-nb",
-				Output: "tcp:1.1.1.1:6441,tcp:1.1.1.2:6641,tcp:1.1.1.3:6641",
-			})
-
-			tokenFile, err1 := createTempFileContent("token", "TG9yZW0gaXBzdW0gZ")
-			gomega.Expect(err1).NotTo(gomega.HaveOccurred())
-			defer os.Remove(tokenFile)
-
-			cfgPath, err := InitConfigSa(ctx, fexec, tmpDir, &Defaults{
-				OvnNorthAddress: true,
-				K8sAPIServer:    true,
-				K8sToken:        true,
-				K8sTokenFile:    true,
-				K8sCert:         true,
-			})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-
-			gomega.Expect(Kubernetes.APIServer).To(gomega.Equal("https://somewhere.com:8081"))
-			gomega.Expect(Kubernetes.CACert).To(gomega.Equal(fname))
-			gomega.Expect(Kubernetes.CAData).To(gomega.Equal(fdata))
-			gomega.Expect(Kubernetes.Token).To(gomega.Equal("asadfasdfasrw3atr3r3rf33fasdaa3233"))
-			gomega.Expect(Kubernetes.TokenFile).To(gomega.Equal("/new/path/to/token"))
-
-			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeTCP))
-			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal(""))
-			gomega.Expect(OvnNorth.Cert).To(gomega.Equal(""))
-			gomega.Expect(OvnNorth.CACert).To(gomega.Equal(""))
-			gomega.Expect(OvnNorth.Address).To(
-				gomega.Equal("tcp:1.1.1.1:6441,tcp:1.1.1.2:6641,tcp:1.1.1.3:6641"))
-			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal(""))
-
-			gomega.Expect(OvnSouth.Scheme).To(gomega.Equal(OvnDBSchemeUnix))
-			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.Cert).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.CACert).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.Address).To(gomega.Equal("unix:/var/run/ovn/ovnsb_db.sock"))
-			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal(""))
-
 			return nil
 		}
 		err := app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
@@ -670,23 +523,21 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
-			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
 			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/path/to/nb-client.crt"))
 			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/path/to/nb-client-ca.crt"))
-			gomega.Expect(OvnNorth.Address).To(gomega.Equal("ssl:1.2.3.4:6641"))
 			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal("cfg-nbcommonname"))
 			gomega.Expect(OvnNorth.RunDir).To(gomega.Equal("/custom/ovn/run/"))
 			gomega.Expect(OvnNorth.DbLocation).To(gomega.Equal("/custom/ovn/nb.db"))
+			gomega.Expect(OvnNorth.GetURL()).To(gomega.Equal("unix:/custom/ovn/run/ovnnb_db.sock"))
 
-			gomega.Expect(OvnSouth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal("/path/to/sb-client-private.key"))
 			gomega.Expect(OvnSouth.Cert).To(gomega.Equal("/path/to/sb-client.crt"))
 			gomega.Expect(OvnSouth.CACert).To(gomega.Equal("/path/to/sb-client-ca.crt"))
-			gomega.Expect(OvnSouth.Address).To(gomega.Equal("ssl:1.2.3.4:6642"))
 			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal("cfg-sbcommonname"))
 			gomega.Expect(OvnSouth.RunDir).To(gomega.Equal("/custom/ovn/run/"))
 			gomega.Expect(OvnSouth.DbLocation).To(gomega.Equal("/custom/ovn/sb.db"))
+			gomega.Expect(OvnSouth.GetURL()).To(gomega.Equal("unix:/custom/ovn/run/ovnsb_db.sock"))
 
 			gomega.Expect(Gateway.Mode).To(gomega.Equal(GatewayModeShared))
 			gomega.Expect(Gateway.Interface).To(gomega.Equal("eth1"))
@@ -788,19 +639,15 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
-			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/client/privkey"))
 			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/client/cert"))
 			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/client/cacert"))
-			gomega.Expect(OvnNorth.Address).To(gomega.Equal("ssl:6.5.4.3:6651"))
 			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal("testnbcommonname"))
 
-			gomega.Expect(OvnSouth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
-			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal("/client/privkey2"))
-			gomega.Expect(OvnSouth.Cert).To(gomega.Equal("/client/cert2"))
-			gomega.Expect(OvnSouth.CACert).To(gomega.Equal("/client/cacert2"))
-			gomega.Expect(OvnSouth.Address).To(gomega.Equal("ssl:6.5.4.1:6652"))
-			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal("testsbcommonname"))
+			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal("/path/to/sb-client-private.key"))
+			gomega.Expect(OvnSouth.Cert).To(gomega.Equal("/path/to/sb-client.crt"))
+			gomega.Expect(OvnSouth.CACert).To(gomega.Equal("/path/to/sb-client-ca.crt"))
+			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal("cfg-sbcommonname"))
 
 			gomega.Expect(Gateway.Mode).To(gomega.Equal(GatewayModeShared))
 			gomega.Expect(Gateway.NodeportEnable).To(gomega.BeTrue())
@@ -858,17 +705,11 @@ var _ = Describe("Config Operations", func() {
 			"-k8s-token=asdfasdfasdfasfd",
 			"-k8s-token-file=/new/path/to/token",
 			"-k8s-service-cidrs=172.15.0.0/24",
-			"-nb-address=ssl:6.5.4.3:6651",
 			"-no-hostsubnet-nodes=test=pass",
 			"-nb-client-privkey=/client/privkey",
 			"-nb-client-cert=/client/cert",
 			"-nb-client-cacert=/client/cacert",
 			"-nb-cert-common-name=testnbcommonname",
-			"-sb-address=ssl:6.5.4.1:6652",
-			"-sb-client-privkey=/client/privkey2",
-			"-sb-client-cert=/client/cert2",
-			"-sb-client-cacert=/client/cacert2",
-			"-sb-cert-common-name=testsbcommonname",
 			"-node-server-privkey=/tls/nodeprivkey",
 			"-node-server-cert=/tls/nodecert",
 			"-gateway-mode=shared",
@@ -1274,116 +1115,6 @@ enable-pprof=true
 		gomega.Expect(ClusterManager.V4TransitSubnet).To(gomega.Equal("100.89.0.0/16"))
 		gomega.Expect(ClusterManager.V6TransitSubnet).To(gomega.Equal("fd99::/64"))
 	})
-	It("overrides config file and defaults with CLI options (multi-master)", func() {
-		kubeconfigFile, _, err := createTempFile("kubeconfig")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		defer os.Remove(kubeconfigFile)
-
-		bootstrapKubeconfigFile := "/new/path/to/bootstrap-kubeconfig"
-		certDir := "/new/path/to/cert-dir"
-
-		kubeCAFile, kubeCAData, err := createTempFile("kube-ca.crt")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		defer os.Remove(kubeCAFile)
-
-		err = writeTestConfigFile(cfgFile.Name())
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		app.Action = func(ctx *cli.Context) error {
-			var cfgPath string
-			cfgPath, err = InitConfig(ctx, kexec.New(), nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-
-			gomega.Expect(Default.MTU).To(gomega.Equal(1234))
-			gomega.Expect(Default.ConntrackZone).To(gomega.Equal(5555))
-			gomega.Expect(Default.LFlowCacheEnable).To(gomega.BeTrue())
-			gomega.Expect(Default.LFlowCacheLimit).To(gomega.Equal(uint(500)))
-			gomega.Expect(Default.LFlowCacheLimitKb).To(gomega.Equal(uint(50000)))
-			gomega.Expect(Logging.File).To(gomega.Equal("/some/logfile"))
-			gomega.Expect(Logging.Level).To(gomega.Equal(3))
-			gomega.Expect(Monitoring.RawNetFlowTargets).To(gomega.Equal("2.2.2.2:2055"))
-			gomega.Expect(Monitoring.RawSFlowTargets).To(gomega.Equal("2.2.2.2:2056"))
-			gomega.Expect(Monitoring.RawIPFIXTargets).To(gomega.Equal("2.2.2.2:2057"))
-			gomega.Expect(IPFIX.Sampling).To(gomega.Equal(uint(1123)))
-			gomega.Expect(IPFIX.CacheMaxFlows).To(gomega.Equal(uint(1456)))
-			gomega.Expect(IPFIX.CacheActiveTimeout).To(gomega.Equal(uint(1789)))
-			gomega.Expect(CNI.ConfDir).To(gomega.Equal("/some/cni/dir"))
-			gomega.Expect(CNI.Plugin).To(gomega.Equal("a-plugin"))
-			gomega.Expect(Kubernetes.Kubeconfig).To(gomega.Equal(kubeconfigFile))
-			gomega.Expect(Kubernetes.BootstrapKubeconfig).To(gomega.Equal(bootstrapKubeconfigFile))
-			gomega.Expect(Kubernetes.CertDir).To(gomega.Equal(certDir))
-			gomega.Expect(Kubernetes.CertDuration).To(gomega.Equal(time.Second * 999))
-			gomega.Expect(Kubernetes.CACert).To(gomega.Equal(kubeCAFile))
-			gomega.Expect(Kubernetes.CAData).To(gomega.Equal(kubeCAData))
-			gomega.Expect(Kubernetes.Token).To(gomega.Equal("asdfasdfasdfasfd"))
-			gomega.Expect(Kubernetes.TokenFile).To(gomega.Equal("/new/path/to/token"))
-			gomega.Expect(Kubernetes.APIServer).To(gomega.Equal("https://4.4.3.2:8080"))
-			gomega.Expect(Kubernetes.RawNoHostSubnetNodes).To(gomega.Equal("label=another-test-label"))
-			gomega.Expect(Kubernetes.RawServiceCIDRs).To(gomega.Equal("172.15.0.0/24"))
-
-			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
-			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/client/privkey"))
-			gomega.Expect(OvnNorth.Cert).To(gomega.Equal("/client/cert"))
-			gomega.Expect(OvnNorth.CACert).To(gomega.Equal("/client/cacert"))
-			gomega.Expect(OvnNorth.Address).To(
-				gomega.Equal("ssl:6.5.4.3:6651,ssl:6.5.4.4:6651,ssl:6.5.4.5:6651"))
-			gomega.Expect(OvnNorth.CertCommonName).To(gomega.Equal("testnbcommonname"))
-
-			gomega.Expect(OvnSouth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
-			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal("/client/privkey2"))
-			gomega.Expect(OvnSouth.Cert).To(gomega.Equal("/client/cert2"))
-			gomega.Expect(OvnSouth.CACert).To(gomega.Equal("/client/cacert2"))
-			gomega.Expect(OvnSouth.Address).To(
-				gomega.Equal("ssl:6.5.4.1:6652,ssl:6.5.4.2:6652,ssl:6.5.4.3:6652"))
-			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal("testsbcommonname"))
-			gomega.Expect(OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout).To(gomega.Equal(3))
-			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(12345))
-			return nil
-		}
-		cliArgs := []string{
-			app.Name,
-			"-config-file=" + cfgFile.Name(),
-			"-mtu=1234",
-			"-conntrack-zone=5555",
-			"-lflow-cache-limit=500",
-			"-lflow-cache-limit-kb=50000",
-			"-loglevel=3",
-			"-logfile=/some/logfile",
-			"-netflow-targets=2.2.2.2:2055",
-			"-sflow-targets=2.2.2.2:2056",
-			"-ipfix-targets=2.2.2.2:2057",
-			"-ipfix-sampling=1123",
-			"-ipfix-cache-max-flows=1456",
-			"-ipfix-cache-active-timeout=1789",
-			"-cni-conf-dir=/some/cni/dir",
-			"-cni-plugin=a-plugin",
-			"-k8s-kubeconfig=" + kubeconfigFile,
-			"-bootstrap-kubeconfig=" + bootstrapKubeconfigFile,
-			"-cert-dir=" + certDir,
-			"-cert-duration=999s",
-			"-k8s-apiserver=https://4.4.3.2:8080",
-			"-k8s-cacert=" + kubeCAFile,
-			"-k8s-token=asdfasdfasdfasfd",
-			"-k8s-token-file=/new/path/to/token",
-			"-k8s-service-cidr=172.15.0.0/24",
-			"-nb-address=ssl:6.5.4.3:6651,ssl:6.5.4.4:6651,ssl:6.5.4.5:6651",
-			"-nb-client-privkey=/client/privkey",
-			"-nb-client-cert=/client/cert",
-			"-nb-client-cacert=/client/cacert",
-			"-nb-cert-common-name=testnbcommonname",
-			"-sb-address=ssl:6.5.4.1:6652,ssl:6.5.4.2:6652,ssl:6.5.4.3:6652",
-			"-sb-client-privkey=/client/privkey2",
-			"-sb-client-cert=/client/cert2",
-			"-sb-client-cacert=/client/cacert2",
-			"-sb-cert-common-name=testsbcommonname",
-			"-egressip-reachability-total-timeout=3",
-			"-egressip-node-healthcheck-port=12345",
-		}
-		err = app.Run(cliArgs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
 	It("does not override config file settings with default cli options", func() {
 		kubeconfigFile, _, err := createTempFile("kubeconfig")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1696,113 +1427,32 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 	Describe("OvnDBAuth operations", func() {
-		var certFile, keyFile, caFile string
-
-		BeforeEach(func() {
-			var err error
-			certFile, _, err = createTempFile("cert.crt")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			keyFile, _, err = createTempFile("priv.key")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			caFile = filepath.Join(tmpDir, "ca.crt")
-		})
-
-		AfterEach(func() {
-			err := os.Remove(certFile)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = os.Remove(keyFile)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			os.Remove(caFile)
-		})
-
-		const (
-			nbURL             string = "ssl:1.2.3.4:6641"
-			sbURL             string = "ssl:1.2.3.4:6642"
-			nbDummyCommonName        = "cfg-nbcommonname"
-			sbDummyCommonName        = "cfg-sbcommonname"
-		)
-
-		It("configures client northbound SSL correctly", func() {
+		It("configures client southbound DB auth to unix socket via external_ids", func() {
 			fexec := ovntest.NewFakeExec()
+			expectedURL := "unix:/var/run/ovn/ovnsb_db.sock"
 			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovn-nbctl --db=" + nbURL + " --timeout=5 --private-key=" + keyFile + " --certificate=" + certFile + " --bootstrap-ca-cert=" + caFile + " list nb_global",
+				"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-remote=\"" + expectedURL + "\"",
 			})
 
-			cliConfig := &OvnAuthConfig{
-				Address:        nbURL,
-				PrivKey:        keyFile,
-				Cert:           certFile,
-				CACert:         caFile,
-				CertCommonName: nbDummyCommonName,
-			}
-			a, err := buildOvnAuth(fexec, true, cliConfig, &OvnAuthConfig{}, true)
+			cli := &OvnAuthConfig{RunDir: "/var/run/ovn/"}
+			a, err := buildOvnAuth(fexec, false, cli, &OvnAuthConfig{RunDir: "/var/run/ovn/"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(a.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
-			gomega.Expect(a.PrivKey).To(gomega.Equal(keyFile))
-			gomega.Expect(a.Cert).To(gomega.Equal(certFile))
-			gomega.Expect(a.CACert).To(gomega.Equal(caFile))
-			gomega.Expect(a.Address).To(gomega.Equal(nbURL))
-			gomega.Expect(a.CertCommonName).To(gomega.Equal(nbDummyCommonName))
+			gomega.Expect(a.northbound).To(gomega.BeFalse())
+			gomega.Expect(a.GetURL()).To(gomega.Equal(expectedURL))
+
+			err = a.SetDBAuth()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
+		})
+
+		It("northbound SetDBAuth is a no-op", func() {
+			fexec := ovntest.NewFakeExec()
+			cli := &OvnAuthConfig{RunDir: "/var/run/ovn/"}
+			a, err := buildOvnAuth(fexec, true, cli, &OvnAuthConfig{RunDir: "/var/run/ovn/"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(a.northbound).To(gomega.BeTrue())
+			gomega.Expect(a.GetURL()).To(gomega.Equal("unix:/var/run/ovn/ovnnb_db.sock"))
 
-			gomega.Expect(a.GetURL()).To(gomega.Equal(nbURL))
-			err = a.SetDBAuth()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-		})
-
-		It("configures client southbound SSL correctly", func() {
-			fexec := ovntest.NewFakeExec()
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovn-nbctl --db=" + sbURL + " --timeout=5 --private-key=" + keyFile + " --certificate=" + certFile + " --bootstrap-ca-cert=" + caFile + " list nb_global",
-				"ovs-vsctl --timeout=15 del-ssl",
-				"ovs-vsctl --timeout=15 set-ssl " + keyFile + " " + certFile + " " + caFile,
-				"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-remote=\"" + sbURL + "\"",
-			})
-
-			cliConfig := &OvnAuthConfig{
-				Address:        sbURL,
-				PrivKey:        keyFile,
-				Cert:           certFile,
-				CACert:         caFile,
-				CertCommonName: sbDummyCommonName,
-			}
-			a, err := buildOvnAuth(fexec, false, cliConfig, &OvnAuthConfig{}, false)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(a.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
-			gomega.Expect(a.PrivKey).To(gomega.Equal(keyFile))
-			gomega.Expect(a.Cert).To(gomega.Equal(certFile))
-			gomega.Expect(a.CACert).To(gomega.Equal(caFile))
-			gomega.Expect(a.Address).To(gomega.Equal(sbURL))
-			gomega.Expect(a.CertCommonName).To(gomega.Equal(sbDummyCommonName))
-			gomega.Expect(a.northbound).To(gomega.BeFalse())
-
-			gomega.Expect(a.GetURL()).To(gomega.Equal(sbURL))
-			err = a.SetDBAuth()
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-		})
-
-		const (
-			sbURLLegacy    string = "tcp://1.2.3.4:6642"
-			sbURLConverted string = "tcp:1.2.3.4:6642"
-		)
-
-		It("configures client southbound TCP legacy address correctly", func() {
-			fexec := ovntest.NewFakeExec()
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-remote=\"" + sbURLConverted + "\"",
-			})
-
-			cliConfig := &OvnAuthConfig{Address: sbURLLegacy}
-			a, err := buildOvnAuth(fexec, false, cliConfig, &OvnAuthConfig{}, true)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(a.Scheme).To(gomega.Equal(OvnDBSchemeTCP))
-			// Config should convert :// to : in addresses
-			gomega.Expect(a.Address).To(gomega.Equal(sbURLConverted))
-			gomega.Expect(a.northbound).To(gomega.BeFalse())
-
-			gomega.Expect(a.GetURL()).To(gomega.Equal(sbURLConverted))
 			err = a.SetDBAuth()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
@@ -1830,16 +1480,6 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 				gomega.Expect(err.Error()).To(gomega.ContainSubstring(match))
 			} else {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			}
-		}
-	}
-
-	// Generates multiple runType and direction It() tests for a given description, match, and args
-	generateTests := func(desc, match string, getArgs func() []string) {
-		for _, dir := range []string{"nb", "sb"} {
-			for runType := 1; runType <= 3; runType++ {
-				realDesc := fmt.Sprintf("(%d/%s) %s", runType, dir, desc)
-				It(realDesc, createOneTest(runType, dir, match, getArgs))
 			}
 		}
 	}
@@ -1872,96 +1512,6 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			generateTestsSimple("kubeconfig file does not exist",
 				"kubernetes kubeconfig file \"/foo/bar/baz\" not found",
 				"-k8s-kubeconfig=/foo/bar/baz")
-		})
-	})
-
-	Describe("OVN API config options", func() {
-		var certFile, keyFile, caFile string
-
-		BeforeEach(func() {
-			var err error
-			certFile, _, err = createTempFile("cert.crt")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			keyFile, _, err = createTempFile("priv.key")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			caFile, _, err = createTempFile("ca.crt")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		})
-
-		AfterEach(func() {
-			os.Remove(certFile)
-			os.Remove(keyFile)
-			os.Remove(caFile)
-		})
-
-		Context("returns an error when", func() {
-			generateTests("the scheme is not empty/tcp/ssl",
-				"unknown OVN DB scheme \"blah\"",
-				func() []string {
-					return []string{"address=blah:1.2.3.4:5555"}
-				})
-
-			generateTests("the address is unix socket and certs are given",
-				"certificate or key given; perhaps you mean to use the 'ssl' scheme?",
-				func() []string {
-					return []string{
-						"client-privkey=/bar/baz/foo",
-						"client-cert=/bar/baz/foo",
-						"client-cacert=/var/baz/foo",
-					}
-				})
-
-			generateTests("the OVN URL has no port",
-				"failed to parse OVN DB host/port \"4.3.2.1\": address 4.3.2.1: missing port in address",
-				func() []string {
-					return []string{
-						"address=tcp:4.3.2.1",
-					}
-				})
-
-			generateTests("certs are provided for the TCP scheme",
-				"certificate or key given; perhaps you mean to use the 'ssl' scheme?",
-				func() []string {
-					return []string{
-						"address=tcp:1.2.3.4:444",
-						"client-privkey=/bar/baz/foo",
-					}
-				})
-		})
-
-		Context("does not return an error when", func() {
-			generateTests("the SSL scheme is missing a client CA cert", "",
-				func() []string {
-					return []string{
-						"address=ssl:1.2.3.4:444",
-						"client-privkey=" + keyFile,
-						"client-cert=" + certFile,
-						"cert-common-name=foobar",
-						"client-cacert=/foo/bar/baz",
-					}
-				})
-
-			generateTests("the SSL scheme is missing a private key file", "",
-				func() []string {
-					return []string{
-						"address=ssl:1.2.3.4:444",
-						"client-privkey=/foo/bar/baz",
-						"client-cert=" + certFile,
-						"client-cacert=" + caFile,
-						"cert-common-name=foobar",
-					}
-				})
-
-			generateTests("the SSL scheme is missing a client cert file", "",
-				func() []string {
-					return []string{
-						"address=ssl:1.2.3.4:444",
-						"client-privkey=" + keyFile,
-						"client-cert=/foo/bar/baz",
-						"client-cacert=" + caFile,
-						"cert-common-name=foobar",
-					}
-				})
 		})
 	})
 

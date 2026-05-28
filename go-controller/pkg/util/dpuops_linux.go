@@ -186,10 +186,22 @@ func (s *SimulatedDPUOps) generateMACForHostToDpu(nodeName, role string, index i
 // getDPURepresentor builds rep<pfId>-<funcId> and verifies the link exists.
 func (s *SimulatedDPUOps) getDPURepresentor(pfId, funcId string) (string, error) {
 	rep := fmt.Sprintf(dpusim.DPURepresentorFmt, pfId, funcId)
-	if _, err := GetNetLinkOps().LinkByName(rep); err != nil {
-		return "", fmt.Errorf("simulated representor %s not found: %v", rep, err)
+	if _, err := GetNetLinkOps().LinkByName(rep); err == nil {
+		return rep, nil
 	}
-	return rep, nil
+
+	links, err := GetNetLinkOps().LinkList()
+	if err != nil {
+		return "", fmt.Errorf("simulated representor %s not found and link list failed: %v", rep, err)
+	}
+	for _, link := range links {
+		attrs := link.Attrs()
+		if attrs != nil && attrs.Alias == rep {
+			klog.Infof("Resolved simulated representor %s by alias on netdev %s", rep, attrs.Name)
+			return attrs.Name, nil
+		}
+	}
+	return "", fmt.Errorf("simulated representor %s not found: link name or alias not present", rep)
 }
 
 func (s *SimulatedDPUOps) GetDPUHostRepInterface(_ string) (string, error) {

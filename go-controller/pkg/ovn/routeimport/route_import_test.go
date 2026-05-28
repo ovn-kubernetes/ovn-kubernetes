@@ -105,6 +105,56 @@ func Test_controller_syncNetwork(t *testing.T) {
 	cudnNoOverlayRouter := cudnNoOverlay.GetNetworkScopedGWRouterName(node)
 	cudnNoOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnNoOverlayRouter
 
+	primaryUDNMultiSubnet := &multinetworkmocks.NetInfo{}
+	primaryUDNMultiSubnet.On("IsDefault").Return(false)
+	primaryUDNMultiSubnet.On("GetNetworkName").Return("primary-udn")
+	primaryUDNMultiSubnet.On("GetNetworkID").Return(5)
+	primaryUDNMultiSubnet.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(192, 168, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(192, 169, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+	})
+	primaryUDNMultiSubnet.On("GetNetworkScopedGWRouterName", node).Return("primary-udn-router")
+	primaryUDNMultiSubnet.On("Transport").Return("")
+	primaryUDNMultiSubnetRouter := primaryUDNMultiSubnet.GetNetworkScopedGWRouterName(node)
+	primaryUDNMultiSubnetRouterPort := types.GWRouterToExtSwitchPrefix + primaryUDNMultiSubnetRouter
+
+	primaryUDNMultiSubnetNoOverlay := &multinetworkmocks.NetInfo{}
+	primaryUDNMultiSubnetNoOverlay.On("IsDefault").Return(false)
+	primaryUDNMultiSubnetNoOverlay.On("GetNetworkName").Return("primary-udn-nooverlay")
+	primaryUDNMultiSubnetNoOverlay.On("GetNetworkID").Return(6)
+	primaryUDNMultiSubnetNoOverlay.On("Subnets").Return([]config.CIDRNetworkEntry{
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(192, 168, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(192, 169, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+	})
+	primaryUDNMultiSubnetNoOverlay.On("GetNetworkScopedGWRouterName", node).Return("primary-udn-nooverlay-router")
+	primaryUDNMultiSubnetNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	primaryUDNMultiSubnetNoOverlayRouter := primaryUDNMultiSubnetNoOverlay.GetNetworkScopedGWRouterName(node)
+	primaryUDNMultiSubnetNoOverlayRouterPort := types.GWRouterToExtSwitchPrefix + primaryUDNMultiSubnetNoOverlayRouter
+
 	type fields struct {
 		networkIDs map[int]string
 		networks   map[string]util.NetInfo
@@ -293,6 +343,49 @@ func Test_controller_syncNetwork(t *testing.T) {
 			expected: []libovsdb.TestData{
 				&nbdb.LogicalRouter{UUID: "router", Name: cudnOverlayRouter, StaticRoutes: []string{"keep-1"}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &cudnOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
+			name: "ignores primary UDN pod subnet routes from additional subnet in overlay mode",
+			args: args{"primary-udn"},
+			fields: fields{
+				networkIDs: map[int]string{5: "primary-udn"},
+				networks:   map[string]util.NetInfo{"primary-udn": primaryUDNMultiSubnet},
+			},
+			link: &netlink.Vrf{Table: 5},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: primaryUDNMultiSubnetRouter, StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &primaryUDNMultiSubnetRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("192.169.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: primaryUDNMultiSubnetRouter, StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &primaryUDNMultiSubnetRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
+			name: "adds primary UDN pod subnet routes from additional subnet in no-overlay mode",
+			args: args{"primary-udn-nooverlay"},
+			fields: fields{
+				networkIDs: map[int]string{6: "primary-udn-nooverlay"},
+				networks:   map[string]util.NetInfo{"primary-udn-nooverlay": primaryUDNMultiSubnetNoOverlay},
+			},
+			link: &netlink.Vrf{Table: 6},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: primaryUDNMultiSubnetNoOverlayRouter, StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &primaryUDNMultiSubnetNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("192.169.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: primaryUDNMultiSubnetNoOverlayRouter, StaticRoutes: []string{"keep-1", "add-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &primaryUDNMultiSubnetNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "192.169.1.0/24", Nexthop: "2.2.2.1", OutputPort: &primaryUDNMultiSubnetNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 			},
 		},
 		{

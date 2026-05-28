@@ -1003,36 +1003,57 @@ func (c *Controller) ensureRoutingPoliciesOps(ops []ovsdb.Operation, cncName str
 // createRoutingPoliciesOps returns ops to create logical router policies.
 func (c *Controller) createRoutingPoliciesOps(ops []ovsdb.Operation, dstNetworkID int, routerName, inportName string,
 	dstSubnets []config.CIDRNetworkEntry, srcNetworkID int, nexthops []net.IP, cncName string) ([]ovsdb.Operation, error) {
-	for _, dstSubnet := range dstSubnets {
-		// Determine IP version and get appropriate nexthop
-		var nexthop string
-		for _, nh := range nexthops {
-			isIPv4Subnet := utilnet.IsIPv4(dstSubnet.CIDR.IP)
-			isIPv4Nexthop := utilnet.IsIPv4(nh)
-			if isIPv4Subnet == isIPv4Nexthop {
-				nexthop = nh.String()
-				break
-			}
+	type policyConfig struct {
+		ipVersion string
+		nexthop   string
+		subnets   []string
+	}
+
+	policyByFamily := map[string]*policyConfig{
+		"v4": {ipVersion: "ip4"},
+		"v6": {ipVersion: "ip6"},
+	}
+
+	for _, nexthop := range nexthops {
+		ipFamily := "v4"
+		if utilnet.IsIPv6(nexthop) {
+			ipFamily = "v6"
 		}
-		if nexthop == "" {
+		if policyByFamily[ipFamily].nexthop == "" {
+			policyByFamily[ipFamily].nexthop = nexthop.String()
+		}
+	}
+
+	for _, dstSubnet := range dstSubnets {
+		ipFamily := "v4"
+		if utilnet.IsIPv6(dstSubnet.CIDR.IP) {
+			ipFamily = "v6"
+		}
+		policyByFamily[ipFamily].subnets = append(policyByFamily[ipFamily].subnets, dstSubnet.CIDR.String())
+	}
+
+	for _, ipFamily := range []string{"v4", "v6"} {
+		policyConfig := policyByFamily[ipFamily]
+		if policyConfig.nexthop == "" || len(policyConfig.subnets) == 0 {
 			continue
 		}
 
-		// Build the match string
-		ipVersion := "ip4"
-		ipFamily := "v4"
-		if utilnet.IsIPv6(dstSubnet.CIDR.IP) {
-			ipVersion = "ip6"
-			ipFamily = "v6"
+		var dstMatches []string
+		for _, dstSubnet := range policyConfig.subnets {
+			dstMatches = append(dstMatches, fmt.Sprintf("%s.dst == %s", policyConfig.ipVersion, dstSubnet))
 		}
-		match := fmt.Sprintf(`inport == "%s" && %s.dst == %s`, inportName, ipVersion, dstSubnet.CIDR.String())
+		dstMatch := dstMatches[0]
+		if len(dstMatches) > 1 {
+			dstMatch = fmt.Sprintf("(%s)", strings.Join(dstMatches, " || "))
+		}
+		match := fmt.Sprintf(`inport == "%s" && %s`, inportName, dstMatch)
 
 		dbIndexes := buildLRPolicyDBIDs(cncName, strconv.Itoa(srcNetworkID), strconv.Itoa(dstNetworkID), ipFamily, routerName)
 		policy := &nbdb.LogicalRouterPolicy{
 			Priority:    ovntypes.NetworkConnectPolicyPriority,
 			Match:       match,
 			Action:      nbdb.LogicalRouterPolicyActionReroute,
-			Nexthops:    []string{nexthop},
+			Nexthops:    []string{policyConfig.nexthop},
 			ExternalIDs: dbIndexes.GetExternalIDs(),
 		}
 
@@ -1043,7 +1064,7 @@ func (c *Controller) createRoutingPoliciesOps(ops []ovsdb.Operation, dstNetworkI
 			return nil, fmt.Errorf("failed to create routing policy ops on %s: %v", routerName, err)
 		}
 
-		klog.V(5).Infof("Created/updated routing policy ops on %s: %s -> %s", routerName, match, nexthop)
+		klog.V(5).Infof("Created/updated routing policy ops on %s: %s -> %s", routerName, match, policyConfig.nexthop)
 	}
 
 	return ops, nil

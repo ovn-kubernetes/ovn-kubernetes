@@ -838,7 +838,7 @@ func TestLinkNeighAdd(t *testing.T) {
 			inputLink: mockLink,
 			errExp:    true,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "NeighAdd", OnCallMethodArgType: []string{"*netlink.Neigh"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
+				{OnCallMethodName: "NeighSet", OnCallMethodArgType: []string{"*netlink.Neigh"}, RetArgList: []interface{}{fmt.Errorf("mock error")}},
 			},
 			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName", Index: 1}}},
@@ -848,7 +848,7 @@ func TestLinkNeighAdd(t *testing.T) {
 			desc:      "test code path where adding neighbor returns success",
 			inputLink: mockLink,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "NeighAdd", OnCallMethodArgType: []string{"*netlink.Neigh"}, RetArgList: []interface{}{nil}},
+				{OnCallMethodName: "NeighSet", OnCallMethodArgType: []string{"*netlink.Neigh"}, RetArgList: []interface{}{nil}},
 			},
 			onRetArgsLinkIfaceOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName", Index: 1}}},

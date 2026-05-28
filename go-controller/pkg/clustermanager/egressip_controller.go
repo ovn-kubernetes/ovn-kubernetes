@@ -1138,12 +1138,12 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 	return nil
 }
 
-// syncCloudPrivateIPConfigs This method takes care syncing stale data in the
-// egress ip status with cloud private ip config upon master reboot cases.
-// cloud private ip config entry would have been deleted when master was down
-// whereas egress ip status was not updated for the deleted entry in an error
-// scenario. Hence this method ensures egress ip status is upto date with
-// available cloud private ip config entry.
+// syncCloudPrivateIPConfigs reconciles stale data in the EgressIP status
+// against the CloudPrivateIPConfig objects upon cluster-manager restart (or
+// leadership change). The CloudPrivateIPConfig entry may have been deleted
+// while the cluster manager was down, without the EgressIP status being
+// updated accordingly. This sync ensures the EgressIP status is consistent
+// with the CloudPrivateIPConfig objects currently present.
 func (eIPC *egressIPClusterController) syncCloudPrivateIPConfigs(objs []interface{}) error {
 	if !util.PlatformTypeIsEgressIPCloudProvider() {
 		return nil

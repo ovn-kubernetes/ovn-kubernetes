@@ -33,6 +33,7 @@ import (
 	testnm "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -77,7 +78,8 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		fakeOvn = NewFakeOVN(true)
+		useFakeAddressSets := false
+		fakeOvn = NewFakeOVN(useFakeAddressSets)
 		initialDB = libovsdbtest.TestSetup{
 			NBData: []libovsdbtest.TestData{},
 		}
@@ -121,6 +123,20 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					extraObjects = append(extraObjects, remotePod)
 				}
 
+				var expectedNBData []libovsdbtest.TestData
+				if netInfo.hasEVPN {
+					// emulate address sets handled by other controllers, needed for EVPN SNATs
+					nodeIPsAS4, _, err := buildClusterNodeIPsAddressSetsForNodes(nodes)
+					Expect(err).NotTo(HaveOccurred())
+					udnEnnabledSvcAS4, _ := buildUDNEnabledSvcAddressSets(nil)
+					initialDB.NBData = append(
+						initialDB.NBData,
+						nodeIPsAS4,
+						udnEnnabledSvcAS4,
+					)
+					expectedNBData = append(expectedNBData, nodeIPsAS4, udnEnnabledSvcAS4)
+				}
+
 				Expect(setupFakeOvnForLayer2Topology(fakeOvn, initialDB, netInfo, nodes, podInfo, pod, extraObjects...)).To(Succeed())
 				defer fakeOvn.networkManager.Stop()
 
@@ -134,14 +150,11 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					expectationOptions = append(expectationOptions, withClusterPortGroup())
 				}
 				By("asserting the OVN entities provisioned in the NBDB are the expected ones")
-				Eventually(fakeOvn.nbClient).Should(
-					libovsdbtest.HaveData(
-						newUserDefinedNetworkExpectationMachine(
-							fakeOvn,
-							[]testPod{podInfo},
-							expectationOptions...,
-						).expectedLogicalSwitchesAndPorts(nodeName)...))
-
+				expectedNBData = append(
+					expectedNBData,
+					newUserDefinedNetworkExpectationMachine(fakeOvn, []testPod{podInfo}, expectationOptions...).expectedLogicalSwitchesAndPorts(nodeName)...,
+				)
+				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedNBData))
 				return nil
 			}
 
@@ -1232,6 +1245,11 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	masqSNAT := newNATEntry(masqSNATUUID1, "169.254.169.14", nodeSubnet.String(), standardNonDefaultNetworkExtIDs(netInfo), "")
 	masqSNAT.Match = getMasqueradeManagementIPSNATMatch(util.IPAddrToHWAddr(managementPortIP(nodeSubnet)).String())
 	masqSNAT.LogicalPort = ptr.To(fmt.Sprintf("trtos-%s", netInfo.GetNetworkScopedName(ovntypes.OVNLayer2Switch)))
+	if netInfo.Transport() == ovntypes.NetworkTransportEVPN {
+		nodeIPV4ASHashName, _ := addressset.GetHashNamesForAS(getClusterNodeIPsAddrSetDbIDsForTest())
+		udnEnabledSvcV4ASHashName, _ := addressset.GetHashNamesForAS(udnenabledsvc.GetAddressSetDBIDs())
+		masqSNAT.Match += fmt.Sprintf(" && (ip4.dst == $%s || ip4.dst == $%s)", nodeIPV4ASHashName, udnEnabledSvcV4ASHashName)
+	}
 	gwChassisName := fmt.Sprintf("%s-%s", rtosLRPName, gwConfig.ChassisID)
 	gatewayChassisUUID := gwChassisName + "-UUID"
 	lrsrNextHop := trInfo.gatewayRouterNets[0].IP.String()

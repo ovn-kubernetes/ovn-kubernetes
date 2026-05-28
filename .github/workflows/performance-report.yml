@@ -63,8 +63,6 @@ jobs:
               cd ../..
             fi
 
-            # Clean up
-            rm -rf "$dir"
           fi
         done
 
@@ -101,7 +99,7 @@ jobs:
         fi
         
         # Find all metrics directories from extracted performance test data
-        METRICS_DIRS=$(find perf-data -name "metrics" -type d 2>/dev/null || true)
+        METRICS_DIRS=$(find . -path "*performance-test-data*/perf/metrics" -type d 2>/dev/null || true)
         
         if [ -z "$METRICS_DIRS" ]; then
           echo "::warning::No metrics directories found in artifacts, skipping indexing"
@@ -114,7 +112,7 @@ jobs:
         # Index each metrics directory
         for METRICS_DIR in $METRICS_DIRS; do
           # Extract workload name from path (e.g., perf-data/kubelet-density-cni/...)
-          WORKLOAD=$(echo "$METRICS_DIR" | cut -d'/' -f2)
+          WORKLOAD=$(echo "$METRICS_DIR" | cut -d'/' -f2 | sed 's/-performance-test-data-.*//')
           echo ""
           echo "=== Indexing metrics for workload: $WORKLOAD ==="
           echo "Metrics directory: $METRICS_DIR"
@@ -236,7 +234,7 @@ jobs:
       if: steps.get_prs.outputs.pr_numbers != '[]'
       run: |
         # Extract PR numbers from JSON array
-        PR_NUMBERS=$(echo '${{ steps.get_prs.outputs.pr_numbers }}' | python3 -c "import sys, json; print(' '.join(['--pr', str(pr) for pr in json.load(sys.stdin)]))")
+        PR_NUMBERS=$(echo '${{ steps.get_prs.outputs.pr_numbers }}' | python3 -c "import sys, json; print(' '.join(f'--pr {pr}' for pr in json.load(sys.stdin)))")
 
         if [ -n "$PR_NUMBERS" ]; then
           contrib/perf/post-pr-comment.py \

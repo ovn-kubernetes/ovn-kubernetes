@@ -94,7 +94,11 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 				Namespace: "foo",
 				Name:      "dummy",
 				Labels: map[string]string{
+					kubevirtv1.AppLabel:                "virt-launcher",
 					kubevirtv1.VirtualMachineNameLabel: t.vmName,
+				},
+				Annotations: map[string]string{
+					kubevirtv1.DomainAnnotation: t.vmName,
 				},
 			},
 		}
@@ -222,11 +226,18 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 		)
 
 		newVirtLauncherPod := func(name, nodeName string, phase corev1.PodPhase, annotations map[string]string) *corev1.Pod {
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			annotations[kubevirtv1.DomainAnnotation] = vmName
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:              name,
-					Namespace:         "awips",
-					Labels:            map[string]string{kubevirtv1.VirtualMachineNameLabel: vmName},
+					Name:      name,
+					Namespace: "awips",
+					Labels: map[string]string{
+						kubevirtv1.AppLabel:                "virt-launcher",
+						kubevirtv1.VirtualMachineNameLabel: vmName,
+					},
 					CreationTimestamp: metav1.Time{Time: time.Now()},
 					Annotations:       annotations,
 					OwnerReferences: []metav1.OwnerReference{{

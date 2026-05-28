@@ -23,7 +23,7 @@ import (
 )
 
 // This handles the "k8s.ovn.org/pod-networks" annotation on Pods, used to pass
-// information about networking from the master to the nodes. (The util.PodAnnotation
+// information about networking from the ovnkube-controller to the nodes. (The util.PodAnnotation
 // struct is also embedded in the cni.PodInterfaceInfo type that is passed from the
 // cniserver to the CNI shim.)
 //

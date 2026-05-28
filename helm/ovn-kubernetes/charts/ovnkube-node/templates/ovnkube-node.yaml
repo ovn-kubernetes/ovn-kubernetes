@@ -324,8 +324,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: OVN_SSL_ENABLE
-          value: {{ include "isSslEnabled" . | quote }}
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovn-controller"]

@@ -5,24 +5,18 @@ package libovsdb
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/prometheus/client_golang/prometheus"
-	"gopkg.in/fsnotify/fsnotify.v1"
 	"gopkg.in/natefinch/lumberjack.v2"
 
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/textlogger"
 
@@ -72,10 +66,9 @@ func newClientLogger(dbModelName string) (logger logr.Logger, err error) {
 	return logger, nil
 }
 
-// newClient creates a new client object given the provided config
-// the stopCh is required to ensure the goroutine for ssl cert
-// update is not leaked
-func newClient(cfg config.OvnAuthConfig, dbModel model.ClientDBModel, stopCh <-chan struct{}, opts ...client.Option) (client.Client, error) {
+// newClient creates a new client object connecting to the given unix-socket
+// endpoint (e.g. "unix:/var/run/ovn/ovnnb_db.sock").
+func newClient(endpoint string, dbModel model.ClientDBModel, opts ...client.Option) (client.Client, error) {
 	const connectTimeout time.Duration = types.OVSDBTimeout * 2
 	const inactivityTimeout time.Duration = types.OVSDBTimeout * 18
 	logger, err := newClientLogger(dbModel.Name())
@@ -90,51 +83,33 @@ func newClient(cfg config.OvnAuthConfig, dbModel model.ClientDBModel, stopCh <-c
 		client.WithInactivityCheck(inactivityTimeout, connectTimeout, &backoff.ZeroBackOff{}),
 		client.WithLeaderOnly(true),
 		client.WithLogger(&logger),
+		client.WithEndpoint(endpoint),
 	}
 	options = append(options, opts...)
 
-	for _, endpoint := range strings.Split(cfg.GetURL(), ",") {
-		options = append(options, client.WithEndpoint(endpoint))
-	}
-	var updateFn func(client.Client, <-chan struct{})
-	if cfg.Scheme == config.OvnDBSchemeSSL {
-		tlsConfig, err := createTLSConfig(cfg.Cert, cfg.PrivKey, cfg.CACert, cfg.CertCommonName)
-		if err != nil {
-			return nil, err
-		}
-		updateFn, err = newSSLKeyPairWatcherFunc(cfg.Cert, cfg.PrivKey, tlsConfig)
-		if err != nil {
-			return nil, err
-		}
-		options = append(options, client.WithTLSConfig(tlsConfig))
-	}
-
-	client, err := client.NewOVSDBClient(dbModel, options...)
+	c, err := client.NewOVSDBClient(dbModel, options...)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
-	err = client.Connect(ctx)
-	if err != nil {
+	if err := c.Connect(ctx); err != nil {
 		return nil, err
 	}
 
-	if updateFn != nil {
-		go updateFn(client, stopCh)
-	}
-
-	return client, nil
+	return c, nil
 }
 
-// NewSBClient creates a new OVN Southbound Database client
+// NewSBClient creates a new OVN Southbound Database client connected to the
+// local OVN SB DB.
 func NewSBClient(stopCh <-chan struct{}) (client.Client, error) {
-	return NewSBClientWithConfig(config.OvnSouth, prometheus.DefaultRegisterer, stopCh)
+	return NewSBClientWithEndpoint(config.OvnSouth.GetURL(), prometheus.DefaultRegisterer, stopCh)
 }
 
-// NewSBClientWithConfig creates a new OVN Southbound Database client with the provided configuration
-func NewSBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Registerer, stopCh <-chan struct{}) (client.Client, error) {
+// NewSBClientWithEndpoint creates a new OVN Southbound Database client connected
+// to the given unix-socket endpoint (e.g. "unix:/var/run/ovn/ovnsb_db.sock").
+func NewSBClientWithEndpoint(endpoint string, promRegistry prometheus.Registerer, stopCh <-chan struct{}) (client.Client, error) {
 	dbModel, err := sbdb.FullDatabaseModel()
 	if err != nil {
 		return nil, err
@@ -143,7 +118,7 @@ func NewSBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Reg
 	enableMetricsOption := client.WithMetricsRegistryNamespaceSubsystem(promRegistry,
 		"ovnkube", "master_libovsdb")
 
-	c, err := newClient(cfg, dbModel, stopCh, enableMetricsOption)
+	c, err := newClient(endpoint, dbModel, enableMetricsOption)
 	if err != nil {
 		return nil, err
 	}
@@ -185,13 +160,15 @@ func NewSBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Reg
 	return c, nil
 }
 
-// NewNBClient creates a new OVN Northbound Database client
+// NewNBClient creates a new OVN Northbound Database client connected to the
+// local OVN NB DB.
 func NewNBClient(stopCh <-chan struct{}) (client.Client, error) {
-	return NewNBClientWithConfig(config.OvnNorth, prometheus.DefaultRegisterer, stopCh)
+	return NewNBClientWithEndpoint(config.OvnNorth.GetURL(), prometheus.DefaultRegisterer, stopCh)
 }
 
-// NewNBClientWithConfig creates a new OVN Northbound Database client with the provided configuration
-func NewNBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Registerer, stopCh <-chan struct{}) (client.Client, error) {
+// NewNBClientWithEndpoint creates a new OVN Northbound Database client connected
+// to the given unix-socket endpoint (e.g. "unix:/var/run/ovn/ovnnb_db.sock").
+func NewNBClientWithEndpoint(endpoint string, promRegistry prometheus.Registerer, stopCh <-chan struct{}) (client.Client, error) {
 	dbModel, err := nbdb.FullDatabaseModel()
 	if err != nil {
 		return nil, err
@@ -210,7 +187,7 @@ func NewNBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Reg
 		nbdb.QoSTable:           {{Columns: []model.ColumnKey{{Column: "external_ids", Key: types.PrimaryIDKey}}}},
 	})
 
-	c, err := newClient(cfg, dbModel, stopCh, enableMetricsOption)
+	c, err := newClient(endpoint, dbModel, enableMetricsOption)
 	if err != nil {
 		return nil, err
 	}
@@ -234,20 +211,18 @@ func NewNBClientWithConfig(cfg config.OvnAuthConfig, promRegistry prometheus.Reg
 
 // NewOVSClient creates a new openvswitch Database client
 func NewOVSClient(stopCh <-chan struct{}) (client.Client, error) {
-	cfg := &config.OvnAuthConfig{
-		Scheme:  config.OvnDBSchemeUnix,
-		Address: fmt.Sprintf("unix:%s", filepath.Join(config.OvsPaths.RunDir, "db.sock")),
-	}
-
-	return NewOVSClientWithConfig(*cfg, stopCh)
+	endpoint := fmt.Sprintf("unix:%s", filepath.Join(config.OvsPaths.RunDir, "db.sock"))
+	return NewOVSClientWithEndpoint(endpoint, stopCh)
 }
 
-func NewOVSClientWithConfig(cfg config.OvnAuthConfig, stopCh <-chan struct{}) (client.Client, error) {
+// NewOVSClientWithEndpoint connects to the OVS DB at the given unix-socket
+// endpoint (e.g. "unix:/var/run/openvswitch/db.sock").
+func NewOVSClientWithEndpoint(endpoint string, stopCh <-chan struct{}) (client.Client, error) {
 	dbModel, err := vswitchd.FullDatabaseModel()
 	if err != nil {
 		return nil, err
 	}
-	c, err := newClient(cfg, dbModel, stopCh)
+	c, err := newClient(endpoint, dbModel)
 	if err != nil {
 		return nil, err
 	}
@@ -273,88 +248,4 @@ func NewOVSClientWithConfig(cfg config.OvnAuthConfig, stopCh <-chan struct{}) (c
 	}
 
 	return c, nil
-}
-
-func createTLSConfig(certFile, privKeyFile, caCertFile, serverName string) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, privKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("error generating x509 certs for ovndbapi: %s", err)
-	}
-	caCert, err := os.ReadFile(caCertFile)
-	if err != nil {
-		return nil, fmt.Errorf("error generating ca certs for ovndbapi: %s", err)
-	}
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-		ServerName:   serverName,
-	}
-	return tlsConfig, nil
-}
-
-// Watch TLS key/cert files, and update the ovndb tlsConfig Certificate.
-// Call ovndbclient.Close() will disconnect underlying rpc2client connection.
-// With ovndbclient initalized with reconnect flag, rcp2client will reconnct with new tlsConfig Certificate.
-func newSSLKeyPairWatcherFunc(certFile, privKeyFile string, tlsConfig *tls.Config) (func(client.Client, <-chan struct{}), error) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
-	}
-	if err := watcher.Add(certFile); err != nil {
-		return nil, err
-	}
-	if err := watcher.Add(privKeyFile); err != nil {
-		return nil, err
-	}
-	fn := func(client client.Client, stopChan <-chan struct{}) {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if ok && event.Op&(fsnotify.Write|fsnotify.Remove) != 0 {
-					if event.Op&fsnotify.Remove != 0 {
-						// cert/key file removed, need wait for the file to be created again.
-						if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Millisecond, 5*time.Second, true, func(_ context.Context) (bool, error) {
-							if _, err := os.Stat(event.Name); os.IsNotExist(err) {
-								return false, nil
-							}
-							return true, nil
-						}); err != nil {
-							klog.Errorf("Fatal error: timeout waiting for %s to be created", event.Name)
-							os.Exit(1)
-						}
-						if err := watcher.Add(event.Name); err != nil {
-							klog.Errorf("Cannot add %s back to watcher, err: %s", event.Name, err)
-							os.Exit(1)
-						}
-					}
-					cert, err := tls.LoadX509KeyPair(certFile, privKeyFile)
-					if err != nil {
-						klog.Infof("Cannot load new cert with cert %s key %s err %s", certFile, privKeyFile, err)
-						continue
-					}
-					if reflect.DeepEqual(tlsConfig.Certificates, []tls.Certificate{cert}) {
-						klog.Infof("TLS update already finished")
-						continue
-					}
-					tlsConfig.Certificates = []tls.Certificate{cert}
-					client.Disconnect()
-					klog.Infof("TLS connection to %s force reconnected with new TLS config", client.Schema().Name)
-					// We do not call client.Connect() as reconnection is handled in the reconnect goroutine
-				}
-			case err, ok := <-watcher.Errors:
-				if ok {
-					klog.Errorf("Error watching for changes: %s", err)
-				}
-			case <-stopChan:
-				err := watcher.Close()
-				if err != nil {
-					klog.Errorf("Error closing watcher: %s", err)
-				}
-				return
-			}
-		}
-	}
-	return fn, nil
 }

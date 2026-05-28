@@ -35,6 +35,7 @@ const (
 	HybridNodeRouteOwnerType    ownerType = "HybridNodeRoute"
 	EgressIPOwnerType           ownerType = "EgressIP"
 	EgressServiceOwnerType      ownerType = "EgressService"
+	ClusterNodeIPsOwnerType     ownerType = "ClusterNodeIPs"
 	MulticastNamespaceOwnerType ownerType = "MulticastNS"
 	MulticastClusterOwnerType   ownerType = "MulticastCluster"
 	NetpolNodeOwnerType         ownerType = "NetpolNode"
@@ -141,6 +142,12 @@ var AddressSetEgressIP = newObjectIDsType(addressSet, EgressIPOwnerType, []Exter
 	ObjectNameKey,
 	IPFamilyKey,
 	NetworkKey,
+})
+
+var AddressSetClusterNodeIPs = newObjectIDsType(addressSet, ClusterNodeIPsOwnerType, []ExternalIDKey{
+	// cluster-wide address set name
+	ObjectNameKey,
+	IPFamilyKey,
 })
 
 var AddressSetEgressService = newObjectIDsType(addressSet, EgressServiceOwnerType, []ExternalIDKey{

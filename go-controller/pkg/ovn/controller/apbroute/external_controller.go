@@ -210,7 +210,7 @@ type externalPolicyManager struct {
 	// routePolicySyncCache is a cache of configures states for policies, key is policyName.
 	routePolicySyncCache *syncmap.SyncMap[*routePolicyState]
 	// networkClient is an interface that exposes add and delete GW IPs. There are 2 structs that implement this contract: one to interface with the north bound DB and another one for the conntrack.
-	// the north bound is used by the master controller to add and delete the logical static routes, whilst the conntrack is used by the node controller to ensure that the ECMP entries are removed
+	// the north bound is used by ovnkube-controller to add and delete the logical static routes, whilst the conntrack is used by the node-side controller to ensure that the ECMP entries are removed
 	// when a gateway IP is no longer an egress access point.
 	netClient networkClient
 

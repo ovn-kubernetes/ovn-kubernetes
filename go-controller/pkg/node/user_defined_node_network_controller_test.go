@@ -33,7 +33,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
-	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -315,8 +314,6 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		nodeLister := v1mocks.NodeLister{}
 		nodeInformer.On("Lister").Return(&nodeLister)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		nodenft.SetFakeNFTablesHelper()
-		util.SetFakeIPTablesHelpers()
 
 		kubeFakeClient := fake.NewSimpleClientset(
 			&corev1.NodeList{

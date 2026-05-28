@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/vishvananda/netlink"
-	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,11 +37,12 @@ type neighEntries struct {
 // podNeedsUpdate returns true for local pods when the annotation changed, the pod completed, or was deleted.
 // For non-local pods, it returns true when the kubevirt migration target ready timestamp changes,
 // so that reconcilePod can remove the local source pod's entries.
+// For local pods, it also returns true on migration status changes so that
+// reconcilePod re-programs PERMANENT neighbor entries that may have been
+// overwritten by zebra's extern_learn during EVPN MAC mobility.
 func (c *Controller) podNeedsUpdate(oldObj, newObj *corev1.Pod) bool {
-	if oldObj != nil && newObj != nil &&
-		oldObj.Spec.NodeName != c.nodeName && newObj.Spec.NodeName != c.nodeName {
-		return oldObj.Annotations[kubevirtv1.MigrationTargetReadyTimestamp] !=
-			newObj.Annotations[kubevirtv1.MigrationTargetReadyTimestamp]
+	if kubevirt.LiveMigrationStatusChanged(oldObj, newObj) {
+		return true
 	}
 
 	var oldAnnot, newAnnot string
@@ -186,9 +186,7 @@ func (c *Controller) ensurePodNeighbors(entries *neighEntries) error {
 	klog.V(5).Infof("Configured FDB %s vlan %d on %s", entries.mac, entries.macvrfVID, entries.ovsPortName)
 	for _, ip := range entries.ips {
 		if err := util.LinkNeighAdd(svi, ip, entries.mac); err != nil {
-			if !errors.Is(err, syscall.EEXIST) {
-				return fmt.Errorf("failed to add neighbor %s on %s: %w", ip, entries.sviName, err)
-			}
+			return fmt.Errorf("failed to add neighbor %s on %s: %w", ip, entries.sviName, err)
 		}
 		klog.V(5).Infof("Configured neighbor %s lladdr %s on %s", ip, entries.mac, entries.sviName)
 	}

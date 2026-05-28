@@ -21,23 +21,23 @@ spec:
       labels:
        severity: critical
       annotations:
-       description: There is no running ovnkube-manager
+       description: There is no running ovnkube-cluster-manager
 
     - alert: OvnKubeManagerMultipleLeaders
-      expr: sum(ovnkube_controller_leader) > 1
+      expr: sum(ovnkube_clustermanager_leader) > 1
       for: 4m
       labels:
        severity: critical
       annotations:
-       description: There are multiple ovnkube-manager leaders
+       description: There are multiple ovnkube-cluster-manager leaders
 
     - alert: OvnKubeManagerNoLeader
-      expr: max(ovnkube_controller_leader) == 0
+      expr: max(ovnkube_clustermanager_leader) == 0
       for: 4m
       labels:
         severity: critical
       annotations:
-       description: There is no running ovnkube-manager leader
+       description: There is no running ovnkube-cluster-manager leader
 
     - alert: OvnKubePodRestarts
       expr: |
@@ -75,7 +75,7 @@ spec:
       annotations:
        description: |
          {{`The pod creation latency value {{ $value }} aggregated across 
-         all masters for the last 15minutes is more than 5 seconds.`}}
+         all ovnkube-controller instances for the last 15minutes is more than 5 seconds.`}}
 
     - alert: OvnKubeIncreaseInPodCreationLatency99thPercentile
       expr: |
@@ -97,7 +97,7 @@ spec:
        severity: warning
       annotations:
        description: |
-         The pod creation latency aggregated across all masters for the last 
+         The pod creation latency aggregated across all ovnkube-controller instances for the last 
          15minutes is more than 5 seconds as compared to 15 minutes before last 15 minutes.
 
     - alert: OvnKubeHighNBCliLatency99thPercentile
@@ -113,8 +113,8 @@ spec:
        severity: warning
       annotations:
        description: |
-         {{`The ovn-nbctl 99th percentile CLI latency {{ value }} aggregated 
-         across all masters for the last 15minutes is more than 3 seconds.`}}
+         {{`The ovn-nbctl 99th percentile CLI latency {{ $value }} aggregated 
+         across all ovnkube-controller instances for the last 15minutes is more than 3 seconds.`}}
 
     - alert: OvnKubeHighSBCliLatency99thPercentile
       expr: |
@@ -129,8 +129,8 @@ spec:
        severity: warning
       annotations:
        description: |
-         {{`The ovn-sbctl 99th percentile CLI latency {{ value }} aggregated
-         across all masters for the last 15minutes is more than 3 seconds.`}}
+         {{`The ovn-sbctl 99th percentile CLI latency {{ $value }} aggregated
+         across all ovnkube-controller instances for the last 15minutes is more than 3 seconds.`}}
 
     - alert: OvnKubeHighK8sNetworkPolicyUpdateLatency99thPercentile
       expr: |
@@ -145,8 +145,8 @@ spec:
        severity: warning
       annotations:
        description: |
-         {{`The 99th percentile {{ $labels.name }} update latency {{ value }} aggregated 
-         across all masters for the last 15minutes is more than 1 seconds.`}}
+         {{`The 99th percentile {{ $labels.name }} update latency {{ $value }} aggregated 
+         across all ovnkube-controller instances for the last 15minutes is more than 1 seconds.`}}
 
     - alert: OvnKubeHighK8sNamespaceUpdateLatency99thPercentile
       expr: |
@@ -161,8 +161,8 @@ spec:
        severity: warning
       annotations:
        description: |
-         {{`The 99th percentile {{ $labels.name }} update latency {{ value }} 
-         aggregated across all masters for the last 15minutes is more than 1 seconds.`}}
+         {{`The 99th percentile {{ $labels.name }} update latency {{ $value }} 
+         aggregated across all ovnkube-controller instances for the last 15minutes is more than 1 seconds.`}}
 
     - alert: OvnKubeHighK8sServiceUpdateLatency99thPercentile
       expr: |
@@ -177,8 +177,8 @@ spec:
        severity: warning
       annotations:
        description: |
-         {{`The 99th percentile {{ $labels.name }} update latency {{ value }} aggregated 
-         across all masters for the last 15minutes is more than 1 seconds.`}}
+         {{`The 99th percentile {{ $labels.name }} update latency {{ $value }} aggregated 
+         across all ovnkube-controller instances for the last 15minutes is more than 1 seconds.`}}
 
     - alert: OvnKubeHighK8sEndpointUpdateLatency99thPercentile
       expr: |
@@ -193,8 +193,8 @@ spec:
        severity: warning
       annotations:
        description: |
-         {{`The 99th percentile {{ $labels.name }} update latency {{ value }} aggregated
-         across all masters for the last 15minutes is more than 1 seconds.`}}
+         {{`The 99th percentile {{ $labels.name }} update latency {{ $value }} aggregated
+         across all ovnkube-controller instances for the last 15minutes is more than 1 seconds.`}}
 
     - alert: OvnNBDBStale
       expr: time() - max(ovnkube_controller_nb_e2e_timestamp) > 120
@@ -237,38 +237,6 @@ spec:
          {{`Pod ovn-kubernetes/ {{ $labels.pod }} sbdb container is 
          restarting {{ printf "%.2f" $value }} times / 5 minutes.`}}
 
-    - alert: OvnNBDBMultipleLeaders
-      expr: sum(ovn_db_cluster_server_role{db_name="OVN_Northbound",server_role="leader"}) > 1
-      for: 4m
-      labels:
-       severity: critical
-      annotations:
-       description: There are multiple ovn-nbdb leaders
-
-    - alert: OvnNBDBNoLeader
-      expr: max(ovn_db_cluster_server_role{db_name="OVN_Northbound",server_role="leader"}) == 0
-      for: 4m
-      labels:
-        severity: critical
-      annotations:
-       description: There is no running ovn-nbdb leader
-
-    - alert: OvnSBDBMultipleLeaders
-      expr: sum(ovn_db_cluster_server_role{db_name="OVN_Southbound",server_role="leader"}) > 1
-      for: 4m
-      labels:
-       severity: critical
-      annotations:
-       description: There are multiple ovn-sbdb leaders
-
-    - alert: OvnSBDBNoLeader
-      expr: max(ovn_db_cluster_server_role{db_name="OVN_Southbound",server_role="leader"}) == 0
-      for: 4m
-      labels:
-        severity: critical
-      annotations:
-       description: There is no running ovn-sbdb leader
-
     - alert: OvnNorthdContainerRestarts
       expr: |
         rate(kube_pod_container_status_restarts_total{namespace="ovn-kubernetes", container="ovn-northd"}[15m]) * 60 * 5 > 0
@@ -281,12 +249,17 @@ spec:
          restarting {{ printf "%.2f" $value }} times / 5 minutes`}}
 
     - alert: OvnNorthdNotActive
-      expr: sum(ovn_northd_status) != 1
+      # In IC mode each zone runs its own active ovn-northd, so the alert
+      # must be evaluated per-instance rather than over a global sum.
+      # ovn_northd_status: -1=error, 0=standby, 1=active, 2=paused.
+      expr: ovn_northd_status{namespace="ovn-kubernetes",job="ovnkube-node"} != 1
       for: 4m
       labels:
        severity: critical
       annotations:
-       description: There is no running ovn-northd.
+       description: |
+         {{`Pod ovn-kubernetes/{{ $labels.pod }} ovn-northd is not active
+         (status={{ $value }}; -1=error, 0=standby, 2=paused).`}}
 
     - alert: OvnNorthdTxnError
       expr: |

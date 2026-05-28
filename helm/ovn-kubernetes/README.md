@@ -266,7 +266,7 @@ false
 false
 </pre>
 </td>
-			<td>Use SSL transport to NB/SB db and northd</td>
+			<td>Use SSL transport for the Egress IP gRPC health-check (NB cert paths are reused for this; OVN NB/SB DB connections are always unix sockets)</td>
 		</tr>
 		<tr>
 			<td>global.enableStatelessNetworkPolicy</td>

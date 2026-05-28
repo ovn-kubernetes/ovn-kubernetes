@@ -1150,8 +1150,12 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		ensureNetwork = util.NewMutableNetInfo(nadNetwork)
 	case util.AreNetworksCompatible(currentNetwork, nadNetwork):
 		// the NAD refers to an existing compatible network, ensure that
-		// existing network holds a reference to this NAD
-		ensureNetwork = currentNetwork
+		// existing network holds references to all NADs while still allowing
+		// dynamic fields from the latest NAD config to reconcile.
+		ensureNetwork = util.NewMutableNetInfo(nadNetwork)
+		if nadSet := c.nadsByNetwork[nadNetworkName]; len(nadSet) > 0 {
+			ensureNetwork.AddNADs(nadSet.UnsortedList()...)
+		}
 	case func() bool {
 		nadSet := c.nadsByNetwork[nadNetworkName]
 		return len(nadSet) == 1 && nadSet.Has(key)

@@ -405,7 +405,7 @@ func runOVNretry(cmdPath string, envVars []string, extraArgsFunc func() ([]strin
 		}
 
 		// Connection refused
-		// Master may not be up so keep trying
+		// OVN DB may not be up so keep trying
 		if strings.Contains(stderr.String(), "Connection refused") {
 			if retriesLeft == 0 {
 				return stdout, stderr, err
@@ -421,34 +421,9 @@ func runOVNretry(cmdPath string, envVars []string, extraArgsFunc func() ([]strin
 }
 
 func getNbctlArgsAndEnv(timeout int, args ...string) ([]string, []string) {
-	var cmdArgs []string
-
-	if config.OvnNorth.Scheme == config.OvnDBSchemeSSL {
-		cmdArgs = append(cmdArgs,
-			fmt.Sprintf("--private-key=%s", config.OvnNorth.PrivKey),
-			fmt.Sprintf("--certificate=%s", config.OvnNorth.Cert),
-			fmt.Sprintf("--bootstrap-ca-cert=%s", config.OvnNorth.CACert),
-			fmt.Sprintf("--db=%s", config.OvnNorth.GetURL()))
-	} else if config.OvnNorth.Scheme == config.OvnDBSchemeTCP {
-		cmdArgs = append(cmdArgs, fmt.Sprintf("--db=%s", config.OvnNorth.GetURL()))
-	}
-	cmdArgs = append(cmdArgs, fmt.Sprintf("--timeout=%d", timeout))
+	cmdArgs := []string{fmt.Sprintf("--timeout=%d", timeout)}
 	cmdArgs = append(cmdArgs, args...)
 	return cmdArgs, []string{}
-}
-
-func getNbOVSDBArgs(command string, args ...string) []string {
-	var cmdArgs []string
-	if config.OvnNorth.Scheme == config.OvnDBSchemeSSL {
-		cmdArgs = append(cmdArgs,
-			fmt.Sprintf("--private-key=%s", config.OvnNorth.PrivKey),
-			fmt.Sprintf("--certificate=%s", config.OvnNorth.Cert),
-			fmt.Sprintf("--bootstrap-ca-cert=%s", config.OvnNorth.CACert))
-	}
-	cmdArgs = append(cmdArgs, command)
-	cmdArgs = append(cmdArgs, config.OvnNorth.GetURL())
-	cmdArgs = append(cmdArgs, args...)
-	return cmdArgs
 }
 
 // RunOVNNbctlWithTimeout runs command via ovn-nbctl with a specific timeout
@@ -476,22 +451,7 @@ func RunOVNNbctl(args ...string) (string, string, error) {
 // FIXME: Remove when https://github.com/ovn-kubernetes/libovsdb/issues/235 is fixed
 func RunOVNSbctlWithTimeout(timeout int, args ...string) (string, string,
 	error) {
-	var cmdArgs []string
-	if config.OvnSouth.Scheme == config.OvnDBSchemeSSL {
-		cmdArgs = []string{
-			fmt.Sprintf("--private-key=%s", config.OvnSouth.PrivKey),
-			fmt.Sprintf("--certificate=%s", config.OvnSouth.Cert),
-			fmt.Sprintf("--bootstrap-ca-cert=%s", config.OvnSouth.CACert),
-			fmt.Sprintf("--db=%s", config.OvnSouth.GetURL()),
-		}
-	} else if config.OvnSouth.Scheme == config.OvnDBSchemeTCP {
-		cmdArgs = []string{
-			fmt.Sprintf("--db=%s", config.OvnSouth.GetURL()),
-		}
-	}
-
-	cmdArgs = append(cmdArgs, fmt.Sprintf("--timeout=%d", timeout))
-	cmdArgs = append(cmdArgs, "--no-leader-only")
+	cmdArgs := []string{fmt.Sprintf("--timeout=%d", timeout)}
 	cmdArgs = append(cmdArgs, args...)
 	stdout, stderr, err := runOVNretry(runner.sbctlPath, nil, nil, cmdArgs...)
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
@@ -506,13 +466,6 @@ func RunOVSDBClient(args ...string) (string, string, error) {
 // RunOVSDBTool runs an 'ovsdb-tool [OPTIONS] COMMAND [ARG...] command'.
 func RunOVSDBTool(args ...string) (string, string, error) {
 	stdout, stderr, err := run(runner.ovsdbToolPath, args...)
-	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
-}
-
-// RunOVSDBClientOVN runs an 'ovsdb-client [OPTIONS] COMMAND [SERVER] [ARG...] command' against OVN NB database.
-func RunOVSDBClientOVNNB(command string, args ...string) (string, string, error) {
-	cmdArgs := getNbOVSDBArgs(command, args...)
-	stdout, stderr, err := runOVNretry(runner.ovsdbClientPath, nil, nil, cmdArgs...)
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
 }
 
@@ -907,10 +860,9 @@ func IsOvsHwOffloadEnabled() (bool, error) {
 }
 
 type OvsDbProperties struct {
-	AppCtl        func(timeout int, args ...string) (string, string, error)
-	DbAlias       string
-	DbName        string
-	ElectionTimer int
+	AppCtl  func(timeout int, args ...string) (string, string, error)
+	DbAlias string
+	DbName  string
 }
 
 // GetOvsDbProperties inits OvsDbProperties based on db file path given to it.
@@ -918,17 +870,15 @@ type OvsDbProperties struct {
 func GetOvsDbProperties(db string) (*OvsDbProperties, error) {
 	if strings.Contains(db, "ovnnb") {
 		return &OvsDbProperties{
-			ElectionTimer: int(config.OvnNorth.ElectionTimer) * 1000,
-			AppCtl:        RunOVNNBAppCtlWithTimeout,
-			DbName:        "OVN_Northbound",
-			DbAlias:       db,
+			AppCtl:  RunOVNNBAppCtlWithTimeout,
+			DbName:  "OVN_Northbound",
+			DbAlias: db,
 		}, nil
 	} else if strings.Contains(db, "ovnsb") {
 		return &OvsDbProperties{
-			ElectionTimer: int(config.OvnSouth.ElectionTimer) * 1000,
-			AppCtl:        RunOVNSBAppCtlWithTimeout,
-			DbName:        "OVN_Southbound",
-			DbAlias:       db,
+			AppCtl:  RunOVNSBAppCtlWithTimeout,
+			DbName:  "OVN_Southbound",
+			DbAlias: db,
 		}, nil
 	} else {
 		return nil, fmt.Errorf("failed to parse ovn db type Northbound/Southbound from the path %s", db)

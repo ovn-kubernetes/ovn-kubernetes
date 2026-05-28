@@ -45,7 +45,6 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer2' || (has(self.evpn) && has(self.evpn.macVRF))", message="spec.evpn.macVRF field is required for Layer2 topology when transport is 'EVPN'"
 	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer3' || (has(self.evpn) && has(self.evpn.ipVRF))", message="spec.evpn.ipVRF field is required for Layer3 topology when transport is 'EVPN'"
 	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer3' || !has(self.evpn) || !has(self.evpn.macVRF)", message="spec.evpn.macVRF field is forbidden for Layer3 topology when transport is 'EVPN'"
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
 }
@@ -62,6 +61,7 @@ type NetworkSpec struct {
 	//
 	// +kubebuilder:validation:Enum=Layer2;Layer3;Localnet
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Topology is immutable"
 	// +required
 	// +unionDiscriminator
 	Topology NetworkTopology `json:"topology"`
@@ -71,10 +71,12 @@ type NetworkSpec struct {
 	Layer3 *Layer3Config `json:"layer3,omitempty"`
 
 	// Layer2 is the Layer2 topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Layer2 is immutable"
 	// +optional
 	Layer2 *Layer2Config `json:"layer2,omitempty"`
 
 	// Localnet is the Localnet topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Localnet is immutable"
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
 
@@ -85,10 +87,12 @@ type NetworkSpec struct {
 	// When omitted, the network uses the default OVN overlay transport (e.g. Geneve, VXLAN)
 	// as configured by ovn-encap-type.
 	// +kubebuilder:validation:Enum=NoOverlay;EVPN
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Transport is immutable"
 	// +optional
 	Transport TransportOption `json:"transport,omitempty"`
 	// NoOverlay contains configuration for no-overlay mode.
 	// This is only allowed when Transport is "NoOverlay".
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="NoOverlay is immutable"
 	// +optional
 	NoOverlay *NoOverlayConfig `json:"noOverlay,omitempty"`
 	// EVPN contains configuration for EVPN mode.

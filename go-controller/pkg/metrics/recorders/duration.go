@@ -146,7 +146,7 @@ var metricNetworkProgrammingOVN = prometheus.NewHistogram(prometheus.HistogramOp
 		prometheus.LinearBuckets(120, 30, 11))}, // 2min, 2.5min, 3min, ..., 7min
 )
 
-// Run monitors the config duration for OVN-Kube master to configure k8 kinds. A measurement maybe allowed and this is
+// Run monitors the config duration for the ovnkube control plane to configure k8s kinds. A measurement maybe allowed and this is
 // related to the number of k8 nodes, N [1] and by argument k [2] where there is a probability that 1 out of N*k
 // measurement attempts are allowed. If k=0, all measurements are allowed. mUpdatePeriod determines the period to
 // process and publish metrics

@@ -488,12 +488,14 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			labels := map[string]string{
 				kubevirtv1.VirtualMachineNameLabel: t.vmName,
 				kubevirtv1.NodeNameLabel:           t.nodeName,
+				kubevirtv1.AppLabel:                "virt-launcher",
 			}
 			for k, v := range t.extraLabels {
 				labels[k] = v
 			}
 			annotations := map[string]string{
 				kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation: "",
+				kubevirtv1.DomainAnnotation:                             t.vmName,
 			}
 			for k, v := range t.extraAnnotations {
 				annotations[k] = v
@@ -811,10 +813,22 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						WithPolling(time.Second).
 						Should(Succeed(), "should fill in the cache with the pod")
 
-					// Change the phase by updating to emulate the logic of transition
+					// Change the phase by patching the status subresource to
+					// emulate the logic of transition. Using Patch instead of
+					// UpdateStatus avoids overwriting controller annotations
+					// (the fake client's UpdateStatus replaces the entire object).
 					if virtLauncherPodToCreate.updatePhase != nil {
-						podToCreate.Status.Phase = *virtLauncherPodToCreate.updatePhase
-						_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).UpdateStatus(context.TODO(), podToCreate, metav1.UpdateOptions{})
+						patch := []byte(fmt.Sprintf(`{"status":{"phase":%q}}`, *virtLauncherPodToCreate.updatePhase))
+						_, err = fakeOvn.fakeClient.KubeClient.CoreV1().
+							Pods(t.namespace).
+							Patch(
+								context.TODO(),
+								podToCreate.Name,
+								ktypes.MergePatchType,
+								patch,
+								metav1.PatchOptions{},
+								"status",
+							)
 						Expect(err).NotTo(HaveOccurred())
 						Eventually(func() (corev1.PodPhase, error) {
 							updatedPod, err := fakeOvn.controller.watchFactory.GetPod(podToCreate.Namespace, podToCreate.Name)
@@ -822,7 +836,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						}).
 							WithTimeout(time.Minute).
 							WithPolling(time.Second).
-							Should(Equal(podToCreate.Status.Phase), "should be in the updated phase")
+							Should(Equal(*virtLauncherPodToCreate.updatePhase), "should be in the updated phase")
 
 					}
 				}

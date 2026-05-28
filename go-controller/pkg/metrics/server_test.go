@@ -792,7 +792,6 @@ func TestHandleMetrics(t *testing.T) {
 			name:       "default registry metrics",
 			registerer: prometheus.DefaultRegisterer,
 			expectedMetrics: []string{
-				"ovnkube_controller_leader",
 				"ovnkube_controller_ready_duration_seconds",
 				"ovnkube_controller_sync_duration_seconds",
 				"ovnkube_controller_build_info",

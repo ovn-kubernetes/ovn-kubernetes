@@ -6,7 +6,7 @@ package images
 import (
 	"os"
 
-	"k8s.io/kubernetes/test/utils/image"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 )
 
 var (
@@ -16,7 +16,6 @@ var (
 	// New test images should ideally be sourced from the upstream k8s.io/kubernetes/test/utils/image package.
 	// Failing to find an image from upstream k8s, please get community approval because downstream consumers must
 	// pre-approve new images.
-	agnHost = image.GetE2EImage(image.Agnhost)
 	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
 	iperf3                = "quay.io/sronanrh/iperf:latest"
 	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
@@ -24,14 +23,13 @@ var (
 	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
 	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
 	frr                   = "quay.io/frrouting/frr:10.5.3"
-
+	
+	agnHostOverride = ""
 	extraImages []string
 )
 
 func init() {
-	if agnHostOverride := os.Getenv("AGNHOST_IMAGE"); agnHostOverride != "" {
-		agnHost = agnHostOverride
-	}
+	agnHostOverride = os.Getenv("AGNHOST_IMAGE")
 	if iperf3Override := os.Getenv("IPERF3_IMAGE"); iperf3Override != "" {
 		iperf3 = iperf3Override
 	}
@@ -53,7 +51,10 @@ func init() {
 }
 
 func AgnHost() string {
-	return agnHost
+	if agnHostOverride != "" {
+		return agnHostOverride
+	}
+	return deploymentconfig.Get().GetAgnHostContainerImage()
 }
 
 func IPerf3() string {
@@ -90,6 +91,7 @@ func Add(imgs ...string) {
 // Required returns the deduplicated set of images needed for the current
 // test run. agnhost is always included because it is used by most e2e tests.
 func Required() []string {
+	agnHost := AgnHost()
 	seen := map[string]struct{}{
 		agnHost: {},
 	}

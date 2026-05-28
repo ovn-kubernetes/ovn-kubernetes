@@ -51,7 +51,7 @@ func cudnGRRoutesForNode(k8sClient kubernetes.Interface, cudnName, nodeName stri
 	}
 	return e2ekubectl.RunKubectl(ns,
 		"exec", nbPod.Name, "-c", nbContainerName, "--",
-		"ovn-nbctl", "--no-leader-only", "lr-route-list",
+		"ovn-nbctl", "lr-route-list",
 		cudnGatewayRouterName(cudnName, nodeName))
 }
 

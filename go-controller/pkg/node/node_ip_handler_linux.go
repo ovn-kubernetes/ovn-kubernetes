@@ -550,18 +550,11 @@ func (c *addressManager) sync() {
 	var addrs []netlink.Addr
 
 	if c.useNetlink {
-		links, err := netlink.LinkList()
+		var err error
+		addrs, err = util.GetNetLinkOps().AddrList(nil, getSupportedIPFamily())
 		if err != nil {
-			klog.Errorf("Failed sync due to being unable to list links: %v", err)
+			klog.Errorf("Failed to sync node addresses: unable to list all interface addresses: %v", err)
 			return
-		}
-		for _, link := range links {
-			foundAddrs, err := util.GetNetLinkOps().AddrList(link, getSupportedIPFamily())
-			if err != nil {
-				klog.Errorf("Failed sync due to being unable to list addresses for %q: %v", link.Attrs().Name, err)
-				return
-			}
-			addrs = append(addrs, foundAddrs...)
 		}
 	}
 

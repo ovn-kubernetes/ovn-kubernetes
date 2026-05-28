@@ -182,8 +182,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: OVN_SSL_ENABLE
-          value: {{ include "isSslEnabled" . | quote }}
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnsb-db"]
@@ -238,12 +236,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: OVN_SSL_ENABLE
-          value: {{ include "isSslEnabled" . | quote }}
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovn-northd"]
@@ -492,10 +484,6 @@ spec:
             configMapKeyRef:
               name: ovn-config
               key: host_network_namespace
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: {{ hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false | quote }}
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
@@ -561,12 +549,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: OVN_SSL_ENABLE
-          value: {{ default "" .Values.global.enableSsl | quote }}
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovn-controller"]
@@ -607,10 +589,6 @@ spec:
         - name: METRICS_IP
           value: {{ .Values.global.metricsIp | quote }}
         {{- end }}
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         # end of container
       nodeSelector:
         kubernetes.io/os: "linux"

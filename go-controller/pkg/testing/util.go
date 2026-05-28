@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
@@ -190,4 +191,12 @@ func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
 		}
 		return true, vtep, nil
 	})
+}
+
+func BuildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nadapi.NetworkAttachmentDefinition, error) {
+	config, err := json.Marshal(network)
+	if err != nil {
+		return nil, err
+	}
+	return GenerateNADWithConfig(name, namespace, string(config)), nil
 }

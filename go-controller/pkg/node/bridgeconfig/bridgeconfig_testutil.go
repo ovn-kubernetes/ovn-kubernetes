@@ -15,7 +15,6 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestDefaultBridgeConfig() *BridgeConfiguration {
@@ -71,32 +70,31 @@ func CheckAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDN
 	ginkgo.By(fmt.Sprintf("Checking advertised UDN %s service isolation flows for %s; expected %d flows",
 		netName, svcCIDR.String(), expectedNFlows))
 
-	var matchingIPFamilySubnet *net.IPNet
 	var protoPrefix string
-	var udnAdvertisedSubnets []*net.IPNet
-	var err error
-	for _, clusterEntry := range netConfig.Subnets {
-		udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
-	}
+	var matchingIPFamilySubnets []*net.IPNet
 	if net2.IsIPv4CIDR(svcCIDR) {
-		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(false, udnAdvertisedSubnets)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		protoPrefix = protoPrefixV4
 	} else {
-		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(true, udnAdvertisedSubnets)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		protoPrefix = protoPrefixV6
 	}
+	for _, clusterEntry := range netConfig.Subnets {
+		if net2.IsIPv6CIDR(clusterEntry.CIDR) == net2.IsIPv6CIDR(svcCIDR) {
+			matchingIPFamilySubnets = append(matchingIPFamilySubnets, clusterEntry.CIDR)
+		}
+	}
+	gomega.Expect(matchingIPFamilySubnets).NotTo(gomega.BeEmpty())
 
 	var nFlows int
 	for _, flow := range flows {
-		if strings.Contains(flow, fmt.Sprintf("priority=200, table=2, %s, %s_src=%s, actions=drop",
-			protoPrefix, protoPrefix, matchingIPFamilySubnet)) {
-			nFlows++
-		}
-		if strings.Contains(flow, fmt.Sprintf("priority=550, in_port=LOCAL, %s, %s_src=%s, %s_dst=%s, actions=ct(commit,zone=64001,table=2)",
-			protoPrefix, protoPrefix, matchingIPFamilySubnet, protoPrefix, svcCIDR)) {
-			nFlows++
+		for _, matchingIPFamilySubnet := range matchingIPFamilySubnets {
+			if strings.Contains(flow, fmt.Sprintf("priority=200, table=2, %s, %s_src=%s, actions=drop",
+				protoPrefix, protoPrefix, matchingIPFamilySubnet)) {
+				nFlows++
+			}
+			if strings.Contains(flow, fmt.Sprintf("priority=550, in_port=LOCAL, %s, %s_src=%s, %s_dst=%s, actions=ct(commit,zone=64001,table=2)",
+				protoPrefix, protoPrefix, matchingIPFamilySubnet, protoPrefix, svcCIDR)) {
+				nFlows++
+			}
 		}
 	}
 

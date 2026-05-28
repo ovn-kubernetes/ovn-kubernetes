@@ -91,57 +91,113 @@ func generateConnectSubnetsWithCIDRs(cs clientset.Interface, v4CIDR string, v4Pr
 	return strings.Join(subnets, "\n")
 }
 
-// generateNetworkSubnets generates subnets YAML with custom CIDRs
-// Pass empty strings to use defaults
-func generateNetworkSubnets(cs clientset.Interface, topology, v4Subnet, v6Subnet string) string {
+// generateNetworkSubnets generates subnets YAML with custom CIDRs.
+// Pass empty slices to use defaults.
+func generateNetworkSubnets(cs clientset.Interface, topology string, v4Subnets, v6Subnets []string) string {
 	// Use custom subnets if provided, otherwise fall back to defaults
-	l3v4CIDR := layer3UserDefinedNetworkIPv4CIDR
-	l3v6CIDR := layer3UserDefinedNetworkIPv6CIDR
-	l2v4CIDR := layer2UserDefinedNetworkIPv4CIDR
-	l2v6CIDR := layer2UserDefinedNetworkIPv6CIDR
+	l3v4Subnets := []string{layer3UserDefinedNetworkIPv4CIDR}
+	l3v6Subnets := []string{layer3UserDefinedNetworkIPv6CIDR}
+	l2v4Subnets := []string{layer2UserDefinedNetworkIPv4CIDR}
+	l2v6Subnets := []string{layer2UserDefinedNetworkIPv6CIDR}
 
-	if v4Subnet != "" {
-		l3v4CIDR = v4Subnet
-		l2v4CIDR = v4Subnet
+	if len(v4Subnets) > 0 {
+		l3v4Subnets = v4Subnets
+		l2v4Subnets = v4Subnets
 	}
-	if v6Subnet != "" {
-		l3v6CIDR = v6Subnet
-		l2v6CIDR = v6Subnet
+	if len(v6Subnets) > 0 {
+		l3v6Subnets = v6Subnets
+		l2v6Subnets = v6Subnets
 	}
 
 	if topology == "Layer3" {
 		var subnets []string
 		if isIPv4Supported(cs) {
-			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s", hostSubnet: %d}`, l3v4CIDR, layer3UserDefinedNetworkIPv4HostSubnet))
+			for _, cidr := range l3v4Subnets {
+				if len(strings.Split(cidr, "/")) == 2 {
+					subnets = append(subnets, fmt.Sprintf(`{cidr: "%s", hostSubnet: %d}`, cidr, layer3UserDefinedNetworkIPv4HostSubnet))
+				} else {
+					subnets = append(subnets, generateLayer3Subnets(cidr)[0])
+				}
+			}
 		}
 		if isIPv6Supported(cs) {
-			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s", hostSubnet: %d}`, l3v6CIDR, layer3UserDefinedNetworkIPv6HostSubnet))
+			for _, cidr := range l3v6Subnets {
+				if len(strings.Split(cidr, "/")) == 2 {
+					subnets = append(subnets, fmt.Sprintf(`{cidr: "%s", hostSubnet: %d}`, cidr, layer3UserDefinedNetworkIPv6HostSubnet))
+				} else {
+					subnets = append(subnets, generateLayer3Subnets(cidr)[0])
+				}
+			}
 		}
 		return fmt.Sprintf("[%s]", strings.Join(subnets, ","))
 	}
 	// Layer2 format
 	var quotedCidrs []string
 	if isIPv4Supported(cs) {
-		quotedCidrs = append(quotedCidrs, fmt.Sprintf(`"%s"`, l2v4CIDR))
+		for _, cidr := range l2v4Subnets {
+			quotedCidrs = append(quotedCidrs, fmt.Sprintf(`"%s"`, cidr))
+		}
 	}
 	if isIPv6Supported(cs) {
-		quotedCidrs = append(quotedCidrs, fmt.Sprintf(`"%s"`, l2v6CIDR))
+		for _, cidr := range l2v6Subnets {
+			quotedCidrs = append(quotedCidrs, fmt.Sprintf(`"%s"`, cidr))
+		}
 	}
 	return fmt.Sprintf("[%s]", strings.Join(quotedCidrs, ","))
+}
+
+func generateLayer3NetworkSubnets(cs clientset.Interface, cidrs ...string) string {
+	subnets := generateLayer3Subnets(joinStrings(filterCIDRs(cs, cidrs...)...))
+	return fmt.Sprintf("[%s]", strings.Join(subnets, ","))
+}
+
+func generatePrimaryUDNSubnets(cs clientset.Interface, topology string, subnets []string) string {
+	if len(subnets) == 0 {
+		if topology == "Layer3" {
+			subnets = []string{layer3UserDefinedNetworkIPv4CIDR, layer3UserDefinedNetworkIPv6CIDR}
+		} else {
+			subnets = []string{layer2UserDefinedNetworkIPv4CIDR, layer2UserDefinedNetworkIPv6CIDR}
+		}
+	}
+
+	if topology == "Layer3" {
+		return generateLayer3NetworkSubnets(cs, subnets...)
+	}
+
+	var quotedCidrs []string
+	for _, cidr := range filterCIDRs(cs, subnets...) {
+		quotedCidrs = append(quotedCidrs, fmt.Sprintf(`"%s"`, cidr))
+	}
+	return fmt.Sprintf("[%s]", strings.Join(quotedCidrs, ","))
+}
+
+func subnetList(subnets ...string) []string {
+	return subnets
 }
 
 // newTestNetworkSubnetsAllocator returns a function that yields unique (v4CIDR, v6CIDR) pairs
 // for UDN/CUDN creation within a single test.
 //
 // This prevents multiple networks in the same test from accidentally sharing the same CIDRs.
-func newTestNetworkSubnetsAllocator() func() (string, string) {
+func newTestNetworkSubnetsAllocator() func(bool) ([]string, []string) {
 	i := 0
-	return func() (string, string) {
+	return func(multiSubnet bool) ([]string, []string) {
 		i++
 		// Allocated networks for ipv4 are 172.31.0.0/16, 172.32.0.0/16, ... (non-overlapping /16s)
-		v4 := fmt.Sprintf("172.%d.0.0/16", 30+i)
+		v4 := []string{fmt.Sprintf("172.%d.0.0/16", 30+i)}
 		// Allocated networks for ipv6 are 2014:100:201::0/60, 2014:100:202::0/60, ... (non-overlapping /60s)
-		v6 := fmt.Sprintf("2014:100:%d::0/60", 200+i)
+		v6 := []string{fmt.Sprintf("2014:100:%d::0/60", 200+i)}
+		if multiSubnet {
+			v4 = []string{
+				fmt.Sprintf("172.%d.0.0/23/24", 30+i),
+				fmt.Sprintf("172.%d.0.0/16/24", 31+i),
+			}
+			v6 = []string{
+				fmt.Sprintf("2014:100:%d::0/63/64", 200+i),
+				fmt.Sprintf("2014:100:%d::0/48/64", 201+i),
+			}
+			i++
+		}
 		return v4, v6
 	}
 }
@@ -290,8 +346,8 @@ func deleteCNC(cncName string) {
 }
 
 // createPrimaryCUDNWithSubnets creates a primary CUDN with specified topology and custom subnets.
-// Pass empty strings for v4Subnet/v6Subnet to use defaults.
-func createPrimaryCUDNWithSubnets(cs clientset.Interface, cudnName, topology string, labels map[string]string, v4Subnet, v6Subnet string, targetNamespaces ...string) {
+// Pass empty slices for v4Subnets/v6Subnets to use defaults.
+func createPrimaryCUDNWithSubnets(cs clientset.Interface, cudnName, topology string, labels map[string]string, v4Subnets, v6Subnets []string, targetNamespaces ...string) {
 	targetNs := strings.Join(targetNamespaces, ",")
 	labelAnnotations := ""
 	for k, v := range labels {
@@ -319,7 +375,7 @@ spec:
     %s:
       role: Primary
       subnets: %s
-`, cudnName, labelAnnotations, targetNs, topology, topologyLower, generateNetworkSubnets(cs, topology, v4Subnet, v6Subnet))
+`, cudnName, labelAnnotations, targetNs, topology, topologyLower, generateNetworkSubnets(cs, topology, v4Subnets, v6Subnets))
 	_, err := e2ekubectl.RunKubectlInput("", manifest, "apply", "-f", "-")
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -330,9 +386,10 @@ func deleteCUDN(cudnName string) {
 }
 
 // createPrimaryUDNWithSubnets creates a primary UDN with specified topology and custom subnets.
-// Pass empty strings for v4Subnet/v6Subnet to use defaults.
-func createPrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName, topology, v4Subnet, v6Subnet string) {
+// Pass empty slices for v4Subnets/v6Subnets to use defaults.
+func createPrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName, topology string, v4Subnets, v6Subnets []string) {
 	topologyLower := strings.ToLower(topology)
+	subnets := append(append([]string{}, v4Subnets...), v6Subnets...)
 	manifest := fmt.Sprintf(`
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
@@ -343,7 +400,7 @@ spec:
   %s:
     role: Primary
     subnets: %s
-`, udnName, topology, topologyLower, generateNetworkSubnets(cs, topology, v4Subnet, v6Subnet))
+`, udnName, topology, topologyLower, generatePrimaryUDNSubnets(cs, topology, subnets))
 	_, err := e2ekubectl.RunKubectlInput(namespace, manifest, "apply", "-f", "-")
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -354,23 +411,23 @@ func deleteUDN(namespace, udnName string) {
 }
 
 // createLayer3PrimaryCUDNWithSubnets creates a Layer3 primary CUDN with custom subnets
-func createLayer3PrimaryCUDNWithSubnets(cs clientset.Interface, cudnName string, labels map[string]string, v4Subnet, v6Subnet string, targetNamespaces ...string) {
-	createPrimaryCUDNWithSubnets(cs, cudnName, "Layer3", labels, v4Subnet, v6Subnet, targetNamespaces...)
+func createLayer3PrimaryCUDNWithSubnets(cs clientset.Interface, cudnName string, labels map[string]string, v4Subnets, v6Subnets []string, targetNamespaces ...string) {
+	createPrimaryCUDNWithSubnets(cs, cudnName, "Layer3", labels, v4Subnets, v6Subnets, targetNamespaces...)
 }
 
 // createLayer2PrimaryCUDNWithSubnets creates a Layer2 primary CUDN with custom subnets
-func createLayer2PrimaryCUDNWithSubnets(cs clientset.Interface, cudnName string, labels map[string]string, v4Subnet, v6Subnet string, targetNamespaces ...string) {
-	createPrimaryCUDNWithSubnets(cs, cudnName, "Layer2", labels, v4Subnet, v6Subnet, targetNamespaces...)
+func createLayer2PrimaryCUDNWithSubnets(cs clientset.Interface, cudnName string, labels map[string]string, v4Subnets, v6Subnets []string, targetNamespaces ...string) {
+	createPrimaryCUDNWithSubnets(cs, cudnName, "Layer2", labels, v4Subnets, v6Subnets, targetNamespaces...)
 }
 
 // createLayer3PrimaryUDNWithSubnets creates a Layer3 primary UDN with custom subnets
-func createLayer3PrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName, v4Subnet, v6Subnet string) {
-	createPrimaryUDNWithSubnets(cs, namespace, udnName, "Layer3", v4Subnet, v6Subnet)
+func createLayer3PrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName string, v4Subnets, v6Subnets []string) {
+	createPrimaryUDNWithSubnets(cs, namespace, udnName, "Layer3", v4Subnets, v6Subnets)
 }
 
 // createLayer2PrimaryUDNWithSubnets creates a Layer2 primary UDN with custom subnets
-func createLayer2PrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName, v4Subnet, v6Subnet string) {
-	createPrimaryUDNWithSubnets(cs, namespace, udnName, "Layer2", v4Subnet, v6Subnet)
+func createLayer2PrimaryUDNWithSubnets(cs clientset.Interface, namespace, udnName string, v4Subnets, v6Subnets []string) {
+	createPrimaryUDNWithSubnets(cs, namespace, udnName, "Layer2", v4Subnets, v6Subnets)
 }
 
 // getCNCAnnotations gets CNC annotations
@@ -686,7 +743,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					})
 
 					By(fmt.Sprintf("creating a %s primary UDN", topology))
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(topology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, ns.Name, networkName, topology, v4, v6)
 
 					By("waiting for UDN to be ready")
@@ -703,7 +760,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					})
 
 					By(fmt.Sprintf("creating a %s primary CUDN", topology))
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(topology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkName, topology, testLabel, v4, v6, ns.Name)
 
 					By("waiting for CUDN to be ready")
@@ -750,16 +807,16 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					})
 
 					By("creating 2 Layer3 and 2 Layer2 primary UDNs")
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(true)
 					createLayer3PrimaryUDNWithSubnets(cs, namespaces[0].Name, networkNames[0], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(true)
 					createLayer3PrimaryUDNWithSubnets(cs, namespaces[1].Name, networkNames[1], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createLayer2PrimaryUDNWithSubnets(cs, namespaces[2].Name, networkNames[2], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer2")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createLayer2PrimaryUDNWithSubnets(cs, namespaces[3].Name, networkNames[3], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -788,16 +845,16 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					})
 
 					By("creating 2 Layer3 and 2 Layer2 primary CUDNs (one L3 targets multiple namespaces)")
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(true)
 					createPrimaryCUDNWithSubnets(cs, networkNames[0], "Layer3", testLabel, v4, v6, namespaces[0].Name)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(true)
 					createPrimaryCUDNWithSubnets(cs, networkNames[1], "Layer3", testLabel, v4, v6, namespaces[1].Name, namespaces[4].Name) // multi-ns
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createPrimaryCUDNWithSubnets(cs, networkNames[2], "Layer2", testLabel, v4, v6, namespaces[2].Name)
 					expectedTopologies = append(expectedTopologies, "Layer2")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createPrimaryCUDNWithSubnets(cs, networkNames[3], "Layer2", testLabel, v4, v6, namespaces[3].Name)
 					expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -856,30 +913,30 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating 4 CUDNs (2xL3 + 2xL2)")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnNames[0], cudnLabel, v4, v6, cudnNamespaces[0].Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnNames[1], cudnLabel, v4, v6, cudnNamespaces[1].Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnNames[2], cudnLabel, v4, v6, cudnNamespaces[2].Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnNames[3], cudnLabel, v4, v6, cudnNamespaces[3].Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 
 			By("creating 4 UDNs (2xL3 + 2xL2)")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNamespaces[0].Name, udnNames[0], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNamespaces[1].Name, udnNames[1], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNamespaces[2].Name, udnNames[2], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNamespaces[3].Name, udnNames[3], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -929,7 +986,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					verifyCNCHasOnlyTunnelIDAnnotation(cncName)
 
 					By(fmt.Sprintf("creating a %s primary UDN", topology))
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(topology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, ns.Name, networkName, topology, v4, v6)
 					expectedTopologies = append(expectedTopologies, topology)
 
@@ -951,7 +1008,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					verifyCNCHasOnlyTunnelIDAnnotation(cncName)
 
 					By(fmt.Sprintf("creating a %s primary CUDN", topology))
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(topology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkName, topology, testLabel, v4, v6, ns.Name)
 					expectedTopologies = append(expectedTopologies, topology)
 
@@ -1002,16 +1059,16 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					verifyCNCHasOnlyTunnelIDAnnotation(cncName)
 
 					By("creating 2 Layer3 and 2 Layer2 primary UDNs")
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(true)
 					createLayer3PrimaryUDNWithSubnets(cs, namespaces[0].Name, networkNames[0], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(true)
 					createLayer3PrimaryUDNWithSubnets(cs, namespaces[1].Name, networkNames[1], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createLayer2PrimaryUDNWithSubnets(cs, namespaces[2].Name, networkNames[2], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer2")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createLayer2PrimaryUDNWithSubnets(cs, namespaces[3].Name, networkNames[3], v4, v6)
 					expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -1043,16 +1100,16 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					verifyCNCHasOnlyTunnelIDAnnotation(cncName)
 
 					By("creating 2 Layer3 and 2 Layer2 primary CUDNs (one L3 targets multiple namespaces)")
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(true)
 					createPrimaryCUDNWithSubnets(cs, networkNames[0], "Layer3", testLabel, v4, v6, namespaces[0].Name)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(true)
 					createPrimaryCUDNWithSubnets(cs, networkNames[1], "Layer3", testLabel, v4, v6, namespaces[1].Name, namespaces[4].Name)
 					expectedTopologies = append(expectedTopologies, "Layer3")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createPrimaryCUDNWithSubnets(cs, networkNames[2], "Layer2", testLabel, v4, v6, namespaces[2].Name)
 					expectedTopologies = append(expectedTopologies, "Layer2")
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(false)
 					createPrimaryCUDNWithSubnets(cs, networkNames[3], "Layer2", testLabel, v4, v6, namespaces[3].Name)
 					expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -1114,30 +1171,30 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating 4 CUDNs (2xL3 + 2xL2)")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnNames[0], cudnLabel, v4, v6, cudnNamespaces[0].Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnNames[1], cudnLabel, v4, v6, cudnNamespaces[1].Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnNames[2], cudnLabel, v4, v6, cudnNamespaces[2].Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnNames[3], cudnLabel, v4, v6, cudnNamespaces[3].Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 
 			By("creating 4 UDNs (2xL3 + 2xL2)")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNamespaces[0].Name, udnNames[0], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNamespaces[1].Name, udnNames[1], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNamespaces[2].Name, udnNames[2], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNamespaces[3].Name, udnNames[3], v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -1186,7 +1243,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By(fmt.Sprintf("creating initial %s primary UDN", initialTopology))
 					nextSubnets := newTestNetworkSubnetsAllocator()
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(initialTopology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, namespaces[0].Name, networkNames[0], initialTopology, v4, v6)
 					expectedTopologies = append(expectedTopologies, initialTopology)
 					Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, namespaces[0].Name, networkNames[0]), 30*time.Second, time.Second).Should(Succeed())
@@ -1200,7 +1257,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
 					By(fmt.Sprintf("adding a %s primary UDN", addedTopology))
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(addedTopology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, namespaces[1].Name, networkNames[1], addedTopology, v4, v6)
 					expectedTopologies = append(expectedTopologies, addedTopology)
 					Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, namespaces[1].Name, networkNames[1]), 30*time.Second, time.Second).Should(Succeed())
@@ -1223,7 +1280,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By(fmt.Sprintf("creating initial %s primary CUDN", initialTopology))
 					nextSubnets := newTestNetworkSubnetsAllocator()
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(initialTopology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkNames[0], initialTopology, testLabel, v4, v6, namespaces[0].Name)
 					expectedTopologies = append(expectedTopologies, initialTopology)
 					Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[0]), 30*time.Second, time.Second).Should(Succeed())
@@ -1237,7 +1294,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 					verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
 					By(fmt.Sprintf("adding a %s primary CUDN", addedTopology))
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(addedTopology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkNames[1], addedTopology, testLabel, v4, v6, namespaces[1].Name)
 					expectedTopologies = append(expectedTopologies, addedTopology)
 					Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[1]), 30*time.Second, time.Second).Should(Succeed())
@@ -1284,10 +1341,10 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating initial L3 CUDN and L3 UDN")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, initialCudnName, cudnLabel, v4, v6, cudnNs.Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNs.Name, initialUdnName, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
 
@@ -1303,10 +1360,10 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			verifyCNCSubnetAnnotationContent(cncName, expectedTopologies)
 
 			By("adding L2 CUDN and L2 UDN")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, addedCudnName, cudnLabel, v4, v6, addedCudnNs.Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, addedUdnNs.Name, addedUdnName, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 
@@ -1348,9 +1405,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By("creating 2 primary UDNs (L3 + topology)")
 					nextSubnets := newTestNetworkSubnetsAllocator()
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(true)
 					createLayer3PrimaryUDNWithSubnets(cs, namespaces[0].Name, networkNames[0], v4, v6)
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(topology == "Layer3")
 					createPrimaryUDNWithSubnets(cs, namespaces[1].Name, networkNames[1], topology, v4, v6)
 					for i, ns := range namespaces {
 						Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns.Name, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
@@ -1390,9 +1447,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 					By("creating 2 primary CUDNs (L3 + topology)")
 					nextSubnets := newTestNetworkSubnetsAllocator()
-					v4, v6 := nextSubnets()
+					v4, v6 := nextSubnets(true)
 					createLayer3PrimaryCUDNWithSubnets(cs, networkNames[0], testLabel, v4, v6, namespaces[0].Name)
-					v4, v6 = nextSubnets()
+					v4, v6 = nextSubnets(topology == "Layer3")
 					createPrimaryCUDNWithSubnets(cs, networkNames[1], topology, testLabel, v4, v6, namespaces[1].Name)
 					for i := 0; i < 2; i++ {
 						Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, networkNames[i]), 30*time.Second, time.Second).Should(Succeed())
@@ -1454,13 +1511,13 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating 2 CUDNs (L3 + L2) and 2 UDNs (L3 + L2)")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, cudnLabel, v4, v6, cudnNs1.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, cudnLabel, v4, v6, cudnNs2.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNs1.Name, udnName1, v4, v6)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs2.Name, udnName2, v4, v6)
 
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
@@ -1518,9 +1575,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating 2 CUDNs - both with common label, second also has specific label")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, commonLabel, v4, v6, ns1.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, specificLabel, v4, v6, ns2.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -1568,9 +1625,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating 2 UDNs in namespaces - both with common label, second also has specific")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, ns1.Name, udnName1, v4, v6)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, ns2.Name, udnName2, v4, v6)
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -1618,9 +1675,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating L3 CUDN and L2 UDN")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cudnLabel, v4, v6, cudnNs.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs.Name, udnName, v4, v6)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs.Name, udnName), 30*time.Second, time.Second).Should(Succeed())
@@ -1670,9 +1727,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating L3 CUDN and L2 UDN")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cudnLabel, v4, v6, cudnNs.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs.Name, udnName, v4, v6)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs.Name, udnName), 30*time.Second, time.Second).Should(Succeed())
@@ -1733,9 +1790,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating 2 CUDNs - first with matching label, second without")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, cncLabel, v4, v6, ns1.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, map[string]string{"other": "label"}, v4, v6, ns2.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -1792,9 +1849,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			By("creating 2 UDNs - first in namespace with matching label, second without")
 			nextSubnets := newTestNetworkSubnetsAllocator()
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, ns1.Name, udnName1, v4, v6)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, ns2.Name, udnName2, v4, v6)
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -1876,9 +1933,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating 2 CUDNs with different labels")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, label1, v4, v6, ns1.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, label2, v4, v6, ns2.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -1925,7 +1982,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating a CUDN with shared label")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, sharedLabel, v4, v6, ns.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
@@ -1974,9 +2031,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating 2 CUDNs with different labels")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, label1, v4, v6, ns1.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, label2, v4, v6, ns2.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -2020,7 +2077,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating a CUDN")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
@@ -2075,9 +2132,9 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 			})
 
 			By("creating 2 CUDNs with different labels")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, label1, v4, v6, ns1.Name)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, label2, v4, v6, ns2.Name)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -2160,7 +2217,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			// Phase 2: Create first L3 CUDN - count goes to 1
 			By("Phase 2: Creating first L3 CUDN")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, cudnName1, cudnLabel, v4, v6, cudnNs1.Name)
 			expectedTopologies = append(expectedTopologies, "Layer3")
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName1), 30*time.Second, time.Second).Should(Succeed())
@@ -2169,7 +2226,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			// Phase 3: Create first L2 UDN - count goes to 2
 			By("Phase 3: Creating first L2 UDN")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, udnNs1.Name, udnName1, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
@@ -2178,7 +2235,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			// Phase 4: Create second L2 CUDN - count goes to 3
 			By("Phase 4: Creating second L2 CUDN")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, cudnName2, cudnLabel, v4, v6, cudnNs2.Name)
 			expectedTopologies = append(expectedTopologies, "Layer2")
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -2187,7 +2244,7 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 
 			// Phase 5: Create second L3 UDN - count goes to 4
 			By("Phase 5: Creating second L3 UDN")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, udnNs2.Name, udnName2, v4, v6)
 			expectedTopologies = append(expectedTopologies, "Layer3")
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udnNs2.Name, udnName2), 30*time.Second, time.Second).Should(Succeed())
@@ -2276,8 +2333,8 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 		})
 
 		By(fmt.Sprintf("creating 2 %s primary UDNs with overlapping subnets", topology))
-		createPrimaryUDNWithSubnets(cs, ns1.Name, udnName1, topology, overlapV4Subnet, overlapV6Subnet)
-		createPrimaryUDNWithSubnets(cs, ns2.Name, udnName2, topology, overlapV4Subnet, overlapV6Subnet)
+		createPrimaryUDNWithSubnets(cs, ns1.Name, udnName1, topology, subnetList(overlapV4Subnet), subnetList(overlapV6Subnet))
+		createPrimaryUDNWithSubnets(cs, ns2.Name, udnName2, topology, subnetList(overlapV4Subnet), subnetList(overlapV6Subnet))
 
 		By("waiting for UDNs to be ready")
 		Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, ns1.Name, udnName1), 30*time.Second, time.Second).Should(Succeed())
@@ -2409,7 +2466,7 @@ var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.Netw
 		})
 
 		By("creating a CUDN and CNC so cluster-manager sets both annotations")
-		v4, v6 := nextSubnets()
+		v4, v6 := nextSubnets(true)
 		createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
 		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
@@ -2457,7 +2514,7 @@ var _ = Describe("ClusterNetworkConnect ValidatingAdmissionPolicy", feature.Netw
 		})
 
 		By("creating a CUDN and CNC so cluster-manager sets both annotations")
-		v4, v6 := nextSubnets()
+		v4, v6 := nextSubnets(true)
 		createLayer3PrimaryCUDNWithSubnets(cs, cudnName, cncLabel, v4, v6, ns.Name)
 		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
 
@@ -2767,14 +2824,14 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createUDNNamespaceWithName(cs, whiteNs1, nil)
 
 			By("1. Creating black CUDN targeting black-ns-0 and black-ns-1")
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, blackCUDN, cudnLabel, v4, v6, blackNs0, blackNs1)
 
 			By("1. Waiting for black CUDN to be ready")
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("1. Creating white CUDN targeting white-ns-0 and white-ns-1")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryCUDNWithSubnets(cs, whiteCUDN, cudnLabel, v4, v6, whiteNs0, whiteNs1)
 
 			By("1. Waiting for white CUDN to be ready")
@@ -2808,14 +2865,14 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createUDNNamespaceWithName(cs, greenNs, udnLabel)
 
 			By("2. Creating blue UDN (L3)")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, v4, v6)
 
 			By("2. Waiting for blue UDN to be ready")
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("2. Creating green UDN (L2)")
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, v4, v6)
 
 			By("2. Waiting for green UDN to be ready")
@@ -3133,8 +3190,8 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createUDNNamespaceWithName(cs, l2Namespace, udnLabel)
 
 			By("Creating the L3 and L2 UDNs")
-			createLayer3PrimaryUDNWithSubnets(cs, l3Namespace, l3UDNName, "10.140.0.0/16", "2014:100:600::0/60")
-			createLayer2PrimaryUDNWithSubnets(cs, l2Namespace, l2UDNName, "10.141.0.0/16", "2014:100:700::0/60")
+			createLayer3PrimaryUDNWithSubnets(cs, l3Namespace, l3UDNName, []string{"10.140.0.0/16"}, []string{"2014:100:600::0/60"})
+			createLayer2PrimaryUDNWithSubnets(cs, l2Namespace, l2UDNName, []string{"10.141.0.0/16"}, []string{"2014:100:700::0/60"})
 
 			By("Waiting for both UDNs to be ready")
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, l3Namespace, l3UDNName), 60*time.Second, time.Second).Should(Succeed())
@@ -3324,7 +3381,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("3. Creating blue namespace and L2 UDN")
 			createUDNNamespaceWithName(cs, blueNs, blueLabel)
-			v4, v6 := nextSubnets()
+			v4, v6 := nextSubnets(false)
 			createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, v4, v6)
 
 			By("3. Waiting for blue UDN to be ready")
@@ -3351,7 +3408,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("4. Creating red namespace and L3 CUDN")
 			createUDNNamespaceWithName(cs, redNs, nil)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, redLabel, v4, v6, redNs)
 
 			By("4. Waiting for red CUDN to be ready")
@@ -3378,7 +3435,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("5. Creating green namespace and L3 UDN")
 			createUDNNamespaceWithName(cs, greenNs, greenLabel)
-			v4, v6 = nextSubnets()
+			v4, v6 = nextSubnets(true)
 			createLayer3PrimaryUDNWithSubnets(cs, greenNs, greenUDN, v4, v6)
 
 			By("5. Waiting for green UDN to be ready")
@@ -3560,7 +3617,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("2. Creating blue namespace, L2 UDN, and pods")
 			createUDNNamespaceWithName(cs, blueNs, blueLabel)
-			createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "10.128.0.0/16", "2014:100:200::0/60")
+			createLayer2PrimaryUDNWithSubnets(cs, blueNs, blueUDN, subnetList("10.128.0.0/16"), subnetList("2014:100:200::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			bluePodConfig0 := httpServerPodConfig("blue-pod-0", blueNs)
@@ -3574,7 +3631,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 
 			By("2. Creating red namespace, L3 CUDN, and pods")
 			createUDNNamespaceWithName(cs, redNs, nil)
-			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, redLabel, "10.129.0.0/16", "2014:100:300::0/60", redNs)
+			createLayer3PrimaryCUDNWithSubnets(cs, redCUDN, redLabel, subnetList("10.129.0.0/16"), subnetList("2014:100:300::0/60"), redNs)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, redCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			redPodConfig0 := httpServerPodConfig("red-pod-0", redNs)
@@ -3584,7 +3641,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 
 			By("2. Creating green namespace, L3 UDN, and pods")
 			createUDNNamespaceWithName(cs, greenNs, greenLabel)
-			createLayer3PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "10.130.0.0/16", "2014:100:400::0/60")
+			createLayer3PrimaryUDNWithSubnets(cs, greenNs, greenUDN, subnetList("10.130.0.0/16"), subnetList("2014:100:400::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			greenPodConfig0 := httpServerPodConfig("green-pod-0", greenNs)
@@ -3790,7 +3847,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// =====================================================================
 			By("2. Creating net-A namespace, L3 CUDN, and pods")
 			createUDNNamespaceWithName(cs, netANs, nil)
-			createLayer3PrimaryCUDNWithSubnets(cs, netACUDN, sharedCUDNLabel, "10.128.0.0/16", "2014:100:200::0/60", netANs)
+			createLayer3PrimaryCUDNWithSubnets(cs, netACUDN, sharedCUDNLabel, subnetList("10.128.0.0/16"), subnetList("2014:100:200::0/60"), netANs)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, netACUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			netAPodConfig := httpServerPodConfig("net-a-pod-0", netANs)
@@ -3800,7 +3857,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 
 			By("2. Creating net-B namespace, L2 UDN, and pods")
 			createUDNNamespaceWithName(cs, netBNs, sharedUDNLabel)
-			createLayer2PrimaryUDNWithSubnets(cs, netBNs, netBUDN, "10.129.0.0/16", "2014:100:300::0/60")
+			createLayer2PrimaryUDNWithSubnets(cs, netBNs, netBUDN, subnetList("10.129.0.0/16"), subnetList("2014:100:300::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netBNs, netBUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			netBPodConfig := httpServerPodConfig("net-b-pod-0", netBNs)
@@ -4047,11 +4104,11 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createUDNNamespaceWithName(cs, whiteNs1, nil)
 
 			By("Setup: Creating black CUDN (L3)")
-			createLayer3PrimaryCUDNWithSubnets(cs, blackCUDN, cudnLabel, "10.128.0.0/16", "2014:100:200::0/60", blackNs0, blackNs1)
+			createLayer3PrimaryCUDNWithSubnets(cs, blackCUDN, cudnLabel, subnetList("10.128.0.0/16"), subnetList("2014:100:200::0/60"), blackNs0, blackNs1)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating white CUDN (L2)")
-			createLayer2PrimaryCUDNWithSubnets(cs, whiteCUDN, cudnLabel, "10.129.0.0/16", "2014:100:300::0/60", whiteNs0, whiteNs1)
+			createLayer2PrimaryCUDNWithSubnets(cs, whiteCUDN, cudnLabel, subnetList("10.129.0.0/16"), subnetList("2014:100:300::0/60"), whiteNs0, whiteNs1)
 			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating pods in black CUDN namespaces")
@@ -4086,11 +4143,11 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			createUDNNamespaceWithName(cs, greenNs, pudnLabel)
 
 			By("Setup: Creating blue UDN (L3)")
-			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "10.130.0.0/16", "2014:100:400::0/60")
+			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, subnetList("10.130.0.0/16"), subnetList("2014:100:400::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating green UDN (L2)")
-			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "10.131.0.0/16", "2014:100:500::0/60")
+			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, subnetList("10.131.0.0/16"), subnetList("2014:100:500::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("Setup: Creating pods in blue UDN namespace")
@@ -4511,7 +4568,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// Step 31: Re-create blue PUDN network and pods (service was not deleted)
 			// =====================================================================
 			By("31. Recreating blue PUDN network")
-			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, "103.103.0.0/16", "2014:100:400::0/60")
+			createLayer3PrimaryUDNWithSubnets(cs, blueNs, blueUDN, subnetList("103.103.0.0/16"), subnetList("2014:100:400::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("31. Recreating blue pods")
@@ -4528,7 +4585,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 			// Step 32: Re-create green PUDN network and pods (service was not deleted)
 			// =====================================================================
 			By("32. Recreating green PUDN network")
-			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, "104.104.0.0/16", "2014:100:500::0/60")
+			createLayer2PrimaryUDNWithSubnets(cs, greenNs, greenUDN, subnetList("104.104.0.0/16"), subnetList("2014:100:500::0/60"))
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
 
 			By("32. Recreating green pods")

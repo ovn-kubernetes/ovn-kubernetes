@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
@@ -21,6 +23,81 @@ func DeleteAddrSetsWithoutACLRef(predicateIDs *libovsdbops.DbObjectIDs, nbClient
 
 func DeleteAddrSetsWithoutACLRefAnyController(dbOwnerType *libovsdbops.ObjectIDsType, nbClient libovsdbclient.Client) error {
 	return deleteAddrSetsWithoutACLRef(nil, dbOwnerType, nbClient)
+}
+
+// DeleteAddrSetsWithoutMatchRef deletes address sets related to predicateIDs
+// when they are not referenced from ACL, NAT, or logical router policy matches.
+func DeleteAddrSetsWithoutMatchRef(predicateIDs *libovsdbops.DbObjectIDs, nbClient libovsdbclient.Client) error {
+	addrSets, err := libovsdbops.FindAddressSetsWithPredicate(
+		nbClient,
+		libovsdbops.GetPredicate[*nbdb.AddressSet](predicateIDs, nil),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to find address sets with predicate: %w", err)
+	}
+	if len(addrSets) == 0 {
+		return nil
+	}
+
+	addrSetNames := sets.New[string]()
+	for _, addrSet := range addrSets {
+		addrSetNames.Insert(addrSet.Name)
+	}
+	referencedNames, err := addressSetNamesReferencedInMatches(nbClient, addrSetNames)
+	if err != nil {
+		return err
+	}
+
+	staleAddressSets := make([]*nbdb.AddressSet, 0, len(addrSets))
+	for _, addrSet := range addrSets {
+		if !referencedNames.Has(addrSet.Name) {
+			staleAddressSets = append(staleAddressSets, addrSet)
+		}
+	}
+	if len(staleAddressSets) == 0 {
+		return nil
+	}
+	if err := libovsdbops.DeleteAddressSets(nbClient, staleAddressSets...); err != nil {
+		return fmt.Errorf("failed to delete address sets without match references: %w", err)
+	}
+	return nil
+}
+
+func addressSetNamesReferencedInMatches(nbClient libovsdbclient.Client, addressSetNames sets.Set[string]) (sets.Set[string], error) {
+	referencedNames := sets.New[string]()
+	recordReferences := func(match string) {
+		for addressSetName := range addressSetNames {
+			if strings.Contains(match, addressSetName) {
+				referencedNames.Insert(addressSetName)
+			}
+		}
+	}
+
+	_, err := libovsdbops.FindACLsWithPredicate(nbClient, func(acl *nbdb.ACL) bool {
+		recordReferences(acl.Match)
+		return false
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find ACLs referencing address sets: %w", err)
+	}
+
+	_, err = libovsdbops.FindNATsWithPredicate(nbClient, func(nat *nbdb.NAT) bool {
+		recordReferences(nat.Match)
+		return false
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find NATs referencing address sets: %w", err)
+	}
+
+	_, err = libovsdbops.FindLogicalRouterPoliciesWithPredicate(nbClient, func(policy *nbdb.LogicalRouterPolicy) bool {
+		recordReferences(policy.Match)
+		return false
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find logical router policies referencing address sets: %w", err)
+	}
+
+	return referencedNames, nil
 }
 
 func deleteAddrSetsWithoutACLRef(predicateIDs *libovsdbops.DbObjectIDs, dbOwnerType *libovsdbops.ObjectIDsType, nbClient libovsdbclient.Client) error {

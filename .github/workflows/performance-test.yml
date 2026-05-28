@@ -2,6 +2,12 @@ name: performance-test
 on:
   pull_request:
     branches: [ master ]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'mkdocs.yml'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
   schedule:
     - cron: '0 6 * * *'  # Daily at 6 AM UTC
   workflow_dispatch:

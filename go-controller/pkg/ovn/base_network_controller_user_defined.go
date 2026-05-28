@@ -33,6 +33,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -939,10 +940,12 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 		// For advertised networks, we need to SNAT any traffic leaving the
 		// pods from these networks towards the node IPs in the cluster. In
 		// order to do such a conditional SNAT, we need an address set that
-		// contains the node IPs in the cluster. Given that egressIP feature
-		// already has an address set containing these nodeIPs owned by the
-		// default network controller, let's re-use it.
-		nodeIPsASIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
+		// contains the node IPs in the cluster. Re-use the shared cluster node
+		// IP address set owned by the address set manager.
+		nodeIPsASIDs, err := bsnc.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsRouteAdvertisementsBackRef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to ensure cluster node IP address set for route advertisements: %w", err)
+		}
 		nodeIPsAS, err = bsnc.addressSetFactory.GetAddressSet(nodeIPsASIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get address set with IDs %v: %w", nodeIPsASIDs, err)

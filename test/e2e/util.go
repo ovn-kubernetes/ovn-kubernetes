@@ -594,7 +594,7 @@ func getNodeStatus(node string) string {
 	return status
 }
 
-// waitClusterHealthy ensures we have a given number of ovn-k worker and master nodes,
+// waitClusterHealthy ensures we have a given number of ovn-k worker and control-plane nodes,
 // as well as all nodes are healthy
 func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, controlPlanePodName string) error {
 	return wait.PollImmediate(2*time.Second, 120*time.Second, func() (bool, error) {
@@ -642,7 +642,7 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 			LabelSelector: "name=" + controlPlanePodName,
 		})
 		if err != nil {
-			return false, fmt.Errorf("failed to list ovn-kube master pods: %w", err)
+			return false, fmt.Errorf("failed to list ovn-kube control-plane pods: %w", err)
 		}
 		if len(podList.Items) != numControlPlanePods {
 			framework.Logf("Not enough running %s pods, want %d, have %d", controlPlanePodName, numControlPlanePods, len(podList.Items))

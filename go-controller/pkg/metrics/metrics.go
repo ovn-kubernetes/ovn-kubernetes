@@ -65,7 +65,7 @@ type stopwatchStatistics struct {
 
 // MetricResourceRetryFailuresCount is the number of times retrying to reconcile a Kubernetes
 // resource reached the maximum retry limit and will not be retried. This metric doesn't
-// need Subsystem string since it is applicable for both master and node.
+// need Subsystem string since it is applicable for both control plane and node.
 var MetricResourceRetryFailuresCount = prometheus.NewCounter(prometheus.CounterOpts{
 	Namespace: types.MetricOvnkubeNamespace,
 	Name:      "resource_retry_failures_total",

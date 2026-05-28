@@ -58,6 +58,7 @@ type NetLinkOps interface {
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
 	RuleAdd(rule *netlink.Rule) error
 	NeighAdd(neigh *netlink.Neigh) error
+	NeighSet(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
 	NeighList(linkIndex, family int) ([]netlink.Neigh, error)
 	ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error)
@@ -240,6 +241,10 @@ func (defaultNetLinkOps) RuleAdd(rule *netlink.Rule) error {
 
 func (defaultNetLinkOps) NeighAdd(neigh *netlink.Neigh) error {
 	return netlink.NeighAdd(neigh)
+}
+
+func (defaultNetLinkOps) NeighSet(neigh *netlink.Neigh) error {
+	return netlink.NeighSet(neigh)
 }
 
 func (defaultNetLinkOps) NeighDel(neigh *netlink.Neigh) error {
@@ -658,7 +663,9 @@ func LinkNeighDel(link netlink.Link, neighIP net.IP) error {
 	return nil
 }
 
-// LinkNeighAdd adds MAC/IP bindings for the given link
+// LinkNeighAdd adds or replaces MAC/IP bindings for the given link.
+// It uses NeighSet (NLM_F_CREATE|NLM_F_REPLACE) so that existing entries
+// (e.g. extern_learn from EVPN) are replaced with the desired state.
 func LinkNeighAdd(link netlink.Link, neighIP net.IP, neighMAC net.HardwareAddr) error {
 	neigh := &netlink.Neigh{
 		LinkIndex:    link.Attrs().Index,
@@ -667,9 +674,9 @@ func LinkNeighAdd(link netlink.Link, neighIP net.IP, neighMAC net.HardwareAddr) 
 		IP:           neighIP,
 		HardwareAddr: neighMAC,
 	}
-	err := netLinkOps.NeighAdd(neigh)
+	err := netLinkOps.NeighSet(neigh)
 	if err != nil {
-		return fmt.Errorf("failed to add neighbour entry %+v: %w", neigh, err)
+		return fmt.Errorf("failed to set neighbour entry %+v: %w", neigh, err)
 	}
 	return nil
 }

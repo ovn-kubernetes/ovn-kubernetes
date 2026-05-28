@@ -756,9 +756,6 @@ google.golang.org/protobuf/types/known/timestamppb
 # gopkg.in/evanphx/json-patch.v4 v4.13.0
 ## explicit
 gopkg.in/evanphx/json-patch.v4
-# gopkg.in/fsnotify/fsnotify.v1 v1.4.7
-## explicit
-gopkg.in/fsnotify/fsnotify.v1
 # gopkg.in/gcfg.v1 v1.2.3
 ## explicit
 gopkg.in/gcfg.v1

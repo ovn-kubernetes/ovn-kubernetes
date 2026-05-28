@@ -10,6 +10,7 @@ import (
 
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,6 +29,8 @@ func TestNodeSuite(t *testing.T) {
 		t.Fatalf("Failed to disable WatchListClient feature gate: %v", err)
 	}
 	RegisterFailHandler(Fail)
+	util.SetFakeIPTablesHelpers()
+	nodenft.SetFakeNFTablesHelper()
 	RunSpecs(t, "Node Suite")
 }
 

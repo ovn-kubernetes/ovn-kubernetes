@@ -204,7 +204,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				EgressQoSClient:      egressQoSFakeClient,
 			}
 
-			f, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -214,7 +214,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
-				fakeClient.GetMasterClientset(),
+				fakeClient.GetOVNKubeControllerClientset(),
 				f,
 				stopChan,
 				nil,
@@ -339,7 +339,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -379,7 +379,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			expectedDatabaseState = addNodeLogicalFlows(expectedDatabaseState, expectedOVNClusterRouter, expectedNodeSwitch, expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1)
 
 			clusterController, err := NewOvnController(
-				fakeClient.GetMasterClientset(),
+				fakeClient.GetOVNKubeControllerClientset(),
 				f,
 				stopChan,
 				nil,
@@ -641,7 +641,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -731,7 +731,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
-				fakeClient.GetMasterClientset(),
+				fakeClient.GetOVNKubeControllerClientset(),
 				f,
 				stopChan,
 				nil,
@@ -870,7 +870,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -910,7 +910,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			expectedDatabaseState = addNodeLogicalFlows(expectedDatabaseState, expectedOVNClusterRouter, expectedNodeSwitch, expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1)
 
 			clusterController, err := NewOvnController(
-				fakeClient.GetMasterClientset(),
+				fakeClient.GetOVNKubeControllerClientset(),
 				f,
 				stopChan,
 				nil,
@@ -1188,7 +1188,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode1.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1225,7 +1225,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
-				fakeClient.GetMasterClientset(),
+				fakeClient.GetOVNKubeControllerClientset(),
 				f,
 				stopChan,
 				nil,
@@ -1396,7 +1396,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			updatedNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1433,7 +1433,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
-				fakeClient.GetMasterClientset(),
+				fakeClient.GetOVNKubeControllerClientset(),
 				f,
 				stopChan,
 				nil,
@@ -1569,7 +1569,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}
 			egressQoSFakeClient := &egressqosfake.Clientset{}
-			fakeClient := &util.OVNMasterClientset{
+			fakeClient := &util.OVNKubeControllerClientset{
 				KubeClient:           kubeFakeClient,
 				EgressIPClient:       egressIPFakeClient,
 				EgressFirewallClient: egressFirewallFakeClient,
@@ -1595,7 +1595,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			f, err = factory.NewMasterWatchFactory(fakeClient)
+			f, err = factory.NewOVNKubeControllerWatchFactory(fakeClient)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())

@@ -1274,6 +1274,32 @@ func TestCreateRoutingPoliciesOps(t *testing.T) {
 			},
 		},
 		{
+			name:         "create single IPv4 routing policy for multiple same-family destination subnets",
+			dstNetworkID: 2,
+			routerName:   "network-router-1",
+			inportName:   "switch-to-router-port",
+			nexthops: []net.IP{
+				net.ParseIP("192.168.0.0"),
+			},
+			cncName:      "test-cnc",
+			srcNetworkID: 1,
+			dstSubnets:   []string{"10.200.0.0/24", "10.201.0.0/24"},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID: "router-uuid",
+					Name: "network-router-1",
+				},
+			},
+			expectError: false,
+			expectedPolicies: []expectedPolicy{
+				{
+					match:    `inport == "switch-to-router-port" && (ip4.dst == 10.200.0.0/24 || ip4.dst == 10.201.0.0/24)`,
+					nexthop:  "192.168.0.0",
+					ipFamily: "v4",
+				},
+			},
+		},
+		{
 			name:         "create dual-stack routing policies",
 			dstNetworkID: 2,
 			routerName:   "network-router-1",

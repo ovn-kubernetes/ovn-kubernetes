@@ -154,7 +154,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		}
 		for _, node := range nodes {
 			// allocation also happens during Add/Update Node events we only want to allocate any addresses allocated as hybrid overlay
-			// distributed router ips during a previous run of ovn-k master to ensure that incoming pod events will not take the address that
+			// distributed router ips during a previous run of ovn-k controller to ensure that incoming pod events will not take the address that
 			// the node is expecting as the hybrid overlay DRIP
 			if _, ok := node.Annotations[hotypes.HybridOverlayDRIP]; ok {
 				if err := oc.allocateHybridOverlayDRIP(node); err != nil {

@@ -158,8 +158,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
-        - name: OVN_SSL_ENABLE
-          value: {{ include "isSslEnabled" . | quote }}
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnsb-db"]
@@ -207,12 +205,6 @@ spec:
           value: "dpu"
         - name: OVN_LOGLEVEL_NORTHD
           value: {{ default "-vconsole:info -vfile:info" .Values.northdLogLevel | quote }}
-        - name: OVN_SSL_ENABLE
-          value: {{ include "isSslEnabled" . | quote }}
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovn-northd"]
@@ -401,6 +393,8 @@ spec:
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: {{ hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false | quote }}
         - name: OVN_NETWORK_CONNECT_ENABLE
           value: {{ default "" .Values.global.enableNetworkConnect | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
@@ -411,10 +405,6 @@ spec:
           value: {{ default "" .Values.global.emptyLbEvents | quote }}
         - name: OVN_ACL_LOGGING_RATE_LIMIT
           value: {{ default 20 .Values.global.aclLoggingRateLimit | quote }}
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: {{ hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false | quote }}
         - name: OVN_ENABLE_OVNKUBE_IDENTITY
@@ -485,12 +475,6 @@ spec:
           value: "dpu"
         - name: OVN_LOGLEVEL_CONTROLLER
           value: {{ default "-vconsole:info" .Values.ovnControllerLogLevel | quote }}
-        - name: OVN_SSL_ENABLE
-          value: {{ default "" .Values.global.enableSsl | quote }}
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovn-controller"]
@@ -525,10 +509,6 @@ spec:
           value: "1.3.0"
         - name: OVNKUBE_NODE_MODE
           value: "dpu"
-        - name: OVN_NORTH
-          value: "local"
-        - name: OVN_SOUTH
-          value: "local"
         # end of container
       nodeSelector:
         kubernetes.io/os: "linux"

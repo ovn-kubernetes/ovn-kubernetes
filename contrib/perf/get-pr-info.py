@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import sys
+import subprocess
 from pathlib import Path
 from typing import List
 
@@ -44,8 +45,8 @@ def get_prs_from_event_file(event_path: Path) -> List[int]:
     """
     Extract PR numbers from GitHub event file.
 
-    This is the most reliable method as it uses the workflow_run.pull_requests
-    data directly from the event payload.
+    For pull_request events, searches for PRs matching the head_branch.
+    For other events (schedule, etc.), returns empty list.
     """
     if not event_path.exists():
         print(f"Error: Event file not found: {event_path}", file=sys.stderr)
@@ -54,19 +55,45 @@ def get_prs_from_event_file(event_path: Path) -> List[int]:
     with open(event_path, 'r') as f:
         event_data = json.load(f)
 
-    # Get pull requests from workflow_run event
-    pull_requests = event_data.get('workflow_run', {}).get('pull_requests', [])
+    workflow_run = event_data.get('workflow_run', {})
 
-    pr_numbers = [pr['number'] for pr in pull_requests]
+    # Only search for PRs if the triggering workflow was a pull_request event
+    if workflow_run.get('event') != 'pull_request':
+        return []
 
-    return pr_numbers
+    head_branch = workflow_run.get('head_branch')
+    if not head_branch:
+        return []
+
+    print(f"Searching for PRs by head_branch: {head_branch}", file=sys.stderr)
+
+    # Use gh CLI to search for PRs by head branch
+    try:
+        result = subprocess.run(
+            ['gh', 'pr', 'list', '--head', head_branch, '--json', 'number', '--jq', '.[].number'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        if result.stdout.strip():
+            pr_numbers = [int(n) for n in result.stdout.strip().split('\n') if n]
+            if pr_numbers:
+                print(f"Found PR(s): {pr_numbers}", file=sys.stderr)
+            return pr_numbers
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"Warning: gh CLI failed: {e}", file=sys.stderr)
+        return []
+
+    return []
 
 
 def get_prs_from_api(owner: str, repo: str, run_id: int, token: str) -> List[int]:
     """
     Get PR numbers from workflow run via GitHub API.
 
-    Uses the workflow_run.pull_requests field from the API.
+    For pull_request events, searches for PRs matching the head_branch.
+    For other events (schedule, etc.), returns empty list.
     """
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}"
     headers = {
@@ -78,11 +105,36 @@ def get_prs_from_api(owner: str, repo: str, run_id: int, token: str) -> List[int
     response.raise_for_status()
 
     data = response.json()
-    pull_requests = data.get('pull_requests', [])
 
-    pr_numbers = [pr['number'] for pr in pull_requests]
+    # Only search for PRs if this was a pull_request event
+    if data.get('event') != 'pull_request':
+        return []
 
-    return pr_numbers
+    head_branch = data.get('head_branch')
+    if not head_branch:
+        return []
+
+    print(f"Searching for PRs by head_branch: {head_branch}", file=sys.stderr)
+
+    # Use gh CLI to search for PRs by head branch
+    try:
+        result = subprocess.run(
+            ['gh', 'pr', 'list', '--head', head_branch, '--json', 'number', '--jq', '.[].number'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        if result.stdout.strip():
+            pr_numbers = [int(n) for n in result.stdout.strip().split('\n') if n]
+            if pr_numbers:
+                print(f"Found PR(s): {pr_numbers}", file=sys.stderr)
+            return pr_numbers
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"Warning: gh CLI failed: {e}", file=sys.stderr)
+        return []
+
+    return []
 
 
 def main():

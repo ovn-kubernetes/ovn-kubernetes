@@ -851,6 +851,24 @@ func (_m *NetLinkOps) NeighAdd(neigh *netlink.Neigh) error {
 	return r0
 }
 
+// NeighSet provides a mock function with given fields: neigh
+func (_m *NetLinkOps) NeighSet(neigh *netlink.Neigh) error {
+	ret := _m.Called(neigh)
+
+	if len(ret) == 0 {
+		panic("no return value specified for NeighSet")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*netlink.Neigh) error); ok {
+		r0 = rf(neigh)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // NeighDel provides a mock function with given fields: neigh
 func (_m *NetLinkOps) NeighDel(neigh *netlink.Neigh) error {
 	ret := _m.Called(neigh)

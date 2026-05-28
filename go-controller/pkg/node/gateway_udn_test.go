@@ -618,8 +618,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
 
-		_ = nodenft.SetFakeNFTablesHelper()
-
 		// Make Management port
 		nodeSubnets := ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet)
 		mp, err := managementport.NewManagementPortController(ovsClient, node, nodeSubnets, "", "", rm, netInfo)
@@ -854,8 +852,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
 
-		_ = nodenft.SetFakeNFTablesHelper()
-
 		// Make Management port
 		nodeSubnets := ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet)
 		mp, err := managementport.NewManagementPortController(ovsClient, node, nodeSubnets, "", "", rm, netInfo)
@@ -1059,9 +1055,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			wg.Wait()
 		}()
 		err = wf.Start()
-
-		_ = nodenft.SetFakeNFTablesHelper()
-
 		Expect(err).NotTo(HaveOccurred())
 
 		// Make Management port
@@ -1237,6 +1230,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		config.Gateway.NodeportEnable = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		Expect(configureAdvertisedUDNIsolationNFTables()).To(Succeed())
 		ifAddrs := ovntest.MustParseIPNets(v4NodeIP, v6NodeIP)
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1299,8 +1293,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}()
 		err = wf.Start()
 		Expect(err).NotTo(HaveOccurred())
-
-		_ = nodenft.SetFakeNFTablesHelper()
 
 		// Make Management port
 		nodeSubnets := ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet)
@@ -1634,6 +1626,39 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
+	ovntest.OnSupportedPlatformsIt("should create a route import VRF in DPU mode", func() {
+		config.OvnKubeNode.Mode = types.NodeModeDPU
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+			},
+		}
+		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16/24", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			ofm := getDummyOpenflowManager()
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(udnGateway.ensureDPUVRF()).To(Succeed())
+
+			vrfLink, err := util.GetNetLinkOps().LinkByName(util.GetNetworkVRFName(netInfo))
+			Expect(err).NotTo(HaveOccurred())
+			vrfDevice, ok := vrfLink.(*netlink.Vrf)
+			Expect(ok).To(BeTrue())
+			Expect(vrfDevice.Table).To(Equal(uint32(dpuUDNVRFRouteTableID(netInfo.GetNetworkID()))))
+			Expect(vrfLink.Attrs().MasterIndex).To(Equal(0))
+			Expect(udnGateway.vrfTableId).To(Equal(dpuUDNVRFRouteTableID(netInfo.GetNetworkID())))
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
 	ovntest.OnSupportedPlatformsIt("should have default route when network is advertised on default VRF", func() {
 		config.Gateway.Interface = "eth0"
 		config.IPv4Mode = true
@@ -1750,7 +1775,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		defer func() {
 			wf.Shutdown()
 		}()
-		nodenft.SetFakeNFTablesHelper()
 		fNPW := initFakeNodePortWatcher()
 		fNPW.watchFactory = wf
 		// in-order to simulate a namespace with an Invalid UDN (when GetActiveNamespace is called), we add an entry

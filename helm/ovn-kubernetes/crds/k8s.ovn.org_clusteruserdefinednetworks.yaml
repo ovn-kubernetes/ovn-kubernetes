@@ -410,6 +410,8 @@ spec:
                     - role
                     type: object
                     x-kubernetes-validations:
+                    - message: Layer2 is immutable
+                      rule: self == oldSelf
                     - message: Subnets is required with ipam.mode is Enabled or unset
                       rule: has(self.ipam) && has(self.ipam.mode) && self.ipam.mode
                         != 'Enabled' || has(self.subnets)
@@ -497,6 +499,8 @@ spec:
                         minItems: 1
                         type: array
                         x-kubernetes-validations:
+                        - message: joinSubnets is immutable
+                          rule: self == oldSelf
                         - message: When 2 CIDRs are set, they must be from different
                             IP families
                           rule: size(self) != 2 || !isCIDR(self[0]) || !isCIDR(self[1])
@@ -510,6 +514,9 @@ spec:
                         maximum: 65536
                         minimum: 576
                         type: integer
+                        x-kubernetes-validations:
+                        - message: mtu is immutable
+                          rule: self == oldSelf
                       role:
                         description: |-
                           Role describes the network role in the pod.
@@ -521,12 +528,15 @@ spec:
                         - Primary
                         - Secondary
                         type: string
+                        x-kubernetes-validations:
+                        - message: role is immutable
+                          rule: self == oldSelf
                       subnets:
                         description: |-
                           Subnets are used for the pod network across the cluster.
 
-                          Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
-                          Given subnet is split into smaller subnets for every node.
+                          Each IP family can have multiple subnets.
+                          For each IP family, every node allocates a smaller subnet from the provided subnets.
                         items:
                           properties:
                             cidr:
@@ -557,19 +567,24 @@ spec:
                             rule: '!has(self.hostSubnet) || !isCIDR(self.cidr) ||
                               (cidr(self.cidr).ip().family() != 4 || self.hostSubnet
                               < 32)'
-                        maxItems: 2
+                        maxItems: 400
                         minItems: 1
                         type: array
-                        x-kubernetes-validations:
-                        - message: When 2 CIDRs are set, they must be from different
-                            IP families
-                          rule: size(self) != 2 || !isCIDR(self[0].cidr) || !isCIDR(self[1].cidr)
-                            || cidr(self[0].cidr).ip().family() != cidr(self[1].cidr).ip().family()
                     required:
                     - role
                     - subnets
                     type: object
                     x-kubernetes-validations:
+                    - message: Subnets is immutable for Secondary role
+                      rule: self.role != 'Secondary' || self.subnets == oldSelf.subnets
+                    - message: Secondary networks may define at most 2 subnets
+                      rule: self.role != 'Secondary' || !has(self.subnets) || self.subnets.size()
+                        <= 2
+                    - message: When 2 CIDRs are set for Secondary networks, they must
+                        be from different IP families
+                      rule: self.role != 'Secondary' || size(self.subnets) != 2 ||
+                        !isCIDR(self.subnets[0].cidr) || !isCIDR(self.subnets[1].cidr)
+                        || cidr(self.subnets[0].cidr).ip().family() != cidr(self.subnets[1].cidr).ip().family()
                     - message: JoinSubnets is only supported for Primary network
                       rule: '!has(self.joinSubnets) || has(self.role) && self.role
                         == ''Primary'''
@@ -578,6 +593,26 @@ spec:
                       rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                         isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu
                         >= 1280'
+                    - message: Removing existing subnets is not allowed
+                      rule: '!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new,
+                        new.cidr == old.cidr))'
+                    - message: Subnets must not overlap or contain each other
+                      rule: '!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i,
+                        self.subnets.exists(j, i != j && cidr(i.cidr).containsCIDR(j.cidr)))'
+                    - message: Subnets with same CIDR are not allowed
+                      rule: '!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i,
+                        self.subnets.filter(j, j.cidr == i.cidr).size() > 1)'
+                    - message: hostSubnet is immutable
+                      rule: '!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new,
+                        new.cidr == old.cidr && (!has(old.hostSubnet) && !has(new.hostSubnet)
+                        || has(old.hostSubnet) && has(new.hostSubnet) && old.hostSubnet
+                        == new.hostSubnet)))'
+                    - message: Subnets from the same IP family must use the same hostSubnet
+                        value
+                      rule: '!has(self.subnets) || self.subnets.size() == 1 || self.subnets.all(i,
+                        self.subnets.all(j, cidr(i.cidr).ip().family() != cidr(j.cidr).ip().family()
+                        || (has(i.hostSubnet) == has(j.hostSubnet) && (!has(i.hostSubnet)
+                        || i.hostSubnet == j.hostSubnet))))'
                   localnet:
                     description: Localnet is the Localnet topology configuration.
                     properties:
@@ -759,6 +794,8 @@ spec:
                     - role
                     type: object
                     x-kubernetes-validations:
+                    - message: Localnet is immutable
+                      rule: self == oldSelf
                     - message: Subnets is required with ipam.mode is Enabled or unset,
                         and forbidden otherwise
                       rule: '!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode
@@ -792,6 +829,9 @@ spec:
                     - outboundSNAT
                     - routing
                     type: object
+                    x-kubernetes-validations:
+                    - message: NoOverlay is immutable
+                      rule: self == oldSelf
                   topology:
                     description: |-
                       Topology describes network configuration.
@@ -805,6 +845,9 @@ spec:
                     - Layer3
                     - Localnet
                     type: string
+                    x-kubernetes-validations:
+                    - message: Topology is immutable
+                      rule: self == oldSelf
                   transport:
                     description: |-
                       Transport describes the transport technology for pod-to-pod traffic.
@@ -817,6 +860,9 @@ spec:
                     - NoOverlay
                     - EVPN
                     type: string
+                    x-kubernetes-validations:
+                    - message: Transport is immutable
+                      rule: self == oldSelf
                 required:
                 - topology
                 type: object
@@ -867,8 +913,6 @@ spec:
                     when transport is 'EVPN'
                   rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
                     != ''Layer3'' || !has(self.evpn) || !has(self.evpn.macVRF)'
-                - message: Network spec is immutable
-                  rule: self == oldSelf
             required:
             - namespaceSelector
             - network

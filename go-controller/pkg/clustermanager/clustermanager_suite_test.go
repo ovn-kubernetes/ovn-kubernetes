@@ -20,6 +20,11 @@ func init() {
 }
 
 func TestClusterManager(t *testing.T) {
+	// Disable WatchListClient for this suite. Fake NAD clients used in tests
+	// don't provide watchlist bookmarks and informer sync may time out.
+	if err := os.Setenv("KUBE_FEATURE_WatchListClient", "false"); err != nil {
+		t.Fatalf("Failed to set KUBE_FEATURE_WatchListClient: %v", err)
+	}
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Cluster Manager Operations Suite")
 }

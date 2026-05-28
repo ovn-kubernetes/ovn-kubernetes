@@ -181,15 +181,15 @@ func (c *Controller) syncLink(link netlink.Link) error {
 		}
 	}
 	linkName := link.Attrs().Name
-	// get all addresses associated with the link depending on which IP families we support
-	foundAddresses, err := util.GetFilteredInterfaceAddrs(link, c.ipv4Enabled, c.ipv6Enabled)
-	if err != nil {
-		return fmt.Errorf("failed to get address from link %q: %w", linkName, err)
-	}
 	wantedAddresses, found := c.store[linkName]
 	// we don't manage this link therefore we don't need to add any addresses
 	if !found {
 		return nil
+	}
+	// get all addresses associated with the link depending on which IP families we support
+	foundAddresses, err := util.GetFilteredInterfaceAddrs(link, c.ipv4Enabled, c.ipv6Enabled)
+	if err != nil {
+		return fmt.Errorf("failed to get address from link %q: %w", linkName, err)
 	}
 	// add addresses we want that are not found on the link
 	for _, addressWanted := range wantedAddresses {

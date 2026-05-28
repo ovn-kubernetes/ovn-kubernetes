@@ -164,7 +164,7 @@ spec:
         - name: OVN_V6_JOIN_SUBNET
           value: {{ default "" .Values.global.v6JoinSubnet | quote }}
         - name: OVN_SSL_ENABLE
-          value: {{ hasKey .Values.global "enableSsl" | ternary .Values.global.enableSsl false | quote }}
+          value: {{ include "isSslEnabled" . | quote }}
         - name: OVN_GATEWAY_MODE
           value: {{ default "shared" .Values.global.gatewayMode }}
         - name: OVN_MULTICAST_ENABLE

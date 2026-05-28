@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -25,6 +26,7 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	udngenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
@@ -123,6 +125,118 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 	})
 
 	ginkgo.Context("sync", func() {
+		ginkgo.It("queues local nodes when EgressIP primary Layer3 UDN adds a subnet", func() {
+			netInfoBefore := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
+			nadBefore, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoBefore.netconf())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			node, err := newNodeWithUserDefinedNetworks(node1Name, "192.168.126.202/24", netInfoBefore)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			fakeOvn.startWithDBSetup(
+				libovsdbtest.TestSetup{},
+				node,
+				&nadv1.NetworkAttachmentDefinitionList{Items: []nadv1.NetworkAttachmentDefinition{*nadBefore}},
+			)
+
+			l3Controller, ok := fakeOvn.fullL3UDNControllers[netInfoBefore.netName]
+			gomega.Expect(ok).To(gomega.BeTrue())
+			l3Controller.lastNADKeys = sets.New[string](ns + "/" + nadName)
+
+			netInfoAfter := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16,192.169.0.0/16", "192.168.1.0/24")
+			nadAfter, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoAfter.netconf())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			parsedNetInfoAfter, err := util.ParseNADInfo(nadAfter)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			mutableNetInfoAfter := util.NewMutableNetInfo(parsedNetInfoAfter)
+			mutableNetInfoAfter.SetNetworkID(2)
+
+			reconciledNodes := sets.New[string]()
+			gomega.Expect(l3Controller.reconcile(mutableNetInfoAfter, func(node string) {
+				reconciledNodes.Insert(node)
+			})).To(gomega.Succeed())
+			gomega.Expect(reconciledNodes.Has(node1Name)).To(gomega.BeTrue())
+		})
+
+		ginkgo.It("creates EgressIP routes and no-reroute policies for each primary Layer3 UDN subnet", func() {
+			netInfo := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16,192.169.0.0/16", "192.168.1.0/24")
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netInfo.netconf())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			node, err := newNodeWithUserDefinedNetworks(node1Name, "192.168.126.202/24", netInfo)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			parsedNetInfo, err := util.ParseNADInfo(nad)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			mutableNetInfo := util.NewMutableNetInfo(parsedNetInfo)
+			mutableNetInfo.SetNetworkID(2)
+			routerName := mutableNetInfo.GetNetworkScopedClusterRouterName()
+			udnEnabledSvcV4, _ := addressset.GetTestDbAddrSets(udnenabledsvc.GetAddressSetDBIDs(), []string{})
+
+			fakeOvn.startWithDBSetup(
+				libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.LogicalRouter{
+							Name:        routerName,
+							UUID:        routerName + "-UUID",
+							ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(mutableNetInfo),
+						},
+						udnEnabledSvcV4,
+					},
+				},
+				node,
+				&nadv1.NetworkAttachmentDefinitionList{Items: []nadv1.NetworkAttachmentDefinition{*nad}},
+			)
+			fakeOvn.eIPController.nodeZoneState.Store(node1Name, true)
+
+			gomega.Expect(fakeOvn.eIPController.ensureRouterPoliciesForNetwork(mutableNetInfo, node)).To(gomega.Succeed())
+
+			gatewayIPs, err := udngenerator.GetGWRouterIPs(node, mutableNetInfo)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(gatewayIPs).To(gomega.HaveLen(1))
+			expectedNextHop := gatewayIPs[0].IP.String()
+			routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(
+				fakeOvn.nbClient,
+				&nbdb.LogicalRouter{Name: routerName},
+				func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.Policy != nil &&
+						*route.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP &&
+						route.Nexthop == expectedNextHop
+				},
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			routePrefixes := sets.New[string]()
+			for _, route := range routes {
+				routePrefixes.Insert(route.IPPrefix)
+			}
+			gomega.Expect(routePrefixes.HasAll("192.168.0.0/16", "192.169.0.0/16")).To(gomega.BeTrue())
+
+			findNoRerouteMatches := func(policyName egressIPNoReroutePolicyName) []string {
+				policies, err := libovsdbops.FindALogicalRouterPoliciesWithPredicate(
+					fakeOvn.nbClient,
+					routerName,
+					func(policy *nbdb.LogicalRouterPolicy) bool {
+						return policy.Priority == ovntypes.DefaultNoRereoutePriority &&
+							policy.ExternalIDs[libovsdbops.ObjectNameKey.String()] == string(policyName) &&
+							policy.ExternalIDs[libovsdbops.NetworkKey.String()] == mutableNetInfo.GetNetworkName()
+					},
+				)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				matches := make([]string, 0, len(policies))
+				for _, policy := range policies {
+					matches = append(matches, policy.Match)
+				}
+				return matches
+			}
+			gomega.Expect(findNoRerouteMatches(NoReRoutePodToJoin)).To(gomega.ContainElements(
+				fmt.Sprintf("ip4.src == %s && ip4.dst == %s", "192.168.0.0/16", config.Gateway.V4JoinSubnet),
+				fmt.Sprintf("ip4.src == %s && ip4.dst == %s", "192.169.0.0/16", config.Gateway.V4JoinSubnet),
+			))
+			gomega.Expect(findNoRerouteMatches(NoReRoutePodToPod)).To(gomega.ContainElements(
+				"ip4.src == 192.168.0.0/16 && ip4.dst == 192.168.0.0/16",
+				"ip4.src == 192.168.0.0/16 && ip4.dst == 192.169.0.0/16",
+				"ip4.src == 192.169.0.0/16 && ip4.dst == 192.168.0.0/16",
+				"ip4.src == 192.169.0.0/16 && ip4.dst == 192.169.0.0/16",
+			))
+		})
+
 		ginkgo.It("should remove stale LRPs for marks and configures missing LRP marks", func() {
 			app.Action = func(ctx *cli.Context) error {
 				// Node 1 is local, Node 2 is remote

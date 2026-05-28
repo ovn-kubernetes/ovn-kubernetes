@@ -82,27 +82,6 @@ type OVNClientset struct {
 	VTEPClient                vtepclientset.Interface
 }
 
-// OVNMasterClientset
-type OVNMasterClientset struct {
-	KubeClient                kubernetes.Interface
-	ANPClient                 anpclientset.Interface
-	EgressIPClient            egressipclientset.Interface
-	CloudNetworkClient        ocpcloudnetworkclientset.Interface
-	EgressFirewallClient      egressfirewallclientset.Interface
-	OCPNetworkClient          ocpnetworkclientset.Interface
-	EgressQoSClient           egressqosclientset.Interface
-	MultiNetworkPolicyClient  multinetworkpolicyclientset.Interface
-	EgressServiceClient       egressserviceclientset.Interface
-	AdminPolicyRouteClient    adminpolicybasedrouteclientset.Interface
-	IPAMClaimsClient          ipamclaimssclientset.Interface
-	NetworkAttchDefClient     networkattchmentdefclientset.Interface
-	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
-	RouteAdvertisementsClient routeadvertisementsclientset.Interface
-	FRRClient                 frrclientset.Interface
-	NetworkQoSClient          networkqosclientset.Interface
-	VTEPClient                vtepclientset.Interface
-}
-
 // OVNKubeControllerClientset
 type OVNKubeControllerClientset struct {
 	KubeClient                kubernetes.Interface
@@ -164,48 +143,6 @@ var (
 	certUsages = []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageClientAuth}
 )
 
-func (cs *OVNClientset) GetMasterClientset() *OVNMasterClientset {
-	return &OVNMasterClientset{
-		KubeClient:                cs.KubeClient,
-		ANPClient:                 cs.ANPClient,
-		EgressIPClient:            cs.EgressIPClient,
-		CloudNetworkClient:        cs.CloudNetworkClient,
-		EgressFirewallClient:      cs.EgressFirewallClient,
-		OCPNetworkClient:          cs.OCPNetworkClient,
-		EgressQoSClient:           cs.EgressQoSClient,
-		MultiNetworkPolicyClient:  cs.MultiNetworkPolicyClient,
-		EgressServiceClient:       cs.EgressServiceClient,
-		AdminPolicyRouteClient:    cs.AdminPolicyRouteClient,
-		IPAMClaimsClient:          cs.IPAMClaimsClient,
-		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
-		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
-		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
-		FRRClient:                 cs.FRRClient,
-		NetworkQoSClient:          cs.NetworkQoSClient,
-		VTEPClient:                cs.VTEPClient,
-	}
-}
-
-func (cs *OVNMasterClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClientset {
-	return &OVNKubeControllerClientset{
-		KubeClient:                cs.KubeClient,
-		ANPClient:                 cs.ANPClient,
-		EgressIPClient:            cs.EgressIPClient,
-		EgressFirewallClient:      cs.EgressFirewallClient,
-		OCPNetworkClient:          cs.OCPNetworkClient,
-		EgressQoSClient:           cs.EgressQoSClient,
-		MultiNetworkPolicyClient:  cs.MultiNetworkPolicyClient,
-		EgressServiceClient:       cs.EgressServiceClient,
-		AdminPolicyRouteClient:    cs.AdminPolicyRouteClient,
-		IPAMClaimsClient:          cs.IPAMClaimsClient,
-		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
-		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
-		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
-		NetworkQoSClient:          cs.NetworkQoSClient,
-		VTEPClient:                cs.VTEPClient,
-	}
-}
-
 func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClientset {
 	return &OVNKubeControllerClientset{
 		KubeClient:                cs.KubeClient,
@@ -257,17 +194,6 @@ func (cs *OVNClientset) GetNodeClientset() *OVNNodeClientset {
 		AdminPolicyRouteClient:    cs.AdminPolicyRouteClient,
 		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
-		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
-		VTEPClient:                cs.VTEPClient,
-	}
-}
-
-func (cs *OVNMasterClientset) GetNodeClientset() *OVNNodeClientset {
-	return &OVNNodeClientset{
-		KubeClient:                cs.KubeClient,
-		EgressServiceClient:       cs.EgressServiceClient,
-		EgressIPClient:            cs.EgressIPClient,
-		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
 		VTEPClient:                cs.VTEPClient,
 	}

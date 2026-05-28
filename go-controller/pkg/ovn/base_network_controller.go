@@ -200,11 +200,13 @@ type BaseNetworkController struct {
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
 	var reconcileNodes []string
+	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
 	oc.localZoneNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
 		isAdvertised := util.IsPodNetworkAdvertisedAtNode(netInfo, nodeName)
-		if wasAdvertised == isAdvertised {
+		reconcileSubnetChange := subnetsChanged && (isAdvertised || config.OVNKubernetesFeature.EnableEgressIP)
+		if wasAdvertised == isAdvertised && !reconcileSubnetChange {
 			// noop
 			return true
 		}
@@ -229,6 +231,20 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
 	return oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
+}
+
+func clusterSubnetsChanged(old, new util.NetInfo) bool {
+	oldSubnets := sets.New[string]()
+	for _, subnet := range old.Subnets() {
+		oldSubnets.Insert(subnet.CIDR.String())
+	}
+
+	newSubnets := sets.New[string]()
+	for _, subnet := range new.Subnets() {
+		newSubnets.Insert(subnet.CIDR.String())
+	}
+
+	return !oldSubnets.Equal(newSubnets)
 }
 
 func (oc *BaseNetworkController) updateNADKeysChanged(nadKeys []string) bool {

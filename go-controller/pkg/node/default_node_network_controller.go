@@ -220,6 +220,13 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 			return nil, fmt.Errorf("failed to setup PMTUD nftables chain: %w", err)
 		}
 
+		if util.IsRouteAdvertisementsEnabled() {
+			err = configureAdvertisedUDNIsolationNFTables()
+			if err != nil {
+				return nil, fmt.Errorf("failed to setup advertised UDN isolation nftables: %w", err)
+			}
+		}
+
 		// Setup nftables sets for no-overlay SNAT exemption in LGW mode.
 		// In SGW mode, OVN address sets are used instead.
 		if config.Default.Transport == types.NetworkTransportNoOverlay && config.NoOverlay.OutboundSNAT == types.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
@@ -833,7 +840,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
-	// First wait for the node logical switch to be created by the Master, timeout is 300s.
+	// First wait for the node logical switch to be created by ovnkube-controller, timeout is 300s.
 	err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 300*time.Second, true, func(_ context.Context) (bool, error) {
 		if node, err = nc.watchFactory.GetNode(nc.name); err != nil {
 			klog.Infof("Waiting to retrieve node %s: %v", nc.name, err)

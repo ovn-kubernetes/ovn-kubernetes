@@ -619,7 +619,7 @@ func findOvnKubeControlPlaneNode(namespace, controlPlanePodName, leaseName strin
 	framework.ExpectNoError(err, fmt.Sprintf("Unable to retrieve leases (%s)"+
 		"from %s %v", leaseName, namespace, err))
 
-	framework.Logf("master instance of %s is running on node %s", controlPlanePodName, ovnkubeControlPlaneNode)
+	framework.Logf("leader instance of %s is running on node %s", controlPlanePodName, ovnkubeControlPlaneNode)
 	// Strip leading and trailing quotes if present
 	if ovnkubeControlPlaneNode[0] == '\'' || ovnkubeControlPlaneNode[0] == '"' {
 		ovnkubeControlPlaneNode = ovnkubeControlPlaneNode[1 : len(ovnkubeControlPlaneNode)-1]
@@ -754,11 +754,11 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		}, "5s", "500ms").ShouldNot(gomega.Equal(0))
 	})
 
-	ginkgo.It("should provide Internet connection continuously when pod running master instance of ovnkube-control-plane is killed", func() {
+	ginkgo.It("should provide Internet connection continuously when pod running leader instance of ovnkube-control-plane is killed", func() {
 		ginkgo.By(fmt.Sprintf("Running container which tries to connect to %s in a loop", extDNSIP))
 
 		ovnKubeControlPlaneNode, err := findOvnKubeControlPlaneNode(deploymentconfig.Get().OVNKubernetesNamespace(), controlPlanePodName, controlPlaneLeaseName)
-		framework.ExpectNoError(err, fmt.Sprintf("unable to find current master of %s cluster %v", controlPlanePodName, err))
+		framework.ExpectNoError(err, fmt.Sprintf("unable to find current leader of %s cluster %v", controlPlanePodName, err))
 		podChan, errChan := make(chan *v1.Pod), make(chan error)
 		go func() {
 			defer ginkgo.GinkgoRecover()
@@ -799,11 +799,11 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		framework.ExpectNoError(err, "one or more nodes failed to go back ready, schedulable, and untainted")
 	})
 
-	ginkgo.It("should provide Internet connection continuously when all pods are killed on node running master instance of ovnkube-control-plane", func() {
+	ginkgo.It("should provide Internet connection continuously when all pods are killed on node running leader instance of ovnkube-control-plane", func() {
 		ginkgo.By(fmt.Sprintf("Running container which tries to connect to %s in a loop", extDNSIP))
 		ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 		ovnKubeControlPlaneNode, err := findOvnKubeControlPlaneNode(ovnKubeNamespace, controlPlanePodName, controlPlaneLeaseName)
-		framework.ExpectNoError(err, fmt.Sprintf("unable to find current master of %s cluster %v", controlPlanePodName, err))
+		framework.ExpectNoError(err, fmt.Sprintf("unable to find current leader of %s cluster %v", controlPlanePodName, err))
 
 		podChan, errChan := make(chan *v1.Pod), make(chan error)
 		go func() {

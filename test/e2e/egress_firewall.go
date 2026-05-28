@@ -152,13 +152,18 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				f.Namespace = namespace
 				framework.ExpectNoError(err)
 
-				userDefinedNetworkIPv4Subnet := "172.31.0.0/16"
-				userDefinedNetworkIPv6Subnet := "2014:100:200::0/60"
+				userDefinedNetworkIPv4Subnets := []string{"172.31.0.0/16"}
+				userDefinedNetworkIPv6Subnets := []string{"2014:100:200::0/60"}
+				if udnTopology == "layer3" {
+					userDefinedNetworkIPv4Subnets = []string{"172.31.0.0/23/24", "172.30.0.0/16/24"}
+					userDefinedNetworkIPv6Subnets = []string{"2014:100:200::0/63/64", "2014:100:100::0/48/64"}
+				}
+				userDefinedNetworkSubnets := append(append([]string{}, userDefinedNetworkIPv4Subnets...), userDefinedNetworkIPv6Subnets...)
 
 				nadCfg := networkAttachmentConfigParams{
 					name:     "tenant-red",
 					topology: udnTopology,
-					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkSubnets...),
 					role:     "primary",
 				}
 
@@ -167,10 +172,10 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				switch strings.ToLower(udnTopology) {
 				case "layer2":
 					createLayer2PrimaryUDNWithSubnets(f.ClientSet, f.Namespace.Name, netConfig.name,
-						userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet)
+						userDefinedNetworkIPv4Subnets, userDefinedNetworkIPv6Subnets)
 				case "layer3":
-					createLayer3PrimaryUDNWithSubnets(f.ClientSet, f.Namespace.Name, netConfig.name,
-						userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet)
+					createPrimaryUDNWithSubnets(f.ClientSet, f.Namespace.Name, netConfig.name, "Layer3",
+						userDefinedNetworkIPv4Subnets, userDefinedNetworkIPv6Subnets)
 				default:
 					framework.Failf("unsupported UDN topology %q", udnTopology)
 				}

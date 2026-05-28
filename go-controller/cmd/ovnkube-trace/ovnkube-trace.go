@@ -565,7 +565,7 @@ func getPodInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, 
 }
 
 func getRouterPortMacAddress(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, podInfo *PodInfo, ovnNamespace, portPrefix string) (string, error) {
-	tspCmd := "ovn-sbctl --no-leader-only " + podInfo.SbCommand + " --bare --no-heading --column=mac list Port_Binding " + portPrefix + podInfo.NodeName
+	tspCmd := "ovn-sbctl " + podInfo.SbCommand + " --bare --no-heading --column=mac list Port_Binding " + portPrefix + podInfo.NodeName
 	ipOutput, ipError, err := execInPod(coreclient, restconfig, ovnNamespace, podInfo.OvnKubePodName, podInfo.OvnKubeContainerName, tspCmd, "")
 	if err != nil {
 		return "", fmt.Errorf("execInPod() failed. err: %s, stderr: %s, stdout: %s, podInfo: %v", err, ipError, ipOutput, podInfo)
@@ -582,7 +582,7 @@ func getRouterPortMacAddress(coreclient *corev1client.CoreV1Client, restconfig *
 
 // getNodeExternalBridgeName gets the name of the external bridge of this node, e.g. breth0 or br-ex.
 func getNodeExternalBridgeName(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, ovnNamespace string, podInfo *PodInfo) (string, error) {
-	cmd := "ovn-sbctl --no-leader-only " + podInfo.SbCommand + " --bare --no-heading --column=logical_port find Port_Binding options:network_name=" + types.PhysicalNetworkName
+	cmd := "ovn-sbctl " + podInfo.SbCommand + " --bare --no-heading --column=logical_port find Port_Binding options:network_name=" + types.PhysicalNetworkName
 	stdout, stderr, err := execInPod(coreclient, restconfig, ovnNamespace, podInfo.OvnKubePodName, podInfo.OvnKubeContainerName, cmd, "")
 	if err != nil {
 		return "", fmt.Errorf("execInPod() failed with %s stderr %s stdout %s", err, stderr, stdout)
@@ -742,7 +742,7 @@ func runOvnTraceToService(coreclient *corev1client.CoreV1Client, restconfig *res
 		klog.Exitf("Pod src IP address family (address: %s) and service IP address family (address: %s) do not match",
 			srcPodInfo.IP, dstSvcInfo.ClusterIP)
 	}
-	cmd := fmt.Sprintf(`ovn-trace --no-leader-only %[1]s %[2]s --ct=new `+
+	cmd := fmt.Sprintf(`ovn-trace %[1]s %[2]s --ct=new `+
 		`'inport=="%[3]s" && eth.src==%[4]s && eth.dst==%[5]s && %[6]s.src==%[7]s && %[8]s.dst==%[9]s && ip.ttl==64 && %[10]s.dst==%[11]s && %[10]s.src==52888' --lb-dst %[12]s:%[13]s`,
 		srcPodInfo.SbCommand,  // 1
 		srcPodInfo.NodeName,   // 2
@@ -787,7 +787,7 @@ func runOvnTraceToIP(coreclient *corev1client.CoreV1Client, restconfig *rest.Con
 			srcPodInfo.IP, parsedDstIP)
 	}
 
-	cmd := fmt.Sprintf(`ovn-trace --no-leader-only %[1]s %[2]s `+
+	cmd := fmt.Sprintf(`ovn-trace %[1]s %[2]s `+
 		`'inport=="%[3]s" && eth.src==%[4]s && eth.dst==%[5]s && %[6]s.src==%[7]s && %[8]s.dst==%[9]s && ip.ttl==64 && %[10]s.dst==%[11]s && %[10]s.src==52888'`,
 		srcPodInfo.SbCommand,               // 1
 		srcPodInfo.NodeName,                // 2
@@ -862,7 +862,7 @@ func runOvnTraceToPod(coreclient *corev1client.CoreV1Client, restconfig *rest.Co
 	if srcPodInfo.HostNetwork {
 		inport = srcPodInfo.K8sNodeNamePort
 	}
-	cmd := fmt.Sprintf(`ovn-trace --no-leader-only %[1]s %[2]s `+
+	cmd := fmt.Sprintf(`ovn-trace %[1]s %[2]s `+
 		`'inport=="%[3]s" && eth.src==%[4]s && eth.dst==%[5]s && %[6]s.src==%[7]s && %[8]s.dst==%[9]s && ip.ttl==64 && %[10]s.dst==%[11]s && %[10]s.src==52888'`,
 		srcPodInfo.SbCommand, // 1
 		srcPodInfo.NodeName,  // 2
@@ -902,7 +902,7 @@ func runOvnTraceToRemotePod(coreclient *corev1client.CoreV1Client, restconfig *r
 	if dstPodInfo.HostNetwork || podsInSameInterconnectZone(srcPodInfo, dstPodInfo) {
 		return
 	}
-	cmd := fmt.Sprintf(`ovn-trace --no-leader-only %[1]s `+
+	cmd := fmt.Sprintf(`ovn-trace %[1]s `+
 		`'inport=="%[2]s" && eth.src==%[3]s && eth.dst==%[4]s && %[5]s.src==%[6]s && %[7]s.dst==%[8]s && ip.ttl==64 && %[9]s.dst==%[10]s && %[9]s.src==52888'`,
 		dstPodInfo.SbCommand, // 1
 		types.TransitSwitchToRouterPrefix+srcPodInfo.NodeName, // 2

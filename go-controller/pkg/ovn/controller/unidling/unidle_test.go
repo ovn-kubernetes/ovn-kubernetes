@@ -72,9 +72,6 @@ var _ = Describe("Unidling Controller", func() {
 		sbClient, cleanup, err = libovsdbtest.NewSBTestHarness(testSetup, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		config.OvnSouth.Scheme = config.OvnDBSchemeTCP
-		config.OvnSouth.Address = "tcp::56640"
-
 		c, err := NewController(
 			recorder,
 			serviceInformer,

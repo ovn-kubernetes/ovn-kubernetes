@@ -17,7 +17,7 @@ import (
 )
 
 // This handles the annotations related to subnets assigned to a node. The annotations are
-// created by the master, and then read by the node. In a single-stack cluster, they look
+// created by the cluster manager, and then read by the node. In a single-stack cluster, they look
 // like:
 //
 //   annotations:

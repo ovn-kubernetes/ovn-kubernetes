@@ -61,6 +61,7 @@ type testNetwork struct {
 	name         string
 	id           int
 	topologyType string
+	role         string
 	subnets      []string // Pod subnets for the network (optional, defaults based on IP mode)
 }
 
@@ -298,11 +299,15 @@ func createNetInfo(net testNetwork) (util.NetInfo, error) {
 	// Use DefaultSubnets which handles IP mode
 	subnets := net.DefaultSubnets()
 	subnetsStr := strings.Join(subnets, ",")
+	role := net.role
+	if role == "" {
+		role = ovntypes.NetworkRoleSecondary
+	}
 
 	netConf := &ovncnitypes.NetConf{
 		NetConf:  cnitypes.NetConf{Name: net.name},
 		Topology: net.topologyType,
-		Role:     ovntypes.NetworkRoleSecondary,
+		Role:     role,
 		Subnets:  subnetsStr,
 	}
 	netInfo, err := util.NewNetInfo(netConf)
@@ -550,6 +555,33 @@ func verifyRouterPolicyCount(nbClient libovsdbclient.Client, routerName, cncName
 	if len(policies) != expectedCount {
 		return fmt.Errorf("expected %d policies on %s for CNC %s, got %d",
 			expectedCount, routerName, cncName, len(policies))
+	}
+	return nil
+}
+
+// verifyRouterPolicyMatch verifies the routing policy for an IP family has the expected match.
+// Returns error for use in Eventually.
+func verifyRouterPolicyMatch(nbClient libovsdbclient.Client, routerName, cncName string,
+	srcNetworkID, dstNetworkID int, ipFamily, expectedMatch string) error {
+	policies, err := libovsdbops.FindALogicalRouterPoliciesWithPredicate(nbClient, routerName,
+		func(policy *nbdb.LogicalRouterPolicy) bool {
+			return policy.ExternalIDs != nil &&
+				policy.ExternalIDs[libovsdbops.ObjectNameKey.String()] == cncName &&
+				policy.ExternalIDs[libovsdbops.SourceNetworkIDKey.String()] == strconv.Itoa(srcNetworkID) &&
+				policy.ExternalIDs[libovsdbops.DestinationNetworkIDKey.String()] == strconv.Itoa(dstNetworkID) &&
+				policy.ExternalIDs[libovsdbops.IPFamilyKey.String()] == ipFamily
+		})
+	if err != nil {
+		return fmt.Errorf("failed to get policies from %s: %v", routerName, err)
+	}
+
+	if len(policies) != 1 {
+		return fmt.Errorf("expected 1 %s policy on %s for CNC %s, got %d",
+			ipFamily, routerName, cncName, len(policies))
+	}
+	if policies[0].Match != expectedMatch {
+		return fmt.Errorf("expected %s policy match %q on %s for CNC %s, got %q",
+			ipFamily, expectedMatch, routerName, cncName, policies[0].Match)
 	}
 	return nil
 }
@@ -1482,6 +1514,85 @@ var _ = Describe("OVNKube Network Connect Controller Integration Tests", func() 
 						return verifyRouterPolicyCount(nbClient, networks[1].RouterName(),
 							"update-cnc", networks[1].id, networks[0].id, expectedRouteCount)
 					}).WithTimeout(5 * time.Second).Should(Succeed())
+				})
+
+				It("should update router policies when a connected primary Layer3 network adds a subnet", func() {
+					networks := []testNetwork{
+						{name: "subnet-net1", id: 1, topologyType: ovntypes.Layer3Topology, role: ovntypes.NetworkRolePrimary,
+							subnets: []string{"10.128.0.0/14/23", "fd00:10:128::/48/64"}},
+						{name: "subnet-net2", id: 2, topologyType: ovntypes.Layer3Topology, role: ovntypes.NetworkRolePrimary,
+							subnets: []string{"10.132.0.0/14/23", "fd00:10:132::/48/64"}},
+					}
+					nodes := []testNode{
+						{name: "node1", id: 1, zone: "node1", nodeSubnets: map[string]subnetPair{
+							"subnet-net1": {"10.128.1.0/24", "fd00:10:128:1::/64"},
+							"subnet-net2": {"10.132.1.0/24", "fd00:10:132:1::/64"},
+						}},
+					}
+					initialDB := createInitialDBWithRouters(networks)
+					nad1 := ovntest.GenerateNAD(networks[0].name, networks[0].name, "ns1",
+						networks[0].topologyType, strings.Join(networks[0].DefaultSubnets(), ","), networks[0].role)
+					nad2 := ovntest.GenerateNAD(networks[1].name, networks[1].name, "ns2",
+						networks[1].topologyType, strings.Join(networks[1].DefaultSubnets(), ","), networks[1].role)
+					start(initialDB, nodes, map[string]testNetwork{"ns1": networks[0], "ns2": networks[1]}, nad1, nad2)
+
+					subnetAnnotation := buildConnectSubnetAnnotation(map[string]subnetPair{
+						"layer3_1": {"192.168.0.0/24", "fd00:192:168::/64"},
+						"layer3_2": {"192.168.1.0/24", "fd00:192:168:1::/64"},
+					})
+					cnc := createTestCNC("subnet-update-cnc", 450, defaultConnectSubnets(), subnetAnnotation)
+
+					_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+						context.Background(), cnc, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					expectedPerIPFamily := 0
+					if config.IPv4Mode {
+						expectedPerIPFamily++
+					}
+					if config.IPv6Mode {
+						expectedPerIPFamily++
+					}
+
+					Eventually(func() error {
+						return verifyRouterPolicyCount(nbClient, networks[0].RouterName(),
+							"subnet-update-cnc", networks[0].id, networks[1].id, expectedPerIPFamily)
+					}).WithTimeout(5 * time.Second).Should(Succeed())
+
+					updatedNetwork := networks[1]
+					updatedNetwork.subnets = []string{
+						"10.132.0.0/14/23",
+						"10.136.0.0/14/23",
+						"fd00:10:132::/48/64",
+						"fd00:10:136::/48/64",
+					}
+					updatedNetInfo, err := createNetInfo(updatedNetwork)
+					Expect(err).NotTo(HaveOccurred())
+
+					fakeNM.Lock()
+					fakeNM.PrimaryNetworks["ns2"] = updatedNetInfo
+					if fakeNM.NADNetworks == nil {
+						fakeNM.NADNetworks = make(map[string]util.NetInfo)
+					}
+					fakeNM.NADNetworks["ns2/subnet-net2"] = updatedNetInfo
+					fakeNM.Unlock()
+					fakeNM.TriggerHandlers("ns2/subnet-net2", updatedNetInfo, false)
+
+					expectedInport := ovntypes.RouterToSwitchPrefix + util.GetUserDefinedNetworkPrefix(networks[0].name) + "node1"
+					if config.IPv4Mode {
+						Eventually(func() error {
+							return verifyRouterPolicyMatch(nbClient, networks[0].RouterName(),
+								"subnet-update-cnc", networks[0].id, networks[1].id, "v4",
+								fmt.Sprintf(`inport == "%s" && (ip4.dst == 10.132.0.0/14 || ip4.dst == 10.136.0.0/14)`, expectedInport))
+						}).WithTimeout(5 * time.Second).Should(Succeed())
+					}
+					if config.IPv6Mode {
+						Eventually(func() error {
+							return verifyRouterPolicyMatch(nbClient, networks[0].RouterName(),
+								"subnet-update-cnc", networks[0].id, networks[1].id, "v6",
+								fmt.Sprintf(`inport == "%s" && (ip6.dst == fd00:10:132::/48 || ip6.dst == fd00:10:136::/48)`, expectedInport))
+						}).WithTimeout(5 * time.Second).Should(Succeed())
+					}
 				})
 
 				It("should remove ports, policies and routes when network is disconnected via annotation update", func() {

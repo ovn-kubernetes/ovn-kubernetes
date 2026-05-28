@@ -24,8 +24,8 @@ type Layer3ConfigApplyConfiguration struct {
 	MTU *int32 `json:"mtu,omitempty"`
 	// Subnets are used for the pod network across the cluster.
 	//
-	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
-	// Given subnet is split into smaller subnets for every node.
+	// Each IP family can have multiple subnets.
+	// For each IP family, every node allocates a smaller subnet from the provided subnets.
 	Subnets []Layer3SubnetApplyConfiguration `json:"subnets,omitempty"`
 	// JoinSubnets are used inside the OVN network topology.
 	//

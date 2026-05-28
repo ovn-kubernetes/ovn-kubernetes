@@ -192,3 +192,115 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	require.Equal(t, pgName, entry.pgName)
 	require.True(t, util.IsIPNetsEqual(subnetsForNetInfo(netInfo2), entry.subnets))
 }
+
+func TestEFControllerSync_AddsCIDRExclusionWhenPrimaryNetworkAddsOverlappingSubnet(t *testing.T) {
+	require.NoError(t, config.PrepareTestConfig())
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+
+	const (
+		namespace = "namespace1"
+		udnName   = "udn-test"
+		zone      = "global"
+	)
+
+	netInfoBefore := mustNetInfo(t, udnName, "10.128.0.0/16")
+	netInfoAfter := mustNetInfo(t, udnName, "10.128.0.0/16,10.129.0.0/16")
+
+	networkManager := &fakenetworkmanager.FakeNetworkManager{
+		PrimaryNetworks: map[string]util.NetInfo{
+			namespace: netInfoBefore,
+		},
+	}
+
+	ownerController := udnName + "-network-controller"
+	pgName := libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController))
+
+	initialDB := libovsdbtest.TestSetup{
+		NBData: []libovsdbtest.TestData{
+			&nbdb.PortGroup{
+				Name: pgName,
+				ExternalIDs: map[string]string{
+					libovsdbops.OwnerTypeKey.String():       libovsdbops.NamespaceOwnerType,
+					libovsdbops.OwnerControllerKey.String(): ownerController,
+					libovsdbops.ObjectNameKey.String():      namespace,
+				},
+			},
+		},
+	}
+	nbClient, _, cleanup, err := libovsdbtest.NewNBSBTestHarness(initialDB)
+	require.NoError(t, err)
+	t.Cleanup(cleanup.Cleanup)
+
+	nsIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	require.NoError(t, nsIndexer.Add(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}))
+	namespaceLister := corelisters.NewNamespaceLister(nsIndexer)
+
+	efIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	ef := &egressfirewallapi.EgressFirewall{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            egressFirewallName,
+			Namespace:       namespace,
+			ResourceVersion: "1",
+		},
+		Spec: egressfirewallapi.EgressFirewallSpec{
+			Egress: []egressfirewallapi.EgressFirewallRule{
+				{
+					Type: egressfirewallapi.EgressFirewallRuleAllow,
+					To: egressfirewallapi.EgressFirewallDestination{
+						CIDRSelector: "10.129.1.0/24",
+					},
+				},
+			},
+		},
+		Status: egressfirewallapi.EgressFirewallStatus{
+			Messages: []string{types.GetZoneStatus(zone, EgressFirewallAppliedCorrectly)},
+		},
+	}
+	require.NoError(t, efIndexer.Add(ef))
+	efLister := egressfirewalllisters.NewEgressFirewallLister(efIndexer)
+
+	oc := &EFController{
+		name:            "test",
+		zone:            zone,
+		cache:           syncmap.NewSyncMap[*cacheEntry](),
+		nbClient:        nbClient,
+		kube:            nil, // status updates are no-op in this test due to pre-seeded status message
+		namespaceLister: namespaceLister,
+		efLister:        efLister,
+		networkManager:  networkManager,
+		ruleCounter:     sync.Map{},
+		dnsNameResolver: noopDNSNameResolver{},
+	}
+
+	// Pre-seed rule counter so status updates don't affect global metrics.
+	oc.ruleCounter.Store(namespace+"/"+egressFirewallName, uint32(len(ef.Spec.Egress)))
+
+	err = oc.sync(namespace + "/" + egressFirewallName)
+	require.NoError(t, err)
+
+	p := libovsdbops.GetPredicate[*nbdb.ACL](oc.GetEgressFirewallACLDbIDs(namespace, 0), nil)
+	acls, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, p)
+	require.NoError(t, err)
+	require.Len(t, acls, 1)
+	require.Contains(t, acls[0].Match, "ip4.dst == 10.129.1.0/24")
+	require.NotContains(t, acls[0].Match, "ip4.dst != 10.129.0.0/16")
+
+	networkManager.Lock()
+	networkManager.PrimaryNetworks[namespace] = netInfoAfter
+	networkManager.Unlock()
+
+	err = oc.sync(namespace + "/" + egressFirewallName)
+	require.NoError(t, err)
+
+	acls, err = libovsdbops.FindACLsWithPredicate(oc.nbClient, p)
+	require.NoError(t, err)
+	require.Len(t, acls, 1)
+	require.Contains(t, acls[0].Match, "ip4.dst == 10.129.1.0/24")
+	require.Contains(t, acls[0].Match, "ip4.dst != 10.129.0.0/16")
+
+	entry, ok := oc.cache.Load(namespace)
+	require.True(t, ok)
+	require.Equal(t, pgName, entry.pgName)
+	require.True(t, util.IsIPNetsEqual(subnetsForNetInfo(netInfoAfter), entry.subnets))
+}

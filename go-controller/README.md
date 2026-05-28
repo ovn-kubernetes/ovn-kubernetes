@@ -69,22 +69,12 @@ Usage:
      the absolute path to the Kubernetes API CA certificate (not required if --k8s-kubeconfig is given)
   -k8s-token string
      the Kubernetes API authentication token (not required if --k8s-kubeconfig is given)
-  -nb-address string
-     IP address and port of the OVN northbound API (eg, ssl:1.2.3.4:6641).  Leave empty to use a local unix socket.
   -nb-client-privkey string
-     Private key that the client should use for talking to the OVN database.  Leave empty to use local unix socket. (default: /etc/openvswitch/ovnnb-privkey.pem)
+     Private key used by the node-to-node Egress IP gRPC health-check channel (historical name; no longer used for OVN DB connection).
   -nb-client-cert string
-     Client certificate that the client should use for talking to the OVN database.  Leave empty to use local unix socket. (default: /etc/openvswitch/ovnnb-cert.pem)
+     Client certificate used by the node-to-node Egress IP gRPC health-check channel (historical name; no longer used for OVN DB connection).
   -nb-client-cacert string
-     CA certificate that the client should use for talking to the OVN database.  Leave empty to use local unix socket. (default: /etc/openvswitch/ovnnb-ca.cert)
-  -sb-address string
-     IP address and port of the OVN southbound API (eg, ssl:1.2.3.4:6642).  Leave empty to use a local unix socket.
-  -sb-client-privkey string
-     Private key that the client should use for talking to the OVN database.  Leave empty to use local unix socket. (default: /etc/openvswitch/ovnsb-privkey.pem)
-  -sb-client-cert string
-     Client certificate that the client should use for talking to the OVN database.  Leave empty to use local unix socket. (default: /etc/openvswitch/ovnsb-cert.pem)
-  -sb-client-cacert string
-     CA certificate that the client should use for talking to the OVN database.  Leave empty to use local unix socket. (default: /etc/openvswitch/ovnsb-ca.cert)
+     CA certificate used by the node-to-node Egress IP gRPC health-check channel (historical name; no longer used for OVN DB connection).
 ```
 
 ### Environment Variables

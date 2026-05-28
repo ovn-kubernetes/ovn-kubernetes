@@ -16,7 +16,7 @@ import (
 )
 
 // newNetpolRetryFramework builds and returns a retry framework for the input resource
-// type and assigns all ovnk-master-specific function attributes in the returned struct;
+// type and assigns all ovnkube-controller-specific function attributes in the returned struct;
 // these functions will then be called by the retry logic in the retry package when
 // WatchResource() is called.
 // newNetpolRetryFramework takes as input a resource type (required)

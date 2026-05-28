@@ -71,7 +71,7 @@ var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
 		extEgDNS              *ExternalEgressDNS
 		_, clusterSubnet, _   = net.ParseCIDR("10.128.0.0/14")
 		wf                    *factory.WatchFactory
-		fakeClient            *util.OVNMasterClientset
+		fakeClient            *util.OVNKubeControllerClientset
 		fakeAddressSetFactory addressset.AddressSetFactory
 		nbClient              libovsdbclient.Client
 		testdbCtx             *libovsdbtest.Context
@@ -85,8 +85,8 @@ var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
 	start := func(objects ...runtime.Object) {
 		var err error
 
-		fakeClient = util.GetOVNClientset(objects...).GetMasterClientset()
-		wf, err = factory.NewMasterWatchFactory(fakeClient)
+		fakeClient = util.GetOVNClientset(objects...).GetOVNKubeControllerClientset()
+		wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClient)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		extEgDNS, err = NewExternalEgressDNS(fakeAddressSetFactory, DefaultNetworkControllerName, true,

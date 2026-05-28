@@ -32,6 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/gateway"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/gatewayrouter"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -51,6 +52,7 @@ type GatewayManager struct {
 	watchFactory            *factory.WatchFactory
 	getNetworkNameForNADKey func(nadKey string) string
 	nodeAnnotationCache     *nodecontroller.NodeAnnotationCache
+	addressSetManager       *addresssetmanager.AddressSetManager
 	// Cluster wide Load_Balancer_Group UUID.
 	// Includes all node switches and node gateway routers.
 	clusterLoadBalancerGroupUUID string
@@ -76,6 +78,7 @@ func NewGatewayManagerForLayer2Topology(
 	netInfo util.NetInfo,
 	watchFactory *factory.WatchFactory,
 	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 	useTransitRouter bool,
 	opts ...GatewayOption,
 ) *GatewayManager {
@@ -94,6 +97,7 @@ func NewGatewayManagerForLayer2Topology(
 		netInfo,
 		watchFactory,
 		nodeAnnotationCache,
+		addressSetManager,
 		opts...,
 	)
 }
@@ -106,6 +110,7 @@ func NewGatewayManager(
 	netInfo util.NetInfo,
 	watchFactory *factory.WatchFactory,
 	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 	opts ...GatewayOption,
 ) *GatewayManager {
 	return newGWManager(
@@ -119,6 +124,7 @@ func NewGatewayManager(
 		netInfo,
 		watchFactory,
 		nodeAnnotationCache,
+		addressSetManager,
 		opts...,
 	)
 }
@@ -131,6 +137,7 @@ func newGWManager(
 	netInfo util.NetInfo,
 	watchFactory *factory.WatchFactory,
 	nodeAnnotationCache *nodecontroller.NodeAnnotationCache,
+	addressSetManager *addresssetmanager.AddressSetManager,
 	opts ...GatewayOption) *GatewayManager {
 	gwManager := &GatewayManager{
 		nodeName:            nodeName,
@@ -144,6 +151,7 @@ func newGWManager(
 		netInfo:             netInfo,
 		watchFactory:        watchFactory,
 		nodeAnnotationCache: nodeAnnotationCache,
+		addressSetManager:   addressSetManager,
 	}
 
 	for _, opt := range opts {
@@ -891,6 +899,15 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 			}
 		}
 
+		isNetworkAdvertised := gw.isRoutingAdvertised(nodeName)
+		var clusterNodeIPsAddrSetDbIDs *libovsdbops.DbObjectIDs
+		if isNetworkAdvertised && !util.IsNoOverlaySNATExemptionNeeded(gw.netInfo) {
+			clusterNodeIPsAddrSetDbIDs, err = gw.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsRouteAdvertisementsBackRef)
+			if err != nil {
+				return fmt.Errorf("failed to ensure cluster node IP address set for route advertisements: %w", err)
+			}
+		}
+
 		// Default SNAT rules. DisableSNATMultipleGWs=false in LGW (traffic egresses via mp0) always.
 		// We are not checking for gateway mode to be shared explicitly to reduce topology differences.
 		for _, entry := range gwConfig.clusterSubnets {
@@ -906,7 +923,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 				ipFamily = utilnet.IPv6
 			}
 			snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(gw.nbClient, gw.netInfo, nodeName,
-				gw.isRoutingAdvertised(nodeName), ipFamily)
+				isNetworkAdvertised, ipFamily, clusterNodeIPsAddrSetDbIDs)
 			if err != nil {
 				return fmt.Errorf("failed to get SNAT match for node %s for network %s: %w", nodeName, gw.netInfo.GetNetworkName(), err)
 			}
@@ -1074,7 +1091,7 @@ func (gw *GatewayManager) gatewayInit(
 // - For Layer2 topology, the match is the output port of the GR to the join switch and the destination must be a nodeIP in the cluster.
 // - For Layer3 topology, the match is the destination must be a nodeIP in the cluster.
 func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netInfo util.NetInfo, nodeName string,
-	isNetworkAdvertised bool, ipFamily utilnet.IPFamily) (string, error) {
+	isNetworkAdvertised bool, ipFamily utilnet.IPFamily, clusterNodeIPsAddrSetDbIDs *libovsdbops.DbObjectIDs) (string, error) {
 	layer2OldTopo := netInfo.TopologyType() == types.Layer2Topology && !config.Layer2UsesTransitRouter
 	if !isNetworkAdvertised {
 		if !layer2OldTopo {
@@ -1086,15 +1103,17 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 	}
 
 	// if the network is advertised, we need to ensure that the SNAT exists with the correct conditional destination match
-	dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, types.DefaultNetworkControllerName)
+	if clusterNodeIPsAddrSetDbIDs == nil {
+		return "", fmt.Errorf("cluster node IP address set DB IDs are required for advertised network %s", netInfo.GetNetworkName())
+	}
 	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
-	addrSet, err := addressSetFactory.GetAddressSet(dbIDs)
+	addrSet, err := addressSetFactory.GetAddressSet(clusterNodeIPsAddrSetDbIDs)
 	if err != nil {
-		return "", fmt.Errorf("cannot ensure that addressSet %v exists: %w", dbIDs, err)
+		return "", fmt.Errorf("cannot ensure that addressSet %v exists: %w", clusterNodeIPsAddrSetDbIDs, err)
 	}
 	destinationMatch := getClusterNodesDestinationBasedSNATMatch(ipFamily, addrSet)
 	if destinationMatch == "" {
-		return "", fmt.Errorf("could not build a destination based SNAT match because no addressSet %v exists for IP family %v", dbIDs, ipFamily)
+		return "", fmt.Errorf("could not build a destination based SNAT match because no addressSet %v exists for IP family %v", clusterNodeIPsAddrSetDbIDs, ipFamily)
 	}
 	if !layer2OldTopo {
 		return destinationMatch, nil
@@ -1693,12 +1712,18 @@ func (oc *DefaultNetworkController) AddPodSNATOps(
 
 	isNetworkAdvertised := oc.isPodNetworkAdvertisedAtNode(nodeName)
 	gwRouterName := oc.GetNetworkScopedGWRouterName(nodeName)
+	var clusterNodeIPsAddrSetDbIDs *libovsdbops.DbObjectIDs
 
 	if util.IsNoOverlaySNATExemptionNeeded(oc.GetNetInfo()) {
 		// Get the no-overlay SNAT exemption address set UUIDs
 		v4UUID, v6UUID, err = getNoOverlaySNATExemptionAsUUID(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get no-overlay SNAT exemption address set UUID: %w", err)
+		}
+	} else if isNetworkAdvertised {
+		clusterNodeIPsAddrSetDbIDs, err = oc.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsRouteAdvertisementsBackRef)
+		if err != nil {
+			return nil, fmt.Errorf("failed to ensure cluster node IP address set for route advertisements: %w", err)
 		}
 	}
 
@@ -1716,7 +1741,7 @@ func (oc *DefaultNetworkController) AddPodSNATOps(
 			exemptedExtIPs = v4UUID
 		}
 
-		snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(oc.nbClient, oc.GetNetInfo(), nodeName, isNetworkAdvertised, ipFamily)
+		snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(oc.nbClient, oc.GetNetInfo(), nodeName, isNetworkAdvertised, ipFamily, clusterNodeIPsAddrSetDbIDs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get SNAT match for node %s for network %s: %w", nodeName, oc.GetNetInfo().GetNetworkName(), err)
 		}

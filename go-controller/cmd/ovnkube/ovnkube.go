@@ -38,7 +38,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -80,7 +79,6 @@ func getFlagsByCategory() map[string][]cli.Flag {
 	m["OVN Gateway Options"] = config.OVNGatewayFlags
 	m["Cluster Manager Options"] = config.ClusterManagerFlags
 	m["Cluster Manager HA Options"] = config.ClusterMgrHAFlags
-	m["Master HA Options"] = config.MasterHAFlags
 	m["OVN Kube Node Options"] = config.OvnKubeNodeFlags
 	m["Monitoring Options"] = config.MonitoringFlags
 	m["IPFIX Flow Tracing Options"] = config.IPFIXFlags
@@ -206,8 +204,10 @@ type ovnkubeRunMode struct {
 // determineOvnkubeRunMode determines the run modes of ovnkube
 // based on the init flags set.  It is possible to run ovnkube in
 // multiple modes.  Allowed multiple modes are:
-//   - ovnkube controller + cluster manager
 //   - ovnkube controller + node
+//
+// Now ovnkube-controller always runs co-located with node, so combining
+// it with cluster manager is not supported.
 func determineOvnkubeRunMode(ctx *cli.Context) (*ovnkubeRunMode, error) {
 	mode := &ovnkubeRunMode{}
 
@@ -242,6 +242,11 @@ func determineOvnkubeRunMode(ctx *cli.Context) (*ovnkubeRunMode, error) {
 
 	if !mode.ovnkubeController && mode.clusterManager && mode.node {
 		return nil, fmt.Errorf("cannot run in both cluster manager and node mode")
+	}
+
+	if mode.clusterManager && mode.ovnkubeController {
+		return nil, fmt.Errorf("cannot run cluster manager and ovnkube-controller in the same process; " +
+			"ovnkube-controller runs co-located with node")
 	}
 
 	identities := sets.NewString(cm, ovnkController, node, cleanup)
@@ -314,45 +319,23 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 
 	eventRecorder := util.EventRecorder(ovnClientset.KubeClient)
 
-	// Start the general metrics server only when not combined.
-	// Non LE master instances also are required to expose the metrics server.
 	if config.Metrics.BindAddress != "" && !combineMetricsEndpoints(runMode) {
 		metrics.StartMetricsServer(config.Metrics.BindAddress, config.Metrics.EnablePprof,
 			config.Metrics.NodeServerCert, config.Metrics.NodeServerPrivKey, ctx.Done(), ovnKubeStartWg)
 	}
 
-	// no need for leader election in node mode
-	// only node mode
-	if !runMode.clusterManager && !runMode.ovnkubeController {
+	// In IC mode, only cluster manager runs leader election. Node and
+	// ovnkube-controller (which always runs co-located with node) start directly.
+	if !runMode.clusterManager {
+		if runMode.ovnkubeController {
+			metrics.RegisterOVNKubeControllerBase()
+		}
 		return runOvnKube(ctx.Context, runMode, ovnClientset, eventRecorder)
 	}
 
-	// ovnkube-controller with node
-	if runMode.node && runMode.ovnkubeController {
-		metrics.RegisterOVNKubeControllerBase()
-		return runOvnKube(ctx.Context, runMode, ovnClientset, eventRecorder)
-	}
-
-	// Register prometheus metrics that do not depend on becoming ovnkube-controller
-	// leader and get the proper HA config depending on the mode. For ovnkube
-	// controller mode or combined cluster manager and ovnkube-controller modes (the classic
-	// master mode), the master HA config applies. For cluster manager
-	// standalone mode, the cluster manager HA config applies.
-	var haConfig *config.HAConfig
-	var name string
-	switch {
-	case runMode.ovnkubeController && runMode.clusterManager:
-		metrics.RegisterClusterManagerBase()
-		fallthrough
-	case runMode.ovnkubeController:
-		metrics.RegisterOVNKubeControllerBase()
-		haConfig = &config.MasterHA
-		name = controllerManagerLockName()
-	case runMode.clusterManager:
-		metrics.RegisterClusterManagerBase()
-		haConfig = &config.ClusterMgrHA
-		name = "ovn-kubernetes-master"
-	}
+	metrics.RegisterClusterManagerBase()
+	haConfig := &config.ClusterMgrHA
+	name := "ovn-kubernetes-master"
 
 	// Set up leader election process. Use lease resource lock as configmap and
 	// endpoint lock support has been removed from leader election library.
@@ -656,8 +639,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 // mode
 func newWatchFactory(runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset) (watchFactory *factory.WatchFactory, err error) {
 	switch {
-	case runMode.clusterManager && runMode.ovnkubeController:
-		watchFactory, err = factory.NewMasterWatchFactory(ovnClientset.GetMasterClientset())
 	case runMode.clusterManager:
 		watchFactory, err = factory.NewClusterManagerWatchFactory(ovnClientset.GetClusterManagerClientset())
 	case runMode.ovnkubeController:
@@ -675,18 +656,12 @@ type leaderMetrics struct {
 }
 
 func (m leaderMetrics) On(string) {
-	if m.runMode.ovnkubeController {
-		metrics.MetricOVNKubeControllerLeader.Set(1)
-	}
 	if m.runMode.clusterManager {
 		metrics.MetricClusterManagerLeader.Set(1)
 	}
 }
 
 func (m leaderMetrics) Off(string) {
-	if m.runMode.ovnkubeController {
-		metrics.MetricOVNKubeControllerLeader.Set(0)
-	}
 	if m.runMode.clusterManager {
 		metrics.MetricClusterManagerLeader.Set(0)
 	}
@@ -700,13 +675,4 @@ type ovnkubeMetricsProvider struct {
 
 func (p ovnkubeMetricsProvider) NewLeaderMetric() leaderelection.LeaderMetric {
 	return &leaderMetrics{p.runMode}
-}
-
-func controllerManagerLockName() string {
-	// keep the same old lock name unless we are owners of a specific zone
-	name := "ovn-kubernetes-master"
-	if config.Default.Zone != types.OvnDefaultZone {
-		name = name + "-" + config.Default.Zone
-	}
-	return name
 }

@@ -275,6 +275,38 @@ var _ = Describe("Healthcheck tests", func() {
 
 	})
 
+	Describe("NewNodeControllerManager", func() {
+		It("creates a VRF manager in DPU mode", func() {
+			Expect(config.PrepareTestConfig()).To(Succeed())
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OvnKubeNode.Mode = types.NodeModeDPU
+
+			factoryMock := factoryMocks.NodeWatchFactory{}
+			factoryMock.On("UserDefinedNetworkInformer").Return(nil)
+			factoryMock.On("ClusterUserDefinedNetworkInformer").Return(nil)
+			factoryMock.On("NamespaceInformer").Return(nil)
+			nadListerMock := &nadlistermocks.NetworkAttachmentDefinitionLister{}
+			nadInformerMock := &nadinformermocks.NetworkAttachmentDefinitionInformer{}
+			nadInformerMock.On("Lister").Return(nadListerMock)
+			nadInformerMock.On("Informer").Return(nil)
+			factoryMock.On("NADInformer").Return(nadInformerMock)
+			nodeInformerMock := &coreinformermocks.NodeInformer{}
+			nodeListerMock := &corelistermocks.NodeLister{}
+			nodeInformerMock.On("Lister").Return(nodeListerMock)
+			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
+			fakeClient := &util.OVNClientset{
+				KubeClient: fake.NewSimpleClientset(),
+			}
+
+			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, "worker1",
+				&sync.WaitGroup{}, nil, routemanager.NewController(), nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ncm.vrfManager).NotTo(BeNil())
+			Expect(ncm.ruleManager).To(BeNil())
+		})
+	})
+
 	Context("verify cleanup of deleted networks", func() {
 		var (
 			staleNetID uint = 1000

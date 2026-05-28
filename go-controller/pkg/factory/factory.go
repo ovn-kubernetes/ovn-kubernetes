@@ -181,7 +181,7 @@ const (
 	// resync time is 0, none of the resources being watched in ovn-kubernetes have
 	// any race condition where a resync may be required e.g. cni executable on node watching for
 	// events on pods and assuming that an 'ADD' event will contain the annotations put in by
-	// ovnkube master (currently, it is just a 'get' loop)
+	// ovnkube controller (currently, it is just a 'get' loop)
 	// the downside of making it tight (like 10 minutes) is needless spinning on all resources
 	// However, AddEventHandlerWithResyncPeriod can specify a per handler resync period
 	resyncInterval        = 0
@@ -230,7 +230,7 @@ type endpointSliceForGateway struct{}
 type serviceForFakeNodePortWatcher struct{} // only for unit tests
 
 var (
-	// Resource types used in ovnk master
+	// Resource types used in the ovnkube control plane
 	PodType                         reflect.Type = reflect.TypeOf(&corev1.Pod{})
 	ServiceType                     reflect.Type = reflect.TypeOf(&corev1.Service{})
 	EndpointSliceType               reflect.Type = reflect.TypeOf(&discovery.EndpointSlice{})
@@ -262,42 +262,6 @@ var (
 	EndpointSliceForGatewayType               reflect.Type = reflect.TypeOf(&endpointSliceForGateway{})
 	ServiceForFakeNodePortWatcherType         reflect.Type = reflect.TypeOf(&serviceForFakeNodePortWatcher{}) // only for unit tests
 )
-
-// NewMasterWatchFactory initializes a new watch factory for:
-// a) ovnkube controller + cluster manager or
-// b) ovnkube controller + node
-// c) all-in-one a.k.a ovnkube controller + cluster-manager + node
-// processes.
-func NewMasterWatchFactory(ovnClientset *util.OVNMasterClientset) (*WatchFactory, error) {
-	wf, err := NewOVNKubeControllerWatchFactory(ovnClientset.GetOVNKubeControllerClientset())
-	if err != nil {
-		return nil, err
-	}
-	wf.cpipcFactory = ocpcloudnetworkinformerfactory.NewSharedInformerFactory(ovnClientset.CloudNetworkClient, resyncInterval)
-	if util.PlatformTypeIsEgressIPCloudProvider() {
-		wf.informers[CloudPrivateIPConfigType], err = newQueuedInformer(eventQueueSize, CloudPrivateIPConfigType,
-			wf.cpipcFactory.Cloud().V1().CloudPrivateIPConfigs().Informer(), wf.stopChan, minNumEventQueues)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Initialize VTEP factory for EVPN support in combined mode (cluster-manager + ovnkube-controller).
-	if util.IsEVPNEnabled() {
-		wf.vtepFactory = vtepinformerfactory.NewSharedInformerFactory(ovnClientset.VTEPClient, resyncInterval)
-		// make sure shared informer is created for a factory, so on wf.vtepFactory.Start() it is initialized and caches are synced.
-		wf.vtepFactory.K8s().V1().VTEPs().Informer()
-	}
-
-	// Initialize FRR factory for Route Advertisement support in combined mode (cluster-manager + ovnkube-controller).
-	if util.IsRouteAdvertisementsEnabled() {
-		wf.frrFactory = frrinformerfactory.NewSharedInformerFactory(ovnClientset.FRRClient, resyncInterval)
-		// make sure shared informer is created for a factory, so on wf.frrFactory.Start() it is initialized and caches are synced.
-		wf.frrFactory.Api().V1beta1().FRRConfigurations().Informer()
-	}
-
-	return wf, nil
-}
 
 // Informer transform to trim object fields for memory efficiency.
 func informerObjectTrim(obj interface{}) (interface{}, error) {
@@ -351,7 +315,7 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	// resync time is 12 hours, none of the resources being watched in ovn-kubernetes have
 	// any race condition where a resync may be required e.g. cni executable on node watching for
 	// events on pods and assuming that an 'ADD' event will contain the annotations put in by
-	// ovnkube master (currently, it is just a 'get' loop)
+	// ovnkube controller (currently, it is just a 'get' loop)
 	// the downside of making it tight (like 10 minutes) is needless spinning on all resources
 	// However, AddEventHandlerWithResyncPeriod can specify a per handler resync period
 	wf := &WatchFactory{

@@ -24,8 +24,8 @@ export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
 IPV6_SKIPPED_TESTS="Should be allowed by externalip services|\
 should provide connection to external host by DNS name from a pod|\
 should provide Internet connection continuously when ovnkube-node pod is killed|\
-should provide Internet connection continuously when pod running master instance of ovnkube-control-plane is killed|\
-should provide Internet connection continuously when all pods are killed on node running master instance of ovnkube-control-plane|\
+should provide Internet connection continuously when pod running leader instance of ovnkube-control-plane is killed|\
+should provide Internet connection continuously when all pods are killed on node running leader instance of ovnkube-control-plane|\
 should provide Internet connection continuously when all ovnkube-control-plane pods are killed|\
 Should validate flow data of br-int is sent to an external gateway with netflow v5|\
 should be able to receive multicast IGMP query|\

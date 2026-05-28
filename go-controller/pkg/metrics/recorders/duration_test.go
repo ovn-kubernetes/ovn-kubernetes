@@ -89,7 +89,7 @@ var _ = ginkgo.Describe("Config Duration Operations", func() {
 		}
 
 		var err error
-		wf, err = factory.NewMasterWatchFactory(fakeClient.GetMasterClientset())
+		wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClient.GetOVNKubeControllerClientset())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		err = wf.Start()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

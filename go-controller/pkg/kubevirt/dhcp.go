@@ -75,11 +75,14 @@ func WithIPv6DNSServer(dnsServer string) func(*dhcpConfigs) {
 }
 
 func EnsureDHCPOptionsForLSP(controllerName string, nbClient libovsdbclient.Client, pod *corev1.Pod, ips []*net.IPNet, lsp *nbdb.LogicalSwitchPort, opts ...DHCPConfigsOpt) error {
-	vmKey := ExtractVMNameFromPod(pod)
-	if vmKey == nil {
+	vmDescription, err := NewVMDescriptionFromPod(pod)
+	if err != nil {
+		return fmt.Errorf("failed discovering vm description at pod %s/%s:%w", pod.Namespace, pod.Name, err)
+	}
+	if vmDescription == nil {
 		return fmt.Errorf("missing vm label at pod %s/%s", pod.Namespace, pod.Name)
 	}
-	dhcpConfigs, err := composeDHCPConfigs(controllerName, *vmKey, ips, opts...)
+	dhcpConfigs, err := composeDHCPConfigs(controllerName, vmDescription.Key(), ips, opts...)
 	if err != nil {
 		return fmt.Errorf("failed composing DHCP options: %v", err)
 	}
@@ -171,12 +174,15 @@ func composeDHCPOptions(controllerName string, vmKey ktypes.NamespacedName, dhcp
 }
 
 func DeleteDHCPOptions(nbClient libovsdbclient.Client, pod *corev1.Pod) error {
-	vmKey := ExtractVMNameFromPod(pod)
-	if vmKey == nil {
+	vmDescription, err := NewVMDescriptionFromPod(pod)
+	if err != nil {
+		return fmt.Errorf("failed discovering vm description at pod %s/%s:%w", pod.Namespace, pod.Name, err)
+	}
+	if vmDescription == nil {
 		return nil
 	}
 	if err := libovsdbops.DeleteDHCPOptionsWithPredicate(nbClient, func(item *nbdb.DHCPOptions) bool {
-		return item.ExternalIDs[string(libovsdbops.ObjectNameKey)] == vmKey.String()
+		return item.ExternalIDs[string(libovsdbops.ObjectNameKey)] == vmDescription.Key().String()
 	}); err != nil {
 		return err
 	}

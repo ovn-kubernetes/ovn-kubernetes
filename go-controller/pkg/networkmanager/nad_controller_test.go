@@ -33,6 +33,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	ovntesting "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -153,7 +154,7 @@ func TestSyncNAD_NotifiesReconcilers(t *testing.T) {
 		MTU:     1400,
 		NADName: nadKey,
 	}
-	nad, err := buildNAD(nadName, nadNS, networkAPrimary)
+	nad, err := ovntesting.BuildNAD(nadName, nadNS, networkAPrimary)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// The NAD has no network ID annotation so syncNAD will not ensure the network,
@@ -923,7 +924,7 @@ func TestNADController(t *testing.T) {
 				var nad *nettypes.NetworkAttachmentDefinition
 				if args.network != nil {
 					args.network.NADName = args.nad
-					nad, err = buildNAD(name, namespace, args.network)
+					nad, err = ovntesting.BuildNAD(name, namespace, args.network)
 					g.Expect(err).ToNot(gomega.HaveOccurred())
 					_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
 					g.Expect(err).To(gomega.Or(gomega.Not(gomega.HaveOccurred()), gomega.MatchError(apierrors.IsAlreadyExists, "AlreadyExists")))
@@ -1844,7 +1845,7 @@ func TestResourceCleanup(t *testing.T) {
 		MTU:     1400,
 		NADName: nadKey,
 	}
-	nad, err := buildNAD(nadName, nadNs, networkAPrimary)
+	nad, err := ovntesting.BuildNAD(nadName, nadNs, networkAPrimary)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// make annotation update fail (nad doesn't exist), make sure networkID and tunnel keys are released
@@ -1857,6 +1858,15 @@ func TestResourceCleanup(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	err = nadController.tunnelKeysAllocator.ReserveKeys("networkB", []int{16711684, 16715779})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
+}
+
+func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetConf, annotations map[string]string) (*nettypes.NetworkAttachmentDefinition, error) {
+	nad, err := ovntesting.BuildNAD(name, namespace, network)
+	if err != nil {
+		return nil, err
+	}
+	nad.Annotations = annotations
+	return nad, nil
 }
 
 func buildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nettypes.NetworkAttachmentDefinition, error) {
@@ -1873,15 +1883,6 @@ func buildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nettypes.N
 			Config: string(config),
 		},
 	}
-	return nad, nil
-}
-
-func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetConf, annotations map[string]string) (*nettypes.NetworkAttachmentDefinition, error) {
-	nad, err := buildNAD(name, namespace, network)
-	if err != nil {
-		return nil, err
-	}
-	nad.Annotations = annotations
 	return nad, nil
 }
 
@@ -3154,7 +3155,7 @@ func TestOnNetworkRefChangeNotifiesNetworkController(t *testing.T) {
 				Role:     types.NetworkRolePrimary,
 				NADName:  "ns1/primary",
 			}
-			nad, err := buildNAD("primary", "ns1", netConf)
+			nad, err := ovntesting.BuildNAD("primary", "ns1", netConf)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			nad.OwnerReferences = []metav1.OwnerReference{{
 				Kind:       "UserDefinedNetwork",

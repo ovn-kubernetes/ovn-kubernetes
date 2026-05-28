@@ -124,8 +124,8 @@ type RetryFramework struct {
 
 // NewRetryFramework returns a new RetryFramework instance, essential for the whole retry logic.
 // It returns a new struct packed with the desired input parameters and
-// with its function attributes pre-filled with default code. Clients of this pkg (ovnk master,
-// ovnk node) will have to override the functions in the returned struct with the desired
+// with its function attributes pre-filled with default code. Clients of this pkg (ovnkube controller,
+// ovnkube node) will have to override the functions in the returned struct with the desired
 // per-resource logic.
 func NewRetryFramework(name string,
 	stopChan <-chan struct{}, doneWg *sync.WaitGroup,

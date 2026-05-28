@@ -27,6 +27,7 @@ import (
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	anpcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	egresssvc_zone "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	networkconnectcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
@@ -446,8 +447,22 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 	}
 
 	if !config.OVNKubernetesFeature.EnableEgressIP {
-		initClusterEgressPolicies = InitClusterEgressPolicies
-		ensureNodeNoReroutePolicies = ensureDefaultNoRerouteNodePolicies
+		initClusterEgressPolicies = func(nbClient libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory,
+			ni util.NetInfo, clusterSubnets []*net.IPNet, controllerName, routerName string) error {
+			clusterNodeIPsAddrSetDbIDs, err := oc.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsEgressServiceBackRef)
+			if err != nil {
+				return fmt.Errorf("failed to ensure cluster node IP address set for EgressService: %w", err)
+			}
+			return InitClusterEgressPolicies(nbClient, addressSetFactory, ni, clusterSubnets, controllerName, routerName, clusterNodeIPsAddrSetDbIDs)
+		}
+		ensureNodeNoReroutePolicies = func(nbClient libovsdbclient.Client, addressSetFactory addressset.AddressSetFactory,
+			network, router, controller string, nodeLister listers.NodeLister, v4, v6 bool) error {
+			clusterNodeIPsAddrSetDbIDs, err := oc.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsEgressServiceBackRef)
+			if err != nil {
+				return fmt.Errorf("failed to ensure cluster node IP address set for EgressService: %w", err)
+			}
+			return ensureDefaultNoRerouteNodePolicies(nbClient, addressSetFactory, network, router, controller, nodeLister, v4, v6, clusterNodeIPsAddrSetDbIDs)
+		}
 		createDefaultNodeRouteToExternal = libovsdbutil.CreateDefaultRouteToExternal
 	}
 

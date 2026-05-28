@@ -157,10 +157,10 @@ is updated with a subnet that would overlap, and ensure that the Egress Firewall
 
 #### BGP RouteAdvertisement (RA)
 
-Whenever a BGP RA is configured to advertise the pod subnet, it generates an FRR-K8S configuration that includes the subnet.
-When a NAD changes today, we reconcile all BGP RAs. However, in the reconciliation, we check raNeedsUpdate, which only checks
-if the RA changed. We will need to fix this code and add a unit test to make sure that when an RA exists, with pod subnet
-advertisement, that adding a subnet updates the FRR-K8S configuration with the new subnet.
+No code change is required for Layer3 topology. When a BGP RA advertises pod subnets, the FRR-K8S configuration uses the
+node subnets allocated from the NAD and stored in the node subnet annotation, rather than the NAD cluster subnet list
+directly. If a node receives a subnet from a newly added NAD subnet range, the node subnet annotation changes and already
+triggers RA reconciliation.
 
 #### BGP Route Importing
 

@@ -15,8 +15,6 @@ fi
 # Commands ($1 values)
 #    ovs-server     Runs the ovs daemons - ovsdb-server and ovs-switchd (v3)
 #    run-ovn-northd Runs ovn-northd as a process does not run nb_ovsdb or sb_ovsdb (v3)
-#    nb-ovsdb       Runs nb_ovsdb as a process (no detach or monitor) (v3)
-#    sb-ovsdb       Runs sb_ovsdb as a process (no detach or monitor) (v3)
 #    ovn-identity   Runs ovnkube-identity (v3)
 #    ovn-controller Runs ovn controller (v3)
 #    ovn-node       Runs ovnkube in node mode (v3)
@@ -61,13 +59,6 @@ fi
 # OVNKUBE_LOGFILE_MAXAGE - log file max age in days (default 5 days)
 # OVNKUBE_LIBOVSDB_CLIENT_LOGFILE - separate log file for libovsdb client (default: do not separate from logfile)
 # OVN_ACL_LOGGING_RATE_LIMIT - specify default ACL logging rate limit in messages per second (default: 20)
-# OVN_NB_PORT - ovn north db port (default 6641)
-# OVN_SB_PORT - ovn south db port (default 6642)
-# OVN_NB_RAFT_PORT - ovn north db raft port (default 6643)
-# OVN_SB_RAFT_PORT - ovn south db raft port (default 6644)
-# OVN_NB_RAFT_ELECTION_TIMER - ovn north db election timer in ms (default 1000)
-# OVN_SB_RAFT_ELECTION_TIMER - ovn south db election timer in ms (default 1000)
-# OVN_SSL_ENABLE - use SSL transport to NB/SB db and northd (default: no)
 # OVN_REMOTE_PROBE_INTERVAL - ovn remote probe interval in ms (default 100000)
 # OVN_MONITOR_ALL - ovn-controller monitor all data in SB DB
 # OVN_OFCTRL_WAIT_BEFORE_CLEAR - ovn-controller wait time in ms before clearing OpenFlow rules during start up
@@ -89,7 +80,8 @@ fi
 # OVN_DISABLE_FORWARDING - disable forwarding on OVNK controlled interfaces
 # OVN_ENABLE_MULTI_EXTERNAL_GATEWAY - enable multi external gateway for ovn-kubernetes
 # OVN_ENABLE_OVNKUBE_IDENTITY - enable per node certificate ovn-kubernetes
-# OVN_METRICS_MASTER_PORT - metrics port which will be exposed by ovnkube control plane components (default 9409)
+# OVN_METRICS_CONTROLLER_PORT - metrics port exposed by ovnkube-controller (default 9409)
+# OVN_METRICS_MASTER_PORT - deprecated alias for OVN_METRICS_CONTROLLER_PORT
 # OVN_METRICS_WORKER_PORT - metrics port which will be exposed by ovnkube-node (default 9410)
 # OVN_METRICS_BIND_PORT - port for the OVN metrics server to serve on (default 9476)
 # OVN_METRICS_EXPORTER_PORT - ovs-metrics exporter port (default 9310)
@@ -132,7 +124,6 @@ ovnkube_version="1.3.0"
 ovn_daemonset_version=${OVN_DAEMONSET_VERSION:-"1.3.0"}
 
 # hostname is the host's hostname when using host networking,
-# This is useful on the master
 # otherwise it is the container ID (useful for debugging).
 ovn_pod_host=${K8S_NODE:-$(hostname)}
 
@@ -151,23 +142,13 @@ fi
 # certs and private keys for k8s and OVN
 k8s_cacert=${K8S_CACERT:-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt}
 
+# NB cert material used by ovnkube components to authenticate the Egress IP
+# gRPC health-check channel (historical name; no longer used for the OVN NB
+# DB connection which is unix-socket only since central mode was removed).
 ovn_ca_cert=/ovn-cert/ca-cert.pem
-ovn_nb_pk=/ovn-cert/ovnnb-privkey.pem
-ovn_nb_cert=/ovn-cert/ovnnb-cert.pem
-ovn_sb_pk=/ovn-cert/ovnsb-privkey.pem
-ovn_sb_cert=/ovn-cert/ovnsb-cert.pem
-ovn_northd_pk=/ovn-cert/ovnnorthd-privkey.pem
-ovn_northd_cert=/ovn-cert/ovnnorthd-cert.pem
 ovn_controller_pk=/ovn-cert/ovncontroller-privkey.pem
 ovn_controller_cert=/ovn-cert/ovncontroller-cert.pem
 ovn_controller_cname="ovncontroller"
-
-transport="tcp"
-ovndb_ctl_ssl_opts=""
-if [[ "yes" == ${OVN_SSL_ENABLE} ]]; then
-  transport="ssl"
-  ovndb_ctl_ssl_opts="-p ${ovn_controller_pk} -c ${ovn_controller_cert} -C ${ovn_ca_cert}"
-fi
 
 # ovn-northd - /etc/sysconfig/ovn-northd
 ovn_northd_opts=${OVN_NORTHD_OPTS:-""}
@@ -193,8 +174,8 @@ routable_mtu=${OVN_ROUTABLE_MTU:-}
 metrics_endpoint_ip="${METRICS_IP:-${K8S_NODE_IP:-0.0.0.0}}"
 metrics_endpoint_ip=$(bracketify $metrics_endpoint_ip)
 
-# set metrics master port
-metrics_master_port=${OVN_METRICS_MASTER_PORT:-9409}
+# set metrics controller port (OVN_METRICS_MASTER_PORT kept as deprecated alias)
+metrics_controller_port=${OVN_METRICS_CONTROLLER_PORT:-${OVN_METRICS_MASTER_PORT:-9409}}
 
 # set metrics worker port
 metrics_worker_port=${OVN_METRICS_WORKER_PORT:-9410}
@@ -209,23 +190,8 @@ ovn_kubernetes_namespace=${OVN_KUBERNETES_NAMESPACE:-ovn-kubernetes}
 # namespace used for classifying host network traffic
 ovn_host_network_namespace=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
 
-# host on which this zone's OVN DB pod is running.
-ovn_db_host=${K8S_NODE_IP:-""}
-
-# OVN_NB_PORT - ovn north db port (default 6641)
-ovn_nb_port=${OVN_NB_PORT:-6641}
-# OVN_SB_PORT - ovn south db port (default 6642)
-ovn_sb_port=${OVN_SB_PORT:-6642}
-# OVN_NB_RAFT_PORT - ovn north db port used for raft communication (default 6643)
-ovn_nb_raft_port=${OVN_NB_RAFT_PORT:-6643}
-# OVN_SB_RAFT_PORT - ovn south db port used for raft communication (default 6644)
-ovn_sb_raft_port=${OVN_SB_RAFT_PORT:-6644}
 # OVN_ENCAP_PORT - GENEVE UDP port (default 6081)
 ovn_encap_port=${OVN_ENCAP_PORT:-6081}
-# OVN_NB_RAFT_ELECTION_TIMER - ovn north db election timer in ms (default 1000)
-ovn_nb_raft_election_timer=${OVN_NB_RAFT_ELECTION_TIMER:-1000}
-# OVN_SB_RAFT_ELECTION_TIMER - ovn south db election timer in ms (default 1000)
-ovn_sb_raft_election_timer=${OVN_SB_RAFT_ELECTION_TIMER:-1000}
 
 ovn_hybrid_overlay_enable=${OVN_HYBRID_OVERLAY_ENABLE:-}
 ovn_hybrid_overlay_net_cidr=${OVN_HYBRID_OVERLAY_NET_CIDR:-}
@@ -442,29 +408,23 @@ wait_ovnkube_controller_with_node_done() {
   fi
 }
 
-# The OVN DB service for this zone, ovnkube-db or ovnkube-db-$zone, must be
-# populated with endpoints before other OVN-Kubernetes containers can start.
-# This function checks for those endpoints.
-# If OVN dbs are configured to listen only on unix sockets, then there will not be
-# OVN DB service endpoints.
-ready_to_start_node() {
-  get_ovn_db_vars
-  if [[ $ovn_nbdb == "local" ]]; then
-    return 0
-  fi
-
-  ovnkube_db_ep=$(get_ovnkube_zone_db_ep)
-  echo "Getting the ${ovnkube_db_ep} ep"
-  # See if ep is available ...
-  IFS=" " read -a ovn_db_hosts <<<"$(kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} \
-    get ep -n ${ovn_kubernetes_namespace} ${ovnkube_db_ep} -o=jsonpath='{range .subsets[0].addresses[*]}{.ip}{" "}')"
-  if [[ ${#ovn_db_hosts[@]} == 0 ]]; then
+# In IC mode NB/SB run as local unix-socket-only OVSDB containers
+# (local-nb-ovsdb / local-sb-ovsdb). Consumers (ovn-northd,
+# ovnkube-controller, ovn-controller, ovn-cluster-manager) wait on this
+# function via wait_for_event before starting.
+local_dbs_ready() {
+  for daemon in ovnnb_db ovnsb_db; do
+    pidfile=${OVN_RUNDIR}/${daemon}.pid
+    if [[ -f ${pidfile} ]]; then
+      check_health $daemon $(cat $pidfile)
+      if [[ $? == 0 ]]; then
+        continue
+      fi
+    fi
     return 1
-  fi
-  get_ovn_db_vars
+  done
   return 0
 }
-# wait_for_event ready_to_start_node
 
 # check that daemonset version is among expected versions
 check_ovn_daemonset_version() {
@@ -476,29 +436,6 @@ check_ovn_daemonset_version() {
   done
   echo "VERSION MISMATCH expect ${ok}, daemonset is version ${ovn_daemonset_version}"
   exit 1
-}
-
-get_ovn_db_vars() {
-  ovn_nbdb_str=""
-  ovn_sbdb_str=""
-  for i in "${ovn_db_hosts[@]}"; do
-    if [ -n "$ovn_nbdb_str" ]; then
-      ovn_nbdb_str=${ovn_nbdb_str}","
-      ovn_sbdb_str=${ovn_sbdb_str}","
-    fi
-    ip=$(bracketify $i)
-    ovn_nbdb_str=${ovn_nbdb_str}${transport}://${ip}:${ovn_nb_port}
-    ovn_sbdb_str=${ovn_sbdb_str}${transport}://${ip}:${ovn_sb_port}
-  done
-  # OVN_NORTH and OVN_SOUTH override derived host
-  ovn_nbdb=${OVN_NORTH:-$ovn_nbdb_str}
-  ovn_sbdb=${OVN_SOUTH:-$ovn_sbdb_str}
-
-  echo ovn_nbdb=$ovn_nbdb
-  echo ovn_sbdb=$ovn_sbdb
-  # ovsdb server connection method <transport>:<host_address>:<port>
-  ovn_nbdb_conn=$(echo ${ovn_nbdb} | sed 's;//;;g')
-  ovn_sbdb_conn=$(echo ${ovn_sbdb} | sed 's;//;;g')
 }
 
 # OVS must be up before OVN comes up.
@@ -678,8 +615,8 @@ display_file() {
 display() {
   echo "==================== display for ${ovn_pod_host}  =================== "
   date
-  display_file "nb-ovsdb" ${OVN_RUNDIR}/ovnnb_db.pid ${OVN_LOGDIR}/ovsdb-server-nb.log
-  display_file "sb-ovsdb" ${OVN_RUNDIR}/ovnsb_db.pid ${OVN_LOGDIR}/ovsdb-server-sb.log
+  display_file "local-nb-ovsdb" ${OVN_RUNDIR}/ovnnb_db.pid ${OVN_LOGDIR}/ovsdb-server-nb.log
+  display_file "local-sb-ovsdb" ${OVN_RUNDIR}/ovnsb_db.pid ${OVN_LOGDIR}/ovsdb-server-sb.log
   display_file "run-ovn-northd" ${OVN_RUNDIR}/ovn-northd.pid ${OVN_LOGDIR}/ovn-northd.log
   display_file "ovs-vswitchd" ${OVS_RUNDIR}/ovs-vswitchd.pid ${OVS_LOGDIR}/ovs-vswitchd.log
   display_file "ovsdb-server" ${OVS_RUNDIR}/ovsdb-server.pid ${OVS_LOGDIR}/ovsdb-server.log
@@ -689,18 +626,6 @@ display() {
 
 setup_cni() {
   cp -f /usr/libexec/cni/ovn-k8s-cni-overlay /opt/cni/bin/ovn-k8s-cni-overlay
-}
-
-check_ovnkube_db_ep() {
-  local dbaddr=${1}
-  local dbport=${2}
-
-  echo "======= checking [${dbaddr}]:${dbport} OVSDB instance ==============="
-  ovsdb-client ${ovndb_ctl_ssl_opts} list-dbs ${transport}:[${dbaddr}]:${dbport} >/dev/null
-  if [[ $? != 0 ]]; then
-    return 1
-  fi
-  return 0
 }
 
 set_northd_probe_interval() {
@@ -746,9 +671,7 @@ display_version() {
 display_env() {
   echo OVS_USER_ID ${ovs_user_id}
   echo OVS_OPTIONS ${ovs_options}
-  echo OVN_NORTH ${ovn_nbdb}
   echo OVN_NORTHD_OPTS ${ovn_northd_opts}
-  echo OVN_SOUTH ${ovn_sbdb}
   echo OVN_CONTROLLER_OPTS ${ovn_controller_opts}
   echo OVN_LOGLEVEL_CONTROLLER ${ovn_loglevel_controller}
   echo OVN_GATEWAY_MODE ${ovn_gateway_mode}
@@ -756,8 +679,6 @@ display_env() {
   echo OVN_GATEWAY_ROUTER_SUBNET ${ovn_gateway_router_subnet}
   echo OVN_NET_CIDR ${net_cidr}
   echo OVN_SVC_CIDR ${svc_cidr}
-  echo OVN_NB_PORT ${ovn_nb_port}
-  echo OVN_SB_PORT ${ovn_sb_port}
   echo K8S_APISERVER ${K8S_APISERVER}
   echo OVNKUBE_LOGLEVEL ${ovnkube_loglevel}
   echo OVN_DAEMONSET_VERSION ${ovn_daemonset_version}
@@ -769,21 +690,18 @@ display_env() {
 }
 
 ovn_debug() {
-  wait_for_event attempts=3 ready_to_start_node
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
-  echo "ovn_nbdb_conn ${ovn_nbdb_conn}"
-  echo "ovn_sbdb_conn ${ovn_sbdb_conn}"
+  wait_for_event attempts=3 local_dbs_ready
 
-  # get ovs/ovn info from the node for debug purposes
+  # get ovs/ovn info from the node for debug purposes (uses local NB/SB unix sockets)
   echo "=========== ovn_debug   hostname: ${ovn_pod_host} ============="
-  echo "=========== ovn-nbctl --db=${ovn_nbdb_conn} show ============="
-  ovn-nbctl --db=${ovn_nbdb_conn} show
+  echo "=========== ovn-nbctl show ============="
+  ovn-nbctl show
   echo " "
   echo "=========== ovn-nbctl list ACL ============="
-  ovn-nbctl --db=${ovn_nbdb_conn} list ACL
+  ovn-nbctl list ACL
   echo " "
   echo "=========== ovn-nbctl list address_set ============="
-  ovn-nbctl --db=${ovn_nbdb_conn} list address_set
+  ovn-nbctl list address_set
   echo " "
   echo "=========== ovs-vsctl show ============="
   ovs-vsctl show
@@ -797,17 +715,17 @@ ovn_debug() {
   echo "=========== ovs-ofctl dump-flows br-int ============="
   ovs-ofctl dump-flows br-int
   echo " "
-  echo "=========== ovn-sbctl --db=${ovn_sbdb_conn} show ============="
-  ovn-sbctl --db=${ovn_sbdb_conn} show
+  echo "=========== ovn-sbctl show ============="
+  ovn-sbctl show
   echo " "
-  echo "=========== ovn-sbctl --db=${ovn_sbdb_conn} lflow-list ============="
-  ovn-sbctl --db=${ovn_sbdb_conn} lflow-list
+  echo "=========== ovn-sbctl lflow-list ============="
+  ovn-sbctl lflow-list
   echo " "
-  echo "=========== ovn-sbctl --db=${ovn_sbdb_conn} list datapath ============="
-  ovn-sbctl --db=${ovn_sbdb_conn} list datapath
+  echo "=========== ovn-sbctl list datapath ============="
+  ovn-sbctl list datapath
   echo " "
-  echo "=========== ovn-sbctl --db=${ovn_sbdb_conn} list port_binding ============="
-  ovn-sbctl --db=${ovn_sbdb_conn} list port_binding
+  echo "=========== ovn-sbctl list port_binding ============="
+  ovn-sbctl list port_binding
 }
 
 ovs-server() {
@@ -901,37 +819,6 @@ cleanup-ovs-server() {
   /usr/share/openvswitch/scripts/ovs-ctl stop
 }
 
-# set the ovnkube_db endpoint for other pods to query the OVN DB IP
-set_ovnkube_db_ep() {
-  ips=("$@")
-
-  ovn_zone=$(get_node_zone)
-  ovnkube_db_ep=$(get_ovnkube_zone_db_ep)
-  echo "=============== setting ${ovnkube_db_ep} endpoints to ${ips[@]}"
-  # create a new endpoint for the headless onvkube-db service without selectors
-  kubectl --server=${K8S_APISERVER} --token=${k8s_token} --certificate-authority=${k8s_cacert} apply -f - <<EOF
-apiVersion: v1
-kind: Endpoints
-metadata:
-  name: ${ovnkube_db_ep}
-  namespace: ${ovn_kubernetes_namespace}
-subsets:
-  - addresses:
-$(for ip in ${ips[@]}; do printf "    - ip: ${ip}\n"; done)
-    ports:
-    - name: north
-      port: ${ovn_nb_port}
-      protocol: TCP
-    - name: south
-      port: ${ovn_sb_port}
-      protocol: TCP
-EOF
-  if [[ $? != 0 ]]; then
-    echo "Failed to create endpoint with host(s) ${ips[@]} for ${ovnkube_db_ep} service"
-    exit 1
-  fi
-}
-
 function memory_trim_on_compaction_supported {
   if [[ $1 == "nbdb" ]]; then
     mem_trim_check=$(ovn-appctl -t ${OVN_RUNDIR}/ovnnb_db.ctl list-commands | grep "memory-trim-on-compaction")
@@ -998,109 +885,6 @@ EOF
   echo "$zone"
 }
 
-function get_ovnkube_zone_db_ep() {
-  zone=$(get_node_zone)
-  if [ "$zone" == "global" ]; then
-      echo "ovnkube-db"
-  else
-      echo "ovnkube-db-$zone"
-  fi
-}
-
-# v1.3.0 - run nb_ovsdb in a separate container
-nb-ovsdb() {
-  trap 'ovsdb_cleanup nb' TERM
-  check_ovn_daemonset_version "1.3.0"
-  rm -f ${OVN_RUNDIR}/ovnnb_db.pid
-
-  if [[ ${ovn_db_host} == "" ]]; then
-    echo "The IP address of the host $(hostname) could not be determined. Exiting..."
-    exit 1
-  fi
-
-  ovn_zone=$(get_node_zone)
-  echo "Node ${K8S_NODE} zone is $ovn_zone"
-
-  echo "=============== run nb_ovsdb ========== MASTER ONLY"
-  run_as_ovs_user_if_needed \
-    ${OVNCTL_PATH} run_nb_ovsdb --no-monitor \
-    --ovn-nb-log="${ovn_loglevel_nb}" &
-
-  wait_for_event attempts=3 process_ready ovnnb_db
-  echo "=============== nb-ovsdb ========== RUNNING"
-
-  # setting northd probe interval
-  set_northd_probe_interval
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn-nbctl set-ssl ${ovn_nb_pk} ${ovn_nb_cert} ${ovn_ca_cert}
-    echo "=============== nb-ovsdb ========== reconfigured for SSL"
-  }
- [[ "true" == "${ENABLE_IPSEC}" ]] && {
-    ovn-nbctl set nb_global . ipsec=true
-    echo "=============== nb-ovsdb ========== reconfigured for ipsec"
-  }
-
-  # Let ovn-northd sleep and not use so much CPU
-  ovn-nbctl set NB_Global . options:northd-backoff-interval-ms=${ovn_northd_backoff_interval}
-  echo "=============== nb-ovsdb ========== reconfigured for northd backoff"
-
-  ovn-nbctl set NB_Global . name=${ovn_zone}
-  ovn-nbctl set NB_Global . options:name=${ovn_zone}
-
-  ovn-nbctl --inactivity-probe=0 set-connection p${transport}:${ovn_nb_port}:$(bracketify ${ovn_db_host})
-  if memory_trim_on_compaction_supported "nbdb"
-  then
-    # Enable NBDB memory trimming on DB compaction, Every 10mins DBs are compacted
-    # memory on the heap is freed, when enable memory trimmming freed memory will go back to OS.
-    ovn-appctl -t ${OVN_RUNDIR}/ovnnb_db.ctl ovsdb-server/memory-trim-on-compaction on
-  fi
-  tail --follow=name ${OVN_LOGDIR}/ovsdb-server-nb.log &
-  ovn_tail_pid=$!
-  process_healthy ovnnb_db ${ovn_tail_pid}
-  echo "=============== run nb_ovsdb ========== terminated"
-}
-
-# v1.3.0 - run sb_ovsdb in a separate container
-sb-ovsdb() {
-  trap 'ovsdb_cleanup sb' TERM
-  check_ovn_daemonset_version "1.3.0"
-  rm -f ${OVN_RUNDIR}/ovnsb_db.pid
-
-  if [[ ${ovn_db_host} == "" ]]; then
-    echo "The IP address of the host $(hostname) could not be determined. Exiting..."
-    exit 1
-  fi
-
-  echo "=============== run sb_ovsdb ========== MASTER ONLY"
-  run_as_ovs_user_if_needed \
-    ${OVNCTL_PATH} run_sb_ovsdb --no-monitor \
-    --ovn-sb-log="${ovn_loglevel_sb}" &
-
-  wait_for_event attempts=3 process_ready ovnsb_db
-  echo "=============== sb-ovsdb ========== RUNNING"
-
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn-sbctl set-ssl ${ovn_sb_pk} ${ovn_sb_cert} ${ovn_ca_cert}
-    echo "=============== sb-ovsdb ========== reconfigured for SSL"
-  }
-  ovn-sbctl --inactivity-probe=0 set-connection p${transport}:${ovn_sb_port}:$(bracketify ${ovn_db_host})
-
-  # create the OVN DB service endpoint for this zone
-  wait_for_event attempts=10 check_ovnkube_db_ep ${ovn_db_host} ${ovn_nb_port}
-  set_ovnkube_db_ep ${ovn_db_host}
-  if memory_trim_on_compaction_supported "sbdb"
-  then
-    # Enable SBDB memory trimming on DB compaction, Every 10mins DBs are compacted
-    # memory on the heap is freed, when enable memory trimmming freed memory will go back to OS.
-    ovn-appctl -t ${OVN_RUNDIR}/ovnsb_db.ctl ovsdb-server/memory-trim-on-compaction on
-  fi
-  tail --follow=name ${OVN_LOGDIR}/ovsdb-server-sb.log &
-  ovn_tail_pid=$!
-
-  process_healthy ovnsb_db ${ovn_tail_pid}
-  echo "=============== run sb_ovsdb ========== terminated"
-}
-
 # v1.0.0 - run nb_ovsdb in a separate container listening only on
 # unix sockets
 local-nb-ovsdb() {
@@ -1162,45 +946,25 @@ local-sb-ovsdb() {
   echo "=============== run sb-ovsdb (unix sockets only) ========== terminated"
 }
 
-# v1.3.0 - Runs northd on master. Does not run nb_ovsdb, and sb_ovsdb
+# v1.3.0 - Runs northd.
 run-ovn-northd() {
   trap 'ovn-appctl -t ovn-northd exit >/dev/null 2>&1; exit 0' TERM
   check_ovn_daemonset_version "1.3.0"
   rm -f ${OVN_RUNDIR}/ovn-northd.pid
   rm -f ${OVN_RUNDIR}/ovn-northd.*.ctl
 
-  echo "=============== run-ovn-northd (wait for ready_to_start_node)"
-  wait_for_event ready_to_start_node
+  echo "=============== run-ovn-northd (wait for local NB/SB)"
+  wait_for_event local_dbs_ready
 
-  echo "=============== run_ovn_northd ========== MASTER ONLY"
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
+  echo "=============== run_ovn_northd =========="
   echo "ovn_northd_opts=${ovn_northd_opts}"
   echo "ovn_loglevel_northd=${ovn_loglevel_northd}"
 
   # no monitor (and no detach), start northd which connects to the
-  # OVN DB service endpoint for this zone
-  local ovn_northd_ssl_opts=""
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn_northd_ssl_opts="
-        --ovn-northd-ssl-key=${ovn_northd_pk}
-        --ovn-northd-ssl-cert=${ovn_northd_cert}
-        --ovn-northd-ssl-ca-cert=${ovn_ca_cert}
-     "
-  }
-
-  ovn_dbs=""
-  if [[ $ovn_nbdb != "local" ]]; then
-      ovn_dbs="--ovn-northd-nb-db=${ovn_nbdb_conn}"
-  fi
-  if [[ $ovn_sbdb != "local" ]]; then
-      ovn_dbs="${ovn_dbs} --ovn-northd-sb-db=${ovn_sbdb_conn}"
-  fi
-
+  # local NB/SB OVSDB unix sockets
   run_as_ovs_user_if_needed \
     ${OVNCTL_PATH} start_northd \
     --no-monitor --ovn-manage-ovsdb=no \
-    ${ovn_dbs} \
-    ${ovn_northd_ssl_opts} \
     --ovn-northd-log="${ovn_loglevel_northd}" \
     ${ovn_northd_opts}
 
@@ -1242,9 +1006,8 @@ ovnkube-controller() {
   check_ovn_daemonset_version "1.3.0"
   rm -f ${OVN_RUNDIR}/ovnkube-controller.pid
 
-  echo "=============== ovnkube-controller (wait for ready_to_start_node) =========="
-  wait_for_event ready_to_start_node
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
+  echo "=============== ovnkube-controller (wait for local NB/SB) =========="
+  wait_for_event local_dbs_ready
 
   # wait for northd to start
   wait_for_event process_ready ovn-northd
@@ -1309,21 +1072,6 @@ ovnkube-controller() {
       ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
   echo "ovn_v6_masquerade_subnet_opt=${ovn_v6_masquerade_subnet_opt}"
-
-  local ovn_master_ssl_opts=""
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn_master_ssl_opts="
-        --nb-client-privkey ${ovn_controller_pk}
-        --nb-client-cert ${ovn_controller_cert}
-        --nb-client-cacert ${ovn_ca_cert}
-        --nb-cert-common-name ${ovn_controller_cname}
-        --sb-client-privkey ${ovn_controller_pk}
-        --sb-client-cert ${ovn_controller_cert}
-        --sb-client-cacert ${ovn_ca_cert}
-        --sb-cert-common-name ${ovn_controller_cname}
-      "
-  }
-  echo "ovn_master_ssl_opts=${ovn_master_ssl_opts}"
 
   libovsdb_client_logfile_flag=
   if [[ -n ${ovnkube_libovsdb_client_logfile} ]]; then
@@ -1435,8 +1183,8 @@ ovnkube-controller() {
   fi
   echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
 
-  ovnkube_master_metrics_bind_address="${metrics_endpoint_ip}:${metrics_master_port}"
-  echo "ovnkube_master_metrics_bind_address=${ovnkube_master_metrics_bind_address}"
+  ovnkube_controller_metrics_bind_address="${metrics_endpoint_ip}:${metrics_controller_port}"
+  echo "ovnkube_controller_metrics_bind_address=${ovnkube_controller_metrics_bind_address}"
 
   local ovnkube_metrics_tls_opts=""
   if [[ ${OVNKUBE_METRICS_PK} != "" && ${OVNKUBE_METRICS_CERT} != "" ]]; then
@@ -1455,14 +1203,6 @@ ovnkube-controller() {
 
   ovn_zone=$(get_node_zone)
   echo "ovnkube-controller's configured zone is ${ovn_zone}"
-
-  ovn_dbs=""
-  if [[ $ovn_nbdb != "local" ]]; then
-      ovn_dbs="--nb-address=${ovn_nbdb}"
-  fi
-  if [[ $ovn_sbdb != "local" ]]; then
-      ovn_dbs="${ovn_dbs} --sb-address=${ovn_sbdb}"
-  fi
 
   ovnkube_enable_multi_external_gateway_flag=
   if [[ ${ovn_enable_multi_external_gateway} == "true" ]]; then
@@ -1528,7 +1268,7 @@ ovnkube-controller() {
   fi
   echo "ovn_stateless_netpol_enable_flag: ${ovn_stateless_netpol_enable_flag}"
 
-  echo "=============== ovnkube-controller ========== MASTER ONLY"
+  echo "=============== ovnkube-controller =========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_snat_multiple_gws_flag} \
@@ -1550,7 +1290,6 @@ ovnkube-controller() {
     ${advertised_udn_isolation_flag} \
     ${ovnkube_config_file_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
-    ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
     ${ovnkube_config_duration_enable_flag} \
@@ -1559,7 +1298,6 @@ ovnkube-controller() {
     ${ovnkube_metrics_scale_enable_flag} \
     ${ovnkube_metrics_tls_opts} \
     ${ovn_encap_port_flag} \
-    ${ovn_master_ssl_opts} \
     ${ovn_v4_join_subnet_opt} \
     ${ovn_v4_masquerade_subnet_opt} \
     ${ovn_v6_join_subnet_opt} \
@@ -1577,7 +1315,7 @@ ovnkube-controller() {
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile /var/log/ovn-kubernetes/ovnkube-controller.log \
     --loglevel=${ovnkube_loglevel} \
-    --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
+    --metrics-bind-address ${ovnkube_controller_metrics_bind_address} \
     --metrics-enable-pprof \
     --ovn-config-namespace ${ovn_kubernetes_namespace} \
     --pidfile ${OVN_RUNDIR}/ovnkube-controller.pid \
@@ -1598,21 +1336,17 @@ ovnkube-controller-with-node() {
   check_ovn_daemonset_version "1.3.0"
   rm -f ${OVN_RUNDIR}/ovnkube-controller-with-node.pid
 
+  # wait for ovs-servers to start since ovnkube initialization sets some fields in OVS DB
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovnkube-controller-with-node - (wait for ovs)"
     wait_for_event ovs_ready
   fi
 
-  echo "=============== ovnkube-controller-with-node (wait for ready_to_start_node) =========="
-  wait_for_event ready_to_start_node
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}  ovn_nbdb_conn ${ovn_nbdb_conn}"
+  echo "=============== ovnkube-controller-with-node (wait for local NB/SB) =========="
+  wait_for_event local_dbs_ready
 
   # wait for northd to start
   wait_for_event process_ready ovn-northd
-
-  # wait for ovs-servers to start since ovnkube initialization sets some fields in OVS DB
-  echo "=============== ovnkube-controller-with-node - (wait for ovs)"
-  wait_for_event ovs_ready
 
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovnkube-controller-with-node - (ovn-node  wait for ovn-controller.pid)"
@@ -1690,22 +1424,6 @@ ovnkube-controller-with-node() {
       ovn_v6_join_subnet_opt="--gateway-v6-join-subnet=${ovn_v6_join_subnet}"
   fi
   echo "ovn_v6_join_subnet_opt=${ovn_v6_join_subnet_opt}"
-
-  local ssl_opts=""
-
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ssl_opts="
-        --nb-client-privkey ${ovn_controller_pk}
-        --nb-client-cert ${ovn_controller_cert}
-        --nb-client-cacert ${ovn_ca_cert}
-        --nb-cert-common-name ${ovn_controller_cname}
-        --sb-client-privkey ${ovn_controller_pk}
-        --sb-client-cert ${ovn_controller_cert}
-        --sb-client-cacert ${ovn_ca_cert}
-        --sb-cert-common-name ${ovn_controller_cname}
-      "
-  }
-  echo "ssl_opts=${ssl_opts}"
 
   ovn_acl_logging_rate_limit_flag=
   if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
@@ -1934,14 +1652,6 @@ ovnkube-controller-with-node() {
   ovn_zone=$(get_node_zone)
   echo "ovnkube-controller-with-node's configured zone is ${ovn_zone}"
 
-  ovn_dbs=""
-  if [[ $ovn_nbdb != "local" ]]; then
-      ovn_dbs="--nb-address=${ovn_nbdb}"
-  fi
-  if [[ $ovn_sbdb != "local" ]]; then
-      ovn_dbs="${ovn_dbs} --sb-address=${ovn_sbdb}"
-  fi
-
   ovnkube_enable_multi_external_gateway_flag=
   if [[ ${ovn_enable_multi_external_gateway} == "true" ]]; then
 	  ovnkube_enable_multi_external_gateway_flag="--enable-multi-external-gateway"
@@ -2045,6 +1755,20 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
+  # NB client cert material is only consumed by the Egress IP gRPC
+  # health-check channel (see pkg/ovn/healthcheck/egressip_healthcheck.go).
+  # The OVN NB/SB DB connections themselves are unix-socket only.
+  local ssl_opts=""
+  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
+    ssl_opts="
+        --nb-client-privkey ${ovn_controller_pk}
+        --nb-client-cert ${ovn_controller_cert}
+        --nb-client-cacert ${ovn_ca_cert}
+        --nb-cert-common-name ${ovn_controller_cname}
+      "
+  }
+  echo "ssl_opts=${ssl_opts}"
+
   # Pass DPU Host cluster access credentials provided via environment variables in case of DPU
   cluster_access_opts=""
   if [[ ${ovnkube_node_mode} == "dpu" ]]; then
@@ -2088,7 +1812,6 @@ ovnkube-controller-with-node() {
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
     ${ovn_acl_logging_rate_limit_flag} \
-    ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
     ${ovn_encap_ip_flag} \
@@ -2102,6 +1825,7 @@ ovnkube-controller-with-node() {
     ${ovnkube_node_mode_flag} \
     ${ovn_simulate_dpu_flag} \
     ${ovn_dpu_host_gateway_representor_interface_flag} \
+    ${ssl_opts} \
     ${ovn_unprivileged_flag} \
     ${ovn_v4_join_subnet_opt} \
     ${ovn_v4_masquerade_subnet_opt} \
@@ -2109,7 +1833,6 @@ ovnkube-controller-with-node() {
     ${ovn_v6_masquerade_subnet_opt} \
     ${routable_mtu_flag} \
     ${sflow_targets} \
-    ${ssl_opts} \
     ${dynamic_udn_allocation_flag} \
     ${dynamic_udn_grace_period} \
     ${network_qos_enabled_flag} \
@@ -2349,7 +2072,22 @@ ovn-cluster-manager() {
   fi
   echo "ovn_allow_icmp_netpol_flag=${ovn_allow_icmp_netpol_flag}"
 
-  echo "=============== ovn-cluster-manager ========== MASTER ONLY"
+  # NB client cert material is only consumed by the Egress IP gRPC
+  # health-check channel (see pkg/ovn/healthcheck/egressip_healthcheck.go).
+  # The cluster-manager is the gRPC client; the OVN NB/SB DB connections
+  # themselves are unix-socket only.
+  local ovn_cluster_manager_ssl_opts=""
+  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
+    ovn_cluster_manager_ssl_opts="
+        --nb-client-privkey ${ovn_controller_pk}
+        --nb-client-cert ${ovn_controller_cert}
+        --nb-client-cacert ${ovn_ca_cert}
+        --nb-cert-common-name ${ovn_controller_cname}
+      "
+  }
+  echo "ovn_cluster_manager_ssl_opts=${ovn_cluster_manager_ssl_opts}"
+
+  echo "=============== ovn-cluster-manager ========== control plane node only"
   /usr/bin/ovnkube --init-cluster-manager ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${egressfirewall_enabled_flag} \
@@ -2372,6 +2110,7 @@ ovn-cluster-manager() {
     ${ovnkube_enable_multi_external_gateway_flag} \
     ${ovnkube_metrics_tls_opts} \
     ${ovn_encap_port_flag} \
+    ${ovn_cluster_manager_ssl_opts} \
     ${ovn_v4_join_subnet_opt} \
     ${ovn_v4_masquerade_subnet_opt} \
     ${ovn_v6_join_subnet_opt} \
@@ -2411,27 +2150,15 @@ ovn-controller() {
   echo "=============== ovn-controller - (wait for ovs)"
   wait_for_event ovs_ready
 
-  echo "=============== ovn-controller - (wait for ready_to_start_node)"
-  wait_for_event ready_to_start_node
-
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
-  echo "ovn_nbdb_conn ${ovn_nbdb_conn}"
+  echo "=============== ovn-controller - (wait for local NB/SB)"
+  wait_for_event local_dbs_ready
 
   echo "=============== ovn-controller  start_controller"
   rm -f /var/run/ovn-kubernetes/cni/*
   rm -f ${OVN_RUNDIR}/ovn-controller.*.ctl
 
-  local ovn_controller_ssl_opts=""
-  [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-    ovn_controller_ssl_opts="
-          --ovn-controller-ssl-key=${ovn_controller_pk}
-          --ovn-controller-ssl-cert=${ovn_controller_cert}
-          --ovn-controller-ssl-ca-cert=${ovn_ca_cert}
-      "
-  }
   run_as_ovs_user_if_needed \
     ${OVNCTL_PATH} --no-monitor start_controller \
-    ${ovn_controller_ssl_opts} \
     --ovn-controller-log="${ovn_loglevel_controller}" \
     ${ovn_controller_opts}
 
@@ -2451,16 +2178,14 @@ ovn-node() {
   check_ovn_daemonset_version "1.3.0"
   rm -f ${OVN_RUNDIR}/ovnkube.pid
 
-  # ready_to_start_node checks for the NB/SB readiness state.
+  # local_dbs_ready checks for the local NB/SB OVSDB readiness state.
   # This is not available on the DPU host because the DBs run locally on the DPU.
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovn-node - (wait for ovs)"
     wait_for_event ovs_ready
-    echo "=============== ovn-node - (wait for ready_to_start_node)"
-    wait_for_event ready_to_start_node
+    echo "=============== ovn-node - (wait for local NB/SB)"
+    wait_for_event local_dbs_ready
   fi
-
-  echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}  ovn_nbdb_conn ${ovn_nbdb_conn}"
 
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovn-node - (ovn-node  wait for ovn-controller.pid)"
@@ -2677,22 +2402,6 @@ ovn-node() {
       fi
   fi
 
-  local ovn_node_ssl_opts=""
-  if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
-      [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
-        ovn_node_ssl_opts="
-            --nb-client-privkey ${ovn_controller_pk}
-            --nb-client-cert ${ovn_controller_cert}
-            --nb-client-cacert ${ovn_ca_cert}
-            --nb-cert-common-name ${ovn_controller_cname}
-            --sb-client-privkey ${ovn_controller_pk}
-            --sb-client-cert ${ovn_controller_cert}
-            --sb-client-cacert ${ovn_ca_cert}
-            --sb-cert-common-name ${ovn_controller_cname}
-          "
-      }
-  fi
-
   ovn_unprivileged_flag="--unprivileged-mode"
   if test -z "${OVN_UNPRIVILEGED_MODE+x}" -o "x${OVN_UNPRIVILEGED_MODE}" = xno; then
     ovn_unprivileged_flag=""
@@ -2717,13 +2426,6 @@ ovn-node() {
 	  ovnkube_enable_multi_external_gateway_flag="--enable-multi-external-gateway"
   fi
   echo "ovnkube_enable_multi_external_gateway_flag=${ovnkube_enable_multi_external_gateway_flag}"
-
-  if [[ $ovn_nbdb != "local" ]]; then
-      ovn_dbs="--nb-address=${ovn_nbdb}"
-  fi
-  if [[ $ovn_sbdb != "local" ]]; then
-      ovn_dbs="${ovn_dbs} --sb-address=${ovn_sbdb}"
-  fi
 
   ovnkube_node_certs_flags=
   if [[ ${ovn_enable_ovnkube_identity} == "true" ]]; then
@@ -2768,6 +2470,21 @@ ovn-node() {
   fi
   echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
 
+  # NB client cert material is only consumed by the Egress IP gRPC
+  # health-check channel (see pkg/ovn/healthcheck/egressip_healthcheck.go).
+  # The OVN NB/SB DB connections themselves are unix-socket only.
+  local ovn_node_ssl_opts=""
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
+      [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
+        ovn_node_ssl_opts="
+            --nb-client-privkey ${ovn_controller_pk}
+            --nb-client-cert ${ovn_controller_cert}
+            --nb-client-cacert ${ovn_ca_cert}
+            --nb-cert-common-name ${ovn_controller_cname}
+          "
+      }
+  fi
+
   echo "=============== ovn-node   --init-node"
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
@@ -2796,7 +2513,6 @@ ovn-node() {
         ${ovnkube_config_file_flag} \
         ${netflow_targets} \
         ${ofctrl_wait_before_clear} \
-        ${ovn_dbs} \
         ${ovn_encap_ip_flag} \
         ${ovn_encap_port_flag} \
         ${ovn_conntrack_zone_flag} \
@@ -2902,20 +2618,12 @@ display_version
 # ovs-db-server  - all nodes  -- not done by this script (v3)
 # ovs-vswitchd   - all nodes  -- not done by this script (v3)
 # run-ovn-northd Runs ovn-northd as a process does not run nb_ovsdb or sb_ovsdb (v3)
-# nb-ovsdb       Runs nb_ovsdb as a process (no detach or monitor) (v3)
-# sb-ovsdb       Runs sb_ovsdb as a process (no detach or monitor) (v3)
-# ovn-identity     - master only (v3)
+# ovn-identity     - control plane only (v3)
 # ovn-controller - all nodes (v3)
 # ovn-node       - all nodes (v3)
 # cleanup-ovn-node - all nodes (v3)
 
 case ${cmd} in
-"nb-ovsdb") # zone DB container nb-ovsdb
-  nb-ovsdb
-  ;;
-"sb-ovsdb") # zone DB container sb-ovsdb
-  sb-ovsdb
-  ;;
 "local-nb-ovsdb")
   local-nb-ovsdb
   ;;
@@ -2972,7 +2680,7 @@ case ${cmd} in
   ;;
 *)
   echo "invalid command ${cmd}"
-  echo "valid v3 commands: ovs-server nb-ovsdb sb-ovsdb run-ovn-northd " \
+  echo "valid v3 commands: ovs-server local-nb-ovsdb local-sb-ovsdb run-ovn-northd " \
     "ovnkube-identity ovn-controller ovn-node display_env display ovn_debug cleanup-ovs-server " \
     "cleanup-ovn-node"
   exit 0

@@ -275,7 +275,7 @@ func (oc *DefaultNetworkController) initRetryFramework() {
 }
 
 // newRetryFramework builds and returns a retry framework for the input resource
-// type and assigns all ovnk-master-specific function attributes in the returned struct;
+// type and assigns all ovnkube-controller-specific function attributes in the returned struct;
 // these functions will then be called by the retry logic in the retry package when
 // WatchResource() is called.
 func (oc *DefaultNetworkController) newRetryFramework(
@@ -785,6 +785,9 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 		if err = oc.egressSvcController.Run(oc.wg, 1); err != nil {
 			return err
 		}
+	}
+	if err := cleanupDeprecatedClusterNodeIPsAddressSet(oc.nbClient); err != nil {
+		return err
 	}
 
 	if config.OVNKubernetesFeature.EnableMultiExternalGateway {
