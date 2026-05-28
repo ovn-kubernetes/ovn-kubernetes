@@ -1153,7 +1153,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		f.SkipNamespaceCreation = true
 		var udnNamespaceA, udnNamespaceB *corev1.Namespace
 		var nodes *corev1.NodeList
-		// podsNetA has 3 pods in cudnA, two are on nodes[0] and the last one is on nodes[1] - done in BeforeEach
+		// podsNetA has 4 pods in cudnA, two on nodes[0], one on nodes[1], and one on nodes[2] - done in BeforeEach
 		var podsNetA []*corev1.Pod
 
 		// podNetB is in cudnB hosted on nodes[1], podNetDefault is in the default network hosted on nodes[1] - done in BeforeEach
@@ -1262,12 +1262,14 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
 					e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-2-%s-net-%s", nodes.Items[0].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
 					e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-3-%s-net-%s", nodes.Items[1].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
+					e2epod.NewAgnhostPod(udnNamespaceA.Name, fmt.Sprintf("pod-4-%s-net-%s", nodes.Items[2].Name, cudnA.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec"),
 				}
 				for _, p := range podNetASpecs {
 					p.Spec.NodeName = nodes.Items[0].Name
 					p.Labels = map[string]string{"network": cudnA.Name}
 				}
 				podNetASpecs[2].Spec.NodeName = nodes.Items[1].Name
+				podNetASpecs[3].Spec.NodeName = nodes.Items[2].Name
 
 				podNetBSpec := e2epod.NewAgnhostPod(udnNamespaceB.Name, fmt.Sprintf("pod-1-%s-net-%s", nodes.Items[1].Name, cudnB.Name), nil, nil, []corev1.ContainerPort{{ContainerPort: 8080}}, "netexec")
 				podNetBSpec.Spec.NodeName = nodes.Items[1].Name
