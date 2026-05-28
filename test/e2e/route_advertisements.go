@@ -1532,8 +1532,20 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						framework.Logf("Connectivity check successful:'%s' -> %s", client, targetAddress)
 						return out, nil
 					}
+					expectedOutputList := func(expectedOutput string) []string {
+						var expectedOutputs []string
+						for _, output := range strings.Split(expectedOutput, "\n") {
+							output = strings.TrimSpace(output)
+							if output != "" {
+								expectedOutputs = append(expectedOutputs, output)
+							}
+						}
+						return expectedOutputs
+					}
 					for _, ipFamily := range getSupportedIPFamiliesSlice(f.ClientSet) {
 						clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(ipFamily)
+						expectedOutputs := expectedOutputList(expectedOutput)
+						seenOutputs := sets.New[string]()
 						asyncAssertion := gomega.Eventually
 						timeout := time.Second * 30
 						if expectErr {
@@ -1546,9 +1558,26 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							if expectErr != (err != nil) {
 								return fmt.Errorf("expected connectivity check to return error(%t), got %v, output %v", expectErr, err, out)
 							}
-							if expectedOutput != "" {
-								if !strings.Contains(out, expectedOutput) {
-									return fmt.Errorf("expected connectivity check to contain %q, got %q", expectedOutput, out)
+							if len(expectedOutputs) > 0 {
+								if expectErr || len(expectedOutputs) == 1 {
+									for _, output := range expectedOutputs {
+										if !strings.Contains(out, output) {
+											return fmt.Errorf("expected connectivity check to contain %q, got %q", output, out)
+										}
+									}
+								} else {
+									var missingOutputs []string
+									for _, output := range expectedOutputs {
+										if strings.Contains(out, output) {
+											seenOutputs.Insert(output)
+										}
+										if !seenOutputs.Has(output) {
+											missingOutputs = append(missingOutputs, output)
+										}
+									}
+									if len(missingOutputs) > 0 {
+										return fmt.Errorf("expected connectivity check to reach all endpoints %v, still missing %v; last output %q", expectedOutputs, missingOutputs, out)
+									}
 								}
 							}
 							return nil
@@ -1846,8 +1875,11 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						}
 						nodePort := svcNodePortNetA.Spec.Ports[0].NodePort
 
-						// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
-						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
+						expectedHostnames := []string{}
+						for _, pod := range podsNetA {
+							expectedHostnames = append(expectedHostnames, pod.Name)
+						}
+						return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", strings.Join(expectedHostnames, "\n"), false
 					}),
 				ginkgo.Entry("[ETP=Cluster] UDN pod to the same node nodeport service in different UDN network should not work",
 					// FIXME: This test should work: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5419
