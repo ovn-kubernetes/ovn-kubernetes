@@ -214,6 +214,9 @@ func (rm *Controller) reconcile() error {
 }
 
 func areNetlinkRulesEqual(r1, r2 *netlink.Rule) bool {
+	if r1.Family != r2.Family {
+		return false
+	}
 	if r1.Priority != r2.Priority {
 		return false
 	}
