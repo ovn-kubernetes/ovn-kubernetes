@@ -5,7 +5,10 @@ package ovn
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"sync"
+	gotesting "testing"
 	"time"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
@@ -13,11 +16,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -408,3 +416,215 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 	})
 
 })
+
+func TestAdvertisedSharedGatewaySNATUsesLiveAllowedExtIPSets(t *gotesting.T) {
+	for _, outboundSNAT := range []string{types.NoOverlaySNATDisabled, types.NoOverlaySNATEnabled} {
+		t.Run(outboundSNAT, func(t *gotesting.T) {
+			bsnc, asf, localPodSubnets := newAdvertisedSNATTestController(t, outboundSNAT, config.GatewayModeShared)
+			seedAdvertisedSNATAddressSets(t, asf)
+
+			expectAdvertisedSNATUsesLiveAllowedExtIPs(t, bsnc, asf, localPodSubnets)
+		})
+	}
+}
+
+func TestAdvertisedLocalGatewaySNATUsesDestinationMatch(t *gotesting.T) {
+	bsnc, asf, localPodSubnets := newAdvertisedSNATTestController(t, types.NoOverlaySNATDisabled, config.GatewayModeLocal)
+	seedAdvertisedSNATAddressSets(t, asf)
+
+	expectAdvertisedSNATUsesDestinationMatch(t, bsnc, asf, localPodSubnets)
+}
+
+func newAdvertisedSNATTestController(
+	t *gotesting.T,
+	outboundSNAT string,
+	gatewayMode config.GatewayMode,
+) (*BaseUserDefinedNetworkController, *addressset.FakeAddressSetFactory, []*net.IPNet) {
+	t.Helper()
+	return newAdvertisedSNATTestControllerForTopology(
+		t,
+		types.Layer3Topology,
+		"100.128.0.0/16/24,ae70::/60/64",
+		outboundSNAT,
+		gatewayMode,
+		ovntest.MustParseIPNets("100.128.0.0/24", "ae70::/64"),
+	)
+}
+
+func newAdvertisedSNATTestControllerForTopology(
+	t *gotesting.T,
+	topology string,
+	cidrs string,
+	outboundSNAT string,
+	gatewayMode config.GatewayMode,
+	localPodSubnets []*net.IPNet,
+) (*BaseUserDefinedNetworkController, *addressset.FakeAddressSetFactory, []*net.IPNet) {
+	t.Helper()
+	RegisterTestingT(t)
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = config.PrepareTestConfig()
+	})
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+	config.Gateway.Mode = gatewayMode
+	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
+	config.Gateway.V6MasqueradeSubnet = "fd69::/112"
+
+	const (
+		networkName = "bluenet"
+		nadName     = "rednad"
+		namespace   = "greenamespace"
+	)
+	nad := ovntest.GenerateNADWithConfig(nadName, namespace, fmt.Sprintf(`
+{
+        "cniVersion": "1.1.0",
+        "name": %q,
+        "type": "ovn-k8s-cni-overlay",
+        "topology": %q,
+        "subnets": %q,
+        "mtu": 1300,
+        "netAttachDefName": %q,
+        "role": %q,
+        "transport": %q,
+        "outboundSNAT": %q
+}
+`,
+		networkName,
+		topology,
+		cidrs,
+		fmt.Sprintf("%s/%s", namespace, nadName),
+		types.NetworkRolePrimary,
+		types.NetworkTransportNoOverlay,
+		outboundSNAT,
+	))
+	ovntest.AnnotateNADWithNetworkID("3", nad)
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		t.Fatalf("failed to parse NAD: %v", err)
+	}
+
+	controllerName := getNetworkControllerName(netInfo.GetNetworkName())
+	asf := addressset.NewFakeAddressSetFactory(controllerName)
+	node := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "worker1",
+			Annotations: map[string]string{
+				util.OVNNodeHostCIDRs: `["192.168.126.11/24","fd00::11/64"]`,
+			},
+		},
+	}
+	clientSet := util.GetOVNClientset(&corev1.NodeList{Items: []corev1.Node{node}}).GetOVNKubeControllerClientset()
+	watchFactory, err := factory.NewOVNKubeControllerWatchFactory(clientSet)
+	if err != nil {
+		t.Fatalf("failed to create watch factory: %v", err)
+	}
+	if err := watchFactory.Start(); err != nil {
+		t.Fatalf("failed to start watch factory: %v", err)
+	}
+	t.Cleanup(watchFactory.Shutdown)
+
+	nbClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{})
+	if err != nil {
+		t.Fatalf("failed to create libovsdb test harness: %v", err)
+	}
+	t.Cleanup(libovsdbCleanup.Cleanup)
+	addressSetManager := addresssetmanager.NewAddressSetManager(
+		watchFactory.PodCoreInformer(),
+		watchFactory.NamespaceInformer(),
+		watchFactory.NodeCoreInformer(),
+		nbClient,
+		networkmanager.Default().Interface().GetNetworkNameForNADKey,
+	)
+	return &BaseUserDefinedNetworkController{
+			BaseNetworkController: BaseNetworkController{
+				controllerName:      controllerName,
+				ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
+				addressSetFactory:   asf,
+				addressSetManager:   addressSetManager,
+			},
+		},
+		asf,
+		localPodSubnets
+}
+
+func seedAdvertisedSNATAddressSets(t *gotesting.T, asf addressset.AddressSetFactory) {
+	t.Helper()
+	nodeIPsASIDs := getClusterNodeIPsAddrSetDbIDsForTest()
+	if _, err := asf.NewAddressSet(nodeIPsASIDs, []string{"192.168.126.11", "fd00::11"}); err != nil {
+		t.Fatalf("failed to create node IP address set: %v", err)
+	}
+
+	svcIPsASIDs := udnenabledsvc.GetAddressSetDBIDs()
+	if _, err := asf.NewAddressSet(svcIPsASIDs, []string{"10.96.0.10", "fd02::10"}); err != nil {
+		t.Fatalf("failed to create UDN-enabled service address set: %v", err)
+	}
+}
+
+func expectAdvertisedSNATUsesLiveAllowedExtIPs(
+	t *gotesting.T,
+	bsnc *BaseUserDefinedNetworkController,
+	asf addressset.AddressSetFactory,
+	localPodSubnets []*net.IPNet,
+) {
+	t.Helper()
+	g := NewWithT(t)
+
+	snats, err := bsnc.buildUDNEgressSNAT(localPodSubnets, "rtos-bluenet-worker1", true)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(snats).To(HaveLen(4))
+
+	nodeIPsAS, err := asf.GetAddressSet(getClusterNodeIPsAddrSetDbIDsForTest())
+	g.Expect(err).NotTo(HaveOccurred())
+	nodeIPv4ASUUID, nodeIPv6ASUUID := nodeIPsAS.GetASUUID()
+	svcIPsAS, err := asf.GetAddressSet(udnenabledsvc.GetAddressSetDBIDs())
+	g.Expect(err).NotTo(HaveOccurred())
+	svcIPv4ASUUID, svcIPv6ASUUID := svcIPsAS.GetASUUID()
+
+	actualAllowedExtIPsByLogicalIP := map[string][]string{}
+	for _, snat := range snats {
+		g.Expect(snat.Match).To(Equal(""))
+		g.Expect(snat.AllowedExtIPs).NotTo(BeNil())
+		g.Expect(snat.ExemptedExtIPs).To(BeNil())
+		actualAllowedExtIPsByLogicalIP[snat.LogicalIP] = append(
+			actualAllowedExtIPsByLogicalIP[snat.LogicalIP],
+			*snat.AllowedExtIPs,
+		)
+	}
+	g.Expect(actualAllowedExtIPsByLogicalIP["100.128.0.0/24"]).To(ConsistOf(nodeIPv4ASUUID, svcIPv4ASUUID))
+	g.Expect(actualAllowedExtIPsByLogicalIP["ae70::/64"]).To(ConsistOf(nodeIPv6ASUUID, svcIPv6ASUUID))
+}
+
+func expectAdvertisedSNATUsesDestinationMatch(
+	t *gotesting.T,
+	bsnc *BaseUserDefinedNetworkController,
+	asf addressset.AddressSetFactory,
+	localPodSubnets []*net.IPNet,
+) {
+	t.Helper()
+	g := NewWithT(t)
+
+	snats, err := bsnc.buildUDNEgressSNAT(localPodSubnets, "rtos-bluenet-worker1", true)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(snats).To(HaveLen(2))
+
+	nodeIPsAS, err := asf.GetAddressSet(getClusterNodeIPsAddrSetDbIDsForTest())
+	g.Expect(err).NotTo(HaveOccurred())
+	svcIPsAS, err := asf.GetAddressSet(udnenabledsvc.GetAddressSetDBIDs())
+	g.Expect(err).NotTo(HaveOccurred())
+
+	dstMac := util.IPAddrToHWAddr(bsnc.GetNodeManagementIP(localPodSubnets[0]).IP)
+	dstMacMatch := getMasqueradeManagementIPSNATMatch(dstMac.String())
+	v4Match := getClusterNodesDestinationBasedSNATMatch(utilnet.IPv4, nodeIPsAS, svcIPsAS)
+	v6Match := getClusterNodesDestinationBasedSNATMatch(utilnet.IPv6, nodeIPsAS, svcIPsAS)
+
+	g.Expect(snats[0].Match).To(Equal(fmt.Sprintf("%s && %s", dstMacMatch, v4Match)))
+	g.Expect(snats[0].AllowedExtIPs).To(BeNil())
+	g.Expect(snats[0].ExemptedExtIPs).To(BeNil())
+
+	g.Expect(snats[1].Match).To(Equal(fmt.Sprintf("%s && %s", dstMacMatch, v6Match)))
+	g.Expect(snats[1].AllowedExtIPs).To(BeNil())
+	g.Expect(snats[1].ExemptedExtIPs).To(BeNil())
+}

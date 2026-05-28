@@ -5,6 +5,7 @@ package ops
 
 import (
 	"fmt"
+	"net"
 	"testing"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -92,6 +93,50 @@ func TestFindNATsUsingPredicate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildSNATWithAllowedExtIPs(t *testing.T) {
+	externalIP := net.ParseIP("169.254.0.12")
+	_, logicalIP, err := net.ParseCIDR("100.128.0.0/24")
+	if err != nil {
+		t.Fatalf("failed to parse logical IP: %v", err)
+	}
+
+	nat := BuildSNATWithAllowedExtIPs(
+		&externalIP,
+		logicalIP,
+		"rtos-blue-node",
+		map[string]string{"network": "blue"},
+		"",
+		"allowed-ext-ips-uuid",
+	)
+
+	if nat.AllowedExtIPs == nil || *nat.AllowedExtIPs != "allowed-ext-ips-uuid" {
+		t.Fatalf("expected allowed_ext_ips to be set, got %v", nat.AllowedExtIPs)
+	}
+	if nat.ExemptedExtIPs != nil {
+		t.Fatalf("expected exempted_ext_ips to be nil, got %v", nat.ExemptedExtIPs)
+	}
+}
+
+func TestEquivalentNATChecksProvidedExtIPAddressSets(t *testing.T) {
+	externalIP := net.ParseIP("169.254.0.12")
+	_, logicalIP, err := net.ParseCIDR("100.128.0.0/24")
+	if err != nil {
+		t.Fatalf("failed to parse logical IP: %v", err)
+	}
+	externalIDs := map[string]string{"network": "blue"}
+
+	existing := BuildSNATWithAllowedExtIPs(&externalIP, logicalIP, "rtos-blue-node", externalIDs, "", "node-ip-as-uuid")
+	searched := BuildSNATWithAllowedExtIPs(&externalIP, logicalIP, "rtos-blue-node", externalIDs, "", "svc-ip-as-uuid")
+	if isEquivalentNAT(existing, searched) {
+		t.Fatal("expected SNATs with different allowed_ext_ips to be distinct")
+	}
+
+	broadSearch := BuildSNATWithMatch(&externalIP, logicalIP, "rtos-blue-node", externalIDs, "")
+	if !isEquivalentNAT(existing, broadSearch) {
+		t.Fatal("expected broad SNAT search without allowed_ext_ips to still match")
 	}
 }
 

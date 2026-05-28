@@ -1013,7 +1013,7 @@ func RemoveLoadBalancersFromLogicalRouterOps(nbClient libovsdbclient.Client, ops
 func getNATMutableFields(nat *nbdb.NAT) []interface{} {
 	return []interface{}{&nat.Type, &nat.ExternalIP, &nat.LogicalIP, &nat.LogicalPort, &nat.ExternalMAC,
 		&nat.ExternalIDs, &nat.Match, &nat.Options, &nat.ExternalPortRange, &nat.GatewayPort, &nat.Priority,
-		&nat.ExemptedExtIPs}
+		&nat.ExemptedExtIPs, &nat.AllowedExtIPs}
 }
 
 func buildNAT(
@@ -1095,6 +1095,22 @@ func BuildSNATWithExemptedExtIPs(
 	return nat
 }
 
+// BuildSNATWithAllowedExtIPs builds a logical router SNAT with allowed external IPs.
+func BuildSNATWithAllowedExtIPs(
+	externalIP *net.IP,
+	logicalIP *net.IPNet,
+	logicalPort string,
+	externalIDs map[string]string,
+	match string,
+	allowedExtIPs string,
+) *nbdb.NAT {
+	nat := BuildSNATWithMatch(externalIP, logicalIP, logicalPort, externalIDs, match)
+	if allowedExtIPs != "" {
+		nat.AllowedExtIPs = &allowedExtIPs
+	}
+	return nat
+}
+
 // BuildDNATAndSNAT builds a logical router DNAT/SNAT
 func BuildDNATAndSNAT(
 	externalIP *net.IP,
@@ -1172,6 +1188,16 @@ func isEquivalentNAT(existing *nbdb.NAT, searched *nbdb.NAT) bool {
 		if foundValue, found := existing.ExternalIDs[externalIdKey]; !found || foundValue != externalIdValue {
 			return false
 		}
+	}
+
+	if searched.AllowedExtIPs != nil &&
+		(existing.AllowedExtIPs == nil || *searched.AllowedExtIPs != *existing.AllowedExtIPs) {
+		return false
+	}
+
+	if searched.ExemptedExtIPs != nil &&
+		(existing.ExemptedExtIPs == nil || *searched.ExemptedExtIPs != *existing.ExemptedExtIPs) {
+		return false
 	}
 
 	return true

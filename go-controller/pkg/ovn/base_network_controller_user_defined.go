@@ -978,6 +978,30 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 			return nil, fmt.Errorf("masquerade IP cannot be empty network %s (%d): %v", bsnc.GetNetworkName(), networkID, err)
 		}
 
+		if isUDNAdvertised && config.Gateway.Mode == config.GatewayModeShared {
+			addedAllowedExtIPsSNAT := false
+			// OVN NAT.allowed_ext_ips accepts a single Address_Set, so create one
+			// SNAT per allowed destination set.
+			for _, allowedExtIPsAS := range []addressset.AddressSet{nodeIPsAS, svcIPsAS} {
+				allowedExtIPs := getAddressSetUUIDForIPFamily(ipFamily, allowedExtIPsAS)
+				if allowedExtIPs == "" {
+					continue
+				}
+				snats = append(snats, libovsdbops.BuildSNATWithAllowedExtIPs(
+					&masqIP.ManagementPort.IP,
+					localPodSubnet,
+					outputPort,
+					extIDs,
+					"",
+					allowedExtIPs,
+				))
+				addedAllowedExtIPsSNAT = true
+			}
+			if addedAllowedExtIPsSNAT {
+				continue // move to the next pod subnet
+			}
+		}
+
 		if isUDNAdvertised {
 			additionalSNATMatch := getClusterNodesDestinationBasedSNATMatch(ipFamily, nodeIPsAS, svcIPsAS)
 			if additionalSNATMatch != "" {
@@ -1023,6 +1047,17 @@ func (bsnc *BaseUserDefinedNetworkController) buildUDNEgressSNAT(localPodSubnets
 	}
 
 	return snats, nil
+}
+
+func getAddressSetUUIDForIPFamily(ipFamily utilnet.IPFamily, as addressset.AddressSet) string {
+	if as == nil {
+		return ""
+	}
+	v4UUID, v6UUID := as.GetASUUID()
+	if ipFamily == utilnet.IPv6 {
+		return v6UUID
+	}
+	return v4UUID
 }
 
 func getMasqueradeManagementIPSNATMatch(dstMac string) string {

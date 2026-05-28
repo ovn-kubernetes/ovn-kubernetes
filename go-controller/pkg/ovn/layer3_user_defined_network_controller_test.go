@@ -1260,8 +1260,6 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 		config.Gateway.Mode = config.GatewayModeLocal
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		config.OVNKubernetesFeature.EnableInterconnect = true
-		config.Default.Zone = testICZone
 		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16" // Broader subnet to accommodate network ID 2
 
 		app := cli.NewApp()
@@ -1420,8 +1418,6 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 		config.Gateway.Mode = config.GatewayModeShared
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-		config.OVNKubernetesFeature.EnableInterconnect = true
-		config.Default.Zone = testICZone
 		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16" // Broader subnet to accommodate network ID 2
 
 		app := cli.NewApp()

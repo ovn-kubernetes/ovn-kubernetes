@@ -1098,8 +1098,11 @@ func (oc *Layer2UserDefinedNetworkController) cleanupInterconnectSetupForRemoteN
 // externalIP = "169.254.0.12"; which is the masqueradeIP for this L2 UDN
 // so all in all we want to condionally SNAT all packets that are coming from pods hosted on this node,
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
-// If isUDNAdvertised is true, then we want to SNAT all packets that are coming from pods on this network
-// leaving towards nodeIPs on the cluster to masqueradeIP. If network is advertise then the SNAT looks like this:
+// If isUDNAdvertised is true, then we want to SNAT packets from pods on this network
+// leaving towards cluster node IPs and UDN-enabled service IPs to the masqueradeIP.
+// In shared gateway mode, advertised SNAT keeps NAT.match empty and uses
+// NAT.allowed_ext_ips to point directly at those address sets. Local gateway mode
+// keeps the destination address-set checks in NAT.match, for example:
 // "eth.dst == 0a:58:5d:5d:00:02 && (ip4.dst == $a712973235162149816)" "169.254.0.36" "93.93.0.0/16"
 func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet,
 	nodeName string, isUDNAdvertised bool) error {
