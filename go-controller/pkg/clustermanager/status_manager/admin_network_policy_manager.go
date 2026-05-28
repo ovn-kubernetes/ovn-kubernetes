@@ -6,6 +6,7 @@ package status_manager
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,6 +16,11 @@ import (
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	anpapiapply "sigs.k8s.io/network-policy-api/pkg/client/applyconfiguration/apis/v1alpha1"
 	anpclientset "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned"
+)
+
+const (
+	// policyReadyStatusType is the prefix for zone-specific readiness status conditions
+	policyReadyStatusType = "Ready-In-Zone-"
 )
 
 // anpZoneDeleteCleanupManager is NOT like other status managers
@@ -145,6 +151,86 @@ func (m *anpZoneDeleteCleanupManager) doStartupCleanup(currentZones sets.Set[str
 		}
 	}
 
-	klog.Infof("StatusManager: ANP/BANP startup cleanup complete")
+	klog.Infof("StatusManager: ANP/BANP managedFields cleanup complete")
+
+	// Also cleanup stale status.conditions[] entries
+	if err := m.cleanupStaleStatusConditions(currentZones, existingANPs, existingBANPs); err != nil {
+		return fmt.Errorf("failed to cleanup stale status conditions: %w", err)
+	}
+
 	return nil
+}
+
+// cleanupStaleStatusConditions removes status.conditions[] entries for deleted zones
+// This addresses the issue where nodes deleted while the pod was down leave stale
+// "Ready-In-Zone-<nodename>" conditions that never get cleaned up.
+func (m *anpZoneDeleteCleanupManager) cleanupStaleStatusConditions(currentZones sets.Set[string], existingANPs []*anpapi.AdminNetworkPolicy, existingBANPs []*anpapi.BaselineAdminNetworkPolicy) error {
+	klog.Infof("StatusManager: performing cleanup for stale ANP/BANP status conditions")
+
+	totalStaleEntries := 0
+
+	// Clean up stale zones from ANPs
+	for _, anp := range existingANPs {
+		staleZones := m.findStaleZonesInStatus(anp.Status.Conditions, currentZones)
+		if len(staleZones) > 0 {
+			klog.Infof("StatusManager: found %d stale status conditions in ANP %s", len(staleZones), anp.Name)
+			totalStaleEntries += len(staleZones)
+
+			// Remove stale zones one by one using Server-Side Apply
+			for _, staleZone := range staleZones {
+				applyObj := anpapiapply.AdminNetworkPolicy(anp.Name)
+				_, err := m.client.PolicyV1alpha1().AdminNetworkPolicies().
+					ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: staleZone, Force: true})
+				if err != nil {
+					klog.Warningf("StatusManager: failed to remove stale zone %s from ANP %s: %v", staleZone, anp.Name, err)
+				} else {
+					klog.V(4).Infof("StatusManager: removed stale zone %s from ANP %s", staleZone, anp.Name)
+				}
+			}
+		}
+	}
+
+	// Clean up stale zones from BANPs
+	for _, banp := range existingBANPs {
+		staleZones := m.findStaleZonesInStatus(banp.Status.Conditions, currentZones)
+		if len(staleZones) > 0 {
+			klog.Infof("StatusManager: found %d stale status conditions in BANP %s", len(staleZones), banp.Name)
+			totalStaleEntries += len(staleZones)
+
+			// Remove stale zones one by one using Server-Side Apply
+			for _, staleZone := range staleZones {
+				applyObj := anpapiapply.BaselineAdminNetworkPolicy(banp.Name)
+				_, err := m.client.PolicyV1alpha1().BaselineAdminNetworkPolicies().
+					ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: staleZone, Force: true})
+				if err != nil {
+					klog.Warningf("StatusManager: failed to remove stale zone %s from BANP %s: %v", staleZone, banp.Name, err)
+				} else {
+					klog.V(4).Infof("StatusManager: removed stale zone %s from BANP %s", staleZone, banp.Name)
+				}
+			}
+		}
+	}
+
+	klog.Infof("StatusManager: ANP/BANP status conditions cleanup complete, removed %d stale entries", totalStaleEntries)
+	return nil
+}
+
+// findStaleZonesInStatus extracts stale zone names from status conditions
+// A zone is considered stale if it appears in status.conditions[] but doesn't exist in currentZones
+func (m *anpZoneDeleteCleanupManager) findStaleZonesInStatus(conditions []metav1.Condition, currentZones sets.Set[string]) []string {
+	staleZones := []string{}
+
+	for _, condition := range conditions {
+		// Extract zone name from condition type "Ready-In-Zone-<nodename>"
+		if strings.HasPrefix(condition.Type, policyReadyStatusType) {
+			zoneName := strings.TrimPrefix(condition.Type, policyReadyStatusType)
+
+			// If zone is not in current active zones, it's stale
+			if !currentZones.Has(zoneName) {
+				staleZones = append(staleZones, zoneName)
+			}
+		}
+	}
+
+	return staleZones
 }
