@@ -744,9 +744,9 @@ SNAT behavior via:
   is not SNATed. Pod IPs must be routable on the external network.
 
 * **`outboundSNAT: Enabled`** (or `outbound-snat=enabled`): Pod egress traffic
-  to external destinations is SNATed to the node IP. This is intended for
-  deployments where pod networks are only advertised to an internal BGP fabric
-  and are not routable from external networks.
+  to external destinations is SNATed at node egress. In shared gateway mode and
+  local gateway mode using the default VRF, this exposes the node IP. In local
+  gateway VRF-Lite, Linux masquerade uses the selected VRF egress interface IP.
 
 **Important:** Regardless of this setting, pod-to-remote-pod traffic within the
 same network is never SNATed, while traffic to remote nodes, the Kubernetes API
@@ -836,6 +836,9 @@ for details).
 When `outboundSNAT` is enabled for the default network, pod egress traffic is
 forwarded to the host kernel by the ovn-cluster-router, where it is then SNATed
 to the node IP using nftables rules.
+
+For local gateway VRF-Lite CUDNs, the exposed source IP is the egress interface IP in
+the target VRF.
 
 In the following example, `10.128.0.0/24` is the pod subnet in the local node,
 `10.128.0.0/16` is the CIDR of the pod network. `outboundSNAT` is enabled for
