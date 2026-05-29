@@ -50,6 +50,11 @@ const (
 	// created on DPUs. DPU mode has no host management interface to derive a
 	// table from, so this avoids colliding with link-index based tables.
 	dpuUDNVRFRouteTableIDStart = 100000
+
+	udnMgmtPortPreroutingMarkChainPrefix  = "udn-mp-prerouting-mark-"
+	udnMgmtPortOutputMarkChainPrefix      = "udn-mp-output-mark-"
+	udnMgmtPortInputSNATChainPrefix       = "udn-mp-input-snat-"
+	udnMgmtPortPostroutingSNATChainPrefix = "udn-mp-postrouting-snat-"
 )
 
 // UserDefinedNetworkGateway contains information
@@ -170,6 +175,174 @@ func GetUDNMarkChain(pktMark string) string {
 	return "udn-mark-" + pktMark
 }
 
+type udnMgmtPortNFTChains struct {
+	preroutingMark  string
+	outputMark      string
+	inputSNAT       string
+	postroutingSNAT string
+}
+
+func concatNFTStrings(items ...string) string {
+	concatItems := make([]interface{}, 0, len(items))
+	for _, item := range items {
+		concatItems = append(concatItems, item)
+	}
+	return knftables.Concat(concatItems...)
+}
+
+func (udng *UserDefinedNetworkGateway) getMgmtPortNFTChains() udnMgmtPortNFTChains {
+	networkID := udng.GetNetworkID()
+	return udnMgmtPortNFTChains{
+		preroutingMark:  fmt.Sprintf("%s%d", udnMgmtPortPreroutingMarkChainPrefix, networkID),
+		outputMark:      fmt.Sprintf("%s%d", udnMgmtPortOutputMarkChainPrefix, networkID),
+		inputSNAT:       fmt.Sprintf("%s%d", udnMgmtPortInputSNATChainPrefix, networkID),
+		postroutingSNAT: fmt.Sprintf("%s%d", udnMgmtPortPostroutingSNATChainPrefix, networkID),
+	}
+}
+
+func (udng *UserDefinedNetworkGateway) getMgmtPortNFTChainObjects(chains udnMgmtPortNFTChains) []*knftables.Chain {
+	return []*knftables.Chain{
+		{
+			Name:     chains.preroutingMark,
+			Comment:  ptr.To(fmt.Sprintf("%s: UDN management port reply mark - Prerouting", udng.GetNetworkName())),
+			Type:     ptr.To(knftables.FilterType),
+			Hook:     ptr.To(knftables.PreroutingHook),
+			Priority: ptr.To(knftables.ManglePriority),
+		},
+		{
+			Name:     chains.outputMark,
+			Comment:  ptr.To(fmt.Sprintf("%s: UDN management port reply mark - Output", udng.GetNetworkName())),
+			Type:     ptr.To(knftables.RouteType),
+			Hook:     ptr.To(knftables.OutputHook),
+			Priority: ptr.To(knftables.ManglePriority),
+		},
+		{
+			Name:     chains.inputSNAT,
+			Comment:  ptr.To(fmt.Sprintf("%s: UDN management port SNAT - Input", udng.GetNetworkName())),
+			Type:     ptr.To(knftables.NATType),
+			Hook:     ptr.To(knftables.InputHook),
+			Priority: ptr.To(knftables.SNATPriority),
+		},
+		{
+			Name:     chains.postroutingSNAT,
+			Comment:  ptr.To(fmt.Sprintf("%s: UDN management port SNAT - Postrouting", udng.GetNetworkName())),
+			Type:     ptr.To(knftables.NATType),
+			Hook:     ptr.To(knftables.PostroutingHook),
+			Priority: ptr.To(knftables.SNATPriority),
+		},
+	}
+}
+
+func (udng *UserDefinedNetworkGateway) managementPortMasqueradeIP(subnet *net.IPNet) (string, string, bool) {
+	if utilnet.IsIPv6CIDR(subnet) {
+		if udng.v6MasqIPs == nil || udng.v6MasqIPs.ManagementPort == nil {
+			return "", "", false
+		}
+		return "ip6", udng.v6MasqIPs.ManagementPort.IP.String(), true
+	}
+	if udng.v4MasqIPs == nil || udng.v4MasqIPs.ManagementPort == nil {
+		return "", "", false
+	}
+	return "ip", udng.v4MasqIPs.ManagementPort.IP.String(), true
+}
+
+// addSharedGatewayUDNManagementPortNFTables replaces the OVN router SNAT for
+// traffic that enters the host through a UDN management port in shared gateway
+// mode. The reply mark rules run before reverse NAT can restore the pod
+// destination, so return traffic still matches the UDN fwmark routing rule.
+func (udng *UserDefinedNetworkGateway) addSharedGatewayUDNManagementPortNFTables(localPodSubnets []*net.IPNet, mgmtPortName string) error {
+	if config.Gateway.Mode != config.GatewayModeShared {
+		return nil
+	}
+
+	var counterIfDebug []string
+	if config.Logging.Level > 4 {
+		counterIfDebug = []string{"counter"}
+	}
+
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+
+	chains := udng.getMgmtPortNFTChains()
+	tx := nft.NewTransaction()
+	for _, chain := range udng.getMgmtPortNFTChainObjects(chains) {
+		tx.Add(chain)
+		tx.Flush(&knftables.Chain{Name: chain.Name})
+	}
+
+	pktMark := fmt.Sprintf("0x%x", udng.pktMark)
+	for _, subnet := range localPodSubnets {
+		nfproto, masqIP, ok := udng.managementPortMasqueradeIP(subnet)
+		if !ok {
+			continue
+		}
+
+		preroutingMarkRule := append([]string{
+			"iifname", "!=", mgmtPortName,
+			nfproto, "daddr", masqIP,
+			"meta mark set", pktMark,
+		}, counterIfDebug...)
+		tx.Add(&knftables.Rule{
+			Chain: chains.preroutingMark,
+			Rule:  concatNFTStrings(preroutingMarkRule...),
+		})
+
+		outputMarkRule := append([]string{
+			nfproto, "daddr", masqIP,
+			"meta mark set", pktMark,
+		}, counterIfDebug...)
+		tx.Add(&knftables.Rule{
+			Chain: chains.outputMark,
+			Rule:  concatNFTStrings(outputMarkRule...),
+		})
+
+		inputSNATRule := []string{
+			"iifname", mgmtPortName,
+			nfproto, "saddr", subnet.String(),
+		}
+		inputSNATRule = append(inputSNATRule, counterIfDebug...)
+		inputSNATRule = append(inputSNATRule, fmt.Sprintf("snat %s to", nfproto), masqIP)
+		tx.Add(&knftables.Rule{
+			Chain: chains.inputSNAT,
+			Rule:  concatNFTStrings(inputSNATRule...),
+		})
+
+		// The original ingress interface is not a reliable postrouting match
+		// after the UDN VRF routes the packet to the shared gateway bridge.
+		postroutingSNATRule := []string{
+			nfproto, "saddr", subnet.String(),
+		}
+		postroutingSNATRule = append(postroutingSNATRule, counterIfDebug...)
+		postroutingSNATRule = append(postroutingSNATRule, fmt.Sprintf("snat %s to", nfproto), masqIP)
+		tx.Add(&knftables.Rule{
+			Chain: chains.postroutingSNAT,
+			Rule:  concatNFTStrings(postroutingSNATRule...),
+		})
+	}
+
+	return nft.Run(context.TODO(), tx)
+}
+
+func (udng *UserDefinedNetworkGateway) delSharedGatewayUDNManagementPortNFTables() error {
+	if config.Gateway.Mode != config.GatewayModeShared {
+		return nil
+	}
+
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+
+	chains := udng.getMgmtPortNFTChains()
+	tx := nft.NewTransaction()
+	for _, chain := range udng.getMgmtPortNFTChainObjects(chains) {
+		safeDelete(tx, chain)
+	}
+	return nft.Run(context.TODO(), tx)
+}
+
 // delMarkChain removes the UDN packet mark nftables chain
 func (udng *UserDefinedNetworkGateway) delMarkChain() error {
 	nft, err := nodenft.GetNFTablesHelper()
@@ -265,6 +438,9 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		}
 		if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
 			return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
+		}
+		if err = udng.addSharedGatewayUDNManagementPortNFTables(nodeSubnets, mplink.Attrs().Name); err != nil {
+			return fmt.Errorf("failed to add shared gateway management port nftables rules for network %s: %w", udng.GetNetworkName(), err)
 		}
 	}
 	if config.IsModeDPU() {
@@ -381,6 +557,9 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 
 		if err := udng.delMarkChain(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove mark chain for network %s, err: %v", udng.GetNetworkName(), err))
+		}
+		if err := udng.delSharedGatewayUDNManagementPortNFTables(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove shared gateway management port nftables rules for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
 	// delete the management port interface for this network

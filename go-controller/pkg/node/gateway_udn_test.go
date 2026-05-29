@@ -34,6 +34,7 @@ import (
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	factoryMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	kubemocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -2492,4 +2493,74 @@ func TestUserDefinedNetworkGateway_updateAdvertisedUDNIsolationRules(t *testing.
 			}
 		})
 	}
+}
+
+func TestUserDefinedNetworkGateway_sharedGatewayManagementPortNFTables(t *testing.T) {
+	g := NewWithT(t)
+
+	err := config.PrepareTestConfig()
+	g.Expect(err).NotTo(HaveOccurred())
+	config.Gateway.Mode = config.GatewayModeShared
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+	config.Logging.Level = 0
+	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
+	config.Gateway.V6MasqueradeSubnet = "fd69::/112"
+
+	nft := nodenft.SetFakeNFTablesHelper()
+	const networkID = 9
+	nad := ovntest.GenerateNAD("test", "rednad", "greenamespace",
+		types.Layer3Topology, "10.20.0.0/16/24,fd20::/60/64", types.NetworkRolePrimary)
+	ovntest.AnnotateNADWithNetworkID(fmt.Sprintf("%d", networkID), nad)
+	netInfo, err := util.ParseNADInfo(nad)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	v4MasqIPs, err := udn.AllocateV4MasqueradeIPs(networkID)
+	g.Expect(err).NotTo(HaveOccurred())
+	v6MasqIPs, err := udn.AllocateV6MasqueradeIPs(networkID)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	udng := &UserDefinedNetworkGateway{
+		NetInfo:   netInfo,
+		pktMark:   pktMarkBase + uint(networkID),
+		v4MasqIPs: v4MasqIPs,
+		v6MasqIPs: v6MasqIPs,
+	}
+	localPodSubnets := ovntest.MustParseIPNets("10.20.2.0/24", "fd20::/64")
+	err = udng.addSharedGatewayUDNManagementPortNFTables(localPodSubnets, "ovn-k8s-mp9")
+	g.Expect(err).NotTo(HaveOccurred())
+
+	expectedNFT := fmt.Sprintf(`
+add table inet ovn-kubernetes
+add chain inet ovn-kubernetes udn-mp-prerouting-mark-9 { type filter hook prerouting priority -150 ; comment "test: UDN management port reply mark - Prerouting" ; }
+add chain inet ovn-kubernetes udn-mp-output-mark-9 { type route hook output priority -150 ; comment "test: UDN management port reply mark - Output" ; }
+add chain inet ovn-kubernetes udn-mp-input-snat-9 { type nat hook input priority 100 ; comment "test: UDN management port SNAT - Input" ; }
+add chain inet ovn-kubernetes udn-mp-postrouting-snat-9 { type nat hook postrouting priority 100 ; comment "test: UDN management port SNAT - Postrouting" ; }
+add rule inet ovn-kubernetes udn-mp-prerouting-mark-9 iifname != ovn-k8s-mp9 ip daddr %s meta mark set 0x1009
+add rule inet ovn-kubernetes udn-mp-prerouting-mark-9 iifname != ovn-k8s-mp9 ip6 daddr %s meta mark set 0x1009
+add rule inet ovn-kubernetes udn-mp-output-mark-9 ip daddr %s meta mark set 0x1009
+add rule inet ovn-kubernetes udn-mp-output-mark-9 ip6 daddr %s meta mark set 0x1009
+add rule inet ovn-kubernetes udn-mp-input-snat-9 iifname ovn-k8s-mp9 ip saddr 10.20.2.0/24 snat ip to %s
+add rule inet ovn-kubernetes udn-mp-input-snat-9 iifname ovn-k8s-mp9 ip6 saddr fd20::/64 snat ip6 to %s
+add rule inet ovn-kubernetes udn-mp-postrouting-snat-9 ip saddr 10.20.2.0/24 snat ip to %s
+add rule inet ovn-kubernetes udn-mp-postrouting-snat-9 ip6 saddr fd20::/64 snat ip6 to %s
+`,
+		v4MasqIPs.ManagementPort.IP.String(),
+		v6MasqIPs.ManagementPort.IP.String(),
+		v4MasqIPs.ManagementPort.IP.String(),
+		v6MasqIPs.ManagementPort.IP.String(),
+		v4MasqIPs.ManagementPort.IP.String(),
+		v6MasqIPs.ManagementPort.IP.String(),
+		v4MasqIPs.ManagementPort.IP.String(),
+		v6MasqIPs.ManagementPort.IP.String(),
+	)
+	err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+	if err != nil {
+		t.Logf("actual nftables dump:\n%s", nft.Dump())
+	}
+	g.Expect(err).NotTo(HaveOccurred())
+
+	err = udng.delSharedGatewayUDNManagementPortNFTables()
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(nodenft.MatchNFTRules("add table inet ovn-kubernetes", nft.Dump())).To(Succeed())
 }

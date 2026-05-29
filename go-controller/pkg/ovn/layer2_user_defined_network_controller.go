@@ -714,9 +714,16 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 					return err
 				}
 				isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
-				err = oc.addOrUpdateUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, node.Name, isUDNAdvertised)
-				if err != nil {
-					return err
+				if config.Gateway.Mode == config.GatewayModeShared {
+					err = oc.deleteUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, node.Name)
+					if err != nil {
+						return err
+					}
+				} else {
+					err = oc.addOrUpdateUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, node.Name, isUDNAdvertised)
+					if err != nil {
+						return err
+					}
 				}
 				shouldIsolate := isUDNAdvertised && config.OVNKubernetesFeature.AdvertisedUDNIsolationMode == config.AdvertisedUDNIsolationModeStrict
 				if shouldIsolate {
@@ -1091,7 +1098,7 @@ func (oc *Layer2UserDefinedNetworkController) cleanupInterconnectSetupForRemoteN
 // Based on the isUDNAdvertised flag, the SNAT matches are slightly different
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 10.128.0.0/14
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 2010:100:200::/64
-// these SNATs are required for pod2Egress traffic in LGW mode and pod2SameNode traffic in SGW mode to function properly on UDNs
+// these SNATs are required for pod2Egress traffic in LGW mode; SGW mode handles this host path with nftables
 // SNAT Breakdown:
 // match = "eth.dst == d6:cf:fd:2c:a6:44"; the MAC here is the mpX interface MAC address for this UDN
 // logicalIP = "10.128.0.0/14"; which is the clustersubnet for this L2 UDN
@@ -1121,6 +1128,31 @@ func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressS
 	}
 	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, nats...); err != nil {
 		return fmt.Errorf("failed to update SNAT for cluster on router: %q for network %q, error: %w",
+			routerName, oc.GetNetworkName(), err)
+	}
+	return nil
+}
+
+func (oc *Layer2UserDefinedNetworkController) deleteUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet,
+	nodeName string) error {
+	outputPort := oc.getCRToSwitchPortName(oc.GetNetworkScopedSwitchName(""))
+	routerName := oc.GetNetworkScopedClusterRouterName()
+	if !config.Layer2UsesTransitRouter {
+		routerName = oc.GetNetworkScopedGWRouterName(nodeName)
+		outputPort = types.GWRouterToJoinSwitchPrefix + routerName
+	}
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, false)
+	if err != nil {
+		return err
+	}
+	if len(nats) == 0 {
+		return nil // nothing to do
+	}
+	router := &nbdb.LogicalRouter{
+		Name: routerName,
+	}
+	if err := libovsdbops.DeleteNATs(oc.nbClient, router, nats...); err != nil {
+		return fmt.Errorf("failed to delete SNAT for cluster on router: %q for network %q, error: %w",
 			routerName, oc.GetNetworkName(), err)
 	}
 	return nil
