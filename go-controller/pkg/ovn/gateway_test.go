@@ -8,9 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"testing"
 
-	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
@@ -19,7 +17,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/utils/net"
 
-	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -40,126 +37,6 @@ func init() {
 	// libovsdb matcher might produce a lengthy output that will be cropped by
 	// default gomega output limit, set to 0 to unlimit.
 	format.MaxLength = 0
-}
-
-func TestUDNGatewayRouterLBForceSNATIP(t *testing.T) {
-	if err := config.PrepareTestConfig(); err != nil {
-		t.Fatalf("failed to prepare test config: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := config.PrepareTestConfig(); err != nil {
-			t.Errorf("failed to reset test config: %v", err)
-		}
-	})
-	config.IPv4Mode = true
-	config.Gateway.V4MasqueradeSubnet = "169.254.0.0/16"
-
-	nbClient, _, cleanup, err := libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{})
-	if err != nil {
-		t.Fatalf("failed to create libovsdb test harness: %v", err)
-	}
-	defer cleanup.Cleanup()
-
-	defaultCOPPUUID, err := EnsureDefaultCOPP(nbClient)
-	if err != nil {
-		t.Fatalf("failed to create default COPP: %v", err)
-	}
-
-	joinCIDRs := ovntest.MustParseIPNets("100.65.0.2/16", "fd98::2/64")
-	joinIPs := strings.Join(util.IPNetsIPToStringSlice(joinCIDRs), " ")
-
-	for i, tc := range []struct {
-		gatewayMode config.GatewayMode
-		name        string
-		topology    string
-		transport   string
-		expected    func(util.NetInfo) string
-	}{
-		{
-			gatewayMode: config.GatewayModeLocal,
-			name:        "local overlay layer3 keeps router IP",
-			topology:    types.Layer3Topology,
-			expected: func(util.NetInfo) string {
-				return "router_ip"
-			},
-		},
-		{
-			gatewayMode: config.GatewayModeLocal,
-			name:        "local no-overlay layer3 uses UDN gateway router masquerade IP",
-			topology:    types.Layer3Topology,
-			transport:   types.NetworkTransportNoOverlay,
-			expected: func(netInfo util.NetInfo) string {
-				lbForceSNATIPs, err := getUDNGatewayRouterMasqueradeIPs(netInfo)
-				if err != nil {
-					t.Fatalf("failed to get UDN gateway router masquerade IPs: %v", err)
-				}
-				return strings.Join(lbForceSNATIPs, " ")
-			},
-		},
-		{
-			gatewayMode: config.GatewayModeShared,
-			name:        "shared no-overlay layer3 keeps router IP",
-			topology:    types.Layer3Topology,
-			transport:   types.NetworkTransportNoOverlay,
-			expected: func(util.NetInfo) string {
-				return "router_ip"
-			},
-		},
-		{
-			gatewayMode: config.GatewayModeLocal,
-			name:        "local layer2 keeps explicit join subnet IPs",
-			topology:    types.Layer2Topology,
-			expected: func(util.NetInfo) string {
-				return joinIPs
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			subnets := "10.100.0.0/16/24"
-			if tc.topology == types.Layer2Topology {
-				subnets = "10.100.0.0/16"
-			}
-			netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
-				NetConf:   cnitypes.NetConf{Name: fmt.Sprintf("blue-%d", i)},
-				Topology:  tc.topology,
-				Subnets:   subnets,
-				Role:      types.NetworkRolePrimary,
-				Transport: tc.transport,
-			})
-			if err != nil {
-				t.Fatalf("failed to build netInfo: %v", err)
-			}
-			mutableNetInfo, ok := netInfo.(util.MutableNetInfo)
-			if !ok {
-				t.Fatalf("expected mutable netInfo for UDN")
-			}
-			mutableNetInfo.SetNetworkID(i + 3)
-
-			config.Gateway.Mode = tc.gatewayMode
-			nodeName := fmt.Sprintf("node-%d", i)
-			gw := &GatewayManager{
-				nbClient:     nbClient,
-				netInfo:      netInfo,
-				gwRouterName: netInfo.GetNetworkScopedGWRouterName(nodeName),
-				coppUUID:     defaultCOPPUUID,
-			}
-			router, err := gw.createGWRouter(&GatewayConfig{
-				annoConfig: &util.L3GatewayConfig{
-					ChassisID:   fmt.Sprintf("system-%d", i),
-					IPAddresses: ovntest.MustParseIPNets(fmt.Sprintf("192.0.2.%d/24", i+2)),
-				},
-				gwRouterJoinCIDRs: joinCIDRs,
-			})
-			if err != nil {
-				t.Fatalf("failed to create gateway router for %s gateway mode: %v", tc.gatewayMode, err)
-			}
-			expected := tc.expected(netInfo)
-			if router.Options["lb_force_snat_ip"] != expected {
-				t.Fatalf("gateway router %s has lb_force_snat_ip=%q, want %q",
-					router.Name, router.Options["lb_force_snat_ip"], expected)
-			}
-		})
-	}
 }
 
 func generateAdvertisedUDNIsolationExpectedNB(testData []libovsdbtest.TestData, networkName string, networkID int, clusterIPSubnets []*net.IPNet, nodeSwitch *nbdb.LogicalSwitch, addrSet addressset.AddressSet) []libovsdbtest.TestData {

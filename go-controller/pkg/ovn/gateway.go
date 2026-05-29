@@ -25,7 +25,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	udngenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -292,19 +291,7 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 	if gw.netInfo.GetNetworkName() == types.DefaultNetworkName {
 		logicalRouterOptions["snat-ct-zone"] = "0"
 	}
-	// In no-overlay LGW, post-LB UDN traffic exits through the host/VRF
-	// underlay path, so use the UDN GR masquerade IP as the OVN-side source
-	// before host egress performs the final masquerade.
-	if config.Gateway.Mode == config.GatewayModeLocal &&
-		gw.netInfo.IsUserDefinedNetwork() &&
-		gw.netInfo.TopologyType() == types.Layer3Topology &&
-		gw.netInfo.Transport() == types.NetworkTransportNoOverlay {
-		lbForceSNATIPs, err := getUDNGatewayRouterMasqueradeIPs(gw.netInfo)
-		if err != nil {
-			return nil, err
-		}
-		logicalRouterOptions["lb_force_snat_ip"] = strings.Join(lbForceSNATIPs, " ")
-	} else if gw.netInfo.TopologyType() == types.Layer2Topology {
+	if gw.netInfo.TopologyType() == types.Layer2Topology {
 		// When multiple networks are set of the same logical-router-port
 		// the networks get lexicographically sorted; thus there is no
 		// ordering or telling on which IP will be chosen as the router-ip
@@ -347,20 +334,6 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 		return nil, fmt.Errorf("failed to create logical router %+v: %v", gwRouter, err)
 	}
 	return &gwRouter, nil
-}
-
-func getUDNGatewayRouterMasqueradeIPs(netInfo util.NetInfo) ([]string, error) {
-	networkID := netInfo.GetNetworkID()
-	masqIPs, err := udngenerator.GetUDNGatewayMasqueradeIPs(networkID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get gateway-router masquerade IPs for UDN %q (%d): %w",
-			netInfo.GetNetworkName(), networkID, err)
-	}
-	if len(masqIPs) == 0 {
-		return nil, fmt.Errorf("no gateway-router masquerade IPs available for UDN %q (%d)",
-			netInfo.GetNetworkName(), networkID)
-	}
-	return util.IPNetsIPToStringSlice(masqIPs), nil
 }
 
 func (gw *GatewayManager) getGWRouterPeerRouterPortName() string {

@@ -1176,9 +1176,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				netInfo, err := util.NewNetInfo(&netconf)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				mutableNetInfo := util.NewMutableNetInfo(netInfo)
-				mutableNetInfo.SetNetworkID(2)
-				netInfo = mutableNetInfo
 
 				node1Annotations := map[string]string{
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, ""),
@@ -1545,7 +1542,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Ports: []string{
 							ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name + "-UUID"},
 						ExternalIDs: gwRouterExternalIDs(netInfo, *gwConfig),
-						Options:     udnGWRouterOptions(*gwConfig, netInfo),
+						Options:     gwRouterOptions(*gwConfig),
 						Policies: []string{getGWPktMarkLRPUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName()),
 							getGWPktMarkLRPUUID(eipNamespace2, podName4, IPFamilyValueV4, netInfo.GetNetworkName())},
 					},
@@ -1799,7 +1796,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:        netInfo.GetNetworkScopedGWRouterName(node1.Name),
 						Ports:       []string{ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name + "-UUID"},
 						ExternalIDs: gwRouterExternalIDs(netInfo, *gwConfig),
-						Options:     udnGWRouterOptions(*gwConfig, netInfo),
+						Options:     gwRouterOptions(*gwConfig),
 					},
 					rtosPort,
 					rtosGatewayChassis,
@@ -2674,9 +2671,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				netInfo, err := util.NewNetInfo(&netconf)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				mutableNetInfo := util.NewMutableNetInfo(netInfo)
-				mutableNetInfo.SetNetworkID(2)
-				netInfo = mutableNetInfo
 
 				node1Annotations := map[string]string{
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, ""),
@@ -3050,7 +3044,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:        netInfo.GetNetworkScopedGWRouterName(node1.Name),
 						Ports:       []string{ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name + "-UUID"},
 						ExternalIDs: gwRouterExternalIDs(netInfo, *gwConfig),
-						Options:     udnGWRouterOptions(*gwConfig, netInfo),
+						Options:     gwRouterOptions(*gwConfig),
 						Policies: []string{getGWPktMarkLRPUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName()),
 							getGWPktMarkLRPUUID(eipNamespace2, podName4, IPFamilyValueV4, netInfo.GetNetworkName())},
 					},
@@ -3163,14 +3157,6 @@ func addL3GatewayConfig(annotations map[string]string, nodeIPv4CIDR, mac string)
 		mac,
 		nodeIPv4CIDR,
 	)
-}
-
-func udnGWRouterOptions(gwConfig util.L3GatewayConfig, netInfo util.NetInfo) map[string]string {
-	options := gwRouterOptions(gwConfig)
-	if netInfo.TopologyType() == ovntypes.Layer3Topology && netInfo.Transport() == ovntypes.NetworkTransportNoOverlay {
-		options["lb_force_snat_ip"] = expectedUDNGatewayRouterMasqueradeIPString(netInfo)
-	}
-	return options
 }
 
 // returns the address set with externalID "k8s.ovn.org/name": "egressip-served-pods""
