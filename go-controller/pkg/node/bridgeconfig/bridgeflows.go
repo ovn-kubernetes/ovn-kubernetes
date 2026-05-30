@@ -151,6 +151,22 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				"actions=ct(zone=%d,nat,table=5)",
 				nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV4, protoPrefixV4,
 				config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String(), config.Default.OVNMasqConntrackZone))
+
+		for _, netConfig := range b.patchedNetConfigs() {
+			if !isLocalGatewayNoOverlayUDN(netConfig) {
+				continue
+			}
+			// table 0, reply traffic from host back to OVN for no-overlay UDN
+			// service hairpins. Table 4 SNATs the forward direction to this
+			// UDN's gateway router masquerade IP; use the OVN masquerade CT
+			// zone to unSNAT replies and then continue reply service handling
+			// in table 5.
+			dftFlows = append(dftFlows,
+				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s,"+
+					"actions=ct(zone=%d,nat,table=5)",
+					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV4, protoPrefixV4,
+					netConfig.V4MasqIPs.GatewayRouter.IP.String(), config.Default.OVNMasqConntrackZone))
+		}
 	}
 	if config.IPv6Mode {
 		if ofPortPhys != "" {
@@ -216,6 +232,22 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				"actions=ct(zone=%d,nat,table=5)",
 				nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV6, protoPrefixV6,
 				config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String(), config.Default.OVNMasqConntrackZone))
+
+		for _, netConfig := range b.patchedNetConfigs() {
+			if !isLocalGatewayNoOverlayUDN(netConfig) {
+				continue
+			}
+			// table 0, reply traffic from host back to OVN for no-overlay UDN
+			// service hairpins. Table 4 SNATs the forward direction to this
+			// UDN's gateway router masquerade IP; use the OVN masquerade CT
+			// zone to unSNAT replies and then continue reply service handling
+			// in table 5.
+			dftFlows = append(dftFlows,
+				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s,"+
+					"actions=ct(zone=%d,nat,table=5)",
+					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV6, protoPrefixV6,
+					netConfig.V6MasqIPs.GatewayRouter.IP.String(), config.Default.OVNMasqConntrackZone))
+		}
 	}
 
 	var protoPrefix, masqIP, masqSubnet string
@@ -476,31 +508,123 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 	// table 4, hairpinned pkts that need to go from OVN -> Host
 	// We need to SNAT and masquerade OVN GR IP, send to table 3 for dispatch to Host
 	if config.IPv4Mode {
+		for _, netConfig := range b.patchedNetConfigs() {
+			if !isLocalGatewayNoOverlayUDN(netConfig) {
+				continue
+			}
+			// table 4, forward traffic for no-overlay UDN service hairpins
+			// from OVN to host. The UDN GR already SNATed to the node IP due to
+			// lb_force_snat_ip=router_ip; SNAT again to this UDN's gateway
+			// router masquerade IP so replies can be steered back to the same
+			// UDN. Match UDN pod CIDRs so ordinary UDN traffic to node IPs, such
+			// as NodePort requests on a different node, keeps the default table
+			// 4 behavior.
+			var udnSubnets []*net.IPNet
+			for _, clusterEntry := range netConfig.Subnets {
+				udnSubnets = append(udnSubnets, clusterEntry.CIDR)
+			}
+			for _, subnet := range matchIPNetFamily(false, udnSubnets) {
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=100, table=4, in_port=%s, %s, %s_dst=%s, "+
+						"actions=ct(commit,zone=%d,nat(src=%s),exec(set_field:%s->ct_mark),table=3)",
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV4, protoPrefixV4,
+						subnet.String(), config.Default.OVNMasqConntrackZone,
+						netConfig.V4MasqIPs.GatewayRouter.IP.String(), netConfig.MasqCTMark))
+			}
+		}
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=4,%s,"+
+			fmt.Sprintf("cookie=%s, priority=0, table=4,%s,"+
 				"actions=ct(commit,zone=%d,nat(src=%s),table=3)",
 				nodetypes.DefaultOpenFlowCookie, protoPrefixV4, config.Default.OVNMasqConntrackZone, config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String()))
 	}
 	if config.IPv6Mode {
+		for _, netConfig := range b.patchedNetConfigs() {
+			if !isLocalGatewayNoOverlayUDN(netConfig) {
+				continue
+			}
+			// table 4, forward traffic for no-overlay UDN service hairpins
+			// from OVN to host. The UDN GR already SNATed to the node IP due to
+			// lb_force_snat_ip=router_ip; SNAT again to this UDN's gateway
+			// router masquerade IP so replies can be steered back to the same
+			// UDN. Match UDN pod CIDRs so ordinary UDN traffic to node IPs, such
+			// as NodePort requests on a different node, keeps the default table
+			// 4 behavior.
+			var udnSubnets []*net.IPNet
+			for _, clusterEntry := range netConfig.Subnets {
+				udnSubnets = append(udnSubnets, clusterEntry.CIDR)
+			}
+			for _, subnet := range matchIPNetFamily(true, udnSubnets) {
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=100, table=4, in_port=%s, %s, %s_dst=%s, "+
+						"actions=ct(commit,zone=%d,nat(src=%s),exec(set_field:%s->ct_mark),table=3)",
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV6, protoPrefixV6,
+						subnet.String(), config.Default.OVNMasqConntrackZone,
+						netConfig.V6MasqIPs.GatewayRouter.IP.String(), netConfig.MasqCTMark))
+			}
+		}
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=4,%s, "+
+			fmt.Sprintf("cookie=%s, priority=0, table=4,%s, "+
 				"actions=ct(commit,zone=%d,nat(src=%s),table=3)",
 				nodetypes.DefaultOpenFlowCookie, protoPrefixV6, config.Default.OVNMasqConntrackZone, config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String()))
 	}
 	// table 5, Host Reply traffic to hairpinned svc, need to unDNAT, send to table 2
 	if config.IPv4Mode {
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=5, %s, "+
+			fmt.Sprintf("cookie=%s, priority=0, table=5, %s, "+
 				"actions=ct(commit,zone=%d,nat,table=2)",
 				nodetypes.DefaultOpenFlowCookie, protoPrefixV4, config.Default.HostMasqConntrackZone))
+		for _, netConfig := range b.patchedNetConfigs() {
+			if !isLocalGatewayNoOverlayUDN(netConfig) {
+				continue
+			}
+			// table 5, finish reply service unNAT for no-overlay UDN service
+			// hairpins and dispatch directly to the UDN patch port. Sending
+			// these replies through table 2 would hit the advertised-UDN source
+			// isolation drops after unNAT.
+			dftFlows = append(dftFlows,
+				fmt.Sprintf("cookie=%s, priority=100, table=5, %s, ct_mark=%s, "+
+					"actions=ct(commit,zone=%d,nat,exec(set_field:%s->ct_mark)),"+
+					"set_field:%s->eth_dst,%soutput:%s",
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV4, netConfig.MasqCTMark,
+					config.Default.HostMasqConntrackZone, netConfig.MasqCTMark,
+					bridgeMacAddress, mod_vlan_id, netConfig.OfPortPatch))
+		}
 	}
 	if config.IPv6Mode {
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=5, %s, "+
+			fmt.Sprintf("cookie=%s, priority=0, table=5, %s, "+
 				"actions=ct(commit,zone=%d,nat,table=2)",
 				nodetypes.DefaultOpenFlowCookie, protoPrefixV6, config.Default.HostMasqConntrackZone))
+		for _, netConfig := range b.patchedNetConfigs() {
+			if !isLocalGatewayNoOverlayUDN(netConfig) {
+				continue
+			}
+			// table 5, finish reply service unNAT for no-overlay UDN service
+			// hairpins and dispatch directly to the UDN patch port. Sending
+			// these replies through table 2 would hit the advertised-UDN source
+			// isolation drops after unNAT.
+			dftFlows = append(dftFlows,
+				fmt.Sprintf("cookie=%s, priority=100, table=5, %s, ct_mark=%s, "+
+					"actions=ct(commit,zone=%d,nat,exec(set_field:%s->ct_mark)),"+
+					"set_field:%s->eth_dst,%soutput:%s",
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV6, netConfig.MasqCTMark,
+					config.Default.HostMasqConntrackZone, netConfig.MasqCTMark,
+					bridgeMacAddress, mod_vlan_id, netConfig.OfPortPatch))
+		}
 	}
 	return dftFlows, nil
+}
+
+// isLocalGatewayNoOverlayUDN filters UDN-specific service hairpin flows that
+// SNAT to the UDN gateway router masquerade IP. Today those flows are only
+// needed for local gateway no-overlay UDNs, where service traffic can hairpin
+// through breth0 on the underlay. If UDNs later support underlay-routed
+// service backends in Geneve mode, such as host-networked pods, this predicate
+// should be updated to include those paths.
+func isLocalGatewayNoOverlayUDN(netConfig *BridgeUDNConfiguration) bool {
+	return !netConfig.IsDefaultNetwork() &&
+		netConfig.Transport == types.NetworkTransportNoOverlay &&
+		config.Gateway.Mode == config.GatewayModeLocal
 }
 
 // getMaxFrameLength returns the maximum frame size (ignoring VLAN header) that a gateway can handle

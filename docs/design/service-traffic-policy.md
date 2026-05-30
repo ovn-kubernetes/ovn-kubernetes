@@ -477,6 +477,81 @@ cookie=0xdeff105, duration=5992.878s, table=0, n_packets=89312, n_bytes=6154654,
 
 where packet leaves the node and goes back to the external entity that initiated the connection.
 
+## User Defined Network Service Hairpin Traffic
+
+No-overlay User Defined Networks (UDNs) use the same physical bridge for service traffic, but the
+bridge must preserve enough UDN identity to send reply traffic back to the correct UDN gateway
+router patch port. The bridge flows use the UDN gateway router masquerade IP and the UDN CT mark
+for that steering.
+
+### Shared Gateway Mode, No-Overlay UDN
+
+For shared gateway mode, no-overlay UDN service traffic can hairpin from the UDN gateway router
+back to the node IP. The UDN gateway router load balancer uses `lb_force_snat_ip=router_ip`, so
+the packet can already have the node IP as source when it leaves the gateway router toward the
+physical bridge.
+
+The physical bridge still commits that packet through the default conntrack zone with
+`nat(src=<node-ip>)`. This lets conntrack detect overlapping source ports and reassign them in the
+same zone used for underlay egress, instead of bypassing NAT because the source IP already equals
+the node IP.
+
+```
+table=0, priority=99,ip,in_port="patch-breth0_<udn>",dl_src=<bridge-mac>,nw_src=<node-ip> actions=ct(commit,zone=64000,nat(src=<node-ip>),exec(set_field:<udn-ct-mark>->ct_mark)),output:<physical-port>
+table=0, priority=100,ip,in_port="patch-breth0_<udn>",dl_src=<bridge-mac>,nw_src=<udn-gr-masq-ip> actions=ct(commit,zone=64000,nat(src=<node-ip>),exec(set_field:<udn-ct-mark>->ct_mark)),output:<physical-port>
+```
+
+The priority 99 flow handles packets that were already SNATed to the node IP by the UDN gateway
+router. The priority 100 flow handles the normal UDN gateway router masquerade source. In both
+cases, the bridge commits the connection in zone 64000 and records the UDN CT mark.
+
+### Local Gateway Mode, No-Overlay UDN
+
+For local gateway mode, ingress service traffic can enter the host, get DNATed to a service, and
+then be routed back to `breth0`. Table 2 sends that packet to the UDN patch port. If the UDN gateway
+router load balancer selects a remote endpoint, `lb_force_snat_ip=router_ip` SNATs the packet to the
+node IP, and the no-overlay route can hairpin the packet back to `breth0` through the same UDN patch
+port.
+
+The existing table 0 hairpin match sends that OVN-to-host packet to table 4:
+
+```
+table=0, priority=175,ip,in_port="patch-breth0_<udn>",nw_src=<node-ip> actions=ct(table=4,zone=64001,nat)
+```
+
+Table 4 then matches on the UDN patch port and destination UDN pod CIDR, and SNATs to that UDN
+gateway router masquerade IP. The `in_port` match is what lets each no-overlay UDN use its own
+masquerade IP. The destination CIDR match keeps ordinary UDN pod traffic to node IPs, such as a
+request to a NodePort on a different node, on the default table 4 path:
+
+```
+table=4, priority=100,in_port="patch-breth0_<udn>",ip,ip_dst=<udn-pod-cidr> actions=ct(commit,zone=64002,nat(src=<udn-gr-masq-ip>),exec(set_field:<udn-ct-mark>->ct_mark),table=3)
+```
+
+After table 3 sends the packet to the host, host routing sends it back out the physical interface.
+The local gateway masquerade rules SNAT the UDN gateway router masquerade IP to the node IP for
+underlay egress. Reply traffic is restored by host conntrack back to the UDN gateway router
+masquerade IP before it returns to `breth0`.
+
+The reply path starts with a UDN-specific LOCAL flow that unSNATs in the OVN masquerade zone and
+continues to table 5:
+
+```
+table=0, priority=500,in_port=LOCAL,ip,ip_dst=<udn-gr-masq-ip> actions=ct(zone=64002,nat,table=5)
+```
+
+Table 5 finishes the service reply unNAT in the host masquerade zone and dispatches directly to the
+correct UDN patch port. This direct dispatch is important for advertised UDNs because, after the
+reply is unNATed, table 2's UDN source isolation flow would otherwise drop the packet before a
+generic dispatch flow could send it back to the UDN gateway router:
+
+```
+table=5, priority=100,ip,ct_mark=<udn-ct-mark> actions=ct(commit,zone=64001,nat,exec(set_field:<udn-ct-mark>->ct_mark)),set_field:<bridge-mac>->eth_dst,output:"patch-breth0_<udn>"
+```
+
+The IPv6 path uses equivalent flows with `ipv6`, `ipv6_dst`, and the UDN IPv6 gateway router
+masquerade IP.
+
 ## Sources
 - https://www.asykim.com/blog/deep-dive-into-kubernetes-external-traffic-policies
 
