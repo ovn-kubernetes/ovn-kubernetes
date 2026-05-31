@@ -707,7 +707,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 		}
 		var err error
 		if namespaces != nil {
-			err = fakeOvn.controller.WatchNamespaces()
+			err = fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 		if pods != nil {

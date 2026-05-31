@@ -265,7 +265,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			},
 		)
 
-		err := fakeOVN.controller.WatchNamespaces()
+		err := fakeOVN.controller.RegisterNamespaceHandler()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		startDNSNameResolver(oldDNS)

@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/namespace"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -292,16 +293,21 @@ func updateMulticast(fakeOvn *FakeOVN, ns *corev1.Namespace, enable bool) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
-func startBaseNetworkController(fakeOvn *FakeOVN, nad *nadapi.NetworkAttachmentDefinition) *BaseNetworkController {
+// startBaseNetworkController returns the embedded *BaseNetworkController
+// for the test's network plus the concrete NamespaceHandler to register
+// with the shared NamespaceController. The base view alone can't recover
+// its concrete handler (Go embedding has no back-pointer), so it's
+// returned explicitly — callers pass it to registerNamespaceReconciler.
+func startBaseNetworkController(fakeOvn *FakeOVN, nad *nadapi.NetworkAttachmentDefinition) (*BaseNetworkController, nscontroller.NamespaceHandler) {
 	if nad != nil {
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(fakeOvn.NewUserDefinedNetworkController(nad)).To(Succeed())
 		controller, ok := fakeOvn.userDefinedNetworkControllers[netInfo.GetNetworkName()]
 		Expect(ok).To(BeTrue())
-		return &controller.bnc.BaseNetworkController
+		return &controller.bnc.BaseNetworkController, controller.bnc
 	} else {
-		return &fakeOvn.controller.BaseNetworkController
+		return &fakeOvn.controller.BaseNetworkController, fakeOvn.controller
 	}
 }
 
@@ -379,7 +385,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 						clusterRtrPortGroup,
 					},
 				})
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, _ := startBaseNetworkController(fakeOvn, nad)
 
 				Expect(bnc.createDefaultDenyMulticastPolicy()).To(Succeed())
 				Expect(bnc.createDefaultAllowMulticastPolicy()).To(Succeed())
@@ -422,7 +428,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 						},
 					},
 				)
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, _ := startBaseNetworkController(fakeOvn, nad)
 
 				// this "if !oc.multicastSupport" part of SetupMaster
 				Expect(bnc.disableMulticast()).To(Succeed())
@@ -477,9 +483,9 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					Expect(fakeOvn.networkManager.Start()).To(Succeed())
 					defer fakeOvn.networkManager.Stop()
 				}
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
 
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 				expectedData = append(expectedData, getMulticastPolicyExpectedData(netInfo, namespaceName1, nil)...)
 				Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData))
 				return nil
@@ -523,9 +529,9 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					Expect(fakeOvn.networkManager.Start()).To(Succeed())
 					defer fakeOvn.networkManager.Stop()
 				}
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
 
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 				expectedData = getMulticastExpectedData(netInfo, clusterPortGroup, clusterRtrPortGroup)
 				expectedData = append(expectedData, getMulticastPolicyExpectedData(netInfo, namespaceName1, nil)...)
 				Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData))
@@ -572,9 +578,9 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					Expect(fakeOvn.networkManager.Start()).To(Succeed())
 					defer fakeOvn.networkManager.Stop()
 				}
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
 
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 				// only namespaced acls should be dereferenced, default acls will stay
 				namespacePortGroup := getNamespacePG(namespaceName1, getNetworkControllerName(netInfo.GetNetworkName()))
 				expectedData := append(defaultMulticastData, namespacePortGroup, addrSet)
@@ -619,8 +625,8 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					defer fakeOvn.networkManager.Stop()
 				}
 
-				bnc := startBaseNetworkController(fakeOvn, nad)
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 
 				ns, err := fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespace1.Name, metav1.GetOptions{})
 				Expect(err).To(Succeed())
@@ -688,7 +694,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				}
 
 				fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: getNodeData(netInfo, nodeName)}, objs...)
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
 
 				for _, tPod := range tPods {
 					tPod.populateControllerLogicalSwitchCache(bnc)
@@ -698,7 +704,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					defer fakeOvn.networkManager.Stop()
 				}
 
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 				Expect(bnc.WatchPods()).To(Succeed())
 				ns, err := fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespace1.Name, metav1.GetOptions{})
 				Expect(err).To(Succeed())
@@ -761,14 +767,14 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				}
 
 				fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: getNodeData(netInfo, nodeName)}, objs...)
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
 
 				if nad != nil {
 					Expect(fakeOvn.networkManager.Start()).To(Succeed())
 					defer fakeOvn.networkManager.Stop()
 				}
 
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 				Expect(bnc.WatchPods()).To(Succeed())
 				ns1, err := fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespace1.Name, metav1.GetOptions{})
 				Expect(err).To(Succeed())
@@ -852,7 +858,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 				}
 
 				fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: getNodeData(netInfo, nodeName)}, objs...)
-				bnc := startBaseNetworkController(fakeOvn, nad)
+				bnc, nsHandler := startBaseNetworkController(fakeOvn, nad)
 
 				for _, tPod := range tPods {
 					tPod.populateControllerLogicalSwitchCache(bnc)
@@ -862,7 +868,7 @@ var _ = Describe("OVN Multicast with IP Address Family", func() {
 					defer fakeOvn.networkManager.Stop()
 				}
 
-				Expect(bnc.WatchNamespaces()).To(Succeed())
+				Expect(bnc.registerNamespaceReconciler(nsHandler)).To(Succeed())
 				Expect(bnc.WatchPods()).To(Succeed())
 				ns, err := fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespace1.Name, metav1.GetOptions{})
 				Expect(err).To(Succeed())

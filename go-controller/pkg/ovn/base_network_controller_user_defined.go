@@ -63,6 +63,8 @@ func (bsnc *BaseUserDefinedNetworkController) GetInternalCacheEntryForUserDefine
 
 // AddUserDefinedNetworkResourceCommon adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation. This function is called for User Defined Networks only.
+// Namespace events flow through the shared NamespaceController; this dispatcher handles the
+// remaining types still routed via the per-network retry framework.
 func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommon(objType reflect.Type, obj interface{}) error {
 	switch objType {
 	case factory.PodType:
@@ -71,13 +73,6 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 			return fmt.Errorf("could not cast %T object to *knet.Pod", obj)
 		}
 		return bsnc.ensurePodForUserDefinedNetwork(pod, true)
-
-	case factory.NamespaceType:
-		ns, ok := obj.(*corev1.Namespace)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to *kapi.Namespace", obj)
-		}
-		return bsnc.AddNamespaceForUserDefinedNetwork(ns)
 
 	case factory.MultiNetworkPolicyType:
 		mp, ok := obj.(*mnpapi.MultiNetworkPolicy)
@@ -119,10 +114,6 @@ func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCo
 		newPod := newObj.(*corev1.Pod)
 
 		return bsnc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache))
-
-	case factory.NamespaceType:
-		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
-		return bsnc.updateNamespaceForUserDefinedNetwork(oldNs, newNs)
 
 	case factory.MultiNetworkPolicyType:
 		oldMp, ok := oldObj.(*mnpapi.MultiNetworkPolicy)
@@ -183,10 +174,6 @@ func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCo
 			portInfoMap = cachedObj.(map[string]*lpInfo)
 		}
 		return bsnc.removePodForUserDefinedNetwork(pod, portInfoMap)
-
-	case factory.NamespaceType:
-		ns := obj.(*corev1.Namespace)
-		return bsnc.deleteNamespaceForUserDefinedNetwork(ns)
 
 	case factory.MultiNetworkPolicyType:
 		mp, ok := obj.(*mnpapi.MultiNetworkPolicy)

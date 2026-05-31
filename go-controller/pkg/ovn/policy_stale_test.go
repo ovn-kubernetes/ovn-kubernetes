@@ -268,7 +268,7 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 		)
 		var err error
 		if namespaces != nil {
-			err = fakeOvn.controller.WatchNamespaces()
+			err = fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 		err = fakeOvn.controller.WatchNetworkPolicy()

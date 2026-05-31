@@ -6,6 +6,7 @@ package ovn
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -497,7 +498,6 @@ func (bnc *BaseNetworkController) deleteDefaultDenyPGAndACLs(namespace string) e
 	return nil
 }
 
-// must be called with namespace lock
 func (bnc *BaseNetworkController) updateACLLoggingForPolicy(np *networkPolicy, aclLogging *libovsdbutil.ACLLoggingLevels) error {
 	np.RLock()
 	defer np.RUnlock()
@@ -513,7 +513,7 @@ func (bnc *BaseNetworkController) updateACLLoggingForPolicy(np *networkPolicy, a
 	return libovsdbutil.UpdateACLLoggingWithPredicate(bnc.nbClient, p, aclLogging)
 }
 
-func (bnc *BaseNetworkController) updateACLLoggingForDefaultACLs(ns string, nsInfo *namespaceInfo) error {
+func (bnc *BaseNetworkController) updateACLLoggingForDefaultACLs(ns string, aclLogging libovsdbutil.ACLLoggingLevels) error {
 	return bnc.sharedNetpolPortGroups.DoWithLock(ns, func(pgKey string) error {
 		_, loaded := bnc.sharedNetpolPortGroups.Load(pgKey)
 		if !loaded {
@@ -530,37 +530,57 @@ func (bnc *BaseNetworkController) updateACLLoggingForDefaultACLs(ns string, nsIn
 		if err != nil {
 			return fmt.Errorf("failed to find netpol default deny acls for namespace %s: %v", ns, err)
 		}
-		if err := libovsdbutil.UpdateACLLogging(bnc.nbClient, defaultDenyACLs, &nsInfo.aclLogging); err != nil {
+		if err := libovsdbutil.UpdateACLLogging(bnc.nbClient, defaultDenyACLs, &aclLogging); err != nil {
 			return fmt.Errorf("unable to update ACL logging for namespace %s: %w", ns, err)
 		}
 		return nil
 	})
 }
 
-// handleNetPolNamespaceUpdate should update all network policies related to given namespace.
-// Must be called with namespace Lock, should be retriable
-func (bnc *BaseNetworkController) handleNetPolNamespaceUpdate(namespace string, nsInfo *namespaceInfo) error {
-	// update shared port group ACLs
-	if err := bnc.updateACLLoggingForDefaultACLs(namespace, nsInfo); err != nil {
+// ReconcileNetworkPolicyACLLogging refreshes the ACL-logging level on a single
+// network policy's ACLs; it does not delete or re-create the policy. aclLogging
+// is passed by the caller (not read from the namespace cache) to avoid taking
+// the namespace lock, which the in-tree caller already holds.
+func (bnc *BaseNetworkController) ReconcileNetworkPolicyACLLogging(npKey string, aclLogging libovsdbutil.ACLLoggingLevels) error {
+	return bnc.networkPolicies.DoWithLock(npKey, func(_ string) error {
+		np, found := bnc.networkPolicies.Load(npKey)
+		if !found {
+			// The policy is gone; nothing to update.
+			return nil
+		}
+		return bnc.updateACLLoggingForPolicy(np, &aclLogging)
+	})
+}
+
+// ReconcileNetworkPoliciesACLLoggingInNamespace updates the ACL-logging level
+// for every network policy this controller programmed in the namespace, plus
+// the shared default-deny ACLs. Walks bnc.networkPolicies, not the NetworkPolicy
+// informer, since converted MultiNetworkPolicies are absent from the informer.
+func (bnc *BaseNetworkController) ReconcileNetworkPoliciesACLLoggingInNamespace(namespace string, aclLogging libovsdbutil.ACLLoggingLevels) error {
+	if err := bnc.updateACLLoggingForDefaultACLs(namespace, aclLogging); err != nil {
 		return fmt.Errorf("failed to update default deny ACLs for namespace %s: %v", namespace, err)
 	}
-	// now update network policy specific ACLs
 	klog.V(5).Infof("Setting network policy ACLs for ns: %s", namespace)
-	for npKey := range nsInfo.relatedNetworkPolicies {
-		err := bnc.networkPolicies.DoWithLock(npKey, func(_ string) error {
-			np, found := bnc.networkPolicies.Load(npKey)
-			if !found {
-				klog.Errorf("Netpol was deleted from cache, but not from namespace related objects")
-				return nil
-			}
-			return bnc.updateACLLoggingForPolicy(np, &nsInfo.aclLogging)
-		})
-		if err != nil {
+	// Policy keys are "namespace/name"; namespace names never contain "/",
+	// so the prefix match is unambiguous.
+	prefix := namespace + "/"
+	for _, npKey := range bnc.networkPolicies.GetKeys() {
+		if !strings.HasPrefix(npKey, prefix) {
+			continue
+		}
+		if err := bnc.ReconcileNetworkPolicyACLLogging(npKey, aclLogging); err != nil {
 			return fmt.Errorf("unable to update ACL for network policy %s: %v", npKey, err)
 		}
-		klog.Infof("ACL for network policy: %s, updated to new log level: %s", npKey, nsInfo.aclLogging.Allow)
+		klog.Infof("ACL for network policy: %s, updated to new log level: %s", npKey, aclLogging.Allow)
 	}
 	return nil
+}
+
+// handleNetPolNamespaceUpdate is the legacy entry point for the in-tree caller,
+// which holds nsInfo's lock. New callers should use
+// ReconcileNetworkPoliciesACLLoggingInNamespace directly.
+func (bnc *BaseNetworkController) handleNetPolNamespaceUpdate(namespace string, nsInfo *namespaceInfo) error {
+	return bnc.ReconcileNetworkPoliciesACLLoggingInNamespace(namespace, nsInfo.aclLogging)
 }
 
 // getPolicyType returns whether the policy is of type ingress and/or egress
@@ -1254,11 +1274,17 @@ func (bnc *BaseNetworkController) addNetworkPolicy(policy *knet.NetworkPolicy) e
 	// 6. defer unlock namespace
 	defer nsUnlock()
 
+	// KNOWN LIMITATION (pre-existing on master):
+	// this presence check lags a primary-NAD change (bnc.namespaces is updated
+	// by the async delete leg, but a NAD flip is immediate), so a NetworkPolicy
+	// add in that window can leave ACLs/port groups for a network that no longer
+	// owns the namespace. Closing it needs a live-membership recheck; deferred.
+
 	// 4. check if namespace information related to network policy has changed,
 	// network policy only reacts to namespace update ACL log level.
 	// Run handleNetPolNamespaceUpdate sequence, but only for 1 newly added policy.
 	if nsInfo.aclLogging.Deny != aclLogging.Deny {
-		if err = bnc.updateACLLoggingForDefaultACLs(policy.Namespace, nsInfo); err != nil {
+		if err = bnc.updateACLLoggingForDefaultACLs(policy.Namespace, nsInfo.aclLogging); err != nil {
 			return fmt.Errorf("network policy %s failed to be created: update default deny ACLs failed: %v", npKey, err)
 		} else {
 			klog.Infof("Policy %s: ACL logging setting updated to deny=%s allow=%s",
@@ -1273,9 +1299,6 @@ func (bnc *BaseNetworkController) addNetworkPolicy(policy *knet.NetworkPolicy) e
 				npKey, nsInfo.aclLogging.Deny, nsInfo.aclLogging.Allow)
 		}
 	}
-
-	// 5. subscribe to namespace update events
-	nsInfo.relatedNetworkPolicies[npKey] = true
 	return nil
 }
 
@@ -1306,13 +1329,6 @@ func (bnc *BaseNetworkController) deleteNetworkPolicy(policy *knet.NetworkPolicy
 			duration := time.Since(start)
 			metrics.RecordNetpolEvent("delete", duration)
 		}()
-	}
-	// First lock and update namespace
-	nsInfo, nsUnlock := bnc.getNamespaceLocked(policy.Namespace, false)
-	if nsInfo != nil {
-		// unsubscribe from namespace events
-		delete(nsInfo.relatedNetworkPolicies, npKey)
-		nsUnlock()
 	}
 	// Next cleanup network policy
 	err := bnc.networkPolicies.DoWithLock(npKey, func(npKey string) error {

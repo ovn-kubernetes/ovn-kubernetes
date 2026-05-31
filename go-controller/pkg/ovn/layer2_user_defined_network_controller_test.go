@@ -422,7 +422,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(udnNetController)
 				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
-				Expect(udnNetController.bnc.WatchNamespaces()).To(Succeed())
+				Expect(udnNetController.bnc.RegisterNamespaceHandler()).To(Succeed())
 				Expect(udnNetController.bnc.WatchPods()).To(Succeed())
 
 				// Deregister active node handler before cleanup to avoid concurrent
@@ -490,7 +490,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			Expect(fakeOvn.networkManager.Start()).To(Succeed())
 			defer fakeOvn.networkManager.Stop()
-			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.RegisterNamespaceHandler()).To(Succeed())
 			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
 
 			// Run init() to create cluster-level entities, then watchers so node sync creates per-node entities.
@@ -501,7 +501,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			Expect(ok).To(BeTrue())
 			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 			Expect(l2Controller.RegisterNodeHandler()).To(Succeed())
-			Expect(l2Controller.WatchNamespaces()).To(Succeed())
+			Expect(l2Controller.RegisterNamespaceHandler()).To(Succeed())
 			Expect(l2Controller.WatchPods()).To(Succeed())
 			Expect(l2Controller.WatchNetworkPolicy()).To(Succeed())
 
@@ -536,6 +536,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				NewPortCache(ctx.Done()),
 				nil,
 				fakeOvn.addressSetManager,
+				nil,
 				nil,
 				nil,
 			)
@@ -600,7 +601,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			Expect(fakeOvn.networkManager.Start()).To(Succeed())
 			defer fakeOvn.networkManager.Stop()
-			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.RegisterNamespaceHandler()).To(Succeed())
 			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
 
 			l2Controller, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
@@ -609,7 +610,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			udnNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
 			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-			Expect(l2Controller.WatchNamespaces()).To(Succeed())
+			Expect(l2Controller.RegisterNamespaceHandler()).To(Succeed())
 			Expect(l2Controller.WatchPods()).To(Succeed())
 			Expect(l2Controller.WatchNetworkPolicy()).To(Succeed())
 
@@ -634,10 +635,14 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(addrSets).To(BeEmpty(), "address set should be deleted from NB DB after cleanup")
 
-			// Recreate: new controller for the same network. NewMutableNetInfo
-			// produces a NetInfo without the tunnel keys that the network
-			// manager normally assigns; seed two keys so the L2 transit-router
-			// validation in init() succeeds.
+			// Recreate: new controller for the same network. The existing
+			// l2Controller's namespace handler registration was released
+			// by Cleanup() above (DeregisterNamespaceHandler), so the new
+			// controller can register against the same network name.
+			//
+			// NewMutableNetInfo produces a NetInfo without the tunnel keys
+			// that the network manager normally assigns; seed two keys so
+			// the L2 transit-router validation in init() succeeds.
 			mutableNetInfo.SetTunnelKeys([]int{1, 2})
 			l2ControllerNew, err := NewLayer2UserDefinedNetworkController(
 				&l2Controller.CommonNetworkControllerInfo,
@@ -649,10 +654,11 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				fakeOvn.addressSetManager,
 				nil,
 				fakeOvn.controller.ServiceController(),
+				fakeOvn.controller.nsReconciler,
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(l2ControllerNew.init()).To(Succeed())
-			Expect(l2ControllerNew.WatchNamespaces()).To(Succeed())
+			Expect(l2ControllerNew.RegisterNamespaceHandler()).To(Succeed())
 			Expect(l2ControllerNew.WatchPods()).To(Succeed())
 			Expect(l2ControllerNew.WatchNetworkPolicy()).To(Succeed())
 
@@ -1419,7 +1425,7 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	if err = fakeOvn.registerUDNNodeHandler(userDefinedNetworkName); err != nil {
 		return err
 	}
-	if err = userDefinedNetController.bnc.WatchNamespaces(); err != nil {
+	if err = userDefinedNetController.bnc.RegisterNamespaceHandler(); err != nil {
 		return err
 	}
 	if err = userDefinedNetController.bnc.WatchPods(); err != nil {

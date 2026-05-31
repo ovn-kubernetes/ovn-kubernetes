@@ -201,7 +201,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(fullL3UDNController).ToNot(BeNil())
 				Expect(fullL3UDNController.init()).To(Succeed())
 
-				Expect(fakeOvn.controller.WatchNamespaces()).NotTo(HaveOccurred())
+				Expect(fakeOvn.controller.RegisterNamespaceHandler()).NotTo(HaveOccurred())
 				Expect(fakeOvn.controller.WatchPods()).NotTo(HaveOccurred())
 
 				userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
@@ -210,7 +210,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
 				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
-				Expect(userDefinedNetController.bnc.WatchNamespaces()).To(Succeed())
+				Expect(userDefinedNetController.bnc.RegisterNamespaceHandler()).To(Succeed())
 				Expect(fullL3UDNController.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
@@ -429,7 +429,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(fullL3UDNController).ToNot(BeNil())
 				Expect(fullL3UDNController.init()).To(Succeed())
 
-				Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+				Expect(fakeOvn.controller.RegisterNamespaceHandler()).To(Succeed())
 				Expect(fakeOvn.controller.WatchPods()).To(Succeed())
 				userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 				Expect(ok).To(BeTrue())
@@ -437,7 +437,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
 				Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
-				Expect(userDefinedNetController.bnc.WatchNamespaces()).To(Succeed())
+				Expect(userDefinedNetController.bnc.RegisterNamespaceHandler()).To(Succeed())
 				Expect(fullL3UDNController.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
 				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
@@ -527,7 +527,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			})
 
 			// networkManager is already started by startWithDBSetup (via init()) and stopped by AfterEach (shutdown).
-			Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
+			Expect(fakeOvn.controller.RegisterNamespaceHandler()).To(Succeed())
 			Expect(fakeOvn.controller.WatchPods()).To(Succeed())
 
 			// Run init() to create cluster-level entities (cluster router, join switch, LB groups, etc.),
@@ -536,7 +536,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			Expect(ok).To(BeTrue())
 			Expect(l3Controller.init()).To(Succeed())
 			Expect(l3Controller.RegisterNodeHandler()).To(Succeed())
-			Expect(l3Controller.WatchNamespaces()).To(Succeed())
+			Expect(l3Controller.RegisterNamespaceHandler()).To(Succeed())
 			Expect(l3Controller.waitForLocalZoneNodeLogicalSwitches()).To(Succeed())
 			Expect(l3Controller.WatchPods()).To(Succeed())
 			Expect(l3Controller.WatchNetworkPolicy()).To(Succeed())
@@ -580,6 +580,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				nil,
 				nil,
 				NewPortCache(ctx.Done()),
+				nil,
 				nil,
 				nil,
 				nil,

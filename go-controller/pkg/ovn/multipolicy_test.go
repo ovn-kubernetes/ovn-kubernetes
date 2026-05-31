@@ -347,7 +347,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		}
 
 		if namespaces != nil {
-			err = fakeOvn.controller.WatchNamespaces()
+			err = fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 
@@ -376,7 +376,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 			}
 
 			if namespaces != nil {
-				err = ocInfo.bnc.WatchNamespaces()
+				err = ocInfo.bnc.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 

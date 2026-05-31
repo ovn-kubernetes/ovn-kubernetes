@@ -154,7 +154,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			podMAC := ovntest.MustParseMAC(tP.podMAC)
 			podIPNets := []*net.IPNet{ovntest.MustParseIPNet(tP.podIP + "/24")}
 			fakeOvn.controller.logicalPortCache.add(tPod, tP.nodeName, ovntypes.DefaultNetworkName, fakeUUID, podMAC, podIPNets)
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceT.Name, metav1.GetOptions{})
@@ -175,7 +175,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 					*ovntest.NewNamespace(namespaceName),
 				},
 			})
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
@@ -209,7 +209,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				},
 			)
 
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(initialData))
 		})
@@ -233,7 +233,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				},
 			)
 
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{}))
 		})
@@ -253,7 +253,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				},
 			)
 
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{}))
 		})

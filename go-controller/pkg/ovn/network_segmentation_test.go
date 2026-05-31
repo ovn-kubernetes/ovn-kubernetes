@@ -124,7 +124,7 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 				t1.populateLogicalSwitchCache(fakeOvn)
 				// pod annotations and lsp exist now
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

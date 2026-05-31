@@ -536,7 +536,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(lsl).To(gomega.HaveLen(1))
 
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -601,7 +601,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				t.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -656,7 +656,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				t.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -769,7 +769,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				t.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -945,7 +945,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 				t.populateLogicalSwitchCache(fakeOvn)
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -991,7 +991,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				t.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1066,7 +1066,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				podTest.populateLogicalSwitchCache(fakeOvn)
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
 					libovsdbtest.HaveData(getDefaultNetExpectedPodsAndSwitches([]testPod{}, []string{"node1"})...))
@@ -1140,7 +1140,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				podTest.populateLogicalSwitchCache(fakeOvn)
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1217,7 +1217,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				podTest.populateLogicalSwitchCache(fakeOvn)
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				gomega.Eventually(fakeOvn.controller.nbClient).Should(
@@ -1329,7 +1329,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				podTest.populateLogicalSwitchCache(fakeOvn)
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1440,7 +1440,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 
 				podTest.populateLogicalSwitchCache(fakeOvn)
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1570,7 +1570,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				t.populateLogicalSwitchCache(fakeOvn)
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1630,7 +1630,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				t.populateLogicalSwitchCache(fakeOvn)
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1685,7 +1685,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					},
 				)
 				t.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1751,7 +1751,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				_, ok := pod.Annotations[ovntypes.OvnPodAnnotationName]
 				gomega.Expect(ok).To(gomega.BeFalse())
 
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1808,7 +1808,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				annotations := getPodAnnotations(fakeOvn.fakeClient.KubeClient, t.namespace, t.podName)
 				gomega.Expect(annotations).To(gomega.MatchJSON(t.getAnnotationsJson()))
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1875,7 +1875,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 
 				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(testNode.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)}, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2033,7 +2033,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				t3.populateLogicalSwitchCache(fakeOvn)
 				// pod annotations and lsp exist now
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2192,7 +2192,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				t1.populateLogicalSwitchCache(fakeOvn)
 				// pod annotations and lsp exist now
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2252,7 +2252,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				_, ok := pod.Annotations[ovntypes.OvnPodAnnotationName]
 				gomega.Expect(ok).To(gomega.BeFalse())
 
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2324,7 +2324,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t.namespace, t.podName)
 				}, 2).Should(gomega.MatchJSON(t.getAnnotationsJson()))
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2396,7 +2396,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				)
 				runningTPod.populateLogicalSwitchCache(fakeOvn)
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2454,7 +2454,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// the node is on a remote zone
 				fakeOvn.controller.localZoneNodes = &sync.Map{}
 
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

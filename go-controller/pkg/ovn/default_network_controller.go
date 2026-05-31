@@ -20,6 +20,7 @@ import (
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/namespace"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressqoslisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
@@ -154,10 +155,11 @@ func NewDefaultNetworkController(
 	portCache *PortCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
+	nsReconciler *nscontroller.NamespaceController,
 ) (*DefaultNetworkController, error) {
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, routeImportManager, observManager, eIPController, portCache, addressSetManager, nodeReconciler)
+	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, routeImportManager, observManager, eIPController, portCache, addressSetManager, nodeReconciler, nsReconciler)
 }
 
 func newDefaultNetworkControllerCommon(
@@ -172,9 +174,13 @@ func newDefaultNetworkControllerCommon(
 	portCache *PortCache,
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
+	nsReconciler *nscontroller.NamespaceController,
 ) (*DefaultNetworkController, error) {
 	if nodeReconciler == nil {
 		return nil, fmt.Errorf("shared node reconciler is required for the default network controller")
+	}
+	if nsReconciler == nil {
+		return nil, fmt.Errorf("shared namespace reconciler is required for the default network controller")
 	}
 
 	defaultNetInfo := &util.DefaultNetInfo{}
@@ -237,6 +243,7 @@ func newDefaultNetworkControllerCommon(
 			addressSetManager:           addressSetManager,
 			nodeReconciler:              nodeReconciler,
 			nodeAnnotationCache:         nodeReconciler.AnnotationCache(),
+			nsReconciler:                nsReconciler,
 		},
 		externalGatewayRouteInfo:   apbExternalRouteController.ExternalGWRouteInfoCache,
 		eIPC:                       eIPController,
@@ -263,14 +270,14 @@ func newDefaultNetworkControllerCommon(
 }
 
 func (oc *DefaultNetworkController) initRetryFramework() {
-	// Init the retry framework for pods, namespaces, network policies, egress firewalls,
+	// Init the retry framework for pods, network policies, egress firewalls,
 	// egress IP (and dependent namespaces, pods, nodes), cloud private ip config.
+	// Namespace handling is on the shared NamespaceController.
 	oc.retryPods = oc.newRetryFramework(factory.PodType)
 	oc.retryEgressIPs = oc.newRetryFramework(factory.EgressIPType)
 	oc.retryEgressIPNamespaces = oc.newRetryFramework(factory.EgressIPNamespaceType)
 	oc.retryEgressIPPods = oc.newRetryFramework(factory.EgressIPPodType)
 	oc.retryEgressNodes = oc.newRetryFramework(factory.EgressNodeType)
-	oc.retryNamespaces = oc.newRetryFramework(factory.NamespaceType)
 	oc.retryNetworkPolicies = oc.newRetryFramework(factory.PolicyType)
 }
 
@@ -344,6 +351,7 @@ func (oc *DefaultNetworkController) Start(ctx context.Context) error {
 // Stop gracefully stops the controller
 func (oc *DefaultNetworkController) Stop() {
 	oc.DeregisterNodeHandler()
+	oc.DeregisterNamespaceHandler()
 	if oc.dnsNameResolver != nil {
 		oc.dnsNameResolver.Shutdown()
 	}
@@ -371,6 +379,12 @@ func (oc *DefaultNetworkController) ServiceController() *svccontroller.Controlle
 
 func (oc *DefaultNetworkController) RegisterNodeHandler() error {
 	return oc.nodeReconciler.RegisterNetworkController(oc)
+}
+
+// RegisterNamespaceHandler registers this controller as the namespace handler
+// for its network. Mirrors RegisterNodeHandler.
+func (oc *DefaultNetworkController) RegisterNamespaceHandler() error {
+	return oc.registerNamespaceReconciler(oc)
 }
 
 func (oc *DefaultNetworkController) startNodeReconciliation() error {
@@ -656,9 +670,13 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 	klog.Info("Starting all the Watchers...")
 	start := time.Now()
 
-	// WatchNamespaces() should be started first because it has no other
-	// dependencies, and node startup depends on it.
-	if err := WithSyncDurationMetric("namespace", oc.WatchNamespaces); err != nil {
+	// Namespace handling flows through the shared NamespaceController.
+	// Registration blocks on WaitForBootstrap so the later WatchPods and
+	// WatchNetworkPolicy start only after every existing namespace has been
+	// processed once, preserving the WatchNamespaces ordering contract.
+	if err := WithSyncDurationMetric("namespace", func() error {
+		return oc.RegisterNamespaceHandler()
+	}); err != nil {
 		return err
 	}
 
@@ -1066,13 +1084,6 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		}
 		return nil
 
-	case factory.NamespaceType:
-		ns, ok := obj.(*corev1.Namespace)
-		if !ok {
-			return fmt.Errorf("could not cast %T object to *corev1.Namespace", obj)
-		}
-		return h.oc.AddNamespace(ns)
-
 	default:
 		return h.oc.AddResourceCommon(h.objType, obj)
 	}
@@ -1143,10 +1154,6 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			h.oc.syncEIPNodeFailed.Delete(newNode.Name)
 		}
 		return nil
-
-	case factory.NamespaceType:
-		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
-		return h.oc.updateNamespace(oldNs, newNs)
 	}
 	return fmt.Errorf("no update function for object type %s", h.objType)
 }
@@ -1192,10 +1199,6 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 		h.oc.syncEIPNodeFailed.Delete(node.Name)
 		return nil
 
-	case factory.NamespaceType:
-		ns := obj.(*corev1.Namespace)
-		return h.oc.deleteNamespace(ns)
-
 	default:
 		return h.oc.DeleteResourceCommon(h.objType, obj)
 	}
@@ -1224,9 +1227,6 @@ func (h *defaultNetworkControllerEventHandler) SyncFunc(objs []interface{}) erro
 		case factory.EgressIPNamespaceType,
 			factory.EgressIPType:
 			syncFunc = nil
-
-		case factory.NamespaceType:
-			syncFunc = h.oc.syncNamespaces
 
 		default:
 			return fmt.Errorf("no sync function for object type %s", h.objType)
