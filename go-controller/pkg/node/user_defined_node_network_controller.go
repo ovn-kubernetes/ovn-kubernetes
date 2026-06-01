@@ -11,6 +11,8 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -43,6 +45,7 @@ func NewUserDefinedNodeNetworkController(
 	ruleManager *iprulemanager.Controller,
 	mpdm *managementport.MgmtPortDeviceManager,
 	defaultNetworkGateway Gateway,
+	ovsClient libovsdbclient.Client,
 ) (*UserDefinedNodeNetworkController, error) {
 
 	snnc := &UserDefinedNodeNetworkController{
@@ -63,7 +66,8 @@ func NewUserDefinedNodeNetworkController(
 		}
 
 		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
-			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway)
+			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
+			ovsClient, snnc.watchFactory.UplinkStateInformer().Lister())
 		if err != nil {
 			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
 		}
