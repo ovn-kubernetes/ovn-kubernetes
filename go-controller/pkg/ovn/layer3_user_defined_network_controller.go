@@ -115,10 +115,7 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
 func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
-	switch h.objType {
-	default:
-		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
-	}
+	return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 }
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
@@ -548,7 +545,6 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 			return fmt.Errorf("failed to add network %s to the route import manager: %v", oc.GetNetworkName(), err)
 		}
 	}
-
 	// start NetworkQoS controller if feature is enabled
 	if config.OVNKubernetesFeature.EnableNetworkQoS {
 		err := oc.newNetworkQoSController()
@@ -603,6 +599,12 @@ func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) er
 
 func (oc *Layer3UserDefinedNetworkController) RegisterNodeHandler() error {
 	return oc.nodeReconciler.RegisterNetworkController(oc)
+}
+
+// MarkGatewaySyncNeeded forces the next node reconciliation to sync gateway
+// state even when node annotations did not change.
+func (oc *Layer3UserDefinedNetworkController) MarkGatewaySyncNeeded(nodeName string) {
+	oc.gatewaysFailed.Store(nodeName, true)
 }
 
 // ReconcileNode reconciles a node for a layer3 UDN controller.
@@ -1142,9 +1144,20 @@ func (oc *Layer3UserDefinedNetworkController) gatherJoinSwitchIPs() error {
 }
 
 func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Node) (*GatewayConfig, error) {
-	l3GatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
+	l3GatewayConfig, hasUplink, err := oc.uplinkGatewayConfig(node)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get node %s network %s L3 gateway config: %v", node.Name, oc.GetNetworkName(), err)
+		return nil, fmt.Errorf(
+			"failed to get node %s network %s Uplink gateway config: %v",
+			node.Name,
+			oc.GetNetworkName(),
+			err,
+		)
+	}
+	if !hasUplink {
+		l3GatewayConfig, err = util.ParseNodeL3GatewayAnnotation(node)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node %s network %s L3 gateway config: %v", node.Name, oc.GetNetworkName(), err)
+		}
 	}
 
 	networkName := oc.GetNetworkName()

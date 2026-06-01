@@ -40,6 +40,13 @@ type NodeHandler interface {
 	SyncNodes(nodes []*corev1.Node) error
 }
 
+// GatewaySyncHandler can be implemented by handlers that need an explicit
+// gateway resync trigger for external state changes that are not represented
+// by node annotations.
+type GatewaySyncHandler interface {
+	MarkGatewaySyncNeeded(nodeName string)
+}
+
 // NodeController reconciles node topology for all registered networks.
 type NodeController struct {
 	name string
@@ -148,6 +155,22 @@ func (c *NodeController) Stop() {
 // ReconcileNetwork queues reconciliation for a single node/network pair.
 func (c *NodeController) ReconcileNetwork(nodeName, netName string) {
 	c.nodeController.Reconcile(scopedNodeQueueKey(nodeName, netName))
+}
+
+// ReconcileNetworkGateway requests a gateway resync and queues reconciliation
+// for a single node/network pair. This is used for external state, such as
+// UplinkState, where the normal node annotation diff may otherwise skip
+// gateway setup.
+func (c *NodeController) ReconcileNetworkGateway(nodeName, netName string) {
+	_ = c.handlers.DoWithLock(netName, func(handlerKey string) error {
+		if handler, ok := c.handlers.Load(handlerKey); ok && handler != nil {
+			if gatewayHandler, ok := handler.(GatewaySyncHandler); ok {
+				gatewayHandler.MarkGatewaySyncNeeded(nodeName)
+			}
+		}
+		return nil
+	})
+	c.ReconcileNetwork(nodeName, netName)
 }
 
 // AnnotationCache returns the cache used for parsed node annotations.
