@@ -965,6 +965,24 @@ func (_m *NetInfo) Transport() string {
 	return r0
 }
 
+// Uplink provides a mock function with no fields
+func (_m *NetInfo) Uplink() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Uplink")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // Vlan provides a mock function with no fields
 func (_m *NetInfo) Vlan() uint {
 	ret := _m.Called()

@@ -24,6 +24,7 @@ const (
 	UplinkStateReasonReady                  = "Ready"
 	UplinkStateReasonHostInterfaceNotFound  = "HostInterfaceNotFound"
 	UplinkStateReasonBridgeNotFound         = "BridgeNotFound"
+	UplinkStateReasonBridgeUplinkNotFound   = "BridgeUplinkNotFound"
 	UplinkStateReasonBridgeInvalid          = "BridgeInvalid"
 	UplinkStateReasonInvalidHostInterface   = "InvalidHostInterface"
 	UplinkStateReasonGatewayInfoUnavailable = "GatewayInfoUnavailable"
