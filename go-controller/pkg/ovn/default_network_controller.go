@@ -104,6 +104,9 @@ type DefaultNetworkController struct {
 
 	// Controller used for programming OVN for Network Connect
 	networkConnectController *networkconnectcontroller.Controller
+	// Controller used to re-drive Uplink-backed network gateways when
+	// UplinkState changes.
+	uplinkStateController *uplinkStateController
 
 	// Controller used to handle the admin policy based external route resources
 	apbExternalRouteController *apbroutecontroller.ExternalGatewayMasterController
@@ -246,6 +249,16 @@ func newDefaultNetworkControllerCommon(
 		svcController:              svcController,
 		gatewayTopologyFactory:     topology.NewGatewayTopologyFactory(cnci.nbClient),
 	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		oc.uplinkStateController = newUplinkStateController(
+			cnci.watchFactory.UplinkStateInformer(),
+			cnci.watchFactory.NodeCoreInformer(),
+			networkManager,
+			nodeReconciler,
+			routeImportManager,
+			cnci.zone,
+		)
+	}
 	// Allocate IPs for logical router port "GwRouterToJoinSwitchPrefix + OVNClusterRouter". This should always
 	// allocate the first IPs in the join switch subnets.
 	gwLRPIfAddrs, err := oc.getOVNClusterRouterPortToJoinSwitchIfAddrs()
@@ -358,6 +371,9 @@ func (oc *DefaultNetworkController) Stop() {
 	}
 	if oc.networkConnectController != nil {
 		oc.networkConnectController.Stop()
+	}
+	if oc.uplinkStateController != nil {
+		oc.uplinkStateController.Stop()
 	}
 
 	close(oc.stopChan)
@@ -667,6 +683,11 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 	// https://github.com/ovn-kubernetes/ovn-kubernetes/pull/859
 	if err := WithSyncDurationMetric("node", oc.startNodeReconciliation); err != nil {
 		return err
+	}
+	if oc.uplinkStateController != nil {
+		if err := WithSyncDurationMetric("uplink state", oc.uplinkStateController.Start); err != nil {
+			return err
+		}
 	}
 
 	startSvc := time.Now()

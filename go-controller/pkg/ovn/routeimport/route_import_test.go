@@ -15,14 +15,19 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovntesting "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 	multinetworkmocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
@@ -58,6 +63,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	udn.On("Subnets").Return(nil)
 	udn.On("GetNetworkScopedGWRouterName", node).Return("router")
 	udn.On("Transport").Return("")
+	udn.On("Uplink").Return("")
 
 	cudn := &multinetworkmocks.NetInfo{}
 	cudn.On("IsDefault").Return(false)
@@ -66,6 +72,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	cudn.On("Subnets").Return(nil)
 	cudn.On("GetNetworkScopedGWRouterName", node).Return("router")
 	cudn.On("Transport").Return("")
+	cudn.On("Uplink").Return("")
 
 	// Create CUDN with subnets for overlay mode testing
 	cudnOverlay := &multinetworkmocks.NetInfo{}
@@ -83,6 +90,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	cudnOverlay.On("GetNetworkScopedGWRouterName", node).Return("cudn-overlay-router")
 	cudnOverlay.On("Transport").Return("") // Empty means overlay (geneve)
+	cudnOverlay.On("Uplink").Return("")
 	cudnOverlayRouter := cudnOverlay.GetNetworkScopedGWRouterName(node)
 	cudnOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnOverlayRouter
 
@@ -102,6 +110,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	cudnNoOverlay.On("GetNetworkScopedGWRouterName", node).Return("cudn-nooverlay-router")
 	cudnNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	cudnNoOverlay.On("Uplink").Return("")
 	cudnNoOverlayRouter := cudnNoOverlay.GetNetworkScopedGWRouterName(node)
 	cudnNoOverlayRouterPort := types.GWRouterToExtSwitchPrefix + cudnNoOverlayRouter
 
@@ -127,6 +136,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	primaryUDNMultiSubnet.On("GetNetworkScopedGWRouterName", node).Return("primary-udn-router")
 	primaryUDNMultiSubnet.On("Transport").Return("")
+	primaryUDNMultiSubnet.On("Uplink").Return("")
 	primaryUDNMultiSubnetRouter := primaryUDNMultiSubnet.GetNetworkScopedGWRouterName(node)
 	primaryUDNMultiSubnetRouterPort := types.GWRouterToExtSwitchPrefix + primaryUDNMultiSubnetRouter
 
@@ -152,8 +162,20 @@ func Test_controller_syncNetwork(t *testing.T) {
 	})
 	primaryUDNMultiSubnetNoOverlay.On("GetNetworkScopedGWRouterName", node).Return("primary-udn-nooverlay-router")
 	primaryUDNMultiSubnetNoOverlay.On("Transport").Return(types.NetworkTransportNoOverlay)
+	primaryUDNMultiSubnetNoOverlay.On("Uplink").Return("")
 	primaryUDNMultiSubnetNoOverlayRouter := primaryUDNMultiSubnetNoOverlay.GetNetworkScopedGWRouterName(node)
 	primaryUDNMultiSubnetNoOverlayRouterPort := types.GWRouterToExtSwitchPrefix + primaryUDNMultiSubnetNoOverlayRouter
+
+	uplinkCUDN := &multinetworkmocks.NetInfo{}
+	uplinkCUDN.On("IsDefault").Return(false)
+	uplinkCUDN.On("GetNetworkName").Return(types.CUDNPrefix + "blue")
+	uplinkCUDN.On("GetNetworkID").Return(7)
+	uplinkCUDN.On("Subnets").Return(nil)
+	uplinkCUDN.On("GetNetworkScopedGWRouterName", node).Return("blue-router")
+	uplinkCUDN.On("Transport").Return("")
+	uplinkCUDN.On("Uplink").Return("uplink1")
+	uplinkCUDNRouter := uplinkCUDN.GetNetworkScopedGWRouterName(node)
+	uplinkCUDNRouterPort := types.GWRouterToExtSwitchPrefix + uplinkCUDNRouter
 
 	type fields struct {
 		networkIDs map[int]string
@@ -163,17 +185,19 @@ func Test_controller_syncNetwork(t *testing.T) {
 		network string
 	}
 	tests := []struct {
-		name             string
-		fields           fields
-		args             args
-		initial          []libovsdb.TestData
-		expected         []libovsdb.TestData
-		routes           []netlink.Route
-		link             netlink.Link
-		noOverlayEnabled bool
-		linkErr          bool
-		routesErr        bool
-		wantErr          bool
+		name              string
+		fields            fields
+		args              args
+		initial           []libovsdb.TestData
+		expected          []libovsdb.TestData
+		routes            []netlink.Route
+		link              netlink.Link
+		uplinkStateLister uplinklisters.UplinkStateLister
+		uplinkBridgeLink  netlink.Link
+		noOverlayEnabled  bool
+		linkErr           bool
+		routesErr         bool
+		wantErr           bool
 	}{
 		{
 			name: "ignored if network not known",
@@ -410,6 +434,54 @@ func Test_controller_syncNetwork(t *testing.T) {
 				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "192.168.1.0/24", Nexthop: "2.2.2.1", OutputPort: &cudnNoOverlayRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 			},
 		},
+		{
+			name: "filters routes for an Uplink-backed CUDN by Uplink bridge",
+			args: args{types.CUDNPrefix + "blue"},
+			fields: fields{
+				networkIDs: map[int]string{7: types.CUDNPrefix + "blue"},
+				networks:   map[string]util.NetInfo{types.CUDNPrefix + "blue": uplinkCUDN},
+			},
+			link: &netlink.Vrf{Table: 7},
+			uplinkStateLister: newRouteImportUplinkStateLister(
+				t,
+				"uplink1",
+				node,
+				"ovsbr1",
+			),
+			uplinkBridgeLink: &netlink.Bridge{
+				LinkAttrs: netlink.LinkAttrs{
+					Name:  "ovsbr1",
+					Index: 10,
+				},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: uplinkCUDNRouter},
+			},
+			routes: []netlink.Route{
+				{
+					Dst: ovntesting.MustParseIPNet("172.26.0.0/16"),
+					MultiPath: []*netlink.NexthopInfo{
+						{LinkIndex: 2, Gw: ovntesting.MustParseIP("172.18.0.5")},
+						{LinkIndex: 10, Gw: ovntesting.MustParseIP("172.28.0.5")},
+					},
+				},
+				{
+					LinkIndex: 2,
+					Dst:       ovntesting.MustParseIPNet("172.27.0.0/16"),
+					Gw:        ovntesting.MustParseIP("172.18.0.5"),
+				},
+				{
+					LinkIndex: 10,
+					Dst:       ovntesting.MustParseIPNet("172.29.0.0/16"),
+					Gw:        ovntesting.MustParseIP("172.28.0.5"),
+				},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: uplinkCUDNRouter, StaticRoutes: []string{"add-1", "add-2"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "172.26.0.0/16", Nexthop: "172.28.0.5", OutputPort: &uplinkCUDNRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-2", IPPrefix: "172.29.0.0/16", Nexthop: "172.28.0.5", OutputPort: &uplinkCUDNRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -431,6 +503,9 @@ func Test_controller_syncNetwork(t *testing.T) {
 				nlmock.On("LinkByName", mock.Anything).Return(nil, testError)
 			default:
 				nlmock.On("LinkByName", util.GetNetworkVRFName(network)).Return(tt.link, nil)
+				if tt.uplinkBridgeLink != nil {
+					nlmock.On("LinkByName", tt.uplinkBridgeLink.Attrs().Name).Return(tt.uplinkBridgeLink, nil)
+				}
 			}
 
 			switch {
@@ -450,13 +525,14 @@ func Test_controller_syncNetwork(t *testing.T) {
 			t.Cleanup(ctx.Cleanup)
 
 			c := &controller{
-				nbClient:   client,
-				node:       node,
-				log:        testr.New(t),
-				networkIDs: tt.fields.networkIDs,
-				networks:   tt.fields.networks,
-				tables:     map[int]int{},
-				netlink:    nlmock,
+				nbClient:          client,
+				node:              node,
+				log:               testr.New(t),
+				networkIDs:        tt.fields.networkIDs,
+				networks:          tt.fields.networks,
+				tables:            map[int]int{},
+				netlink:           nlmock,
+				uplinkStateLister: tt.uplinkStateLister,
 			}
 
 			if tt.noOverlayEnabled {
@@ -473,6 +549,37 @@ func Test_controller_syncNetwork(t *testing.T) {
 			g.Expect(client).To(libovsdb.HaveData(tt.expected...))
 		})
 	}
+}
+
+func newRouteImportUplinkStateLister(
+	t *testing.T,
+	uplinkName, nodeName, bridgeName string,
+) uplinklisters.UplinkStateLister {
+	t.Helper()
+
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	err := indexer.Add(&uplinkv1alpha1.UplinkState{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: uplinkutil.StateName(uplinkName, nodeName),
+		},
+		Status: uplinkv1alpha1.UplinkStateStatus{
+			UplinkName: uplinkName,
+			NodeName:   nodeName,
+			Type:       uplinkv1alpha1.UplinkTypeOVSBridge,
+			OVSBridge: &uplinkv1alpha1.OVSBridgeStatus{
+				Name: bridgeName,
+			},
+			Conditions: []metav1.Condition{
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionReady,
+					Status: metav1.ConditionTrue,
+				},
+			},
+		},
+	})
+	gomega.NewWithT(t).Expect(err).ToNot(gomega.HaveOccurred())
+
+	return uplinklisters.NewUplinkStateLister(indexer)
 }
 
 func Test_controller_syncRouteUpdate(t *testing.T) {

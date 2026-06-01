@@ -194,12 +194,13 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	// gather some information first
 	var reconcileNodes []string
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
+	uplinkChanged := oc.Uplink() != netInfo.Uplink()
 	oc.localZoneNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
 		isAdvertised := util.IsPodNetworkAdvertisedAtNode(netInfo, nodeName)
 		reconcileSubnetChange := subnetsChanged && (isAdvertised || config.OVNKubernetesFeature.EnableEgressIP)
-		if wasAdvertised == isAdvertised && !reconcileSubnetChange {
+		if wasAdvertised == isAdvertised && !reconcileSubnetChange && !uplinkChanged {
 			// noop
 			return true
 		}
