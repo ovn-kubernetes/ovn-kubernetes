@@ -3,10 +3,20 @@
 
 package node
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+)
 
 func TestOpenFlowManagerDeletesGroupCacheWithFlowCache(t *testing.T) {
-	ofm := &openflowManager{}
+	ofm := &openflowManager{
+		defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+		uplinkBridges: map[string]*openflowBridge{},
+	}
 	key := "NodePort_namespace1_service1_tcp_31111"
 
 	ofm.updateFlowCacheEntry(key, []string{"cookie=0x123, priority=110, actions=group:100"})
@@ -19,6 +29,93 @@ func TestOpenFlowManagerDeletesGroupCacheWithFlowCache(t *testing.T) {
 	}
 	if groups := ofm.getGroupsByKey(key); groups != nil {
 		t.Fatalf("expected group cache entry to be deleted, got %#v", groups)
+	}
+}
+
+func TestOpenFlowManagerCleansUnusedUplinkBridgeFlows(t *testing.T) {
+	fexec := ovntest.NewFakeExec()
+	if err := util.SetExec(fexec); err != nil {
+		t.Fatalf("failed to set fake exec: %v", err)
+	}
+	t.Cleanup(util.ResetRunner)
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd: "ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd: "ovs-ofctl -O OpenFlow13 del-groups breth0 group_id=100",
+	})
+
+	bridge := newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig())
+	bridge.updateFlowCacheEntry("stale", []string{"table=0,priority=100,actions=drop"})
+	bridge.updateGroupCacheEntry("stale", []string{"group_id=100,type=select,bucket=actions=drop"})
+	bridge.installedGroups = map[string]struct{}{"100": {}}
+	ofm := &openflowManager{
+		defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+		uplinkBridges: map[string]*openflowBridge{
+			"breth0": bridge,
+		},
+	}
+
+	if err := ofm.delNetwork(&util.DefaultNetInfo{}, "breth0"); err != nil {
+		t.Fatalf("failed to delete network from uplink bridge: %v", err)
+	}
+
+	if len(ofm.uplinkBridges) != 0 {
+		t.Fatalf("expected unused uplink bridge to be removed, got %d entries", len(ofm.uplinkBridges))
+	}
+	if flows := bridge.getFlowsByKey("NORMAL"); len(flows) != 1 {
+		t.Fatalf("expected NORMAL flow to remain, got %#v", flows)
+	}
+	if flows := bridge.getFlowsByKey("stale"); flows != nil {
+		t.Fatalf("expected stale flow cache entry to be deleted, got %#v", flows)
+	}
+	if groups := bridge.getGroupsByKey("stale"); groups != nil {
+		t.Fatalf("expected stale group cache entry to be deleted, got %#v", groups)
+	}
+	if len(bridge.installedGroups) != 0 {
+		t.Fatalf("expected stale installed groups to be deleted, got %#v", bridge.installedGroups)
+	}
+	if bridge.GetNetConfigLen() != 0 {
+		t.Fatalf("expected %s network config to be removed", types.DefaultNetworkName)
+	}
+	if !fexec.CalledMatchesExpected() {
+		t.Fatalf("expected cleanup to replace flows on the unused uplink bridge")
+	}
+}
+
+func TestOpenFlowManagerDefaultTargetUsesDefaultBridgeSet(t *testing.T) {
+	defaultBridge := bridgeconfig.TestDefaultBridgeConfig()
+	externalGatewayBridge := bridgeconfig.TestDefaultBridgeConfig()
+	defaultBridge.DelNetworkConfig(&util.DefaultNetInfo{})
+	externalGatewayBridge.DelNetworkConfig(&util.DefaultNetInfo{})
+	ofm := &openflowManager{
+		defaultBridge:         newOpenflowBridge(defaultBridge),
+		externalGatewayBridge: newOpenflowBridge(externalGatewayBridge),
+		uplinkBridges:         map[string]*openflowBridge{},
+	}
+
+	if err := ofm.addNetwork(defaultOpenFlowBridgeTarget(), &util.DefaultNetInfo{}, nil, nil, 0, 0, nil, nil); err != nil {
+		t.Fatalf("failed to add network to default bridge set: %v", err)
+	}
+
+	if netConfig := ofm.defaultBridge.GetNetworkConfig(types.DefaultNetworkName); netConfig == nil {
+		t.Fatalf("expected default bridge network config to be added")
+	}
+	if netConfig := ofm.externalGatewayBridge.GetNetworkConfig(types.DefaultNetworkName); netConfig == nil {
+		t.Fatalf("expected external gateway bridge network config to be added")
+	}
+	if len(ofm.uplinkBridges) != 0 {
+		t.Fatalf("expected default bridge target to avoid uplink bridge cache, got %d entries", len(ofm.uplinkBridges))
+	}
+
+	if err := ofm.delNetwork(&util.DefaultNetInfo{}, defaultOpenFlowBridgeSetName); err != nil {
+		t.Fatalf("failed to delete network from default bridge set: %v", err)
+	}
+	if netConfig := ofm.defaultBridge.GetNetworkConfig(types.DefaultNetworkName); netConfig != nil {
+		t.Fatalf("expected default bridge network config to be removed")
+	}
+	if netConfig := ofm.externalGatewayBridge.GetNetworkConfig(types.DefaultNetworkName); netConfig != nil {
+		t.Fatalf("expected external gateway bridge network config to be removed")
 	}
 }
 

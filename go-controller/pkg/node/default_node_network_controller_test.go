@@ -825,8 +825,8 @@ var _ = Describe("Node", func() {
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache:     map[string][]string{},
-							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
+							defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+							uplinkBridges: map[string]*openflowBridge{},
 						},
 					}
 
@@ -936,8 +936,8 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache:     map[string][]string{},
-							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
+							defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+							uplinkBridges: map[string]*openflowBridge{},
 						},
 					}
 
@@ -1089,8 +1089,8 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache:     map[string][]string{},
-							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
+							defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+							uplinkBridges: map[string]*openflowBridge{},
 						},
 					}
 
@@ -1199,8 +1199,8 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache:     map[string][]string{},
-							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
+							defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+							uplinkBridges: map[string]*openflowBridge{},
 						},
 					}
 
@@ -1360,8 +1360,8 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache:     map[string][]string{},
-							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
+							defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+							uplinkBridges: map[string]*openflowBridge{},
 						},
 					}
 
@@ -1481,8 +1481,8 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache:     map[string][]string{},
-							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
+							defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),
+							uplinkBridges: map[string]*openflowBridge{},
 						},
 					}
 
