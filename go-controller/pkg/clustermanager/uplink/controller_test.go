@@ -1,0 +1,766 @@
+// SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+package uplink
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnlisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+)
+
+func TestUplinkControllerReportsMissingSelectedNodeState(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newNode("node-b", map[string]string{"role": "red"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+	)
+
+	stateName := uplinkutil.StateName("br-blue", "node-a")
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	_, err := client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
+		context.Background(),
+		stateName,
+		metav1.GetOptions{},
+	)
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+
+	_, err = client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
+		context.Background(),
+		uplinkutil.StateName("br-blue", "node-b"),
+		metav1.GetOptions{},
+	)
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+
+	cond := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionDegraded)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonMissingUplinkState),
+	))
+}
+
+func TestUplinkControllerAggregatesReadyState(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newReadyUplinkState("br-blue", "node-a", "br-blue"),
+	)
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	degraded := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionDegraded)
+	g.Expect(degraded).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonReady),
+	))
+}
+
+func TestUplinkControllerAggregatesUplinkStateGatewayFailureReason(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newFailedUplinkState(
+			"br-blue",
+			"node-a",
+			"br-blue",
+			uplinkv1alpha1.UplinkStateReasonVRFAttachmentFailed,
+		),
+	)
+
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	degraded := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionDegraded)
+	g.Expect(degraded).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonUplinkVRFAttachmentFailed),
+	))
+}
+
+func TestUplinkControllerClearsObsoleteReferencedCondition(t *testing.T) {
+	g := gomega.NewWithT(t)
+	uplink := newUplink("br-blue", "role", "blue", "br-blue")
+	uplink.Status.Conditions = []metav1.Condition{
+		{
+			Type:    uplinkv1alpha1.UplinkConditionDegraded,
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonReady,
+			Message: "all selected nodes are ready",
+		},
+		{
+			Type:    obsoleteUplinkConditionReferenced,
+			Status:  metav1.ConditionTrue,
+			Reason:  obsoleteUplinkConditionReferenced,
+			Message: "obsolete condition",
+		},
+	}
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		uplink,
+		newReadyUplinkState("br-blue", "node-a", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	updated, err := client.UplinkClient.K8sV1alpha1().Uplinks().Get(
+		context.Background(),
+		"br-blue",
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(meta.FindStatusCondition(
+		updated.Status.Conditions,
+		obsoleteUplinkConditionReferenced,
+	)).To(gomega.BeNil())
+}
+
+func TestUplinkControllerReportsOverlappingSelectors(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue", "zone": "a"}),
+		&uplinkv1alpha1.Uplink{
+			ObjectMeta: metav1.ObjectMeta{Name: "br-blue"},
+			Spec: uplinkv1alpha1.UplinkSpec{
+				NodeConfigs: []uplinkv1alpha1.UplinkNodeConfig{
+					newUplinkNodeConfig("role", "blue", "br-blue"),
+					newUplinkNodeConfig("zone", "a", "br-alt"),
+				},
+			},
+		},
+	)
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	cond := getUplinkCondition(g, client, "br-blue", uplinkv1alpha1.UplinkConditionDegraded)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonNodeSelectorOverlap),
+	))
+
+	states, err := client.UplinkClient.K8sV1alpha1().UplinkStates().List(
+		context.Background(),
+		metav1.ListOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(states.Items).To(gomega.BeEmpty())
+}
+
+func TestUplinkControllerEnsuresFinalizerWhenReferenced(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	finalizers := getUplinkFinalizers(g, client, "br-blue")
+	g.Expect(finalizers).To(gomega.ContainElement(finalizerUplink))
+}
+
+func TestUplinkControllerRemovesFinalizerWhenUnreferenced(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		withFinalizer(newUplink("br-blue", "role", "blue", "br-blue")),
+	)
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	finalizers := getUplinkFinalizers(g, client, "br-blue")
+	g.Expect(finalizers).NotTo(gomega.ContainElement(finalizerUplink))
+}
+
+func TestUplinkControllerBlocksDeleteWhileReferenced(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newCUDN("blue", "br-blue"),
+		deletingUplink("br-blue"),
+		newReadyUplinkState("br-blue", "node-a", "br-blue"),
+	)
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	finalizers := getUplinkFinalizers(g, client, "br-blue")
+	g.Expect(finalizers).To(gomega.ContainElement(finalizerUplink))
+
+	_, err := client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
+		context.Background(),
+		uplinkutil.StateName("br-blue", "node-a"),
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+}
+
+func TestUplinkControllerRequeuesReferencedCUDNOnUplinkReconcile(t *testing.T) {
+	g := gomega.NewWithT(t)
+	reconciledCUDNs := make(chan string, 1)
+	controller, _ := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+	controller.cudnController = controllerutil.NewController(
+		"test-cudn-requeue",
+		&controllerutil.ControllerConfig[string]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile: func(key string) error {
+				reconciledCUDNs <- key
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	g.Expect(controllerutil.Start(controller.cudnController)).To(gomega.Succeed())
+	t.Cleanup(func() {
+		controllerutil.Stop(controller.cudnController)
+	})
+
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	g.Eventually(reconciledCUDNs).Should(gomega.Receive(gomega.Equal("blue")))
+}
+
+func TestUplinkControllerDeletesUnreferencedUplink(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		deletingUplink("br-blue"),
+		newReadyUplinkState("br-blue", "node-a", "br-blue"),
+	)
+	g.Expect(controller.reconcileUplink("br-blue")).To(gomega.Succeed())
+
+	_, err := client.UplinkClient.K8sV1alpha1().Uplinks().Get(
+		context.Background(),
+		"br-blue",
+		metav1.GetOptions{},
+	)
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+
+	_, err = client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
+		context.Background(),
+		uplinkutil.StateName("br-blue", "node-a"),
+		metav1.GetOptions{},
+	)
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+}
+
+func TestUplinkControllerInitialSyncDeletesStaleUplinkStates(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newNode("node-b", map[string]string{"role": "red"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newReadyUplinkState("br-blue", "node-a", "br-blue"),
+		newReadyUplinkState("br-missing", "node-a", "br-missing"),
+		newReadyUplinkState("br-blue", "node-b", "br-blue"),
+		newReadyUplinkState("br-blue", "node-missing", "br-blue"),
+	)
+
+	g.Expect(controller.initialSync()).To(gomega.Succeed())
+
+	expectUplinkStateExists(g, client, "br-blue", "node-a")
+	expectUplinkStateNotFound(g, client, "br-missing", "node-a")
+	expectUplinkStateNotFound(g, client, "br-blue", "node-b")
+	expectUplinkStateNotFound(g, client, "br-blue", "node-missing")
+}
+
+func TestUplinkControllerTargetsUplinkFromDeletedUplinkStateIdentity(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, _ := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newUplink("br-red", "role", "red", "br-red"),
+		newCUDN("blue", "br-blue"),
+	)
+	state := newReadyUplinkState("br-blue", "node-a", "br-blue")
+	controller.rememberUplinkStateIdentity(state)
+
+	reconciledUplinks := make(chan string, 2)
+	controller.uplinkController = controllerutil.NewController(
+		"test-uplink-delete-requeue",
+		&controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Lister:      controller.uplinkLister.List,
+			Reconcile: func(key string) error {
+				reconciledUplinks <- key
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	g.Expect(controllerutil.Start(controller.uplinkController)).To(gomega.Succeed())
+	t.Cleanup(func() {
+		controllerutil.Stop(controller.uplinkController)
+	})
+
+	g.Expect(controller.reconcileUplinkState(state.Name)).To(gomega.Succeed())
+
+	g.Eventually(reconciledUplinks, time.Second).Should(
+		gomega.Receive(gomega.Equal("br-blue")),
+	)
+	g.Consistently(reconciledUplinks, 100*time.Millisecond).ShouldNot(
+		gomega.Receive(gomega.Equal("br-red")),
+	)
+}
+
+func TestUplinkControllerTargetsUplinkFromDeletedUplinkStateName(t *testing.T) {
+	g := gomega.NewWithT(t)
+	longUplinkName := "up-" + strings.Repeat("a", 60) + ".up-" + strings.Repeat("b", 60)
+	longNodeName := "nd-" + strings.Repeat("c", 60) + ".nd-" + strings.Repeat("d", 60)
+	controller, _ := newTestController(t,
+		newNode(longNodeName, map[string]string{"role": "blue"}),
+		newUplink(longUplinkName, "role", "blue", "br-blue"),
+		newUplink("br-red", "role", "red", "br-red"),
+	)
+
+	reconciledUplinks := make(chan string, 2)
+	controller.uplinkController = controllerutil.NewController(
+		"test-uplink-delete-requeue-from-name",
+		&controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Lister:      controller.uplinkLister.List,
+			Reconcile: func(key string) error {
+				reconciledUplinks <- key
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	g.Expect(controllerutil.Start(controller.uplinkController)).To(gomega.Succeed())
+	t.Cleanup(func() {
+		controllerutil.Stop(controller.uplinkController)
+	})
+
+	g.Expect(controller.reconcileUplinkState(uplinkutil.StateName(longUplinkName, longNodeName))).To(gomega.Succeed())
+
+	g.Eventually(reconciledUplinks, time.Second).Should(
+		gomega.Receive(gomega.Equal(longUplinkName)),
+	)
+	g.Consistently(reconciledUplinks, 100*time.Millisecond).ShouldNot(
+		gomega.Receive(gomega.Equal("br-red")),
+	)
+}
+
+func TestUplinkControllerReconcilesUplinksForUnknownDeletedUplinkState(t *testing.T) {
+	g := gomega.NewWithT(t)
+	controller, _ := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+
+	reconciledUplinks := make(chan string, 1)
+	controller.uplinkController = controllerutil.NewController(
+		"test-uplink-delete-requeue-all-uplinks",
+		&controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Lister:      controller.uplinkLister.List,
+			Reconcile: func(key string) error {
+				reconciledUplinks <- key
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	reconciledCUDNs := make(chan string, 1)
+	controller.cudnController = controllerutil.NewController(
+		"test-uplink-delete-requeue-no-cudns",
+		&controllerutil.ControllerConfig[udnv1.ClusterUserDefinedNetwork]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Lister:      controller.cudnLister.List,
+			Reconcile: func(key string) error {
+				reconciledCUDNs <- key
+				return nil
+			},
+			Threadiness: 1,
+		},
+	)
+	g.Expect(controllerutil.Start(controller.uplinkController, controller.cudnController)).To(gomega.Succeed())
+	t.Cleanup(func() {
+		controllerutil.Stop(controller.uplinkController, controller.cudnController)
+	})
+
+	g.Expect(controller.reconcileUplinkState("unknown-state")).To(gomega.Succeed())
+
+	g.Eventually(reconciledUplinks, time.Second).Should(
+		gomega.Receive(gomega.Equal("br-blue")),
+	)
+	g.Consistently(reconciledCUDNs, 100*time.Millisecond).ShouldNot(
+		gomega.Receive(),
+	)
+}
+
+func TestUplinkControllerSetsCUDNUplinksReadyWhenNoUplinkIsConfigured(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t, newCUDNWithoutUplink("blue"))
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonUplinksReady),
+	))
+}
+
+func TestUplinkControllerSetsCUDNUplinksReadyForActiveNodes(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newReadyUplinkState("br-blue", "node-a", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonUplinksReady),
+	))
+}
+
+func TestUplinkControllerReportsCUDNUplinkNotReadyForActiveNode(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonUplinkNotReadyForNode),
+	))
+}
+
+func TestUplinkControllerPropagatesCUDNUplinkStateGatewayFailure(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newFailedUplinkState(
+			"br-blue",
+			"node-a",
+			"br-blue",
+			uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed,
+		),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonUplinkBridgeMappingFailed),
+		gomega.HaveField("Message", gomega.ContainSubstring("UplinkBridgeMappingFailed=1")),
+	))
+}
+
+func TestUplinkControllerBoundsCUDNUplinksReadyMessage(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newNode("node-b", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionFalse),
+		gomega.HaveField("Reason", reasonUplinkNotReadyForNode),
+		gomega.HaveField("Message", gomega.ContainSubstring("2 active node/uplink readiness check(s) failed")),
+		gomega.HaveField("Message", gomega.ContainSubstring("nodes: node-a, node-b")),
+		gomega.HaveField("Message", gomega.ContainSubstring("uplinks: br-blue")),
+	))
+}
+
+func TestUplinkControllerIgnoresInactiveNodesForCUDNUplinksReady(t *testing.T) {
+	g := gomega.NewWithT(t)
+	setSharedGatewayMode(t)
+	oldDynamicUDN := config.OVNKubernetesFeature.EnableDynamicUDNAllocation
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	t.Cleanup(func() {
+		config.OVNKubernetesFeature.EnableDynamicUDNAllocation = oldDynamicUDN
+	})
+
+	controller, client := newTestController(t,
+		newNode("node-a", map[string]string{"role": "blue"}),
+		newNode("node-b", map[string]string{"role": "blue"}),
+		newUplink("br-blue", "role", "blue", "br-blue"),
+		newReadyUplinkState("br-blue", "node-b", "br-blue"),
+		newCUDN("blue", "br-blue"),
+	)
+	fakeNetworkManager := controller.networkManager.(*networkmanager.FakeNetworkManager)
+	networkName := util.GenerateCUDNNetworkName("blue")
+	fakeNetworkManager.SetNodeActive(networkName, "node-a", false)
+	fakeNetworkManager.SetNodeActive(networkName, "node-b", true)
+
+	g.Expect(controller.reconcileCUDN("blue")).To(gomega.Succeed())
+
+	cond := getCUDNCondition(g, client, "blue", conditionTypeUplinksReady)
+	g.Expect(cond).To(gomega.And(
+		gomega.HaveField("Status", metav1.ConditionTrue),
+		gomega.HaveField("Reason", reasonUplinksReady),
+	))
+}
+
+func newTestController(t *testing.T, objects ...runtime.Object) (*Controller, *util.OVNClusterManagerClientset) {
+	t.Helper()
+
+	g := gomega.NewWithT(t)
+
+	client := util.GetOVNClientset(objects...).GetClusterManagerClientset()
+	ovntest.AddUplinkApplyReactor(client.UplinkClient.(*uplinkfake.Clientset))
+
+	nodeIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	uplinkIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	uplinkStateIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	cudnIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	for _, obj := range objects {
+		switch typed := obj.(type) {
+		case *corev1.Node:
+			g.Expect(nodeIndexer.Add(typed)).To(gomega.Succeed())
+		case *uplinkv1alpha1.Uplink:
+			g.Expect(uplinkIndexer.Add(typed)).To(gomega.Succeed())
+		case *uplinkv1alpha1.UplinkState:
+			g.Expect(uplinkStateIndexer.Add(typed)).To(gomega.Succeed())
+		case *udnv1.ClusterUserDefinedNetwork:
+			g.Expect(cudnIndexer.Add(typed)).To(gomega.Succeed())
+		}
+	}
+
+	controller := &Controller{
+		uplinkClient:              client.UplinkClient,
+		udnClient:                 client.UserDefinedNetworkClient,
+		uplinkLister:              uplinklisters.NewUplinkLister(uplinkIndexer),
+		uplinkStateLister:         uplinklisters.NewUplinkStateLister(uplinkStateIndexer),
+		cudnLister:                udnlisters.NewClusterUserDefinedNetworkLister(cudnIndexer),
+		nodeLister:                corelisters.NewNodeLister(nodeIndexer),
+		networkManager:            &networkmanager.FakeNetworkManager{},
+		uplinkController:          newNoopController("test-uplink"),
+		cudnController:            newNoopController("test-cudn"),
+		cudnUplinkIndex:           make(map[string][]string),
+		uplinkStateIdentityByName: make(map[string]uplinkStateIdentity),
+	}
+	return controller, client
+}
+
+func newNoopController(name string) controllerutil.Controller {
+	return controllerutil.NewController(
+		name,
+		&controllerutil.ControllerConfig[string]{
+			RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile: func(_ string) error {
+				return nil
+			},
+		},
+	)
+}
+
+func setSharedGatewayMode(t *testing.T) {
+	t.Helper()
+	oldMode := config.Gateway.Mode
+	config.Gateway.Mode = config.GatewayModeShared
+	t.Cleanup(func() {
+		config.Gateway.Mode = oldMode
+	})
+}
+
+func newNode(name string, nodeLabels map[string]string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: nodeLabels,
+		},
+	}
+}
+
+func newUplink(name string, selectorKey string, selectorValue string, hostInterfaceName string) *uplinkv1alpha1.Uplink {
+	return &uplinkv1alpha1.Uplink{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: uplinkv1alpha1.UplinkSpec{
+			NodeConfigs: []uplinkv1alpha1.UplinkNodeConfig{
+				newUplinkNodeConfig(selectorKey, selectorValue, hostInterfaceName),
+			},
+		},
+	}
+}
+
+func withFinalizer(uplink *uplinkv1alpha1.Uplink) *uplinkv1alpha1.Uplink {
+	uplink.Finalizers = append(uplink.Finalizers, finalizerUplink)
+	return uplink
+}
+
+func deletingUplink(name string) *uplinkv1alpha1.Uplink {
+	now := metav1.Now()
+	uplink := newUplink(name, "role", "blue", "br-blue")
+	uplink.Finalizers = []string{finalizerUplink}
+	uplink.DeletionTimestamp = &now
+	return uplink
+}
+
+func newCUDN(name, uplinkName string) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: udnv1.ClusterUserDefinedNetworkSpec{
+			Uplinks: []string{uplinkName},
+		},
+	}
+}
+
+func newCUDNWithoutUplink(name string) *udnv1.ClusterUserDefinedNetwork {
+	return &udnv1.ClusterUserDefinedNetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+	}
+}
+
+func newUplinkNodeConfig(
+	selectorKey string,
+	selectorValue string,
+	hostInterfaceName string,
+) uplinkv1alpha1.UplinkNodeConfig {
+	return uplinkv1alpha1.UplinkNodeConfig{
+		Type: uplinkv1alpha1.UplinkTypeOVSBridge,
+		NodeSelector: metav1.LabelSelector{
+			MatchLabels: map[string]string{selectorKey: selectorValue},
+		},
+		HostInterfaceName: uplinkv1alpha1.InterfaceName(hostInterfaceName),
+	}
+}
+
+func newReadyUplinkState(uplinkName string, nodeName string, hostInterfaceName string) *uplinkv1alpha1.UplinkState {
+	return &uplinkv1alpha1.UplinkState{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: uplinkutil.StateName(uplinkName, nodeName),
+			Annotations: map[string]string{
+				uplinkutil.StateAnnotationUplink: uplinkName,
+				uplinkutil.StateAnnotationNode:   nodeName,
+			},
+		},
+		Status: uplinkv1alpha1.UplinkStateStatus{
+			UplinkName:        uplinkName,
+			NodeName:          nodeName,
+			Type:              uplinkv1alpha1.UplinkTypeOVSBridge,
+			HostInterfaceName: uplinkv1alpha1.InterfaceName(hostInterfaceName),
+			Conditions: []metav1.Condition{
+				{
+					Type:   uplinkv1alpha1.UplinkStateConditionReady,
+					Status: metav1.ConditionTrue,
+					Reason: uplinkv1alpha1.UplinkStateReasonReady,
+				},
+			},
+		},
+	}
+}
+
+func newFailedUplinkState(
+	uplinkName string,
+	nodeName string,
+	hostInterfaceName string,
+	reason string,
+) *uplinkv1alpha1.UplinkState {
+	state := newReadyUplinkState(uplinkName, nodeName, hostInterfaceName)
+	state.Status.Conditions = []metav1.Condition{
+		{
+			Type:   uplinkv1alpha1.UplinkStateConditionReady,
+			Status: metav1.ConditionFalse,
+			Reason: reason,
+		},
+	}
+	return state
+}
+
+func getUplinkCondition(
+	g gomega.Gomega,
+	client *util.OVNClusterManagerClientset,
+	uplinkName string,
+	conditionType string,
+) *metav1.Condition {
+	uplink, err := client.UplinkClient.K8sV1alpha1().Uplinks().Get(
+		context.Background(),
+		uplinkName,
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	return meta.FindStatusCondition(uplink.Status.Conditions, conditionType)
+}
+
+func getUplinkFinalizers(g gomega.Gomega, client *util.OVNClusterManagerClientset, uplinkName string) []string {
+	uplink, err := client.UplinkClient.K8sV1alpha1().Uplinks().Get(
+		context.Background(),
+		uplinkName,
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	return uplink.Finalizers
+}
+
+func getCUDNCondition(
+	g gomega.Gomega,
+	client *util.OVNClusterManagerClientset,
+	cudnName string,
+	conditionType string,
+) *metav1.Condition {
+	cudn, err := client.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(
+		context.Background(),
+		cudnName,
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	return meta.FindStatusCondition(cudn.Status.Conditions, conditionType)
+}
+
+func expectUplinkStateExists(g gomega.Gomega, client *util.OVNClusterManagerClientset, uplinkName, nodeName string) {
+	_, err := client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
+		context.Background(),
+		uplinkutil.StateName(uplinkName, nodeName),
+		metav1.GetOptions{},
+	)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+}
+
+func expectUplinkStateNotFound(g gomega.Gomega, client *util.OVNClusterManagerClientset, uplinkName, nodeName string) {
+	_, err := client.UplinkClient.K8sV1alpha1().UplinkStates().Get(
+		context.Background(),
+		uplinkutil.StateName(uplinkName, nodeName),
+		metav1.GetOptions{},
+	)
+	g.Expect(apierrors.IsNotFound(err)).To(gomega.BeTrue())
+}
