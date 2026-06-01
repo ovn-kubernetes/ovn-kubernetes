@@ -1561,8 +1561,24 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 		nodeIPV4ASHashName, _ := addressset.GetHashNamesForAS(getClusterNodeIPsAddrSetDbIDsForTest())
 		udnSubnetMasqMatch = fmt.Sprintf("ip4.dst == $%s", nodeIPV4ASHashName)
 	}
-	expectedEntities = append(expectedEntities, newNATEntry(nat1, dummyMasqueradeIP().IP.String(), gwRouterJoinIPAddress().IP.String(), standardNonDefaultNetworkExtIDs(netInfo), ""))
-	expectedEntities = append(expectedEntities, newNATEntry(nat2, dummyMasqueradeIP().IP.String(), netInfo.Subnets()[0].CIDR.String(), standardNonDefaultNetworkExtIDs(netInfo), udnSubnetMasqMatch))
+	snatExternalIP := dummyMasqueradeIP().IP.String()
+	if config.Gateway.Mode == config.GatewayModeShared {
+		snatExternalIP = nodePhysicalIPAddress().IP.String()
+	}
+	expectedEntities = append(expectedEntities, newNATEntry(
+		nat1,
+		snatExternalIP,
+		gwRouterJoinIPAddress().IP.String(),
+		standardNonDefaultNetworkExtIDs(netInfo),
+		"",
+	))
+	expectedEntities = append(expectedEntities, newNATEntry(
+		nat2,
+		snatExternalIP,
+		netInfo.Subnets()[0].CIDR.String(),
+		standardNonDefaultNetworkExtIDs(netInfo),
+		udnSubnetMasqMatch,
+	))
 	return expectedEntities
 }
 
