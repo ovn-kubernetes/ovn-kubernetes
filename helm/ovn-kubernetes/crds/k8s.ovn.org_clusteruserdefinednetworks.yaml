@@ -913,10 +913,35 @@ spec:
                     when transport is 'EVPN'
                   rule: '!has(self.transport) || self.transport != ''EVPN'' || self.topology
                     != ''Layer3'' || !has(self.evpn) || !has(self.evpn.macVRF)'
+              uplinks:
+                description: |-
+                  Uplinks references Uplink resources used for this network's external
+                  traffic. This release supports one Uplink. When omitted, existing gateway
+                  behavior is preserved.
+                items:
+                  maxLength: 253
+                  minLength: 1
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: uplinks is immutable
+                  rule: self == oldSelf
             required:
             - namespaceSelector
             - network
             type: object
+            x-kubernetes-validations:
+            - message: spec.uplinks is supported only for primary Layer2 and Layer3
+                networks
+              rule: '!has(self.uplinks) || size(self.uplinks) == 0 || ((self.network.topology
+                == ''Layer2'' && has(self.network.layer2) && self.network.layer2.role
+                == ''Primary'') || (self.network.topology == ''Layer3'' && has(self.network.layer3)
+                && self.network.layer3.role == ''Primary''))'
+            - message: spec.uplinks is not supported with EVPN transport
+              rule: '!has(self.uplinks) || size(self.uplinks) == 0 || !has(self.network.transport)
+                || self.network.transport != ''EVPN'''
           status:
             description: ClusterUserDefinedNetworkStatus contains the observed status
               of the ClusterUserDefinedNetwork.

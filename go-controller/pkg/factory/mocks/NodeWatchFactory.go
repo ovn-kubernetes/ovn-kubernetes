@@ -26,6 +26,8 @@ import (
 
 	routeadvertisementsv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
 
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
+
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 
 	v1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
@@ -222,6 +224,46 @@ func (_m *NodeWatchFactory) ClusterUserDefinedNetworkInformer() userdefinednetwo
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(userdefinednetworkv1.ClusterUserDefinedNetworkInformer)
+		}
+	}
+
+	return r0
+}
+
+// UplinkInformer provides a mock function with no fields
+func (_m *NodeWatchFactory) UplinkInformer() uplinkv1alpha1.UplinkInformer {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for UplinkInformer")
+	}
+
+	var r0 uplinkv1alpha1.UplinkInformer
+	if rf, ok := ret.Get(0).(func() uplinkv1alpha1.UplinkInformer); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(uplinkv1alpha1.UplinkInformer)
+		}
+	}
+
+	return r0
+}
+
+// UplinkStateInformer provides a mock function with no fields
+func (_m *NodeWatchFactory) UplinkStateInformer() uplinkv1alpha1.UplinkStateInformer {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for UplinkStateInformer")
+	}
+
+	var r0 uplinkv1alpha1.UplinkStateInformer
+	if rf, ok := ret.Get(0).(func() uplinkv1alpha1.UplinkStateInformer); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(uplinkv1alpha1.UplinkStateInformer)
 		}
 	}
 

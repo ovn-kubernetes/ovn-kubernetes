@@ -99,6 +99,10 @@ type NetConf struct {
 	// Only valid when Transport is "evpn".
 	EVPN *EVPNConfig `json:"evpn,omitempty"`
 
+	// Uplink is the name of the Uplink resource used for this network's
+	// external connectivity.
+	Uplink string `json:"uplink,omitempty"`
+
 	// PciAddrs in case of using sriov or Auxiliry device name in case of SF
 	DeviceID string `json:"deviceID,omitempty"`
 	// LogFile to log all the messages from cni shim binary to
@@ -148,6 +152,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		Transport             string      `json:"transport,omitempty"`
 		OutboundSNAT          string      `json:"outboundSNAT,omitempty"`
 		EVPN                  *EVPNConfig `json:"evpn,omitempty"`
+		Uplink                string      `json:"uplink,omitempty"`
 		DeviceID              string      `json:"deviceID,omitempty"`
 		LogFile               string      `json:"logFile,omitempty"`
 		LogLevel              string      `json:"logLevel,omitempty"`
@@ -177,6 +182,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		Transport:             n.Transport,
 		OutboundSNAT:          n.OutboundSNAT,
 		EVPN:                  n.EVPN,
+		Uplink:                n.Uplink,
 		DeviceID:              n.DeviceID,
 		LogFile:               n.LogFile,
 		LogLevel:              n.LogLevel,
