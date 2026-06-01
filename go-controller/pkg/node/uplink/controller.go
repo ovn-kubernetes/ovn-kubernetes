@@ -4,6 +4,7 @@
 package uplink
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/applyconfiguration/uplink/v1alpha1"
@@ -32,11 +34,17 @@ import (
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const fieldManager = "ovnkube-node-uplink-controller"
+const (
+	fieldManager         = "ovnkube-node-uplink-controller"
+	dpuFieldManager      = "ovnkube-node-uplink-controller-dpu"
+	dpuHostFieldManager  = "ovnkube-node-uplink-controller-dpu-host"
+	ovsIntegrationBridge = "br-int"
+)
 
 type hostInterfaceState struct {
 	macAddress      net.HardwareAddr
@@ -50,6 +58,7 @@ type hostInterfaceDiscoverer interface {
 
 type ovsBridgeResolver interface {
 	Resolve(hostInterfaceName string) (string, error)
+	ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error)
 	BridgeUplink(bridgeName string) (string, error)
 }
 
@@ -269,6 +278,51 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
+		hostState, err := hostInterfaceStateFromStatus(state, hostInterfaceName)
+		if err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				nil,
+				"",
+				metav1.ConditionFalse,
+				uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost,
+				err.Error(),
+			)
+		}
+		bridgeName, err := c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
+		if err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				"",
+				metav1.ConditionFalse,
+				discoveryReason(err),
+				err.Error(),
+			)
+		}
+		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, false); err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				bridgeName,
+				metav1.ConditionFalse,
+				discoveryReason(err),
+				err.Error(),
+			)
+		}
+		return c.updateReadyUplinkStateStatus(
+			state,
+			hostInterfaceName,
+			hostState,
+			bridgeName,
+			"Uplink DPU bridge discovery succeeded",
+		)
+	}
+
 	hostState, err := c.hostDiscoverer.Discover(hostInterfaceName)
 	if err != nil {
 		return c.updateUplinkStateStatus(
@@ -279,6 +333,29 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
+		)
+	}
+
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
+		if dpuSideBridgeReadyForHostInterface(state, hostInterfaceName) {
+			// The DPU side has resolved the OVS bridge. The DPU-host side
+			// now publishes host interface details under its field manager.
+			return c.updateReadyUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				"",
+				"Uplink DPU bridge discovery succeeded",
+			)
+		}
+		return c.updateUplinkStateStatus(
+			state,
+			hostInterfaceName,
+			hostState,
+			"",
+			metav1.ConditionFalse,
+			uplinkv1alpha1.UplinkStateReasonWaitingForDPU,
+			"waiting for DPU-side bridge discovery",
 		)
 	}
 
@@ -350,6 +427,13 @@ func (c *Controller) validateBridgeUplink(
 	hostInterfaceName string,
 	rejectHostInterfaceAsUplink bool,
 ) error {
+	if bridgeName == ovsIntegrationBridge {
+		return newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeInvalid,
+			fmt.Errorf("OVN integration bridge %s cannot be used as an Uplink bridge",
+				bridgeName),
+		)
+	}
 	uplinkName, err := c.bridgeResolver.BridgeUplink(bridgeName)
 	if err != nil {
 		return err
@@ -442,6 +526,16 @@ func (c *Controller) updateUplinkStateStatus(
 	return nil
 }
 
+func dpuSideBridgeReadyForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) bool {
+	if state.Status.OVSBridge == nil || state.Status.OVSBridge.Name == "" {
+		return false
+	}
+	readyCondition := readyConditionForHostInterface(state, hostInterfaceName)
+	return readyCondition != nil &&
+		readyCondition.Status == metav1.ConditionTrue &&
+		readyCondition.Reason == uplinkv1alpha1.UplinkStateReasonReady
+}
+
 func gatewayProgrammingFailureCondition(
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
@@ -462,7 +556,14 @@ func gatewayProgrammingFailureCondition(
 // StatusFieldManager returns the field manager used by ovnkube-node when it
 // applies UplinkState status.
 func StatusFieldManager() string {
-	return fieldManager
+	switch config.OvnKubeNode.Mode {
+	case ovntypes.NodeModeDPU:
+		return dpuFieldManager
+	case ovntypes.NodeModeDPUHost:
+		return dpuHostFieldManager
+	default:
+		return fieldManager
+	}
 }
 
 func readyCondition(
@@ -604,6 +705,49 @@ func (c *Controller) deleteUplinkState(name string) error {
 
 func (c *Controller) currentHostInterfaceName(state *uplinkv1alpha1.UplinkState) string {
 	return string(state.Status.HostInterfaceName)
+}
+
+func hostInterfaceStateFromStatus(
+	state *uplinkv1alpha1.UplinkState,
+	hostInterfaceName string,
+) (*hostInterfaceState, error) {
+	if string(state.Status.HostInterfaceName) != hostInterfaceName {
+		return nil, fmt.Errorf("waiting for DPU-host state for interface %s",
+			hostInterfaceName)
+	}
+	macAddress, err := net.ParseMAC(string(state.Status.MACAddress))
+	if err != nil {
+		return nil, fmt.Errorf("waiting for DPU-host MAC address for interface %s: %w",
+			hostInterfaceName, err)
+	}
+	ipAddresses := make([]*net.IPNet, 0, len(state.Status.IPAddresses))
+	for _, ipAddress := range state.Status.IPAddresses {
+		ip, cidr, err := net.ParseCIDR(string(ipAddress))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse DPU-host IP address %q: %w",
+				ipAddress, err)
+		}
+		cidr.IP = ip
+		ipAddresses = append(ipAddresses, cidr)
+	}
+	if len(ipAddresses) == 0 {
+		return nil, fmt.Errorf("waiting for DPU-host IP addresses for interface %s",
+			hostInterfaceName)
+	}
+	defaultGateways := make([]net.IP, 0, len(state.Status.DefaultGateways))
+	for _, defaultGateway := range state.Status.DefaultGateways {
+		ip := net.ParseIP(string(defaultGateway))
+		if ip == nil {
+			return nil, fmt.Errorf("failed to parse DPU-host default gateway %q",
+				defaultGateway)
+		}
+		defaultGateways = append(defaultGateways, ip)
+	}
+	return &hostInterfaceState{
+		macAddress:      macAddress,
+		ipAddresses:     ipAddresses,
+		defaultGateways: defaultGateways,
+	}, nil
 }
 
 func discoveryReason(err error) string {
@@ -792,4 +936,31 @@ func (r ovsPortBridgeResolver) BridgeUplink(bridgeName string) (string, error) {
 		)
 	}
 	return uplinkName, nil
+}
+
+func (r ovsPortBridgeResolver) ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error) {
+	stdout, stderr, err := util.RunOVSVsctl("list-br")
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+			fmt.Errorf("failed to list OVS bridges: %v: %s", err, stderr),
+		)
+	}
+	for _, bridgeName := range strings.Fields(stdout) {
+		if bridgeName == ovsIntegrationBridge {
+			continue
+		}
+		bridgeMAC, err := util.GetDPUOps().GetHostGatewayMACAddress(bridgeName, nodeName)
+		if err != nil {
+			klog.V(5).Infof("Failed to read DPU host MAC for bridge %s: %v", bridgeName, err)
+			continue
+		}
+		if bytes.Equal(bridgeMAC, hostMAC) {
+			return bridgeName, nil
+		}
+	}
+	return "", newDiscoveryError(
+		uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+		fmt.Errorf("failed to find DPU bridge for host MAC %s", hostMAC),
+	)
 }
