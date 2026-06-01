@@ -583,7 +583,15 @@ align_metallb_pool_with_ip_family() {
 }
 
 install_metallb() {
-  local metallb_version=v0.15.3
+  # MetalLB v0.15.3 generated BGPPeer CRDs with ASN fields such as
+  # myASN, peerASN, and localASN marked as format: int32 even though
+  # the schema allowed the full 4-byte ASN range up to 4294967295.
+  # Kubernetes 1.36 rejects that schema.
+  #
+  # MetalLB v0.16.1 contains the official ASN schema fixes for those
+  # fields, so use the released upstream CRDs.
+  local metallb_version=v0.16.1
+  local metallb_upstream_frr_image=quay.io/frrouting/frr:10.5.3
   mkdir -p /tmp/metallb
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
@@ -602,21 +610,22 @@ install_metallb() {
     'kind_path = os.path.join(build_path, "kind")' \
     'kind_path = "kind"'
 
-  # MetalLB v0.15.3 still pins its in-cluster FRR speaker containers to 10.4.1.
-  # Keep the pinned upstream string for patching, but replace the actual
-  # deployed image so CI exercises the same FRR build as the rest of our BGP
-  # setup and coredump debugging.
+  # MetalLB v0.16.1 manifests reference FRR 10.5.3. CI uses
+  # FRR_DEPLOYED_IMAGE for BGP tests, so replace that exact upstream value in
+  # the MetalLB manifests. Matching the exact upstream value is intentional
+  # because if a future MetalLB release changes its FRR image, this script
+  # should fail instead of silently leaving MetalLB on an unexpected FRR version.
   replace_in_file_or_exit \
     config/frr/speaker-patch.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${metallb_upstream_frr_image}" \
     "${FRR_DEPLOYED_IMAGE}"
   replace_in_file_or_exit \
     config/manifests/metallb-frr.yaml \
-    "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
+    "${metallb_upstream_frr_image}" \
     "${FRR_DEPLOYED_IMAGE}"
   replace_in_file_or_exit \
     charts/metallb/values.yaml \
-    "tag: ${FRR_K8S_UPSTREAM_FRR_IMAGE##*:}" \
+    "tag: ${metallb_upstream_frr_image##*:}" \
     "tag: ${FRR_DEPLOYED_IMAGE##*:}"
 
   pip install -r dev-env/requirements.txt
@@ -632,6 +641,17 @@ install_metallb() {
     ip_family="ipv4"
     ipv6_network=""
   fi
+  # The dev-env BGP backend is selected with -b. MetalLB v0.16.1 can default
+  # that path to frr-k8s, which runs FRR through in-cluster frr-k8s resources
+  # instead of the standalone dev-env container named frr. The service and
+  # network-segmentation e2e setup below still connects clientnet to that frr
+  # container and relies on its external routes. Keep -b frr explicit so this
+  # Kubernetes 1.36 compatibility update only changes the MetalLB release and
+  # does not also change the BGP datapath used by those tests.
+  #
+  # TODO: Move this path to frr-k8s in a separate change after validating the
+  # service and network-segmentation e2e setup against the in-cluster frr-k8s
+  # backend.
   # Override GOBIN until https://github.com/metallb/metallb/issues/2218 is fixed.
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
 
