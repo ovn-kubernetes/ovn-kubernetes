@@ -1,4 +1,8 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+
 set -eE
 
 # OVN-Kubernetes KIND Cluster Auto-Scaler
@@ -193,7 +197,7 @@ echo "Cluster network: $NETWORK"
 echo ""
 
 # Get OVN image name
-OVN_IMAGE=$(kubectl get ds -n ovn-kubernetes ovs-node -o jsonpath='{.spec.template.spec.containers[0].image}')
+OVN_IMAGE=$(kubectl get ds -n ovn-kubernetes ovs-node -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
 if [ -z "$OVN_IMAGE" ]; then
     echo "Warning: Could not detect OVN image, will attempt to use localhost/ovn-daemonset-fedora:dev"
     OVN_IMAGE="localhost/ovn-daemonset-fedora:dev"
@@ -383,16 +387,16 @@ add_worker_node() {
 add_worker_node_parallel() {
     local WORKER_NUM=$1
     local LOG_FILE="/tmp/scale-worker-${WORKER_NUM}.log"
+    local EXIT_CODE=0
 
     # Run add_worker_node and capture output
-    add_worker_node "$WORKER_NUM" > "$LOG_FILE" 2>&1
-    local EXIT_CODE=$?
+    add_worker_node "$WORKER_NUM" > "$LOG_FILE" 2>&1 || EXIT_CODE=$?
 
     # Show output
     cat "$LOG_FILE"
     rm -f "$LOG_FILE"
 
-    return $EXIT_CODE
+    return "$EXIT_CODE"
 }
 
 # Add all requested worker nodes
@@ -413,7 +417,7 @@ if [ "$PARALLEL_MODE" = false ]; then
 
     # Sequential execution
     for ((i=START_NUM; i<=END_NUM; i++)); do
-        add_worker_node "$i"
+	add_worker_node "$i" || echo "Warning: Failed to add ${CLUSTER_NAME}-worker${i}"
     done
 else
     echo "Mode: Parallel"
