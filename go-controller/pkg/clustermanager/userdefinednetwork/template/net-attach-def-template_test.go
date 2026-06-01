@@ -823,6 +823,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 
 		config.IPv4Mode = true
 		config.IPv6Mode = false
+		config.Gateway.Mode = config.GatewayModeShared
 		nad, err := RenderNetAttachDefManifest(cudn, "mynamespace")
 		Expect(err).NotTo(HaveOccurred())
 

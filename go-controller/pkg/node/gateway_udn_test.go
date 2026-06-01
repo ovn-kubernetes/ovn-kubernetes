@@ -2261,6 +2261,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 	ovntest.OnSupportedPlatformsIt("should create a route import VRF in DPU mode", func() {
 		config.OvnKubeNode.Mode = types.NodeModeDPU
+		config.Gateway.Mode = config.GatewayModeShared
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: nodeName,
@@ -2356,6 +2357,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 	})
 	ovntest.OnSupportedPlatformsIt("should use Uplink for service and default routes", func() {
 		config.Gateway.Interface = "eth0"
+		config.Gateway.Mode = config.GatewayModeShared
 		config.IPv4Mode = true
 		config.IPv6Mode = true
 		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("10.96.0.0/16", "fd00:10:96::/112")
@@ -2415,6 +2417,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 	})
 	ovntest.OnSupportedPlatformsIt("should filter Uplink default routes by network IP family", func() {
 		config.Gateway.Interface = "eth0"
+		config.Gateway.Mode = config.GatewayModeShared
 		config.IPv4Mode = false
 		config.IPv6Mode = true
 		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("fd00:10:96::/112")
@@ -2470,6 +2473,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 	ovntest.OnSupportedPlatformsIt("should enslave Uplink gateway interface based on advertisement VRF", func() {
 		config.Gateway.Interface = "eth0"
+		config.Gateway.Mode = config.GatewayModeShared
 		config.IPv4Mode = true
 		config.IPv6Mode = true
 		getIPv6KeepAddrOnDownFakeCommand(fexec, "ovsbr1")

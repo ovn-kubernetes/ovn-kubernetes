@@ -49,6 +49,10 @@ func NewUserDefinedNodeNetworkController(
 	ovsClient client.Client,
 	uplinkClient uplinkclientset.Interface,
 ) (*UserDefinedNodeNetworkController, error) {
+	if netInfo.Uplink() != "" && config.Gateway.Mode != config.GatewayModeShared {
+		return nil, fmt.Errorf("uplink %q for network %s is supported only in shared gateway mode",
+			netInfo.Uplink(), netInfo.GetNetworkName())
+	}
 
 	snnc := &UserDefinedNodeNetworkController{
 		BaseNodeNetworkController: BaseNodeNetworkController{
