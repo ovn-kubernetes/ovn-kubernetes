@@ -4,6 +4,7 @@
 package uplink
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,18 +23,30 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinkapply "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/applyconfiguration/uplink/v1alpha1"
 	uplinkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned"
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
-const fieldManager = "ovnkube-node-uplink-controller"
+const (
+	fieldManager         = "ovnkube-node-uplink-controller"
+	dpuFieldManager      = "ovnkube-node-uplink-controller-dpu"
+	dpuHostFieldManager  = "ovnkube-node-uplink-controller-dpu-host"
+	ovsIntegrationBridge = "br-int"
+)
 
 type hostInterfaceState struct {
 	macAddress      net.HardwareAddr
@@ -46,7 +59,11 @@ type hostInterfaceDiscoverer interface {
 }
 
 type ovsBridgeResolver interface {
+	// Resolve finds the OVS bridge for a host interface in Full mode.
 	Resolve(hostInterfaceName string) (string, error)
+	// ResolveByHostMAC finds the OVS bridge by its host-side MAC in DPU mode.
+	ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error)
+	// BridgeUplink returns the physical uplink port attached to an OVS bridge.
 	BridgeUplink(bridgeName string) (string, error)
 }
 
@@ -81,7 +98,8 @@ type Controller struct {
 }
 
 // NewController creates an ovnkube-node Uplink controller.
-func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset) *Controller {
+func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util.OVNNodeClientset, ovsClient libovsdbclient.Client,
+) *Controller {
 	c := &Controller{
 		nodeName:          nodeName,
 		uplinkClient:      ovnClient.UplinkClient,
@@ -89,7 +107,7 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, ovnClient *util
 		uplinkStateLister: wf.UplinkStateInformer().Lister(),
 		nodeLister:        wf.NodeCoreInformer().Lister(),
 		hostDiscoverer:    netlinkHostInterfaceDiscoverer{},
-		bridgeResolver:    ovsPortBridgeResolver{},
+		bridgeResolver:    defaultOVSBridgeResolver{ovsClient: ovsClient},
 	}
 
 	uplinkCfg := &controllerutil.ControllerConfig[uplinkv1alpha1.Uplink]{
@@ -258,6 +276,51 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU {
+		hostState, err := hostInterfaceStateFromStatus(state, hostInterfaceName)
+		if err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				nil,
+				"",
+				metav1.ConditionFalse,
+				uplinkv1alpha1.UplinkStateReasonWaitingForDPUHost,
+				err.Error(),
+			)
+		}
+		bridgeName, err := c.bridgeResolver.ResolveByHostMAC(hostState.macAddress, c.nodeName)
+		if err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				"",
+				metav1.ConditionFalse,
+				discoveryReason(err),
+				err.Error(),
+			)
+		}
+		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, false); err != nil {
+			return c.updateUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				bridgeName,
+				metav1.ConditionFalse,
+				discoveryReason(err),
+				err.Error(),
+			)
+		}
+		return c.updateReadyUplinkStateStatus(
+			state,
+			hostInterfaceName,
+			hostState,
+			bridgeName,
+			"Uplink DPU bridge discovery succeeded",
+		)
+	}
+
 	hostState, err := c.hostDiscoverer.Discover(hostInterfaceName)
 	if err != nil {
 		return c.updateUplinkStateStatus(
@@ -268,6 +331,29 @@ func (c *Controller) reconcileUplinkState(key string) error {
 			metav1.ConditionFalse,
 			discoveryReason(err),
 			err.Error(),
+		)
+	}
+
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
+		if dpuSideBridgeReadyForHostInterface(state, hostInterfaceName) {
+			// The DPU side has resolved the OVS bridge. The DPU-host side
+			// now publishes host interface details under its field manager.
+			return c.updateReadyUplinkStateStatus(
+				state,
+				hostInterfaceName,
+				hostState,
+				"",
+				"Uplink DPU bridge discovery succeeded",
+			)
+		}
+		return c.updateUplinkStateStatus(
+			state,
+			hostInterfaceName,
+			hostState,
+			"",
+			metav1.ConditionFalse,
+			uplinkv1alpha1.UplinkStateReasonWaitingForDPU,
+			"waiting for DPU-side bridge discovery",
 		)
 	}
 
@@ -326,6 +412,13 @@ func (c *Controller) validateBridgeUplink(
 	hostInterfaceName string,
 	rejectHostInterfaceAsUplink bool,
 ) error {
+	if bridgeName == ovsIntegrationBridge {
+		return newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeInvalid,
+			fmt.Errorf("OVN integration bridge %s cannot be used as an Uplink bridge",
+				bridgeName),
+		)
+	}
 	uplinkName, err := c.bridgeResolver.BridgeUplink(bridgeName)
 	if err != nil {
 		return err
@@ -385,7 +478,7 @@ func (c *Controller) updateUplinkStateStatus(
 			uplinkv1alpha1.InterfaceName(hostInterfaceName),
 		)
 	}
-	if hostState != nil {
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU && hostState != nil {
 		if hostState.macAddress != nil {
 			statusApply = statusApply.WithMACAddress(
 				uplinkv1alpha1.MACAddress(hostState.macAddress.String()),
@@ -394,7 +487,7 @@ func (c *Controller) updateUplinkStateStatus(
 		statusApply = statusApply.WithIPAddresses(ipAddressCIDRs(hostState.ipAddresses)...)
 		statusApply = statusApply.WithDefaultGateways(ipAddresses(hostState.defaultGateways)...)
 	}
-	if bridgeName != "" {
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost && bridgeName != "" {
 		statusApply = statusApply.WithOVSBridge(
 			uplinkapply.OVSBridgeStatus().WithName(bridgeName),
 		)
@@ -425,14 +518,28 @@ func desiredUplinkStateStatus(
 	condition metav1.Condition,
 ) uplinkv1alpha1.UplinkStateStatus {
 	desired := uplinkv1alpha1.UplinkStateStatus{}
+	// Split DPU modes preserve fields owned by the peer field manager while
+	// comparing the status owned by this side.
+	if config.OvnKubeNode.Mode == ovntypes.NodeModeDPU || config.OvnKubeNode.Mode == ovntypes.NodeModeDPUHost {
+		desired = state.DeepCopy().Status
+	}
+
 	desired.UplinkName = state.Status.UplinkName
 	desired.NodeName = state.Status.NodeName
 	desired.Type = uplinkv1alpha1.UplinkTypeOVSBridge
 	desired.HostInterfaceName = uplinkv1alpha1.InterfaceName(hostInterfaceName)
 	desired.Conditions = append([]metav1.Condition(nil), state.Status.Conditions...)
 	meta.SetStatusCondition(&desired.Conditions, condition)
-	setUplinkStateHostStatus(&desired, hostState)
-	setUplinkStateBridgeStatus(&desired, bridgeName)
+
+	switch config.OvnKubeNode.Mode {
+	case ovntypes.NodeModeDPU:
+		setUplinkStateBridgeStatus(&desired, bridgeName)
+	case ovntypes.NodeModeDPUHost:
+		setUplinkStateHostStatus(&desired, hostState)
+	default:
+		setUplinkStateHostStatus(&desired, hostState)
+		setUplinkStateBridgeStatus(&desired, bridgeName)
+	}
 	return desired
 }
 
@@ -461,10 +568,27 @@ func setUplinkStateBridgeStatus(status *uplinkv1alpha1.UplinkStateStatus, bridge
 	}
 }
 
+func dpuSideBridgeReadyForHostInterface(state *uplinkv1alpha1.UplinkState, hostInterfaceName string) bool {
+	if state.Status.OVSBridge == nil || state.Status.OVSBridge.Name == "" {
+		return false
+	}
+	readyCondition := readyConditionForHostInterface(state, hostInterfaceName)
+	return readyCondition != nil &&
+		readyCondition.Status == metav1.ConditionTrue &&
+		readyCondition.Reason == uplinkv1alpha1.UplinkStateReasonReady
+}
+
 // StatusFieldManager returns the field manager used by ovnkube-node when it
 // applies UplinkState status.
 func StatusFieldManager() string {
-	return fieldManager
+	switch config.OvnKubeNode.Mode {
+	case ovntypes.NodeModeDPU:
+		return dpuFieldManager
+	case ovntypes.NodeModeDPUHost:
+		return dpuHostFieldManager
+	default:
+		return fieldManager
+	}
 }
 
 func readyCondition(
@@ -582,6 +706,49 @@ func (c *Controller) deleteUplinkState(name string) error {
 	return nil
 }
 
+func hostInterfaceStateFromStatus(
+	state *uplinkv1alpha1.UplinkState,
+	hostInterfaceName string,
+) (*hostInterfaceState, error) {
+	if string(state.Status.HostInterfaceName) != hostInterfaceName {
+		return nil, fmt.Errorf("waiting for DPU-host state for interface %s",
+			hostInterfaceName)
+	}
+	macAddress, err := net.ParseMAC(string(state.Status.MACAddress))
+	if err != nil {
+		return nil, fmt.Errorf("waiting for DPU-host MAC address for interface %s: %w",
+			hostInterfaceName, err)
+	}
+	ipAddresses := make([]*net.IPNet, 0, len(state.Status.IPAddresses))
+	for _, ipAddress := range state.Status.IPAddresses {
+		ip, cidr, err := net.ParseCIDR(string(ipAddress))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse DPU-host IP address %q: %w",
+				ipAddress, err)
+		}
+		cidr.IP = ip
+		ipAddresses = append(ipAddresses, cidr)
+	}
+	if len(ipAddresses) == 0 {
+		return nil, fmt.Errorf("waiting for DPU-host IP addresses for interface %s",
+			hostInterfaceName)
+	}
+	defaultGateways := make([]net.IP, 0, len(state.Status.DefaultGateways))
+	for _, defaultGateway := range state.Status.DefaultGateways {
+		ip := net.ParseIP(string(defaultGateway))
+		if ip == nil {
+			return nil, fmt.Errorf("failed to parse DPU-host default gateway %q",
+				defaultGateway)
+		}
+		defaultGateways = append(defaultGateways, ip)
+	}
+	return &hostInterfaceState{
+		macAddress:      macAddress,
+		ipAddresses:     ipAddresses,
+		defaultGateways: defaultGateways,
+	}, nil
+}
+
 func discoveryReason(err error) string {
 	var discoveryErr *discoveryError
 	if errors.As(err, &discoveryErr) {
@@ -685,81 +852,213 @@ func isDefaultRoute(route netlink.Route) bool {
 	return bits != 0 && ones == 0
 }
 
-type ovsPortBridgeResolver struct{}
+// defaultOVSBridgeResolver implements ovsBridgeResolver using OVS and device discovery.
+type defaultOVSBridgeResolver struct {
+	ovsClient libovsdbclient.Client
+}
 
-func (r ovsPortBridgeResolver) Resolve(hostInterfaceName string) (string, error) {
-	stdout, _, err := util.RunOVSVsctl("--if-exists", "get", "Bridge", hostInterfaceName, "name")
-	if err == nil && strings.TrimSpace(stdout) == hostInterfaceName {
-		return hostInterfaceName, nil
+func (r defaultOVSBridgeResolver) Resolve(hostInterfaceName string) (string, error) {
+	bridge, err := ovsops.GetBridge(r.ovsClient, hostInterfaceName)
+	if err == nil {
+		return bridge.Name, nil
+	}
+	if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+			fmt.Errorf("failed to look up OVS bridge %s: %w", hostInterfaceName, err),
+		)
 	}
 
-	stdout, stderr, err := util.RunOVSVsctl("port-to-br", hostInterfaceName)
-	if err == nil {
-		bridgeName := strings.TrimSpace(stdout)
-		if bridgeName != "" {
-			return bridgeName, nil
-		}
+	bridgeName, resolveErr := r.bridgeForPortOrInterface(hostInterfaceName)
+	if resolveErr == nil {
+		return bridgeName, nil
 	}
 
 	rep, repErr := util.GetNetdeviceRepresentorName(hostInterfaceName)
 	if repErr != nil {
-		if err != nil {
-			return "", newDiscoveryError(
-				uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
-				fmt.Errorf("failed to resolve OVS bridge for %s: %v: %s",
-					hostInterfaceName, err, stderr),
-			)
-		}
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
-			fmt.Errorf("failed to resolve OVS bridge for %s", hostInterfaceName),
+			fmt.Errorf("failed to resolve OVS bridge for %s: %w", hostInterfaceName, resolveErr),
 		)
 	}
 
-	stdout, stderr, err = util.RunOVSVsctl("port-to-br", rep)
+	bridgeName, err = r.bridgeForPortOrInterface(rep)
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
-			fmt.Errorf("failed to resolve OVS bridge for %s representor %s: %v: %s",
-				hostInterfaceName, rep, err, stderr),
-		)
-	}
-	bridgeName := strings.TrimSpace(stdout)
-	if bridgeName == "" {
-		return "", newDiscoveryError(
-			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
-			fmt.Errorf("failed to resolve OVS bridge for %s representor %s",
-				hostInterfaceName, rep),
+			fmt.Errorf("failed to resolve OVS bridge for %s representor %s: %w", hostInterfaceName, rep, err),
 		)
 	}
 	return bridgeName, nil
 }
 
-func (r ovsPortBridgeResolver) BridgeUplink(bridgeName string) (string, error) {
-	uplinkName, err := util.GetNicName(bridgeName)
+func (r defaultOVSBridgeResolver) BridgeUplink(bridgeName string) (string, error) {
+	bridge, err := ovsops.GetBridge(r.ovsClient, bridgeName)
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
-			fmt.Errorf("failed to resolve physical uplink for OVS bridge %s: %w",
-				bridgeName, err),
-		)
-	}
-	uplinkName = strings.TrimSpace(uplinkName)
-	if uplinkName == "" {
-		return "", newDiscoveryError(
-			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
-			fmt.Errorf("failed to resolve physical uplink for OVS bridge %s",
-				bridgeName),
+			fmt.Errorf("failed to get OVS bridge %s: %w", bridgeName, err),
 		)
 	}
 
-	_, stderr, err := util.RunOVSVsctl("get", "interface", uplinkName, "ofport")
+	bridgePortIDs := make(map[string]struct{}, len(bridge.Ports))
+	for _, portID := range bridge.Ports {
+		bridgePortIDs[portID] = struct{}{}
+	}
+	ports, err := libovsdbops.FindOVSPortsWithPredicate(r.ovsClient, func(port *vswitchd.Port) bool {
+		_, ok := bridgePortIDs[port.UUID]
+		return ok
+	})
 	if err != nil {
 		return "", newDiscoveryError(
 			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
-			fmt.Errorf("failed to get ofport for bridge %s physical uplink %s: %v: %s",
-				bridgeName, uplinkName, err, stderr),
+			fmt.Errorf("failed to list ports for OVS bridge %s: %w", bridgeName, err),
+		)
+	}
+
+	interfaceIDs := map[string]struct{}{}
+	for _, port := range ports {
+		for _, interfaceID := range port.Interfaces {
+			interfaceIDs[interfaceID] = struct{}{}
+		}
+	}
+	interfaces, err := ovsops.FindInterfacesWithPredicate(r.ovsClient, func(iface *vswitchd.Interface) bool {
+		_, ok := interfaceIDs[iface.UUID]
+		return ok
+	})
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
+			fmt.Errorf("failed to list interfaces for OVS bridge %s: %w", bridgeName, err),
+		)
+	}
+	interfacesByID := make(map[string]*vswitchd.Interface, len(interfaces))
+	for _, iface := range interfaces {
+		interfacesByID[iface.UUID] = iface
+	}
+
+	systemPorts := []string{}
+	for _, port := range ports {
+		for _, interfaceID := range port.Interfaces {
+			iface, ok := interfacesByID[interfaceID]
+			if ok && iface.Type == "system" {
+				systemPorts = append(systemPorts, port.Name)
+			}
+		}
+	}
+
+	var uplinkName string
+	if len(systemPorts) == 1 {
+		uplinkName = systemPorts[0]
+	} else {
+		if len(systemPorts) > 1 {
+			klog.Infof("Found more than one system Type ports on the OVS bridge %s, so skipping "+
+				"this method of determining the uplink port", bridgeName)
+		}
+		uplinkName = bridge.ExternalIDs["bridge-uplink"]
+		if uplinkName == "" && strings.HasPrefix(bridgeName, "br") {
+			uplinkName = strings.TrimPrefix(bridgeName, "br")
+		}
+	}
+	if uplinkName == "" {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
+			fmt.Errorf("failed to resolve physical uplink for OVS bridge %s", bridgeName),
+		)
+	}
+
+	uplinkInterfaces, err := ovsops.FindInterfacesWithPredicate(r.ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.Name == uplinkName
+	})
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
+			fmt.Errorf("failed to get interface for bridge %s physical uplink %s: %w", bridgeName, uplinkName, err),
+		)
+	}
+	if len(uplinkInterfaces) == 0 {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeUplinkNotFound,
+			fmt.Errorf("failed to find interface for bridge %s physical uplink %s", bridgeName, uplinkName),
 		)
 	}
 	return uplinkName, nil
+}
+
+func (r defaultOVSBridgeResolver) ResolveByHostMAC(hostMAC net.HardwareAddr, nodeName string) (string, error) {
+	bridges, err := ovsops.ListBridges(r.ovsClient)
+	if err != nil {
+		return "", newDiscoveryError(
+			uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+			fmt.Errorf("failed to list OVS bridges: %w", err),
+		)
+	}
+	sort.Slice(bridges, func(i, j int) bool {
+		return bridges[i].Name < bridges[j].Name
+	})
+	for _, bridge := range bridges {
+		if bridge.Name == ovsIntegrationBridge {
+			continue
+		}
+		bridgeMAC, err := util.GetDPUOps().GetHostGatewayMACAddress(r.ovsClient, bridge.Name, nodeName)
+		if err != nil {
+			klog.V(5).Infof("Failed to read DPU host MAC for bridge %s: %v", bridge.Name, err)
+			continue
+		}
+		if bytes.Equal(bridgeMAC, hostMAC) {
+			return bridge.Name, nil
+		}
+	}
+	return "", newDiscoveryError(
+		uplinkv1alpha1.UplinkStateReasonBridgeNotFound,
+		fmt.Errorf("failed to find DPU bridge for host MAC %s", hostMAC),
+	)
+}
+
+func (r defaultOVSBridgeResolver) bridgeForPortOrInterface(name string) (string, error) {
+	interfaces, err := ovsops.FindInterfacesWithPredicate(r.ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.Name == name
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to look up OVS interface %s: %w", name, err)
+	}
+	interfaceIDs := make(map[string]struct{}, len(interfaces))
+	for _, iface := range interfaces {
+		interfaceIDs[iface.UUID] = struct{}{}
+	}
+
+	ports, err := libovsdbops.FindOVSPortsWithPredicate(r.ovsClient, func(port *vswitchd.Port) bool {
+		if port.Name == name {
+			return true
+		}
+		for _, interfaceID := range port.Interfaces {
+			if _, ok := interfaceIDs[interfaceID]; ok {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to look up OVS port for %s: %w", name, err)
+	}
+	if len(ports) == 0 {
+		return "", fmt.Errorf("OVS port or interface %s not found: %w", name, libovsdbclient.ErrNotFound)
+	}
+	portIDs := make(map[string]struct{}, len(ports))
+	for _, port := range ports {
+		portIDs[port.UUID] = struct{}{}
+	}
+
+	bridges, err := ovsops.ListBridges(r.ovsClient)
+	if err != nil {
+		return "", fmt.Errorf("failed to list OVS bridges for %s: %w", name, err)
+	}
+	for _, bridge := range bridges {
+		for _, portID := range bridge.Ports {
+			if _, ok := portIDs[portID]; ok {
+				return bridge.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("OVS port or interface %s is not attached to a bridge: %w", name, libovsdbclient.ErrNotFound)
 }

@@ -315,7 +315,7 @@ func NewUnmanagedBridgeConfiguration(ovsClient libovsdbclient.Client, bridgeName
 	if macAddress == nil {
 		return nil, fmt.Errorf("gateway MAC address is required for OVS bridge %s", bridgeName)
 	}
-	uplinkName, err := getIntfName(bridgeName)
+	uplinkName, err := getIntfName(ovsClient, bridgeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find uplink interface for OVS bridge %s: %w", bridgeName, err)
 	}
@@ -329,7 +329,7 @@ func NewUnmanagedBridgeConfiguration(ovsClient libovsdbclient.Client, bridgeName
 	if gwIface == "" || config.IsModeDPU() {
 		gwIface = bridgeName
 		if config.IsModeDPU() {
-			gwIfaceRep, err = util.GetDPUOps().GetDPUHostRepInterface(bridgeName)
+			gwIfaceRep, err = util.GetDPUOps().GetDPUHostRepInterface(ovsClient, bridgeName)
 			if err != nil {
 				return nil, err
 			}

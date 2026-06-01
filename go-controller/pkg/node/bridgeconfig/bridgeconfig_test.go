@@ -102,51 +102,32 @@ func TestNewUnmanagedBridgeConfigurationResolvesDPUHostRepresentor(t *testing.T)
 	config.OvnKubeNode.Mode = ovntypes.NodeModeDPU
 
 	bridgeUUID := "ovsbr1-uuid"
+	uplinkPortUUID := "eth1-port-uuid"
+	uplinkInterfaceUUID := "eth1-interface-uuid"
+	hostRepPortUUID := "pfhpf0-port-uuid"
+	hostRepInterfaceUUID := "pfhpf0-interface-uuid"
 	ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
 		OVSData: []libovsdbtest.TestData{
 			&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{bridgeUUID}},
-			&vswitchd.Bridge{UUID: bridgeUUID, Name: "ovsbr1"},
+			&vswitchd.Bridge{
+				UUID:        bridgeUUID,
+				Name:        "ovsbr1",
+				Ports:       []string{uplinkPortUUID, hostRepPortUUID},
+				ExternalIDs: map[string]string{"bridge-uplink": "eth1"},
+			},
+			&vswitchd.Port{UUID: uplinkPortUUID, Name: "eth1", Interfaces: []string{uplinkInterfaceUUID}},
+			&vswitchd.Interface{UUID: uplinkInterfaceUUID, Name: "eth1", Type: "system"},
+			&vswitchd.Port{UUID: hostRepPortUUID, Name: "pfhpf0", Interfaces: []string{hostRepInterfaceUUID}},
+			&vswitchd.Interface{UUID: hostRepInterfaceUUID, Name: "pfhpf0", Type: "system"},
 		},
 	})
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	t.Cleanup(ovsCleanup.Cleanup)
 
 	fexec := ovntest.NewLooseCompareFakeExec()
-	fexec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 list-ports ovsbr1",
-		Output: "eth1\npfhpf0",
-	}, 2)
-	fexec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Port eth1 Interfaces",
-		Output: "[eth1]",
-	}, 2)
-	fexec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Port pfhpf0 Interfaces",
-		Output: "[pfhpf0]",
-	}, 2)
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Interface eth1 Type",
-		Output: "system",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Interface pfhpf0 Type",
-		Output: "system",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 br-get-external-id ovsbr1 bridge-uplink",
-		Output: "eth1",
-	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 get interface eth1 ofport",
 		Output: "7",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Interface eth1 Name",
-		Output: "eth1",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Interface pfhpf0 Name",
-		Output: "pfhpf0",
 	})
 	g.Expect(util.SetExec(fexec)).To(gomega.Succeed())
 

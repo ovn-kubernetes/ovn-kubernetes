@@ -316,7 +316,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
-		ncm.uplinkController = nodeuplink.NewController(name, wf, ncm.ovnNodeClient)
+		ncm.uplinkController = nodeuplink.NewController(name, wf, ncm.ovnNodeClient, ncm.ovsClient)
 	}
 
 	return ncm, nil
