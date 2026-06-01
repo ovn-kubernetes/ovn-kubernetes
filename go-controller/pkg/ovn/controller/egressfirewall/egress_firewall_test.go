@@ -94,7 +94,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 		iFactory, err = factory.NewOVNKubeControllerWatchFactory(&util.OVNKubeControllerClientset{
 			KubeClient:           fakeClient,
 			EgressFirewallClient: kubeInterface.EgressFirewallClient,
-		})
+		}, "test-node")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		nbClient, _, nbsbCleanup, err = libovsdbtest.NewNBSBTestHarness(initialDB)

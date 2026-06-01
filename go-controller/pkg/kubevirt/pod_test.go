@@ -63,7 +63,7 @@ var _ = Describe("Kubevirt Pod", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 
 		fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-		wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+		wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 		Expect(err).ToNot(HaveOccurred())
 
 		for _, pod := range pods {

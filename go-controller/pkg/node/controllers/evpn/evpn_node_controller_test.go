@@ -28,6 +28,7 @@ import (
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
 	routeadvertisementsfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
 	udnfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
@@ -817,6 +818,7 @@ var _ = Describe("EVPN node controller", func() {
 				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
 				UserDefinedNetworkClient:  udnfake.NewClientset(),
 				RouteAdvertisementsClient: routeadvertisementsfake.NewClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 				VTEPClient:                vtepClient,
 			}, nodeName)
 			Expect(err).NotTo(HaveOccurred())

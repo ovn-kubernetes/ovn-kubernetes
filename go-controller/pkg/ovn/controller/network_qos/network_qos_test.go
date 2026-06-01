@@ -1172,8 +1172,7 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 			KubeClient:            clientset.KubeClient,
 			NetworkQoSClient:      clientset.NetworkQoSClient,
 			NetworkAttchDefClient: clientset.NetworkAttchDefClient,
-		},
-	)
+		}, "test-node")
 	Expect(err).NotTo(HaveOccurred())
 
 	if initialDB == nil {

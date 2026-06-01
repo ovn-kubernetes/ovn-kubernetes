@@ -218,7 +218,7 @@ func TestSetAdvertisements(t *testing.T) {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			tcm := &testControllerManager{
@@ -522,7 +522,7 @@ func TestNetworkController_ConcurrentReconciliation(t *testing.T) {
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	tcm := &testControllerManager{
@@ -607,7 +607,7 @@ func TestNetworkController_ConcurrentReconciliationMixed(t *testing.T) {
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	tcm := &testControllerManager{

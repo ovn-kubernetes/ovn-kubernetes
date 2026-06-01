@@ -86,7 +86,7 @@ var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
 		var err error
 
 		fakeClient = util.GetOVNClientset(objects...).GetOVNKubeControllerClientset()
-		wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClient)
+		wf, err = factory.NewOVNKubeControllerWatchFactory(fakeClient, "test-node")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		extEgDNS, err = NewExternalEgressDNS(fakeAddressSetFactory, DefaultNetworkControllerName, true,

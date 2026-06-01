@@ -139,7 +139,7 @@ var _ = ginkgo.Describe("OVN podSelectorAddressSet", func() {
 			&corev1.NodeList{Items: nodes},
 		).GetOVNKubeControllerClientset()
 		var err error
-		wf, err = factory.NewOVNKubeControllerWatchFactory(clientSet)
+		wf, err = factory.NewOVNKubeControllerWatchFactory(clientSet, "test-node")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(wf.Start()).To(gomega.Succeed())
 		libovsdbNBClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)

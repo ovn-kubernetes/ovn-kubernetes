@@ -123,7 +123,7 @@ func TestUDNEnabledServices(t *testing.T) {
 			asf := addressset.NewOvnAddressSetFactory(nbClient, true, true)
 			t.Logf("adding services to kapi before controller is executed")
 			ovnClient := util.GetOVNClientset(tt.initialServices...).GetOVNKubeControllerClientset()
-			factoryMock, err := factory.NewOVNKubeControllerWatchFactory(ovnClient)
+			factoryMock, err := factory.NewOVNKubeControllerWatchFactory(ovnClient, "test-node")
 			if err != nil {
 				t.Fatalf("failed to create new OVN kube controller watch factory: %v", err)
 			}

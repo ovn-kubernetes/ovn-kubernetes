@@ -654,7 +654,8 @@ func newWatchFactory(runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset) (
 	case runMode.clusterManager:
 		watchFactory, err = factory.NewClusterManagerWatchFactory(ovnClientset.GetClusterManagerClientset())
 	case runMode.ovnkubeController:
-		watchFactory, err = factory.NewOVNKubeControllerWatchFactory(ovnClientset.GetOVNKubeControllerClientset())
+		watchFactory, err = factory.NewOVNKubeControllerWatchFactory(
+			ovnClientset.GetOVNKubeControllerClientset(), runMode.identity)
 	case runMode.node:
 		watchFactory, err = factory.NewNodeWatchFactory(ovnClientset.GetNodeClientset(), runMode.identity)
 	default:

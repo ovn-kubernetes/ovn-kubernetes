@@ -135,7 +135,7 @@ func initController(k8sObjects, routePolicyObjects []runtime.Object) {
 	iFactory, err = factory.NewOVNKubeControllerWatchFactory(&util.OVNKubeControllerClientset{
 		KubeClient:             fakeClient,
 		AdminPolicyRouteClient: fakeRouteClient,
-	})
+	}, "test-node")
 	Expect(err).NotTo(HaveOccurred())
 	// Try to get the NBZone.  If there is an error, create NB_Global record.
 	// Otherwise NewController() will return error since it

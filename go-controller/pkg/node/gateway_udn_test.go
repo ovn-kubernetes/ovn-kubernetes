@@ -33,6 +33,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	rafakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	factoryMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory/mocks"
@@ -644,6 +645,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
+			UplinkClient:             uplinkfake.NewSimpleClientset(),
 			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
 		}
 
@@ -874,6 +876,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
+			UplinkClient:             uplinkfake.NewSimpleClientset(),
 			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
 		}
 
@@ -1070,6 +1073,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:               kubeFakeClient,
 			NetworkAttchDefClient:    nadfake.NewSimpleClientset(),
+			UplinkClient:             uplinkfake.NewSimpleClientset(),
 			UserDefinedNetworkClient: udnfakeclient.NewSimpleClientset(),
 		}
 
@@ -1303,6 +1307,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:                kubeFakeClient,
 			NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+			UplinkClient:              uplinkfake.NewSimpleClientset(),
 			UserDefinedNetworkClient:  udnfakeclient.NewSimpleClientset(),
 			RouteAdvertisementsClient: rafakeclient.NewSimpleClientset(),
 		}

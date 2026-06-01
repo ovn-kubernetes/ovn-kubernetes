@@ -579,7 +579,7 @@ func newAdvertisedSNATTestControllerForTopology(
 		},
 	}
 	clientSet := util.GetOVNClientset(&corev1.NodeList{Items: []corev1.Node{node}}).GetOVNKubeControllerClientset()
-	watchFactory, err := factory.NewOVNKubeControllerWatchFactory(clientSet)
+	watchFactory, err := factory.NewOVNKubeControllerWatchFactory(clientSet, "test-node")
 	if err != nil {
 		t.Fatalf("failed to create watch factory: %v", err)
 	}

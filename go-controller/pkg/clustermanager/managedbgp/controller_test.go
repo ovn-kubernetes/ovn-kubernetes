@@ -27,6 +27,7 @@ import (
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -124,6 +125,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -159,6 +161,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -211,6 +214,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -252,6 +256,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -297,6 +302,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -353,6 +359,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -406,6 +413,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -455,6 +463,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -530,6 +539,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -571,6 +581,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -641,6 +652,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -671,6 +683,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -733,6 +746,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -778,6 +792,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -837,6 +852,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -896,6 +912,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1021,6 +1038,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1086,6 +1104,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1134,6 +1153,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1184,6 +1204,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1241,6 +1262,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1286,6 +1308,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1336,6 +1359,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1371,6 +1395,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnFakeClient,
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()
@@ -1444,6 +1469,7 @@ var _ = ginkgo.Describe("Managed BGP Controller", func() {
 				RouteAdvertisementsClient: raFakeClient,
 				FRRClient:                 frrFakeClient,
 				UserDefinedNetworkClient:  udnfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			defer wf.Shutdown()

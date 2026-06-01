@@ -40,7 +40,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 
 	DescribeTable("should fail to render NAD spec given",
 		func(spec *udnv1.UserDefinedNetworkSpec, expectedError string) {
-			_, err := renderNADSpec("foo", "bar", spec, nil)
+			_, err := renderNADSpec("foo", "bar", spec, "", nil)
 			Expect(err).To(MatchError(ContainSubstring(expectedError)))
 		},
 		Entry("invalid layer2 subnets",
@@ -803,6 +803,34 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			}`,
 		),
 	)
+
+	It("should render CUDN uplink into the NAD CNI config", func() {
+		cudn := &udnv1.ClusterUserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-net", UID: "1"},
+			Spec: udnv1.ClusterUserDefinedNetworkSpec{
+				Uplinks: []string{"br-test"},
+				Network: udnv1.NetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer3,
+					Layer3: &udnv1.Layer3Config{
+						Role: udnv1.NetworkRolePrimary,
+						Subnets: []udnv1.Layer3Subnet{
+							{CIDR: "192.168.100.0/16"},
+						},
+					},
+				},
+			},
+		}
+
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+		nad, err := RenderNetAttachDefManifest(cudn, "mynamespace")
+		Expect(err).NotTo(HaveOccurred())
+
+		netConf := map[string]interface{}{}
+		err = json.Unmarshal([]byte(nad.Spec.Config), &netConf)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(netConf).To(HaveKeyWithValue("uplink", "br-test"))
+	})
 
 	Context("EVPN VID injection", func() {
 		It("should inject VIDs into EVPN config when provided via WithEVPNVIDs", func() {
