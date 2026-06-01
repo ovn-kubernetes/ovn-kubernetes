@@ -805,6 +805,22 @@ func (bnc *BaseNetworkController) deleteNamespaceLocked(ns string) (*namespaceIn
 	bnc.namespacesMutex.Unlock()
 
 	if nsInfo == nil {
+		// No cached nsInfo: the namespace was deleted before its bootstrap add
+		// reconcile ran, so SyncNamespaces kept its port group and multicast
+		// ACLs as "expected" and stale OVN state from a previous run can remain.
+		// Clean all deterministically-named namespace-scoped state; every op is
+		// idempotent. Multicast ACLs first, so their rows are removed while the
+		// port group still exists (mirrors syncNsMulticast's nil-nsInfo path).
+		if bnc.multicastSupport {
+			if err := bnc.deleteMulticastAllowPolicy(ns, nil); err != nil {
+				return nil, fmt.Errorf("failed to delete stale multicast state for namespace %s: %w", ns, err)
+			}
+		}
+		if bnc.needNamespacedPortGroup() {
+			if err := libovsdbops.DeletePortGroups(bnc.nbClient, bnc.getNamespacePortGroupName(ns)); err != nil {
+				return nil, fmt.Errorf("failed to delete stale port group for namespace %s: %w", ns, err)
+			}
+		}
 		return nil, nil
 	}
 	nsInfo.Lock()

@@ -293,13 +293,19 @@ func (oc *DefaultNetworkController) deleteNamespace(ns *corev1.Namespace) error 
 	if err != nil {
 		return err
 	}
-	if nsInfo == nil {
-		return nil
+	if nsInfo != nil {
+		defer nsInfo.Unlock()
 	}
-	defer nsInfo.Unlock()
 
+	// GW-route cleanup is keyed by namespace name (not nsInfo) and idempotent,
+	// so it runs even when nsInfo == nil. This keeps the delete re-runnable: a
+	// retry after deleteNamespaceLocked removed nsInfo arrives with nsInfo ==
+	// nil and must still clean up routes rather than leak them.
 	if err := oc.deleteGWRoutesForNamespace(ns.Name, nil); err != nil {
 		return fmt.Errorf("failed to delete GW routes for namespace: %s, error: %v", ns.Name, err)
+	}
+	if nsInfo == nil {
+		return nil
 	}
 	if err := oc.multicastDeleteNamespace(ns, nsInfo); err != nil {
 		return fmt.Errorf("failed to delete multicast namespace error %v", err)

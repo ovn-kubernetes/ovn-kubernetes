@@ -537,6 +537,32 @@ func TestReconcileNamespace_TransitionGate(t *testing.T) {
 		}
 	})
 
+	t.Run("deletion event + !had + pending bootstrap → delete leg fires", func(t *testing.T) {
+		// A namespace in bootstrapNetwork's initial list that vanishes
+		// before its scoped reconcile runs: had == false (nsActive was
+		// never set on this fresh start), but a bootstrap reconciliation
+		// is still pending. SyncNamespaces saw the same stale list and
+		// did not clean it up, so the delete leg MUST still fire to tear
+		// down any stale per-namespace OVN state from a previous run.
+		c, h := transitionGateFixture(t, netName, func(string) (bool, error) {
+			t.Fatal("ClaimsNamespace must not be called on deletion path")
+			return false, nil
+		})
+		// Seed the bootstrap reconciliation mark (mirrors
+		// setBootstrapNamespaces) without marking the namespace active.
+		c.setBootstrapNamespaces(netName, []*corev1.Namespace{makeNS()})
+
+		if err := c.reconcileNamespace(scopedNamespaceQueueKey(nsName, netName)); err != nil {
+			t.Fatalf("reconcileNamespace: %v", err)
+		}
+		if h.deleteCalls != 1 {
+			t.Fatalf("expected delete leg to fire for a vanished bootstrap namespace; got delete=%d", h.deleteCalls)
+		}
+		if c.namespaceNeedsReconciliation(netName, nsName) {
+			t.Fatal("bootstrap reconciliation mark must be cleared after delete")
+		}
+	})
+
 	t.Run("ClaimsNamespace error → no state mutation", func(t *testing.T) {
 		// Load-bearing test for the (bool, error) signature: the gate
 		// must NOT change cache or active state on the error path,
