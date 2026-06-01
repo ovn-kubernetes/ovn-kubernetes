@@ -431,7 +431,7 @@ func (c *Controller) updateUplinkStateStatus(
 			statusApply,
 		),
 		metav1.ApplyOptions{
-			FieldManager: fieldManager,
+			FieldManager: StatusFieldManager(),
 			Force:        true,
 		},
 	)
@@ -457,6 +457,12 @@ func gatewayProgrammingFailureCondition(
 	default:
 		return nil
 	}
+}
+
+// StatusFieldManager returns the field manager used by ovnkube-node when it
+// applies UplinkState status.
+func StatusFieldManager() string {
+	return fieldManager
 }
 
 func readyCondition(

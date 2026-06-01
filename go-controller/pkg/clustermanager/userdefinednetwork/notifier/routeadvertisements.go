@@ -50,7 +50,7 @@ func NewRouteAdvertisementsNotifier(raInformer rainformer.RouteAdvertisementsInf
 }
 
 // needUpdate returns true when the RouteAdvertisements CR has been created, deleted, or fields relevant
-// to CUDN transport validation have changed.
+// to CUDN transport validation and Uplink VRF placement have changed.
 //
 // Per OKEP, CUDN validation checks:
 // 1. Whether the RA selects the CUDN (via NetworkSelectors)
@@ -71,6 +71,12 @@ func (c *RouteAdvertisementsNotifier) needUpdate(old, new *ratypes.RouteAdvertis
 
 	// Check if Advertisements changed - determines if PodNetwork is advertised
 	if !reflect.DeepEqual(old.Spec.Advertisements, new.Spec.Advertisements) {
+		return true
+	}
+
+	// Check if TargetVRF changed - determines whether an Uplink bridge must
+	// be kept in the default VRF or enslaved to the selected UDN VRF.
+	if old.Spec.TargetVRF != new.Spec.TargetVRF {
 		return true
 	}
 

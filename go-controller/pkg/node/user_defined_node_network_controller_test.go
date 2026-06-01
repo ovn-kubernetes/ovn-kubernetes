@@ -94,7 +94,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		factoryMock.On("GetNodes").Return(nodeList, nil)
 		NetInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		controller, err := NewUserDefinedNodeNetworkController(&cnnci, NetInfo, nil, nil, nil, nil, &gateway{}, nil)
+		controller, err := NewUserDefinedNodeNetworkController(&cnnci, NetInfo, nil, nil, nil, nil, &gateway{}, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		err = controller.Start(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -130,7 +130,17 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		Expect(err).NotTo(HaveOccurred())
 		getCreationFakeCommands(fexec, "ovn-k8s-mp3", mgtPortMAC, NetInfo.GetNetworkName(), "worker1", NetInfo.MTU())
 		ofm := getDummyOpenflowManager()
-		controller, err := NewUserDefinedNodeNetworkController(&cnnci, NetInfo, nil, nil, nil, nil, &gateway{openflowManager: ofm}, nil)
+		controller, err := NewUserDefinedNodeNetworkController(
+			&cnnci,
+			NetInfo,
+			nil,
+			nil,
+			nil,
+			nil,
+			&gateway{openflowManager: ofm},
+			nil,
+			uplinkfake.NewSimpleClientset(),
+		)
 		Expect(err).NotTo(HaveOccurred())
 		err = controller.Start(context.Background())
 		Expect(err).To(HaveOccurred()) // we don't have the gateway pieces setup so its expected to fail here
@@ -158,7 +168,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 			types.Layer3Topology, "100.128.0.0/16", types.NetworkRoleSecondary)
 		NetInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		controller, err := NewUserDefinedNodeNetworkController(&cnnci, NetInfo, nil, nil, nil, nil, &gateway{}, nil)
+		controller, err := NewUserDefinedNodeNetworkController(&cnnci, NetInfo, nil, nil, nil, nil, &gateway{}, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		err = controller.Start(context.Background())
 		Expect(err).NotTo(HaveOccurred())
@@ -451,7 +461,17 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 
 			By("creating a UDN controller for user-defined primary network")
 			cnnci := CommonNodeNetworkControllerInfo{name: nodeName, watchFactory: &factoryMock}
-			controller, err := NewUserDefinedNodeNetworkController(&cnnci, NetInfo, nil, vrf, ipRulesManager, nil, localGw, nil)
+			controller, err := NewUserDefinedNodeNetworkController(
+				&cnnci,
+				NetInfo,
+				nil,
+				vrf,
+				ipRulesManager,
+				nil,
+				localGw,
+				nil,
+				uplinkfake.NewSimpleClientset(),
+			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(controller.gateway).To(Not(BeNil()))
 			Expect(controller.gateway.ruleManager).To(Not(BeNil()))
