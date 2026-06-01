@@ -1720,12 +1720,10 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 			expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), gwRouterJoinIPAddress().IP.String(), nil, nil, netInfo),
 			expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
 			expectedLogicalRouterPolicy(routerPolicyUUID2, netInfo, nodeName, masqIPAddr, managementPortIP(nodeSubnet).String()),
+			masqSNAT,
 		)
-		if config.Gateway.Mode != config.GatewayModeShared {
-			expectedEntities = append(expectedEntities, masqSNAT)
-			clusterRouter.Nat = []string{masqSNATUUID1}
-		}
 		clusterRouter.Ports = append(clusterRouter.Ports, rtojLRPUUID)
+		clusterRouter.Nat = []string{masqSNATUUID1}
 		clusterRouter.Policies = []string{routerPolicyUUID1, routerPolicyUUID2}
 		clusterRouter.StaticRoutes = []string{staticRouteUUID1, staticRouteUUID2}
 	}

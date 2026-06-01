@@ -1266,10 +1266,8 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		StaticRoutes: []string{staticRouteUUID1, staticRouteUUID2},
 		Policies:     []string{routerPolicyUUID1},
 		ExternalIDs:  clusterRouterExternalIDs,
+		Nat:          []string{masqSNATUUID1},
 		Copp:         ptr.To(string(coppUUID)),
-	}
-	if config.Gateway.Mode != config.GatewayModeShared {
-		clusterRouter.Nat = []string{masqSNATUUID1}
 	}
 	hasEVPN := netInfo.Transport() == ovntypes.NetworkTransportEVPN
 	if !hasEVPN {
@@ -1303,10 +1301,8 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		expectedGRStaticRoute(staticRouteUUID1, nodeSubnet.String(), lrsrNextHop, &nbdb.LogicalRouterStaticRoutePolicySrcIP, nil, netInfo),
 		expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), trInfo.gatewayRouterNets[0].IP.String(), nil, nil, netInfo),
 		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
+		masqSNAT,
 		&nbdb.GatewayChassis{UUID: gatewayChassisUUID, Name: gwChassisName, Priority: 1, ChassisName: gwConfig.ChassisID},
-	}
-	if config.Gateway.Mode != config.GatewayModeShared {
-		expectedEntities = append(expectedEntities, masqSNAT)
 	}
 	if staleNode {
 		staleNodeName := "stale-node"

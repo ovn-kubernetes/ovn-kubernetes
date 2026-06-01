@@ -919,7 +919,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *cor
 // Based on the isUDNAdvertised flag, the SNAT matches are slightly different
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 10.128.0.0/24
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 2010:100:200::/64
-// these SNATs are required for pod2Egress traffic in LGW mode; SGW mode handles this host path with nftables
+// these SNATs are required for pod2Egress traffic in LGW mode and pod2SameNode traffic in SGW mode to function properly on UDNs
 // SNAT Breakdown:
 // match = "eth.dst == d6:cf:fd:2c:a6:44"; the MAC here is the mpX interface MAC address for this UDN
 // logicalIP = "10.128.0.0/24"; which is the podsubnet for this node in L3 UDN
@@ -949,26 +949,6 @@ func (oc *Layer3UserDefinedNetworkController) addOrUpdateUDNNodeSubnetEgressSNAT
 	return nil
 }
 
-func (oc *Layer3UserDefinedNetworkController) deleteUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node) error {
-	outputPort := types.RouterToSwitchPrefix + oc.GetNetworkScopedName(node.Name)
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, false)
-	if err != nil {
-		return fmt.Errorf("failed to build UDN masquerade SNATs for network %q on node %q, err: %w",
-			oc.GetNetworkName(), node.Name, err)
-	}
-	if len(nats) == 0 {
-		return nil // nothing to do
-	}
-	router := &nbdb.LogicalRouter{
-		Name: oc.GetNetworkScopedClusterRouterName(),
-	}
-	if err := libovsdbops.DeleteNATs(oc.nbClient, router, nats...); err != nil {
-		return fmt.Errorf("failed to delete SNAT for node subnet on router: %q for network %q, error: %w",
-			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkName(), err)
-	}
-	return nil
-}
-
 func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node) ([]*net.IPNet, error) {
 	// Node subnet for the layer3 UDN is allocated by cluster manager.
 	// Make sure that the node is allocated with the subnet before proceeding
@@ -984,14 +964,8 @@ func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node) ([]*net
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
 		isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
-		if config.Gateway.Mode == config.GatewayModeShared {
-			if err := oc.deleteUDNNodeSubnetEgressSNAT(hostSubnets, node); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
-				return nil, err
-			}
+		if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
+			return nil, err
 		}
 		shouldIsolate := isUDNAdvertised && config.OVNKubernetesFeature.AdvertisedUDNIsolationMode == config.AdvertisedUDNIsolationModeStrict
 		if shouldIsolate {
