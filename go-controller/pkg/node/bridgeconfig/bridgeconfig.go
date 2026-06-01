@@ -477,6 +477,12 @@ func (b *BridgeConfiguration) GetActiveNetworkBridgeConfigCopy(networkName strin
 	return nil
 }
 
+func (b *BridgeConfiguration) HasNetworkConfigs() bool {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return len(b.netConfig) > 0
+}
+
 // must be called with mutex held
 func (b *BridgeConfiguration) patchedNetConfigs() []*BridgeUDNConfiguration {
 	result := make([]*BridgeUDNConfiguration, 0, len(b.netConfig))
