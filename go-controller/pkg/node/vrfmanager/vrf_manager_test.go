@@ -131,6 +131,31 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("adds another slave interface to an existing VRF", func() {
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: getLinkIndex(enslaveLinkName1)}, nil)
+			enslaveLinkMock2.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName2, MasterIndex: 0, Index: getLinkIndex(enslaveLinkName2)}, nil)
+			nlMock.On("LinkSetMaster", enslaveLinkMock2, buildVRF(vrfLinkName1)).Return(nil)
+
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), nil)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
+			err = c.AddVRFSlave(vrfLinkName1, enslaveLinkName2)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkSetMaster", enslaveLinkMock2, buildVRF(vrfLinkName1))
+		})
+
+		ginkgo.It("removes a slave interface from an existing VRF", func() {
+			enslaveLinkMock1.On("Attrs").Return(&netlink.LinkAttrs{Name: enslaveLinkName1, MasterIndex: getLinkIndex(vrfLinkName1), Index: getLinkIndex(enslaveLinkName1)}, nil)
+			nlMock.On("LinkSetNoMaster", enslaveLinkMock1).Return(nil)
+
+			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), nil)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+
+			err = c.DeleteVRFSlave(vrfLinkName1, enslaveLinkName1)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkSetNoMaster", enslaveLinkMock1)
+		})
+
 		ginkgo.It("fails if we add a VRF with a long name", func() {
 			err := c.AddVRF("this.name.is.too.long", "other", 0, nil)
 			gomega.Expect(err).Should(gomega.HaveOccurred())

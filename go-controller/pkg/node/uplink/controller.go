@@ -406,7 +406,7 @@ func (c *Controller) updateUplinkStateStatus(
 			statusApply,
 		),
 		metav1.ApplyOptions{
-			FieldManager: fieldManager,
+			FieldManager: StatusFieldManager(),
 			Force:        true,
 		},
 	)
@@ -459,6 +459,12 @@ func setUplinkStateBridgeStatus(status *uplinkv1alpha1.UplinkStateStatus, bridge
 	if bridgeName != "" {
 		status.OVSBridge = &uplinkv1alpha1.OVSBridgeStatus{Name: bridgeName}
 	}
+}
+
+// StatusFieldManager returns the field manager used by ovnkube-node when it
+// applies UplinkState status.
+func StatusFieldManager() string {
+	return fieldManager
 }
 
 func readyCondition(

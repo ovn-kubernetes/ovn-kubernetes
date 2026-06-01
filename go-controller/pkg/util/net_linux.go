@@ -1088,3 +1088,15 @@ func SetRPFilterLooseModeForInterface(ifName string) error {
 	}
 	return nil
 }
+
+// SetIPv6KeepAddrOnDownForInterface preserves global IPv6 addresses when an
+// interface changes state while it is attached to or detached from a VRF.
+func SetIPv6KeepAddrOnDownForInterface(ifName string) error {
+	setVal := fmt.Sprintf("net.ipv6.conf.%s.keep_addr_on_down = 1", sysctlIfName(ifName))
+	stdout, stderr, err := RunSysctl("-w", setVal)
+	if err != nil || stdout != setVal {
+		return fmt.Errorf("could not enable IPv6 address retention for interface %s: stdout: %v, stderr: %v, err: %v",
+			ifName, stdout, stderr, err)
+	}
+	return nil
+}
