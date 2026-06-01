@@ -111,7 +111,8 @@ func (n *SwitchdevDPUOps) GetDPUHostRepInterface(bridgeName string) (string, err
 		return "", err
 	}
 
-	for _, ifaces := range portsToInterfaces {
+	for _, port := range SortedKeys(portsToInterfaces) {
+		ifaces := portsToInterfaces[port]
 		for _, iface := range ifaces {
 			stdout, stderr, err := RunOVSVsctl("get", "Interface", strings.TrimSpace(iface), "Name")
 			if err != nil {
@@ -204,24 +205,89 @@ func (s *SimulatedDPUOps) getDPURepresentor(pfId, funcId string) (string, error)
 	return "", fmt.Errorf("simulated representor %s not found: link name or alias not present", rep)
 }
 
-func (s *SimulatedDPUOps) GetDPUHostRepInterface(_ string) (string, error) {
-	return dpusim.HostGatewayPeerInterface, nil
+func (s *SimulatedDPUOps) GetDPUHostRepInterface(bridgeName string) (string, error) {
+	if bridgeName == "" {
+		return dpusim.HostGatewayPeerInterface, nil
+	}
+
+	portsToInterfaces, err := getBridgePortsInterfaces(bridgeName)
+	if err != nil {
+		return "", err
+	}
+	for _, port := range SortedKeys(portsToInterfaces) {
+		ifaces := portsToInterfaces[port]
+		normalizedPort := normalizeOVSName(port)
+		if simulatedDPURepresentorIndex(normalizedPort) >= 0 {
+			return normalizedPort, nil
+		}
+		for _, iface := range ifaces {
+			iface = normalizeOVSName(iface)
+			if simulatedDPURepresentorIndex(iface) >= 0 {
+				return iface, nil
+			}
+			ifaceName, err := ovsInterfaceName(iface)
+			if err == nil && simulatedDPURepresentorIndex(ifaceName) >= 0 {
+				return ifaceName, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("simulated DPU host representor was not found for bridge %q", bridgeName)
 }
 
-func (s *SimulatedDPUOps) GetHostGatewayMACAddress(_, nodeName string) (net.HardwareAddr, error) {
+func (s *SimulatedDPUOps) GetHostGatewayMACAddress(bridgeName, nodeName string) (net.HardwareAddr, error) {
 	if nodeName == "" {
 		return nil, fmt.Errorf("nodeName must be provided for simulated GetHostGatewayMACAddress")
 	}
 
+	index := dpusim.HostGatewayInterfaceIndex
+	if bridgeName != "" {
+		rep, err := s.GetDPUHostRepInterface(bridgeName)
+		if err != nil {
+			return nil, err
+		}
+		index = simulatedDPURepresentorIndex(rep)
+		if index < 0 {
+			return nil, fmt.Errorf("failed to parse simulated DPU representor %q", rep)
+		}
+	}
+
 	// TODO: This identifies a need to have an API to get reliable information from the host (requested by the DPU)
-	macStr := s.generateMACForHostToDpu(nodeName, "host", dpusim.HostGatewayInterfaceIndex)
+	macStr := s.generateMACForHostToDpu(nodeName, "host", index)
 	mac, err := net.ParseMAC(macStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse generated MAC %s: %v", macStr, err)
 	}
 
-	klog.Infof("Derived host gateway peer MAC %s for node %s", mac, nodeName)
+	klog.Infof("Derived host gateway peer MAC %s for node %s bridge %s", mac, nodeName, bridgeName)
 	return mac, nil
+}
+
+func ovsInterfaceName(iface string) (string, error) {
+	stdout, stderr, err := RunOVSVsctl("get", "Interface", iface, "Name")
+	if err != nil {
+		return "", fmt.Errorf("failed to get Interface %q Name: %v: %s",
+			iface, err, stderr)
+	}
+	return normalizeOVSName(stdout), nil
+}
+
+func normalizeOVSName(name string) string {
+	return strings.Trim(strings.TrimSpace(name), `"`)
+}
+
+func simulatedDPURepresentorIndex(iface string) int {
+	if !strings.HasPrefix(iface, strings.TrimSuffix(dpusim.DPUDataIfFmt, "%d")) {
+		return -1
+	}
+	matches := dpusim.ReSimulationNetdevFunc.FindStringSubmatch(iface)
+	if len(matches) != 3 || matches[1] != "0" {
+		return -1
+	}
+	index, err := strconv.Atoi(matches[2])
+	if err != nil || index < dpusim.HostGatewayInterfaceIndex {
+		return -1
+	}
+	return index
 }
 
 func (s *SimulatedDPUOps) ResolveDeviceDetails(deviceID string) (*NetworkDeviceDetails, error) {
