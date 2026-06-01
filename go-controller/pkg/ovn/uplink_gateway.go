@@ -23,6 +23,13 @@ func (oc *BaseNetworkController) uplinkGatewayConfig(node *corev1.Node) (*util.L
 	if uplinkName == "" {
 		return nil, false, nil
 	}
+	if config.Gateway.Mode != config.GatewayModeShared {
+		return nil, true, fmt.Errorf(
+			"uplink %q for network %s is supported only in shared gateway mode",
+			uplinkName,
+			oc.GetNetworkName(),
+		)
+	}
 
 	stateName := uplinkutil.StateName(uplinkName, node.Name)
 	state, err := oc.watchFactory.UplinkStateInformer().Lister().Get(stateName)
