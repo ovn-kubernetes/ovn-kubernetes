@@ -75,17 +75,15 @@ func (oc *DefaultNetworkController) SetupMaster() error {
 }
 
 func (oc *DefaultNetworkController) newClusterRouter() (*nbdb.LogicalRouter, error) {
+	routerOptions := map[string]string{}
 	if oc.multicastSupport {
-		return oc.gatewayTopologyFactory.NewClusterRouterWithMulticastSupport(
-			oc.GetNetworkScopedClusterRouterName(),
-			oc.GetNetInfo(),
-			oc.defaultCOPPUUID,
-		)
+		routerOptions["mcast_relay"] = "true"
 	}
 	return oc.gatewayTopologyFactory.NewClusterRouter(
 		oc.GetNetworkScopedClusterRouterName(),
 		oc.GetNetInfo(),
 		oc.defaultCOPPUUID,
+		routerOptions,
 	)
 }
 

@@ -8,6 +8,7 @@ import (
 	"net"
 	"runtime"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
@@ -234,3 +235,35 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 		})
 	})
 })
+
+func TestAreNetlinkRulesEqualConsidersFamily(t *testing.T) {
+	baseRule := netlink.NewRule()
+	baseRule.Family = netlink.FAMILY_V4
+	baseRule.Priority = 2000
+	baseRule.Table = 1065
+	baseRule.Mark = 0x100d
+
+	sameRule := netlink.NewRule()
+	*sameRule = *baseRule
+	if !areNetlinkRulesEqual(baseRule, sameRule) {
+		t.Fatalf("expected identical rules to be equal")
+	}
+
+	v6Rule := netlink.NewRule()
+	*v6Rule = *baseRule
+	v6Rule.Family = netlink.FAMILY_V6
+	if areNetlinkRulesEqual(baseRule, v6Rule) {
+		t.Fatalf("expected IPv4 and IPv6 rules to be different")
+	}
+
+	v4DstRule := netlink.NewRule()
+	*v4DstRule = *baseRule
+	v4DstRule.Dst = ovntest.MustParseIPNet("169.254.0.12/32")
+	v6DstRule := netlink.NewRule()
+	*v6DstRule = *v4DstRule
+	v6DstRule.Family = netlink.FAMILY_V6
+	v6DstRule.Dst = ovntest.MustParseIPNet("fd69::12/128")
+	if areNetlinkRulesEqual(v4DstRule, v6DstRule) {
+		t.Fatalf("expected IPv4 and IPv6 destination rules to be different")
+	}
+}

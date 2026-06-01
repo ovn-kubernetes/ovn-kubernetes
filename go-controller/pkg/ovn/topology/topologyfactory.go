@@ -29,17 +29,12 @@ func (gtf *GatewayTopologyFactory) NewClusterRouter(
 	clusterRouterName string,
 	netInfo util.NetInfo,
 	coopUUID string,
+	additionalOptions map[string]string,
 ) (*nbdb.LogicalRouter, error) {
 	routerOptions := map[string]string{"always_learn_from_arp_request": "false"}
-	return gtf.newClusterRouter(clusterRouterName, netInfo, coopUUID, routerOptions)
-}
-
-func (gtf *GatewayTopologyFactory) NewClusterRouterWithMulticastSupport(
-	clusterRouterName string,
-	netInfo util.NetInfo,
-	coopUUID string,
-) (*nbdb.LogicalRouter, error) {
-	routerOptions := map[string]string{"mcast_relay": "true", "always_learn_from_arp_request": "false"}
+	for key, value := range additionalOptions {
+		routerOptions[key] = value
+	}
 	return gtf.newClusterRouter(clusterRouterName, netInfo, coopUUID, routerOptions)
 }
 
@@ -49,7 +44,10 @@ func (gtf *GatewayTopologyFactory) NewTransitRouter(
 	coopUUID string,
 	tunnelKey string,
 ) (*nbdb.LogicalRouter, error) {
-	routerOptions := map[string]string{libovsdbops.RequestedTnlKey: tunnelKey}
+	routerOptions := map[string]string{
+		libovsdbops.RequestedTnlKey: tunnelKey,
+		libovsdbops.CtCommitAll:     "true",
+	}
 	return gtf.newClusterRouter(transitRouterName, netInfo, coopUUID, routerOptions)
 }
 

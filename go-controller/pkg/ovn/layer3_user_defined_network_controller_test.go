@@ -1561,8 +1561,24 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 		nodeIPV4ASHashName, _ := addressset.GetHashNamesForAS(getClusterNodeIPsAddrSetDbIDsForTest())
 		udnSubnetMasqMatch = fmt.Sprintf("ip4.dst == $%s", nodeIPV4ASHashName)
 	}
-	expectedEntities = append(expectedEntities, newNATEntry(nat1, dummyMasqueradeIP().IP.String(), gwRouterJoinIPAddress().IP.String(), standardNonDefaultNetworkExtIDs(netInfo), ""))
-	expectedEntities = append(expectedEntities, newNATEntry(nat2, dummyMasqueradeIP().IP.String(), netInfo.Subnets()[0].CIDR.String(), standardNonDefaultNetworkExtIDs(netInfo), udnSubnetMasqMatch))
+	snatExternalIP := dummyMasqueradeIP().IP.String()
+	if config.Gateway.Mode == config.GatewayModeShared {
+		snatExternalIP = nodePhysicalIPAddress().IP.String()
+	}
+	expectedEntities = append(expectedEntities, newNATEntry(
+		nat1,
+		snatExternalIP,
+		gwRouterJoinIPAddress().IP.String(),
+		standardNonDefaultNetworkExtIDs(netInfo),
+		"",
+	))
+	expectedEntities = append(expectedEntities, newNATEntry(
+		nat2,
+		snatExternalIP,
+		netInfo.Subnets()[0].CIDR.String(),
+		standardNonDefaultNetworkExtIDs(netInfo),
+		udnSubnetMasqMatch,
+	))
 	return expectedEntities
 }
 
@@ -1648,7 +1664,7 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		Ports:       []string{rtosLRPUUID},
 		ExternalIDs: clusterRouterExternalIDs,
 		Copp:        ptr.To(string(coppUUID)),
-		Options:     map[string]string{"always_learn_from_arp_request": "false"},
+		Options:     udnClusterRouterOptions(false),
 	}
 
 	expectedEntities := []libovsdbtest.TestData{
@@ -1890,6 +1906,24 @@ func gwRouterOptions(gwConfig util.L3GatewayConfig) map[string]string {
 		"chassis":                       gwConfig.ChassisID,
 		"always_learn_from_arp_request": "false",
 		"dynamic_neigh_routers":         dynamicNeighRouters,
+	}
+}
+
+func udnClusterRouterOptions(multicastSupport bool) map[string]string {
+	options := map[string]string{
+		"always_learn_from_arp_request": "false",
+		libovsdbops.CtCommitAll:         "true",
+	}
+	if multicastSupport {
+		options["mcast_relay"] = "true"
+	}
+	return options
+}
+
+func udnTransitRouterOptions(tunnelKey string) map[string]string {
+	return map[string]string{
+		libovsdbops.RequestedTnlKey: tunnelKey,
+		libovsdbops.CtCommitAll:     "true",
 	}
 }
 

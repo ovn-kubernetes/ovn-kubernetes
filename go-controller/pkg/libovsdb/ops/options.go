@@ -10,6 +10,8 @@ const (
 	// RequestedTnlKey can be used by LogicalSwitch, LogicalSwitchPort, LogicalRouter and LogicalRouterPort
 	// for distributed switches/routers
 	RequestedTnlKey = "requested-tnl-key"
+	// CtCommitAll can be used by LogicalRouter to commit all traffic when the router is stateful.
+	CtCommitAll = "ct-commit-all"
 	// RequestedChassis can be used by LogicalSwitchPort and LogicalRouterPort.
 	// It specifies the chassis (by name or hostname) that is allowed to bind this port.
 	RequestedChassis = "requested-chassis"
