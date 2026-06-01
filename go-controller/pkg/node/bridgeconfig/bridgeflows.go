@@ -1060,7 +1060,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 	}
 	if ofPortPhys != "" {
-		defaultNetConfig := b.netConfig[types.DefaultNetworkName]
+		defaultNetConfig, hasDefaultNetConfig := b.netConfig[types.DefaultNetworkName]
 		// table 0, Ingress/Egress flows for MEG enabled pods and advertised UDNs
 		// priority 300: Ingress traffic to MEG pods and advertised UDNs
 		// priority 301: Ingress traffic to node management traffic
@@ -1167,7 +1167,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					fmt.Sprintf("cookie=%s, priority=14, table=1,icmp6,icmpv6_type=%d actions=FLOOD",
 						nodetypes.DefaultOpenFlowCookie, icmpType))
 			}
-			if ofPortPhys != "" {
+			if ofPortPhys != "" && hasDefaultNetConfig {
 				// We send BFD traffic both on the host and in ovn
 				dftFlows = append(dftFlows,
 					fmt.Sprintf("cookie=%s, priority=13, table=1, in_port=%s, udp6, tp_dst=3784, actions=output:%s,output:%s",
@@ -1176,7 +1176,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 
 		if config.IPv4Mode {
-			if ofPortPhys != "" {
+			if ofPortPhys != "" && hasDefaultNetConfig {
 				// We send BFD traffic both on the host and in ovn
 				dftFlows = append(dftFlows,
 					fmt.Sprintf("cookie=%s, priority=13, table=1, in_port=%s, udp, tp_dst=3784, actions=output:%s,output:%s",
@@ -1188,7 +1188,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		// potential fragmentation
 		// introduced specifically for replies to egress traffic not routed
 		// through the host
-		if config.Gateway.Mode == config.GatewayModeLocal && !config.Gateway.DisablePacketMTUCheck {
+		if config.Gateway.Mode == config.GatewayModeLocal && !config.Gateway.DisablePacketMTUCheck && hasDefaultNetConfig {
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=10, table=11, reg0=0x1, "+
 					"actions=output:%s", nodetypes.DefaultOpenFlowCookie, ofPortHost))
