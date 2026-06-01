@@ -22,6 +22,10 @@ func TestDefaultBridgeConfig() *BridgeConfiguration {
 		OfPortPatch: "patch-breth0_ov",
 	}
 	return &BridgeConfiguration{
+		bridgeName: "breth0",
+		gwIface:    "breth0",
+		uplinkName: "eth0",
+		ofPortPhys: "eth0",
 		netConfig: map[string]*BridgeUDNConfiguration{
 			types.DefaultNetworkName: defaultNetConfig,
 		},
