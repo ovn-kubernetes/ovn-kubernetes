@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/nooverlay"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/routeadvertisements"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
+	uplinkcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/uplink"
 	udncontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
 	udntemplate "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	vtepcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/vtep"
@@ -62,6 +63,8 @@ type ClusterManager struct {
 	userDefinedNetworkController *udncontroller.Controller
 	// Controller for managing cluster-network-connect CRD
 	networkConnectController *networkconnect.Controller
+	// Controller for managing uplink CRDs
+	uplinkController *uplinkcontroller.Controller
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
 
@@ -209,6 +212,13 @@ func NewClusterManager(
 	if util.IsNetworkConnectEnabled() {
 		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface(), tunnelKeysAllocator)
 	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		cm.uplinkController = uplinkcontroller.NewController(
+			wf,
+			ovnClient,
+			cm.networkManager.Interface(),
+		)
+	}
 
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
@@ -297,6 +307,11 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 			return err
 		}
 	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		if err := cm.uplinkController.Start(); err != nil {
+			return err
+		}
+	}
 
 	if cm.raController != nil {
 		if cm.managedBGPController != nil {
@@ -351,6 +366,9 @@ func (cm *ClusterManager) Stop() {
 	}
 	if cm.networkConnectController != nil {
 		cm.networkConnectController.Stop()
+	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		cm.uplinkController.Stop()
 	}
 	if cm.vtepController != nil {
 		cm.vtepController.Stop()
