@@ -36,6 +36,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodeuplink "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -76,6 +77,8 @@ type NodeControllerManager struct {
 	ndm *netlinkdevicemanager.Controller
 	// evpn controller that manages EVPN datapath
 	evpnController *evpn.Controller
+	// uplink controller that publishes node-local UplinkState
+	uplinkController *nodeuplink.Controller
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -271,6 +274,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		routeManager:  routeManager,
 		ovsClient:     ovsClient,
 	}
+	ncm.ovnNodeClient.UplinkClient = ovnClient.UplinkClient
 
 	// need to configure OVS interfaces for Pods on UDNs in the DPU mode
 	// need to start NAD controller on node side for programming gateway pieces for UDNs
@@ -307,6 +311,9 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
+	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		ncm.uplinkController = nodeuplink.NewController(name, wf, ncm.ovnNodeClient)
 	}
 
 	return ncm, nil
@@ -408,6 +415,12 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		}
 	}
 
+	if ncm.uplinkController != nil {
+		if err := ncm.uplinkController.Start(); err != nil {
+			return fmt.Errorf("failed to start Uplink controller: %w", err)
+		}
+	}
+
 	err = ncm.defaultNodeNetworkController.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to start default node network controller: %v", err)
@@ -490,6 +503,10 @@ func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
 	// stale events while EVPN is shutting down.
 	if ncm.evpnController != nil {
 		ncm.evpnController.Stop()
+	}
+	if ncm.uplinkController != nil {
+		ncm.uplinkController.Stop()
+		ncm.uplinkController = nil
 	}
 
 	// stop stale ovs ports cleanup
