@@ -35,6 +35,12 @@ func TestBridgeConfig(brName string) *BridgeConfiguration {
 	}
 }
 
+func TestBridgeConfigWithGatewayRepresentor(brName, gwIfaceRep string) *BridgeConfiguration {
+	bridge := TestBridgeConfig(brName)
+	bridge.gwIfaceRep = gwIfaceRep
+	return bridge
+}
+
 func (b *BridgeConfiguration) GetNetConfigLen() int {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
