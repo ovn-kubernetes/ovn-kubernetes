@@ -97,6 +97,11 @@ import (
 	routeadvertisementsscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/scheme"
 	routeadvertisementsinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions"
 	routeadvertisementsinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
+	uplinkapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	uplinkclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned"
+	uplinkscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/scheme"
+	uplinkinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions"
+	uplinkinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/informers/externalversions/uplink/v1alpha1"
 	userdefinednetworkapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	userdefinednetworkscheme "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
 	userdefinednetworkapiinformerfactory "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions"
@@ -134,6 +139,8 @@ type WatchFactory struct {
 	raFactory            routeadvertisementsinformerfactory.SharedInformerFactory
 	frrFactory           frrinformerfactory.SharedInformerFactory
 	networkQoSFactory    networkqosinformerfactory.SharedInformerFactory
+	uplinkFactory        uplinkinformerfactory.SharedInformerFactory
+	uplinkStateFactory   uplinkinformerfactory.SharedInformerFactory
 	vtepFactory          vtepinformerfactory.SharedInformerFactory
 	informers            map[reflect.Type]*informer
 
@@ -164,6 +171,8 @@ func (wf *WatchFactory) ShallowClone() *WatchFactory {
 		raFactory:            wf.raFactory,
 		frrFactory:           wf.frrFactory,
 		networkQoSFactory:    wf.networkQoSFactory,
+		uplinkFactory:        wf.uplinkFactory,
+		uplinkStateFactory:   wf.uplinkStateFactory,
 		vtepFactory:          wf.vtepFactory,
 		informers:            wf.informers,
 		stopChan:             wf.stopChan,
@@ -253,6 +262,8 @@ var (
 	IPAMClaimsType                  reflect.Type = reflect.TypeOf(&ipamclaimsapi.IPAMClaim{})
 	UserDefinedNetworkType          reflect.Type = reflect.TypeOf(&userdefinednetworkapi.UserDefinedNetwork{})
 	ClusterUserDefinedNetworkType   reflect.Type = reflect.TypeOf(&userdefinednetworkapi.ClusterUserDefinedNetwork{})
+	UplinkType                      reflect.Type = reflect.TypeOf(&uplinkapi.Uplink{})
+	UplinkStateType                 reflect.Type = reflect.TypeOf(&uplinkapi.UplinkState{})
 	NetworkQoSType                  reflect.Type = reflect.TypeOf(&networkqosapi.NetworkQoS{})
 	ClusterNetworkConnectType       reflect.Type = reflect.TypeOf(&networkconnectapi.ClusterNetworkConnect{})
 	// Resource types used in ovnk node
@@ -308,6 +319,22 @@ func informerObjectTrim(obj interface{}) (interface{}, error) {
 		}
 	}
 	return obj, nil
+}
+
+func newUplinkStateSharedInformerFactory(
+	client uplinkclientset.Interface,
+	nodeName string,
+) uplinkinformerfactory.SharedInformerFactory {
+	if nodeName == "" {
+		return uplinkinformerfactory.NewSharedInformerFactory(client, resyncInterval)
+	}
+	return uplinkinformerfactory.NewSharedInformerFactoryWithOptions(
+		client,
+		resyncInterval,
+		uplinkinformerfactory.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.FieldSelector = fields.OneTermEqualSelector("status.nodeName", nodeName).String()
+		}),
+	)
 }
 
 // NewOVNKubeControllerWatchFactory initializes a new watch factory for the ovnkube controller process
@@ -372,6 +399,9 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		return nil, err
 	}
 	if err := userdefinednetworkapi.AddToScheme(userdefinednetworkscheme.Scheme); err != nil {
+		return nil, err
+	}
+	if err := uplinkapi.AddToScheme(uplinkscheme.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -501,6 +531,19 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 
 		wf.informers[ClusterUserDefinedNetworkType], err = newQueuedInformer(eventQueueSize, ClusterUserDefinedNetworkType,
 			wf.udnFactory.K8s().V1().ClusterUserDefinedNetworks().Informer(), wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+
+		wf.uplinkFactory = uplinkinformerfactory.NewSharedInformerFactory(ovnClientset.UplinkClient, resyncInterval)
+		wf.uplinkStateFactory = newUplinkStateSharedInformerFactory(ovnClientset.UplinkClient, "")
+		wf.informers[UplinkType], err = newQueuedInformer(eventQueueSize, UplinkType,
+			wf.uplinkFactory.K8s().V1alpha1().Uplinks().Informer(), wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+		wf.informers[UplinkStateType], err = newQueuedInformer(eventQueueSize, UplinkStateType,
+			wf.uplinkStateFactory.K8s().V1alpha1().UplinkStates().Informer(), wf.stopChan, minNumEventQueues)
 		if err != nil {
 			return nil, err
 		}
@@ -646,6 +689,19 @@ func (wf *WatchFactory) Start() error {
 		}
 	}
 
+	if util.IsNetworkSegmentationSupportEnabled() && wf.uplinkFactory != nil {
+		wf.uplinkFactory.Start(wf.stopChan)
+		if err := waitForCacheSyncWithTimeout(wf.uplinkFactory, wf.stopChan); err != nil {
+			return err
+		}
+	}
+	if util.IsNetworkSegmentationSupportEnabled() && wf.uplinkStateFactory != nil {
+		wf.uplinkStateFactory.Start(wf.stopChan)
+		if err := waitForCacheSyncWithTimeout(wf.uplinkStateFactory, wf.stopChan); err != nil {
+			return err
+		}
+	}
+
 	if wf.cncFactory != nil {
 		wf.cncFactory.Start(wf.stopChan)
 		if err := waitForCacheSyncWithTimeout(wf.cncFactory, wf.stopChan); err != nil {
@@ -716,6 +772,13 @@ func (wf *WatchFactory) Stop() {
 		wf.udnFactory.Shutdown()
 	}
 
+	if wf.uplinkFactory != nil {
+		wf.uplinkFactory.Shutdown()
+	}
+	if wf.uplinkStateFactory != nil {
+		wf.uplinkStateFactory.Shutdown()
+	}
+
 	if wf.cncFactory != nil {
 		wf.cncFactory.Shutdown()
 	}
@@ -767,6 +830,9 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 		return nil, err
 	}
 	if err := routeadvertisementsapi.AddToScheme(routeadvertisementsscheme.Scheme); err != nil {
+		return nil, err
+	}
+	if err := uplinkapi.AddToScheme(uplinkscheme.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -908,6 +974,21 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 		if err != nil {
 			return nil, err
 		}
+
+		wf.uplinkFactory = uplinkinformerfactory.NewSharedInformerFactory(ovnClientset.UplinkClient, resyncInterval)
+		wf.uplinkStateFactory = newUplinkStateSharedInformerFactory(ovnClientset.UplinkClient, nodeName)
+		wf.informers[UplinkType], err = newQueuedInformer(eventQueueSize,
+			UplinkType, wf.uplinkFactory.K8s().V1alpha1().Uplinks().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+		wf.informers[UplinkStateType], err = newQueuedInformer(eventQueueSize,
+			UplinkStateType, wf.uplinkStateFactory.K8s().V1alpha1().UplinkStates().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return wf, nil
@@ -952,6 +1033,9 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		return nil, err
 	}
 	if err := userdefinednetworkapi.AddToScheme(userdefinednetworkscheme.Scheme); err != nil {
+		return nil, err
+	}
+	if err := uplinkapi.AddToScheme(uplinkscheme.Scheme); err != nil {
 		return nil, err
 	}
 	if err := networkconnectapi.AddToScheme(networkconnectscheme.Scheme); err != nil {
@@ -1096,6 +1180,21 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 			return nil, err
 		}
 
+		wf.uplinkFactory = uplinkinformerfactory.NewSharedInformerFactory(ovnClientset.UplinkClient, resyncInterval)
+		wf.uplinkStateFactory = newUplinkStateSharedInformerFactory(ovnClientset.UplinkClient, "")
+		wf.informers[UplinkType], err = newQueuedInformer(eventQueueSize,
+			UplinkType, wf.uplinkFactory.K8s().V1alpha1().Uplinks().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+		wf.informers[UplinkStateType], err = newQueuedInformer(eventQueueSize,
+			UplinkStateType, wf.uplinkStateFactory.K8s().V1alpha1().UplinkStates().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+
 		// make sure namespace informer cache is initialized and synced on Start().
 		wf.iFactory.Core().V1().Namespaces().Informer()
 
@@ -1226,6 +1325,14 @@ func getObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 	case ClusterUserDefinedNetworkType:
 		if cudn, ok := obj.(*userdefinednetworkapi.ClusterUserDefinedNetwork); ok {
 			return &cudn.ObjectMeta, nil
+		}
+	case UplinkType:
+		if uplink, ok := obj.(*uplinkapi.Uplink); ok {
+			return &uplink.ObjectMeta, nil
+		}
+	case UplinkStateType:
+		if uplinkState, ok := obj.(*uplinkapi.UplinkState); ok {
+			return &uplinkState.ObjectMeta, nil
 		}
 	case ClusterNetworkConnectType:
 		if cnc, ok := obj.(*networkconnectapi.ClusterNetworkConnect); ok {
@@ -1838,6 +1945,14 @@ func (wf *WatchFactory) UserDefinedNetworkInformer() userdefinednetworkinformer.
 
 func (wf *WatchFactory) ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer {
 	return wf.udnFactory.K8s().V1().ClusterUserDefinedNetworks()
+}
+
+func (wf *WatchFactory) UplinkInformer() uplinkinformer.UplinkInformer {
+	return wf.uplinkFactory.K8s().V1alpha1().Uplinks()
+}
+
+func (wf *WatchFactory) UplinkStateInformer() uplinkinformer.UplinkStateInformer {
+	return wf.uplinkStateFactory.K8s().V1alpha1().UplinkStates()
 }
 
 func (wf *WatchFactory) ClusterNetworkConnectInformer() networkconnectinformer.ClusterNetworkConnectInformer {

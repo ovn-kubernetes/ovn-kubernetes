@@ -51,6 +51,7 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string, opts 
 	var ownerRef metav1.OwnerReference
 	var spec SpecGetter
 	var networkName string
+	var uplink string
 	switch o := obj.(type) {
 	case *userdefinednetworkv1.UserDefinedNetwork:
 		ownerRef = *metav1.NewControllerRef(obj, userdefinednetworkv1.SchemeGroupVersion.WithKind("UserDefinedNetwork"))
@@ -60,13 +61,16 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string, opts 
 		ownerRef = *metav1.NewControllerRef(obj, userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"))
 		spec = &o.Spec.Network
 		networkName = util.GenerateCUDNNetworkName(obj.GetName())
+		if len(o.Spec.Uplinks) > 0 {
+			uplink = o.Spec.Uplinks[0]
+		}
 	default:
 		return nil, fmt.Errorf("unknown type %T", obj)
 	}
 
 	nadName := util.GetNADName(targetNamespace, obj.GetName())
 
-	nadSpec, err := renderNADSpec(networkName, nadName, spec, applyOptions(opts))
+	nadSpec, err := renderNADSpec(networkName, nadName, spec, uplink, applyOptions(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +87,12 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string, opts 
 	}, nil
 }
 
-func renderNADSpec(networkName, nadName string, spec SpecGetter, opts *RenderOptions) (*netv1.NetworkAttachmentDefinitionSpec, error) {
+func renderNADSpec(networkName, nadName string, spec SpecGetter, uplink string, opts *RenderOptions) (*netv1.NetworkAttachmentDefinitionSpec, error) {
 	if err := validateTopology(spec); err != nil {
 		return nil, fmt.Errorf("invalid topology specified: %w", err)
 	}
 
-	cniNetConf, err := renderCNINetworkConfig(networkName, nadName, spec, opts)
+	cniNetConf, err := renderCNINetworkConfig(networkName, nadName, spec, uplink, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render CNI network config: %w", err)
 	}
@@ -138,7 +142,7 @@ func validateTopology(spec SpecGetter) error {
 	return nil
 }
 
-func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *RenderOptions) (map[string]interface{}, error) {
+func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, uplink string, opts *RenderOptions) (map[string]interface{}, error) {
 	netConfSpec := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
 			CNIVersion: config.CNISpecVersion,
@@ -148,6 +152,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 		NADName:   nadName,
 		Topology:  strings.ToLower(string(spec.GetTopology())),
 		Transport: transportFromCRD(spec.GetTransport()),
+		Uplink:    uplink,
 	}
 
 	switch spec.GetTopology() {
@@ -286,6 +291,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter, opts *
 	}
 	if netConfSpec.EVPN != nil {
 		cniNetConf["evpn"] = netConfSpec.EVPN
+	}
+	if netConfSpec.Uplink != "" {
+		cniNetConf["uplink"] = netConfSpec.Uplink
 	}
 
 	return cniNetConf, nil

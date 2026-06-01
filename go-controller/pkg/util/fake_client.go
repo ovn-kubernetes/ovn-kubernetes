@@ -40,6 +40,8 @@ import (
 	networkqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	routeadvertisements "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	routeadvertisementsfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
@@ -63,6 +65,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 	raObjects := []runtime.Object{}
 	frrObjects := []runtime.Object{}
 	networkConnectObjects := []runtime.Object{}
+	uplinkObjects := []runtime.Object{}
 	vtepObjects := []runtime.Object{}
 	for _, object := range objects {
 		switch object.(type) {
@@ -96,6 +99,8 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 			networkQoSObjects = append(networkQoSObjects, object)
 		case *networkconnect.ClusterNetworkConnect:
 			networkConnectObjects = append(networkConnectObjects, object)
+		case *uplinkv1alpha1.Uplink, *uplinkv1alpha1.UplinkState:
+			uplinkObjects = append(uplinkObjects, object)
 		case *vtepv1.VTEP:
 			vtepObjects = append(vtepObjects, object)
 		default:
@@ -127,6 +132,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 		FRRClient:                 frrfake.NewSimpleClientset(frrObjects...),
 		NetworkQoSClient:          networkqosfake.NewSimpleClientset(networkQoSObjects...),
 		NetworkConnectClient:      networkconnectfake.NewSimpleClientset(networkConnectObjects...),
+		UplinkClient:              uplinkfake.NewSimpleClientset(uplinkObjects...),
 		VTEPClient:                vtepfake.NewSimpleClientset(vtepObjects...),
 	}
 }
