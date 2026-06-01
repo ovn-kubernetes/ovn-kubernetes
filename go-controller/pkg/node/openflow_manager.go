@@ -673,7 +673,7 @@ func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []
 	}
 	c.uplinkFlowMutex.Unlock()
 	for bridgeName, bridge := range uplinkBridges {
-		uplinkBridgeDftFlows, err := bridge.ExternalBridgeFlows(hostSubnets)
+		uplinkBridgeDftFlows, err := bridge.UplinkBridgeFlows(hostSubnets)
 		if err != nil {
 			return err
 		}
