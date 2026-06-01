@@ -37,6 +37,9 @@ fi
 # Helper function to get API version for a given CRD
 get_crd_version() {
   case "$1" in
+    uplink)
+      echo "v1alpha1"
+      ;;
     networkqos)
       echo "v1alpha1"
       ;;
@@ -152,3 +155,7 @@ echo "Copying clusterNetworkConnect CRD"
 cp _output/crds/k8s.ovn.org_clusternetworkconnects.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_clusternetworkconnects.yaml
 echo "Copying vtep CRD"
 cp _output/crds/k8s.ovn.org_vteps.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_vteps.yaml
+echo "Copying uplink CRD"
+cp _output/crds/k8s.ovn.org_uplinks.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_uplinks.yaml
+echo "Copying uplinkstate CRD"
+cp _output/crds/k8s.ovn.org_uplinkstates.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_uplinkstates.yaml
