@@ -150,6 +150,23 @@ func (c *NodeController) ReconcileNetwork(nodeName, netName string) {
 	c.nodeController.Reconcile(scopedNodeQueueKey(nodeName, netName))
 }
 
+// ReconcileNetworkWithPreflight runs preflight against the network handler and
+// queues reconciliation for a single node/network pair. Callers use this for
+// external state that must update handler-local state before reconciliation.
+func (c *NodeController) ReconcileNetworkWithPreflight(
+	nodeName string,
+	netName string,
+	preflight func(NodeHandler),
+) {
+	_ = c.handlers.DoWithLock(netName, func(handlerKey string) error {
+		if handler, ok := c.handlers.Load(handlerKey); ok {
+			preflight(handler)
+		}
+		return nil
+	})
+	c.ReconcileNetwork(nodeName, netName)
+}
+
 // AnnotationCache returns the cache used for parsed node annotations.
 func (c *NodeController) AnnotationCache() *NodeAnnotationCache {
 	return c.annotationCache

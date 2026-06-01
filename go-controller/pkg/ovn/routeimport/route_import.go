@@ -14,6 +14,9 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
@@ -21,9 +24,12 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	nbdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -33,6 +39,7 @@ const (
 	subscribeBuffer         = 100
 	reconcileDelay          = 500 * time.Millisecond
 	noTable                 = -1
+	noRouteLinkIndex        = -1
 	controllerExternalIDKey = string(nbdbops.OwnerControllerKey)
 	controllerName          = "RouteImport"
 )
@@ -63,16 +70,17 @@ type Controller interface {
 	Stop()
 }
 
-func New(node string, nbClient client.Client) Controller {
+func New(node string, nbClient client.Client, uplinkStateLister uplinklisters.UplinkStateLister) Controller {
 	c := &controller{
-		ctx:        util.NewCancelableContext(),
-		node:       node,
-		nbClient:   nbClient,
-		networkIDs: map[int]string{},
-		networks:   map[string]util.NetInfo{},
-		tables:     map[int]int{},
-		log:        klog.LoggerWithName(klog.Background(), controllerName),
-		netlink:    util.GetNetLinkOps(),
+		ctx:               util.NewCancelableContext(),
+		node:              node,
+		nbClient:          nbClient,
+		networkIDs:        map[int]string{},
+		networks:          map[string]util.NetInfo{},
+		tables:            map[int]int{},
+		log:               klog.LoggerWithName(klog.Background(), controllerName),
+		netlink:           util.GetNetLinkOps(),
+		uplinkStateLister: uplinkStateLister,
 	}
 
 	c.reconciler = controllerutil.NewReconciler(
@@ -87,12 +95,13 @@ func New(node string, nbClient client.Client) Controller {
 }
 
 type controller struct {
-	ctx        util.CancelableContext
-	nbClient   client.Client
-	node       string
-	log        logr.Logger
-	reconciler controllerutil.Reconciler
-	netlink    util.NetLinkOps
+	ctx               util.CancelableContext
+	nbClient          client.Client
+	node              string
+	log               logr.Logger
+	reconciler        controllerutil.Reconciler
+	netlink           util.NetLinkOps
+	uplinkStateLister uplinklisters.UplinkStateLister
 
 	sync.RWMutex
 	networks map[string]util.NetInfo
@@ -154,12 +163,13 @@ func (c *controller) NeedsReconciliation(network util.NetInfo) bool {
 	c.RLock()
 	defer c.RUnlock()
 
-	if c.networks[network.GetNetworkName()] == nil {
+	stored := c.networks[network.GetNetworkName()]
+	if stored == nil {
 		return false
 	}
 
 	// TODO check if overlay mode changed
-	return false
+	return stored.Uplink() != network.Uplink()
 }
 
 func (c *controller) ReconcileNetwork(name string) error {
@@ -353,7 +363,12 @@ func (c *controller) syncNetwork(network string) error {
 		}
 	}
 
-	expected, err := c.getBGPRoutes(table, ignoreSubnets)
+	routeLinkIndex, err := c.getRouteLinkIndexFilter(info)
+	if err != nil {
+		return err
+	}
+
+	expected, err := c.getBGPRoutes(table, ignoreSubnets, routeLinkIndex)
 	if err != nil {
 		return err
 	}
@@ -420,7 +435,7 @@ func (c *controller) syncNetwork(network string) error {
 	return err
 }
 
-func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet) (sets.Set[route], error) {
+func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet, routeLinkIndex int) (sets.Set[route], error) {
 	start := time.Now()
 	filter := &netlink.Route{
 		Protocol: unix.RTPROT_BGP,
@@ -437,11 +452,57 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet) (sets.S
 			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
 			continue
 		}
-		routes.Insert(routesFromNetlinkRoute(&nlroute)...)
+		routes.Insert(routesFromNetlinkRoute(&nlroute, routeLinkIndex)...)
 	}
 
 	c.log.V(5).Info("Listed BGP routes", "table", table, "routes", stringer{routes}, "took", time.Since(start))
 	return routes, nil
+}
+
+// getRouteLinkIndexFilter returns the Linux link index that imported routes
+// must use for Uplink-backed networks. Those GRs are attached only to the
+// selected Uplink bridge, so BGP routes learned or leaked through other
+// interfaces cannot be installed into OVN for that network.
+func (c *controller) getRouteLinkIndexFilter(network util.NetInfo) (int, error) {
+	uplinkName := network.Uplink()
+	if uplinkName == "" {
+		return 0, nil
+	}
+	if c.uplinkStateLister == nil {
+		return 0, fmt.Errorf("cannot filter BGP routes for Uplink %q without UplinkState lister", uplinkName)
+	}
+
+	stateName := uplinkutil.StateName(uplinkName, c.node)
+	state, err := uplinkutil.GetState(c.uplinkStateLister, uplinkName, c.node)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return noRouteLinkIndex, nil
+		}
+		return 0, fmt.Errorf("failed to get UplinkState %s for route import: %w", stateName, err)
+	}
+	condition := meta.FindStatusCondition(
+		state.Status.Conditions,
+		uplinkv1alpha1.UplinkStateConditionReady,
+	)
+	if condition == nil || condition.Status != metav1.ConditionTrue {
+		return noRouteLinkIndex, nil
+	}
+	if state.Status.OVSBridge == nil || state.Status.OVSBridge.Name == "" {
+		return noRouteLinkIndex, nil
+	}
+
+	link, err := c.netlink.LinkByName(state.Status.OVSBridge.Name)
+	if err != nil {
+		if c.netlink.IsLinkNotFoundError(err) {
+			return noRouteLinkIndex, nil
+		}
+		return 0, fmt.Errorf("failed to resolve Uplink bridge %s for route import: %w",
+			state.Status.OVSBridge.Name, err)
+	}
+	if link.Attrs() == nil {
+		return 0, fmt.Errorf("uplink bridge %s has no link attributes", state.Status.OVSBridge.Name)
+	}
+	return link.Attrs().Index, nil
 }
 
 func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]string, error) {
@@ -520,7 +581,10 @@ func (c *controller) setTableForNetworkUnlocked(networkID, table int) {
 	c.tables[table] = networkID
 }
 
-func routesFromNetlinkRoute(r *netlink.Route) []route {
+func routesFromNetlinkRoute(r *netlink.Route, routeLinkIndex int) []route {
+	if routeLinkIndex == noRouteLinkIndex {
+		return nil
+	}
 	validIP := func(ip string) bool {
 		if ip == "" || ip == "<nil>" {
 			return false
@@ -535,15 +599,24 @@ func routesFromNetlinkRoute(r *netlink.Route) []route {
 		return nil
 	}
 	var routes []route
+	if len(r.MultiPath) > 0 {
+		for _, nh := range r.MultiPath {
+			if routeLinkIndex != 0 && nh.LinkIndex != routeLinkIndex {
+				continue
+			}
+			gw := nh.Gw.String()
+			if validIP(gw) {
+				routes = append(routes, route{dst: dst, gw: gw})
+			}
+		}
+		return routes
+	}
+	if routeLinkIndex != 0 && r.LinkIndex != routeLinkIndex {
+		return nil
+	}
 	gw := r.Gw.String()
 	if validIP(gw) {
 		routes = append(routes, route{dst: dst, gw: gw})
-	}
-	for _, nh := range r.MultiPath {
-		gw = nh.Gw.String()
-		if validIP(gw) {
-			routes = append(routes, route{dst: dst, gw: gw})
-		}
 	}
 	return routes
 }
