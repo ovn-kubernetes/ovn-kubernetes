@@ -1715,7 +1715,7 @@ func (gw *GatewayManager) SyncGateway(
 }
 
 func physNetName(netInfo util.NetInfo) string {
-	if netInfo.IsDefault() || netInfo.IsPrimaryNetwork() {
+	if netInfo.IsDefault() || (netInfo.IsPrimaryNetwork() && netInfo.Uplink() == "") {
 		return types.PhysicalNetworkName
 	}
 	return netInfo.GetNetworkName()

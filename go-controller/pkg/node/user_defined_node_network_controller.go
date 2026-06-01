@@ -67,7 +67,8 @@ func NewUserDefinedNodeNetworkController(
 		}
 
 		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
-			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway)
+			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
+			ovsClient, snnc.watchFactory.UplinkStateInformer().Lister())
 		if err != nil {
 			return nil, fmt.Errorf("error creating UDN gateway for network %s: %v", netInfo.GetNetworkName(), err)
 		}

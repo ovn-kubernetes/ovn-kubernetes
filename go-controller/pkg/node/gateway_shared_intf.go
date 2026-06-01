@@ -832,7 +832,8 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 			}
 		}
 		nftElems := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
-		if netInfo.IsPrimaryNetwork() && activeNetwork != nil {
+		if activeNetwork != nil &&
+			shouldAddUDNServiceMarkRules(netInfo, npw.nodeIPManager.nodeName) {
 			nftElems = append(nftElems, getUDNNFTRules(service, activeNetwork)...)
 		}
 		if len(nftElems) > 0 {
@@ -1306,7 +1307,8 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		if !npw.dpuMode {
 			keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
 			keepNFTSetElems = append(keepNFTSetElems, getGatewayNFTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
-			if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
+			if util.IsNetworkSegmentationSupportEnabled() &&
+				shouldAddUDNServiceMarkRules(netInfo, npw.nodeIPManager.nodeName) {
 				netConfig := npw.ofm.getActiveNetwork(netInfo)
 				if netConfig == nil {
 					return fmt.Errorf("failed to get active network config for network %s", netInfo.GetNetworkName())
