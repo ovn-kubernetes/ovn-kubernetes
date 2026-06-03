@@ -208,7 +208,7 @@ func NewLocalnetUserDefinedNetworkController(
 	}
 
 	if oc.allocatesPodAnnotation() {
-		var claimsReconciler persistentips.PersistentAllocations
+		var opts []pod.AllocatorOption
 		if oc.allowPersistentIPs() {
 			ipamClaimsReconciler := persistentips.NewIPAMClaimReconciler(
 				oc.kube,
@@ -216,13 +216,14 @@ func NewLocalnetUserDefinedNetworkController(
 				oc.watchFactory.IPAMClaimsInformer().Lister(),
 			)
 			oc.ipamClaimsReconciler = ipamClaimsReconciler
-			claimsReconciler = ipamClaimsReconciler
+			opts = append(opts, pod.WithIPAMClaimReconciler(ipamClaimsReconciler))
 		}
 		oc.podAnnotationAllocator = pod.NewPodAnnotationAllocator(
 			netInfo,
 			cnci.watchFactory.PodCoreInformer().Lister(),
 			cnci.kube,
-			claimsReconciler)
+			opts...,
+		)
 	}
 
 	// disable multicast support for UDNs
