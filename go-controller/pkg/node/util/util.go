@@ -125,5 +125,5 @@ func GenerateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, pr
 // NeedIPTablesForwardingRules determines whether iptables forwarding rules are needed to
 // work around DisableForwarding.
 func NeedIPTablesForwardingRules(proto iptables.Protocol) bool {
-	return config.Gateway.DisableForwarding && proto == iptables.ProtocolIPv6
+	return config.Gateway.DisableForwarding && proto == iptables.ProtocolIPv6 && !pkgutil.SupportsIPv6InterfaceForwarding()
 }

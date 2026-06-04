@@ -3678,6 +3678,8 @@ var _ = Describe("Node Operations", func() {
 			config.IPv4Mode = true
 			config.IPv6Mode = true
 
+			util.SetSupportsIPv6InterfaceForwarding(false)
+
 			By("setting DisableForwarding = true, and confirming that configureGlobalForwarding() sets the IPv6 policy to DROP")
 			config.Gateway.DisableForwarding = true
 			err = configureGlobalForwarding()
@@ -3730,6 +3732,17 @@ var _ = Describe("Node Operations", func() {
 			err = f6.MatchState(expectedTablesV6, expectedPolicyAccept)
 			Expect(err).NotTo(HaveOccurred())
 
+			By("setting DisableForwarding = true with SupportsIPv6InterfaceForwarding() also true, and confirming that configureGlobalForwarding() does not change the policy")
+			config.Gateway.DisableForwarding = true
+			util.SetSupportsIPv6InterfaceForwarding(true)
+			defer util.SetSupportsIPv6InterfaceForwarding(false)
+			err = configureGlobalForwarding()
+			Expect(err).NotTo(HaveOccurred())
+			err = f4.MatchState(expectedTablesV4, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+			err = f6.MatchState(expectedTablesV6, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+
 			By("deleting the OVN-K DisableForwarding rules and manually setting the policy back to DROP")
 			err = nodeipt.DelRules(rules)
 			Expect(err).NotTo(HaveOccurred())
@@ -3738,8 +3751,11 @@ var _ = Describe("Node Operations", func() {
 			err = iptV6.ChangePolicy("filter", "FORWARD", "DROP")
 			Expect(err).NotTo(HaveOccurred())
 
-			By("re-running configureGlobalForwarding() and confirming that it doesn't change the policy")
-			configureGlobalForwarding()
+			By("setting DisableForwarding = false, and confirming that configureGlobalForwarding() doesn't change the policy")
+			config.Gateway.DisableForwarding = false
+			util.SetSupportsIPv6InterfaceForwarding(false)
+			err = configureGlobalForwarding()
+			Expect(err).NotTo(HaveOccurred())
 			err = f4.MatchState(expectedTablesEmpty, expectedPolicyDrop)
 			Expect(err).NotTo(HaveOccurred())
 			err = f6.MatchState(expectedTablesEmpty, expectedPolicyDrop)
