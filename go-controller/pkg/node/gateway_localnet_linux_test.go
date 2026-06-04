@@ -3667,6 +3667,7 @@ var _ = Describe("Node Operations", func() {
 				Table: "filter",
 				Chain: "FORWARD",
 			}: "ACCEPT"}
+			expectedPolicyNotSet := map[util.FakePolicyKey]string{}
 
 			err := iptV4.NewChain("filter", "FORWARD")
 			Expect(err).NotTo(HaveOccurred())
@@ -3677,20 +3678,22 @@ var _ = Describe("Node Operations", func() {
 			config.IPv4Mode = true
 			config.IPv6Mode = true
 
-			By("setting DisableForwarding = true, and confirming that configureGlobalForwarding() sets the policy to DROP")
+			By("setting DisableForwarding = true, and confirming that configureGlobalForwarding() sets the IPv6 policy to DROP")
 			config.Gateway.DisableForwarding = true
 			err = configureGlobalForwarding()
 			Expect(err).NotTo(HaveOccurred())
-			err = f4.MatchState(expectedTablesEmpty, expectedPolicyDrop)
+			err = f4.MatchState(expectedTablesEmpty, expectedPolicyNotSet)
 			Expect(err).NotTo(HaveOccurred())
 			err = f6.MatchState(expectedTablesEmpty, expectedPolicyDrop)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("manually creating some of the rules OVN-K would create when DisableForwarding is true")
+			By("manually creating some of the rules OVN-K would create when DisableForwarding is true, and setting the IPv4 policy to DROP")
 			var rules []nodeipt.Rule
 			rules = append(rules, getMasqueradeIpTablesForwardRules(config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP, iptables.ProtocolIPv4)...)
 			rules = append(rules, getMasqueradeIpTablesForwardRules(config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP, iptables.ProtocolIPv6)...)
 			err = nodeipt.AddRules(rules, false)
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV4.ChangePolicy("filter", "FORWARD", "DROP")
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedTablesV4 := map[string]util.FakeTable{
@@ -3718,7 +3721,7 @@ var _ = Describe("Node Operations", func() {
 			err = f6.MatchState(expectedTablesV6, expectedPolicyDrop)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("setting DisableForwarding = false, and confirming that configureGlobalForwarding() sets the policy to ACCEPT")
+			By("setting DisableForwarding = false, and confirming that configureGlobalForwarding() sets the policy to ACCEPT for both IPv4 and IPv6")
 			config.Gateway.DisableForwarding = false
 			err = configureGlobalForwarding()
 			Expect(err).NotTo(HaveOccurred())
