@@ -1439,18 +1439,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 				"OVN-KUBE-ETP": []string{},
 				"OVN-KUBE-ITP": []string{},
 			},
-			"filter": {
-				"FORWARD": []string{
-					"-d 169.254.169.1 -j ACCEPT",
-					"-s 169.254.169.1 -j ACCEPT",
-					"-d 172.16.1.0/24 -j ACCEPT",
-					"-s 172.16.1.0/24 -j ACCEPT",
-					"-d 10.1.0.0/16 -j ACCEPT",
-					"-s 10.1.0.0/16 -j ACCEPT",
-					"-i ovn-k8s-mp0 -j ACCEPT",
-					"-o ovn-k8s-mp0 -j ACCEPT",
-				},
-			},
+			"filter": {},
 			"mangle": {
 				"OUTPUT": []string{
 					"-j OVN-KUBE-ITP",
@@ -1459,10 +1448,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			},
 		}
 		f4 := iptV4.(*util.FakeIPTables)
-		err = f4.MatchState(expectedTables, map[util.FakePolicyKey]string{{
-			Table: "filter",
-			Chain: "FORWARD",
-		}: "DROP"})
+		err = f4.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
 		expectedTables = map[string]util.FakeTable{

@@ -26,7 +26,7 @@ The [IP sysctl documentation] suggests that if you only want IPv6 forwarding on 
 interfaces, you should use iptables rules to block it on other interfaces. OVN-Kubernetes
 provides the `disable-forwarding` config/command-line option to do this:
 
-  - If `disable-forwarding` is `true`:
+  - If `disable-forwarding` is `true` (and IPv6 is enabled):
 
       - OVN-Kubernetes sets the default policy of the ip6tables `FORWARD` chain to
         `DROP`, blocking the effect of the global forwarding sysctls.
@@ -38,14 +38,13 @@ provides the `disable-forwarding` config/command-line option to do this:
       - This fixes IPv6 forwarding to work effectively the same as IPv4 forwarding: it is
         only allowed on OVN-Kubernetes's own interfaces.
 
-  - If `disable-forwarding` is `false`:
+  - If `disable-forwarding` is `false` (or the cluster is single-stack IPv4):
 
       - OVN-Kubernetes does not take any action other than resetting the default policy of
         the `FORWARD` chain back to `ACCEPT` if it appears that OVN-Kubernetes itself had
         previously set it to `DROP`.
 
-For consistency, OVN-Kubernetes also applies the effect of `disable-forwarding` to IPv4 as
-well, even though it is not necessary.
+Note that setting `disable-forwarding` has no effect on IPv4 traffic.
 
 Note that this is always done via iptables, not nftables, to better preserve compatibility
 with other components. If ovn-kubernetes were to create its own `hook forward; policy

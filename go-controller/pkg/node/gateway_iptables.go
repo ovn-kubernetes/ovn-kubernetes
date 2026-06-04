@@ -267,16 +267,13 @@ func getExternalIPTRules(svcPort corev1.ServicePort, externalIP, dstIP string, s
 	}
 }
 
-func getGatewayForwardRules(cidrs []*net.IPNet) []nodeipt.Rule {
-	var returnRules []nodeipt.Rule
-	protocols := make(map[iptables.Protocol]struct{})
+func getGatewayForwardRules(cidrs []*net.IPNet) map[iptables.Protocol][]nodeipt.Rule {
+	returnRules := map[iptables.Protocol][]nodeipt.Rule{}
 
 	// Add rules for all CIDRs.
 	for _, cidr := range cidrs {
 		protocol := getIPTablesProtocol(cidr.IP.String())
-		protocols[protocol] = struct{}{}
-
-		returnRules = append(returnRules, []nodeipt.Rule{
+		returnRules[protocol] = append(returnRules[protocol], []nodeipt.Rule{
 			{
 				Table: "filter",
 				Chain: "FORWARD",
@@ -299,12 +296,12 @@ func getGatewayForwardRules(cidrs []*net.IPNet) []nodeipt.Rule {
 	}
 
 	// Add rules for MasqueraIPs.
-	for protocol := range protocols {
+	for protocol := range returnRules {
 		masqueradeIP := config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP
 		if protocol == iptables.ProtocolIPv6 {
 			masqueradeIP = config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP
 		}
-		returnRules = append(returnRules, getMasqueradeIpTablesForwardRules(masqueradeIP, protocol)...)
+		returnRules[protocol] = append(returnRules[protocol], getMasqueradeIpTablesForwardRules(masqueradeIP, protocol)...)
 	}
 
 	return returnRules
@@ -360,12 +357,19 @@ func getMasqueradeIpTablesNATRules(masqueradeIP net.IP, protocol iptables.Protoc
 // -A FORWARD -s 169.254.169.1 -j ACCEPT
 // -A FORWARD -d 169.254.169.1 -j ACCEPT
 func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
-	rules := getGatewayForwardRules(cidrs)
-	if nodeutil.NeedIPTablesForwardingRules() {
-		return insertIptRules(rules)
-	} else {
-		return deleteIptRules(rules)
+	allRules := getGatewayForwardRules(cidrs)
+	for protocol, rules := range allRules {
+		var err error
+		if nodeutil.NeedIPTablesForwardingRules(protocol) {
+			err = insertIptRules(rules)
+		} else {
+			err = deleteIptRules(rules)
+		}
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func getLocalGatewayFilterRules(ifname string, protocol iptables.Protocol) []nodeipt.Rule {
@@ -396,7 +400,7 @@ func getLocalGatewayFilterRules(ifname string, protocol iptables.Protocol) []nod
 func initLocalGatewayIPTFilterRules(ifname string) error {
 	for _, protocol := range clusterIPTablesProtocols() {
 		rules := getLocalGatewayFilterRules(ifname, protocol)
-		if nodeutil.NeedIPTablesForwardingRules() {
+		if nodeutil.NeedIPTablesForwardingRules(protocol) {
 			// Insert (rather than append) the filter table rules because they
 			// need to be evaluated BEFORE the DROP rules we have for
 			// forwarding. DO NOT change the ordering; especially important

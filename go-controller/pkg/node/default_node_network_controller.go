@@ -1591,10 +1591,10 @@ func DummyMasqueradeIPs() []net.IP {
 	return nextHops
 }
 
-// configureGlobalForwarding configures the global forwarding settings. It sets the
-// FORWARD policy to DROP if config.Gateway.DisableForwarding is set (or sets it back to
-// ACCEPT if it had previously set it DROP and DisableForwarding is now unset) for all
-// enabled IP families. For IPv6 it additionally always enables global forwarding.
+// configureGlobalForwarding configures the global forwarding settings for IPv6. It
+// enables global forwarding, and sets the ip6tables FORWARD policy to DROP if
+// config.Gateway.DisableForwarding is set (or sets it back to ACCEPT if it had previously
+// set it DROP and DisableForwarding is now unset).
 //
 // This function assumes that other forwarding setup will also be performed. Specifically,
 // for IPv4, you must call util.SetForwardingModeForInterface() to enable per-interface
@@ -1620,7 +1620,7 @@ func configureGlobalForwarding() error {
 		}
 
 		desiredPolicy := ""
-		if nodeutil.NeedIPTablesForwardingRules() {
+		if nodeutil.NeedIPTablesForwardingRules(proto) {
 			desiredPolicy = "DROP"
 		} else {
 			// If there's evidence that we previously configured
