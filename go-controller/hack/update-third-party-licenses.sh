@@ -202,7 +202,7 @@ collect_module_downloads() {
                     cp go.sum "${tmp_sumfile}"
                 fi
 
-                GOTOOLCHAIN=local GOWORK=off GOFLAGS=-mod=mod \
+                GOWORK=off GOFLAGS=-mod=mod \
                     go mod download -modfile="$(basename "${tmp_modfile}")" -json all || true
             )
         done \
