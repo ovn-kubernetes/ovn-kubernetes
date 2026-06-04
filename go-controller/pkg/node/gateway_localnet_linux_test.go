@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
@@ -27,6 +28,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
+	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -85,14 +87,8 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 		subnets = append(subnets, subnet.CIDR)
 	}
 	subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
-	if config.Gateway.DisableForwarding {
-		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
-			return fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", linkName, err)
-		}
-	} else {
-		if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
-			return fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", linkName, err)
-		}
+	if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+		return fmt.Errorf("failed to configure iptables forwarding rules for bridge %s: err %v", linkName, err)
 	}
 
 	// set up a controller to handle events on services to mock the nodeportwatcher bits
@@ -3690,13 +3686,60 @@ var _ = Describe("Node Operations", func() {
 			err = f6.MatchState(expectedTablesEmpty, expectedPolicyDrop)
 			Expect(err).NotTo(HaveOccurred())
 
+			By("manually creating some of the rules OVN-K would create when DisableForwarding is true")
+			var rules []nodeipt.Rule
+			rules = append(rules, getMasqueradeIpTablesForwardRules(config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP, iptables.ProtocolIPv4)...)
+			rules = append(rules, getMasqueradeIpTablesForwardRules(config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP, iptables.ProtocolIPv6)...)
+			err = nodeipt.AddRules(rules, false)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectedTablesV4 := map[string]util.FakeTable{
+				"filter": {
+					"FORWARD": []string{
+						"-d 169.254.169.1 -j ACCEPT",
+						"-s 169.254.169.1 -j ACCEPT",
+					},
+				},
+				"nat":    {},
+				"mangle": {},
+			}
+			err = f4.MatchState(expectedTablesV4, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+			expectedTablesV6 := map[string]util.FakeTable{
+				"filter": {
+					"FORWARD": []string{
+						"-d fd69::1 -j ACCEPT",
+						"-s fd69::1 -j ACCEPT",
+					},
+				},
+				"nat":    {},
+				"mangle": {},
+			}
+			err = f6.MatchState(expectedTablesV6, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+
 			By("setting DisableForwarding = false, and confirming that configureGlobalForwarding() sets the policy to ACCEPT")
 			config.Gateway.DisableForwarding = false
 			err = configureGlobalForwarding()
 			Expect(err).NotTo(HaveOccurred())
-			err = f4.MatchState(expectedTablesEmpty, expectedPolicyAccept)
+			err = f4.MatchState(expectedTablesV4, expectedPolicyAccept)
 			Expect(err).NotTo(HaveOccurred())
-			err = f6.MatchState(expectedTablesEmpty, expectedPolicyAccept)
+			err = f6.MatchState(expectedTablesV6, expectedPolicyAccept)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("deleting the OVN-K DisableForwarding rules and manually setting the policy back to DROP")
+			err = nodeipt.DelRules(rules)
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV4.ChangePolicy("filter", "FORWARD", "DROP")
+			Expect(err).NotTo(HaveOccurred())
+			err = iptV6.ChangePolicy("filter", "FORWARD", "DROP")
+			Expect(err).NotTo(HaveOccurred())
+
+			By("re-running configureGlobalForwarding() and confirming that it doesn't change the policy")
+			configureGlobalForwarding()
+			err = f4.MatchState(expectedTablesEmpty, expectedPolicyDrop)
+			Expect(err).NotTo(HaveOccurred())
+			err = f6.MatchState(expectedTablesEmpty, expectedPolicyDrop)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
