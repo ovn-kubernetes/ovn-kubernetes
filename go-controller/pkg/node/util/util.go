@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/coreos/go-iptables/iptables"
+
 	net2 "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -122,6 +124,6 @@ func GenerateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, pr
 
 // NeedIPTablesForwardingRules determines whether iptables forwarding rules are needed to
 // work around DisableForwarding.
-func NeedIPTablesForwardingRules() bool {
-	return config.Gateway.DisableForwarding
+func NeedIPTablesForwardingRules(proto iptables.Protocol) bool {
+	return config.Gateway.DisableForwarding && proto == iptables.ProtocolIPv6
 }
