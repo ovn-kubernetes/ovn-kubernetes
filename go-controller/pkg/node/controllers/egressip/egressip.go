@@ -55,7 +55,6 @@ import (
 
 const (
 	rulePriority        = 6000 // the priority of the ip routing rules created by the controller. Egress Service priority is 5000.
-	ruleFwMarkPriority  = 5999 // the priority of the ip routing rules for LGW mode when we want to skip processing eip ip rules because dst is a node ip. Pkt will be fw marked with 1008.
 	routingTableIDStart = 1000
 	chainName           = "OVN-KUBE-EGRESS-IP-MULTI-NIC"
 	iptChainName        = utiliptables.Chain(chainName)
@@ -280,7 +279,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 			}
 
 			// If dst is a node IP, use main routing table and skip EIP routing tables
-			if err = c.ruleManager.Add(getNodeIPFwMarkIPRule(netlink.FAMILY_V4)); err != nil {
+			if err = c.ruleManager.AddNodeIPFwMarkRule(netlink.FAMILY_V4); err != nil {
 				return fmt.Errorf("failed to create IPv4 rule for node IPs: %v", err)
 			}
 			// The fwmark of the packet is included in reverse path route lookup. This permits rp_filter to function when the fwmark is
@@ -309,7 +308,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 
 			// If dst is a node IP, use main routing table and skip EIP routing tables
 			// src_valid_mark is not applicable to ipv6
-			if err = c.ruleManager.Add(getNodeIPFwMarkIPRule(netlink.FAMILY_V6)); err != nil {
+			if err = c.ruleManager.AddNodeIPFwMarkRule(netlink.FAMILY_V6); err != nil {
 				return fmt.Errorf("failed to create IPv6 rule for node IPs: %v", err)
 			}
 		}
@@ -1584,15 +1583,6 @@ func isValidIP(ipStr string) bool {
 		return false
 	}
 	return len(ip) > 0
-}
-
-func getNodeIPFwMarkIPRule(ipFamily int) netlink.Rule {
-	r := netlink.NewRule()
-	r.Priority = ruleFwMarkPriority
-	r.Mark = 1008 // pkt marked with 1008 is a node IP
-	r.Table = 254 // main
-	r.Family = ipFamily
-	return *r
 }
 
 func isVRFSlaveDevice(link netlink.Link) bool {

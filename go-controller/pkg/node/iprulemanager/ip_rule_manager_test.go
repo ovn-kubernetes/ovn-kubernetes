@@ -17,6 +17,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
 
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 )
 
@@ -232,6 +233,39 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 				})
 			}).WithTimeout(time.Second).Should(gomega.Succeed())
 		})
+	})
+
+	ginkgo.Context("AddNodeIPFwMarkRule", func() {
+		ginkgo.DescribeTable("installs fwmark bypass rule for the given IP family",
+			func(family int) {
+				expectedRule := netlink.NewRule()
+				expectedRule.Priority = nodetypes.FwMarkBypassPriority
+				expectedRule.Mark = nodetypes.OvnKubeNodeSNATMarkValue
+				expectedRule.Table = 254
+				expectedRule.Family = family
+
+				gomega.Expect(func() error {
+					return testNS.Do(func(ns.NetNS) error {
+						return c.AddNodeIPFwMarkRule(family)
+					})
+				}()).Should(gomega.Succeed())
+
+				gomega.Eventually(func() error {
+					return testNS.Do(func(ns.NetNS) error {
+						rules, err := netlink.RuleList(family)
+						if err != nil {
+							return err
+						}
+						if ok, _ := isNetlinkRuleInSlice(rules, expectedRule); !ok {
+							return fmt.Errorf("fwmark bypass rule not found for family %d", family)
+						}
+						return nil
+					})
+				}).WithTimeout(time.Second).Should(gomega.Succeed())
+			},
+			ginkgo.Entry("IPv4", netlink.FAMILY_V4),
+			ginkgo.Entry("IPv6", netlink.FAMILY_V6),
+		)
 	})
 
 	ginkgo.Context("Del rule", func() {
