@@ -119,3 +119,9 @@ func GenerateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, pr
 		cookie, priority, inPort, icmpMatch, nwDst, ipAddr, icmpType, icmpCode, action)
 	return icmpFragmentationFlow
 }
+
+// NeedIPTablesForwardingRules determines whether iptables forwarding rules are needed to
+// work around DisableForwarding.
+func NeedIPTablesForwardingRules() bool {
+	return config.Gateway.DisableForwarding
+}
