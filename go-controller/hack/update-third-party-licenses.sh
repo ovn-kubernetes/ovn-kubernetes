@@ -268,6 +268,11 @@ generate_license_tree() {
         exit 1
     fi
 
+    if [[ ${#package_dirs[@]} -eq 0 ]]; then
+        echo "no third-party module source directories were collected; refusing to overwrite ${LICENSES_DIR}" >&2
+        exit 1
+    fi
+
     for package_key in "${!package_dirs[@]}"; do
         package_path=${package_key%@*}
         resolved_version=${package_key##*@}
