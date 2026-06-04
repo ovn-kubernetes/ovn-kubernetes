@@ -17,6 +17,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
@@ -27,6 +28,7 @@ type Interface interface {
 	Delete(rule IPRule) error
 	DeleteWithMetadata(metadata string) error
 	OwnPriority(priority int) error
+	AddNodeIPFwMarkRule(ipFamily int) error
 }
 
 // This struct should be updated whenever a new netlink.Rule field is used in the codebase.
@@ -272,4 +274,16 @@ func (rm *Controller) reconcile() error {
 
 	rm.rules = rulesToKeep
 	return utilerrors.Join(errs...)
+}
+
+// AddNodeIPFwMarkRule adds an ip rule that routes packets marked with
+// OvnKubeNodeSNATMark (0x3f0/1008) via the main routing table, ensuring
+// they are handled before egress IP and egress service routing rules in LGW mode.
+func (rm *Controller) AddNodeIPFwMarkRule(ipFamily int) error {
+	return rm.Add(IPRule{
+		Priority: nodetypes.FwMarkBypassPriority,
+		Mark:     nodetypes.OvnKubeNodeSNATMarkValue,
+		Table:    254, // main
+		Family:   ipFamily,
+	})
 }

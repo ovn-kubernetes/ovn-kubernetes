@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vishvananda/netlink"
+
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,6 +34,7 @@ import (
 	egressserviceinformer "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions/egressservice/v1"
 	egressservicelisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -74,6 +77,8 @@ type Controller struct {
 	endpointSliceLister  discoverylisters.EndpointSliceLister
 	endpointSlicesSynced cache.InformerSynced
 
+	ruleManager iprulemanager.Interface
+
 	services map[string]*svcState // svc key -> state
 }
 
@@ -97,10 +102,11 @@ func NewController(stopCh <-chan struct{}, returnMark, thisNode string,
 	klog.Info("Setting up event handlers for Egress Services")
 
 	c := &Controller{
-		stopCh:     stopCh,
-		returnMark: returnMark,
-		thisNode:   thisNode,
-		services:   map[string]*svcState{},
+		stopCh:      stopCh,
+		returnMark:  returnMark,
+		thisNode:    thisNode,
+		ruleManager: iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode),
+		services:    map[string]*svcState{},
 	}
 
 	c.egressServiceLister = esInformer.Lister()
@@ -196,6 +202,24 @@ func (c *Controller) Run(wg *sync.WaitGroup, threadiness int) error {
 
 	if !util.WaitForInformerCacheSyncWithTimeout("egressservices_endpointslices", c.stopCh, c.endpointSlicesSynced) {
 		return fmt.Errorf("timed out waiting for endpoint slice caches (for egress services) to sync")
+	}
+
+	// In LGW mode, packets from egress pods destined to node IPs get marked with 0x3f0 (1008) by
+	// OVS flows. This ip rule ensures those packets use the main routing table, bypassing egress
+	// custom routing tables. EgressIP also creates this rule when enabled; the ruleManager
+	// reconciliation handles the overlap by checking if the rule already exists before adding.
+	if config.Gateway.Mode == config.GatewayModeLocal {
+		if config.IPv4Mode {
+			if err := c.ruleManager.AddNodeIPFwMarkRule(netlink.FAMILY_V4); err != nil {
+				return fmt.Errorf("failed to create IPv4 fwmark bypass rule: %v", err)
+			}
+		}
+		if config.IPv6Mode {
+			if err := c.ruleManager.AddNodeIPFwMarkRule(netlink.FAMILY_V6); err != nil {
+				return fmt.Errorf("failed to create IPv6 fwmark bypass rule: %v", err)
+			}
+		}
+		go c.ruleManager.Run(c.stopCh, 5*time.Minute)
 	}
 
 	klog.Infof("Repairing Egress Services")
