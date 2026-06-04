@@ -1591,22 +1591,20 @@ func DummyMasqueradeIPs() []net.IP {
 	return nextHops
 }
 
-// configureGlobalForwarding configures the global forwarding settings for IPv6. It
-// enables global forwarding, and sets the ip6tables FORWARD policy to DROP if
-// config.Gateway.DisableForwarding is set (or sets it back to ACCEPT if it had previously
-// set it DROP and DisableForwarding is now unset).
+// configureGlobalForwarding configures the global forwarding settings for IPv6 when
+// per-interface forwarding is not available. It enables global forwarding, and sets the
+// ip6tables FORWARD policy to DROP if config.Gateway.DisableForwarding is set (or sets it
+// back to ACCEPT if it had previously set it DROP and DisableForwarding is now unset).
 //
 // This function assumes that other forwarding setup will also be performed. Specifically,
-// for IPv4, you must call util.SetForwardingModeForInterface() to enable per-interface
+// you must call util.SetForwardingModeForInterface() to enable per-interface
 // forwarding on the interfaces that need it (the bridge and management port interfaces).
 // And if config.Gateway.DisableForwarding is set, you must call
 // initExternalBridgeServiceForwardingRules() to create netfilter rules to forward the
 // traffic that OVN-Kubernetes needs, and block other traffic from being forwarded.
 func configureGlobalForwarding() error {
-	// It is not possible to configure IPv6 forwarding per interface by
-	// setting the net.ipv6.conf.<ifname>.forwarding sysctl, so we always
-	// enable global forwarding.
-	if config.IPv6Mode {
+	if config.IPv6Mode && !util.SupportsIPv6InterfaceForwarding() {
+		// Enable global forwarding since per-interface forwarding isn't available.
 		if err := ip.EnableIP6Forward(); err != nil {
 			return fmt.Errorf("could not set the correct global forwarding value for ipv6:  %w", err)
 		}
