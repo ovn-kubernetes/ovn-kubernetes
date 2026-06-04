@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ip"
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -48,6 +49,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
@@ -1589,10 +1591,10 @@ func DummyMasqueradeIPs() []net.IP {
 	return nextHops
 }
 
-// configureGlobalForwarding configures the global forwarding settings.
-// It sets the FORWARD policy to DROP/ACCEPT based on the config.Gateway.DisableForwarding
-// value, for all enabled IP families. For IPv6 it additionally always enables global
-// forwarding.
+// configureGlobalForwarding configures the global forwarding settings. It sets the
+// FORWARD policy to DROP if config.Gateway.DisableForwarding is set (or sets it back to
+// ACCEPT if it had previously set it DROP and DisableForwarding is now unset) for all
+// enabled IP families. For IPv6 it additionally always enables global forwarding.
 //
 // This function assumes that other forwarding setup will also be performed. Specifically,
 // for IPv4, you must call util.SetForwardingModeForInterface() to enable per-interface
@@ -1617,15 +1619,34 @@ func configureGlobalForwarding() error {
 			return fmt.Errorf("failed to get the iptables helper: %w", err)
 		}
 
-		target := "ACCEPT"
-		if config.Gateway.DisableForwarding {
-			target = "DROP"
-
+		desiredPolicy := ""
+		if nodeutil.NeedIPTablesForwardingRules() {
+			desiredPolicy = "DROP"
+		} else {
+			// If there's evidence that we previously configured
+			// DisableForwarding, then change the policy back to ACCEPT now.
+			// (Note that the rules we look for here will be deleted later
+			// by the gateway setup.)
+			masqueradeIP := config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP
+			if proto == iptables.ProtocolIPv6 {
+				masqueradeIP = config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP
+			}
+			forwardRules := getMasqueradeIpTablesForwardRules(masqueradeIP, proto)
+			if len(forwardRules) != 0 {
+				rule := forwardRules[0]
+				if ruleExists, _ := ipt.Exists(rule.Table, rule.Chain, rule.Args...); ruleExists {
+					desiredPolicy = "ACCEPT"
+				}
+			}
 		}
-		if err := ipt.ChangePolicy("filter", "FORWARD", target); err != nil {
-			return fmt.Errorf("failed to change the forward policy to %q: %w", target, err)
+
+		if desiredPolicy != "" {
+			if err := ipt.ChangePolicy("filter", "FORWARD", desiredPolicy); err != nil {
+				return fmt.Errorf("failed to change the forward policy to %q: %w", desiredPolicy, err)
+			}
 		}
 	}
+
 	return nil
 }
 

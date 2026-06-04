@@ -40,9 +40,9 @@ provides the `disable-forwarding` config/command-line option to do this:
 
   - If `disable-forwarding` is `false`:
 
-      - OVN-Kubernetes sets the default policy of the ip6tables `FORWARD` chain to
-        `ACCEPT`. (This normally has no effect since that's the normal default policy
-        anyway.)
+      - OVN-Kubernetes does not take any action other than resetting the default policy of
+        the `FORWARD` chain back to `ACCEPT` if it appears that OVN-Kubernetes itself had
+        previously set it to `DROP`.
 
 For consistency, OVN-Kubernetes also applies the effect of `disable-forwarding` to IPv4 as
 well, even though it is not necessary.

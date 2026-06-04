@@ -18,6 +18,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
+	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -352,19 +353,19 @@ func getMasqueradeIpTablesNATRules(masqueradeIP net.IP, protocol iptables.Protoc
 	}
 }
 
-// initExternalBridgeForwardingRules sets up iptables rules for br-* interface svc traffic forwarding
+// initExternalBridgeForwardingRules adds or removes iptables rules for br-* interface svc
+// traffic forwarding:
 // -A FORWARD -s 10.96.0.0/16 -j ACCEPT
 // -A FORWARD -d 10.96.0.0/16 -j ACCEPT
 // -A FORWARD -s 169.254.169.1 -j ACCEPT
 // -A FORWARD -d 169.254.169.1 -j ACCEPT
 func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
-	return insertIptRules(getGatewayForwardRules(cidrs))
-}
-
-// delExternalBridgeServiceForwardingRules removes iptables rules which might
-// have been added to disable forwarding
-func delExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
-	return deleteIptRules(getGatewayForwardRules(cidrs))
+	rules := getGatewayForwardRules(cidrs)
+	if nodeutil.NeedIPTablesForwardingRules() {
+		return insertIptRules(rules)
+	} else {
+		return deleteIptRules(rules)
+	}
 }
 
 func getLocalGatewayFilterRules(ifname string, protocol iptables.Protocol) []nodeipt.Rule {
@@ -395,7 +396,7 @@ func getLocalGatewayFilterRules(ifname string, protocol iptables.Protocol) []nod
 func initLocalGatewayIPTFilterRules(ifname string) error {
 	for _, protocol := range clusterIPTablesProtocols() {
 		rules := getLocalGatewayFilterRules(ifname, protocol)
-		if config.Gateway.DisableForwarding {
+		if nodeutil.NeedIPTablesForwardingRules() {
 			// Insert (rather than append) the filter table rules because they
 			// need to be evaluated BEFORE the DROP rules we have for
 			// forwarding. DO NOT change the ordering; especially important

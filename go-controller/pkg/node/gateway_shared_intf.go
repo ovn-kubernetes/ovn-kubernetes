@@ -1910,14 +1910,8 @@ func newNodePortWatcher(
 			subnets = append(subnets, subnet.CIDR)
 		}
 		subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
-		if config.Gateway.DisableForwarding {
-			if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
-				return nil, fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
-			}
-		} else {
-			if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
-				return nil, fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
-			}
+		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+			return nil, fmt.Errorf("failed to configure iptables forwarding rules for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
 		}
 	}
 
