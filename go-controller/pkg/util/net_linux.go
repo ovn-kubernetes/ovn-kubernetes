@@ -12,8 +12,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os/exec"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1012,6 +1015,31 @@ func ipAddrExistsAtInterface(ipAddr net.IP, iface net.Interface) (bool, error) {
 	return false, nil
 }
 
+var supportsIPv6InterfaceForwarding atomic.Bool
+var checkSupportsIPv6InterfaceForwarding sync.Once
+
+// SupportsIPv6InterfaceForwarding checks whether the kernel supports per-interface IPv6
+// forwarding, as opposed to only global IPv6 forwarding.
+func SupportsIPv6InterfaceForwarding() bool {
+	checkSupportsIPv6InterfaceForwarding.Do(func() {
+		// We avoid using RunSysctl here because we don't want unit tests to have
+		// to deal with figuring out exactly when this function is going to be
+		// called so they can fake it out with fExec.
+		_, err := exec.Command("sysctl", "net.ipv6.conf.lo.force_forwarding").CombinedOutput()
+		supportsIPv6InterfaceForwarding.Store(err == nil)
+	})
+	return supportsIPv6InterfaceForwarding.Load()
+}
+
+// SetSupportsIPv6InterfaceForwarding overrides the value returned by
+// SupportsIPv6InterfaceForwarding(), for testing purposes.
+func SetSupportsIPv6InterfaceForwarding(val bool) {
+	// Make sure the Once has run, so it doesn't override us later.
+	_ = SupportsIPv6InterfaceForwarding()
+
+	supportsIPv6InterfaceForwarding.Store(val)
+}
+
 // The sysctl fs interface uses slash as the path separator and allows interface names to
 // contain dots. But the CLI uses dots as the separator and expects interface names to
 // have been rewritten to use slashes instead.
@@ -1021,11 +1049,21 @@ func sysctlIfName(ifName string) string {
 
 // SetForwardingModeForInterface updates the forwarding options for the specified interface
 func SetForwardingModeForInterface(ifName string) error {
-	setVal := fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", sysctlIfName(ifName))
-	stdout, stderr, err := RunSysctl("-w", setVal)
-	if err != nil || stdout != setVal {
-		return fmt.Errorf("could not set the correct forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
-			ifName, stdout, stderr, err)
+	if config.IPv4Mode {
+		setVal := fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", sysctlIfName(ifName))
+		stdout, stderr, err := RunSysctl("-w", setVal)
+		if err != nil || stdout != setVal {
+			return fmt.Errorf("could not set the correct IPv4 forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
+				ifName, stdout, stderr, err)
+		}
+	}
+	if config.IPv6Mode && SupportsIPv6InterfaceForwarding() {
+		setVal := fmt.Sprintf("net.ipv6.conf.%s.force_forwarding = 1", sysctlIfName(ifName))
+		stdout, stderr, err := RunSysctl("-w", setVal)
+		if err != nil || stdout != setVal {
+			return fmt.Errorf("could not set the correct IPv6 forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
+				ifName, stdout, stderr, err)
+		}
 	}
 	return nil
 }
