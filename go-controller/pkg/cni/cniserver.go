@@ -333,6 +333,17 @@ func (s *Server) handleCNIRequest(r *http.Request) (result []byte, err error) {
 		}
 		if primaryPodRequest != nil {
 			klog.V(4).Infof("Pod %s/%s primaryUDN podRequest %v", primaryPodRequest.PodNamespace, primaryPodRequest.PodName, primaryPodRequest)
+
+			// Wait for the OVN controller to create the primary UDN annotation before proceeding.
+			// This prevents a race condition where the CNI tries to configure the OVS port
+			// before the logical port has been created by the OVN controller.
+			_, _, _, err = GetPodWithAnnotations(primaryPodRequest.ctx, s.clientSet,
+				primaryPodRequest.PodNamespace, primaryPodRequest.PodName,
+				primaryPodRequest.nadKey, isOvnReady)
+			if err != nil {
+				return nil, fmt.Errorf("failed to wait for primary UDN pod annotation: %v", err)
+			}
+
 			primaryResponse, err := primaryPodRequest.cmdAdd(s.kubeAuth, s.clientSet, s.ovsClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to add primary UDN pod request: %v", err)
