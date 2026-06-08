@@ -1852,6 +1852,7 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	const (
 		nat1             = "abc-UUID"
 		nat2             = "cba-UUID"
+		nat3             = "bca-UUID"
 		staticRoute1     = "srA-UUID"
 		staticRoute2     = "srB-UUID"
 		staticRoute3     = "srC-UUID"
@@ -1874,6 +1875,9 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	masqSubnet := config.Gateway.V4MasqueradeSubnet
 	var nat []string
 	nat = append(nat, nat1, nat2)
+	if config.Gateway.Mode == config.GatewayModeShared {
+		nat = append(nat, nat3)
+	}
 	expectedEntities := []libovsdbtest.TestData{
 		&nbdb.LogicalRouter{
 			Name:         gwRouterName,
@@ -1900,6 +1904,17 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	}
 	expectedEntities = append(expectedEntities, newNATEntry(nat1, dummyMasqueradeIP().IP.String(), gwRouterJoinIPAddress().IP.String(), standardNonDefaultNetworkExtIDs(netInfo), ""))
 	expectedEntities = append(expectedEntities, newNATEntry(nat2, dummyMasqueradeIP().IP.String(), netInfo.Subnets()[0].CIDR.String(), standardNonDefaultNetworkExtIDs(netInfo), udnSubnetMasqMatch))
+	if config.Gateway.Mode == config.GatewayModeShared {
+		udnEgressSNATV2ExtIDs := standardNonDefaultNetworkExtIDs(netInfo)
+		udnEgressSNATV2ExtIDs[types.UDNEgressSNATVersionExternalID] = types.UDNEgressSNATVersionV2
+		udnEgressSNATV2Match := udnSubnetMasqMatch
+		if udnEgressSNATV2Match == "" {
+			udnEgressSNATV2Match = "ip4"
+		}
+		udnEgressSNATV2 := newNATEntry(nat3, gwConfig.IPAddresses[0].IP.String(), netInfo.Subnets()[0].CIDR.String(), udnEgressSNATV2ExtIDs, udnEgressSNATV2Match)
+		udnEgressSNATV2.Priority = udnEgressSNATV2Priority
+		expectedEntities = append(expectedEntities, udnEgressSNATV2)
+	}
 	return expectedEntities
 }
 

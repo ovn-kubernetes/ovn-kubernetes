@@ -1155,6 +1155,13 @@ func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		return nil, fmt.Errorf("failed to get masquerade IPs, network %s (%d): %v", networkName, networkID, err)
 	}
 
+	var udnEgressSNATIPs []net.IP
+	if config.Gateway.Mode == config.GatewayModeShared {
+		for _, nodeIP := range l3GatewayConfig.IPAddresses {
+			udnEgressSNATIPs = append(udnEgressSNATIPs, nodeIP.IP)
+		}
+	}
+
 	l3GatewayConfig.IPAddresses = append(l3GatewayConfig.IPAddresses, masqIPs...)
 
 	// Always SNAT to the per network masquerade IP.
@@ -1198,6 +1205,7 @@ func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		gwRouterJoinCIDRs:          gwRouterJoinCIDRs,
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
+		udnEgressSNATIPs:           udnEgressSNATIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,
 	}, nil
 }

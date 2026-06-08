@@ -491,13 +491,11 @@ back to the node IP. The UDN gateway router load balancer uses `lb_force_snat_ip
 the packet can already have the node IP as source when it leaves the gateway router toward the
 physical bridge.
 
-The physical bridge still commits that packet through the default conntrack zone with
-`nat(src=<node-ip>)`. This lets conntrack detect overlapping source ports and reassign them in the
-same zone used for underlay egress, instead of bypassing NAT because the source IP already equals
-the node IP.
+The physical bridge still commits that packet through the default conntrack
+zone with all-zero SNAT, avoiding a second explicit node-IP SNAT.
 
 ```
-table=0, priority=99,ip,in_port="patch-breth0_<udn>",dl_src=<bridge-mac>,nw_src=<node-ip> actions=ct(commit,zone=64000,nat(src=<node-ip>),exec(set_field:<udn-ct-mark>->ct_mark)),output:<physical-port>
+table=0, priority=99,ip,in_port="patch-breth0_<udn>",dl_src=<bridge-mac>,nw_src=<node-ip> actions=ct(commit,zone=64000,nat(src=0.0.0.0),exec(set_field:<udn-ct-mark>->ct_mark)),output:<physical-port>
 table=0, priority=100,ip,in_port="patch-breth0_<udn>",dl_src=<bridge-mac>,nw_src=<udn-gr-masq-ip> actions=ct(commit,zone=64000,nat(src=<node-ip>),exec(set_field:<udn-ct-mark>->ct_mark)),output:<physical-port>
 ```
 
