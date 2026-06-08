@@ -1332,7 +1332,6 @@ k8s.io/kubernetes/pkg/features
 k8s.io/kubernetes/pkg/probe
 k8s.io/kubernetes/pkg/probe/http
 k8s.io/kubernetes/pkg/util/hash
-k8s.io/kubernetes/pkg/util/iptables
 # k8s.io/streaming v0.36.2
 ## explicit; go 1.26.0
 k8s.io/streaming/pkg/httpstream

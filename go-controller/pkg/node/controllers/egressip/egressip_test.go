@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
-	"os/exec"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -31,26 +29,29 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
-	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	utilnet "k8s.io/utils/net"
+	"sigs.k8s.io/knftables"
 
 	ovnconfig "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	ovnkube "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovniptables "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // testPodConfig holds all the information needed to validate a config is applied for a pod
 type testPodConfig struct {
-	name        string // pod name
-	ipTableRule ovniptables.RuleArg
-	ipRule      *netlink.Rule
+	name      string // pod name
+	snatKey   string // pod IP (key in nftables SNAT map)
+	snatValue string // egress IP (value in nftables SNAT map)
+	ifName    string // interface name (second key element in nftables SNAT map)
+	ipRule    *netlink.Rule
 }
 
 // eipConfig contains all the information needed to validate an EIP. Max one EIP IP maybe configured for a given
@@ -65,10 +66,10 @@ type eipConfig struct {
 
 // nodeConfig holds networking configuration for a single kubernetes nodes
 type nodeConfig struct {
-	routes       []netlink.Route
-	iptableRules []ovniptables.RuleArg
-	ipRules      []netlink.Rule
-	linkConfigs  []linkConfig
+	routes      []netlink.Route
+	nftElements []*knftables.Element // pre-existing nftables map elements for repair tests
+	ipRules     []netlink.Rule
+	linkConfigs []linkConfig
 }
 
 type linkConfig struct {
@@ -171,22 +172,6 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 				return fmt.Errorf("failed to add route (%s): %v", newRoute.String(), err)
 			}
 		}
-		// adding IPTable rules
-		ipTableV4Client := utiliptables.New(utiliptables.ProtocolIPv4)
-		ipTableV6Client := utiliptables.New(utiliptables.ProtocolIPv6)
-		var ipTableClient utiliptables.Interface
-		for _, iptableRule := range nodeInitialConfig.iptableRules {
-			if len(iptableRule.Args) != 0 {
-				if isIPTableRuleArgIPV6(iptableRule.Args) {
-					ipTableClient = ipTableV6Client
-				} else {
-					ipTableClient = ipTableV4Client
-				}
-				if err = ensureIPTableChainAndRule(ipTableClient, iptableRule.Args); err != nil {
-					return err
-				}
-			}
-		}
 		// adding IP rules
 		for _, ipRule := range nodeInitialConfig.ipRules {
 			if err = netlink.RuleAdd(&ipRule); err != nil {
@@ -199,18 +184,6 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 		return nil, fmt.Errorf("failed to add node config: %v", err)
 	}
 	return testNS, nil
-}
-
-func ensureIPTableChainAndRule(ipt utiliptables.Interface, ruleArgs []string) error {
-	_, err := ipt.EnsureChain(utiliptables.TableNAT, iptChainName)
-	if err != nil {
-		return fmt.Errorf("failed to create chain %s in NAT table: %v", iptChainName, err)
-	}
-	_, err = ipt.EnsureRule(utiliptables.Prepend, utiliptables.TableNAT, iptChainName, ruleArgs...)
-	if err != nil {
-		return fmt.Errorf("failed to ensure IPTables rule (%v): %v", ruleArgs, err)
-	}
-	return nil
 }
 
 func setupFakeTestNode(nodeInitialState nodeConfig) (ns.NetNS, cleanupFn, error) {
@@ -254,7 +227,7 @@ func createVRFAndEnslaveLink(testNS ns.NetNS, linkName, vrfName string, vrfTable
 }
 
 func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs []egressipv1.EgressIP, node nodeConfig, v4, v6, createEIPAnnot bool) (*Controller, *egressipfake.Clientset, error) {
-
+	nodenft.SetFakeNFTablesHelper()
 	kubeClient := fake.NewSimpleClientset(&corev1.NodeList{Items: []corev1.Node{getNodeObj(node, createEIPAnnot)}},
 		&corev1.NamespaceList{Items: namespaces}, &corev1.PodList{Items: pods})
 	egressIPClient := egressipfake.NewSimpleClientset(&egressipv1.EgressIPList{Items: egressIPs})
@@ -263,6 +236,16 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	rm := routemanager.NewController()
 	ovnconfig.OVNKubernetesFeature.EnableMultiNetwork = true // force addition of NAD informer for node watch factory
 	ovnconfig.OVNKubernetesFeature.EnableEgressIP = true
+	// InitEgressIPNFTables requires cluster pod CIDRs to be configured for any enabled IP family.
+	ovnconfig.Default.ClusterSubnets = nil
+	if v4 {
+		_, v4ClusterCIDR, _ := net.ParseCIDR("10.128.0.0/14")
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets, ovnconfig.CIDRNetworkEntry{CIDR: v4ClusterCIDR})
+	}
+	if v6 {
+		_, v6ClusterCIDR, _ := net.ParseCIDR("fd00:10:244::/48")
+		ovnconfig.Default.ClusterSubnets = append(ovnconfig.Default.ClusterSubnets, ovnconfig.CIDRNetworkEntry{CIDR: v6ClusterCIDR})
+	}
 	watchFactory, err := factory.NewNodeWatchFactory(ovnNodeClient, node1Name)
 	if err != nil {
 		return nil, nil, err
@@ -280,6 +263,25 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Pre-populate nftables map elements for repair tests
+	if len(node.nftElements) > 0 {
+		nft, err := nodenft.GetNFTablesHelper()
+		if err != nil {
+			return nil, nil, err
+		}
+		tx := nft.NewTransaction()
+		if err := c.initNFTables(tx); err != nil {
+			return nil, nil, err
+		}
+		for _, elem := range node.nftElements {
+			tx.Add(elem)
+		}
+		if err := nft.Run(context.Background(), tx); err != nil {
+			return nil, nil, fmt.Errorf("failed to pre-populate nftables elements: %v", err)
+		}
+	}
+
 	_, err = c.namespaceInformer.AddEventHandler(
 		factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.onNamespaceAdd,
@@ -332,7 +334,18 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 	runSubControllers(testNS, c, wg, stopCh)
 
 	err := testNS.Do(func(ns.NetNS) error {
-		return c.ruleManager.OwnPriority(rulePriority)
+		if err := c.ruleManager.OwnPriority(rulePriority); err != nil {
+			return err
+		}
+		nft, err := nodenft.GetNFTablesHelper()
+		if err != nil {
+			return err
+		}
+		tx := nft.NewTransaction()
+		if err := c.initNFTables(tx); err != nil {
+			return err
+		}
+		return nft.Run(context.TODO(), tx)
 	})
 	if err != nil {
 		return nil, err
@@ -359,31 +372,6 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 			}(workerFn)
 		}
 	}
-	err = testNS.Do(func(ns.NetNS) error {
-		if err = c.ruleManager.OwnPriority(rulePriority); err != nil {
-			return err
-		}
-		if c.v4 {
-			if err = c.iptablesManager.OwnChain(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv4); err != nil {
-				return err
-			}
-			if err = c.iptablesManager.EnsureRule(utiliptables.TableNAT, utiliptables.ChainPostrouting, utiliptables.ProtocolIPv4, iptJumpRule); err != nil {
-				return err
-			}
-		}
-		if c.v6 {
-			if err = c.iptablesManager.OwnChain(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv6); err != nil {
-				return err
-			}
-			if err = c.iptablesManager.EnsureRule(utiliptables.TableNAT, utiliptables.ChainPostrouting, utiliptables.ProtocolIPv6, iptJumpRule); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
 
 	cleanupFn := func() error {
 		close(stopCh)
@@ -402,16 +390,6 @@ func runSubControllers(testNS ns.NetNS, c *Controller, wg *sync.WaitGroup, stopC
 	// so we invoke them manually here and call reconcile manually
 	// normally executed during Run but we call it manually here because run spawns a go routine that we cannot control its netns during test
 	c.linkManager.Run(stopCh, wg)
-	wg.Add(1)
-	go func() {
-		defer ginkgo.GinkgoRecover()
-		defer wg.Done()
-		err := testNS.Do(func(ns.NetNS) error {
-			c.iptablesManager.Run(stopCh, 10*time.Millisecond)
-			return nil
-		})
-		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-	}()
 	wg.Add(1)
 	go func() {
 		defer ginkgo.GinkgoRecover()
@@ -442,9 +420,6 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		if ovntest.NoRoot() {
 			ginkgo.Skip("Test requires root privileges")
 		}
-		if !commandExists("iptables") {
-			ginkgo.Skip("Test requires iptables tools to be available in PATH")
-		}
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		var err error
@@ -465,35 +440,47 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		cleanupControllerFn, err := runController(testNS, c)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		ginkgo.By("verify expected IPTable rules match what was found")
-		// Ensure only the iptables rules we expect are present on the chain
+		ginkgo.By("verify expected nftables SNAT map elements match what was found")
 		gomega.Eventually(func() error {
-			foundIPTRules, err := getIPTableRules(testNS, c.iptablesManager, v4, v6)
+			nft, err := nodenft.GetNFTablesHelper()
 			if err != nil {
 				return err
 			}
-			// refator all this to account for new egress selected refactor
-			// since iptables rules found must be unique and since each expected rule is also unique, it is sufficient
-			// to say they are equal by comparing their length and ensuring we find all expected rules
-			var ruleCount int
+			var expectedCount int
 			for _, expectedEIPConfig := range expectedEIPConfigs {
-				ruleCount += len(expectedEIPConfig.podConfigs)
+				expectedCount += len(expectedEIPConfig.podConfigs)
 			}
-			if ruleCount != len(foundIPTRules) {
-				return fmt.Errorf("expected and found IPTable rule(s) count do not match: expected %d IPtable rule(s) but got %d:\n"+
-					"expected IPtable rule(s) '%v'\nfound IPTable rule(s) '%v'", ruleCount, len(foundIPTRules), expectedEIPConfigs, foundIPTRules)
+			var foundElements []*knftables.Element
+			if v4 {
+				elems, err := nft.ListElements(context.TODO(), "map", ovntypes.EgressIPNFTablesMapV4)
+				if err != nil && !knftables.IsNotFound(err) {
+					return err
+				}
+				foundElements = append(foundElements, elems...)
+			}
+			if v6 {
+				elems, err := nft.ListElements(context.TODO(), "map", ovntypes.EgressIPNFTablesMapV6)
+				if err != nil && !knftables.IsNotFound(err) {
+					return err
+				}
+				foundElements = append(foundElements, elems...)
+			}
+			if expectedCount != len(foundElements) {
+				return fmt.Errorf("expected %d nftables SNAT element(s) but got %d: %+v", expectedCount, len(foundElements), foundElements)
 			}
 			for _, expectedEIPConfig := range expectedEIPConfigs {
 				for _, expectedPodConfig := range expectedEIPConfig.podConfigs {
 					var found bool
-					for _, foundIPTRule := range foundIPTRules {
-						if strings.Join(expectedPodConfig.ipTableRule.Args, " ") == strings.Join(foundIPTRule.Args, " ") {
+					for _, elem := range foundElements {
+						if len(elem.Key) == 2 && len(elem.Value) == 1 &&
+							elem.Key[0] == expectedPodConfig.snatKey && elem.Key[1] == expectedPodConfig.ifName &&
+							elem.Value[0] == expectedPodConfig.snatValue {
 							found = true
 							break
 						}
 					}
 					if !found {
-						return fmt.Errorf("failed to find expected IPtable rule %+v", strings.Join(expectedPodConfig.ipTableRule.Args, " "))
+						return fmt.Errorf("failed to find expected nftables SNAT element: %s -> %s", expectedPodConfig.snatKey, expectedPodConfig.snatValue)
 					}
 				}
 			}
@@ -643,14 +630,29 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		for _, eIP := range egressIPList {
 			gomega.Expect(eIPClient.K8sV1().EgressIPs().Delete(context.TODO(), eIP.Name, metav1.DeleteOptions{})).Should(gomega.Succeed())
 		}
-		ginkgo.By("verify IPTable rules are removed")
+		ginkgo.By("verify nftables SNAT map elements are removed")
 		gomega.Eventually(func() error {
-			foundIPTRules, err := getIPTableRules(testNS, c.iptablesManager, v4, v6)
+			nft, err := nodenft.GetNFTablesHelper()
 			if err != nil {
 				return err
 			}
-			if len(foundIPTRules) != 0 {
-				return fmt.Errorf("expected zero IPTable rules but found %d", len(foundIPTRules))
+			var totalElements int
+			if v4 {
+				elems, err := nft.ListElements(context.TODO(), "map", ovntypes.EgressIPNFTablesMapV4)
+				if err != nil && !knftables.IsNotFound(err) {
+					return err
+				}
+				totalElements += len(elems)
+			}
+			if v6 {
+				elems, err := nft.ListElements(context.TODO(), "map", ovntypes.EgressIPNFTablesMapV6)
+				if err != nil && !knftables.IsNotFound(err) {
+					return err
+				}
+				totalElements += len(elems)
+			}
+			if totalElements != 0 {
+				return fmt.Errorf("expected zero nftables SNAT elements but found %d", totalElements)
 			}
 			return nil
 		}).WithTimeout(time.Second).Should(gomega.Succeed())
@@ -749,7 +751,9 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod1IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -774,7 +778,9 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod1IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod1IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -799,7 +805,9 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod1IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod1IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -824,12 +832,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod1IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 					{
 						pod2Name,
-						getIPTableMasqRule(pod2IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod2IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod2IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -857,12 +869,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod1IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod1IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 					{
 						pod2Name,
-						getIPTableMasqRule(pod2IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod2IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod2IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -888,12 +904,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod1IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 					{
 						pod2Name,
-						getIPTableMasqRule(pod2IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod2IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod2IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -920,13 +940,18 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				getNetlinkAddr(egressIP1IPV6Compressed, egressIPv6Mask),
 				dummyLink1Name,
 				[]testPodConfig{
-					{pod1Name,
-						getIPTableMasqRule(pod1IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+					{
+						pod1Name,
+						pod1IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod1IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 					{
 						pod2Name,
-						getIPTableMasqRule(pod2IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod2IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod2IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -954,12 +979,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod1IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod1IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 					{
 						pod2Name,
-						getIPTableMasqRule(pod2IPv4CIDR, dummyLink1Name, egressIP1IPV4),
+						pod2IPv4,
+						egressIP1IPV4,
+						dummyLink1Name,
 						getRule(pod2IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -973,12 +1002,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod3Name,
-						getIPTableMasqRule(pod3IPv4CIDR, dummyLink2Name, egressIP2IPV4),
+						pod3IPv4,
+						egressIP2IPV4,
+						dummyLink2Name,
 						getRule(pod3IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink2Name))),
 					},
 					{
 						pod4Name,
-						getIPTableMasqRule(pod4IPv4CIDR, dummyLink2Name, egressIP2IPV4),
+						pod4IPv4,
+						egressIP2IPV4,
+						dummyLink2Name,
 						getRule(pod4IPv4, util.CalculateRouteTableID(getLinkIndex(dummyLink2Name))),
 					},
 				},
@@ -1009,12 +1042,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod1Name,
-						getIPTableMasqRule(pod1IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod1IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod1IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 					{
 						pod2Name,
-						getIPTableMasqRule(pod2IPv6CIDRCompressed, dummyLink1Name, egressIP1IPV6Compressed),
+						pod2IPv6Compressed,
+						egressIP1IPV6Compressed,
+						dummyLink1Name,
 						getRule(pod2IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink1Name))),
 					},
 				},
@@ -1029,12 +1066,16 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				[]testPodConfig{
 					{
 						pod3Name,
-						getIPTableMasqRule(pod3IPv6CIDRCompressed, dummyLink2Name, egressIP2IPV6Compressed),
+						pod3IPv6Compressed,
+						egressIP2IPV6Compressed,
+						dummyLink2Name,
 						getRule(pod3IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink2Name))),
 					},
 					{
 						pod4Name,
-						getIPTableMasqRule(pod4IPv6CIDRCompressed, dummyLink2Name, egressIP2IPV6Compressed),
+						pod4IPv6Compressed,
+						egressIP2IPV6Compressed,
+						dummyLink2Name,
 						getRule(pod4IPv6Compressed, util.CalculateRouteTableID(getLinkIndex(dummyLink2Name))),
 					},
 				},
@@ -1062,9 +1103,7 @@ var _ = ginkgo.Describe("label to annotations migration", func() {
 	if ovntest.NoRoot() {
 		ginkgo.Skip("Test requires root privileges")
 	}
-	if !commandExists("iptables") {
-		ginkgo.Skip("Test requires iptables tools to be available in PATH")
-	}
+
 	var testNS ns.NetNS
 	var c *Controller
 	var cleanupFn cleanupFn
@@ -1122,9 +1161,6 @@ var _ = ginkgo.Describe("VRF", func() {
 		if ovntest.NoRoot() {
 			ginkgo.Skip("Test requires root privileges")
 		}
-		if !commandExists("iptables") {
-			ginkgo.Skip("Test requires iptables tools to be available in PATH")
-		}
 		vrfName := "vrf-dummy"
 		var vrfTable uint32 = 55555
 		ginkgo.By("setup link")
@@ -1173,9 +1209,7 @@ var _ = ginkgo.DescribeTable("repair node", func(expectedStateFollowingClean []e
 	if ovntest.NoRoot() {
 		ginkgo.Skip("Test requires root privileges")
 	}
-	if !commandExists("iptables") {
-		ginkgo.Skip("Test requires iptables tools to be available in PATH")
-	}
+
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	ginkgo.By("setting up test environment and controller")
@@ -1206,20 +1240,40 @@ var _ = ginkgo.DescribeTable("repair node", func(expectedStateFollowingClean []e
 	})
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	// check node
-	ginkgo.By("ensure no stale IPTable rules")
-	foundIPTRules, err := getIPTableRules(testNS, c.iptablesManager, v4, v6)
+	ginkgo.By("ensure no stale nftables SNAT map elements")
+	nft, err := nodenft.GetNFTablesHelper()
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-	var expectedIPTableRuleCount int
+	var foundElements []*knftables.Element
+	if v4 {
+		elems, err := nft.ListElements(context.TODO(), "map", ovntypes.EgressIPNFTablesMapV4)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		foundElements = append(foundElements, elems...)
+	}
+	if v6 {
+		elems, err := nft.ListElements(context.TODO(), "map", ovntypes.EgressIPNFTablesMapV6)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		foundElements = append(foundElements, elems...)
+	}
+	var expectedElementCount int
 	for _, expectedConfig := range expectedStateFollowingClean {
 		if len(expectedConfig.podConfigs) == 0 {
 			continue
 		}
 		for _, podConfig := range expectedConfig.podConfigs {
-			expectedIPTableRuleCount += 1
-			gomega.Expect(isIPTableRuleFound(foundIPTRules, podConfig.ipTableRule)).Should(gomega.BeTrue())
+			expectedElementCount += 1
+			found := false
+			for _, elem := range foundElements {
+				if len(elem.Key) == 2 && len(elem.Value) == 1 &&
+					elem.Key[0] == podConfig.snatKey && elem.Key[1] == podConfig.ifName &&
+					elem.Value[0] == podConfig.snatValue {
+					found = true
+					break
+				}
+			}
+			gomega.Expect(found).Should(gomega.BeTrue())
 		}
 	}
-	gomega.Expect(expectedIPTableRuleCount).Should(gomega.Equal(len(foundIPTRules)))
+	gomega.Expect(expectedElementCount).Should(gomega.Equal(len(foundElements)))
 	ginkgo.By("ensure no stale Egress IP addresses assigned to interface(s)")
 	linkNames := make([]string, 0)
 	for _, expectedState := range expectedStateFollowingClean {
@@ -1303,47 +1357,43 @@ var _ = ginkgo.DescribeTable("repair node", func(expectedStateFollowingClean []e
 		},
 		[]corev1.Pod{},
 		[]corev1.Namespace{}),
-	ginkgo.Entry("should remove stale iptables rules",
+	ginkgo.Entry("should remove stale nftables SNAT map elements",
 		[]eipConfig{
 			{
 				eIP: newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
 			},
 		},
 		nodeConfig{ // node state before repair
-			linkConfigs:  []linkConfig{{dummyLink2Name, nil}},
-			iptableRules: []ovniptables.RuleArg{generateIPTablesSNATRuleArg(net.ParseIP(pod1IPv4), false, dummyLink1Name, egressIP1IPV4)},
+			linkConfigs: []linkConfig{{dummyLink2Name, nil}},
+			nftElements: []*knftables.Element{
+				{Map: ovntypes.EgressIPNFTablesMapV4, Key: []string{pod1IPv4, dummyLink1Name}, Value: []string{egressIP1IPV4}},
+			},
 		},
 		[]corev1.Pod{},
 		[]corev1.Namespace{}),
-	ginkgo.Entry("should remove stale iptables rules but not valid rules",
+	ginkgo.Entry("should remove stale nftables SNAT map elements but not valid elements",
 		[]eipConfig{
 			{
 				eIP: newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel),
 				podConfigs: []testPodConfig{
 					{
-						ipTableRule: generateIPTablesSNATRuleArg(net.ParseIP(pod1IPv4), false, dummyLink1Name, egressIP1IPV4),
+						snatKey:   pod1IPv4,
+						snatValue: egressIP1IPV4,
+						ifName:    dummyLink1Name,
 					},
 				},
 			},
 		},
 		nodeConfig{ // node state before repair
-			iptableRules: []ovniptables.RuleArg{generateIPTablesSNATRuleArg(net.ParseIP(pod1IPv4), false, dummyLink1Name, egressIP1IPV4), // valid
-				generateIPTablesSNATRuleArg(net.ParseIP(pod2IPv4), false, dummyLink1Name, egressIP1IPV4), // invalid
+			nftElements: []*knftables.Element{
+				{Map: ovntypes.EgressIPNFTablesMapV4, Key: []string{pod1IPv4, dummyLink1Name}, Value: []string{egressIP1IPV4}}, // valid
+				{Map: ovntypes.EgressIPNFTablesMapV4, Key: []string{pod2IPv4, dummyLink1Name}, Value: []string{egressIP1IPV4}}, // invalid
 			},
 			linkConfigs: []linkConfig{{dummyLink1Name, []address{{dummy1IPv4CIDR, false}}}},
 		},
 		[]corev1.Pod{newPodWithLabels(namespace1, pod1Name, node1Name, pod1IPv4, egressPodLabel)},
 		[]corev1.Namespace{newNamespaceWithLabels(namespace1, namespace1Label)},
 	))
-
-func isIPTableRuleFound(rules []ovniptables.RuleArg, candidateRule ovniptables.RuleArg) bool {
-	for _, rule := range rules {
-		if reflect.DeepEqual(rule.Args, candidateRule.Args) {
-			return true
-		}
-	}
-	return false
-}
 
 func newPodWithLabels(namespace, name, node, podIP string, additionalLabels map[string]string) corev1.Pod {
 	podIPs := []corev1.PodIP{}
@@ -1479,28 +1529,6 @@ func getLinkAddresses(testNS ns.NetNS, infs ...string) (map[string][]netlink.Add
 	return linkAddresses, nil
 }
 
-func getIPTableRules(testNS ns.NetNS, iptablesManager *ovniptables.Controller, v4, v6 bool) ([]ovniptables.RuleArg, error) {
-	var foundIPTRules []ovniptables.RuleArg
-	err := testNS.Do(func(ns.NetNS) error {
-		if v4 {
-			foundIPTRulesV4, err := iptablesManager.GetIPv4ChainRuleArgs(utiliptables.TableNAT, iptChainName)
-			if err != nil {
-				return err
-			}
-			foundIPTRules = append(foundIPTRules, foundIPTRulesV4...)
-		}
-		if v6 {
-			foundIPTRulesV6, err := iptablesManager.GetIPv6ChainRuleArgs(utiliptables.TableNAT, iptChainName)
-			if err != nil {
-				return err
-			}
-			foundIPTRules = append(foundIPTRules, foundIPTRulesV6...)
-		}
-		return nil
-	})
-	return foundIPTRules, err
-}
-
 func getRoutesForLinkFromTable(testNS ns.NetNS, linkName string) ([]netlink.Route, error) {
 	var err error
 	var routes []netlink.Route
@@ -1608,41 +1636,6 @@ func addLinkAndAddresses(name string, addresses []address) error {
 		}
 	}
 	return nil
-}
-
-func getIPTableMasqRule(podIP, infName, snatIP string) ovniptables.RuleArg {
-	return ovniptables.RuleArg{Args: []string{"-s", podIP, "-o", infName, "-j", "SNAT", "--to-source", snatIP}}
-}
-
-// isIPTableRuleArgIPV6 iterates through rule args starting at the end and attempts to find an IP to determine the version.
-// If an IP is found to be a specific IP version, we can conclude the entire RuleArg is that IP version.
-func isIPTableRuleArgIPV6(ruleArgs []string) bool {
-	if len(ruleArgs) == 0 {
-		panic("unable to determine IP version because IPTable rule is empty or nil")
-	}
-	for i := len(ruleArgs) - 1; i >= 0; i-- {
-		// try IP first
-		ip := net.ParseIP(ruleArgs[i])
-		if len(ip) > 0 {
-			if ip.To4() == nil {
-				return true
-			} else {
-				return false
-			}
-		} else {
-			// try CIDR
-			ip, _, err := net.ParseCIDR(ruleArgs[i])
-			if err != nil {
-				continue
-			}
-			if ip.To4() == nil {
-				return true
-			} else {
-				return false
-			}
-		}
-	}
-	panic("unable to determine IP version of IPTable rule")
 }
 
 // For any IPV4 or IPV6 route, default type is unicast if not mentioned explicitly
@@ -1758,11 +1751,6 @@ func getPod(pods []corev1.Pod, name string) *corev1.Pod {
 		}
 	}
 	panic("failed to find a pod")
-}
-
-func commandExists(cmd string) bool {
-	_, err := exec.LookPath(cmd)
-	return err == nil
 }
 
 func isStrInArray(elements []string, candidate string) bool {
