@@ -170,7 +170,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				)
 
 				fakeOVN.controller.zone = node1Name
-				err := fakeOVN.controller.WatchNamespaces()
+				err := fakeOVN.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOVN.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -939,7 +939,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				t.populateLogicalSwitchCache(fakeOVN)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
 				t2.populateLogicalSwitchCache(fakeOVN)
-				err := fakeOVN.controller.WatchNamespaces()
+				err := fakeOVN.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOVN.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1258,7 +1258,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				t1.populateLogicalSwitchCache(fakeOVN)
 				t2.portName = util.GetLogicalPortName(t2.namespace, t2.podName)
 				t2.populateLogicalSwitchCache(fakeOVN)
-				err := fakeOVN.controller.WatchNamespaces()
+				err := fakeOVN.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOVN.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

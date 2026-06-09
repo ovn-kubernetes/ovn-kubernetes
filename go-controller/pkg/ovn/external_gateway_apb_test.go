@@ -157,7 +157,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -294,7 +294,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -439,7 +439,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -584,7 +584,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -744,7 +744,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					t.populateLogicalSwitchCache(fakeOvn)
 
 					injectNode(fakeOvn)
-					err := fakeOvn.controller.WatchNamespaces()
+					err := fakeOvn.controller.RegisterNamespaceHandler()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = fakeOvn.controller.WatchPods()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -959,7 +959,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					config.IPv6Mode = true
 					t.populateLogicalSwitchCache(fakeOvn)
 					injectNode(fakeOvn)
-					err := fakeOvn.controller.WatchNamespaces()
+					err := fakeOvn.controller.RegisterNamespaceHandler()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = fakeOvn.controller.WatchPods()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1109,7 +1109,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					t.populateLogicalSwitchCache(fakeOvn)
 
 					injectNode(fakeOvn)
-					err := fakeOvn.controller.WatchNamespaces()
+					err := fakeOvn.controller.RegisterNamespaceHandler()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = fakeOvn.controller.WatchPods()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1310,7 +1310,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				)
 				t.populateLogicalSwitchCache(fakeOvn)
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1459,7 +1459,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				)
 				t.populateLogicalSwitchCache(fakeOvn)
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1615,7 +1615,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				)
 				t.populateLogicalSwitchCache(fakeOvn)
 				injectNode(fakeOvn)
-				err = fakeOvn.controller.WatchNamespaces()
+				err = fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1766,7 +1766,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					)
 					t.populateLogicalSwitchCache(fakeOvn)
 					injectNode(fakeOvn)
-					err := fakeOvn.controller.WatchNamespaces()
+					err := fakeOvn.controller.RegisterNamespaceHandler()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = fakeOvn.controller.WatchPods()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1976,7 +1976,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2096,7 +2096,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2225,7 +2225,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				t.populateLogicalSwitchCache(fakeOvn)
 
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3091,7 +3091,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					},
 				}
 				injectNode(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
+				err := fakeOvn.controller.RegisterNamespaceHandler()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

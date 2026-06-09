@@ -16,6 +16,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	nscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/namespace"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -132,9 +133,6 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(objs []inter
 		case factory.PodType:
 			syncFunc = h.oc.syncPodsForUserDefinedNetwork
 
-		case factory.NamespaceType:
-			syncFunc = h.oc.syncNamespaces
-
 		case factory.MultiNetworkPolicyType:
 			syncFunc = h.oc.syncMultiNetworkPolicies
 
@@ -170,6 +168,7 @@ func NewLocalnetUserDefinedNetworkController(
 	networkManager networkmanager.Interface,
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
+	nsReconciler *nscontroller.NamespaceController,
 ) *LocalnetUserDefinedNetworkController {
 
 	stopChan := make(chan struct{})
@@ -202,6 +201,7 @@ func NewLocalnetUserDefinedNetworkController(
 					addressSetManager:           addressSetManager,
 					nodeReconciler:              nodeReconciler,
 					nodeAnnotationCache:         nodeAnnotationCache,
+					nsReconciler:                nsReconciler,
 				},
 			},
 		},
@@ -334,11 +334,11 @@ func (oc *LocalnetUserDefinedNetworkController) initRetryFramework() {
 		oc.retryIPAMClaims = oc.newRetryFramework(factory.IPAMClaimsType)
 	}
 
-	// For secondary networks, we don't have to watch namespace events if
-	// multi-network policy support is not enabled. We don't support
+	// For secondary networks, we don't have to watch network-policy-shaped
+	// events if multi-network policy support is not enabled. We don't support
 	// multi-network policy for IPAM-less secondary networks either.
+	// Namespaces flow through the shared NamespaceController.
 	if util.IsMultiNetworkPoliciesSupportEnabled() {
-		oc.retryNamespaces = oc.newRetryFramework(factory.NamespaceType)
 		oc.retryMultiNetworkPolicies = oc.newRetryFramework(factory.MultiNetworkPolicyType)
 	}
 }

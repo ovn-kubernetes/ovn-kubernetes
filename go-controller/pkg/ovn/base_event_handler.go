@@ -99,10 +99,6 @@ func (h *baseNetworkControllerEventHandler) areResourcesEqual(objType reflect.Ty
 		// force update path for EgressIP resource.
 		return false, nil
 
-	case factory.NamespaceType:
-		// force update path for Namespace resource.
-		return false, nil
-
 	case factory.MultiNetworkPolicyType:
 		mnp1, ok := obj1.(*mnpapi.MultiNetworkPolicy)
 		if !ok {
@@ -157,8 +153,7 @@ func (h *baseNetworkControllerEventHandler) getResourceFromInformerCache(objType
 		factory.EgressIPPodType:
 		obj, err = watchFactory.GetPod(namespace, name)
 
-	case factory.EgressIPNamespaceType,
-		factory.NamespaceType:
+	case factory.EgressIPNamespaceType:
 		obj, err = watchFactory.GetNamespace(name)
 
 	case factory.EgressFirewallType:

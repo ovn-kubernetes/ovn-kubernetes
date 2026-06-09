@@ -87,6 +87,58 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		wg.Wait()
 	})
 
+	ginkgo.Context("deleting a namespace that was never added (bootstrap race)", func() {
+		ginkgo.It("cleans up stale namespace port group and multicast ACLs", func() {
+			fakeOvn.startWithDBSetup(libovsdb.TestSetup{})
+			// multicastSupport makes needNamespacedPortGroup() true AND
+			// enables the no-nsInfo multicast cleanup branch. Set it on the
+			// already-constructed controller (the construction-time flag is
+			// false under PrepareTestConfig).
+			fakeOvn.controller.multicastSupport = true
+
+			// Simulate stale state from a previous run: a namespace port
+			// group and its multicast ACLs exist, but the namespace was
+			// never added on this start (no nsInfo). This is the bootstrap
+			// race — the namespace was listed by bootstrapNetwork (so
+			// SyncNamespaces/syncNsMulticast kept its port group and
+			// multicast ACLs as "expected") and then deleted before its
+			// scoped add reconcile ran, so the add leg never created nsInfo.
+			pgName, err := fakeOvn.controller.createNamespacePortGroup(namespaceName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// createMulticastAllowPolicy programs the namespace multicast
+			// ACLs (+ address set); the throwaway nsInfo stands in for the
+			// previous run's.
+			gomega.Expect(fakeOvn.controller.createMulticastAllowPolicy(namespaceName, &namespaceInfo{})).To(gomega.Succeed())
+
+			mcastACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](
+				libovsdbops.NewDbObjectIDs(libovsdbops.ACLMulticastNamespace, controllerName,
+					map[libovsdbops.ExternalIDKey]string{libovsdbops.ObjectNameKey: namespaceName}), nil)
+			countMcastACLs := func() int {
+				acls, e := libovsdbops.FindACLsWithPredicate(fakeOvn.controller.nbClient, mcastACLPredicate)
+				gomega.Expect(e).NotTo(gomega.HaveOccurred())
+				return len(acls)
+			}
+			gomega.Eventually(func() error {
+				_, e := libovsdbops.GetPortGroup(fakeOvn.controller.nbClient, &nbdb.PortGroup{Name: pgName})
+				return e
+			}).Should(gomega.Succeed(), "precondition: stale port group must exist")
+			gomega.Expect(countMcastACLs()).To(gomega.BeNumerically(">", 0), "precondition: stale multicast ACLs must exist")
+
+			// The delete leg must clean the deterministically-named port
+			// group AND the multicast ACLs even though no nsInfo was ever
+			// created.
+			nsInfo, err := fakeOvn.controller.deleteNamespaceLocked(namespaceName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(nsInfo).To(gomega.BeNil())
+
+			gomega.Eventually(func() error {
+				_, e := libovsdbops.GetPortGroup(fakeOvn.controller.nbClient, &nbdb.PortGroup{Name: pgName})
+				return e
+			}).ShouldNot(gomega.Succeed(), "stale port group must be deleted")
+			gomega.Expect(countMcastACLs()).To(gomega.Equal(0), "stale multicast ACLs must be deleted")
+		})
+	})
+
 	ginkgo.Context("on startup", func() {
 		ginkgo.It("only cleans up address sets owned by namespace", func() {
 			// namespace address sets are now deprecated and should all be removed on startup
@@ -154,7 +206,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			podMAC := ovntest.MustParseMAC(tP.podMAC)
 			podIPNets := []*net.IPNet{ovntest.MustParseIPNet(tP.podIP + "/24")}
 			fakeOvn.controller.logicalPortCache.add(tPod, tP.nodeName, ovntypes.DefaultNetworkName, fakeUUID, podMAC, podIPNets)
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceT.Name, metav1.GetOptions{})
@@ -175,7 +227,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 					*ovntest.NewNamespace(namespaceName),
 				},
 			})
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
@@ -209,7 +261,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				},
 			)
 
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(initialData))
 		})
@@ -233,7 +285,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				},
 			)
 
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{}))
 		})
@@ -253,7 +305,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				},
 			)
 
-			err := fakeOvn.controller.WatchNamespaces()
+			err := fakeOvn.controller.RegisterNamespaceHandler()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData([]libovsdb.TestData{}))
 		})

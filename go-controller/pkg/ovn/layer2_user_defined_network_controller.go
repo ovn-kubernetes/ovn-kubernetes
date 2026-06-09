@@ -23,6 +23,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/namespace"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
@@ -158,9 +159,6 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) SyncFunc(objs []interfa
 		case factory.PodType:
 			syncFunc = h.oc.syncPodsForUserDefinedNetwork
 
-		case factory.NamespaceType:
-			syncFunc = h.oc.syncNamespaces
-
 		case factory.PolicyType:
 			syncFunc = h.oc.syncNetworkPolicies
 
@@ -239,6 +237,7 @@ func NewLayer2UserDefinedNetworkController(
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
 	serviceController *svccontroller.Controller,
+	nsReconciler *nscontroller.NamespaceController,
 ) (*Layer2UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -289,6 +288,7 @@ func NewLayer2UserDefinedNetworkController(
 					addressSetManager:           addressSetManager,
 					nodeReconciler:              nodeReconciler,
 					nodeAnnotationCache:         nodeAnnotationCache,
+					nsReconciler:                nsReconciler,
 				},
 			},
 		},
@@ -299,6 +299,7 @@ func NewLayer2UserDefinedNetworkController(
 		eIPController:          eIPController,
 		remoteNodesNoRouter:    sync.Map{},
 	}
+
 	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
 			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
@@ -392,6 +393,8 @@ func (oc *Layer2UserDefinedNetworkController) run() error {
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
 func (oc *Layer2UserDefinedNetworkController) Cleanup() error {
 	networkName := oc.GetNetworkName()
+	// Release the namespace-handler registration; no-op if never registered.
+	oc.DeregisterNamespaceHandler()
 
 	// For primary Layer2 UDN only: when this is a cleanup-only controller (dummy for stale UDN
 	// cleanup; GetNetworkID() is InvalidID because netInfo was never reconciled from a NAD),
@@ -640,17 +643,16 @@ func (oc *Layer2UserDefinedNetworkController) initRetryFramework() {
 	}
 
 	// When a user-defined network is enabled as a primary network for namespace,
-	// then watch for namespace and network policy events.
+	// then watch for network policy events. Namespaces flow through the shared
+	// NamespaceController.
 	if oc.IsPrimaryNetwork() {
-		oc.retryNamespaces = oc.newRetryFramework(factory.NamespaceType)
 		oc.retryNetworkPolicies = oc.newRetryFramework(factory.PolicyType)
 	}
 
-	// For secondary networks, we don't have to watch namespace events if
-	// multi-network policy support is not enabled. We don't support
+	// For secondary networks, we don't have to watch network-policy-shaped
+	// events if multi-network policy support is not enabled. We don't support
 	// multi-network policy for IPAM-less secondary networks either.
 	if util.IsMultiNetworkPoliciesSupportEnabled() {
-		oc.retryNamespaces = oc.newRetryFramework(factory.NamespaceType)
 		oc.retryMultiNetworkPolicies = oc.newRetryFramework(factory.MultiNetworkPolicyType)
 	}
 }

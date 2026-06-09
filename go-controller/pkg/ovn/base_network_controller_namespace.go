@@ -37,15 +37,6 @@ type namespaceInfo struct {
 	// May be empty if the port group wasn't created.
 	portGroupName string
 
-	// Map of related network policies. Policy will add itself to this list when it's ready to subscribe
-	// to namespace Update events. Retry logic to update network policy based on namespace event is handled by namespace.
-	// Policy should only be added after successful create, and deleted before any network policy resources are deleted.
-	// This is the map of keys that can be used to get networkPolicy from oc.networkPolicies.
-	//
-	// You must hold the namespaceInfo's mutex to add/delete dependent policies.
-	// Namespace can take oc.networkPolicies key Lock while holding nsInfo lock, the opposite should never happen.
-	relatedNetworkPolicies map[string]bool
-
 	// routingExternalGWs is a slice of net.IP containing the values parsed from
 	// annotation k8s.ovn.org/routing-external-gws
 	routingExternalGWs gatewayInfo
@@ -69,26 +60,6 @@ func (bnc *BaseNetworkController) shouldWatchNamespaces() bool {
 	return bnc.IsDefault() ||
 		bnc.IsPrimaryNetwork() && util.IsNetworkSegmentationSupportEnabled() ||
 		bnc.IsUserDefinedNetwork() && util.IsMultiNetworkPoliciesSupportEnabled()
-}
-
-// WatchNamespaces starts the watching of namespace resource and calls
-// back the appropriate handler logic
-func (bnc *BaseNetworkController) WatchNamespaces() error {
-	if !bnc.shouldWatchNamespaces() {
-		klog.Infof("Ignoring namespaces events for network: %s", bnc.GetNetworkName())
-		return nil
-	}
-
-	if bnc.namespaceHandler != nil {
-		return nil
-	}
-
-	handler, err := bnc.retryNamespaces.WatchResource()
-	if err != nil {
-		return err
-	}
-	bnc.namespaceHandler = handler
-	return err
 }
 
 // aclLoggingUpdateNsInfo parses the provided annotation values and sets nsInfo.aclLogging.Deny and
@@ -237,10 +208,9 @@ func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnl
 	nsInfoExisted := false
 	if nsInfo == nil {
 		nsInfo = &namespaceInfo{
-			relatedNetworkPolicies: map[string]bool{},
-			multicastEnabled:       false,
-			routingExternalPodGWs:  make(map[string]gatewayInfo),
-			routingExternalGWs:     gatewayInfo{gws: sets.New[string](), bfdEnabled: false},
+			multicastEnabled:      false,
+			routingExternalPodGWs: make(map[string]gatewayInfo),
+			routingExternalGWs:    gatewayInfo{gws: sets.New[string](), bfdEnabled: false},
 		}
 		// we are creating nsInfo and going to set it in namespaces map
 		// so safe to hold the lock while we create and add it
@@ -330,20 +300,6 @@ func (bnc *BaseNetworkController) configureNamespaceCommon(nsInfo *namespaceInfo
 		return fmt.Errorf("failed to update multicast (%v)", err)
 	}
 	return nil
-}
-
-// GetNamespaceACLLogging retrieves ACLLoggingLevels for the Namespace.
-// nsInfo will be locked (and unlocked at the end) for given namespace if it exists.
-func (bnc *BaseNetworkController) GetNamespaceACLLogging(ns string) *libovsdbutil.ACLLoggingLevels {
-	nsInfo, nsUnlock := bnc.getNamespaceLocked(ns, true)
-	if nsInfo == nil {
-		return &libovsdbutil.ACLLoggingLevels{
-			Allow: "",
-			Deny:  "",
-		}
-	}
-	defer nsUnlock()
-	return &nsInfo.aclLogging
 }
 
 func (bnc *BaseNetworkController) updateNamespaceAclLogging(ns, aclAnnotation string, nsInfo *namespaceInfo) error {

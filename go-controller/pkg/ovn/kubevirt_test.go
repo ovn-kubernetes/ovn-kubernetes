@@ -787,7 +787,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 					fakeOvn.controller.localZoneNodes.Delete(remoteNode)
 				}
 
-				Expect(fakeOvn.controller.WatchNamespaces()).ToNot(HaveOccurred())
+				Expect(fakeOvn.controller.RegisterNamespaceHandler()).ToNot(HaveOccurred())
 				Expect(fakeOvn.controller.WatchPods()).ToNot(HaveOccurred())
 
 				virtLauncherPodToCreate := sourceVirtLauncherPod

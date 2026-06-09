@@ -37,6 +37,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 	}
 	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
 	oc.DeregisterNodeHandler()
+	oc.DeregisterNamespaceHandler()
 	close(oc.stopChan)
 	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
@@ -53,9 +54,6 @@ func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 	}
 	if oc.podHandler != nil {
 		oc.watchFactory.RemovePodHandler(oc.podHandler)
-	}
-	if oc.namespaceHandler != nil {
-		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
 	}
 	if oc.routeImportManager != nil && config.Gateway.Mode == config.GatewayModeShared {
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
@@ -114,9 +112,10 @@ func (oc *BaseLayer2UserDefinedNetworkController) cleanup() error {
 }
 
 func (oc *BaseLayer2UserDefinedNetworkController) run() error {
-	// WatchNamespaces() should be started first because it has no other
-	// dependencies.
-	if err := oc.WatchNamespaces(); err != nil {
+	// Namespace handling flows through the shared NamespaceController.
+	// Registration runs a synchronous bootstrap pass before returning,
+	// matching the WatchNamespaces ordering contract.
+	if err := oc.RegisterNamespaceHandler(); err != nil {
 		return err
 	}
 

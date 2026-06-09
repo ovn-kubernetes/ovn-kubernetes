@@ -251,7 +251,10 @@ func (c *controller[T]) onUpdate(oldObjInterface, newObjInterface interface{}) {
 }
 
 func (c *controller[T]) onDelete(objInterface interface{}) {
-	key, err := cache.MetaNamespaceKeyFunc(objInterface)
+	// DeletionHandling variant unwraps cache.DeletedFinalStateUnknown
+	// tombstones (delivered on a missed delete / relist); the plain key func
+	// errors on them, which would silently drop the delete.
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(objInterface)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("controller %s: couldn't get key for object %+v: %v", c.name, objInterface, err))
 		return

@@ -19,6 +19,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	nscontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/namespace"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
@@ -139,9 +140,6 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) SyncFunc(objs []interfa
 		case factory.PodType:
 			syncFunc = h.oc.syncPodsForUserDefinedNetwork
 
-		case factory.NamespaceType:
-			syncFunc = h.oc.syncNamespaces
-
 		case factory.PolicyType:
 			syncFunc = h.oc.syncNetworkPolicies
 
@@ -213,6 +211,7 @@ func NewLayer3UserDefinedNetworkController(
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
 	serviceController *svccontroller.Controller,
+	nsReconciler *nscontroller.NamespaceController,
 ) (*Layer3UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -246,6 +245,7 @@ func NewLayer3UserDefinedNetworkController(
 				addressSetManager:           addressSetManager,
 				nodeReconciler:              nodeReconciler,
 				nodeAnnotationCache:         nodeAnnotationCache,
+				nsReconciler:                nsReconciler,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -294,17 +294,16 @@ func (oc *Layer3UserDefinedNetworkController) initRetryFramework() {
 	oc.retryPods = oc.newRetryFramework(factory.PodType)
 
 	// When a user-defined network is enabled as a primary network for namespace,
-	// then watch for namespace and network policy events.
+	// then watch for network policy events. Namespaces flow through the shared
+	// NamespaceController.
 	if oc.IsPrimaryNetwork() {
-		oc.retryNamespaces = oc.newRetryFramework(factory.NamespaceType)
 		oc.retryNetworkPolicies = oc.newRetryFramework(factory.PolicyType)
 	}
 
-	// For secondary networks, we don't have to watch namespace events if
-	// multi-network policy support is not enabled. We don't support
+	// For secondary networks, we don't have to watch network-policy-shaped
+	// events if multi-network policy support is not enabled. We don't support
 	// multi-network policy for IPAM-less secondary networks either.
 	if util.IsMultiNetworkPoliciesSupportEnabled() {
-		oc.retryNamespaces = oc.newRetryFramework(factory.NamespaceType)
 		oc.retryMultiNetworkPolicies = oc.newRetryFramework(factory.MultiNetworkPolicyType)
 	}
 }
@@ -360,6 +359,7 @@ func (oc *Layer3UserDefinedNetworkController) Stop() {
 	klog.Infof("Stop %s UDN controller of network %s", oc.TopologyType(), oc.GetNetworkName())
 	oc.DeregisterServiceNetwork()
 	oc.DeregisterNodeHandler()
+	oc.DeregisterNamespaceHandler()
 	close(oc.stopChan)
 	oc.stopChan = nil
 	oc.cancelableCtx.Cancel()
@@ -373,9 +373,6 @@ func (oc *Layer3UserDefinedNetworkController) Stop() {
 	}
 	if oc.podHandler != nil {
 		oc.watchFactory.RemovePodHandler(oc.podHandler)
-	}
-	if oc.namespaceHandler != nil {
-		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
 	}
 	if oc.routeImportManager != nil {
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
@@ -501,9 +498,10 @@ func (oc *Layer3UserDefinedNetworkController) run() error {
 	klog.Infof("Starting all the Watchers for network %s ...", oc.GetNetworkName())
 	start := time.Now()
 
-	// WatchNamespaces() should be started first because it has no other
-	// dependencies.
-	if err := oc.WatchNamespaces(); err != nil {
+	// Namespace handling flows through the shared NamespaceController.
+	// Registration runs a synchronous bootstrap pass before returning,
+	// matching the WatchNamespaces ordering contract.
+	if err := oc.RegisterNamespaceHandler(); err != nil {
 		return err
 	}
 
