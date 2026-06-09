@@ -154,6 +154,12 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 		}
 	}
 
+	if !util.PodWantsHostNetwork(pod) && !addPort {
+		if err := oc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+			return fmt.Errorf("failed to reconcile network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+
 	if kubevirt.IsPodLiveMigratable(pod) {
 		v4Subnets, v6Subnets := util.GetClusterSubnetsWithHostPrefix()
 		return kubevirt.EnsureLocalZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, oc.lsManager, pod, ovntypes.DefaultNetworkName, append(v4Subnets, v6Subnets...))
@@ -198,8 +204,6 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 // removeLocalZonePod tries to tear down a local zone pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo *lpInfo) error {
-	oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
-
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -210,9 +214,15 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 	if util.PodWantsHostNetwork(pod) {
 		return nil
 	}
+	defer oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
+
 	if err := oc.deleteLogicalPort(pod, portInfo); err != nil {
 		return fmt.Errorf("deleteLogicalPort failed for pod %s: %w",
 			getPodNamespacedName(pod), err)
+	}
+
+	if err := oc.deletePodNetworkPolicyMembership(pod); err != nil {
+		return fmt.Errorf("failed to delete network policy membership for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 
 	return nil
