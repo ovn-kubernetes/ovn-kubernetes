@@ -793,15 +793,7 @@ func (bnc *BaseNetworkController) denyPGDeletePorts(np *networkPolicy, portNames
 	return nil
 }
 
-// handleLocalPodSelectorAddFunc adds a new pod to an existing NetworkPolicy, should be retriable.
-func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolLocalPodEvent("add", duration)
-		}()
-	}
+func (bnc *BaseNetworkController) addLocalPodsToNetworkPolicy(np *networkPolicy, objs ...interface{}) error {
 	np.RLock()
 	defer np.RUnlock()
 	if np.deleted {
@@ -839,15 +831,7 @@ func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolic
 	return nil
 }
 
-// handleLocalPodSelectorDelFunc handles delete event for local pod, should be retriable
-func (bnc *BaseNetworkController) handleLocalPodSelectorDelFunc(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
-		start := time.Now()
-		defer func() {
-			duration := time.Since(start)
-			metrics.RecordNetpolLocalPodEvent("delete", duration)
-		}()
-	}
+func (bnc *BaseNetworkController) deleteLocalPodsFromNetworkPolicy(np *networkPolicy, objs ...interface{}) error {
 	np.RLock()
 	defer np.RUnlock()
 	if np.deleted {
@@ -878,6 +862,30 @@ func (bnc *BaseNetworkController) handleLocalPodSelectorDelFunc(np *networkPolic
 	}
 
 	return nil
+}
+
+// handleLocalPodSelectorAddFunc adds a new pod to an existing NetworkPolicy, should be retriable.
+func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolicy, objs ...interface{}) error {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+		start := time.Now()
+		defer func() {
+			duration := time.Since(start)
+			metrics.RecordNetpolLocalPodEvent("add", duration)
+		}()
+	}
+	return bnc.addLocalPodsToNetworkPolicy(np, objs...)
+}
+
+// handleLocalPodSelectorDelFunc handles delete event for local pod, should be retriable
+func (bnc *BaseNetworkController) handleLocalPodSelectorDelFunc(np *networkPolicy, objs ...interface{}) error {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+		start := time.Now()
+		defer func() {
+			duration := time.Since(start)
+			metrics.RecordNetpolLocalPodEvent("delete", duration)
+		}()
+	}
+	return bnc.deleteLocalPodsFromNetworkPolicy(np, objs...)
 }
 
 // This function starts a watcher for local pods. Sync function and add event for every existing pod
