@@ -377,16 +377,14 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 
 	if bsnc.doesNetworkRequireIPAM() &&
 		(util.IsMultiNetworkPoliciesSupportEnabled() || (util.IsNetworkSegmentationSupportEnabled() && bsnc.IsPrimaryNetwork())) {
-		// Ensure the namespace/nsInfo exists
 		portUUID := ""
 		if lsp != nil {
 			portUUID = lsp.UUID
 		}
-		addOps, err := bsnc.addPodToNamespaceForUserDefinedNetwork(pod.Namespace, portUUID)
+		ops, err = bsnc.addPodToNamespacePortGroupOps(ops, pod.Namespace, portUUID)
 		if err != nil {
 			return err
 		}
-		ops = append(ops, addOps...)
 	}
 
 	recordOps, txOkCallBack, _, err := bsnc.AddConfigDurationRecord("pod", pod.Namespace, pod.Name)
@@ -603,19 +601,6 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 	bsnc.trackPodsReleasedBeforeStartup(annotatedLocalPods)
 
 	return bsnc.deleteStaleLogicalSwitchPorts(expectedLogicalPorts)
-}
-
-// addPodToNamespaceForUserDefinedNetwork returns the ops needed to add pod's IP to the namespace's address set.
-func (bsnc *BaseUserDefinedNetworkController) addPodToNamespaceForUserDefinedNetwork(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	var err error
-	nsInfo, nsUnlock, err := bsnc.ensureNamespaceLockedForUserDefinedNetwork(ns, true, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure namespace locked: %v", err)
-	}
-
-	defer nsUnlock()
-
-	return bsnc.addLocalPodToNamespaceLocked(nsInfo, portUUID)
 }
 
 // AddNamespaceForUserDefinedNetwork creates corresponding addressset in ovn db for User Defined Network
