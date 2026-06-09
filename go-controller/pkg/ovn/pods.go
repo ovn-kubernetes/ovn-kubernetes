@@ -339,6 +339,10 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		oc.onLogicalPortCacheAdd(pod, types.DefaultNetworkName)
 	}
 
+	if err := oc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+		return err
+	}
+
 	if kubevirt.IsPodLiveMigratable(pod) {
 		if err := oc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
 			return fmt.Errorf("failed configuring DHCP for default network at pod %s/%s: %w", pod.Namespace, pod.Name, err)

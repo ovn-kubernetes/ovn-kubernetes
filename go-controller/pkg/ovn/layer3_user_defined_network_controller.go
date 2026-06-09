@@ -227,25 +227,26 @@ func NewLayer3UserDefinedNetworkController(
 	oc := &Layer3UserDefinedNetworkController{
 		BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
 			BaseNetworkController: BaseNetworkController{
-				CommonNetworkControllerInfo: *cnci,
-				controllerName:              getNetworkControllerName(netInfo.GetNetworkName()),
-				ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
-				lsManager:                   lsm.NewLogicalSwitchManager(),
-				logicalPortCache:            portCache,
-				namespaces:                  make(map[string]*namespaceInfo),
-				namespacesMutex:             sync.Mutex{},
-				addressSetFactory:           addressSetFactory,
-				networkPolicies:             syncmap.NewSyncMap[*networkPolicy](),
-				sharedNetpolPortGroups:      syncmap.NewSyncMap[*defaultDenyPortGroups](),
-				stopChan:                    stopChan,
-				wg:                          &sync.WaitGroup{},
-				localZoneNodes:              &sync.Map{},
-				cancelableCtx:               util.NewCancelableContext(),
-				networkManager:              networkManager,
-				routeImportManager:          routeImportManager,
-				addressSetManager:           addressSetManager,
-				nodeReconciler:              nodeReconciler,
-				nodeAnnotationCache:         nodeAnnotationCache,
+				CommonNetworkControllerInfo:  *cnci,
+				controllerName:               getNetworkControllerName(netInfo.GetNetworkName()),
+				ReconcilableNetInfo:          util.NewReconcilableNetInfo(netInfo),
+				lsManager:                    lsm.NewLogicalSwitchManager(),
+				logicalPortCache:             portCache,
+				namespaces:                   make(map[string]*namespaceInfo),
+				namespacesMutex:              sync.Mutex{},
+				addressSetFactory:            addressSetFactory,
+				networkPolicies:              syncmap.NewSyncMap[*networkPolicy](),
+				networkPolicyKeysByNamespace: syncmap.NewSyncMap[sets.Set[string]](),
+				sharedNetpolPortGroups:       syncmap.NewSyncMap[*defaultDenyPortGroups](),
+				stopChan:                     stopChan,
+				wg:                           &sync.WaitGroup{},
+				localZoneNodes:               &sync.Map{},
+				cancelableCtx:                util.NewCancelableContext(),
+				networkManager:               networkManager,
+				routeImportManager:           routeImportManager,
+				addressSetManager:            addressSetManager,
+				nodeReconciler:               nodeReconciler,
+				nodeAnnotationCache:          nodeAnnotationCache,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -260,7 +261,6 @@ func NewLayer3UserDefinedNetworkController(
 
 	if oc.IsPrimaryNetwork() {
 		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
-			oc.requestLocalPodPolicyRetriesForPod(pod, "logical port cache update")
 			if oc.eIPController != nil {
 				oc.eIPController.addEgressIPPodRetry(pod, "logical port cache update")
 			}
