@@ -6,6 +6,7 @@ package ovn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -13,6 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -372,4 +375,45 @@ func getNamespacePortGroupDbIDs(ns string, controller string) *libovsdbops.DbObj
 
 func (bnc *BaseNetworkController) getNamespacePortGroupName(namespace string) string {
 	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, bnc.controllerName))
+}
+
+func (bnc *BaseNetworkController) addPodToNamespacePortGroupOps(ops []ovsdb.Operation, ns, portUUID string) ([]ovsdb.Operation, error) {
+	if !bnc.needNamespacedPortGroup() || portUUID == "" {
+		return ops, nil
+	}
+
+	pgName := bnc.getNamespacePortGroupName(ns)
+	if _, err := libovsdbops.GetPortGroup(bnc.nbClient, &nbdb.PortGroup{Name: pgName}); err != nil {
+		if !errors.Is(err, libovsdbclient.ErrNotFound) {
+			return nil, fmt.Errorf("failed to get namespace port group %s for namespace %s: %w", pgName, ns, err)
+		}
+		// Namespace handlers still own namespace port group lifecycle. Create
+		// here only preserves existing pod-before-namespace convergence when
+		// informer ordering exposes a pod before namespace add created the group.
+		pgIDs := getNamespacePortGroupDbIDs(ns, bnc.controllerName)
+		pg := libovsdbutil.BuildPortGroup(pgIDs, []*nbdb.LogicalSwitchPort{{UUID: portUUID}}, nil)
+		return libovsdbops.CreateOrUpdatePortGroupsOps(bnc.nbClient, ops, pg)
+	}
+
+	ops, err := libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, pgName, portUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add pod port %s to namespace port group %s: %w", portUUID, pgName, err)
+	}
+	return ops, nil
+}
+
+func (bnc *BaseNetworkController) deletePodFromNamespacePortGroupOps(ops []ovsdb.Operation, ns, portUUID string) ([]ovsdb.Operation, error) {
+	if !bnc.needNamespacedPortGroup() || portUUID == "" {
+		return ops, nil
+	}
+
+	pgName := bnc.getNamespacePortGroupName(ns)
+	// Namespace port groups may not exist for namespaces this controller does
+	// not manage yet. DeletePortsFromPortGroupOps treats a missing port group as
+	// a no-op, preserving the old delete path's unmanaged-namespace behavior.
+	ops, err := libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, pgName, portUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete pod port %s from namespace port group %s: %w", portUUID, pgName, err)
+	}
+	return ops, nil
 }

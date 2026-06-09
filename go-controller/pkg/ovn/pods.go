@@ -296,12 +296,11 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		}
 	}
 
-	// Ensure the namespace/nsInfo exists
-	addOps, err := oc.addLocalPodToNamespace(pod.Namespace, lsp.UUID)
+	// Ensure pod-owned namespace port group membership before pod setup succeeds.
+	ops, err = oc.addPodToNamespacePortGroupOps(ops, pod.Namespace, lsp.UUID)
 	if err != nil {
 		return err
 	}
-	ops = append(ops, addOps...)
 
 	if config.Gateway.DisableSNATMultipleGWs {
 		// Add NAT rules to pods if disable SNAT is set. External gateway routes

@@ -1707,6 +1707,167 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("pod Add should create namespace port group membership when namespace doesn't yet exist", func() {
+			app.Action = func(*cli.Context) error {
+				config.OVNKubernetesFeature.EnableEgressFirewall = true
+
+				namespaceT := ovntest.NewNamespace("namespace1")
+				t := newTPod(
+					"node1",
+					"10.128.1.0/24",
+					"10.128.1.2",
+					"10.128.1.1",
+					"myPod",
+					"10.128.1.3",
+					"0a:58:0a:80:01:03",
+					namespaceT.Name,
+				)
+
+				fakeOvn.startWithDBSetup(initialDB,
+					&corev1.NodeList{
+						Items: []corev1.Node{
+							*newNode(node1Name, "192.168.126.202/24"),
+						},
+					},
+				)
+				t.populateLogicalSwitchCache(fakeOvn)
+				err := fakeOvn.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchPods()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Create(context.TODO(), ovntest.NewPod(t.namespace, t.podName, t.nodeName, t.podIP), metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				gomega.Eventually(func() string {
+					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t.namespace, t.podName)
+				}, 2).Should(gomega.MatchJSON(t.getAnnotationsJson()))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(
+					getDefaultNetExpectedDataPodsSwitchesPortGroup([]testPod{t}, []string{"node1"}, namespaceT.Name)))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("pod Delete should remove namespace port group membership", func() {
+			app.Action = func(*cli.Context) error {
+				config.OVNKubernetesFeature.EnableEgressFirewall = true
+
+				namespaceT := *ovntest.NewNamespace("namespace1")
+				t := newTPod(
+					"node1",
+					"10.128.1.0/24",
+					"10.128.1.2",
+					"10.128.1.1",
+					"myPod",
+					"10.128.1.3",
+					"0a:58:0a:80:01:03",
+					namespaceT.Name,
+				)
+
+				fakeOvn.startWithDBSetup(initialDB,
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
+							namespaceT,
+						},
+					},
+					&corev1.NodeList{
+						Items: []corev1.Node{
+							*newNode(node1Name, "192.168.126.202/24"),
+						},
+					},
+				)
+				t.populateLogicalSwitchCache(fakeOvn)
+				err := fakeOvn.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchPods()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Create(context.TODO(), ovntest.NewPod(t.namespace, t.podName, t.nodeName, t.podIP), metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(
+					getDefaultNetExpectedDataPodsSwitchesPortGroup([]testPod{t}, []string{"node1"}, namespaceT.Name)))
+
+				err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Delete(context.TODO(), t.podName, *metav1.NewDeleteOptions(0))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(
+					getDefaultNetExpectedDataPodsSwitchesPortGroup(nil, []string{"node1"}, namespaceT.Name)))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("pod Delete should tolerate a missing namespace port group", func() {
+			app.Action = func(*cli.Context) error {
+				config.OVNKubernetesFeature.EnableEgressFirewall = true
+				fakeOvn.startWithDBSetup(initialDB)
+
+				ops, err := fakeOvn.controller.deletePodFromNamespacePortGroupOps(nil, "unmanaged-namespace", fakeUUID)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ops).To(gomega.BeEmpty())
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("pod Add should create namespace port group membership when multicast needs namespace port groups", func() {
+			app.Action = func(*cli.Context) error {
+				config.EnableMulticast = true
+
+				namespaceT := ovntest.NewNamespace("namespace1")
+				t := newTPod(
+					"node1",
+					"10.128.1.0/24",
+					"10.128.1.2",
+					"10.128.1.1",
+					"myPod",
+					"10.128.1.3",
+					"0a:58:0a:80:01:03",
+					namespaceT.Name,
+				)
+
+				fakeOvn.startWithDBSetup(initialDB,
+					&corev1.NodeList{
+						Items: []corev1.Node{
+							*newNode(node1Name, "192.168.126.202/24"),
+						},
+					},
+				)
+				t.populateLogicalSwitchCache(fakeOvn)
+				err := fakeOvn.controller.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchPods()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Create(context.TODO(), ovntest.NewPod(t.namespace, t.podName, t.nodeName, t.podIP), metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Eventually(func() string {
+					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t.namespace, t.podName)
+				}, 2).Should(gomega.MatchJSON(t.getAnnotationsJson()))
+
+				pgIDs := getNamespacePortGroupDbIDs(namespaceT.Name, ovntypes.DefaultNetworkControllerName)
+				namespacePortGroup := libovsdbutil.BuildPortGroup(
+					pgIDs,
+					[]*nbdb.LogicalSwitchPort{{UUID: t.portUUID}},
+					nil,
+				)
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataSubset(namespacePortGroup))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
 	})
 
 	ginkgo.Context("on startup", func() {
