@@ -140,6 +140,8 @@ type BaseNetworkController struct {
 	// Allowed order of locking is namespace Lock -> oc.networkPolicies key Lock -> networkPolicy.Lock
 	// Don't take namespace Lock while holding networkPolicy key lock to avoid deadlock.
 	networkPolicies *syncmap.SyncMap[*networkPolicy]
+	// Indexes policies by namespace for pod membership reconciliation.
+	networkPolicyKeysByNamespace *syncmap.SyncMap[sets.Set[string]]
 
 	// map of existing shared port groups for network policies
 	// port group exists in the db if and only if port group key is present in this map

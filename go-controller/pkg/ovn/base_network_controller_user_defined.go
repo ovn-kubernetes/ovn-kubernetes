@@ -298,6 +298,9 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 	if len(errs) != 0 {
 		return utilerrors.Join(errs...)
 	}
+	if err := bsnc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+		return fmt.Errorf("failed to reconcile network policy membership for pod %s/%s network %s: %w", pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
+	}
 	return nil
 }
 
@@ -444,6 +447,13 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		portInfoMap = map[string]*lpInfo{}
 	}
 
+	cleanupNetworkPolicyMembership := func() error {
+		if err := bsnc.deletePodNetworkPolicyMembership(pod); err != nil {
+			return fmt.Errorf("failed to delete network policy membership for pod %s/%s network %s: %w", pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
+		}
+		return nil
+	}
+
 	var alreadyProcessed bool
 	for nadKey, podAnnotation := range podNetworks {
 		networkName := bsnc.networkManager.GetNetworkNameForNADKey(nadKey)
@@ -460,7 +470,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			// became remote where we might still need to cleanup. On L3 networks
 			// the node switch is removed so there is no need to do this.
 			if bsnc.TopologyType() != types.LocalnetTopology {
-				return nil
+				return cleanupNetworkPolicyMembership()
 			}
 			alreadyProcessed = true
 		}
@@ -500,7 +510,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 
 	}
-	return nil
+	return cleanupNetworkPolicyMembership()
 }
 
 func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods []interface{}) error {
