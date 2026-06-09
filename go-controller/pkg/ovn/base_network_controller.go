@@ -840,21 +840,6 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 	return mgmtPortIPs, nil
 }
 
-// addLocalPodToNamespaceLocked returns the ops needed to add the pod's IP to the namespace
-// address set and the port UUID (if applicable) to the namespace port group.
-// This function must be called with the nsInfo lock taken.
-func (bnc *BaseNetworkController) addLocalPodToNamespaceLocked(nsInfo *namespaceInfo, portUUID string) ([]ovsdb.Operation, error) {
-	var ops []ovsdb.Operation
-	var err error
-	if portUUID != "" && nsInfo.portGroupName != "" {
-		if ops, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {
-			return nil, err
-		}
-	}
-
-	return ops, nil
-}
-
 func (bnc *BaseNetworkController) recordNodeErrorEvent(node *corev1.Node, nodeErr error) {
 	if bnc.IsUserDefinedNetwork() {
 		// TBD, noop for UDN for now

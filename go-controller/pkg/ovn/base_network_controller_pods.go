@@ -736,22 +736,7 @@ func (bnc *BaseNetworkController) delLSPOps(logicalPort, switchName,
 }
 
 func (bnc *BaseNetworkController) deletePodFromNamespace(ns string, portUUID string) ([]ovsdb.Operation, error) {
-	// for UDN, namespace may be not managed
-	nsInfo, nsUnlock := bnc.getNamespaceLocked(ns, true)
-	if nsInfo == nil {
-		return nil, nil
-	}
-	defer nsUnlock()
-	var ops []ovsdb.Operation
-	var err error
-
-	if nsInfo.portGroupName != "" && len(portUUID) > 0 {
-		if ops, err = libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {
-			return nil, err
-		}
-	}
-
-	return ops, nil
+	return bnc.deletePodFromNamespacePortGroupOps(nil, ns, portUUID)
 }
 
 // isPodScheduledinLocalZone returns true when the pod is scheduled on a node
