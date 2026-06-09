@@ -14,6 +14,7 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
@@ -520,6 +521,21 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		if bsnc.IsPrimaryNetwork() {
 			activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 			if err != nil {
+				if apierrors.IsNotFound(err) {
+					// namespace deleted after pod listing - safe to skip
+					klog.Infof("%s network controller pod sync: pod %s/%s namespace deleted, skipping",
+						bsnc.GetNetworkName(), pod.Namespace, pod.Name)
+					continue
+				}
+				if util.IsInvalidPrimaryNetworkError(err) {
+					// If network manager isn't aware of the primary network for this pod's namespace,
+					// it can't possibly be already wired to our network unless someone is directly messing
+					// with the NADs owned by a CUDN, as network manager syncs all NADs at startup.
+					// Skip during initial sync to avoid blocking startup.
+					klog.V(5).Infof("%s network controller pod sync: pod %s/%s namespace network not ready, skipping",
+						bsnc.GetNetworkName(), pod.Namespace, pod.Name)
+					continue
+				}
 				return fmt.Errorf("failed to find the active network for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 			}
 			if activeNetwork == nil || activeNetwork.IsDefault() {
