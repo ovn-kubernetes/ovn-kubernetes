@@ -79,13 +79,6 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		customL2IPv6InfraCIDR               = "2014:100:200::/122"
 		userDefinedNetworkName              = "hogwarts"
 		nadName                             = "gryffindor"
-
-		// The first subnet can support 2 nodes; when the cluster has more than 2 nodes,
-		// both subnets will be utilized.
-		userDefinedNetworkIPv4Subnet1 = "172.31.0.0/23/24"
-		userDefinedNetworkIPv4Subnet2 = "172.30.0.0/16/24"
-		userDefinedNetworkIPv6Subnet1 = "2014:100:200::0/63/64"
-		userDefinedNetworkIPv6Subnet2 = "2014:100:100::0/48/64"
 	)
 
 	BeforeEach(func() {
@@ -1103,12 +1096,11 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr: joinStrings(
-								// the 1st set of CIDR can only allocate subnet for 2 nodes
-								userDefinedNetworkIPv4Subnet1, userDefinedNetworkIPv4Subnet2,
-								// the 2nd set of CIDR can allocate subnet for remaining nodes
-								userDefinedNetworkIPv6Subnet1, userDefinedNetworkIPv6Subnet2,
-							),
+							// Use multiple CIDRs per IP family. The first CIDR
+							// is just big enough to allocate hostSubnets for
+							// the first two nodes, remaining nodes will be
+							// allocated hostSubnets from the second CIDR
+							cidr: primaryLayer3MultiCIDRs(),
 							role: "primary",
 						},
 					),
@@ -1151,7 +1143,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						e2eskipper.Skipf("need at least 3 ready schedulable nodes to run this test")
 					}
 
-					By("creating the intial network with one CIDR")
+					// Use multiple CIDRs per IP family. The first CIDR is just
+					// big enough to allocate hostSubnets for the first two
+					// nodes, remaining nodes will be allocated hostSubnets from
+					// the second CIDR
+					userDefinedNetworkIPv4Subnet1, userDefinedNetworkIPv4Subnet2 := primaryLayer3IPv4CIDRs()
+					userDefinedNetworkIPv6Subnet1, userDefinedNetworkIPv6Subnet2 := primaryLayer3IPv6CIDRs()
+					By("creating the initial network with one CIDR")
 					netConfig := &networkAttachmentConfigParams{
 						name:      randomNetworkMetaName(),
 						namespace: f.Namespace.Name,

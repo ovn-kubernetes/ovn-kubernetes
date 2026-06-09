@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
@@ -152,18 +153,20 @@ func egressFirewallPolicyValidationTests(useUDN bool, udnTopology string) {
 				f.Namespace = namespace
 				framework.ExpectNoError(err)
 
-				userDefinedNetworkIPv4Subnets := []string{"172.31.0.0/16"}
-				userDefinedNetworkIPv6Subnets := []string{"2014:100:200::0/60"}
+				userDefinedNetworkIPv4Subnets, userDefinedNetworkIPv6Subnets := allocators.GetNthFirstUDNSubnets(1)
+				cidr := joinStrings(joinStrings(userDefinedNetworkIPv4Subnets...), joinStrings(userDefinedNetworkIPv6Subnets...))
 				if udnTopology == "layer3" {
-					userDefinedNetworkIPv4Subnets = []string{"172.31.0.0/23/24", "172.30.0.0/16/24"}
-					userDefinedNetworkIPv6Subnets = []string{"2014:100:200::0/63/64", "2014:100:100::0/48/64"}
+					// For Layer 3, use multiple CIDRs per IP family. The first
+					// CIDR is just big enough to allocate hostSubnets for the
+					// first two nodes, remaining nodes will be allocated
+					// hostSubnets from the second CIDR
+					cidr = primaryLayer3MultiCIDRs()
 				}
-				userDefinedNetworkSubnets := append(append([]string{}, userDefinedNetworkIPv4Subnets...), userDefinedNetworkIPv6Subnets...)
 
 				nadCfg := networkAttachmentConfigParams{
 					name:     "tenant-red",
 					topology: udnTopology,
-					cidr:     joinStrings(userDefinedNetworkSubnets...),
+					cidr:     cidr,
 					role:     "primary",
 				}
 

@@ -131,6 +131,7 @@ func (s subnetSpec) usable() int {
 	return s.total() - s.excluded.Len()
 }
 
+// nthFree returns the index of the n-th non-excluded subnet (1-indexed).
 func (s subnetSpec) nthFree(n int) int {
 	count := 0
 	for i := range s.total() {

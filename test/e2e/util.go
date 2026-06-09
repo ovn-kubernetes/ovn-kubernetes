@@ -2016,3 +2016,17 @@ func waitForNodeReadyState(f *framework.Framework, nodeName string, timeout time
 		return false
 	}, timeout, 10*time.Second).Should(gomega.BeTrue(), expectationMessage)
 }
+
+// firstSubnetOf returns the first subnet of a given size within the provided
+// subnet
+func firstSubnetOf(subnet string, subnetSize int) string {
+	_, ipNet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		panic(fmt.Sprintf("firstSubnetOf: invalid subnet %q: %v", subnet, err))
+	}
+	ones, bits := ipNet.Mask.Size()
+	if subnetSize < ones || subnetSize > bits {
+		panic(fmt.Sprintf("firstSubnetOf: requested size /%d is not between min /%d and max /%d for %s", subnetSize, ones, bits, subnet))
+	}
+	return fmt.Sprintf("%s/%d", ipNet.IP, subnetSize)
+}

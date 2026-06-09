@@ -29,6 +29,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -43,18 +44,34 @@ func primaryLayer3MultiCIDRs() string {
 	return joinStrings(primaryLayer3MultiIPv4CIDRs(), primaryLayer3MultiIPv6CIDRs())
 }
 
+// primaryLayer3IPv4CIDRs returns two IPv4 CIDRs for a primary network in layer3
+// topology. The first CIDR is resized to a /23 to force an overflow to the
+// second CIDR for a third and subsequent nodes hostSubnet.
+func primaryLayer3IPv4CIDRs() (string, string) {
+	subnets4, _ := allocators.GetNthFirstUDNSubnets(2)
+	subnets4[0] = firstSubnetOf(subnets4[0], 23) + "/24"
+	subnets4[1] = subnets4[1] + "/24"
+	return subnets4[0], subnets4[1]
+}
+
+// primaryLayer3IPv6CIDRs returns two IPv6 CIDRs for a primary network in layer3
+// topology. The first CIDR is resized to a /63 to force an overflow to the
+// second CIDR for a third and subsequent nodes hostSubnet.
+func primaryLayer3IPv6CIDRs() (string, string) {
+	_, subnets6 := allocators.GetNthFirstUDNSubnets(2)
+	subnets6[0] = firstSubnetOf(subnets6[0], 63) + "/64"
+	subnets6[1] = subnets6[1] + "/64"
+	return subnets6[0], subnets6[1]
+}
+
 func primaryLayer3MultiIPv4CIDRs() string {
-	return joinStrings(
-		"172.31.0.0/23/24",
-		"172.30.0.0/16/24",
-	)
+	subnet1, subnet2 := primaryLayer3IPv4CIDRs()
+	return joinStrings(subnet1, subnet2)
 }
 
 func primaryLayer3MultiIPv6CIDRs() string {
-	return joinStrings(
-		"2014:100:200::0/63/64",
-		"2014:100:100::0/48/64",
-	)
+	subnet1, subnet2 := primaryLayer3IPv6CIDRs()
+	return joinStrings(subnet1, subnet2)
 }
 
 func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
