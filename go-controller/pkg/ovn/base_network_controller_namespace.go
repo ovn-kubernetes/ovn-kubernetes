@@ -6,7 +6,6 @@ package ovn
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -382,22 +381,11 @@ func (bnc *BaseNetworkController) addPodToNamespacePortGroupOps(ops []ovsdb.Oper
 		return ops, nil
 	}
 
-	pgName := bnc.getNamespacePortGroupName(ns)
-	if _, err := libovsdbops.GetPortGroup(bnc.nbClient, &nbdb.PortGroup{Name: pgName}); err != nil {
-		if !errors.Is(err, libovsdbclient.ErrNotFound) {
-			return nil, fmt.Errorf("failed to get namespace port group %s for namespace %s: %w", pgName, ns, err)
-		}
-		// Namespace handlers still own namespace port group lifecycle. Create
-		// here only preserves existing pod-before-namespace convergence when
-		// informer ordering exposes a pod before namespace add created the group.
-		pgIDs := getNamespacePortGroupDbIDs(ns, bnc.controllerName)
-		pg := libovsdbutil.BuildPortGroup(pgIDs, []*nbdb.LogicalSwitchPort{{UUID: portUUID}}, nil)
-		return libovsdbops.CreateOrUpdatePortGroupsOps(bnc.nbClient, ops, pg)
-	}
-
-	ops, err := libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, pgName, portUUID)
+	pgIDs := getNamespacePortGroupDbIDs(ns, bnc.controllerName)
+	pg := libovsdbutil.BuildPortGroup(pgIDs, []*nbdb.LogicalSwitchPort{{UUID: portUUID}}, nil)
+	ops, err := libovsdbops.CreateOrAddPortsToPortGroupOps(bnc.nbClient, ops, pg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add pod port %s to namespace port group %s: %w", portUUID, pgName, err)
+		return nil, fmt.Errorf("failed to add pod port %s to namespace port group %s: %w", portUUID, pg.Name, err)
 	}
 	return ops, nil
 }
