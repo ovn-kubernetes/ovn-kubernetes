@@ -133,7 +133,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 	case factory.PodType:
 		newPod := newObj.(*corev1.Pod)
 		oldPod := oldObj.(*corev1.Pod)
-		if err := h.oc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache)); err != nil {
+		if err := h.oc.reconcilePodForUserDefinedNetwork(oldPod, newPod, inRetryCache); err != nil {
 			return err
 		}
 
