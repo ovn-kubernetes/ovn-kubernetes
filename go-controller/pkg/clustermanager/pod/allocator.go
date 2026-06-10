@@ -116,9 +116,6 @@ func (a *PodAllocator) Init() error {
 func (a *PodAllocator) getActiveNetworkForPod(pod *corev1.Pod) (util.NetInfo, error) {
 	activeNetwork, err := a.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 	if err != nil {
-		if util.IsInvalidPrimaryNetworkError(err) {
-			a.recordPodErrorEvent(pod, err)
-		}
 		return nil, err
 	}
 	// Cluster manager pod allocation should always have an active network
@@ -202,6 +199,11 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		if a.netInfo.IsPrimaryNetwork() {
 			activeNetwork, err = a.getActiveNetworkForPod(pod)
 			if err != nil {
+				if util.IsInvalidPrimaryNetworkError(err) {
+					klog.V(5).Infof("Skipping pod %s/%s on network %s: primary network not ready yet for namespace",
+						pod.Namespace, pod.Name, a.netInfo.GetNetworkName())
+					return nil
+				}
 				return fmt.Errorf("failed looking for an active network: %w", err)
 			}
 		}
