@@ -67,7 +67,7 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *knet.Pod", obj)
 		}
-		return bsnc.ensurePodForUserDefinedNetwork(pod, true)
+		return bsnc.reconcilePodForUserDefinedNetwork(nil, pod, false)
 
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
@@ -113,7 +113,7 @@ func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCo
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return bsnc.ensurePodForUserDefinedNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache))
+		return bsnc.reconcilePodForUserDefinedNetwork(oldPod, newPod, inRetryCache)
 
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -175,7 +175,7 @@ func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCo
 		if cachedObj != nil {
 			portInfoMap = cachedObj.(map[string]*lpInfo)
 		}
-		return bsnc.removePodForUserDefinedNetwork(pod, portInfoMap)
+		return bsnc.deletePodForUserDefinedNetwork(pod, portInfoMap)
 
 	case factory.NamespaceType:
 		ns := obj.(*corev1.Namespace)
@@ -203,6 +203,14 @@ func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCo
 	return nil
 }
 
+// reconcilePodForUserDefinedNetwork is the pod reconciliation entry point for
+// UDN controllers. It centralizes the add/update decision while the
+// implementation still delegates to the legacy ensure path.
+func (bsnc *BaseUserDefinedNetworkController) reconcilePodForUserDefinedNetwork(oldPod, pod *corev1.Pod, inRetryCache bool) error {
+	addPort := oldPod == nil || shouldAddPort(oldPod, pod, inRetryCache)
+	return bsnc.ensurePodForUserDefinedNetwork(pod, addPort)
+}
+
 // ensurePodForUserDefinedNetwork tries to set up the User Defined Network for a pod. It returns nil on success and error
 // on failure; failure indicates the pod set up should be retried later.
 func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod *corev1.Pod, addPort bool) error {
@@ -227,6 +235,9 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 	updatePort := kubevirtLiveMigrationStatus != nil && pod.Name == kubevirtLiveMigrationStatus.TargetPod.Name
 
 	if !addPort && !updatePort {
+		if err := bsnc.reconcilePodNetworkPolicyMembership(pod); err != nil {
+			return fmt.Errorf("failed to reconcile network policy membership for pod %s/%s network %s: %w", pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
+		}
 		return nil
 	}
 
@@ -424,6 +435,12 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	}
 
 	return nil
+}
+
+// deletePodForUserDefinedNetwork is the pod delete entry point for UDN
+// controllers. It currently delegates to the legacy remove path.
+func (bsnc *BaseUserDefinedNetworkController) deletePodForUserDefinedNetwork(pod *corev1.Pod, portInfoMap map[string]*lpInfo) error {
+	return bsnc.removePodForUserDefinedNetwork(pod, portInfoMap)
 }
 
 // removePodForUserDefinedNetwork tried to tear down a pod. It returns nil on success and error on failure;
