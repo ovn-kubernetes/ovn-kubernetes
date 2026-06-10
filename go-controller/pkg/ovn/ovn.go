@@ -98,6 +98,14 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 	}
 }
 
+// reconcilePod is the pod reconciliation entry point for the default network.
+// It centralizes the add/update decision while the implementation still
+// delegates to the legacy ensure path.
+func (oc *DefaultNetworkController) reconcilePod(oldPod, pod *corev1.Pod, inRetryCache bool) error {
+	addPort := oldPod == nil || inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(pod)
+	return oc.ensurePod(oldPod, pod, addPort)
+}
+
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
 func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort bool) error {
@@ -177,6 +185,12 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) erro
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
 	return nil
+}
+
+// deletePod is the pod delete entry point for the default network. It currently
+// delegates to the legacy remove path.
+func (oc *DefaultNetworkController) deletePod(pod *corev1.Pod, portInfo *lpInfo) error {
+	return oc.removePod(pod, portInfo)
 }
 
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
