@@ -837,7 +837,8 @@ func GetFilteredInterfaceAddrs(link netlink.Link, v4, v6 bool) ([]netlink.Addr, 
 	}
 	validAddrs := make([]netlink.Addr, 0)
 	for _, addr := range addrs {
-		if addr.IP.IsLinkLocalUnicast() || IsAddressReservedForInternalUse(addr.IP) || IsAddressAddedByKeepAlived(addr) {
+		if addr.IP.IsLinkLocalUnicast() || IsAddressReservedForInternalUse(addr.IP) ||
+			IsAddressAddedByKeepAlived(addr) || IsVTEPDevice(link.Attrs().Name) {
 			continue
 		}
 		// Ignore addresses marked as secondary or deprecated since they may
@@ -875,6 +876,15 @@ func IsAddressReservedForInternalUse(addr net.IP) bool {
 // "HasSuffix" is used.
 func IsAddressAddedByKeepAlived(addr netlink.Addr) bool {
 	return strings.HasSuffix(addr.Label, "vip")
+}
+
+// IsVTEPDevice checks if the given link name belongs to an EVPN VTEP dummy device.
+// VTEP dummy devices use the "evlo" prefix and are created by the EVPN node controller
+// to hold managed VTEP IPs. Addresses on these devices should be filtered out from
+// host-cidrs as they are reserved for EVPN VTEP functionality and not general node
+// addresses.
+func IsVTEPDevice(linkName string) bool {
+	return strings.HasPrefix(linkName, "evlo")
 }
 
 // GetIPv6OnSubnet when given an IPv6 address with a 128 prefix for an interface,

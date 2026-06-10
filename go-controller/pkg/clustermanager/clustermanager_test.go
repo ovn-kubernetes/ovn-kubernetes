@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
+	frrapi "github.com/metallb/frr-k8s/api/v1beta1"
+	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
@@ -29,9 +31,12 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	networkconnect "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
+	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -1749,6 +1754,315 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				}
 				gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 			})
+		})
+	})
+
+	ginkgo.Context("Managed VTEP + RouteAdvertisements integration", func() {
+		// Full end-to-end user workflow: operator creates a managed VTEP, a CUDN
+		// with EVPN IP-VRF, an RA, and a source FRRConfiguration. The cluster
+		// manager (VTEP controller + UDN controller + network manager + RA
+		// controller all running together) must:
+		//   1. Allocate one VTEP IP per node and write k8s.ovn.org/vteps.
+		//   2. Create a NAD for the CUDN (UDN controller), register the network
+		//      (network manager)
+		//   3. then generate per-node FRRConfigurations that
+		//      include a /32 host route for each allocated VTEP IP (RA controller).
+		ginkgo.It("VTEP controller allocates IPs and RA generates /32 host-route FRRConfigurations", func() {
+			app.Action = func(ctx *cli.Context) error {
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// These flags must be set after InitConfig, which resets all
+				// feature flags to their defaults.
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+				config.OVNKubernetesFeature.EnableEVPN = true
+				config.OVNKubernetesFeature.EnableEgressIP = true
+				config.Gateway.Mode = config.GatewayModeLocal
+
+				const (
+					vtepName    = "evpn-vtep"
+					vtepCIDR    = "100.64.0.0/24"
+					cudnName    = "blue"
+					frrNS       = "frr-system"
+					bgpASN      = 65000
+					bgpPeer     = "192.168.1.1"
+					ipVRFVNI    = int32(2000)
+					routeTarget = "65000:2000"
+				)
+
+				// Two bare nodes: no VTEP annotation yet; node-subnets annotation
+				// is set so RA can compute prefixes for the pod network.
+				node1 := &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node1",
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-subnets": `{"cluster_udn_blue":"10.2.1.0/24"}`,
+						},
+					},
+				}
+				node2 := &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node2",
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-subnets": `{"cluster_udn_blue":"10.2.2.0/24"}`,
+						},
+					},
+				}
+				// The UDN controller creates NADs in namespaces matching the CUDN's
+				// NamespaceSelector. The namespace must carry RequiredUDNNamespaceLabel
+				// so the UDN controller considers it eligible for primary network NADs.
+				ns := &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "blue",
+						// kubernetes.io/metadata.name is added automatically by the
+						// API server but not by the fake client — add it explicitly
+						// so the CUDN's NamespaceSelector matchLabels can find it.
+						Labels: map[string]string{
+							ovntypes.RequiredUDNNamespaceLabel: "",
+							"kubernetes.io/metadata.name":      "blue",
+						},
+					},
+				}
+
+				// Managed VTEP: CM will allocate one IP per node from vtepCIDR.
+				vtep := &vtepv1.VTEP{
+					ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+					Spec:       vtepv1.VTEPSpec{Mode: vtepv1.VTEPModeManaged, CIDRs: []vtepv1.CIDR{vtepCIDR}},
+				}
+
+				// CUDN referencing the VTEP for EVPN IP-VRF.
+				// The UDN controller will create a corresponding NAD; the network
+				// manager will register it so the RA controller can resolve it.
+				cudn := &udnv1.ClusterUserDefinedNetwork{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   cudnName,
+						Labels: map[string]string{"evpn": "true"},
+					},
+					Spec: udnv1.ClusterUserDefinedNetworkSpec{
+						NamespaceSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"kubernetes.io/metadata.name": "blue"},
+						},
+						Network: udnv1.NetworkSpec{
+							Topology:  udnv1.NetworkTopologyLayer3,
+							Transport: udnv1.TransportOptionEVPN,
+							Layer3: &udnv1.Layer3Config{
+								Role:    udnv1.NetworkRolePrimary,
+								Subnets: []udnv1.Layer3Subnet{{CIDR: "10.2.0.0/16"}},
+							},
+							EVPN: &udnv1.EVPNConfig{
+								VTEP:  vtepName,
+								IPVRF: &udnv1.VRFConfig{VNI: ipVRFVNI, RouteTarget: routeTarget},
+							},
+						},
+					},
+				}
+
+				// Source FRRConfiguration: represents the pre-existing BGP session
+				// on each node that the RA controller will extend.
+				frrCfg := &frrapi.FRRConfiguration{
+					ObjectMeta: metav1.ObjectMeta{Name: "base-frr", Namespace: frrNS},
+					Spec: frrapi.FRRConfigurationSpec{
+						BGP: frrapi.BGPConfig{
+							Routers: []frrapi.Router{{
+								ASN: bgpASN,
+								Neighbors: []frrapi.Neighbor{
+									{ASN: bgpASN, Address: bgpPeer, DisableMP: true},
+								},
+							}},
+						},
+					},
+				}
+
+				// RouteAdvertisements: selects CUDNs labelled "evpn=true",
+				// advertises pod network, resolves VRF automatically.
+				ra := &ratypes.RouteAdvertisements{
+					ObjectMeta: metav1.ObjectMeta{Name: "evpn-ra"},
+					Spec: ratypes.RouteAdvertisementsSpec{
+						TargetVRF:                "auto",
+						Advertisements:           []ratypes.AdvertisementType{ratypes.PodNetwork},
+						NodeSelector:             metav1.LabelSelector{},
+						FRRConfigurationSelector: metav1.LabelSelector{},
+						NetworkSelectors: []apitypes.NetworkSelector{{
+							NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+							ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+								NetworkSelector: metav1.LabelSelector{
+									MatchLabels: map[string]string{"evpn": "true"},
+								},
+							},
+						}},
+					},
+				}
+
+				// The RA is intentionally NOT pre-seeded. In production, creation
+				// order doesn't matter: controllers retry via informer requeues
+				// and eventually converge. In this test we defer RA creation until
+				// the NAD exists and the network is registered so the RA
+				// controller's first reconcile succeeds immediately. Without this
+				// ordering the RA controller's HandleError path writes a transient
+				// Accepted=False, which the UDN transport validation reacts to,
+				// adding extra reconcile churn and making the test slow/flaky.
+				fakeClient := util.GetOVNClientset(node1, node2, ns, vtep, cudn, frrCfg).
+					GetClusterManagerClientset()
+				// AddVTEPApplyReactor is needed because the VTEP controller writes status
+				// via server-side apply (ApplyStatus), which the fake client cannot handle
+				// natively — it can't decode the apply patch and merge it with the existing
+				// object. The reactor does that manually.
+				testing.AddVTEPApplyReactor(fakeClient.VTEPClient.(*vtepfake.Clientset))
+				// AddRAApplyReactor handles the RA controller's ApplyStatus calls.
+				// Without it the Accepted status is never persisted, so the UDN
+				// controller's transport validation never sees an accepted RA.
+				testing.AddRAApplyReactor(fakeClient.RouteAdvertisementsClient.(*rafake.Clientset))
+				// AddGenerateNameReactor is needed because the RA controller creates
+				// FRRConfiguration objects using GenerateName. The fake client does not
+				// implement generateName, so without this reactor created objects have an
+				// empty name and cannot be found by subsequent List calls.
+				testing.AddGenerateNameReactor(fakeClient.FRRClient.(*frrfake.Clientset))
+
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				c, cancel := context.WithCancel(ctx.Context)
+				defer cancel()
+
+				clusterMngr, err := NewClusterManager(fakeClient, f, "identity", nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = clusterMngr.Start(c)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				defer clusterMngr.Stop()
+
+				ginkgo.By("UDN controller creates a NAD for the CUDN in the blue namespace")
+				gomega.Eventually(func() (int, error) {
+					nads, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions("blue").List(context.TODO(), metav1.ListOptions{})
+					if err != nil {
+						return 0, err
+					}
+					return len(nads.Items), nil
+				}, 30).Should(gomega.BeNumerically(">", 0),
+					"UDN controller must create a NAD in namespace blue")
+
+				// Create the RA now that the NAD and network are ready (see
+				// comment above for why we defer this in the test).
+				_, err = fakeClient.RouteAdvertisementsClient.K8sV1().
+					RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("RA controller marks the RouteAdvertisements as Accepted")
+				gomega.Eventually(func() (metav1.ConditionStatus, error) {
+					r, err := fakeClient.RouteAdvertisementsClient.K8sV1().
+						RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+					if err != nil {
+						return metav1.ConditionUnknown, nil
+					}
+					cond := meta.FindStatusCondition(r.Status.Conditions, ratypes.RouteAdvertisementsAccepted)
+					if cond == nil {
+						return metav1.ConditionUnknown, nil
+					}
+					return cond.Status, nil
+				}, 30).Should(gomega.Equal(metav1.ConditionTrue),
+					"RA controller must accept the RouteAdvertisements CR")
+
+				ginkgo.By("VTEP controller allocates one IP per node from the managed CIDR")
+				_, vtepNet, _ := net.ParseCIDR(vtepCIDR)
+				nodeIPs := map[string]string{}
+				for _, nodeName := range []string{"node1", "node2"} {
+					name := nodeName
+					gomega.Eventually(func() (string, error) {
+						n, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), name, metav1.GetOptions{})
+						if err != nil {
+							return "", err
+						}
+						vteps, err := util.ParseNodeVTEPs(n)
+						if util.IsAnnotationNotSetError(err) {
+							return "", nil
+						}
+						if err != nil {
+							return "", err
+						}
+						entry, ok := vteps[vtepName]
+						if !ok || len(entry.IPs) == 0 {
+							return "", nil
+						}
+						return entry.IPs[0], nil
+					}, 30).Should(gomega.MatchRegexp(`^100\.64\.0\.\d+$`),
+						"node %s must get a VTEP IP in %s", name, vtepCIDR)
+
+					n, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					vteps, err := util.ParseNodeVTEPs(n)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					nodeIPs[name] = vteps[vtepName].IPs[0]
+					gomega.Expect(vtepNet.Contains(net.ParseIP(nodeIPs[name]))).To(gomega.BeTrue(),
+						"IP %s must be inside VTEP CIDR %s", nodeIPs[name], vtepCIDR)
+				}
+				gomega.Expect(nodeIPs["node1"]).NotTo(gomega.Equal(nodeIPs["node2"]),
+					"each node must receive a distinct VTEP IP")
+
+				ginkgo.By("RA controller generates one FRRConfiguration per node")
+				// The CUDN already has the "evpn=true" label so the RA network selector
+				// matches it. The UDN controller creates the NAD and propagates the CUDN
+				// labels onto it; once the network manager registers the network the RA
+				// controller can reconcile and generate FRRConfigurations.
+				gomega.Eventually(func() ([]frrapi.FRRConfiguration, error) {
+					list, err := fakeClient.FRRClient.ApiV1beta1().
+						FRRConfigurations(frrNS).List(context.TODO(), metav1.ListOptions{})
+					if err != nil {
+						return nil, err
+					}
+					var generated []frrapi.FRRConfiguration
+					for _, fc := range list.Items {
+						if _, ok := fc.Annotations[ovntypes.OvnRouteAdvertisementsKey]; ok {
+							generated = append(generated, fc)
+						}
+					}
+					return generated, nil
+				}, 30).Should(gomega.HaveLen(2),
+					"expected one RA-generated FRRConfiguration per node")
+
+				ginkgo.By("each FRRConfiguration carries a /32 host route for the node's CM-allocated VTEP IP")
+				frrList, err := fakeClient.FRRClient.ApiV1beta1().
+					FRRConfigurations(frrNS).List(context.TODO(), metav1.ListOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				expectedHostRoutes := map[string]bool{}
+				for _, ip := range nodeIPs {
+					expectedHostRoutes[ip+"/32"] = false
+				}
+
+				for _, fc := range frrList.Items {
+					if _, ok := fc.Annotations[ovntypes.OvnRouteAdvertisementsKey]; !ok {
+						continue // skip the pre-existing base-frr
+					}
+					var found bool
+					for _, router := range fc.Spec.BGP.Routers {
+						if router.VRF != "" {
+							continue // EVPN VRF router — host routes live in default VRF
+						}
+						for _, prefix := range router.Prefixes {
+							if _, expected := expectedHostRoutes[prefix]; expected {
+								expectedHostRoutes[prefix] = true
+								found = true
+							}
+						}
+					}
+					gomega.Expect(found).To(gomega.BeTrue(),
+						"FRRConfiguration %s has no /32 VTEP host route in the default-VRF router", fc.Name)
+				}
+
+				for route, seen := range expectedHostRoutes {
+					gomega.Expect(seen).To(gomega.BeTrue(),
+						"/32 host route %s not found in any generated FRRConfiguration", route)
+				}
+
+				return nil
+			}
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 	})
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -58,4 +59,75 @@ func MarshalNodeVTEPs(vteps map[string]VTEPNodeAnnotation) (map[string]interface
 // be non-nil;
 func NodeVTEPsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OVNNodeVTEPs] != newNode.Annotations[OVNNodeVTEPs]
+}
+
+// SetNodeVTEPEntry sets or updates a VTEP entry in the k8s.ovn.org/vteps
+// annotation on a node using retry-on-conflict. The annotation is a shared
+// JSON blob written by both the cluster-manager (managed VTEPs) and
+// ovnkube-node (unmanaged VTEPs), so concurrent writes are expected.
+func SetNodeVTEPEntry(nodeName, vtepName string, ips []string, getNode func(string) (*corev1.Node, error), updateNode func(*corev1.Node) error) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		node, err := getNode(nodeName)
+		if err != nil {
+			return fmt.Errorf("failed to get node %s: %w", nodeName, err)
+		}
+		cnode := node.DeepCopy()
+
+		vteps, err := ParseNodeVTEPs(cnode)
+		if err != nil {
+			if !IsAnnotationNotSetError(err) {
+				return fmt.Errorf("failed to parse VTEP annotation: %w", err)
+			}
+			vteps = map[string]VTEPNodeAnnotation{}
+		}
+
+		vteps[vtepName] = VTEPNodeAnnotation{IPs: ips}
+		return applyVTEPAnnotation(cnode, vteps, updateNode)
+	})
+}
+
+// RemoveNodeVTEPEntry removes a VTEP entry from the k8s.ovn.org/vteps
+// annotation on a node using retry-on-conflict. If the entry does not exist
+// or the annotation is not set, this is a no-op.
+func RemoveNodeVTEPEntry(nodeName, vtepName string, getNode func(string) (*corev1.Node, error), updateNode func(*corev1.Node) error) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		node, err := getNode(nodeName)
+		if err != nil {
+			return fmt.Errorf("failed to get node %s: %w", nodeName, err)
+		}
+
+		vteps, err := ParseNodeVTEPs(node)
+		if err != nil {
+			if IsAnnotationNotSetError(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to parse VTEP annotation: %w", err)
+		}
+
+		if _, ok := vteps[vtepName]; !ok {
+			return nil
+		}
+
+		cnode := node.DeepCopy()
+		delete(vteps, vtepName)
+		return applyVTEPAnnotation(cnode, vteps, updateNode)
+	})
+}
+
+func applyVTEPAnnotation(node *corev1.Node, vteps map[string]VTEPNodeAnnotation, updateNode func(*corev1.Node) error) error {
+	annotations, err := MarshalNodeVTEPs(vteps)
+	if err != nil {
+		return fmt.Errorf("failed to marshal VTEP annotation: %w", err)
+	}
+	for k, v := range annotations {
+		if v == nil {
+			delete(node.Annotations, k)
+		} else {
+			if node.Annotations == nil {
+				node.Annotations = map[string]string{}
+			}
+			node.Annotations[k] = v.(string)
+		}
+	}
+	return updateNode(node)
 }

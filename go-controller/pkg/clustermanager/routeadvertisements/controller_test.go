@@ -6,11 +6,9 @@ package routeadvertisements
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,8 +21,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	ctesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
@@ -426,35 +422,6 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 		})
 	}
 	return nad
-}
-
-type Fake interface {
-	PrependReactor(verb, resource string, reaction ctesting.ReactionFunc)
-}
-
-var count = uint32(0)
-
-// source
-// https://stackoverflow.com/questions/68794562/kubernetes-fake-client-doesnt-handle-generatename-in-objectmeta/68794563#68794563
-func addGenerateNameReactor[T Fake](client any) {
-	fake := client.(Fake)
-	fake.PrependReactor(
-		"create",
-		"*",
-		func(action ctesting.Action) (handled bool, ret runtime.Object, err error) {
-			ret = action.(ctesting.CreateAction).GetObject()
-			meta, ok := ret.(metav1.Object)
-			if !ok {
-				return
-			}
-
-			if meta.GetName() == "" && meta.GetGenerateName() != "" {
-				meta.SetName(meta.GetGenerateName() + fmt.Sprintf("%d", atomic.AddUint32(&count, 1)))
-			}
-
-			return
-		},
-	)
 }
 
 func init() {
@@ -2247,7 +2214,7 @@ exit
 			}
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
-			addGenerateNameReactor[*frrfake.Clientset](fakeClientset.FRRClient)
+			ovntest.AddGenerateNameReactor(fakeClientset.FRRClient.(*frrfake.Clientset))
 
 			// create test objects
 			if tt.ra != nil {

@@ -23,6 +23,7 @@ import (
 	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
@@ -1946,6 +1947,7 @@ write_files:
 					"br"+shortName,
 					"vx"+shortName,
 					sharedNodeIPsVTEPName,
+					vtepv1.VTEPModeUnmanaged,
 					&externalMACVRFContainer,
 					externalMACVRFContainer.Name,
 					&externalContainer,

@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/vishvananda/netlink"
@@ -57,15 +58,11 @@ const (
 	// reconciliation of unmanaged VTEPs whose annotated IPs are stale.
 	reconcileNodeAddressChange = "//node-address-change"
 
-	// reconcileVTEPAnnotationChange is a synthetic key enqueued when the
-	// node's VTEP annotation is externally modified or removed. It
-	// invalidates the annotation cache and triggers reconciliation to
-	// restore the expected state.
+	// reconcileVTEPAnnotationChange is a suffix appended to VTEP names when
+	// enqueuing reconciliation due to external annotation changes. The reconcile
+	// worker detects this suffix, invalidates the annotation cache, and strips
+	// it to obtain the real VTEP name.
 	reconcileVTEPAnnotationChange = "//vtep-annotation-change"
-
-	// vtepAnnotationFieldManager identifies this controller as the owner of
-	// the VTEP annotation on the node, used to detect external modifications.
-	vtepAnnotationFieldManager = "node-vtep-controller"
 )
 
 type Controller struct {
@@ -206,10 +203,7 @@ func (c *Controller) initialSync() error {
 	activeVTEPs := sets.New[string]()
 	for _, vtep := range vteps {
 		activeVTEPs.Insert(vtep.Name)
-		if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
-			continue
-		}
-		vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(vtep)
+		vtepIPv4, vtepIPv6, err := c.discoverVTEPIPs(vtep)
 		if err != nil {
 			klog.Errorf("Failed to get VTEP IPs for %s: %v", vtep.Name, err)
 			continue
@@ -276,12 +270,30 @@ func (c *Controller) onNodeUpdate(oldObj, newObj interface{}) {
 	if !util.NodeVTEPsAnnotationChanged(oldNode, newNode) {
 		return
 	}
-	// don't reconcile on our own updates
-	if util.IsLastUpdatedByManager(vtepAnnotationFieldManager, newNode.ManagedFields) {
+
+	oldIPs, err := util.ParseNodeVTEPs(oldNode)
+	if err != nil && !util.IsAnnotationNotSetError(err) {
+		klog.Errorf("Failed to parse VTEP IPs: %v", err)
+		return
+	}
+	newIPs, err := util.ParseNodeVTEPs(newNode)
+	if err != nil && !util.IsAnnotationNotSetError(err) {
+		klog.Errorf("Failed to parse VTEP IPs: %v", err)
 		return
 	}
 
-	c.vtepController.Reconcile(reconcileVTEPAnnotationChange)
+	// Find VTEPs that need reconciliation: added, removed, or changed
+	toReconcile := sets.KeySet(oldIPs).SymmetricDifference(sets.KeySet(newIPs))
+	for vtepName := range sets.KeySet(oldIPs).Intersection(sets.KeySet(newIPs)) {
+		if !reflect.DeepEqual(oldIPs[vtepName], newIPs[vtepName]) {
+			toReconcile.Insert(vtepName)
+		}
+	}
+	for vtepName := range toReconcile {
+		klog.V(4).Infof("VTEP %s IPs changed on node %s, reconciling", vtepName, c.nodeName)
+		// Signal that this reconcile needs cache invalidation by appending the synthetic key
+		c.vtepController.Reconcile(vtepName + reconcileVTEPAnnotationChange)
+	}
 }
 
 // reconcileNodeAddressChange triggers reconciliation for unmanaged VTEPs whose
@@ -324,36 +336,33 @@ func (c *Controller) reconcileNodeAddressChange() error {
 // 2. Ensure bridge, VXLAN tunnels, and VID/VNI mappings via NDM
 // 3. Reconcile SVIs and OVS ports for each EVPN-enabled network
 // If the VTEP is deleted or unsupported, all its devices are cleaned up.
-// The synthetic keys reconcileVTEPAnnotationChange and
-// reconcileNodeAddressChange trigger reconciliation of unmanaged VTEPs
-// whose annotated IPs are stale or missing.
+// The synthetic key reconcileNodeAddressChange triggers reconciliation of
+// unmanaged VTEPs whose annotated IPs are stale or missing. VTEP names
+// suffixed with reconcileVTEPAnnotationChange signal that the cache should
+// be invalidated before reconciling.
 func (c *Controller) reconcile(key string) error {
-	switch key {
-	case reconcileVTEPAnnotationChange:
-		// node annotation changed, reset the cached annotation to re-read
-		c.vtepsAnnotation = nil
-		fallthrough
-	case reconcileNodeAddressChange:
+	if key == reconcileNodeAddressChange {
 		return c.reconcileNodeAddressChange()
 	}
 
-	vtep, err := c.watchFactory.VTEPInformer().Lister().Get(key)
+	// Check if this is an annotation-change reconcile
+	vtepName := key
+	if strings.HasSuffix(key, reconcileVTEPAnnotationChange) {
+		// Invalidate cache for annotation changes (runs in reconcile worker, so thread-safe)
+		c.vtepsAnnotation = nil
+		vtepName = strings.TrimSuffix(key, reconcileVTEPAnnotationChange)
+	}
+
+	vtep, err := c.watchFactory.VTEPInformer().Lister().Get(vtepName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			klog.V(4).Infof("VTEP %s not found, cleaning up", key)
-			if err := c.deleteVTEPDevices(key); err != nil {
+			klog.V(4).Infof("VTEP %s not found, cleaning up", vtepName)
+			if err := c.deleteVTEPDevices(vtepName); err != nil {
 				return err
 			}
-			return c.setVTEPAnnotation(key, nil, nil)
+			return c.setVTEPAnnotation(vtepName, nil, nil)
 		}
 		return err
-	}
-	if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
-		klog.Warningf("VTEP %s uses unsupported %s mode, cleaning up", vtep.Name, vtepv1.VTEPModeManaged)
-		if err := c.deleteVTEPDevices(key); err != nil {
-			return err
-		}
-		return c.setVTEPAnnotation(key, nil, nil)
 	}
 
 	if config.HybridOverlay.Enabled && config.HybridOverlay.VXLANPort == config.DefaultVXLANPort {
@@ -361,13 +370,13 @@ func (c *Controller) reconcile(key string) error {
 			"configure a different hybrid-overlay-vxlan-port to avoid the conflict", config.DefaultVXLANPort)
 	}
 
-	vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(vtep)
+	vtepIPv4, vtepIPv6, err := c.discoverVTEPIPs(vtep)
 	if err != nil {
 		return fmt.Errorf("failed to discover VTEP %s IPs: %w", vtep.Name, err)
 	}
 	if vtepIPv4 == nil && vtepIPv6 == nil {
 		klog.Infof("VTEP %s IPs not yet available for node %s", vtep.Name, c.nodeName)
-		return c.deleteVTEPDevices(key)
+		return c.deleteVTEPDevices(vtepName)
 	}
 
 	networks, err := c.ensureDevices(vtep, vtepIPv4, vtepIPv6)
@@ -391,6 +400,16 @@ func (c *Controller) reconcile(key string) error {
 // ensureDevices programs NDM-managed devices for a VTEP: bridge, VXLANs, and SVIs.
 // OVS ports are handled separately by reconcileOVSPorts.
 func (c *Controller) ensureDevices(vtep *vtepv1.VTEP, vtepIPv4, vtepIPv6 net.IP) ([]evpnNetworkInfo, error) {
+	if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
+		if err := c.ensureDummyWithIPs(vtep, vtepIPv4, vtepIPv6); err != nil {
+			return nil, fmt.Errorf("failed to ensure VTEP %s dummy device: %w", vtep.Name, err)
+		}
+	} else {
+		// Ensure that the device is not present to cover the VTEP mode change
+		if err := c.ndm.DeleteLink(GetEVPNDummyName(vtep.Name)); err != nil {
+			return nil, fmt.Errorf("failed to delete VTEP %s dummy device: %w", vtep.Name, err)
+		}
+	}
 	bridgeName := GetEVPNBridgeName(vtep.Name)
 
 	klog.V(4).Infof("Applying EVPN devices for VTEP %s: bridge=%s, IPv4=%v, IPv6=%v",
@@ -683,6 +702,9 @@ func (c *Controller) deleteVTEPDevices(vtepName string) error {
 	if err := c.ndm.DeleteLink(bridgeName); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete VTEP %s bridge %s: %w", vtepName, bridgeName, err))
 	}
+	if err := c.ndm.DeleteLink(GetEVPNDummyName(vtepName)); err != nil {
+		errs = append(errs, fmt.Errorf("failed to delete VTEP %s dummy device: %w", vtepName, err))
+	}
 
 	c.nadVTEPInfoLock.Lock()
 	for key, name := range c.nadVTEPInfo {
@@ -749,12 +771,19 @@ func (c *Controller) ensureVXLAN(vxlanName string, bridgeName string, srcIP net.
 	return nil
 }
 
-// discoverUnmanagedVTEPIPs resolves the IPs to use for an unmanaged VTEP.
-// For each IP family present in the VTEP's CIDRs, it checks the node's VTEP annotation
-// for a previously selected IP. If that IP is still present in the address manager and
-// within the VTEP's CIDRs, it is reused for stability. Otherwise, a new IP is discovered
-// from the address manager and the annotation is updated.
-func (c *Controller) discoverUnmanagedVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP, error) {
+// discoverVTEPIPs resolves the IPs to use for a VTEP based on its mode.
+//
+// For managed VTEPs, it returns the IPs from the node's VTEP annotation.
+// These IPs are expected to be populated by cluster manager's VTEP
+// controller. If no annotated IPs are found, nil is returned for the
+// respective IP family.
+//
+// For unmanaged VTEP, for each IP family present in the VTEP's CIDRs, it
+// checks the node's VTEP annotation for a previously selected IP. If that IP
+// is still present in the address manager and within the VTEP's CIDRs, it is
+// reused for stability. Otherwise, a new IP is discovered from the address manager
+// and the annotation is updated.
+func (c *Controller) discoverVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP, error) {
 	// fetch the annotated VTEP IPs
 	vtepsAnnotation, err := c.getVTEPsAnnotation()
 	if err != nil {
@@ -762,6 +791,10 @@ func (c *Controller) discoverUnmanagedVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP
 	}
 	v4AnnotatedIP := net.ParseIP(matchFirstIPStringFamily(false, vtepsAnnotation[vtep.Name].IPs))
 	v6AnnotatedIP := net.ParseIP(matchFirstIPStringFamily(true, vtepsAnnotation[vtep.Name].IPs))
+
+	if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
+		return v4AnnotatedIP, v6AnnotatedIP, nil
+	}
 
 	// get valid node IP addresses
 	nodeIPs, _ := c.addressManager.ListAddresses()
@@ -844,50 +877,38 @@ func (c *Controller) getVTEPsAnnotation() (map[string]util.VTEPNodeAnnotation, e
 
 // setVTEPAnnotation updates or removes a VTEP entry in the node's VTEP
 // annotation. If both IPs are nil, the entry is removed; otherwise it is
-// set to the provided IPs.
-func (c *Controller) setVTEPAnnotation(vtepName string, ipv4, ipv6 net.IP) (err error) {
-	vtepsAnnotation, err := c.getVTEPsAnnotation()
+// set to the provided IPs. Updates both the API and the local cache.
+func (c *Controller) setVTEPAnnotation(vtepName string, ipv4, ipv6 net.IP) error {
+	var ips []string
+	if ipv4 != nil {
+		ips = append(ips, ipv4.String())
+	}
+	if ipv6 != nil {
+		ips = append(ips, ipv6.String())
+	}
+
+	var err error
+	if len(ips) == 0 {
+		err = util.RemoveNodeVTEPEntry(c.nodeName, vtepName, c.watchFactory.GetNode, c.kube.UpdateNodeStatus)
+	} else {
+		err = util.SetNodeVTEPEntry(c.nodeName, vtepName, ips, c.watchFactory.GetNode, c.kube.UpdateNodeStatus)
+	}
+
 	if err != nil {
 		return err
 	}
 
-	// restore previous value on error to ensure retry will reattempt
-	previous := vtepsAnnotation[vtepName]
-	defer func() {
-		if err == nil {
-			return
-		}
-		vtepsAnnotation[vtepName] = previous
-		if len(previous.IPs) == 0 {
-			delete(vtepsAnnotation, vtepName)
-		}
-	}()
-
-	switch {
-	case ipv4 == nil && ipv6 == nil:
-		delete(vtepsAnnotation, vtepName)
-	default:
-		entry := util.VTEPNodeAnnotation{}
-		if ipv4 != nil {
-			entry.IPs = append(entry.IPs, ipv4.String())
-		}
-		if ipv6 != nil {
-			entry.IPs = append(entry.IPs, ipv6.String())
-		}
-		vtepsAnnotation[vtepName] = entry
+	// Update local cache to reflect the change
+	if c.vtepsAnnotation == nil {
+		c.vtepsAnnotation = make(map[string]util.VTEPNodeAnnotation)
+	}
+	if len(ips) == 0 {
+		delete(c.vtepsAnnotation, vtepName)
+	} else {
+		c.vtepsAnnotation[vtepName] = util.VTEPNodeAnnotation{IPs: ips}
 	}
 
-	// inhibit API request if noop
-	if slices.Equal(slices.Sorted(slices.Values(previous.IPs)), slices.Sorted(slices.Values(vtepsAnnotation[vtepName].IPs))) {
-		return nil
-	}
-
-	annotations, err := util.MarshalNodeVTEPs(vtepsAnnotation)
-	if err != nil {
-		return err
-	}
-
-	return c.kube.SetAnnotationsOnNodeWithFieldManager(c.nodeName, annotations, vtepAnnotationFieldManager)
+	return nil
 }
 
 // pickVTEPIP selects a single VTEP IP from the candidates for the given address family.
@@ -929,6 +950,32 @@ func (c *Controller) pickVTEPIP(matches []net.IP, family int) (net.IP, error) {
 	}
 	return nil, nil
 
+}
+
+func (c *Controller) ensureDummyWithIPs(vtep *vtepv1.VTEP, ips ...net.IP) error {
+	name := GetEVPNDummyName(vtep.Name)
+
+	var addresses []netlink.Addr
+	for _, ip := range ips {
+		if ip == nil {
+			continue
+		}
+		maskBits := 32
+		if ip.To4() == nil {
+			maskBits = 128
+		}
+		addresses = append(addresses, netlink.Addr{
+			IPNet: &net.IPNet{
+				IP:   ip,
+				Mask: net.CIDRMask(maskBits, maskBits),
+			},
+		})
+	}
+
+	return c.ndm.EnsureLink(netlinkdevicemanager.DeviceConfig{
+		Link:      &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: name}},
+		Addresses: addresses,
+	})
 }
 
 func matchFirstIPStringFamily(isIPv6 bool, ips []string) string {

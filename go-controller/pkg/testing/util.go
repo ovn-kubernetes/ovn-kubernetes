@@ -6,6 +6,7 @@ package testing
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
@@ -16,6 +17,8 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	networkconnectv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned/fake"
+	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -199,4 +202,66 @@ func BuildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nadapi.Net
 		return nil, err
 	}
 	return GenerateNADWithConfig(name, namespace, string(config)), nil
+}
+
+// AddRAApplyReactor handles ApplyStatus calls for RouteAdvertisements on the
+// fake client. The fake client does not implement server-side apply, so the RA
+// controller's ApplyStatus call would be silently ignored and the Accepted
+// status would never be persisted. This reactor decodes the status patch and
+// updates the object in the fake tracker so informer caches see the change.
+func AddRAApplyReactor(fakeClient *rafake.Clientset) {
+	fakeClient.PrependReactor("patch", "routeadvertisements", func(action ktesting.Action) (bool, runtime.Object, error) {
+		patchAction := action.(ktesting.PatchAction)
+		if patchAction.GetSubresource() != "status" {
+			return false, nil, nil
+		}
+		name := patchAction.GetName()
+		existingObj, err := fakeClient.Tracker().Get(
+			rav1.SchemeGroupVersion.WithResource("routeadvertisements"), "", name)
+		if err != nil {
+			return true, nil, err
+		}
+		ra := existingObj.(*rav1.RouteAdvertisements).DeepCopy()
+
+		type patchShape struct {
+			Status rav1.RouteAdvertisementsStatus `json:"status"`
+		}
+		var p patchShape
+		if err := json.Unmarshal(patchAction.GetPatch(), &p); err != nil {
+			return true, nil, err
+		}
+		ra.Status = p.Status
+		if err := fakeClient.Tracker().Update(
+			rav1.SchemeGroupVersion.WithResource("routeadvertisements"), ra, ""); err != nil {
+			return true, nil, err
+		}
+		return true, ra, nil
+	})
+}
+
+// FakeClientWithReactor is satisfied by any fake clientset that supports
+// PrependReactor (e.g. *frrfake.Clientset, *rafake.Clientset, …).
+type FakeClientWithReactor interface {
+	PrependReactor(verb, resource string, reaction ktesting.ReactionFunc)
+}
+
+// AddGenerateNameReactor wires a Create reactor that assigns a deterministic
+// name to objects whose GenerateName is set. The Kubernetes fake client does
+// not implement generateName natively; without this reactor objects created
+// with GenerateName end up with an empty name and cannot be found by List/Get.
+func AddGenerateNameReactor(fakeClient FakeClientWithReactor) {
+	var count uint32
+	fakeClient.PrependReactor("create", "*",
+		func(action ktesting.Action) (handled bool, ret runtime.Object, err error) {
+			ret = action.(ktesting.CreateAction).GetObject()
+			meta, ok := ret.(metav1.Object)
+			if !ok {
+				return
+			}
+			if meta.GetName() == "" && meta.GetGenerateName() != "" {
+				meta.SetName(meta.GetGenerateName() + fmt.Sprintf("%d", atomic.AddUint32(&count, 1)))
+			}
+			return
+		},
+	)
 }

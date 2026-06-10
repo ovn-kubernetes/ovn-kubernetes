@@ -27,6 +27,7 @@ import (
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	ovnutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
@@ -2225,7 +2226,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				),
 			).To(gomega.Succeed())
 			servers = append(servers, agnhostName)
-		case cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP:
+		case cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP, cudnAdvertisedEVPNManagedRandomVTEP:
 			ginkgo.By("Running an external EVPN network")
 
 			bridgeName := "br" + networkName
@@ -2233,7 +2234,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			vtepName := networkName + "-vtep"
 			// IPv6 VTEPs are not yet supported
 			bgpAlloc.VTEPSubnet6 = ""
-			if networkType != cudnAdvertisedEVPNUnmanagedRandomVTEP {
+			if networkType == cudnAdvertisedEVPNUnmanagedSharedVTEP {
 				// KIND network subnet: node InternalIPs fall within this range,
 				// so the node-side controller can discover them via host-cidrs.
 				kindNetwork, err := infraprovider.Get().PrimaryNetwork()
@@ -2242,6 +2243,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				bgpAlloc.VTEPSubnet = kindV4Subnet
 				vtepName = sharedNodeIPsVTEPName
+			}
+			vtepMode := vtepv1.VTEPModeUnmanaged
+			if networkType == cudnAdvertisedEVPNManagedRandomVTEP {
+				vtepMode = vtepv1.VTEPModeManaged
 			}
 
 			macVRFContainer := infraapi.ExternalContainer{
@@ -2268,6 +2273,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 					bridgeName,
 					vxlanName,
 					vtepName,
+					vtepMode,
 					&macVRFContainer,
 					macVRFNetworkName,
 					&ipVRFContainer,
@@ -2623,6 +2629,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer3IPVRFNetworkSpecGen),
 		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer2MACVRFNetworkSpecGen),
 		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer2MACVRFIPVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF managed random VTEP", feature.EVPN, cudnAdvertisedEVPNManagedRandomVTEP, layer3IPVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF managed random VTEP", feature.EVPN, cudnAdvertisedEVPNManagedRandomVTEP, layer2MACVRFNetworkSpecGen),
+		ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF managed random VTEP", feature.EVPN, cudnAdvertisedEVPNManagedRandomVTEP, layer2MACVRFIPVRFNetworkSpecGen),
 	}
 
 	ginkgo.DescribeTableSubtree("When the tested network is of type",
@@ -2991,6 +3000,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 						ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer3IPVRFNetworkSpecGen),
 						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer2MACVRFNetworkSpecGen),
 						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF random VTEP", feature.EVPN, cudnAdvertisedEVPNUnmanagedRandomVTEP, layer2MACVRFIPVRFNetworkSpecGen),
+						ginkgo.Entry("Layer 3 CUDN EVPN IP-VRF managed random VTEP", feature.EVPN, cudnAdvertisedEVPNManagedRandomVTEP, layer3IPVRFNetworkSpecGen),
+						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF managed random VTEP", feature.EVPN, cudnAdvertisedEVPNManagedRandomVTEP, layer2MACVRFNetworkSpecGen),
+						ginkgo.Entry("Layer 2 CUDN EVPN MAC-VRF and IP-VRF managed random VTEP", feature.EVPN, cudnAdvertisedEVPNManagedRandomVTEP, layer2MACVRFIPVRFNetworkSpecGen),
 					}
 
 					ginkgo.DescribeTableSubtree("Of type",
@@ -3460,6 +3472,7 @@ const (
 	cudnAdvertisedVRFLite                 networkType = "CUDN_ADVERTISED_VRFLITE"
 	cudnAdvertisedEVPNUnmanagedSharedVTEP networkType = "CUDN_ADVERTISED_EVPN_UNMANAGED_SHARED_VTEP"
 	cudnAdvertisedEVPNUnmanagedRandomVTEP networkType = "CUDN_ADVERTISED_EVPN_UNMANAGED_RANDOM_VTEP"
+	cudnAdvertisedEVPNManagedRandomVTEP   networkType = "CUDN_ADVERTISED_EVPN_MANAGED_RANDOM_VTEP"
 )
 
 // createNamespaceWithPrimaryNetworkOfType helper function configures a
@@ -3482,7 +3495,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 	case cudnAdvertised:
 		networkLabels = map[string]string{"advertise": networkName}
 		frrConfigurationLabels = map[string]string{"name": "receive-all"}
-	case cudnAdvertisedVRFLite, cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP:
+	case cudnAdvertisedVRFLite, cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP, cudnAdvertisedEVPNManagedRandomVTEP:
 		targetVRF = networkName
 		networkLabels = map[string]string{"advertise": networkName}
 		frrConfigurationLabels = map[string]string{"network": networkName}

@@ -1200,6 +1200,7 @@ func runEVPNNetworkAndServers(
 	bridgeName string,
 	vxlanName string,
 	vtepName string,
+	vtepMode vtepv1.VTEPMode,
 	macVRFContainer *infraapi.ExternalContainer,
 	macVRFNetworkName string,
 	ipVRFContainer *infraapi.ExternalContainer,
@@ -1284,14 +1285,16 @@ func runEVPNNetworkAndServers(
 		}
 	}
 
-	framework.Logf("Ensuring VTEP loopback IPs on nodes")
-	err = ensureVTEPLoopbackIPs(f, ictx, vtepSubnets)
-	if err != nil {
-		return err
+	if vtepMode == vtepv1.VTEPModeUnmanaged {
+		framework.Logf("Ensuring VTEP loopback IPs on nodes")
+		err = ensureVTEPLoopbackIPs(f, ictx, vtepSubnets)
+		if err != nil {
+			return err
+		}
 	}
 
 	framework.Logf("Creating VTEP CR %s with subnets %v", vtepName, vtepSubnets)
-	err = createVTEP(f, ictx, vtepName, vtepSubnets, vtepv1.VTEPModeUnmanaged)
+	err = createVTEP(f, ictx, vtepName, vtepSubnets, vtepMode)
 	if err != nil {
 		return err
 	}

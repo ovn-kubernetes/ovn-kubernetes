@@ -18,6 +18,7 @@ package evpn
 //   evbr    EVPN bridge     evbr-myvtep   evbr.a3f2b1c9
 //   evx4    VXLAN IPv4      evx4-myvtep   evx4.a3f2b1c9
 //   evx6    VXLAN IPv6      evx6-myvtep   evx6.a3f2b1c9
+//   evlo    Dummy/Loopback  evlo-myvtep   evlo.a3f2b1c9
 //   svl3    L3/IP-VRF SVI   svl3-blue     svl3.42
 //   svl2    L2/MAC-VRF SVI  svl2-blue     svl2.42
 //   ovl2    OVS L2 port     ovl2-blue     ovl2.42
@@ -35,6 +36,7 @@ const (
 	bridgePrefix  = "evbr"
 	vxlan4Prefix  = "evx4"
 	vxlan6Prefix  = "evx6"
+	dummyPrefix   = "evlo"
 	l3SVIPrefix   = "svl3"
 	l2SVIPrefix   = "svl2"
 	ovsPortPrefix = "ovl2"
@@ -53,6 +55,12 @@ func GetEVPNVXLANName(vtepName string, family utilnet.IPFamily) string {
 		return getEVPNVTEPDeviceName(vtepName, vxlan6Prefix)
 	}
 	return getEVPNVTEPDeviceName(vtepName, vxlan4Prefix)
+}
+
+// GetEVPNDummyName returns the dummy device name for a managed VTEP IP.
+// Uses VTEP name if it fits within the interface name limit, otherwise uses a hash.
+func GetEVPNDummyName(vtepName string) string {
+	return getEVPNVTEPDeviceName(vtepName, dummyPrefix)
 }
 
 // getEVPNVTEPDeviceName generates a device name from the VTEP name.

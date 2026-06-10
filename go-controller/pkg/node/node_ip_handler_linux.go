@@ -209,6 +209,14 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 				c.reconcileMasqueradeResources()
 				continue
 			}
+			// Filter out VTEP dummy device addresses
+			if a.NewAddr {
+				if link, err := util.GetNetLinkOps().LinkByIndex(a.LinkIndex); err == nil {
+					if util.IsVTEPDevice(link.Attrs().Name) {
+						continue
+					}
+				}
+			}
 			if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 				if c.gatewayIfIndex != 0 && a.LinkIndex == c.gatewayIfIndex {
 					c.reconcileMasqueradeResources()
@@ -560,6 +568,12 @@ func (c *addressManager) sync() {
 
 	currAddresses := sets.New[string]()
 	for _, addr := range addrs {
+		// Filter out VTEP dummy device addresses by checking link name
+		link, err := util.GetNetLinkOps().LinkByIndex(addr.LinkIndex)
+		if err == nil && util.IsVTEPDevice(link.Attrs().Name) {
+			klog.V(5).Infof("Skipping VTEP dummy device address for host: %s on %s", addr.String(), link.Attrs().Name)
+			continue
+		}
 		if !c.isValidNodeIP(addr.IP, addr.LinkIndex) {
 			klog.V(5).Infof("Skipping non-useable IP address for host: %s", addr.String())
 			continue
