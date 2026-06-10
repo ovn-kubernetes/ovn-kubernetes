@@ -139,9 +139,10 @@ type Controller struct {
 	namespaceTracker     map[string]sets.Set[string]
 	namespaceTrackerLock sync.RWMutex
 	// cudnMetricTracker tracks which CUDNs are counted in the CUDN gauge metric.
-	// Maps CUDN name to its (role, topology, transport) labels.
+	// Maps (role, topology, transport) labels to the set of CUDN names sharing
+	// that combination.
 	// Only mutated from syncClusterUDN and initializeController (single-threaded).
-	cudnMetricTracker map[string]cudnMetricKey
+	cudnMetricTracker map[cudnMetricKey]sets.Set[string]
 	// renderNadFn render NAD manifest from given object, enable replacing in tests.
 	renderNadFn RenderNetAttachDefManifest
 	// createNetworkLock lock should be held when NAD is created to avoid having two components
@@ -210,7 +211,7 @@ func New(
 		namespaceInformer: namespaceInformer,
 		networkManager:    networkManager,
 		namespaceTracker:  map[string]sets.Set[string]{},
-		cudnMetricTracker: map[string]cudnMetricKey{},
+		cudnMetricTracker: map[cudnMetricKey]sets.Set[string]{},
 		vidAllocator:      vidAllocator,
 		reservedVNIs:      map[vniKey]string{},
 		eventRecorder:     eventRecorder,
@@ -971,7 +972,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			}
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
 			delete(c.namespaceTracker, cudnName)
-			c.cudnMetricUncounted(cudnName)
+			c.cudnMetricUncounted(cudnName, &cudn.Spec.Network)
 			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
 			c.releaseEVPNIDsForNetwork(cudnName)
 		}

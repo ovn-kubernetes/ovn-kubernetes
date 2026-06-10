@@ -4,6 +4,7 @@
 package userdefinednetwork
 
 import (
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
@@ -11,7 +12,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 )
 
-// cudnMetricKey holds the label values for a single CUDN in the count gauge.
+// cudnMetricKey holds the label values for a CUDN metric label combination.
 type cudnMetricKey struct {
 	role, topology, transport string
 }
@@ -30,18 +31,14 @@ type cudnMetricKey struct {
 // short-circuits, and cudnMetricUncounted is never called — leaving a phantom
 // entry in the tracker.
 func (c *Controller) seedCUDNCountMetrics(cudnNADs cudnToNADs) {
-	counts := map[cudnMetricKey]float64{}
 	for _, entry := range cudnNADs {
 		if !controllerutil.ContainsFinalizer(entry.cudn, template.FinalizerUserDefinedNetwork) {
 			continue
 		}
-		role, topology, transport := cudnMetricLabels(&entry.cudn.Spec.Network)
-		key := cudnMetricKey{role, topology, transport}
-		c.cudnMetricTracker[entry.cudn.Name] = key
-		counts[key]++
+		c.trackCUDN(entry.cudn.Name, &entry.cudn.Spec.Network)
 	}
-	for k, count := range counts {
-		metrics.SetCUDNCount(k.role, k.topology, k.transport, count)
+	for key, names := range c.cudnMetricTracker {
+		metrics.SetCUDNCount(key.role, key.topology, key.transport, float64(names.Len()))
 	}
 }
 
@@ -49,44 +46,45 @@ func (c *Controller) seedCUDNCountMetrics(cudnNADs cudnToNADs) {
 // the gauge metric. The caller must have already persisted the finalizer — this
 // is what guarantees a matching cudnMetricUncounted call during deletion.
 func (c *Controller) cudnMetricCounted(name string, spec *userdefinednetworkv1.NetworkSpec) {
+	key, names := c.trackCUDN(name, spec)
+	metrics.SetCUDNCount(key.role, key.topology, key.transport, float64(names.Len()))
+}
+
+// trackCUDN inserts a CUDN name into the metric tracker bucket for its label
+// combination, initializing the set if needed. Returns the bucket key and set.
+func (c *Controller) trackCUDN(name string, spec *userdefinednetworkv1.NetworkSpec) (cudnMetricKey, sets.Set[string]) {
 	role, topology, transport := cudnMetricLabels(spec)
 	key := cudnMetricKey{role, topology, transport}
-	c.cudnMetricTracker[name] = key
-	metrics.SetCUDNCount(key.role, key.topology, key.transport, c.countCUDNMetricKey(key))
+	if c.cudnMetricTracker[key] == nil {
+		c.cudnMetricTracker[key] = sets.New[string]()
+	}
+	c.cudnMetricTracker[key].Insert(name)
+	return key, c.cudnMetricTracker[key]
 }
 
 // cudnMetricUncounted records that a CUDN is no longer counted in the gauge
 // metric. The caller must have already removed the finalizer.
-func (c *Controller) cudnMetricUncounted(name string) {
-	key, existed := c.cudnMetricTracker[name]
-	if !existed {
+func (c *Controller) cudnMetricUncounted(name string, spec *userdefinednetworkv1.NetworkSpec) {
+	role, topology, transport := cudnMetricLabels(spec)
+	key := cudnMetricKey{role, topology, transport}
+	names := c.cudnMetricTracker[key]
+	if names == nil || !names.Has(name) {
 		return
 	}
-	delete(c.cudnMetricTracker, name)
-	remaining := c.countCUDNMetricKey(key)
-	if remaining == 0 {
+	names.Delete(name)
+	if names.Len() == 0 {
+		delete(c.cudnMetricTracker, key)
 		metrics.DeleteCUDNCount(key.role, key.topology, key.transport)
 	} else {
-		metrics.SetCUDNCount(key.role, key.topology, key.transport, remaining)
+		metrics.SetCUDNCount(key.role, key.topology, key.transport, float64(names.Len()))
 	}
-}
-
-// countCUDNMetricKey counts how many CUDNs in the tracker share the given label combination.
-func (c *Controller) countCUDNMetricKey(target cudnMetricKey) float64 {
-	var count float64
-	for _, k := range c.cudnMetricTracker {
-		if k == target {
-			count++
-		}
-	}
-	return count
 }
 
 // cudnMetricLabels extracts the role, topology, and transport label values from
-// a CUDN network spec for use in Prometheus metrics. An empty transport (the
-// default OVN overlay) is mapped to "Geneve" for overlay topologies. Localnet
-// topology uses direct provider-network attachment (no overlay encapsulation),
-// so its transport is labeled "Localnet".
+// a CUDN network spec for use in Prometheus metrics. When spec.Transport is
+// empty (the user did not configure an explicit transport), the label is set to
+// "Default" — meaning the standard OVN overlay (Geneve or VXLAN, depending on
+// ovn-encap-type). This avoids assuming a specific encapsulation protocol.
 func cudnMetricLabels(spec *userdefinednetworkv1.NetworkSpec) (role, topology, transport string) {
 	if spec.Layer2 != nil {
 		role = string(spec.Layer2.Role)
@@ -98,11 +96,7 @@ func cudnMetricLabels(spec *userdefinednetworkv1.NetworkSpec) (role, topology, t
 	topology = string(spec.Topology)
 	transport = string(spec.Transport)
 	if transport == "" {
-		if spec.Topology == userdefinednetworkv1.NetworkTopologyLocalnet {
-			transport = "Localnet"
-		} else {
-			transport = "Geneve"
-		}
+		transport = "Default"
 	}
 	return
 }

@@ -2475,7 +2475,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 		})
 
-		It("should not update status for empty transport (defaults to Geneve)", func() {
+		It("should not update status for empty transport (default OVN overlay)", func() {
 			cudn := newCUDNWithTransport("test-cudn", map[string]string{"app": "test"}, "")
 			c = newTestController(template.RenderNetAttachDefManifest, cudn)
 			Expect(c.Run()).To(Succeed())
@@ -2592,8 +2592,8 @@ var _ = Describe("User Defined Network Controller", func() {
 			}
 		})
 
-		It("should increment CUDN count on create with Geneve transport", func() {
-			baseVal, _ := getCUDNCountMetricValue("Primary", "Layer3", "Geneve")
+		It("should increment CUDN count on create with default transport", func() {
+			baseVal, _ := getCUDNCountMetricValue("Primary", "Layer3", "Default")
 
 			testNs := testNamespace("metrics-ns")
 			cudn := testLayer3PrimaryClusterUDN("metrics-cudn", testNs.Name)
@@ -2612,8 +2612,8 @@ var _ = Describe("User Defined Network Controller", func() {
 				Message: "NetworkAttachmentDefinition has been created in following namespaces: [metrics-ns]",
 			}}))
 
-			val, found := getCUDNCountMetricValue("Primary", "Layer3", "Geneve")
-			Expect(found).To(BeTrue(), "CUDN count metric should exist for default Geneve transport")
+			val, found := getCUDNCountMetricValue("Primary", "Layer3", "Default")
+			Expect(found).To(BeTrue(), "CUDN count metric should exist for default transport")
 			Expect(val).To(Equal(baseVal + 1))
 		})
 
@@ -2622,7 +2622,7 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			testNs := testNamespace("metrics-evpn-ns")
 			vtep := testVTEP("vtep-metrics")
-			cudn := testEVPNClusterUDN("metrics-evpn-cudn", vtep.Name, testNs.Name)
+			cudn := testEVPNClusterUDN("metrics-evpn-cudn", &udnv1.EVPNConfig{VTEP: vtep.Name, MACVRF: &udnv1.VRFConfig{VNI: 100}}, testNs.Name)
 			cudn.Finalizers = nil
 			cudn.Spec.Network.Layer2.Role = udnv1.NetworkRolePrimary
 
@@ -2663,14 +2663,14 @@ var _ = Describe("User Defined Network Controller", func() {
 				Message: "NetworkAttachmentDefinition has been created in following namespaces: [metrics-del-ns]",
 			}}))
 
-			beforeVal, found := getCUDNCountMetricValue("Secondary", "Layer2", "Geneve")
+			beforeVal, found := getCUDNCountMetricValue("Secondary", "Layer2", "Default")
 			Expect(found).To(BeTrue())
 
 			markCUDNForDeletion(cudn.Name)
 
 			expected := beforeVal - 1
 			Eventually(func() float64 {
-				val, _ := getCUDNCountMetricValue("Secondary", "Layer2", "Geneve")
+				val, _ := getCUDNCountMetricValue("Secondary", "Layer2", "Default")
 				return val
 			}).Should(Equal(expected), "CUDN count metric should decrement by exactly one after deletion")
 		})
@@ -2889,7 +2889,7 @@ func testClusterUDN(name string, targetNamespaces ...string) *udnv1.ClusterUserD
 	}
 }
 
-// testLayer3PrimaryClusterUDN returns a CUDN with Layer3 Primary topology and default Geneve transport.
+// testLayer3PrimaryClusterUDN returns a CUDN with Layer3 Primary topology and default transport.
 func testLayer3PrimaryClusterUDN(name string, targetNamespaces ...string) *udnv1.ClusterUserDefinedNetwork {
 	cudn := testClusterUDN(name, targetNamespaces...)
 	cudn.Spec.Network = udnv1.NetworkSpec{
@@ -2902,7 +2902,7 @@ func testLayer3PrimaryClusterUDN(name string, targetNamespaces ...string) *udnv1
 	return cudn
 }
 
-// testLayer2SecondaryClusterUDN returns a CUDN with Layer2 Secondary topology and default Geneve transport.
+// testLayer2SecondaryClusterUDN returns a CUDN with Layer2 Secondary topology and default transport.
 func testLayer2SecondaryClusterUDN(name string, targetNamespaces ...string) *udnv1.ClusterUserDefinedNetwork {
 	cudn := testClusterUDN(name, targetNamespaces...)
 	cudn.Spec.Network = udnv1.NetworkSpec{
