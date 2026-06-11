@@ -165,6 +165,13 @@ jobs:
       - name: Install libvirt development headers
         run: sudo apt-get update && sudo apt-get install -y libvirt-dev
 
+      - name: Install VRF kernel module
+        run: |
+          set -x
+          sudo apt update
+          sudo apt-get install linux-modules-extra-$(uname -r) -y
+          sudo modprobe vrf
+
       - name: Install Helm
         uses: azure/setup-helm@v4
 
@@ -209,6 +216,21 @@ jobs:
       - name: Run traffic flow tests
         working-directory: dpu-simulator
         run: ./bin/dpu-sim tft run --check --config "${DPU_SIM_CONFIG}"
+
+      - name: Run Uplink DPU e2e tests
+        working-directory: ovn-kubernetes
+        run: |
+          set -euo pipefail
+          source "${DPU_SIM_PATH}/kubeconfig/helm-values/dpu-sim-dpu-frr-k8s.env"
+          export KUBECONFIG="${DPU_SIM_PATH}/kubeconfig/dpu-sim-host.kubeconfig"
+          export OVN_TEST_DPU_UPLINK_NETWORK="${DPU_SIM_GATEWAY_NETWORK}"
+          export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV4="172.27.0.0/16"
+          export OVN_TEST_BGP_SERVER_NET_SUBNET_IPV6="fc00:f853:ccd:e797::/64"
+          export ENABLE_MULTI_NET=true
+          export ENABLE_NETWORK_SEGMENTATION=true
+          export ENABLE_ROUTE_ADVERTISEMENTS=true
+          export ENABLE_NO_OVERLAY=true
+          make -C test control-plane WHAT="Network Segmentation Uplink route advertisements uses the Uplink interface as the targetVRF auto BGP peering path"
 
       - name: Export kind logs on failure
         if: failure()
