@@ -1264,7 +1264,7 @@ run_bgp_setup() {
     --ipv6="$ipv6_flag" \
     --bgp-server-subnet-ipv4="${BGP_SERVER_NET_SUBNET_IPV4}" \
     --bgp-server-subnet-ipv6="${BGP_SERVER_NET_SUBNET_IPV6}" \
-    --frr-k8s-version="${FRR_K8S_VERSION:-v0.0.21}" \
+    --frr-k8s-version="${FRR_K8S_GIT_REF:-${FRR_K8S_VERSION:-v0.0.21}}" \
     --frr-image="${FRR_DEPLOYED_IMAGE}" \
     --network-name="${NETWORK_NAME:-default}" \
     --cluster-name="${KIND_CLUSTER_NAME:-ovn}" \
