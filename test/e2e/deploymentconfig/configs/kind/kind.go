@@ -38,3 +38,12 @@ func (k kind) PrimaryInterfaceName() string {
 func (k kind) GetAgnHostContainerImage() string {
 	return image.GetE2EImage(image.Agnhost)
 }
+
+func (k kind) IsConfigurationEnabled(config api.Config) bool {
+	switch config {
+	case api.L3UDNMultiSubnetConfig:
+		return true
+	default:
+		return false
+	}
+}

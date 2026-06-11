@@ -26,6 +26,7 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 )
 
@@ -181,13 +182,13 @@ func subnetList(subnets ...string) []string {
 // This prevents multiple networks in the same test from accidentally sharing the same CIDRs.
 func newTestNetworkSubnetsAllocator() func(bool) ([]string, []string) {
 	i := 0
-	return func(multiSubnet bool) ([]string, []string) {
+	return func(isL3Topology bool) ([]string, []string) {
 		i++
 		// Allocated networks for ipv4 are 172.31.0.0/16, 172.32.0.0/16, ... (non-overlapping /16s)
 		v4 := []string{fmt.Sprintf("172.%d.0.0/16", 30+i)}
 		// Allocated networks for ipv6 are 2014:100:201::0/60, 2014:100:202::0/60, ... (non-overlapping /60s)
 		v6 := []string{fmt.Sprintf("2014:100:%d::0/60", 200+i)}
-		if multiSubnet {
+		if isL3Topology && deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
 			v4 = []string{
 				fmt.Sprintf("172.%d.0.0/23/24", 30+i),
 				fmt.Sprintf("172.%d.0.0/16/24", 31+i),
