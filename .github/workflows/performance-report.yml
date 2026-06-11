@@ -34,12 +34,11 @@ jobs:
         pip install -r contrib/perf/requirements.txt
 
     - name: Download performance test data artifacts
-      run: |
-        contrib/perf/download-artifacts.py \
-          --run-id ${{ github.event.workflow_run.id }} \
-          --filter "performance-test-data" \
-          --output-dir . \
-          --extract
+      uses: actions/download-artifact@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        run-id: ${{ github.event.workflow_run.id }}
+        pattern: "*-performance-test-data-*"
 
     - name: Organize extracted artifacts and generate JSON data
       run: |
@@ -156,12 +155,12 @@ jobs:
 
     - name: Download baseline artifacts
       if: steps.get_baseline.outputs.baseline_run_id != ''
-      run: |
-        contrib/perf/download-artifacts.py \
-          --run-id ${{ steps.get_baseline.outputs.baseline_run_id }} \
-          --filter "performance-test-data" \
-          --output-dir baseline-downloads \
-          --extract
+      uses: actions/download-artifact@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        run-id: ${{ steps.get_baseline.outputs.baseline_run_id }}
+        pattern: "*-performance-test-data-*"
+        path: baseline-downloads
 
     - name: Organize baseline artifacts and generate JSON data
       if: steps.get_baseline.outputs.baseline_run_id != ''
@@ -277,19 +276,19 @@ jobs:
         echo "### Artifacts Processed" >> $GITHUB_STEP_SUMMARY
         
         # Count performance test data artifacts
-        PERF_TEST_COUNT=$(ls -1 *performance-test-data*.zip 2>/dev/null | wc -l)
-        if [ "$PERF_TEST_COUNT" -gt 0 ]; then
-          echo "- ✅ Performance test data: **${PERF_TEST_COUNT}** workload(s)" >> $GITHUB_STEP_SUMMARY
-          for zip in *performance-test-data*.zip; do
-            workload=$(echo "$zip" | sed 's/-performance-test-data-.*//')
+        PERF_TEST_COUNT=$(find . -maxdepth 1 -type d -name '*performance-test-data*' 2>/dev/null)
+        if [ -n "$PERF_TEST_COUNT" ]; then
+          echo "- ✅ Performance test data: **$(echo "$PERF_TEST_COUNT" | wc -l)** workload(s)" >> $GITHUB_STEP_SUMMARY
+          for dir in $PERF_TEST_COUNT; do
+            workload=$(basename "$dir" | sed 's/-performance-test-data-.*//')
             echo "  - ${workload}" >> $GITHUB_STEP_SUMMARY
           done
         else
           echo "- ❌ Performance test data: none found" >> $GITHUB_STEP_SUMMARY
         fi
         
-        # Count performance report artifacts
-        REPORT_COUNT=$(ls -1 *performance-report*.zip 2>/dev/null | wc -l)
+        # Count generated performance reports
+        REPORT_COUNT=$(find reports -name 'performance_report.md' 2>/dev/null | wc -l)
         if [ "$REPORT_COUNT" -gt 0 ]; then
           echo "- ✅ Performance reports: **${REPORT_COUNT}** workload(s)" >> $GITHUB_STEP_SUMMARY
         else
