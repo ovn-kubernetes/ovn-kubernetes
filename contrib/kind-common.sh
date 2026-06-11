@@ -530,6 +530,19 @@ docker_create_uplink_interface() {
   done
 }
 
+disable_bridge_netfilter() {
+  echo "disabling bridge netfilter for KIND container bridge networks"
+
+  sudo modprobe br_netfilter || true
+  for sysctl_name in \
+    net.bridge.bridge-nf-call-iptables \
+    net.bridge.bridge-nf-call-ip6tables; do
+    if sysctl -n "${sysctl_name}" >/dev/null 2>&1; then
+      sudo sysctl -w "${sysctl_name}=0"
+    fi
+  done
+}
+
 find_kind_uplink_interface() {
   local node=$1
   local ip iface
