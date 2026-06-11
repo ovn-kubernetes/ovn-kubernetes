@@ -537,6 +537,10 @@ helm_prereqs() {
     sudo sysctl fs.inotify.max_user_watches=524288
     # increase fs.inotify.max_user_instances
     sudo sysctl fs.inotify.max_user_instances=512
+    if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] ||
+       [ "$OVN_UPLINK_BRIDGE" == true ]; then
+      disable_bridge_netfilter
+    fi
 }
 
 helm_extra_values_args() {
