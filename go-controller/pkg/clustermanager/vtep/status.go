@@ -30,17 +30,9 @@ const (
 	reasonEVPNIPv6NotSupported    = "EVPNIPv6NotSupported"
 )
 
-// updateStatusCondition records the condition metric and applies the status
-// condition to the VTEP resource. The API update is skipped if the condition
-// already matches, but the metric is always recorded to stay correct after
-// leader restarts.
+// updateStatusCondition applies the status condition to the VTEP resource.
+// The API update is skipped if the condition already matches.
 func (c *Controller) updateStatusCondition(vtep *vtepv1.VTEP, conditionType string, status metav1.ConditionStatus, reason, message string) error {
-	// Always record the metric, even if we skip the API update.
-	// This ensures the metric is correct after leader restarts when the informer
-	// fires synthetic creates and the existing condition hasn't changed.
-	// This relies on RecordVTEPCondition being cheap (in-memory only, no I/O).
-	metrics.RecordVTEPCondition(vtep.Name, conditionType, status)
-
 	const maxMessageLen = 32768
 	if len(message) >= maxMessageLen {
 		message = message[:maxMessageLen-1]
@@ -51,6 +43,10 @@ func (c *Controller) updateStatusCondition(vtep *vtepv1.VTEP, conditionType stri
 		existingCondition.Status == status &&
 		existingCondition.Reason == reason &&
 		existingCondition.Message == message {
+		// Record the metric from the existing API-confirmed condition so it is
+		// populated after controller restarts, where the informer fires synthetic
+		// creates for all VTEPs but the condition hasn't changed.
+		metrics.RecordVTEPCondition(vtep.Name, conditionType, status)
 		return nil
 	}
 
@@ -85,5 +81,6 @@ func (c *Controller) updateStatusCondition(vtep *vtepv1.VTEP, conditionType stri
 		klog.Errorf("Failed to update status condition %q for VTEP %s: %v", conditionType, vtep.Name, err)
 		return fmt.Errorf("failed to update status condition %q for VTEP %s: %w", conditionType, vtep.Name, err)
 	}
+	metrics.RecordVTEPCondition(vtep.Name, conditionType, status)
 	return nil
 }

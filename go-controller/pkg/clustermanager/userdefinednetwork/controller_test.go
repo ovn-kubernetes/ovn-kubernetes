@@ -2733,7 +2733,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		It("should record TransportAccepted condition metric for EVPN CUDN with accepted RA", func() {
 			testNs := testNamespace("cond-evpn-ns")
 			vtep := testVTEP("cond-vtep")
-			cudn := testEVPNClusterUDN("cond-evpn-cudn", vtep.Name, testNs.Name)
+			cudn := testEVPNClusterUDN("cond-evpn-cudn", &udnv1.EVPNConfig{VTEP: vtep.Name, MACVRF: &udnv1.VRFConfig{VNI: 100}}, testNs.Name)
 
 			c = newTestControllerWithNetworkManager(template.RenderNetAttachDefManifest, cudn, testNs, vtep)
 			Expect(c.Run()).To(Succeed())

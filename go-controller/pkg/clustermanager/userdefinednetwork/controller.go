@@ -306,7 +306,6 @@ func (c *Controller) initializeController() error {
 
 	c.initializeNamespaceTracker(cudnNADs)
 	c.seedCUDNCountMetrics(cudnNADs)
-	seedCUDNConditionMetrics(cudnNADs)
 
 	if util.IsEVPNEnabled() {
 		// Recover VID allocations from existing EVPN CUDNs.
@@ -1093,6 +1092,10 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 
 	// Apply status if either NetworkCreated or TransportAccepted condition changed
 	if !networkCreatedOrUpdated && !transportUpdated {
+		// Record the metric from the existing API-confirmed conditions so it is
+		// populated after controller restarts, where the informer fires synthetic
+		// creates for all CUDNs but the conditions haven't changed.
+		recordCUDNConditionMetrics(cudn)
 		return nil
 	}
 	conditionsApply := make([]*metaapplyv1.ConditionApplyConfiguration, len(cudn.Status.Conditions))

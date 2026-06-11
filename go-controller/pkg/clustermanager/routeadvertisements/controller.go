@@ -1404,12 +1404,6 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 		cstatus = metav1.ConditionFalse
 	}
 
-	// Always record the metric, even if we skip the API update.
-	// This ensures the metric is correct after leader restarts when the informer
-	// fires synthetic creates and the existing condition hasn't changed.
-	// This relies on RecordRouteAdvertisementCondition being cheap (in-memory only, no I/O).
-	metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeAccepted, cstatus)
-
 	var updateStatus bool
 	condition := meta.FindStatusCondition(ra.Status.Conditions, conditionTypeAccepted)
 	switch {
@@ -1423,6 +1417,10 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 		updateStatus = true
 	}
 	if !updateStatus {
+		// Record the metric from the existing API-confirmed condition so it is
+		// populated after controller restarts, where the informer fires synthetic
+		// creates for all RAs but the condition hasn't changed.
+		metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeAccepted, cstatus)
 		return nil
 	}
 
@@ -1462,6 +1460,7 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 	if err != nil {
 		return fmt.Errorf("failed to apply status for RouteAdvertisements %q: %w", ra.Name, err)
 	}
+	metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeAccepted, cstatus)
 
 	return nil
 }
