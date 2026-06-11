@@ -1320,17 +1320,56 @@ func (eIPC *egressIPClusterController) assignEgressIPs(name string, egressIPs []
 				})
 				continue
 			} else {
-				eIPC.recorder.Eventf(
-					&corev1.ObjectReference{
-						Kind: "EgressIP",
-						Name: name,
-					},
-					corev1.EventTypeWarning,
-					"UnsupportedRequest",
-					"IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node,
-				)
-				klog.Errorf("IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node)
-				continue
+				// IP is allocated to a DIFFERENT EgressIP - could be stale if that
+				// EgressIP was deleted but cleanup raced with this assignment.
+				// Verify if the old EgressIP still exists before failing.
+				klog.V(5).Infof("IP: %q for EgressIP: %s appears allocated to EgressIP: %s on %s, verifying",
+					egressIP, name, status.Name, status.Node)
+
+				_, err := eIPC.kube.GetEgressIP(status.Name)
+				isDeleted := apierrors.IsNotFound(err)
+
+				if isDeleted {
+					// Old EgressIP doesn't exist - stale cache entry!
+					// This can happen during rapid delete+create cycles (e.g., during upgrade)
+					// when deletion cleanup hasn't completed before new EgressIP is assigned.
+					klog.Warningf("Detected stale cache entry: IP %q allocated to non-existent "+
+						"EgressIP %s, cleaning and retrying assignment for EgressIP %s",
+						egressIP, status.Name, name)
+
+					// Clean stale entry immediately
+					eIPC.deleteAllAllocatorEgressIPAssignments(status.Name, egressIP)
+
+					// Refresh existingAllocations after cleanup
+					_, existingAllocations = eIPC.getSortedEgressData()
+
+					// Check if cleanup succeeded
+					if _, stillExists := existingAllocations[eIP.String()]; !stillExists {
+						klog.Infof("Successfully cleaned stale entry for IP %q, proceeding with assignment", egressIP)
+						// Fall through to normal assignment logic below
+					} else {
+						klog.Errorf("Failed to clean stale entry for IP %q, skipping assignment", egressIP)
+						continue
+					}
+				} else if err != nil {
+					// Unexpected error checking old EgressIP
+					klog.Errorf("Error verifying old EgressIP %s for IP %q: %v, skipping assignment",
+						status.Name, egressIP, err)
+					continue
+				} else {
+					// Old EgressIP still exists - genuine conflict!
+					eIPC.recorder.Eventf(
+						&corev1.ObjectReference{
+							Kind: "EgressIP",
+							Name: name,
+						},
+						corev1.EventTypeWarning,
+						"UnsupportedRequest",
+						"IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node,
+					)
+					klog.Errorf("IP: %q for EgressIP: %s is already allocated for EgressIP: %s on %s", egressIP, name, status.Name, status.Node)
+					continue
+				}
 			}
 		}
 		// Egress IP for secondary host networks is only available on baremetal environments
