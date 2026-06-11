@@ -38,7 +38,7 @@ func IsKind() bool {
 		framework.Logf("unable to get current cluster context: %v", err)
 		return false
 	}
-	if strings.Contains(string(currentCtx), "kind-ovn") {
+	if strings.HasPrefix(strings.TrimSpace(string(currentCtx)), "kind-") {
 		return true
 	}
 	return false

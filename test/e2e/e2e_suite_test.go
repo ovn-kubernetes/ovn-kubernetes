@@ -54,8 +54,12 @@ var _ = ginkgo.BeforeSuite(func() {
 	framework.ExpectNoError(err)
 	client, err := clientset.NewForConfig(config)
 	framework.ExpectNoError(err, "k8 clientset is required to list nodes")
-	err = ipalloc.InitPrimaryIPAllocator(client.CoreV1().Nodes())
-	framework.ExpectNoError(err, "failed to initialize node primary IP allocator")
+	if os.Getenv(uplinkDPUGatewayNetworkEnv) == "" {
+		err = ipalloc.InitPrimaryIPAllocator(client.CoreV1().Nodes())
+		framework.ExpectNoError(err, "failed to initialize node primary IP allocator")
+	} else {
+		framework.Logf("Skipping primary IP allocator initialization for DPU Uplink e2e")
+	}
 })
 
 // required due to go1.13 issue: https://github.com/onsi/ginkgo/issues/602

@@ -3626,6 +3626,10 @@ func generateFRRConfiguration(neighborIPs, advertiseNetworks []string) (director
 // network's VRF, configured to receive advertisements for the provided
 // networks. Returns a temporary directory where the configuration is generated.
 func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetworks []string) (directory string, err error) {
+	return generateFRRk8sConfigurationForVRF(networkName, networkName, neighborIPs, receiveNetworks)
+}
+
+func generateFRRk8sConfigurationForVRF(networkName, vrf string, neighborIPs, receiveNetworks []string) (directory string, err error) {
 	// parse configuration templates
 	var templates *template.Template
 	templates, err = template.ParseFS(ratestdata, filepath.Join(tmplDir, "frr-k8s", "*.tmpl"))
@@ -3651,7 +3655,7 @@ func generateFRRk8sConfiguration(networkName string, neighborIPs, receiveNetwork
 		Labels: map[string]string{"network": networkName},
 		Routers: []templateInputRouter{
 			{
-				VRF:           networkName,
+				VRF:           vrf,
 				NeighborsIPv4: neighborsIPv4,
 				NeighborsIPv6: neighborsIPv6,
 				NetworksIPv4:  receivesIPv4,
@@ -3685,6 +3689,30 @@ func runBGPNetworkAndServer(
 	serverNetworkName string,
 	peerNetworks []string,
 	serverNetworks []string,
+) error {
+	return runBGPNetworkAndServerWithFRRVRF(
+		f,
+		ictx,
+		ipFamilySet,
+		networkName,
+		serverName,
+		serverNetworkName,
+		peerNetworks,
+		serverNetworks,
+		networkName,
+	)
+}
+
+func runBGPNetworkAndServerWithFRRVRF(
+	f *framework.Framework,
+	ictx infraapi.Context,
+	ipFamilySet sets.Set[utilnet.IPFamily],
+	networkName string,
+	serverName string,
+	serverNetworkName string,
+	peerNetworks []string,
+	serverNetworks []string,
+	frrVRF string,
 ) error {
 	// filter networks by supported IP families
 	peerNetworks = matchCIDRStringsByIPFamilySet(peerNetworks, ipFamilySet)
@@ -3776,7 +3804,7 @@ func runBGPNetworkAndServer(
 
 	// apply FRR-K8s Configuration
 	receiveNetworks := serverNetworks
-	frrK8sConfig, err := generateFRRk8sConfiguration(networkName, []string{frr.IPv4, frr.IPv6}, receiveNetworks)
+	frrK8sConfig, err := generateFRRk8sConfigurationForVRF(networkName, frrVRF, []string{frr.IPv4, frr.IPv6}, receiveNetworks)
 	if err != nil {
 		return fmt.Errorf("failed to generate FRR-k8s configuration: %w", err)
 	}
@@ -3959,17 +3987,20 @@ func createUserDefinedNetwork(
 	ictx.AddCleanUpFn(func() error {
 		return client.Delete(context.Background(), name, metav1.DeleteOptions{})
 	})
-	wait.PollUntilContextTimeout(
+	var lastReadyErr error
+	if err := wait.PollUntilContextTimeout(
 		context.Background(),
 		time.Second,
-		5*time.Second,
+		30*time.Second,
 		true,
 		func(ctx context.Context) (bool, error) {
-			err = networkReadyFunc(client, name)()
-			return err == nil, nil
+			lastReadyErr = networkReadyFunc(client, name)()
+			return lastReadyErr == nil, nil
 		},
-	)
-	if err != nil {
+	); err != nil {
+		if lastReadyErr != nil {
+			return fmt.Errorf("failed to wait for the network to be ready: %w", lastReadyErr)
+		}
 		return fmt.Errorf("failed to wait for the network to be ready: %w", err)
 	}
 
@@ -4021,17 +4052,20 @@ func createRouteAdvertisements(
 	ictx.AddCleanUpFn(func() error {
 		return raClient.K8sV1().RouteAdvertisements().Delete(context.Background(), name, metav1.DeleteOptions{})
 	})
-	wait.PollUntilContextTimeout(
+	var lastReadyErr error
+	if err := wait.PollUntilContextTimeout(
 		context.Background(),
 		time.Second,
-		5*time.Second,
+		30*time.Second,
 		true,
 		func(ctx context.Context) (bool, error) {
-			err = routeAdvertisementsReadyFunc(*raClient, name)()
-			return err == nil, nil
+			lastReadyErr = routeAdvertisementsReadyFunc(*raClient, name)()
+			return lastReadyErr == nil, nil
 		},
-	)
-	if err != nil {
+	); err != nil {
+		if lastReadyErr != nil {
+			return fmt.Errorf("failed to wait for the RouteAdvertisements to be ready: %w", lastReadyErr)
+		}
 		return fmt.Errorf("failed to wait for the RouteAdvertisements to be ready: %w", err)
 	}
 
