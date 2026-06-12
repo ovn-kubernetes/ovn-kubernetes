@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"slices"
 	"strings"
@@ -42,6 +43,8 @@ import (
 	raclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	ralisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vteplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -49,6 +52,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -71,24 +75,26 @@ var (
 type Controller struct {
 	wf *factory.WatchFactory
 
-	eipLister       egressiplisters.EgressIPLister
-	frrLister       frrlisters.FRRConfigurationLister
-	nadLister       nadlisters.NetworkAttachmentDefinitionLister
-	nodeLister      corelisters.NodeLister
-	raLister        ralisters.RouteAdvertisementsLister
-	namespaceLister corelisters.NamespaceLister
-	vtepLister      vteplisters.VTEPLister
+	eipLister         egressiplisters.EgressIPLister
+	frrLister         frrlisters.FRRConfigurationLister
+	nadLister         nadlisters.NetworkAttachmentDefinitionLister
+	nodeLister        corelisters.NodeLister
+	raLister          ralisters.RouteAdvertisementsLister
+	namespaceLister   corelisters.NamespaceLister
+	uplinkStateLister uplinklisters.UplinkStateLister
+	vtepLister        vteplisters.VTEPLister
 
 	frrClient frrclientset.Interface
 	nadClient nadclientset.Interface
 	raClient  raclientset.Interface
 
-	eipController  controllerutil.Controller
-	frrController  controllerutil.Controller
-	nadController  controllerutil.Controller
-	nodeController controllerutil.Controller
-	raController   controllerutil.Controller
-	nsController   controllerutil.Controller
+	eipController         controllerutil.Controller
+	frrController         controllerutil.Controller
+	nadController         controllerutil.Controller
+	nodeController        controllerutil.Controller
+	raController          controllerutil.Controller
+	nsController          controllerutil.Controller
+	uplinkStateController controllerutil.Controller
 
 	nm networkmanager.Interface
 	// networkRefReconcilerID identifies our registration with the network
@@ -110,7 +116,6 @@ func NewController(
 ) *Controller {
 	c := &Controller{
 		wf:              wf,
-		eipLister:       wf.EgressIPInformer().Lister(),
 		frrLister:       wf.FRRConfigurationsInformer().Lister(),
 		nadLister:       wf.NADInformer().Lister(),
 		nodeLister:      wf.NodeCoreInformer().Lister(),
@@ -120,6 +125,9 @@ func NewController(
 		nadClient:       ovnClient.NetworkAttchDefClient,
 		raClient:        ovnClient.RouteAdvertisementsClient,
 		nm:              nm,
+	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		c.uplinkStateLister = wf.UplinkStateInformer().Lister()
 	}
 
 	handleError := func(key string, errorstatus error) error {
@@ -179,25 +187,44 @@ func NewController(
 	}
 	c.nodeController = controllerutil.NewController("clustermanager routeadvertisements node controller", nodeConfig)
 
-	eipConfig := &controllerutil.ControllerConfig[eiptypes.EgressIP]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileEgressIPs,
-		Threadiness:    1,
-		Informer:       wf.EgressIPInformer().Informer(),
-		Lister:         wf.EgressIPInformer().Lister().List,
-		ObjNeedsUpdate: egressIPNeedsUpdate,
+	if util.IsNetworkSegmentationSupportEnabled() {
+		uplinkStateConfig := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
+			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile:      func(_ string) error { c.raController.ReconcileAll(); return nil },
+			Threadiness:    1,
+			Informer:       wf.UplinkStateInformer().Informer(),
+			Lister:         c.uplinkStateLister.List,
+			ObjNeedsUpdate: uplinkStateNeedsUpdate,
+		}
+		c.uplinkStateController = controllerutil.NewController(
+			"clustermanager routeadvertisements uplinkstate controller",
+			uplinkStateConfig,
+		)
 	}
-	c.eipController = controllerutil.NewController("clustermanager routeadvertisements egressip controller", eipConfig)
 
-	nsConfig := &controllerutil.ControllerConfig[corev1.Namespace]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileEgressIPs,
-		Threadiness:    1,
-		Informer:       wf.NamespaceInformer().Informer(),
-		Lister:         wf.NamespaceInformer().Lister().List,
-		ObjNeedsUpdate: nsNeedsUpdate,
+	if config.OVNKubernetesFeature.EnableEgressIP {
+		c.eipLister = wf.EgressIPInformer().Lister()
+
+		eipConfig := &controllerutil.ControllerConfig[eiptypes.EgressIP]{
+			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile:      c.reconcileEgressIPs,
+			Threadiness:    1,
+			Informer:       wf.EgressIPInformer().Informer(),
+			Lister:         wf.EgressIPInformer().Lister().List,
+			ObjNeedsUpdate: egressIPNeedsUpdate,
+		}
+		c.eipController = controllerutil.NewController("clustermanager routeadvertisements egressip controller", eipConfig)
+
+		nsConfig := &controllerutil.ControllerConfig[corev1.Namespace]{
+			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile:      c.reconcileEgressIPs,
+			Threadiness:    1,
+			Informer:       wf.NamespaceInformer().Informer(),
+			Lister:         wf.NamespaceInformer().Lister().List,
+			ObjNeedsUpdate: nsNeedsUpdate,
+		}
+		c.nsController = controllerutil.NewController("clustermanager routeadvertisements namespace controller", nsConfig)
 	}
-	c.nsController = controllerutil.NewController("clustermanager routeadvertisements namespace controller", nsConfig)
 
 	if util.IsEVPNEnabled() {
 		c.vtepLister = wf.VTEPInformer().Lister()
@@ -214,26 +241,36 @@ func (c *Controller) Start() error {
 	c.networkRefReconcilerID = c.nm.RegisterNetworkRefReconciler(networkRefReconcilerFunc(func(_, _ string) {
 		c.raController.ReconcileAll()
 	}))
-	return controllerutil.Start(
-		c.eipController,
+	controllers := []controllerutil.Reconciler{
 		c.frrController,
 		c.nadController,
 		c.nodeController,
-		c.nsController,
 		c.raController,
-	)
+	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		controllers = append(controllers, c.uplinkStateController)
+	}
+	if config.OVNKubernetesFeature.EnableEgressIP {
+		controllers = append(controllers, c.eipController, c.nsController)
+	}
+	return controllerutil.Start(controllers...)
 }
 
 func (c *Controller) Stop() {
 	c.nm.DeRegisterNetworkRefReconciler(c.networkRefReconcilerID)
-	controllerutil.Stop(
-		c.eipController,
+	controllers := []controllerutil.Reconciler{
 		c.frrController,
 		c.nadController,
 		c.nodeController,
-		c.nsController,
 		c.raController,
-	)
+	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		controllers = append(controllers, c.uplinkStateController)
+	}
+	if config.OVNKubernetesFeature.EnableEgressIP {
+		controllers = append(controllers, c.eipController, c.nsController)
+	}
+	controllerutil.Stop(controllers...)
 	klog.Infof("Cluster manager routeadvertisements stopped")
 }
 
@@ -375,6 +412,8 @@ type selectedNetworks struct {
 	ipVRFConfigs []*ipVRFConfig
 	// networkTransport is a map of selected network to their transport mode
 	networkTransport map[string]string
+	// networkUplinks is a map of selected network to its Uplink name.
+	networkUplinks map[string]string
 }
 
 // vrfConfig holds base VRF EVPN configuration for a network
@@ -406,6 +445,9 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	}
 
 	advertisements := sets.New(ra.Spec.Advertisements...)
+	if advertisements.Has(ratypes.EgressIP) && !config.OVNKubernetesFeature.EnableEgressIP {
+		return nil, nil, fmt.Errorf("%w: advertising EgressIP requires EgressIP feature to be enabled", errConfig)
+	}
 	if advertisements.Has(ratypes.EgressIP) && ra.Spec.TargetVRF == "auto" {
 		return nil, nil, fmt.Errorf("%w: advertising EgressIP not supported with TargetVRF set to 'auto'", errConfig)
 	}
@@ -429,6 +471,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		prefixLength:     map[string]uint32{},
 		networkTopology:  map[string]string{},
 		networkTransport: map[string]string{},
+		networkUplinks:   map[string]string{},
 	}
 	for _, nad := range nads {
 		networkName := util.GetAnnotatedNetworkName(nad)
@@ -460,6 +503,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		selectedNetworks.networkVRFs[vrf] = networkName
 		selectedNetworks.networkTopology[networkName] = network.TopologyType()
 		selectedNetworks.networkTransport[networkName] = network.Transport()
+		selectedNetworks.networkUplinks[networkName] = network.Uplink()
 
 		// MAC-VRF configuration
 		if macVNI := network.EVPNMACVRFVNI(); macVNI > 0 {
@@ -936,7 +980,7 @@ func (c *Controller) generateFRRConfiguration(
 		nodeV4, _, _ := strings.Cut(nodeIfAddr.IPv4, "/")
 		nodeV6, _, _ := strings.Cut(nodeIfAddr.IPv6, "/")
 
-		dpuHostGatewayNextHops, err := getDPUHostGatewayNextHops(node)
+		dpuHostGatewayNextHops, err := c.getDPUHostGatewayNextHops(node, selectedNetworks, matchedNetwork)
 		if err != nil {
 			return nil, err
 		}
@@ -1252,13 +1296,6 @@ func (c *Controller) generateFRRConfiguration(
 }
 
 func getDPUHostGatewayNextHops(node *corev1.Node) (map[bool]string, error) {
-	if config.Gateway.Mode != config.GatewayModeShared {
-		return nil, nil
-	}
-	if _, ok := node.Labels[types.OvnDPUHostNodeLabel]; !ok {
-		return nil, nil
-	}
-
 	// ParseNodeL3GatewayAnnotation also requires the chassis ID for enabled
 	// gateways, but reports a missing chassis ID as a config error. Check it
 	// first so a DPU host that is still initializing leaves the RA pending.
@@ -1289,6 +1326,53 @@ func getDPUHostGatewayNextHops(node *corev1.Node) (map[bool]string, error) {
 	}
 	if len(nextHops) == 0 {
 		return nil, fmt.Errorf("%w: no shared gateway IP addresses found for DPU host node %q", errConfig, node.Name)
+	}
+	return nextHops, nil
+}
+
+func (c *Controller) getDPUHostGatewayNextHops(
+	node *corev1.Node,
+	selectedNetworks *selectedNetworks,
+	networkName string,
+) (map[bool]string, error) {
+	if config.Gateway.Mode != config.GatewayModeShared {
+		return nil, nil
+	}
+	if _, ok := node.Labels[types.OvnDPUHostNodeLabel]; !ok {
+		return nil, nil
+	}
+
+	uplinkName := selectedNetworks.networkUplinks[networkName]
+	if uplinkName == "" {
+		return getDPUHostGatewayNextHops(node)
+	}
+	stateName := uplinkutil.StateName(uplinkName, node.Name)
+	state, err := uplinkutil.GetState(c.uplinkStateLister, uplinkName, node.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: waiting for UplinkState %q to be set for DPU host node %q",
+				errPending, stateName, node.Name)
+		}
+		return nil, fmt.Errorf("%w: failed to get UplinkState %q for DPU host node %q: %w",
+			errConfig, stateName, node.Name, err)
+	}
+	if !meta.IsStatusConditionTrue(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionReady) {
+		return nil, fmt.Errorf("%w: waiting for UplinkState %q to become ready for DPU host node %q",
+			errPending, stateName, node.Name)
+	}
+
+	nextHops := map[bool]string{}
+	for _, ipCIDR := range state.Status.IPAddresses {
+		ip, _, err := net.ParseCIDR(string(ipCIDR))
+		if err != nil {
+			return nil, fmt.Errorf("%w: failed to parse UplinkState %q IP address %q: %w",
+				errConfig, stateName, ipCIDR, err)
+		}
+		nextHops[ip.To4() == nil] = ip.String()
+	}
+	if len(nextHops) == 0 {
+		return nil, fmt.Errorf("%w: no IP addresses found in UplinkState %q for DPU host node %q",
+			errConfig, stateName, node.Name)
 	}
 	return nextHops, nil
 }
@@ -1709,6 +1793,10 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
 		util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||
 		util.NodeVTEPsAnnotationChanged(oldObj, newObj)
+}
+
+func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
+	return oldObj == nil || newObj == nil || !reflect.DeepEqual(oldObj.Status, newObj.Status)
 }
 
 func egressIPNeedsUpdate(oldObj, newObj *eiptypes.EgressIP) bool {
