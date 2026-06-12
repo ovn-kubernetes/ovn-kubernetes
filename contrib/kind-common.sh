@@ -236,15 +236,15 @@ set_common_default_params() {
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
   ENABLE_NO_OVERLAY_OUTBOUND_SNAT=${ENABLE_NO_OVERLAY_OUTBOUND_SNAT:-false}
   ENABLE_NO_OVERLAY_MANAGED_ROUTING=${ENABLE_NO_OVERLAY_MANAGED_ROUTING:-false}
-  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
-    echo "No-overlay mode requires route advertisement to be enabled (-rae)"
-    exit 1
-  fi
-  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ] && [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
-    echo "No-overlay mode requires advertise the default network (-adv) in unmanaged routing mode"
-    exit 1
-  fi
   if [ "$ENABLE_NO_OVERLAY" == true ]; then
+    local enable_no_overlay_unmanaged_no_ra=false
+    if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
+      enable_no_overlay_unmanaged_no_ra=true
+    fi
+    if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ] && [ "$enable_no_overlay_unmanaged_no_ra" != true ]; then
+      echo "No-overlay mode requires RouteAdvertisements (-rae), except for unmanaged no-overlay with no default-network advertisement"
+      exit 1
+    fi
     # Set default MTU for no-overlay mode (1500) if not already set
     OVN_MTU=${OVN_MTU:-1500}
   else
@@ -974,43 +974,257 @@ kind_get_nodes() {
   kind get nodes --name "${KIND_CLUSTER_NAME}" | grep -v external-load-balancer
 }
 
+is_default_network_unmanaged_no_overlay_without_ra() {
+  [ "${ENABLE_NO_OVERLAY}" = true ] &&
+    [ "${ENABLE_NO_OVERLAY_MANAGED_ROUTING}" != true ] &&
+    [ "${ADVERTISE_DEFAULT_NETWORK}" != true ]
+}
+
+needs_host_pod_subnet_routes() {
+  [ "${ADVERTISE_DEFAULT_NETWORK}" = true ] || is_default_network_unmanaged_no_overlay_without_ra
+}
+
+needs_external_frr_router() {
+  if [ "${DPU_MODE:-none}" == "host" ]; then
+    return 1
+  fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" != true ]; then
+    return 0
+  fi
+  is_default_network_unmanaged_no_overlay_without_ra
+}
+
 configure_pod_subnet_routes_on_runner_host() {
-  # Add routes for pod networks dynamically into the github runner for return traffic to pass back
-  if [ "$ADVERTISE_DEFAULT_NETWORK" = "true" ]; then
-    echo "Adding routes for Kubernetes pod networks..."
-    NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
-    echo "Found nodes: $NODES"
-    for node in $NODES; do
-      # Get the addresses
-      node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-      # Get subnet information
-      subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+  if ! needs_host_pod_subnet_routes; then
+    return
+  fi
 
-      if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
-        # Extract IPv4 address (first address)
-        node_ipv4=$(echo "$node_ips" | awk '{print $1}')
-        ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
+  # Add routes for pod networks dynamically into the host for return traffic to pass back.
+  # This is needed when pod IPs are externally visible, either because
+  # the default network is advertised through BGP or because unmanaged no-overlay
+  # without RAs relies on static underlay routes instead of RouteAdvertisements.
+  echo "Adding routes for Kubernetes pod networks to the host..."
+  local nodes
+  nodes=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+  echo "Found nodes: $nodes"
+  for node in $nodes; do
+    local node_ips node_ipv4 node_ipv6 subnet_json subnets subnet
+    node_ips=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+    node_ipv4=$(echo "$node_ips" | tr ' ' '\n' | grep -v ':' | head -n 1 || true)
+    node_ipv6=$(echo "$node_ips" | tr ' ' '\n' | grep ':' | head -n 1 || true)
+    subnet_json=$(kubectl get node "$node" -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+    subnets=$(echo "$subnet_json" | jq -r '.default[]?')
 
-        # Add IPv4 route
-        if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
-          echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
-          sudo ip route replace $ipv4_subnet via $node_ipv4
+    for subnet in $subnets; do
+      if [[ "$subnet" == *:* ]]; then
+        if [ -n "$node_ipv6" ]; then
+          echo "Adding IPv6 route for $node ($node_ipv6): $subnet"
+          sudo ip -6 route replace "$subnet" via "$node_ipv6"
         fi
-      fi
-
-      # Add IPv6 route if enabled
-      if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-        # Extract IPv6 address (second address, if present)
-        node_ipv6=$(echo "$node_ips" | awk '{print $2}')
-        ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
-
-        if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
-          echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
-          sudo ip -6 route replace $ipv6_subnet via $node_ipv6
-        fi
+      elif [ -n "$node_ipv4" ]; then
+        echo "Adding IPv4 route for $node ($node_ipv4): $subnet"
+        sudo ip route replace "$subnet" via "$node_ipv4"
       fi
     done
+  done
+}
+
+# In unmanaged no-overlay without RAs, the default network is not advertised through BGP.
+# The external FRR container still acts as the underlay next hop, so it needs
+# static routes for each node pod subnet pointing at that node's InternalIP.
+configure_no_overlay_unmanaged_no_ra_frr_static_routes() {
+  if ! is_default_network_unmanaged_no_overlay_without_ra; then
+    return
   fi
+
+  if ! $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^frr$'; then
+    echo "error: unmanaged no-overlay without RAs static route setup requires the external frr container"
+    exit 1
+  fi
+
+  echo "Configuring static pod-subnet routes on external FRR for unmanaged no-overlay without RAs..."
+  local nodes
+  nodes=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+  echo "Found nodes: $nodes"
+
+  local configured_routes=0
+  for node in $nodes; do
+    local node_ips node_ipv4 node_ipv6 subnet_json subnets
+    node_ips=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+    node_ipv4=$(echo "$node_ips" | tr ' ' '\n' | grep -v ':' | head -n 1 || true)
+    node_ipv6=$(echo "$node_ips" | tr ' ' '\n' | grep ':' | head -n 1 || true)
+    subnet_json=$(kubectl get node "$node" -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+    subnets=$(echo "$subnet_json" | jq -r '.default[]?')
+
+    for subnet in $subnets; do
+      if [[ "$subnet" == *:* ]]; then
+        if [ -n "$node_ipv6" ]; then
+          echo "Adding IPv6 route on external FRR for $node ($node_ipv6): $subnet"
+          $OCI_BIN exec frr ip -6 route replace "$subnet" via "$node_ipv6"
+          configured_routes=$((configured_routes + 1))
+        fi
+      elif [ -n "$node_ipv4" ]; then
+        echo "Adding IPv4 route on external FRR for $node ($node_ipv4): $subnet"
+        $OCI_BIN exec frr ip route replace "$subnet" via "$node_ipv4"
+        configured_routes=$((configured_routes + 1))
+      fi
+    done
+  done
+
+  if [ "$configured_routes" -eq 0 ]; then
+    echo "error: no unmanaged no-overlay without RAs static pod-subnet routes were configured on external FRR"
+    exit 1
+  fi
+
+  $OCI_BIN exec frr ip route || true
+  $OCI_BIN exec frr ip -6 route || true
+}
+
+# In local-gateway no-overlay, pod traffic leaves OVN through the management
+# port source route and then uses the node host routing table. In RA-backed
+# setups BGP installs more-specific remote pod-subnet routes there. This kind
+# setup does not learn those routes without RAs, so install equivalent routes
+# on every kind node.
+configure_no_overlay_unmanaged_no_ra_node_static_routes() {
+  if ! is_default_network_unmanaged_no_overlay_without_ra; then
+    return
+  fi
+
+  echo "Configuring static remote pod-subnet routes on kind nodes for unmanaged no-overlay without RAs..."
+  local nodes
+  nodes=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+  echo "Found nodes: $nodes"
+
+  local configured_routes=0
+  local local_node remote_node
+  for local_node in $nodes; do
+    for remote_node in $nodes; do
+      if [ "$remote_node" == "$local_node" ]; then
+        continue
+      fi
+
+      local node_ips node_ipv4 node_ipv6 subnet_json subnets subnet
+      node_ips=$(kubectl get node "$remote_node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+      node_ipv4=$(echo "$node_ips" | tr ' ' '\n' | grep -v ':' | head -n 1 || true)
+      node_ipv6=$(echo "$node_ips" | tr ' ' '\n' | grep ':' | head -n 1 || true)
+      subnet_json=$(kubectl get node "$remote_node" -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+      subnets=$(echo "$subnet_json" | jq -r '.default[]?')
+
+      for subnet in $subnets; do
+        if [[ "$subnet" == *:* ]]; then
+          if [ -z "$node_ipv6" ]; then
+            echo "Skipping IPv6 kind-node route on $local_node for $remote_node: no IPv6 InternalIP for $subnet"
+            continue
+          fi
+          echo "Adding IPv6 kind-node route on $local_node for $remote_node: $subnet via $node_ipv6"
+          $OCI_BIN exec "$local_node" ip -6 route replace "$subnet" via "$node_ipv6" dev breth0
+        else
+          if [ -z "$node_ipv4" ]; then
+            echo "Skipping IPv4 kind-node route on $local_node for $remote_node: no IPv4 InternalIP for $subnet"
+            continue
+          fi
+          echo "Adding IPv4 kind-node route on $local_node for $remote_node: $subnet via $node_ipv4"
+          $OCI_BIN exec "$local_node" ip route replace "$subnet" via "$node_ipv4" dev breth0
+        fi
+        configured_routes=$((configured_routes + 1))
+      done
+    done
+
+    echo "Kind node routes on $local_node:"
+    $OCI_BIN exec "$local_node" ip route || true
+    $OCI_BIN exec "$local_node" ip -6 route || true
+  done
+
+  if [ "$configured_routes" -eq 0 ]; then
+    echo "error: no unmanaged no-overlay without RAs static pod-subnet routes were configured on kind nodes"
+    exit 1
+  fi
+}
+
+# Unmanaged no-overlay kind without RAs does not advertise pod subnets, so
+# routeimport has no BGP routes to mirror into OVN. Program equivalent remote
+# pod-subnet routes on each node GR for gateway-router-routed paths.
+configure_no_overlay_unmanaged_no_ra_gr_static_routes() {
+  if ! is_default_network_unmanaged_no_overlay_without_ra; then
+    return
+  fi
+
+  echo "Configuring static pod-subnet routes on OVN gateway routers for unmanaged no-overlay without RAs..."
+  local nodes
+  nodes=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+  echo "Found nodes: $nodes"
+
+  local configured_routes=0
+  local local_node remote_node
+  for local_node in $nodes; do
+    local nb_pod gr output_port
+    nb_pod=$(kubectl -n ovn-kubernetes get pods -l app=ovnkube-node \
+      --field-selector "spec.nodeName=${local_node}" \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [ -z "$nb_pod" ]; then
+      echo "error: failed to find ovnkube-node pod on node $local_node for unmanaged no-overlay without RAs gateway route setup"
+      exit 1
+    fi
+
+    gr="GR_${local_node}"
+    output_port="rtoe-${gr}"
+
+    for remote_node in $nodes; do
+      if [ "$remote_node" == "$local_node" ]; then
+        continue
+      fi
+
+      local node_ips node_ipv4 node_ipv6 subnet_json subnets subnet
+      node_ips=$(kubectl get node "$remote_node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+      node_ipv4=$(echo "$node_ips" | tr ' ' '\n' | grep -v ':' | head -n 1 || true)
+      node_ipv6=$(echo "$node_ips" | tr ' ' '\n' | grep ':' | head -n 1 || true)
+      subnet_json=$(kubectl get node "$remote_node" -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+      subnets=$(echo "$subnet_json" | jq -r '.default[]?')
+
+      for subnet in $subnets; do
+        local next_hop
+        if [[ "$subnet" == *:* ]]; then
+          if [ -z "$node_ipv6" ]; then
+            echo "Skipping IPv6 gateway route for $remote_node: no IPv6 InternalIP for $subnet"
+            continue
+          fi
+          next_hop="$node_ipv6"
+        else
+          if [ -z "$node_ipv4" ]; then
+            echo "Skipping IPv4 gateway route for $remote_node: no IPv4 InternalIP for $subnet"
+            continue
+          fi
+          next_hop="$node_ipv4"
+        fi
+
+        echo "Adding OVN gateway route on $local_node ($gr) for $remote_node: $subnet via $next_hop"
+        kubectl -n ovn-kubernetes exec "$nb_pod" -c nb-ovsdb -- \
+          ovn-nbctl --if-exists lr-route-del "$gr" "$subnet"
+        kubectl -n ovn-kubernetes exec "$nb_pod" -c nb-ovsdb -- \
+          ovn-nbctl lr-route-add "$gr" "$subnet" "$next_hop" "$output_port"
+        configured_routes=$((configured_routes + 1))
+      done
+    done
+
+    echo "Gateway router routes on $local_node ($gr):"
+    kubectl -n ovn-kubernetes exec "$nb_pod" -c nb-ovsdb -- ovn-nbctl lr-route-list "$gr" || true
+  done
+
+  if [ "$configured_routes" -eq 0 ]; then
+    echo "error: no unmanaged no-overlay without RAs static pod-subnet routes were configured on OVN gateway routers"
+    exit 1
+  fi
+}
+
+configure_no_overlay_unmanaged_no_ra_static_routes() {
+  if ! is_default_network_unmanaged_no_overlay_without_ra; then
+    return
+  fi
+
+  configure_pod_subnet_routes_on_runner_host
+  configure_no_overlay_unmanaged_no_ra_frr_static_routes
+  configure_no_overlay_unmanaged_no_ra_node_static_routes
+  configure_no_overlay_unmanaged_no_ra_gr_static_routes
 }
 
 set_dnsnameresolver_images() {
@@ -1444,11 +1658,12 @@ deploy_bgp_external_server() {
     echo "FRR bgp network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
   fi
-  if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ]; then
+  if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ] || is_default_network_unmanaged_no_overlay_without_ra; then
     kind_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' frr)
     echo "FRR kind network IPv4: ${kind_network_frr_v4}"
     # If UDN isolation is in loose disabled, we need to set the default gateway for the nodes in the cluster
     # to the FRR router so that cross-UDN traffic can be routed back to the pods in the cluster in the loose mode.
+    # Unmanaged no-overlay without RAs uses the same default-gateway path for pod traffic.
     echo "Setting default gateway for nodes in the cluster to FRR router IPv4: ${kind_network_frr_v4}"
     set_nodes_default_gw "$kind_network_frr_v4"
     if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
@@ -1885,7 +2100,7 @@ delete() {
   if [ "$KIND_INSTALL_METALLB" == true ]; then
     destroy_metallb
   fi
-  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  if needs_external_frr_router; then
     destroy_bgp
   fi
   timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
