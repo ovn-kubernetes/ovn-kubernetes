@@ -814,20 +814,58 @@ func (eIPC *egressIPClusterController) addEgressNode(nodeName string) error {
 	return nil
 }
 
+// cleanupNodeEgressIPAllocations cleans all EgressIP allocations for a given node
+// from the allocator cache. This prevents stale cache entries that can occur due
+// to race conditions where reassignment happens before cleanup completes.
+// The cleanup scans ALL nodes in the cache to remove duplicates that may have
+// been created by concurrent reassignment operations.
+func (eIPC *egressIPClusterController) cleanupNodeEgressIPAllocations(nodeName, logContext string) {
+	// ToDo: CleanUp
+	klog.Infof("[SRB DEBUG CACHE] cleanupNodeEgressIPAllocations(): Clean up all EgressIP allocations - node: %s, Context: %s", nodeName, logContext)
+
+	// Collect IPs to clean while holding lock
+	eIPC.nodeAllocator.Lock()
+	toClean := make(map[string]string)
+	if eNode, exists := eIPC.nodeAllocator.cache[nodeName]; exists {
+		for egressIP, egressIPName := range eNode.allocations {
+			toClean[egressIP] = egressIPName
+		}
+	}
+	eIPC.nodeAllocator.Unlock()
+
+	// Clean from ALL nodes (defensive against race conditions)
+	for egressIP, egressIPName := range toClean {
+		// ToDo: CleanUp
+		klog.Infof("[SRB DEBUG CACHE] Cleaning cache %s - node: %s, EIP name: %s, IP: %s", logContext, nodeName, egressIPName, egressIP)
+		klog.V(5).Infof("Cleaning cache %s - node: %s, EIP name: %s, IP: %s",
+			logContext, nodeName, egressIPName, egressIP)
+		eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, egressIP)
+	}
+}
+
 // deleteNodeForEgress remove the default allow logical router policies for the
 // node and removes the node from the allocator cache.
 func (eIPC *egressIPClusterController) deleteNodeForEgress(node *corev1.Node) {
+	// Clean up all EgressIP allocations before removing node from cache
+	eIPC.cleanupNodeEgressIPAllocations(node.Name, "before node deletion")
+
+	// Final node removal
 	eIPC.nodeAllocator.Lock()
 	if eNode, exists := eIPC.nodeAllocator.cache[node.Name]; exists {
 		eNode.healthClient.Disconnect()
+		delete(eIPC.nodeAllocator.cache, node.Name)
 	}
-	delete(eIPC.nodeAllocator.cache, node.Name)
 	eIPC.nodeAllocator.Unlock()
 }
 
 func (eIPC *egressIPClusterController) deleteEgressNode(nodeName string) error {
 	var errorAggregate []error
 	klog.V(5).Infof("Egress node: %s about to be removed", nodeName)
+
+	// Clean allocator cache for all EgressIPs on this node BEFORE triggering
+	// reassignment. This prevents duplicate cache entries from race conditions.
+	eIPC.cleanupNodeEgressIPAllocations(nodeName, "before node becomes unassignable")
+
 	// Since the node has been labelled as "not usable" for egress IP
 	// assignments we need to find all egress IPs which have an assignment to
 	// it, and move them elsewhere.
