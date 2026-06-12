@@ -166,6 +166,18 @@ var (
 		UDNDeletionGracePeriod:          120 * time.Second,
 	}
 
+	// Tracing holds OpenTelemetry tracing configuration.
+	Tracing = TracingConfig{
+		Insecure:                       true,
+		ServiceName:                    "ovn-kubernetes",
+		SamplingRate:                   1.0,
+		PropagatedContextAnnotationKey: "tracing.k8s.io/traceparent",
+		ExportTimeout:                  10,
+		BatchTimeout:                   5,
+		MaxExportBatchSize:             512,
+		MaxQueueSize:                   2048,
+	}
+
 	// OvnNorth holds northbound OVN database client and server authentication and location details
 	OvnNorth = OvnAuthConfig{
 		RunDir:     "/var/run/ovn/",
@@ -507,6 +519,21 @@ type OVNKubernetesFeatureConfig struct {
 	// UDNDeletionGracePeriod specified in number of seconds to wait before garbage collecting a UDN. Applies
 	// only when Dynamic UDN Allocation is enabled.
 	UDNDeletionGracePeriod time.Duration `gcfg:"udn-deletion-grace-period"`
+	// EnableTracing enables OpenTelemetry tracing support.
+	EnableTracing bool `gcfg:"enable-tracing"`
+}
+
+// TracingConfig holds OpenTelemetry tracing config file parameters.
+type TracingConfig struct {
+	Endpoint                       string  `gcfg:"endpoint"`
+	Insecure                       bool    `gcfg:"insecure"`
+	ServiceName                    string  `gcfg:"service-name"`
+	SamplingRate                   float64 `gcfg:"sampling-rate"`
+	PropagatedContextAnnotationKey string  `gcfg:"propagated-context-annotation-key"`
+	ExportTimeout                  int     `gcfg:"export-timeout"`
+	BatchTimeout                   int     `gcfg:"batch-timeout"`
+	MaxExportBatchSize             int     `gcfg:"max-export-batch-size"`
+	MaxQueueSize                   int     `gcfg:"max-queue-size"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -711,6 +738,7 @@ type config struct {
 	OvnKubeNode          OvnKubeNodeConfig
 	ClusterManager       ClusterManagerConfig
 	OvsPaths             OvsPathConfig
+	Tracing              TracingConfig
 	NoOverlay            NoOverlayConfig  `gcfg:"no-overlay"`
 	ManagedBGP           ManagedBGPConfig `gcfg:"bgp-managed"`
 }
@@ -732,6 +760,7 @@ var (
 	savedOvnKubeNode          OvnKubeNodeConfig
 	savedClusterManager       ClusterManagerConfig
 	savedOvsPaths             OvsPathConfig
+	savedTracing              TracingConfig
 	savedNoOverlay            NoOverlayConfig
 	savedManagedBGP           ManagedBGPConfig
 
@@ -763,6 +792,7 @@ func init() {
 	savedOvnKubeNode = OvnKubeNode
 	savedClusterManager = ClusterManager
 	savedOvsPaths = OvsPaths
+	savedTracing = Tracing
 	savedNoOverlay = NoOverlay
 	savedManagedBGP = ManagedBGP
 	cli.VersionPrinter = func(_ *cli.Context) {
@@ -795,6 +825,7 @@ func PrepareTestConfig() error {
 	OvnKubeNode = savedOvnKubeNode
 	ClusterManager = savedClusterManager
 	OvsPaths = savedOvsPaths
+	Tracing = savedTracing
 	NoOverlay = savedNoOverlay
 	ManagedBGP = savedManagedBGP
 	Kubernetes.DisableRequestedChassis = false
@@ -1322,6 +1353,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 			"feature is used.",
 		Destination: &cliConfig.OVNKubernetesFeature.UDNDeletionGracePeriod,
 		Value:       OVNKubernetesFeature.UDNDeletionGracePeriod,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-tracing",
+		Usage:       "Enable OpenTelemetry tracing with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableTracing,
+		Value:       OVNKubernetesFeature.EnableTracing,
 	},
 }
 
@@ -2226,6 +2263,39 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 	return nil
 }
 
+func buildTracingConfig(file *config) error {
+	if err := overrideFields(&Tracing, &file.Tracing, &savedTracing); err != nil {
+		return err
+	}
+
+	if Tracing.ServiceName == "" {
+		Tracing.ServiceName = savedTracing.ServiceName
+	}
+	if Tracing.PropagatedContextAnnotationKey == "" {
+		Tracing.PropagatedContextAnnotationKey = savedTracing.PropagatedContextAnnotationKey
+	}
+	if Tracing.ExportTimeout <= 0 {
+		Tracing.ExportTimeout = savedTracing.ExportTimeout
+	}
+	if Tracing.BatchTimeout <= 0 {
+		Tracing.BatchTimeout = savedTracing.BatchTimeout
+	}
+	if Tracing.MaxExportBatchSize <= 0 {
+		Tracing.MaxExportBatchSize = savedTracing.MaxExportBatchSize
+	}
+	if Tracing.MaxQueueSize <= 0 {
+		Tracing.MaxQueueSize = savedTracing.MaxQueueSize
+	}
+	if Tracing.SamplingRate < 0 || Tracing.SamplingRate > 1 {
+		return fmt.Errorf("invalid tracing sampling-rate %v: expected value in range [0.0, 1.0]", Tracing.SamplingRate)
+	}
+	if OVNKubernetesFeature.EnableTracing && Tracing.Endpoint == "" {
+		return fmt.Errorf("tracing endpoint must be configured when enable-tracing is true")
+	}
+
+	return nil
+}
+
 func buildClusterMgrHAConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&ClusterMgrHA, &file.ClusterMgrHA, &savedClusterMgrHA); err != nil {
@@ -2620,6 +2690,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		OvnKubeNode:          savedOvnKubeNode,
 		ClusterManager:       savedClusterManager,
 		OvsPaths:             savedOvsPaths,
+		Tracing:              savedTracing,
 		NoOverlay:            savedNoOverlay,
 		ManagedBGP:           savedManagedBGP,
 	}
@@ -2711,6 +2782,10 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
+	if err = buildTracingConfig(&cfg); err != nil {
+		return "", err
+	}
+
 	if err = buildGatewayConfig(ctx, &cliConfig, &cfg); err != nil {
 		return "", err
 	}
@@ -2773,6 +2848,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	}
 
 	klog.V(5).Infof("Features config: %+v", OVNKubernetesFeature)
+	klog.V(5).Infof("Tracing config: %+v", Tracing)
 	klog.V(5).Infof("Default config: %+v", Default)
 	klog.V(5).Infof("Logging config: %+v", Logging)
 	klog.V(5).Infof("Monitoring config: %+v", Monitoring)

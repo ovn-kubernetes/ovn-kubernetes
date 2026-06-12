@@ -338,6 +338,16 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
 			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeFalse())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeFull))
+			gomega.Expect(OVNKubernetesFeature.EnableTracing).To(gomega.BeFalse())
+			gomega.Expect(Tracing.Endpoint).To(gomega.Equal(""))
+			gomega.Expect(Tracing.Insecure).To(gomega.BeTrue())
+			gomega.Expect(Tracing.ServiceName).To(gomega.Equal("ovn-kubernetes"))
+			gomega.Expect(Tracing.SamplingRate).To(gomega.Equal(1.0))
+			gomega.Expect(Tracing.PropagatedContextAnnotationKey).To(gomega.Equal("tracing.k8s.io/traceparent"))
+			gomega.Expect(Tracing.ExportTimeout).To(gomega.Equal(10))
+			gomega.Expect(Tracing.BatchTimeout).To(gomega.Equal(5))
+			gomega.Expect(Tracing.MaxExportBatchSize).To(gomega.Equal(512))
+			gomega.Expect(Tracing.MaxQueueSize).To(gomega.Equal(2048))
 			gomega.Expect(OvnKubeNode.MgmtPortNetdev).To(gomega.Equal(""))
 			gomega.Expect(OvnKubeNode.MgmtPortDPResourceName).To(gomega.Equal(""))
 			gomega.Expect(Gateway.RouterSubnet).To(gomega.Equal(""))
@@ -1342,6 +1352,79 @@ foo=bar
 			app.Name,
 			"-config-file=" + cfgFile.Name(),
 		}
+		err = app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("configures tracing from config file", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[ovnkubernetesfeature]
+enable-tracing=true
+
+[tracing]
+endpoint=127.0.0.1:4317
+insecure=true
+service-name=ovn-kubernetes-test
+sampling-rate=0.25
+propagated-context-annotation-key=example.com/traceparent
+export-timeout=7
+batch-timeout=2
+max-export-batch-size=64
+max-queue-size=1024
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(OVNKubernetesFeature.EnableTracing).To(gomega.BeTrue())
+			gomega.Expect(Tracing.Endpoint).To(gomega.Equal("127.0.0.1:4317"))
+			gomega.Expect(Tracing.Insecure).To(gomega.BeTrue())
+			gomega.Expect(Tracing.ServiceName).To(gomega.Equal("ovn-kubernetes-test"))
+			gomega.Expect(Tracing.SamplingRate).To(gomega.Equal(0.25))
+			gomega.Expect(Tracing.PropagatedContextAnnotationKey).To(gomega.Equal("example.com/traceparent"))
+			gomega.Expect(Tracing.ExportTimeout).To(gomega.Equal(7))
+			gomega.Expect(Tracing.BatchTimeout).To(gomega.Equal(2))
+			gomega.Expect(Tracing.MaxExportBatchSize).To(gomega.Equal(64))
+			gomega.Expect(Tracing.MaxQueueSize).To(gomega.Equal(1024))
+			return nil
+		}
+		cliArgs := []string{app.Name, "-config-file=" + cfgFile.Name()}
+		err = app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("rejects enabled tracing without endpoint", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[ovnkubernetesfeature]
+enable-tracing=true
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).To(gomega.MatchError(
+				gomega.ContainSubstring("tracing endpoint must be configured when enable-tracing is true")),
+			)
+			return nil
+		}
+		cliArgs := []string{app.Name, "-config-file=" + cfgFile.Name()}
+		err = app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("rejects invalid tracing sampling rate", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[tracing]
+sampling-rate=1.5
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).To(gomega.MatchError(
+				gomega.ContainSubstring("invalid tracing sampling-rate 1.5: expected value in range [0.0, 1.0]")),
+			)
+			return nil
+		}
+		cliArgs := []string{app.Name, "-config-file=" + cfgFile.Name()}
 		err = app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})

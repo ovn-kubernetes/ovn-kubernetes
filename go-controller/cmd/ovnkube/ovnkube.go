@@ -19,6 +19,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/urfave/cli/v2"
+	"go.opentelemetry.io/otel/attribute"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/leaderelection"
@@ -38,6 +39,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -424,6 +426,45 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		}
 	}()
 	startTime := time.Now()
+
+	if config.OVNKubernetesFeature.EnableTracing && (runMode.node || runMode.ovnkubeController || runMode.clusterManager) {
+		attrs := []attribute.KeyValue{}
+		if runMode.node && runMode.identity != "" {
+			attrs = append(attrs, attribute.String("k8s.node.name", runMode.identity))
+		}
+		if config.Default.Zone != "" {
+			attrs = append(attrs, attribute.String("ovn.zone.name", config.Default.Zone))
+		}
+
+		component := "ovnkube-node"
+		if runMode.clusterManager && !runMode.node && !runMode.ovnkubeController {
+			component = "cluster-manager"
+		}
+
+		tracingConfig := tracing.Config{
+			Endpoint:                       config.Tracing.Endpoint,
+			Insecure:                       config.Tracing.Insecure,
+			ServiceName:                    config.Tracing.ServiceName,
+			SamplingRate:                   config.Tracing.SamplingRate,
+			PropagatedContextAnnotationKey: config.Tracing.PropagatedContextAnnotationKey,
+			ExportTimeout:                  time.Duration(config.Tracing.ExportTimeout) * time.Second,
+			BatchTimeout:                   time.Duration(config.Tracing.BatchTimeout) * time.Second,
+			MaxExportBatchSize:             config.Tracing.MaxExportBatchSize,
+			MaxQueueSize:                   config.Tracing.MaxQueueSize,
+		}
+
+		if err := tracing.Init(component, tracingConfig, attrs...); err != nil {
+			klog.Warningf("Tracing disabled, failed to initialize provider: %v", err)
+		} else {
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if shutdownErr := tracing.Shutdown(shutdownCtx); shutdownErr != nil {
+					klog.Warningf("Failed to shut down tracing provider: %v", shutdownErr)
+				}
+			}()
+		}
+	}
 
 	if runMode.cleanupNode {
 		return ovnnode.CleanupClusterNode(runMode.identity)
