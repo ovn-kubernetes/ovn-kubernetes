@@ -4,11 +4,13 @@
 package cni
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
+	"go.opentelemetry.io/otel/attribute"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -33,6 +36,7 @@ var (
 )
 
 const dpuNotReadyMsg = "DPU Not Ready"
+const cniSpanPrefix = "ovnkube.cni"
 
 type direction int
 
@@ -52,6 +56,45 @@ type notFoundError struct{}
 
 func (*notFoundError) Error() string {
 	return "not found"
+}
+
+func cniSpanOperation(cmd command) string {
+	switch cmd {
+	case CNIAdd:
+		return "add"
+	case CNIDel:
+		return "del"
+	default:
+		return ""
+	}
+}
+
+func cniRequestContext(pr *PodRequest) context.Context {
+	if pr.ctx != nil {
+		return pr.ctx
+	}
+	return context.Background()
+}
+
+func cniRequestAttrs(pr *PodRequest) []attribute.KeyValue {
+	attrs := append(
+		tracing.PodAttrs(pr.PodNamespace, pr.PodName, pr.PodUID),
+		attribute.String("cni.command", string(pr.Command)),
+		attribute.String("cni.ifname", pr.IfName),
+		attribute.String("cni.network.name", pr.netName),
+		attribute.String("cni.nad.name", pr.nadName),
+		attribute.String("cni.nad.key", pr.nadKey),
+		attribute.String("cni.sandbox.id", pr.SandboxID),
+	)
+	if pr.CNIConf != nil {
+		attrs = append(attrs,
+			attribute.String("pod.network.topology", pr.CNIConf.Topology),
+		)
+		if pr.CNIConf.DeviceID != "" {
+			attrs = append(attrs, attribute.String("cni.device.id", pr.CNIConf.DeviceID))
+		}
+	}
+	return attrs
 }
 
 func validateBandwidthIsReasonable(rsrc *resource.Quantity) error {

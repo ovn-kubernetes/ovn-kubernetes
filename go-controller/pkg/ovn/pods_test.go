@@ -32,6 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -1006,7 +1007,8 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						Namespace: namespaceT.Name,
 					},
 				}
-				err = fakeOvn.controller.ensurePod(nil, podObj, true) // this fails since pod doesn't exist to set annotations
+				ctx := tracing.ContextWithSpansDisabled(context.Background())
+				err = fakeOvn.controller.ensurePod(ctx, nil, podObj, true) // this fails since pod doesn't exist to set annotations
 				gomega.Expect(err).To(gomega.HaveOccurred())
 
 				key, err := retry.GetResourceKey(podObj)
@@ -1455,7 +1457,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod.Spec.NodeName = "this_is_the_wrong_nodeName"
 
 				// Deleting port from a pod that has no portInfo and the wrong nodeName should still be okay!
-				err = fakeOvn.controller.deleteLogicalPort(pod, nil)
+				err = fakeOvn.controller.deleteLogicalPort(context.Background(), pod, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// OVN db should be empty now
@@ -1466,7 +1468,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podTest.namespace).Get(context.TODO(), podTest.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Expect(fakeOvn.controller.deleteLogicalPort(pod, nil)).To(gomega.Succeed(), "Deleting port that no longer exists should be okay")
+				gomega.Expect(fakeOvn.controller.deleteLogicalPort(context.Background(), pod, nil)).To(gomega.Succeed(), "Deleting port that no longer exists should be okay")
 
 				err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, *metav1.NewDeleteOptions(0))
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1477,11 +1479,11 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// Remove Logical Switch created on behalf of node and make sure deleteLogicalPort will not fail
 				err = libovsdbops.DeleteLogicalSwitch(fakeOvn.controller.nbClient, pod.Spec.NodeName)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(fakeOvn.controller.deleteLogicalPort(pod, nil)).To(gomega.Succeed(), "Deleting port from switch that no longer exists should be okay")
+				gomega.Expect(fakeOvn.controller.deleteLogicalPort(context.Background(), pod, nil)).To(gomega.Succeed(), "Deleting port from switch that no longer exists should be okay")
 
 				// Delete cache from lsManager and make sure deleteLogicalPort will not fail
 				fakeOvn.controller.lsManager.DeleteSwitch(pod.Spec.NodeName)
-				gomega.Expect(fakeOvn.controller.deleteLogicalPort(pod, nil)).To(gomega.Succeed(), "Deleting port from node that no longer exists should be okay")
+				gomega.Expect(fakeOvn.controller.deleteLogicalPort(context.Background(), pod, nil)).To(gomega.Succeed(), "Deleting port from node that no longer exists should be okay")
 
 				return nil
 			}
@@ -1525,7 +1527,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(annotations).To(gomega.Equal(""))
 
 				// Deleting port from a pod that has no annotations should be okay
-				err := fakeOvn.controller.deleteLogicalPort(pod, nil)
+				err := fakeOvn.controller.deleteLogicalPort(context.Background(), pod, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				return nil

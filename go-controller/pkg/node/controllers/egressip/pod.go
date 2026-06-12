@@ -4,10 +4,14 @@
 package egressip
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"sync"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/vishvananda/netlink"
 
@@ -20,7 +24,10 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 )
+
+const egressIPPodSpanPrefix = "ovnkube-node.egressip.pod"
 
 // podIPConfig holds pod specific info to implement egress IP for secondary host networks for a single pod IP. A pod may
 // contain multiple IPs (one for single stack, 2 for dual stack).
@@ -139,43 +146,82 @@ func (pICL *podIPConfigList) delete(pICs ...podIPConfig) {
 	pICL.elems = elems
 }
 
+func startEgressIPPodEventSpan(pod *corev1.Pod, event string) trace.Span {
+	ctx := context.Background()
+	ctx = tracing.ContextWithSpanNamePrefix(ctx, egressIPPodSpanPrefix)
+	var annotations map[string]string
+	if pod != nil {
+		annotations = pod.Annotations
+	}
+	_, span := tracing.StartLinkedSpan(ctx, "event."+event, annotations)
+	if pod != nil {
+		span.SetAttributes(append(
+			tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+			attribute.String("k8s.node.name", pod.Spec.NodeName),
+		)...)
+	}
+	return span
+}
+
 func (c *Controller) onPodAdd(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, obj))
+		err := fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, obj)
+		utilruntime.HandleError(err)
 		return
 	}
 	if pod == nil {
-		utilruntime.HandleError(errors.New("invalid Pod provided to onPodAdd()"))
+		err := errors.New("invalid Pod provided to onPodAdd()")
+		utilruntime.HandleError(err)
 		return
 	}
+
+	span := startEgressIPPodEventSpan(pod, "add")
+	span.SetAttributes(attribute.Int("pod.ip.count", len(pod.Status.PodIPs)))
+	defer span.End()
+
 	// if the pod does not have IPs AND there are no multus network status annotations found, skip it
 	if len(pod.Status.PodIPs) == 0 {
+		span.SetAttributes(attribute.Bool("pod.enqueued", false))
 		return
 	}
+	span.SetAttributes(attribute.Bool("pod.enqueued", true))
 	c.podQueue.Add(pod)
 }
 
 func (c *Controller) onPodUpdate(oldObj, newObj interface{}) {
 	o, ok := oldObj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, o))
+		err := fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, o)
+		utilruntime.HandleError(err)
 		return
 	}
 	n, ok := newObj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, n))
+		err := fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, n)
+		utilruntime.HandleError(err)
 		return
 	}
 	if o == nil || n == nil {
-		utilruntime.HandleError(errors.New("invalid Pod provided to onPodUpdate()"))
+		err := errors.New("invalid Pod provided to onPodUpdate()")
+		utilruntime.HandleError(err)
 		return
 	}
+
+	span := startEgressIPPodEventSpan(n, "update")
+	span.SetAttributes(
+		attribute.Int("pod.ip.count", len(n.Status.PodIPs)),
+		attribute.Bool("pod.labels.changed", !reflect.DeepEqual(o.Labels, n.Labels)),
+		attribute.Bool("pod.ips.changed", !reflect.DeepEqual(o.Status.PodIPs, n.Status.PodIPs)),
+	)
+	defer span.End()
 	// if labels AND assigned Pod IPs AND the multus network status annotations are the same, skip processing changes to the pod.
 	if reflect.DeepEqual(o.Labels, n.Labels) &&
 		reflect.DeepEqual(o.Status.PodIPs, n.Status.PodIPs) {
+		span.SetAttributes(attribute.Bool("pod.enqueued", false))
 		return
 	}
+	span.SetAttributes(attribute.Bool("pod.enqueued", true))
 	c.podQueue.Add(n)
 }
 
@@ -184,17 +230,26 @@ func (c *Controller) onPodDelete(obj interface{}) {
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
-			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
+			err := fmt.Errorf("couldn't get object from tombstone %#v", obj)
+			utilruntime.HandleError(err)
 			return
 		}
 		pod, ok = tombstone.Obj.(*corev1.Pod)
 		if !ok {
-			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a Pod: %#v", tombstone.Obj))
+			err := fmt.Errorf("tombstone contained object that is not a Pod: %#v", tombstone.Obj)
+			utilruntime.HandleError(err)
 			return
 		}
 	}
 	if pod != nil {
+		span := startEgressIPPodEventSpan(pod, "delete")
+		span.SetAttributes(
+			attribute.Int("pod.ip.count", len(pod.Status.PodIPs)),
+			attribute.Bool("pod.enqueued", true),
+		)
+		defer span.End()
 		c.podQueue.Add(pod)
+		return
 	}
 }
 

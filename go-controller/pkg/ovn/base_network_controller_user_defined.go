@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -33,6 +34,7 @@ import (
 	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -334,7 +336,8 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	requiresLogicalPort := isLocalPod || bsnc.isLayer2WithInterconnectTransport()
 
 	if requiresLogicalPort {
-		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadKey, network, lspEnabled)
+		ctx := tracing.ContextWithSpansDisabled(context.Background())
+		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(ctx, pod, nadKey, network, lspEnabled)
 		if err != nil {
 			return err
 		}

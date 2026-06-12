@@ -1047,7 +1047,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				}
 			}
 
-			err = a.reconcile(old, new, tt.args.release)
+			err = a.reconcile(context.Background(), old, new, tt.args.release)
 			if len(tt.expectError) > 0 {
 				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.expectError)))
 			} else if err != nil {

@@ -4,11 +4,15 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -28,6 +32,7 @@ import (
 	anpcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	egresssvc_zone "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	networkconnectcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -101,7 +106,22 @@ func (oc *DefaultNetworkController) recordPodEvent(reason string, addErr error, 
 
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensurePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) (err error) {
+	ctx = tracing.ContextWithSpanNamePrefix(ctx, ovnkubeControllerPodSpanPrefix)
+	ctx, span := tracing.StartSpan(ctx, "setup-logical-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+		attribute.Bool("ovn.add_port", addPort),
+	)...)
+
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
 		return nil
@@ -109,16 +129,30 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 
 	if oc.isPodScheduledinLocalZone(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-		return oc.ensureLocalZonePod(oldPod, pod, addPort)
+		return oc.ensureLocalZonePod(ctx, oldPod, pod, addPort)
 	}
 
 	klog.V(5).Infof("Ensuring zone remote for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
-	return oc.ensureRemoteZonePod(oldPod, pod)
+	return oc.ensureRemoteZonePod(ctx, oldPod, pod, addPort)
 }
 
 // ensureLocalZonePod tries to set up a local zone pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, addPort bool) error {
+func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) (err error) {
+	ctx, span := tracing.StartSpan(ctx, "setup-local-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+		attribute.Bool("ovn.add_port", addPort),
+	)...)
+
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -132,7 +166,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 	}
 
 	if !util.PodWantsHostNetwork(pod) && addPort {
-		if err := oc.addLogicalPort(pod); err != nil {
+		if err := oc.addLogicalPortWithContext(ctx, pod); err != nil {
 			return fmt.Errorf("addLogicalPort failed for %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
@@ -167,7 +201,21 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 //   - For live-migratable VMs, ensures remote-zone pod-to-node routes
 //
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
-func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) error {
+func (oc *DefaultNetworkController) ensureRemoteZonePod(ctx context.Context, oldPod, pod *corev1.Pod, addPort bool) (err error) {
+	_, span := tracing.StartSpan(ctx, "setup-remote-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+		attribute.Bool("ovn.add_port", addPort),
+	)...)
+
 	if kubevirt.IsPodLiveMigratable(pod) {
 		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
@@ -176,18 +224,31 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(_, pod *corev1.Pod) erro
 
 // removePod tried to tear down a pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
-func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo) error {
+func (oc *DefaultNetworkController) removePod(ctx context.Context, pod *corev1.Pod, portInfo *lpInfo) (err error) {
+	ctx, span := tracing.StartSpan(ctx, "teardown-logical-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(append(
+		tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+		attribute.String("k8s.node.name", pod.Spec.NodeName),
+	)...)
+
 	if oc.isPodScheduledinLocalZone(pod) {
-		if err := oc.removeLocalZonePod(pod, portInfo); err != nil {
+		if err := oc.removeLocalZonePod(ctx, pod, portInfo); err != nil {
 			return err
 		}
 	} else {
-		if err := oc.removeRemoteZonePod(pod); err != nil {
+		if err := oc.removeRemoteZonePod(ctx, pod); err != nil {
 			return err
 		}
 	}
 
-	err := kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod)
+	err = kubevirt.CleanUpLiveMigratablePod(oc.nbClient, oc.watchFactory, pod)
 	if err != nil {
 		return err
 	}
@@ -198,7 +259,17 @@ func (oc *DefaultNetworkController) removePod(pod *corev1.Pod, portInfo *lpInfo)
 
 // removeLocalZonePod tries to tear down a local zone pod. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
-func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo *lpInfo) error {
+func (oc *DefaultNetworkController) removeLocalZonePod(ctx context.Context, pod *corev1.Pod, portInfo *lpInfo) (err error) {
+	ctx, span := tracing.StartSpan(ctx, "teardown-local-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID))...)
+
 	oc.logicalPortCache.remove(pod, ovntypes.DefaultNetworkName)
 
 	if config.Metrics.EnableScaleMetrics {
@@ -211,7 +282,7 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 	if util.PodWantsHostNetwork(pod) {
 		return nil
 	}
-	if err := oc.deleteLogicalPort(pod, portInfo); err != nil {
+	if err := oc.deleteLogicalPort(ctx, pod, portInfo); err != nil {
 		return fmt.Errorf("deleteLogicalPort failed for pod %s: %w",
 			getPodNamespacedName(pod), err)
 	}
@@ -222,7 +293,16 @@ func (oc *DefaultNetworkController) removeLocalZonePod(pod *corev1.Pod, portInfo
 // removeRemoteZonePod tries to tear down a remote zone pod bits. It returns nil on success and error on failure;
 // failure indicates the pod tear down should be retried later.
 // It removes the remote pod ips from the namespace address set.
-func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
+func (oc *DefaultNetworkController) removeRemoteZonePod(ctx context.Context, pod *corev1.Pod) (err error) {
+	_, span := tracing.StartSpan(ctx, "teardown-remote-network")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	span.SetAttributes(tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID))...)
 	// while this check is only intended for local pods, we also need it for
 	// remote live migrated pods that might have been allocated from this zone
 	if oc.wasPodReleasedBeforeStartup(string(pod.UID), ovntypes.DefaultNetworkName) {

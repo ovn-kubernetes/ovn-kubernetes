@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -46,10 +49,13 @@ import (
 	zoneic "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
+
+const ovnkubeControllerPodSpanPrefix = "ovnkube-controller.pod"
 
 // DefaultNetworkController structure is the object which holds the controls for starting
 // and reacting upon the watched resources (e.g. pods, endpoints) for default l3 network
@@ -1008,7 +1014,20 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Pod", obj)
 		}
-		return h.oc.ensurePod(nil, pod, true)
+		ctx := context.Background()
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, ovnkubeControllerPodSpanPrefix)
+		ctx, span := tracing.StartLinkedSpan(ctx, "add", pod.Annotations)
+		span.SetAttributes(append(
+			tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID)),
+			attribute.Bool("retry.loop", fromRetryLoop),
+		)...)
+		err := h.oc.ensurePod(ctx, nil, pod, true)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+		return err
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
@@ -1088,7 +1107,23 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return h.oc.ensurePod(oldPod, newPod, inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod))
+		ctx := context.Background()
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, ovnkubeControllerPodSpanPrefix)
+		ctx, span := tracing.StartLinkedSpan(ctx, "update", newPod.Annotations)
+		needsAdd := inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
+		span.SetAttributes(append(
+			tracing.PodAttrs(newPod.Namespace, newPod.Name, string(newPod.UID)),
+			attribute.Bool("retry.cache", inRetryCache),
+			attribute.Bool("pod.schedule.state.changed", util.PodScheduled(oldPod) != util.PodScheduled(newPod)),
+			attribute.Bool("ensure.addPort", needsAdd),
+		)...)
+		err := h.oc.ensurePod(ctx, oldPod, newPod, needsAdd)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+		return err
 
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
@@ -1163,7 +1198,17 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 		if cachedObj != nil {
 			portInfo = cachedObj.(*lpInfo)
 		}
-		return h.oc.removePod(pod, portInfo)
+		ctx := context.Background()
+		ctx = tracing.ContextWithSpanNamePrefix(ctx, ovnkubeControllerPodSpanPrefix)
+		ctx, span := tracing.StartLinkedSpan(ctx, "delete", pod.Annotations)
+		span.SetAttributes(tracing.PodAttrs(pod.Namespace, pod.Name, string(pod.UID))...)
+		err := h.oc.removePod(ctx, pod, portInfo)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+		return err
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
