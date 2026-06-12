@@ -445,7 +445,7 @@ jobs:
         # Valid options are:
         # target: ["shard-conformance", "control-plane", "multi-homing", "node-ip-mac-migration",
         #          "external-gateway", "kv-live-migration", "network-segmentation",
-        #          "network-segmentation-dynamic", "bgp", "bgp-no-overlay", "bgp-loose-isolation",
+        #          "network-segmentation-dynamic", "bgp", "bgp-no-overlay", "bgp-no-overlay-unmanaged-no-ra", "bgp-loose-isolation",
         #          "evpn", "traffic-flow-test-only", "tools", "serial"]
         #         shard-conformance: hybrid-overlay = multicast-enable = emptylb-enable = false
         #         control-plane: hybrid-overlay = multicast-enable = emptylb-enable = true
@@ -496,6 +496,8 @@ jobs:
           # no-overlay (e.g. BGP route advertisements, network-segmentation) where implementations are not strictly orthogonal.
           - {"target": "bgp-no-overlay", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
           - {"target": "bgp-no-overlay",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
+          - {"target": "bgp-no-overlay-unmanaged-no-ra", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "unmanaged-no-ra", "network-segmentation": "enable-network-segmentation", "no-overlay": "true"}
+          - {"target": "bgp-no-overlay-unmanaged-no-ra", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",     "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "unmanaged-no-ra", "network-segmentation": "enable-network-segmentation", "no-overlay": "snat-enabled"}
           - {"target": "bgp-loose-isolation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "advertised-udn-isolation-mode": "loose"}
           - {"target": "evpn", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "evpn": "enable-evpn"}
           - {"target": "traffic-flow-test-only", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
@@ -512,7 +514,7 @@ jobs:
       KIND_INSTALL_METALLB: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') }}"
       OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
-      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
@@ -689,7 +691,10 @@ jobs:
           make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "evpn" ]; then
           make -C test control-plane WHAT="EVPN"
-        elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
+        elif [ "${{ matrix.target }}" == "bgp-no-overlay-unmanaged-no-ra" ]; then
+          make -C test control-plane WHAT="No-Overlay: Default network is enabled with no-overlay"
+          make -C test control-plane WHAT="Network Segmentation: unmanaged no-overlay CUDN without RouteAdvertisements"
+        elif [[ "${{ matrix.target }}" == bgp* ]]; then
           make -C test control-plane
         elif [ "${{ matrix.target }}" == "serial" ]; then
           # Run only Serial tests with ginkgo focus
