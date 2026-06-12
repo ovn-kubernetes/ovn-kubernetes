@@ -1338,7 +1338,14 @@ func (eIPC *egressIPClusterController) assignEgressIPs(name string, egressIPs []
 						egressIP, status.Name, name)
 
 					// Clean stale entry immediately
-					eIPC.deleteAllAllocatorEgressIPAssignments(status.Name, egressIP)
+					// eIPC.deleteAllAllocatorEgressIPAssignments(status.Name, egressIP)
+					// Clean stale entry immediately (we already hold lock)
+					for nodeName, eNode := range eIPC.nodeAllocator.cache {
+						if egressIPName, exists := eNode.allocations[egressIP]; exists && egressIPName == status.Name {
+							klog.V(5).Infof("Deleting stale allocation - node: %s, IP: %s", nodeName, egressIP)
+							delete(eNode.allocations, egressIP)
+						}
+					}
 
 					// Refresh existingAllocations after cleanup
 					_, existingAllocations = eIPC.getSortedEgressData()
