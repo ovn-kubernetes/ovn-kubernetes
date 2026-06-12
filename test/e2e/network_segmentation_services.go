@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"slices"
 	"time"
 
@@ -190,6 +191,7 @@ ips=$(ip -o addr show dev $iface | grep global | awk '{print $4}' | cut -d/ -f1 
 				jig := e2eservice.NewTestJig(cs, namespace, "udn-service")
 
 				dynamicUDNEnabled := isDynamicUDNEnabled()
+				loadBalancerProviderEnabled := isLoadBalancerProviderEnabled()
 
 				By("Selecting 3 schedulable nodes")
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
@@ -226,9 +228,11 @@ ips=$(ip -o addr show dev $iface | grep global | awk '{print $4}' | cut -d/ -f1 
 				})
 				framework.ExpectNoError(err)
 
-				By("Wait for UDN LoadBalancer Ingress to pop up")
-				udnService, err = jig.WaitForLoadBalancer(context.TODO(), 180*time.Second)
-				framework.ExpectNoError(err)
+				if loadBalancerProviderEnabled {
+					By("Wait for UDN LoadBalancer Ingress to pop up")
+					udnService, err = jig.WaitForLoadBalancer(context.TODO(), 180*time.Second)
+					framework.ExpectNoError(err)
+				}
 
 				By("Creating a UDN backend pod")
 				udnServerPod := e2epod.NewAgnhostPod(
@@ -257,7 +261,9 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				By("Connect to the UDN service cluster IP from the UDN client pod on the same node")
 				checkConnectionToClusterIPs(f, udnClientPod, udnService, udnServerPod.Name)
 				By("Connect to the UDN service nodePort on all 3 nodes from the UDN client pod")
-				checkConnectionToLoadBalancers(f, udnClientPod, udnService, udnServerPod.Name)
+				if loadBalancerProviderEnabled {
+					checkConnectionToLoadBalancers(f, udnClientPod, udnService, udnServerPod.Name)
+				}
 				checkConnectionToNodePort(f, udnClientPod, udnService, &nodes.Items[0], "endpoint node", udnServerPod.Name)
 				if !dynamicUDNEnabled {
 					checkConnectionToNodePort(f, udnClientPod, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
@@ -270,7 +276,9 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 				By("Connect to the UDN service from the UDN client pod on a different node")
 				checkConnectionToClusterIPs(f, udnClientPod2, udnService, udnServerPod.Name)
-				checkConnectionToLoadBalancers(f, udnClientPod2, udnService, udnServerPod.Name)
+				if loadBalancerProviderEnabled {
+					checkConnectionToLoadBalancers(f, udnClientPod2, udnService, udnServerPod.Name)
+				}
 				checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[1], "local node", udnServerPod.Name)
 				checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
 				if !dynamicUDNEnabled {
@@ -279,7 +287,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 				By("Connect to the UDN service from the UDN client external container")
 				externalContainer := infraapi.ExternalContainer{Name: "frr"}
-				if !dynamicUDNEnabled {
+				if loadBalancerProviderEnabled && !dynamicUDNEnabled {
 					checkConnectionToLoadBalancersFromExternalContainer(f, externalContainer, udnService, udnServerPod.Name)
 				}
 				checkConnectionToNodePortFromExternalContainer(externalContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
@@ -649,4 +657,8 @@ func filterLoadBalancerIngressByIPFamily(f *framework.Framework, service *v1.Ser
 		})
 	}
 	return lbIngressIPs
+}
+
+func isLoadBalancerProviderEnabled() bool {
+	return os.Getenv("KIND_INSTALL_METALLB") == "true"
 }
