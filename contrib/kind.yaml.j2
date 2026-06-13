@@ -24,51 +24,62 @@ networking:
 {%- if ovn_ip_family %}
   ipFamily: {{ ovn_ip_family }}
 {%- endif %}
+# Kubernetes 1.36 kind node images use kubeadm config v1beta4. In that API,
+# extraArgs and kubeletExtraArgs are lists of {name,value} entries, so keep the
+# patches below in v1beta4 form instead of the older map syntax.
 kubeadmConfigPatches:
 - |
   kind: ClusterConfiguration
+  apiVersion: kubeadm.k8s.io/v1beta4
   metadata:
     name: config
   apiServer:
     extraArgs:
-      "v": "{{ cluster_log_level }}"
-      # K8s 1.36: RelaxedServiceNameValidation is Beta and should be on by default,
-      # but custom KIND node images built from source need explicit enablement.
-      # This allows service names starting with digits (e.g., "1kubernetes").
-      "feature-gates": "RelaxedServiceNameValidation=true"
+      - name: "v"
+        value: "{{ cluster_log_level }}"
   controllerManager:
     extraArgs:
-      "v": "{{ cluster_log_level }}"
+      - name: "v"
+        value: "{{ cluster_log_level }}"
       # Disable service-lb-controller for now
       # https://github.com/kubernetes/kubernetes/issues/128121
       # Once the upstream issue is fixed we can remove this controller
       # customization fully. Tracked with
       # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4785
-      "controllers": "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
+      - name: "controllers"
+        value: "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
   scheduler:
     extraArgs:
-      "v": "{{ cluster_log_level }}"
-  networking: 
+      - name: "v"
+        value: "{{ cluster_log_level }}"
+  networking:
     dnsDomain: {{ dns_domain }}
   ---
   kind: InitConfiguration
+  apiVersion: kubeadm.k8s.io/v1beta4
   nodeRegistration:
     kubeletExtraArgs:
-      "v": "{{ cluster_log_level }}"
+      - name: "v"
+        value: "{{ cluster_log_level }}"
   ---
   kind: JoinConfiguration
+  apiVersion: kubeadm.k8s.io/v1beta4
   nodeRegistration:
     kubeletExtraArgs:
-      "v": "{{ cluster_log_level }}"
+      - name: "v"
+        value: "{{ cluster_log_level }}"
 nodes:
  - role: control-plane
    kubeadmConfigPatches:
    - |
      kind: InitConfiguration
+     apiVersion: kubeadm.k8s.io/v1beta4
      nodeRegistration:
        kubeletExtraArgs:
-         node-labels: "ingress-ready=true"
-         authorization-mode: "AlwaysAllow"
+         - name: node-labels
+           value: "ingress-ready=true"
+         - name: authorization-mode
+           value: "AlwaysAllow"
 {%- if ovn_ha is equalto "true" %}
 {%- for _ in range(1, ovn_num_master | int) %}
  - role: worker
