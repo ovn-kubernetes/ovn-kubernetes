@@ -85,6 +85,27 @@ data:
     [ovnkubenode]
     routing-table-id-start = {{ .Values.global.routingTableIDStart }}
 {{- end }}
+{{- if .Values.global.enableTracing }}
+
+    [ovnkubernetesfeature]
+    enable-tracing=true
+
+    [tracing]
+    endpoint={{ .Values.global.tracing.endpoint }}
+    use-tls={{ .Values.global.tracing.useTLS }}
+    {{- if .Values.global.tracing.useTLS }}
+    tls-insecure-skip-verify={{ .Values.global.tracing.tlsInsecureSkipVerify }}
+    tls-cacert={{ .Values.global.tracing.tlsCACert }}
+    {{- end }}
+    service-name={{ .Values.global.tracing.serviceName }}
+    sampling-rate={{ .Values.global.tracing.samplingRate }}
+    propagated-context-annotation-key={{ .Values.global.tracing.propagatedContextAnnotationKey }}
+    propagated-context-mode={{ .Values.global.tracing.propagatedContextMode }}
+    export-timeout={{ .Values.global.tracing.exportTimeout }}
+    batch-timeout={{ .Values.global.tracing.batchTimeout }}
+    max-export-batch-size={{ .Values.global.tracing.maxExportBatchSize }}
+    max-queue-size={{ .Values.global.tracing.maxQueueSize }}
+{{- end }}
 
 {{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}
 ---
