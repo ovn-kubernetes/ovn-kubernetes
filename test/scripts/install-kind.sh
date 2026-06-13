@@ -48,7 +48,7 @@ install_kind() {
 }
 
 pushd $TMP_DIR
-K8S_VERSION="v1.35.0"
+K8S_VERSION="v1.36.2"
 
 # Install kubectl for K8S_VERSION in use
 curl -sL https://dl.k8s.io/${K8S_VERSION}/kubernetes-client-linux-${ARCH}.tar.gz | sudo tar xvz -C /usr/local/bin kubernetes/client/bin/kubectl --strip-components 3
@@ -72,7 +72,11 @@ rm helm-linux-${ARCH}.tar.gz
 install_kind
 popd # go out of $TMP_DIR
 
+# Build custom kind node image for K8s 1.36 until official images are available
+# See: https://github.com/kubernetes-sigs/kind/issues/4157
+echo "Building custom kind node image for Kubernetes ${K8S_VERSION}..."
+kind build node-image --image kindest/node:${K8S_VERSION} ${K8S_VERSION}
+
 pushd $SCRIPT_DIR/../../contrib
 ./kind-helm.sh
 popd # go our of $SCRIPT_DIR/../../contrib
-

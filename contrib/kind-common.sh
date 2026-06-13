@@ -70,7 +70,7 @@ set_common_default_params() {
   KIND_CREATE=${KIND_CREATE:-true}
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  K8S_VERSION=${K8S_VERSION:-v1.35.0}
+  K8S_VERSION=${K8S_VERSION:-v1.36.2}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
@@ -1481,6 +1481,14 @@ install_frr_k8s() {
   sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
 
+  # clone_frr() patches hack/demo/demo.sh for the external FRR container. This
+  # path applies config/all-in-one/frr-k8s.yaml, which also contains an FRR
+  # image for the in-cluster frr-k8s daemonset. Patch that manifest separately
+  # so both the external FRR container and the in-cluster frr-k8s daemonset run
+  # the FRR image selected for these BGP lanes. The expected source image is
+  # kept in FRR_K8S_ALL_IN_ONE_UPSTREAM_FRR_IMAGE so the replacement fails if a
+  # future frr-k8s update changes the manifest image and this override needs to
+  # be reviewed again.
   replace_in_file_or_exit \
     "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
     "${FRR_K8S_ALL_IN_ONE_UPSTREAM_FRR_IMAGE}" \
@@ -1505,6 +1513,16 @@ install_frr_k8s() {
 }
 
 wait_for_frr_k8s() {
+  # frr-k8s serves admission/webhook requests when tests create
+  # FRRConfiguration resources, so the install must wait for that deployment
+  # before continuing. The OVN-K BGP patched frr-k8s manifest can name this
+  # deployment frr-k8s-webhook-server, while newer upstream frr-k8s manifests
+  # can name it frr-k8s-statuscleaner. Check each name before waiting so this
+  # function waits only for deployments that were installed, instead of
+  # requiring both names or assuming one fixed manifest shape.
+  if kubectl -n frr-k8s-system get deployment frr-k8s-webhook-server >/dev/null 2>&1; then
+    kubectl wait -n frr-k8s-system deployment frr-k8s-webhook-server --for condition=Available --timeout 2m
+  fi
   if kubectl -n frr-k8s-system get deployment frr-k8s-statuscleaner >/dev/null 2>&1; then
     kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
   fi

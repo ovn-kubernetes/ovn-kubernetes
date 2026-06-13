@@ -32,6 +32,10 @@ kubeadmConfigPatches:
   apiServer:
     extraArgs:
       "v": "{{ cluster_log_level }}"
+      # K8s 1.36: RelaxedServiceNameValidation is Beta and should be on by default,
+      # but custom KIND node images built from source need explicit enablement.
+      # This allows service names starting with digits (e.g., "1kubernetes").
+      "feature-gates": "RelaxedServiceNameValidation=true"
   controllerManager:
     extraArgs:
       "v": "{{ cluster_log_level }}"

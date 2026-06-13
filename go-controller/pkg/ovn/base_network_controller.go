@@ -870,7 +870,7 @@ func (bnc *BaseNetworkController) recordNodeErrorEvent(node *corev1.Node, nodeEr
 	}
 
 	klog.V(5).Infof("Posting %s event for Node %s: %v", corev1.EventTypeWarning, node.Name, nodeErr)
-	bnc.recorder.Eventf(nodeRef, corev1.EventTypeWarning, "ErrorReconcilingNode", nodeErr.Error())
+	bnc.recorder.Eventf(nodeRef, corev1.EventTypeWarning, "ErrorReconcilingNode", "%v", nodeErr)
 }
 
 func (bnc *BaseNetworkController) recordPodErrorEvent(pod *corev1.Pod, podErr error) {
@@ -880,7 +880,7 @@ func (bnc *BaseNetworkController) recordPodErrorEvent(pod *corev1.Pod, podErr er
 			pod.Namespace, pod.Name, err)
 	} else {
 		klog.V(5).Infof("Posting a %s event for Pod %s/%s", corev1.EventTypeWarning, pod.Namespace, pod.Name)
-		bnc.recorder.Eventf(podRef, corev1.EventTypeWarning, "ErrorReconcilingPod", podErr.Error())
+		bnc.recorder.Eventf(podRef, corev1.EventTypeWarning, "ErrorReconcilingPod", "%v", podErr)
 	}
 }
 
