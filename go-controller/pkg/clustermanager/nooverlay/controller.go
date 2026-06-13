@@ -302,6 +302,7 @@ func (c *Controller) emitEvent(eventType, reason, message string) {
 		},
 		eventType,
 		reason,
+		"%s",
 		message,
 	)
 }

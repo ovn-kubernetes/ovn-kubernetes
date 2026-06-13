@@ -1,15 +1,5 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-# Upgrade CI creates the pre-upgrade kind cluster from master before checking
-# out the PR branch. K8s 1.36 e2e can then run the digit-prefixed Service DNS
-# test against that pre-upgrade API server. K8s 1.35 keeps
-# RelaxedServiceNameValidation alpha/default-off, so enable it with kind's
-# documented top-level featureGates field instead of kubeadm component patches.
-# TODO: Remove this explicit gate after ovn-kubernetes/ovn-kubernetes#6417
-# lands and master creates K8s 1.36+ kind clusters, where this gate is
-# beta/default-on.
-featureGates:
-  RelaxedServiceNameValidation: true
 networking:
   # kube proxy will be disabled
   kubeProxyMode: "none"
@@ -32,6 +22,10 @@ kubeadmConfigPatches:
   apiServer:
     extraArgs:
       "v": "{{ cluster_log_level }}"
+      # K8s 1.36: RelaxedServiceNameValidation is Beta and should be on by default,
+      # but custom KIND node images built from source need explicit enablement.
+      # This allows service names starting with digits (e.g., "1kubernetes").
+      "feature-gates": "RelaxedServiceNameValidation=true"
   controllerManager:
     extraArgs:
       "v": "{{ cluster_log_level }}"

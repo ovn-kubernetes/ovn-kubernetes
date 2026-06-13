@@ -137,7 +137,7 @@ func (GenericAPIServerConfig) SwaggerDoc() map[string]string {
 }
 
 var map_GenericControllerConfig = map[string]string{
-	"":               "GenericControllerConfig provides information to configure a controller",
+	"":               "GenericControllerConfig provides information to configure a controller\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 	"servingInfo":    "servingInfo is the HTTP serving information for the controller's endpoints",
 	"leaderElection": "leaderElection provides information to elect a leader. Only override this if you have a specific need",
 	"authentication": "authentication allows configuration of authentication for the endpoints",
@@ -319,6 +319,7 @@ var map_APIServerSpec = map[string]string{
 	"additionalCORSAllowedOrigins": "additionalCORSAllowedOrigins lists additional, user-defined regular expressions describing hosts for which the API server allows access using the CORS headers. This may be needed to access the API and the integrated OAuth server from JavaScript applications. The values are regular expressions that correspond to the Golang regular expression language.",
 	"encryption":                   "encryption allows the configuration of encryption of resources at the datastore layer.",
 	"tlsSecurityProfile":           "tlsSecurityProfile specifies settings for TLS connections for externally exposed servers.\n\nWhen omitted, this means no opinion and the platform is left to choose a reasonable default, which is subject to change over time. The current default is the Intermediate profile.",
+	"tlsAdherence":                 "tlsAdherence controls if components in the cluster adhere to the TLS security profile configured on this APIServer resource.\n\nValid values are \"LegacyAdheringComponentsOnly\" and \"StrictAllComponents\".\n\nWhen set to \"LegacyAdheringComponentsOnly\", components that already honor the cluster-wide TLS profile continue to do so. Components that do not already honor it continue to use their individual TLS configurations.\n\nWhen set to \"StrictAllComponents\", all components must honor the configured TLS profile unless they have a component-specific TLS configuration that overrides it. This mode is recommended for security-conscious deployments and is required for certain compliance frameworks.\n\nNote: Some components such as Kubelet and IngressController have their own dedicated TLS configuration mechanisms via KubeletConfig and IngressController CRs respectively. When these component-specific TLS configurations are set, they take precedence over the cluster-wide tlsSecurityProfile. When not set, these components fall back to the cluster-wide default.\n\nComponents that encounter an unknown value for tlsAdherence should treat it as \"StrictAllComponents\" and log a warning to ensure forward compatibility while defaulting to the more secure behavior.\n\nThis field is optional. When omitted, this means the user has no opinion and the platform is left to choose reasonable defaults. These defaults are subject to change over time. The current default is LegacyAdheringComponentsOnly.\n\nOnce set, this field may be changed to a different value, but may not be removed.",
 	"audit":                        "audit specifies the settings for audit configuration to be applied to all OpenShift-provided API servers in the cluster.",
 }
 
@@ -458,7 +459,7 @@ func (OIDCProvider) SwaggerDoc() map[string]string {
 
 var map_PrefixedClaimMapping = map[string]string{
 	"":       "PrefixedClaimMapping configures a claim mapping that allows for an optional prefix.",
-	"prefix": "prefix is an optional field that configures the prefix that will be applied to the cluster identity attribute during the process of mapping JWT claims to cluster identity attributes.\n\nWhen omitted (\"\"), no prefix is applied to the cluster identity attribute.\n\nExample: if `prefix` is set to \"myoidc:\" and the `claim` in JWT contains an array of strings \"a\", \"b\" and \"c\", the mapping will result in an array of string \"myoidc:a\", \"myoidc:b\" and \"myoidc:c\".",
+	"prefix": "prefix is an optional field that configures the prefix that will be applied to the cluster identity attribute during the process of mapping JWT claims to cluster identity attributes.\n\nWhen omitted or set to an empty string (\"\"), no prefix is applied to the cluster identity attribute. Must not be set to a non-empty value when expression is set.\n\nExample: if `prefix` is set to \"myoidc:\" and the `claim` in JWT contains an array of strings \"a\", \"b\" and \"c\", the mapping will result in an array of string \"myoidc:a\", \"myoidc:b\" and \"myoidc:c\".",
 }
 
 func (PrefixedClaimMapping) SwaggerDoc() map[string]string {
@@ -549,7 +550,7 @@ func (TokenUserValidationRule) SwaggerDoc() map[string]string {
 var map_UsernameClaimMapping = map[string]string{
 	"claim":        "claim is an optional field that configures the JWT token claim whose value is assigned to the cluster identity field associated with this mapping. claim is required when the ExternalOIDCWithUpstreamParity feature gate is not enabled. When the ExternalOIDCWithUpstreamParity feature gate is enabled, claim must not be set when expression is set.\n\nclaim must not be an empty string (\"\") and must not exceed 256 characters.",
 	"expression":   "expression is an optional CEL expression used to derive the username from JWT claims.\n\nCEL expressions have access to the token claims through a CEL variable, 'claims'.\n\nexpression must be at least 1 character and must not exceed 1024 characters in length. expression must not be set when claim is set.",
-	"prefixPolicy": "prefixPolicy is an optional field that configures how a prefix should be applied to the value of the JWT claim specified in the 'claim' field.\n\nAllowed values are 'Prefix', 'NoPrefix', and omitted (not provided or an empty string).\n\nWhen set to 'Prefix', the value specified in the prefix field will be prepended to the value of the JWT claim.\n\nThe prefix field must be set when prefixPolicy is 'Prefix'.\n\nWhen set to 'NoPrefix', no prefix will be prepended to the value of the JWT claim.\n\nWhen omitted, this means no opinion and the platform is left to choose any prefixes that are applied which is subject to change over time. Currently, the platform prepends `{issuerURL}#` to the value of the JWT claim when the claim is not 'email'.\n\nAs an example, consider the following scenario:\n\n   `prefix` is unset, `issuerURL` is set to `https://myoidc.tld`,\n   the JWT claims include \"username\":\"userA\" and \"email\":\"userA@myoidc.tld\",\n   and `claim` is set to:\n   - \"username\": the mapped value will be \"https://myoidc.tld#userA\"\n   - \"email\": the mapped value will be \"userA@myoidc.tld\"",
+	"prefixPolicy": "prefixPolicy is an optional field that configures how a prefix should be applied to the value of the JWT claim specified in the 'claim' field.\n\nAllowed values are 'Prefix', 'NoPrefix', and omitted (not provided or an empty string).\n\nWhen set to 'Prefix', the value specified in the prefix field will be prepended to the value of the JWT claim. The prefix field must be set when prefixPolicy is 'Prefix'. Must not be set to 'Prefix' when expression is set. When set to 'NoPrefix', no prefix will be prepended to the value of the JWT claim. When omitted, this means no opinion and the platform is left to choose any prefixes that are applied which is subject to change over time. Currently, the platform prepends `{issuerURL}#` to the value of the JWT claim when the claim is not 'email'.\n\nAs an example, consider the following scenario:\n\n   `prefix` is unset, `issuerURL` is set to `https://myoidc.tld`,\n   the JWT claims include \"username\":\"userA\" and \"email\":\"userA@myoidc.tld\",\n   and `claim` is set to:\n   - \"username\": the mapped value will be \"https://myoidc.tld#userA\"\n   - \"email\": the mapped value will be \"userA@myoidc.tld\"",
 	"prefix":       "prefix configures the prefix that should be prepended to the value of the JWT claim.\n\nprefix must be set when prefixPolicy is set to 'Prefix' and must be unset otherwise.",
 }
 
@@ -987,7 +988,7 @@ func (ConsoleStatus) SwaggerDoc() map[string]string {
 
 var map_AWSDNSSpec = map[string]string{
 	"":                   "AWSDNSSpec contains DNS configuration specific to the Amazon Web Services cloud provider.",
-	"privateZoneIAMRole": "privateZoneIAMRole contains the ARN of an IAM role that should be assumed when performing operations on the cluster's private hosted zone specified in the cluster DNS config. When left empty, no role should be assumed.",
+	"privateZoneIAMRole": "privateZoneIAMRole contains the ARN of an IAM role that should be assumed when performing operations on the cluster's private hosted zone specified in the cluster DNS config. When left empty, no role should be assumed.\n\nThe ARN must follow the format: arn:<partition>:iam::<account-id>:role/<role-name>, where: <partition> is the AWS partition (aws, aws-cn, aws-us-gov, or aws-eusc), <account-id> is a 12-digit numeric identifier for the AWS account, <role-name> is the IAM role name.",
 }
 
 func (AWSDNSSpec) SwaggerDoc() map[string]string {
@@ -1164,9 +1165,9 @@ func (RegistryLocation) SwaggerDoc() map[string]string {
 
 var map_RegistrySources = map[string]string{
 	"":                                 "RegistrySources holds cluster-wide information about how to handle the registries config.",
-	"insecureRegistries":               "insecureRegistries are registries which do not have a valid TLS certificates or only support HTTP connections.",
-	"blockedRegistries":                "blockedRegistries cannot be used for image pull and push actions. All other registries are permitted.\n\nOnly one of BlockedRegistries or AllowedRegistries may be set.",
-	"allowedRegistries":                "allowedRegistries are the only registries permitted for image pull and push actions. All other registries are denied.\n\nOnly one of BlockedRegistries or AllowedRegistries may be set.",
+	"insecureRegistries":               "insecureRegistries are registries which do not have a valid TLS certificates or only support HTTP connections. Each entry must be a valid registry scope in the format hostname[:port][/path], optionally prefixed with \"*.\" for wildcard subdomains (e.g., \"*.example.com\"). The hostname must consist of valid DNS labels separated by dots, where each label contains only alphanumeric characters and hyphens and does not start or end with a hyphen. Entries must not be empty, must not include tags (e.g., \":latest\") or digests (e.g., \"@sha256:...\"), and must be at most 256 characters in length. The list may contain at most 1024 entries.",
+	"blockedRegistries":                "blockedRegistries cannot be used for image pull and push actions. All other registries are permitted. Each entry must be a valid registry scope in the format hostname[:port][/path], optionally prefixed with \"*.\" for wildcard subdomains (e.g., \"*.example.com\"). The hostname must consist of valid DNS labels separated by dots, where each label contains only alphanumeric characters and hyphens and does not start or end with a hyphen. Entries must not be empty, must not include tags (e.g., \":latest\") or digests (e.g., \"@sha256:...\"), and must be at most 256 characters in length. The list may contain at most 1024 entries.\n\nOnly one of BlockedRegistries or AllowedRegistries may be set.",
+	"allowedRegistries":                "allowedRegistries are the only registries permitted for image pull and push actions. All other registries are denied. Each entry must be a valid registry scope in the format hostname[:port][/path], optionally prefixed with \"*.\" for wildcard subdomains (e.g., \"*.example.com\"). The hostname must consist of valid DNS labels separated by dots, where each label contains only alphanumeric characters and hyphens and does not start or end with a hyphen. Entries must not be empty, must not include tags (e.g., \":latest\") or digests (e.g., \"@sha256:...\"), and must be at most 256 characters in length. The list may contain at most 1024 entries.\n\nOnly one of BlockedRegistries or AllowedRegistries may be set.",
 	"containerRuntimeSearchRegistries": "containerRuntimeSearchRegistries are registries that will be searched when pulling images that do not have fully qualified domains in their pull specs. Registries will be searched in the order provided in the list. Note: this search list only works with the container runtime, i.e CRI-O. Will NOT work with builds or imagestream imports.",
 }
 
@@ -1753,7 +1754,7 @@ var map_InfrastructureStatus = map[string]string{
 	"etcdDiscoveryDomain":    "etcdDiscoveryDomain is the domain used to fetch the SRV records for discovering etcd servers and clients. For more info: https://github.com/etcd-io/etcd/blob/329be66e8b3f9e2e6af83c123ff89297e49ebd15/Documentation/op-guide/clustering.md#dns-discovery deprecated: as of 4.7, this field is no longer set or honored.  It will be removed in a future release.",
 	"apiServerURL":           "apiServerURL is a valid URI with scheme 'https', address and optionally a port (defaulting to 443).  apiServerURL can be used by components like the web console to tell users where to find the Kubernetes API.",
 	"apiServerInternalURI":   "apiServerInternalURL is a valid URI with scheme 'https', address and optionally a port (defaulting to 443).  apiServerInternalURL can be used by components like kubelets, to contact the Kubernetes API server using the infrastructure provider rather than Kubernetes networking.",
-	"controlPlaneTopology":   "controlPlaneTopology expresses the expectations for operands that normally run on control nodes. The default is 'HighlyAvailable', which represents the behavior operators have in a \"normal\" cluster. The 'SingleReplica' mode will be used in single-node deployments and the operators should not configure the operand for highly-available operation The 'External' mode indicates that the control plane is hosted externally to the cluster and that its components are not visible within the cluster.",
+	"controlPlaneTopology":   "controlPlaneTopology expresses the expectations for operands that normally run on control nodes. The default is 'HighlyAvailable', which represents the behavior operators have in a \"normal\" cluster. The 'SingleReplica' mode will be used in single-node deployments and the operators should not configure the operand for highly-available operation The 'External' mode indicates that the control plane is hosted externally to the cluster and that its components are not visible within the cluster. The 'HighlyAvailableArbiter' mode indicates that the control plane will consist of 2 control-plane nodes that run conventional services and 1 smaller sized arbiter node that runs a bare minimum of services to maintain quorum.",
 	"infrastructureTopology": "infrastructureTopology expresses the expectations for infrastructure services that do not run on control plane nodes, usually indicated by a node selector for a `role` value other than `master`. The default is 'HighlyAvailable', which represents the behavior operators have in a \"normal\" cluster. The 'SingleReplica' mode will be used in single-node deployments and the operators should not configure the operand for highly-available operation NOTE: External topology mode is not applicable for this field.",
 	"cpuPartitioning":        "cpuPartitioning expresses if CPU partitioning is a currently enabled feature in the cluster. CPU Partitioning means that this cluster can support partitioning workloads to specific CPU Sets. Valid values are \"None\" and \"AllNodes\". When omitted, the default value is \"None\". The default value of \"None\" indicates that no nodes will be setup with CPU partitioning. The \"AllNodes\" value indicates that all nodes have been setup with CPU partitioning, and can then be further configured via the PerformanceProfile API.",
 }
@@ -2081,7 +2082,7 @@ func (VSpherePlatformNodeNetworkingSpec) SwaggerDoc() map[string]string {
 
 var map_VSpherePlatformSpec = map[string]string{
 	"":                     "VSpherePlatformSpec holds the desired state of the vSphere infrastructure provider. In the future the cloud provider operator, storage operator and machine operator will use these fields for configuration.",
-	"vcenters":             "vcenters holds the connection details for services to communicate with vCenter. Currently, only a single vCenter is supported, but in tech preview 3 vCenters are supported. Once the cluster has been installed, you are unable to change the current number of defined vCenters except in the case where the cluster has been upgraded from a version of OpenShift where the vsphere platform spec was not present.  You may make modifications to the existing vCenters that are defined in the vcenters list in order to match with any added or modified failure domains.",
+	"vcenters":             "vcenters holds the connection details for services to communicate with vCenter. Up to 3 vCenters are supported. Once the cluster has been installed, you are unable to change the current number of defined vCenters except when 1.) the cluster has been upgraded from a version of OpenShift where the vsphere platform spec was not present or 2.) in TechPreview you are able to add and remove vCenters but may not remove all vCenters.  You may make modifications to the existing vCenters that are defined in the vcenters list in order to match with any added or modified failure domains.",
 	"failureDomains":       "failureDomains contains the definition of region, zone and the vCenter topology. If this is omitted failure domains (regions and zones) will not be used.",
 	"nodeNetworking":       "nodeNetworking contains the definition of internal and external network constraints for assigning the node's networking. If this field is omitted, networking defaults to the legacy address selection behavior which is to only support a single address and return the first one found.",
 	"apiServerInternalIPs": "apiServerInternalIPs are the IP addresses to contact the Kubernetes API server that can be used by components inside the cluster, like kubelets using the infrastructure rather than Kubernetes networking. These are the IPs for a self-hosted load balancer in front of the API servers. In dual stack clusters this list contains two IP addresses, one from IPv4 family and one from IPv6. In single stack clusters a single IP address is expected. When omitted, values from the status.apiServerInternalIPs will be used. Once set, the list cannot be completely removed (but its second entry can).",
@@ -2328,24 +2329,76 @@ func (Storage) SwaggerDoc() map[string]string {
 	return map_Storage
 }
 
-var map_AWSKMSConfig = map[string]string{
-	"":       "AWSKMSConfig defines the KMS config specific to AWS KMS provider",
-	"keyARN": "keyARN specifies the Amazon Resource Name (ARN) of the AWS KMS key used for encryption. The value must adhere to the format `arn:aws:kms:<region>:<account_id>:key/<key_id>`, where: - `<region>` is the AWS region consisting of lowercase letters and hyphens followed by a number. - `<account_id>` is a 12-digit numeric identifier for the AWS account. - `<key_id>` is a unique identifier for the KMS key, consisting of lowercase hexadecimal characters and hyphens.",
-	"region": "region specifies the AWS region where the KMS instance exists, and follows the format `<region-prefix>-<region-name>-<number>`, e.g.: `us-east-1`. Only lowercase letters and hyphens followed by numbers are allowed.",
+var map_KMSPluginConfig = map[string]string{
+	"":      "KMSPluginConfig defines the configuration for the KMS instance that will be used with KMS encryption",
+	"type":  "type defines the kind of platform for the KMS provider. Allowed values are Vault. When set to Vault, the plugin connects to a HashiCorp Vault server for key management.",
+	"vault": "vault defines the configuration for the Vault KMS plugin. The plugin connects to a Vault Enterprise server that is managed by the user outside the purview of the control plane. This field must be set when type is Vault, and must be unset otherwise.",
 }
 
-func (AWSKMSConfig) SwaggerDoc() map[string]string {
-	return map_AWSKMSConfig
+func (KMSPluginConfig) SwaggerDoc() map[string]string {
+	return map_KMSPluginConfig
 }
 
-var map_KMSConfig = map[string]string{
-	"":     "KMSConfig defines the configuration for the KMS instance that will be used with KMSEncryptionProvider encryption",
-	"type": "type defines the kind of platform for the KMS provider. Available provider types are AWS only.",
-	"aws":  "aws defines the key config for using an AWS KMS instance for the encryption. The AWS KMS instance is managed by the user outside the purview of the control plane.",
+var map_VaultAppRoleAuthentication = map[string]string{
+	"":       "VaultAppRoleAuthentication defines the configuration for AppRole authentication with Vault.",
+	"secret": "secret references a secret in the openshift-config namespace containing the AppRole credentials used to authenticate with Vault. The secret must contain two keys: \"role-id\" for the AppRole Role ID and \"secret-id\" for the AppRole Secret ID.",
 }
 
-func (KMSConfig) SwaggerDoc() map[string]string {
-	return map_KMSConfig
+func (VaultAppRoleAuthentication) SwaggerDoc() map[string]string {
+	return map_VaultAppRoleAuthentication
+}
+
+var map_VaultAuthentication = map[string]string{
+	"":        "VaultAuthentication defines the authentication method used to authenticate with Vault.",
+	"type":    "type defines the authentication method used to authenticate with Vault. Allowed values are AppRole. When set to AppRole, the plugin uses AppRole credentials to authenticate with Vault.",
+	"appRole": "appRole defines the configuration for AppRole authentication. This field must be set when type is AppRole, and must be unset otherwise.",
+}
+
+func (VaultAuthentication) SwaggerDoc() map[string]string {
+	return map_VaultAuthentication
+}
+
+var map_VaultConfigMapReference = map[string]string{
+	"":     "VaultConfigMapReference references a ConfigMap in the openshift-config namespace.",
+	"name": "name is the metadata.name of the referenced ConfigMap in the openshift-config namespace. The name must be a valid DNS subdomain name: it must contain no more than 253 characters, contain only lowercase alphanumeric characters, '-' or '.', and start and end with an alphanumeric character.",
+}
+
+func (VaultConfigMapReference) SwaggerDoc() map[string]string {
+	return map_VaultConfigMapReference
+}
+
+var map_VaultKMSPluginConfig = map[string]string{
+	"":               "VaultKMSPluginConfig defines the KMS plugin configuration specific to Vault KMS",
+	"kmsPluginImage": "kmsPluginImage specifies the container image for the HashiCorp Vault KMS plugin.\n\nThe image must be a fully qualified OCI image pull spec with a SHA256 digest. The format is: host[:port][/namespace]/name@sha256:<digest> where the digest must be 64 characters long and consist only of lowercase hexadecimal characters, a-f and 0-9. The total length must be between 75 and 447 characters.\n\nShort names (e.g., \"vault-plugin\" or \"hashicorp/vault-plugin\") are not allowed. The registry hostname must be included and must contain at least one dot. Image tags (e.g., \":latest\", \":v1.0.0\") are not allowed.\n\nConsult the OpenShift documentation for compatible plugin versions with your cluster version, then obtain the image digest for that version from HashiCorp's container registry.\n\nFor disconnected environments, mirror the plugin image to an accessible registry and reference the mirrored location with its digest.",
+	"vaultAddress":   "vaultAddress specifies the address of the HashiCorp Vault instance. The value must be a valid HTTPS URL containing only scheme, host, and optional port. Paths, user info, query parameters, and fragments are not allowed.\n\nFormat: https://hostname[:port] Example: https://vault.example.com:8200\n\nThe value must be between 1 and 512 characters.",
+	"vaultNamespace": "vaultNamespace specifies the Vault namespace where the Transit secrets engine is mounted. This is only applicable for Vault Enterprise installations. When this field is not set, no namespace is used.\n\nThe value must be between 1 and 4096 characters. The namespace cannot end with a forward slash, cannot contain spaces, and cannot be one of the reserved strings: root, sys, audit, auth, cubbyhole, or identity.",
+	"tls":            "tls contains the TLS configuration for connecting to the Vault server. When this field is not set, system default TLS settings are used.",
+	"authentication": "authentication defines the authentication method used to authenticate with Vault.",
+	"transitMount":   "transitMount specifies the mount path of the Vault Transit engine.\n\nWhen omitted, this means the user has no opinion and the platform is left to choose a reasonable default. These defaults are subject to change over time. The current default is \"transit\".\n\nThe transit mount must be between 1 and 1024 characters when specified, cannot start or end with a forward slash, cannot contain consecutive forward slashes, and must only contain RFC 3986 unreserved characters (alphanumeric, hyphen, period, underscore, tilde) and forward slashes as path separators.",
+	"transitKey":     "transitKey specifies the name of the encryption key in Vault's Transit engine. This key is used to encrypt and decrypt data.\n\nThe transit key must be between 1 and 512 characters, cannot contain forward slashes, and must only contain alphanumeric characters, hyphens, periods, and underscores.",
+}
+
+func (VaultKMSPluginConfig) SwaggerDoc() map[string]string {
+	return map_VaultKMSPluginConfig
+}
+
+var map_VaultSecretReference = map[string]string{
+	"":     "VaultSecretReference references a secret in the openshift-config namespace.",
+	"name": "name is the metadata.name of the referenced secret in the openshift-config namespace. The name must be a valid DNS subdomain name: it must contain no more than 253 characters, contain only lowercase alphanumeric characters, '-' or '.', and start and end with an alphanumeric character.",
+}
+
+func (VaultSecretReference) SwaggerDoc() map[string]string {
+	return map_VaultSecretReference
+}
+
+var map_VaultTLSConfig = map[string]string{
+	"":           "VaultTLSConfig contains TLS configuration for connecting to Vault.",
+	"caBundle":   "caBundle references a ConfigMap in the openshift-config namespace containing the CA certificate bundle used to verify the TLS connection to the Vault server. The ConfigMap must contain the CA bundle in the key \"ca-bundle.crt\". When this field is not set, the system's trusted CA certificates are used.\n\nThe namespace for the ConfigMap is openshift-config.\n\nExample ConfigMap:\n  apiVersion: v1\n  kind: ConfigMap\n  metadata:\n    name: vault-ca-bundle\n    namespace: openshift-config\n  data:\n    ca-bundle.crt: |",
+	"serverName": "serverName specifies the Server Name Indication (SNI) to use when connecting to Vault via TLS. This is useful when the Vault server's hostname doesn't match its TLS certificate. When this field is not set, the hostname from vaultAddress is used for SNI.\n\nThe value must be a valid DNS hostname: it must contain no more than 253 characters, contain only lowercase alphanumeric characters, '-' or '.', and start and end with an alphanumeric character.",
+}
+
+func (VaultTLSConfig) SwaggerDoc() map[string]string {
+	return map_VaultTLSConfig
 }
 
 var map_ClusterNetworkEntry = map[string]string{
