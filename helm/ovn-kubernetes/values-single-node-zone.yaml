@@ -113,6 +113,33 @@ global:
   enableMetricsScale: ""
   # -- Enables monitoring OVN-Kubernetes control plane and OVN configuration duration
   enableConfigDuration: ""
+  # -- Enables OpenTelemetry tracing for OVN-Kubernetes
+  enableTracing: false
+  tracing:
+    # -- OTLP gRPC endpoint for the trace exporter
+    endpoint: 127.0.0.1:4317
+    # -- Use TLS for OTLP transport
+    useTLS: false
+    # -- Skip TLS server certificate verification (only valid when useTLS=true)
+    tlsInsecureSkipVerify: false
+    # -- Optional CA bundle file used to verify collector certificates (only valid when useTLS=true)
+    tlsCACert: ""
+    # -- OpenTelemetry service.name resource attribute
+    serviceName: ovn-kubernetes
+    # -- Root trace sampling ratio in range [0.0, 1.0]
+    samplingRate: 1.0
+    # -- Pod annotation key for propagated W3C traceparent context
+    propagatedContextAnnotationKey: tracing.k8s.io/traceparent
+    # -- Propagated context mode: linked (default) or parent
+    propagatedContextMode: linked
+    # -- Exporter timeout in seconds
+    exportTimeout: 10
+    # -- Batch span processor timeout in seconds
+    batchTimeout: 5
+    # -- Maximum spans per export batch
+    maxExportBatchSize: 512
+    # -- Maximum queued spans before dropping
+    maxQueueSize: 2048
   # -- Indicates if ovn-controller should enable/disable the logical flow in-memory cache when processing Southbound database logical flow changes
   # @default -- true
   enableLFlowCache: true
