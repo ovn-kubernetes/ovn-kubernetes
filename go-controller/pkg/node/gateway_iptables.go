@@ -367,9 +367,8 @@ func delExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
 	return deleteIptRules(getGatewayForwardRules(cidrs))
 }
 
-func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
+func getLocalGatewayFilterRules(ifname string, protocol iptables.Protocol) []nodeipt.Rule {
 	// Allow packets to/from the gateway interface in case defaults deny
-	protocol := getIPTablesProtocol(cidr.IP.String())
 	return []nodeipt.Rule{
 		{
 			Table: "filter",
@@ -403,15 +402,17 @@ func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
 }
 
 // initLocalGatewayIPTFilterRules sets up iptables rules for interfaces
-func initLocalGatewayIPTFilterRules(ifname string, cidr *net.IPNet) error {
-	// Insert the filter table rules because they need to be evaluated BEFORE the DROP rules
-	// we have for forwarding. DO NOT change the ordering; specially important
-	// during SGW->LGW rollouts and restarts.
-	err := insertIptRules(getLocalGatewayFilterRules(ifname, cidr))
-	if err != nil {
-		return fmt.Errorf("unable to insert forwarding rules %v", err)
+func initLocalGatewayIPTFilterRules(ifname string) error {
+	for _, protocol := range clusterIPTablesProtocols() {
+		// Insert (rather than append) the filter table rules because they need to
+		// be evaluated BEFORE the DROP rules we have for forwarding. DO NOT
+		// change the ordering; especially important during SGW->LGW rollouts and
+		// restarts.
+		err := insertIptRules(getLocalGatewayFilterRules(ifname, protocol))
+		if err != nil {
+			return fmt.Errorf("unable to insert forwarding rules %v", err)
+		}
 	}
-	// NOTE: nftables masquerade rules are now handled separately in initLocalGatewayNFTNATRules
 	return nil
 }
 
