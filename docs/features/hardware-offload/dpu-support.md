@@ -44,6 +44,11 @@ Always check the dependencies on the [Requirements page](../requirements.md)
 
 For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gateway Interface Configuration](dpu-gateway-interface.md).
 
+For CUDNs that use a dedicated external OVS bridge through the `Uplink` API,
+see [Uplinks for User Defined Networks](../user-defined-networks/uplinks.md).
+In DPU deployments, the DPU-host side discovers host interface state and the
+DPU side resolves the local OVS bridge from that state.
+
 ### Simulated DPU (`simulate-dpu`)
 
 Hardware DPUs rely on SR-IOV and switchdev metadata so OVN-Kubernetes can resolve representors, PCI relationships, and related details. For development and CI, the same code paths can run on **simulated** platforms (for example Kind or VMs using virtio instead of a real switchdev DPU NICs) where that metadata is absent or different.
