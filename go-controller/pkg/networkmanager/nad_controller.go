@@ -331,31 +331,6 @@ func (c *nadController) NodeHasNetwork(node, networkName string) bool {
 	return c.nodeHasNetworkNoLock(node, networkName)
 }
 
-// sortNADsByAge sorts NADs by CreationTimestamp (oldest first), using
-// namespace/name as a tiebreaker for NADs created within the same second.
-func sortNADsByAge(nads []*nettypes.NetworkAttachmentDefinition) {
-	var errs []error
-	sort.Slice(nads, func(i, j int) bool {
-		ti := nads[i].CreationTimestamp.Time
-		tj := nads[j].CreationTimestamp.Time
-		if !ti.Equal(tj) {
-			return ti.Before(tj)
-		}
-		ki, err := cache.MetaNamespaceKeyFunc(nads[i])
-		if err != nil {
-			errs = append(errs, err)
-		}
-		kj, err := cache.MetaNamespaceKeyFunc(nads[j])
-		if err != nil {
-			errs = append(errs, err)
-		}
-		return ki < kj
-	})
-	for _, err := range errs {
-		klog.Warningf("sortNADsByAge: failed to compute NAD key: %v", err)
-	}
-}
-
 func nadRequiresDynamicFiltering(nad *nettypes.NetworkAttachmentDefinition) bool {
 	ownerRef := metav1.GetControllerOf(nad)
 	if ownerRef == nil {
@@ -1033,6 +1008,31 @@ func (c *nadController) syncAll() (err error) {
 	}
 
 	return nil
+}
+
+// sortNADsByAge sorts NADs by CreationTimestamp (oldest first), using
+// namespace/name as a tiebreaker for NADs created within the same second.
+func sortNADsByAge(nads []*nettypes.NetworkAttachmentDefinition) {
+	var errs []error
+	sort.Slice(nads, func(i, j int) bool {
+		ti := nads[i].CreationTimestamp.Time
+		tj := nads[j].CreationTimestamp.Time
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		ki, err := cache.MetaNamespaceKeyFunc(nads[i])
+		if err != nil {
+			errs = append(errs, err)
+		}
+		kj, err := cache.MetaNamespaceKeyFunc(nads[j])
+		if err != nil {
+			errs = append(errs, err)
+		}
+		return ki < kj
+	})
+	for _, err := range errs {
+		klog.Warningf("sortNADsByAge: failed to compute NAD key: %v", err)
+	}
 }
 
 func (c *nadController) sync(key string) error {

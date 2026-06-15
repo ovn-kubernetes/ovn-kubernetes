@@ -1845,31 +1845,28 @@ func TestSyncAllDeterministicOrdering(t *testing.T) {
 			Name: "vlan-trunk",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		MTU: 1400,
 	}
 
-	// NAD A: older, localnet without VLAN
-	networkNoVLAN := *baseNetwork
-	networkNoVLAN.NADName = "test/nad-no-vlan"
-	nadA, err := ovntesting.BuildNAD("nad-no-vlan", "test", &networkNoVLAN)
+	olderNetworkNoVLAN := *baseNetwork
+	olderNetworkNoVLAN.NADName = "test/nad-no-vlan"
+	olderNAD, err := ovntesting.BuildNAD("nad-no-vlan", "test", &olderNetworkNoVLAN)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	nadA.CreationTimestamp = metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
+	olderNAD.CreationTimestamp = metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	// NAD B: newer, localnet with VLAN 2106 (incompatible)
-	networkWithVLAN := *baseNetwork
-	networkWithVLAN.NADName = "test/nad-vlan-2106"
-	networkWithVLAN.VLANID = 2106
-	nadB, err := ovntesting.BuildNAD("nad-vlan-2106", "test", &networkWithVLAN)
+	newerNetworkWithVLAN := *baseNetwork
+	newerNetworkWithVLAN.NADName = "test/nad-vlan-2106"
+	newerNetworkWithVLAN.VLANID = 2106
+	newerNAD, err := ovntesting.BuildNAD("nad-vlan-2106", "test", &newerNetworkWithVLAN)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-	nadB.CreationTimestamp = metav1.NewTime(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
+	newerNAD.CreationTimestamp = metav1.NewTime(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
 
 	// Create NADs in reverse order (newer first) to ensure the sort is what
 	// determines the winner, not insertion order.
 	_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Create(
-		context.Background(), nadB, metav1.CreateOptions{})
+		context.Background(), newerNAD, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("test").Create(
-		context.Background(), nadA, metav1.CreateOptions{})
+		context.Background(), olderNAD, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	g.Expect(wf.Start()).To(gomega.Succeed())
@@ -1882,7 +1879,7 @@ func TestSyncAllDeterministicOrdering(t *testing.T) {
 	// The older NAD's network (no VLAN) should be established
 	g.Expect(tcm.valid).To(gomega.HaveLen(1))
 	g.Expect(tcm.valid[0].GetNetworkName()).To(gomega.Equal("vlan-trunk"))
-	expectedNetInfo, err := util.NewNetInfo(&networkNoVLAN)
+	expectedNetInfo, err := util.ParseNADInfo(olderNAD)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(util.AreNetworksCompatible(tcm.valid[0], expectedNetInfo)).To(gomega.BeTrue())
 
