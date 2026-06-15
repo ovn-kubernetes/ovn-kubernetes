@@ -2044,14 +2044,16 @@ func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egress
 			continue
 		}
 
-		// Check if node is reachable (unless on cloud platform)
-		if !util.PlatformTypeIsEgressIPCloudProvider() && !eIPC.isEgressNodeReachable(node) {
-			klog.Warningf("EgressIP %s has status for unreachable node %s, "+
-				"skipping cache entry and triggering reallocation for IP %s",
-				egressIP.Name, statusItem.Node, statusItem.EgressIP)
-			shouldRequeue = true
-			continue
-		}
+		// Note: We intentionally do NOT check isEgressNodeReachable() here because:
+		// 1. During controller initialization, nodes may not be marked reachable yet
+		// 2. checkEgressNodesReachability() (which sets isReachable) runs AFTER this
+		// 3. Status entries are assumed valid at startup (they were valid before restart)
+		// 4. Reconciliation will detect and fix unreachable nodes later if needed
+		// 5. Node ready check (above) already catches dead/unready nodes
+		//
+		// If a node becomes unreachable after restart, the periodic reachability check
+		// will trigger setNodeEgressReady(false), which triggers reconciliation to move
+		// the IP to a different node.
 
 		// Check allocator cache for assignability
 		eIPC.nodeAllocator.Lock()
