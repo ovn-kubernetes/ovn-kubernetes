@@ -2055,17 +2055,17 @@ func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egress
 		// will trigger setNodeEgressReady(false), which triggers reconciliation to move
 		// the IP to a different node.
 
-		// Check allocator cache for assignability
-		eIPC.nodeAllocator.Lock()
-		eNode, exists := eIPC.nodeAllocator.cache[statusItem.Node]
-		eIPC.nodeAllocator.Unlock()
-		if exists && !eNode.isEgressAssignable {
-			klog.Warningf("EgressIP %s has status for non-assignable node %s, "+
-				"skipping cache entry and triggering reallocation for IP %s",
-				egressIP.Name, statusItem.Node, statusItem.EgressIP)
-			shouldRequeue = true
-			continue
-		}
+		// Note: We intentionally do NOT check eNode.isEgressAssignable here because:
+		// 1. During controller initialization, nodes may be in cache but isEgressAssignable
+		//    not set yet (defaults to false)
+		// 2. WatchEgressNodes() adds nodes to cache, but assignable flag set via events
+		// 3. Status entries are assumed valid at startup (they were valid before restart)
+		// 4. Reconciliation checks node assignable label during actual assignment
+		// 5. Node ready check (above) already catches nodes that lost assignable label
+		//
+		// If a node loses the assignable label after restart, the UPDATE event will
+		// trigger setNodeEgressAssignable(false), which empties allocations and triggers
+		// reconciliation to move the IP.
 
 		// For cloud platforms, validate CloudPrivateIPConfig succeeded
 		if util.PlatformTypeIsEgressIPCloudProvider() {
