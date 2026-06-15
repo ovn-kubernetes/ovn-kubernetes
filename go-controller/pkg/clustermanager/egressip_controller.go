@@ -1660,6 +1660,43 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(old, new *o
 		newCloudPrivateIPConfig = new
 		// We should only proceed to setting things up for objects where the new
 		// object has the same .spec.node and .status.node, and assignment
+		// condition being true. However, if assignment FAILED, we must clean
+		// the cache to prevent retry storms.
+		if len(newCloudPrivateIPConfig.Status.Conditions) > 0 {
+			cond := newCloudPrivateIPConfig.Status.Conditions[0]
+
+			// Check for assignment failure (e.g., PrivateIpAddressLimitExceeded)
+			if ocpcloudnetworkapi.CloudPrivateIPConfigConditionType(cond.Type) == ocpcloudnetworkapi.Assigned &&
+				corev1.ConditionStatus(cond.Status) == corev1.ConditionFalse {
+
+				// Extract EgressIP name from owner annotation
+				egressIPName, exists := newCloudPrivateIPConfig.Annotations[util.OVNEgressIPOwnerRefLabel]
+				if exists {
+					klog.Warningf("CloudPrivateIPConfig %s failed assignment on node %s: %s (reason: %s), "+
+						"cleaning cache to prevent retry storm for EgressIP %s",
+						newCloudPrivateIPConfig.Name, newCloudPrivateIPConfig.Spec.Node,
+						cond.Message, cond.Reason, egressIPName)
+
+					// Clean stale cache entry to prevent retrying same failed node
+					eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, newCloudPrivateIPConfig.Name)
+
+					// Trigger reallocation to a different node
+					egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
+					if err != nil {
+						return fmt.Errorf("failed to get EgressIP %s for reallocation: %w", egressIPName, err)
+					}
+					if err := eIPC.reconcileEgressIP(nil, egressIP); err != nil {
+						return fmt.Errorf("failed to reconcile EgressIP %s after CPIC failure: %w", egressIPName, err)
+					}
+				} else {
+					klog.Warningf("CloudPrivateIPConfig %s failed but missing EgressIP owner annotation", newCloudPrivateIPConfig.Name)
+				}
+				return nil
+			}
+		}
+
+		// We should only proceed to setting things up for objects where the new
+		// object has the same .spec.node and .status.node, and assignment
 		// condition being true. This is how the cloud-network-config-controller
 		// indicates a successful cloud assignment.
 		shouldAdd = newCloudPrivateIPConfig.Status.Node == newCloudPrivateIPConfig.Spec.Node &&
