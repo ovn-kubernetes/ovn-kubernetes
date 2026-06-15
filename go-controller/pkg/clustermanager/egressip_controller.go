@@ -546,12 +546,16 @@ func (eIPC *egressIPClusterController) initEgressNodeReachability(objs []interfa
 	// with existing assignments from EgressIP statuses. This prevents duplicate IP
 	// assignments when two EgressIPs have the same IP in their specs but only one has
 	// it assigned in status (e.g., after control-plane restart or during initial sync).
+	// However, validate each assignment before adding to cache to prevent stale entries
+	// from causing errors after controller restart.
 	egressIPs, err := eIPC.kube.GetEgressIPs()
 	if err != nil {
 		return fmt.Errorf("unable to list EgressIPs, err: %v", err)
 	}
 	for _, egressIP := range egressIPs {
-		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
+		if err := eIPC.ensureAllocatorEgressIPAssignments(egressIP); err != nil {
+			klog.Errorf("Failed to ensure EgressIP %s assignments during init: %v", egressIP.Name, err)
+		}
 	}
 
 	go eIPC.checkEgressNodesReachability()
@@ -2010,10 +2014,91 @@ func generateStatusPatchOp(statusItems []egressipv1.EgressIPStatusItem) jsonPatc
 // ensureAllocatorEgressIPAssignments adds EgressIP assignments to the allocator cache
 // if the EgressIP has status items. This is critical to prevent duplicate IP assignments
 // during restart when EgressIPs are processed in arbitrary order.
-func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) {
-	if len(egressIP.Status.Items) > 0 {
-		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, egressIP.Status.Items)
+// Validates each assignment before adding to cache to prevent stale entries from causing
+// errors after controller restart.
+func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) error {
+	if len(egressIP.Status.Items) == 0 {
+		return nil
 	}
+
+	var shouldRequeue bool
+	validItems := make([]egressipv1.EgressIPStatusItem, 0, len(egressIP.Status.Items))
+
+	for _, statusItem := range egressIP.Status.Items {
+		// Validate node availability before adding to cache
+		node, err := eIPC.watchFactory.GetNode(statusItem.Node)
+		if err != nil {
+			klog.Warningf("EgressIP %s has status for deleted node %s, skipping cache entry "+
+				"and triggering reallocation for IP %s",
+				egressIP.Name, statusItem.Node, statusItem.EgressIP)
+			shouldRequeue = true
+			continue
+		}
+
+		// Validate node is ready and egress-assignable
+		if !eIPC.isEgressNodeReady(node) {
+			klog.Warningf("EgressIP %s has status for unready node %s, "+
+				"skipping cache entry and triggering reallocation for IP %s",
+				egressIP.Name, statusItem.Node, statusItem.EgressIP)
+			shouldRequeue = true
+			continue
+		}
+
+		// Check if node is reachable (unless on cloud platform)
+		if !util.PlatformTypeIsEgressIPCloudProvider() && !eIPC.isEgressNodeReachable(node) {
+			klog.Warningf("EgressIP %s has status for unreachable node %s, "+
+				"skipping cache entry and triggering reallocation for IP %s",
+				egressIP.Name, statusItem.Node, statusItem.EgressIP)
+			shouldRequeue = true
+			continue
+		}
+
+		// Check allocator cache for assignability
+		eIPC.nodeAllocator.Lock()
+		eNode, exists := eIPC.nodeAllocator.cache[statusItem.Node]
+		eIPC.nodeAllocator.Unlock()
+		if exists && !eNode.isEgressAssignable {
+			klog.Warningf("EgressIP %s has status for non-assignable node %s, "+
+				"skipping cache entry and triggering reallocation for IP %s",
+				egressIP.Name, statusItem.Node, statusItem.EgressIP)
+			shouldRequeue = true
+			continue
+		}
+
+		// For cloud platforms, validate CloudPrivateIPConfig succeeded
+		if util.PlatformTypeIsEgressIPCloudProvider() {
+			cpicName := ipStringToCloudPrivateIPConfigName(statusItem.EgressIP)
+			cpic, err := eIPC.watchFactory.GetCloudPrivateIPConfig(cpicName)
+			if err == nil && cpic != nil && len(cpic.Status.Conditions) > 0 {
+				cond := cpic.Status.Conditions[0]
+				if ocpcloudnetworkapi.CloudPrivateIPConfigConditionType(cond.Type) == ocpcloudnetworkapi.Assigned &&
+					corev1.ConditionStatus(cond.Status) == corev1.ConditionFalse {
+					klog.Warningf("EgressIP %s has failed CloudPrivateIPConfig for IP %s, "+
+						"skipping cache entry and triggering reallocation",
+						egressIP.Name, statusItem.EgressIP)
+					shouldRequeue = true
+					continue
+				}
+			}
+		}
+
+		// Only add validated entries to cache
+		validItems = append(validItems, statusItem)
+	}
+
+	// Add only valid items to allocator cache
+	if len(validItems) > 0 {
+		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, validItems)
+	}
+
+	// Trigger reconciliation for EgressIPs with invalid status entries
+	if shouldRequeue {
+		if err := eIPC.retryEgressIPs.AddRetryObjWithAddNoBackoff(egressIP); err != nil {
+			return fmt.Errorf("failed to requeue EgressIP %s for reallocation: %w", egressIP.Name, err)
+		}
+	}
+
+	return nil
 }
 
 // syncEgressIPMarkAllocator iterates over all existing EgressIPs. It builds a mark cache of existing marks stored on each
