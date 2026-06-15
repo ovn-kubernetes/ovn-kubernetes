@@ -1050,8 +1050,19 @@ func (eIPC *egressIPClusterController) reconcileEgressIP(old, new *egressipv1.Eg
 	validStatus, invalidStatus := eIPC.validateEgressIPStatus(name, status)
 	for status := range validStatus {
 		// If the spec has changed and an egress IP has been removed by the
-		// user: we need to un-assign that egress IP
+		// user: we need to un-assign that egress IP. Also clean cache if
+		// node is no longer available to prevent stale allocations.
 		if !validSpecIPs.Has(status.EgressIP) {
+			// Before marking for removal, check if node is still available
+			node, err := eIPC.watchFactory.GetNode(status.Node)
+			if err != nil || !util.PlatformTypeIsEgressIPCloudProvider() && !eIPC.isEgressNodeReady(node) {
+				klog.Infof("EgressIP %s has assignment to unavailable node %s for IP %s, "+
+					"cleaning cache before reassignment",
+					name, status.Node, status.EgressIP)
+
+				// Clean cache to prevent reusing failed node
+				eIPC.deleteAllAllocatorEgressIPAssignments(name, status.EgressIP)
+			}
 			invalidStatus[status] = ""
 			delete(validStatus, status)
 		}
