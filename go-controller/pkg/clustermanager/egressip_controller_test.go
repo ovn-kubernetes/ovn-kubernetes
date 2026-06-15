@@ -2402,7 +2402,9 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("should not be able to allocate conflicting compressed IP", func() {
+		// Updated test: with stale cache cleanup, the compressed IP should be cleaned
+		// and successfully assigned (not blocked by stale entry)
+		ginkgo.It("should clean stale compressed IP allocation and assign successfully", func() {
 			app.Action = func(*cli.Context) error {
 				egressIP := "::feff:c0a8:8e32"
 				node1IPv4 := ""
@@ -2465,14 +2467,31 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
+				// Setup stale cache entries:
+				// - node1 has bogus1 (::feff:c0a8:8e32) and bogus2 (::feff:c0a8:8e1e)
+				// - node2 has bogus3 (::feff:c0a8:8e23)
+				// The stale entry for ::feff:c0a8:8e32 should be detected and cleaned
 				egressNode1 := setupNode(node1Name, []string{"0:0:0:0:0:feff:c0a8:8e0c/64"}, map[string]string{"0:0:0:0:0:feff:c0a8:8e32": "bogus1", "0:0:0:0:0:feff:c0a8:8e1e": "bogus2"})
 				egressNode2 := setupNode(node2Name, []string{"0:0:0:0:0:fedf:c0a8:8e0c/64"}, map[string]string{"0:0:0:0:0:feff:c0a8:8e23": "bogus3"})
 
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode1.name] = &egressNode1
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
 
+				// With stale cache cleanup logic (Scenario #6):
+				// 1. assignEgressIPs detects ::feff:c0a8:8e32 allocated to "bogus1"
+				// 2. Verifies "bogus1" doesn't exist (stale entry)
+				// 3. Cleans the stale cache entry
+				// 4. Successfully assigns ::feff:c0a8:8e32 to node2
+				//
+				// OLD behavior: Assignment would fail (blocked by stale entry)
+				// NEW behavior: Assignment succeeds (stale entry cleaned)
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
+
+				// Expect successful assignment after cleaning stale entry
+				gomega.Expect(assignedStatuses).To(gomega.HaveLen(1))
+				gomega.Expect(assignedStatuses[0].Node).To(gomega.Equal(node2Name))
+				gomega.Expect(assignedStatuses[0].EgressIP).To(gomega.Equal(egressIP))
+
 				return nil
 			}
 
@@ -4306,16 +4325,27 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				_, err = fakeClusterManagerOVN.eIPC.WatchEgressIP()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// eIP1 should keep its assignment (the IP was already assigned)
-				gomega.Eventually(getEgressIPStatusLen("egressip-1")).Should(gomega.Equal(1))
+				// eIP1 should keep its assignment (the IP was already assigned in status)
+				gomega.Eventually(getEgressIPStatusLen("egressip-1"), "2s").Should(gomega.Equal(1))
 				egressIPs1, nodes1 := getEgressIPStatus("egressip-1")
 				gomega.Expect(nodes1[0]).To(gomega.Equal(node1Name))
 				gomega.Expect(egressIPs1[0]).To(gomega.Equal(duplicateIP))
 
-				// eIP2 should NOT get the duplicate IP assigned (not even to node2) -
-				// it should remain unassigned because initEgressNodeReachability pre-populated the
-				// cache with eIP1's assignment
-				gomega.Eventually(getEgressIPStatusLen("egressip-2")).Should(gomega.Equal(0))
+				// eIP2 should NOT get the duplicate IP assigned because:
+				// 1. initEgressNodeReachability pre-populated cache with eIP1's assignment
+				// 2. During reconciliation, eIP2 tries to assign duplicateIP
+				// 3. Detects it's allocated to eIP1 (which DOES exist)
+				// 4. This is NOT a stale entry (eIP1 is valid)
+				// 5. Correctly rejects duplicate assignment
+				//
+				// This is different from Test #1 where "bogus1" doesn't exist (stale).
+				// Here, eIP1 exists and legitimately owns the IP.
+				gomega.Eventually(getEgressIPStatusLen("egressip-2"), "2s").Should(gomega.Equal(0))
+
+				// Verify eIP1 still owns the IP on the same node (not cleaned as stale)
+				egressIPs1, nodes1 = getEgressIPStatus("egressip-1")
+				gomega.Expect(nodes1[0]).To(gomega.Equal(node1Name))
+				gomega.Expect(egressIPs1[0]).To(gomega.Equal(duplicateIP))
 
 				return nil
 			}
