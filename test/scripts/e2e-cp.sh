@@ -166,7 +166,8 @@ if [ "$ENABLE_NO_OVERLAY" != true ]; then
   skip_label "Feature:NoOverlay"
 fi
 
-if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+# Some lanes keep RouteAdvertisements enabled in the cluster while skipping RA-specific tests.
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ] || [ "$SKIP_ROUTE_ADVERTISEMENTS_TESTS" == true ]; then
   skip_label "Feature:RouteAdvertisements"
 else
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
