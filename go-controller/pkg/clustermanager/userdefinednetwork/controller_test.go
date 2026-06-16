@@ -15,7 +15,6 @@ import (
 	netv1clientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 	netv1fakeclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +40,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
@@ -3192,57 +3192,21 @@ func setNADEVPNVIDs(nad *netv1.NetworkAttachmentDefinition, macVID, ipVID int) e
 // getCUDNCountMetricValue returns the current gauge value for the CUDN count metric with the given labels.
 func getCUDNCountMetricValue(role, topology, transport string) (float64, bool) {
 	metricName := prometheus.BuildFQName(ovntypes.MetricOvnkubeNamespace, ovntypes.MetricOvnkubeSubsystemClusterManager, "cluster_user_defined_networks")
-	mf := findMetricFamily(metricName)
+	mf := ovntest.FindMetricFamily(metricName)
 	if mf == nil {
 		return 0, false
 	}
 	for _, metric := range mf.GetMetric() {
-		if metricLabelValue(metric.GetLabel(), "role") == role &&
-			metricLabelValue(metric.GetLabel(), "topology") == topology &&
-			metricLabelValue(metric.GetLabel(), "transport") == transport {
+		if ovntest.MetricLabelValue(metric.GetLabel(), "role") == role &&
+			ovntest.MetricLabelValue(metric.GetLabel(), "topology") == topology &&
+			ovntest.MetricLabelValue(metric.GetLabel(), "transport") == transport {
 			return metric.GetGauge().GetValue(), true
 		}
 	}
 	return 0, false
 }
 
-// findMetricFamily returns the MetricFamily with the given name from the default Prometheus gatherer.
-func findMetricFamily(name string) *dto.MetricFamily {
-	GinkgoHelper()
-	mfs, err := prometheus.DefaultGatherer.Gather()
-	Expect(err).NotTo(HaveOccurred(), "failed to gather metrics")
-	for _, mf := range mfs {
-		if mf.GetName() == name {
-			return mf
-		}
-	}
-	return nil
-}
-
 func getCUDNConditionMetricValue(nameLabel, conditionLabel, statusLabel string) (float64, bool) {
 	metricName := prometheus.BuildFQName(ovntypes.MetricOvnkubeNamespace, ovntypes.MetricOvnkubeSubsystemClusterManager, "cluster_user_defined_network_condition")
-	mf := findMetricFamily(metricName)
-	if mf == nil {
-		return 0, false
-	}
-	for _, metric := range mf.GetMetric() {
-		if metricLabelValue(metric.GetLabel(), "name") == nameLabel &&
-			metricLabelValue(metric.GetLabel(), "condition") == conditionLabel &&
-			metricLabelValue(metric.GetLabel(), "status") == statusLabel {
-			if metric.GetGauge() != nil {
-				return metric.GetGauge().GetValue(), true
-			}
-		}
-	}
-	return 0, false
-}
-
-// metricLabelValue returns the value of the label with the given name, or empty string if not found.
-func metricLabelValue(labels []*dto.LabelPair, name string) string {
-	for _, label := range labels {
-		if label.GetName() == name {
-			return label.GetValue()
-		}
-	}
-	return ""
+	return ovntest.GetConditionMetricValue(metricName, nameLabel, conditionLabel, statusLabel)
 }

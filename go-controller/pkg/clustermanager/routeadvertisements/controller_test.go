@@ -22,7 +22,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
 	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
@@ -2442,15 +2441,15 @@ exit
 					expectedTrue = 1.0
 					expectedFalse = 0.0
 				}
-				valTrue, found := getRAConditionMetricValue(t, tt.reconcile, "Accepted", "true")
+				valTrue, found := getRAConditionMetricValue(tt.reconcile, "Accepted", "true")
 				g.Expect(found).To(gomega.BeTrue(), "condition metric status=true should exist")
 				g.Expect(valTrue).To(gomega.Equal(expectedTrue))
-				valFalse, found := getRAConditionMetricValue(t, tt.reconcile, "Accepted", "false")
+				valFalse, found := getRAConditionMetricValue(tt.reconcile, "Accepted", "false")
 				g.Expect(found).To(gomega.BeTrue(), "condition metric status=false should exist")
 				g.Expect(valFalse).To(gomega.Equal(expectedFalse))
 			} else {
-				_, foundTrue := getRAConditionMetricValue(t, tt.reconcile, "Accepted", "true")
-				_, foundFalse := getRAConditionMetricValue(t, tt.reconcile, "Accepted", "false")
+				_, foundTrue := getRAConditionMetricValue(tt.reconcile, "Accepted", "true")
+				_, foundFalse := getRAConditionMetricValue(tt.reconcile, "Accepted", "false")
 				g.Expect(foundTrue || foundFalse).To(gomega.BeFalse(), "condition metrics should not exist for deleted RA")
 			}
 
@@ -2869,44 +2868,7 @@ func TestUpdates(t *testing.T) {
 	}
 }
 
-func findMetricFamily(t *testing.T, name string) *dto.MetricFamily {
-	t.Helper()
-	mfs, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-	for _, mf := range mfs {
-		if mf.GetName() == name {
-			return mf
-		}
-	}
-	return nil
-}
-
-func getRAConditionMetricValue(t *testing.T, nameLabel, conditionLabel, statusLabel string) (float64, bool) {
-	t.Helper()
+func getRAConditionMetricValue(nameLabel, conditionLabel, statusLabel string) (float64, bool) {
 	metricName := prometheus.BuildFQName(types.MetricOvnkubeNamespace, types.MetricOvnkubeSubsystemClusterManager, "route_advertisement_condition")
-	mf := findMetricFamily(t, metricName)
-	if mf == nil {
-		return 0, false
-	}
-	for _, metric := range mf.GetMetric() {
-		if labelValue(metric.GetLabel(), "name") == nameLabel &&
-			labelValue(metric.GetLabel(), "condition") == conditionLabel &&
-			labelValue(metric.GetLabel(), "status") == statusLabel {
-			if metric.GetGauge() != nil {
-				return metric.GetGauge().GetValue(), true
-			}
-		}
-	}
-	return 0, false
-}
-
-func labelValue(labels []*dto.LabelPair, name string) string {
-	for _, label := range labels {
-		if label.GetName() == name {
-			return label.GetValue()
-		}
-	}
-	return ""
+	return ovntest.GetConditionMetricValue(metricName, nameLabel, conditionLabel, statusLabel)
 }

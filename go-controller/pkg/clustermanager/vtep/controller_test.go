@@ -13,7 +13,6 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1628,41 +1627,7 @@ var _ = ginkgo.Describe("vtepNameInMessage", func() {
 	})
 })
 
-func findMetricFamily(name string) *dto.MetricFamily {
-	ginkgo.GinkgoHelper()
-	mfs, err := prometheus.DefaultGatherer.Gather()
-	gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to gather metrics")
-	for _, mf := range mfs {
-		if mf.GetName() == name {
-			return mf
-		}
-	}
-	return nil
-}
-
 func getVTEPConditionMetricValue(nameLabel, conditionLabel, statusLabel string) (float64, bool) {
 	metricName := prometheus.BuildFQName(ovntypes.MetricOvnkubeNamespace, ovntypes.MetricOvnkubeSubsystemClusterManager, "vtep_condition")
-	mf := findMetricFamily(metricName)
-	if mf == nil {
-		return 0, false
-	}
-	for _, metric := range mf.GetMetric() {
-		if metricLabelValue(metric.GetLabel(), "name") == nameLabel &&
-			metricLabelValue(metric.GetLabel(), "condition") == conditionLabel &&
-			metricLabelValue(metric.GetLabel(), "status") == statusLabel {
-			if metric.GetGauge() != nil {
-				return metric.GetGauge().GetValue(), true
-			}
-		}
-	}
-	return 0, false
-}
-
-func metricLabelValue(labels []*dto.LabelPair, name string) string {
-	for _, label := range labels {
-		if label.GetName() == name {
-			return label.GetValue()
-		}
-	}
-	return ""
+	return ovntest.GetConditionMetricValue(metricName, nameLabel, conditionLabel, statusLabel)
 }

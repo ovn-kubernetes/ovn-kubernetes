@@ -152,8 +152,6 @@ func (c *Controller) reconcileVTEP(key string) error {
 	vtep, err := c.vtepLister.Get(vtepName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Clean up condition metric timeseries for the deleted VTEP.
-			metrics.DeleteVTEPCondition(vtepName)
 			c.requeueConflictingVTEPs(vtepName)
 			return nil
 		}
@@ -263,6 +261,7 @@ func (c *Controller) handleVTEPDeletion(vtep *vtepv1.VTEP) error {
 		return fmt.Errorf("failed to remove finalizer from VTEP %s: %w", vtep.Name, err)
 	}
 	klog.Infof("Removed finalizer from VTEP %s, deletion unblocked", vtep.Name)
+	metrics.DeleteVTEPCondition(vtep.Name)
 	return nil
 }
 
