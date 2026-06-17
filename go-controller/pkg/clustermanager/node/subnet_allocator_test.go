@@ -324,7 +324,7 @@ func TestAllocateSubnetInvalidHostBitsOrCIDR(t *testing.T) {
 		t.Fatal("Unexpectedly succeeded in initializing subnet allocator")
 	}
 
-	_, err = newSubnetAllocator("10.1.0.0/16", 32)
+	_, err = newSubnetAllocator("10.1.0.0/16", 33)
 	if err == nil {
 		t.Fatal("Unexpectedly succeeded in initializing subnet allocator")
 	}
@@ -334,9 +334,37 @@ func TestAllocateSubnetInvalidHostBitsOrCIDR(t *testing.T) {
 		t.Fatal("Unexpectedly succeeded in initializing subnet allocator")
 	}
 
-	_, err = newSubnetAllocator("fd01::/64", 128)
+	_, err = newSubnetAllocator("fd01::/64", 129)
 	if err == nil {
 		t.Fatal("Unexpectedly succeeded in initializing subnet allocator")
+	}
+}
+
+func TestAllocateSubnetSingleIP(t *testing.T) {
+	// IPv4: /24 with hostSubnetLen=32 gives 256 individual /32 allocations
+	sna, err := newSubnetAllocator("10.1.0.0/24", 32)
+	if err != nil {
+		t.Fatal("Failed to initialize subnet allocator: ", err)
+	}
+
+	if err := allocateExpected(sna, 0, "10.1.0.0/32"); err != nil {
+		t.Fatal(err)
+	}
+	if err := allocateExpected(sna, 1, "10.1.0.1/32"); err != nil {
+		t.Fatal(err)
+	}
+
+	// IPv6: /120 with hostSubnetLen=128 gives 256 individual /128 allocations
+	sna, err = newSubnetAllocator("fd01::/120", 128)
+	if err != nil {
+		t.Fatal("Failed to initialize subnet allocator: ", err)
+	}
+
+	if err := allocateExpected(sna, 0, "fd01::/128"); err != nil {
+		t.Fatal(err)
+	}
+	if err := allocateExpected(sna, 1, "fd01::1/128"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -674,5 +702,181 @@ func TestListAllNetworks(t *testing.T) {
 		if sn.String() != expectV6Subnets[i] {
 			t.Fatalf("Expected %s, got %s", expectV6Subnets[i], sn.String())
 		}
+	}
+}
+
+// TestReplaceNetworkRange verifies that ReplaceNetworkRange preserves existing
+// allocations and allows new ones from the expanded range.
+func TestReplaceNetworkRange(t *testing.T) {
+	// /30 with /32 host length holds 4 IPs (10.0.0.0–10.0.0.3).
+	sna, err := newSubnetAllocator("10.0.0.0/30", 32)
+	if err != nil {
+		t.Fatal("Failed to initialize subnet allocator: ", err)
+	}
+	ip1, err := sna.AllocateIPv4Network("node-1")
+	if err != nil {
+		t.Fatalf("Failed to allocate for node-1: %v", err)
+	}
+	ip2, err := sna.AllocateIPv4Network("node-2")
+	if err != nil {
+		t.Fatalf("Failed to allocate for node-2: %v", err)
+	}
+	if _, err := sna.AllocateIPv4Network("node-3"); err != nil {
+		t.Fatalf("Failed to allocate for node-3: %v", err)
+	}
+	if _, err := sna.AllocateIPv4Network("node-4"); err != nil {
+		t.Fatalf("Failed to allocate for node-4: %v", err)
+	}
+
+	// Range is exhausted; node-5 must fail with ErrSubnetAllocatorFull.
+	_, allocErr := sna.AllocateIPv4Network("node-5")
+	if allocErr != ErrSubnetAllocatorFull {
+		t.Fatalf("Expected ErrSubnetAllocatorFull before replace, got: %v", allocErr)
+	}
+
+	// Expand to /28 (holds 16 IPs). Existing allocations must be preserved.
+	oldNet := ovntest.MustParseIPNet("10.0.0.0/30")
+	newNet := ovntest.MustParseIPNet("10.0.0.0/28")
+	if err := sna.ReplaceNetworkRange(oldNet, newNet, 32); err != nil {
+		t.Fatalf("ReplaceNetworkRange failed: %v", err)
+	}
+
+	// node-1 and node-2 must still return their original IPs (idempotent alloc).
+	realloc1, err := sna.AllocateIPv4Network("node-1")
+	if err != nil {
+		t.Fatalf("Re-allocate node-1 after replace failed: %v", err)
+	}
+	if realloc1.String() != ip1.String() {
+		t.Fatalf("node-1 IP changed after replace: got %s want %s", realloc1, ip1)
+	}
+	realloc2, err := sna.AllocateIPv4Network("node-2")
+	if err != nil {
+		t.Fatalf("Re-allocate node-2 after replace failed: %v", err)
+	}
+	if realloc2.String() != ip2.String() {
+		t.Fatalf("node-2 IP changed after replace: got %s want %s", realloc2, ip2)
+	}
+
+	// node-5 should now get an IP from the expanded range.
+	ip5, err := sna.AllocateIPv4Network("node-5")
+	if err != nil {
+		t.Fatalf("Failed to allocate for node-5 after expand: %v", err)
+	}
+	if !newNet.Contains(ip5.IP) {
+		t.Fatalf("node-5 IP %s not in expanded range %s", ip5, newNet)
+	}
+}
+
+// TestReplaceNetworkRangeNotFound verifies that ReplaceNetworkRange errors
+// when the old range does not exist.
+func TestReplaceNetworkRangeNotFound(t *testing.T) {
+	sna, err := newSubnetAllocator("10.0.0.0/24", 32)
+	if err != nil {
+		t.Fatal("Failed to initialize subnet allocator: ", err)
+	}
+	oldNet := ovntest.MustParseIPNet("10.1.0.0/24")
+	newNet := ovntest.MustParseIPNet("10.1.0.0/16")
+	if err := sna.ReplaceNetworkRange(oldNet, newNet, 32); err == nil {
+		t.Fatal("Expected error for non-existent range, got nil")
+	}
+}
+
+// TestReplaceNetworkRangeNotSupernet verifies that ReplaceNetworkRange rejects
+// a new range that is not a supernet of the old range.
+func TestReplaceNetworkRangeNotSupernet(t *testing.T) {
+	sna, err := newSubnetAllocator("10.0.0.0/24", 32)
+	if err != nil {
+		t.Fatal("Failed to initialize subnet allocator: ", err)
+	}
+	oldNet := ovntest.MustParseIPNet("10.0.0.0/24")
+
+	// Shrinking (more specific mask) must be rejected.
+	smallerNet := ovntest.MustParseIPNet("10.0.0.0/26")
+	if err := sna.ReplaceNetworkRange(oldNet, smallerNet, 32); err == nil {
+		t.Fatal("Expected error for shrinking range, got nil")
+	}
+
+	// Completely different range must be rejected.
+	differentNet := ovntest.MustParseIPNet("192.168.0.0/16")
+	if err := sna.ReplaceNetworkRange(oldNet, differentNet, 32); err == nil {
+		t.Fatal("Expected error for non-supernet range, got nil")
+	}
+}
+
+// TestReplaceNetworkRangeDifferentBase verifies that a valid supernet whose
+// base address differs from the old range is accepted. For example,
+// 10.0.0.128/25 can be replaced by 10.0.0.0/24 since the /24 contains
+// the entire /25.
+func TestReplaceNetworkRangeDifferentBase(t *testing.T) {
+	sna := NewSubnetAllocator()
+	if err := sna.AddNetworkRange(ovntest.MustParseIPNet("10.0.0.128/25"), 32); err != nil {
+		t.Fatal("Failed to add network range: ", err)
+	}
+
+	ip1, err := sna.AllocateIPv4Network("node-1")
+	if err != nil {
+		t.Fatalf("Failed to allocate for node-1: %v", err)
+	}
+
+	oldNet := ovntest.MustParseIPNet("10.0.0.128/25")
+	newNet := ovntest.MustParseIPNet("10.0.0.0/24")
+	if err := sna.ReplaceNetworkRange(oldNet, newNet, 32); err != nil {
+		t.Fatalf("ReplaceNetworkRange with different base failed: %v", err)
+	}
+
+	// node-1 keeps its IP.
+	realloc1, err := sna.AllocateIPv4Network("node-1")
+	if err != nil {
+		t.Fatalf("Re-allocate node-1 after replace failed: %v", err)
+	}
+	if realloc1.String() != ip1.String() {
+		t.Fatalf("node-1 IP changed after replace: got %s want %s", realloc1, ip1)
+	}
+
+	// node-2 gets a new IP from the expanded /24 range (may be below 10.0.0.128).
+	ip2, err := sna.AllocateIPv4Network("node-2")
+	if err != nil {
+		t.Fatalf("Failed to allocate for node-2 after expand: %v", err)
+	}
+	if !newNet.Contains(ip2.IP) {
+		t.Fatalf("node-2 IP %s not in expanded range %s", ip2, newNet)
+	}
+}
+
+// TestReplaceNetworkRangeIPv6 verifies that ReplaceNetworkRange works for
+// IPv6 ranges.
+func TestReplaceNetworkRangeIPv6(t *testing.T) {
+	sna := NewSubnetAllocator()
+	if err := sna.AddNetworkRange(ovntest.MustParseIPNet("fd00::/126"), 128); err != nil {
+		t.Fatal("Failed to add IPv6 range: ", err)
+	}
+
+	ip1, err := sna.AllocateIPv6Network("node-1")
+	if err != nil {
+		t.Fatalf("Failed to allocate IPv6 for node-1: %v", err)
+	}
+
+	oldNet := ovntest.MustParseIPNet("fd00::/126")
+	newNet := ovntest.MustParseIPNet("fd00::/120")
+	if err := sna.ReplaceNetworkRange(oldNet, newNet, 128); err != nil {
+		t.Fatalf("ReplaceNetworkRange IPv6 failed: %v", err)
+	}
+
+	// node-1 keeps its IP.
+	realloc1, err := sna.AllocateIPv6Network("node-1")
+	if err != nil {
+		t.Fatalf("Re-allocate node-1 IPv6 after replace failed: %v", err)
+	}
+	if realloc1.String() != ip1.String() {
+		t.Fatalf("node-1 IPv6 changed after replace: got %s want %s", realloc1, ip1)
+	}
+
+	// node-2 gets a new IP from the expanded range.
+	ip2, err := sna.AllocateIPv6Network("node-2")
+	if err != nil {
+		t.Fatalf("Failed to allocate IPv6 for node-2 after expand: %v", err)
+	}
+	if !newNet.Contains(ip2.IP) {
+		t.Fatalf("node-2 IPv6 %s not in expanded range %s", ip2, newNet)
 	}
 }

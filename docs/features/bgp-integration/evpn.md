@@ -103,10 +103,6 @@ spec:
 ```
 
 > [!NOTE]
-> Managed VTEP mode is not yet implemented. Currently only unmanaged mode is
-> supported.
-
-> [!NOTE]
 > Using the node IP as VTEP IP should be avoided. Assigning the VTEP IP to a
 > device without a physical link carrier (e.g. a dummy interface) keeps the
 > address up when a physical link goes down, enabling EVPN multihoming and
@@ -688,6 +684,70 @@ spec:
 
 Notice that the VRF EVPN section uses ASN 65100 from the explicit VRF router
 instead of inheriting 65000 from the underlay.
+
+## Mode Switching
+
+The VTEP mode can be changed between Managed and Unmanaged at runtime. Each
+direction requires specific user actions to ensure a smooth transition.
+
+### Managed VTEP CIDR requirements
+
+In managed mode, ovnkube-cluster-manager allocates VTEP IPs from the configured
+CIDRs. The CIDRs **must not overlap** with any node host IP reported in
+`k8s.ovn.org/host-cidrs`. If overlap is detected, the VTEP is rejected with
+`Accepted=False` and reason `CIDROverlap`. This prevents the allocator from
+handing out an IP that is already in use on a node interface.
+
+Use a dedicated, non-overlapping IP range for managed VTEP CIDRs (e.g.
+`100.64.0.0/24` from the CGNAT space). If the user wants to use existing node
+IPs as VTEP IPs, unmanaged mode should be used instead.
+
+### Unmanaged to Managed
+
+Before switching the VTEP mode from Unmanaged to Managed:
+
+1. **Remove VTEP IPs from custom interfaces on all nodes.** In unmanaged mode,
+   the user (or an external provider) configures VTEP IPs on dedicated
+   interfaces (e.g. dummy or loopback devices). These IPs appear in
+   `k8s.ovn.org/host-cidrs`. If they remain when switching to managed mode,
+   the overlap check rejects the VTEP. The managed-mode node controller
+   configures IPs on its own `evlo-*` dummy devices automatically.
+
+2. **Update the VTEP CR:**
+   ```shell
+   kubectl patch vtep evpn-vtep --type merge -p '{"spec":{"mode":"Managed"}}'
+   ```
+
+3. ovnkube-cluster-manager creates an allocator, preserves any in-range IPs
+   from existing node annotations, and allocates fresh IPs for nodes that don't
+   have one. ovnkube-node reads the annotation and configures the allocated IP
+   on a dedicated `evlo-*` dummy device.
+
+> [!NOTE]
+> If the VTEP CIDRs are different from those used during the unmanaged phase,
+> out-of-range IPs are discarded and fresh IPs are allocated. There is no
+> downtime guarantee in this case.
+
+### Managed to Unmanaged
+
+Before switching the VTEP mode from Managed to Unmanaged:
+
+1. **Configure VTEP IPs on dedicated interfaces on all nodes.** In unmanaged
+   mode, ovnkube-node discovers IPs from local interfaces. The IPs must be
+   within the VTEP CIDRs and configured as primary addresses on dedicated
+   devices (e.g. dummy interfaces). Using the node's primary IP should be
+   avoided — see the [VTEP IP note](#step-2-create-a-vtep).
+
+2. **Update the VTEP CR:**
+   ```shell
+   kubectl patch vtep evpn-vtep --type merge -p '{"spec":{"mode":"Unmanaged"}}'
+   ```
+
+3. ovnkube-cluster-manager cleans up its annotation entries on all nodes and
+   drops the allocator. There is a brief transient window where the VTEP shows
+   `Accepted=False` / `AllocationFailed` until ovnkube-node writes the
+   discovered IPs. The managed-mode `evlo-*` dummy devices are cleaned up
+   automatically by the node controller.
 
 ## Troubleshooting
 

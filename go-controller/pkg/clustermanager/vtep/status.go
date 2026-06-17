@@ -22,11 +22,10 @@ const (
 
 	conditionTypeAccepted = "Accepted"
 
-	reasonManagedModeNotSupported = "ManagedModeNotSupported"
-	reasonAllocated               = "Allocated"
-	reasonAllocationFailed        = "AllocationFailed"
-	reasonCIDROverlap             = "CIDROverlap"
-	reasonEVPNIPv6NotSupported    = "EVPNIPv6NotSupported"
+	reasonAllocated            = "Allocated"
+	reasonAllocationFailed     = "AllocationFailed"
+	reasonCIDROverlap          = "CIDROverlap"
+	reasonEVPNIPv6NotSupported = "EVPNIPv6NotSupported"
 )
 
 func (c *Controller) updateStatusCondition(vtep *vtepv1.VTEP, conditionType string, status metav1.ConditionStatus, reason, message string) error {

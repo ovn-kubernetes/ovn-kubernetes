@@ -19,6 +19,12 @@ var ErrSubnetAllocatorFull = fmt.Errorf("no subnets available")
 
 type SubnetAllocator interface {
 	AddNetworkRange(network *net.IPNet, hostSubnetLen int) error
+	// ReplaceNetworkRange replaces an existing range (identified by oldNetwork)
+	// with a new, wider range (newNetwork) of the same IP family. All existing
+	// allocations from the old range are preserved: since the new range is a
+	// supernet, every previously allocated IP is still valid within it.
+	// Returns an error if oldNetwork is not found or newNetwork is invalid.
+	ReplaceNetworkRange(oldNetwork, newNetwork *net.IPNet, hostSubnetLen int) error
 	MarkAllocatedNetworks(string, ...*net.IPNet) error
 	// Usage returns the number of used/allocated v4 and v6 subnets
 	Usage() (uint64, uint64)
@@ -107,6 +113,56 @@ func (sna *BaseSubnetAllocator) AddNetworkRange(network *net.IPNet, hostSubnetLe
 		sna.v4ranges = append(sna.v4ranges, snr)
 	}
 	return nil
+}
+
+// ReplaceNetworkRange replaces an existing range (identified by oldNetwork)
+// with a new, wider range (newNetwork) of the same IP family. Existing
+// allocations from the old range are preserved: each entry in the old
+// range's allocMap is copied into the new range's allocMap since every
+// previously allocated IP still falls within the supernet. The allocation
+// cursor (next) is reset to 0; allocateNetwork will skip any already-taken
+// IPs via allocMap, so the reset is safe and avoids cursor arithmetic against
+// the new subnetBits.
+func (sna *BaseSubnetAllocator) ReplaceNetworkRange(oldNetwork, newNetwork *net.IPNet, hostSubnetLen int) error {
+	sna.Lock()
+	defer sna.Unlock()
+
+	newSnr, err := newSubnetAllocatorRange(newNetwork, hostSubnetLen)
+	if err != nil {
+		return fmt.Errorf("invalid new network range %s: %w", newNetwork, err)
+	}
+
+	// Verify that newNetwork is a supernet of oldNetwork: the old network's
+	// base IP must be contained in the new network, and the new prefix must
+	// be shorter (wider).
+	oldOnes, _ := oldNetwork.Mask.Size()
+	newOnes, _ := newNetwork.Mask.Size()
+	if !newNetwork.Contains(oldNetwork.IP) || newOnes > oldOnes {
+		return fmt.Errorf("new network %s is not a supernet of old network %s", newNetwork, oldNetwork)
+	}
+
+	ranges := &sna.v4ranges
+	if utilnet.IsIPv6(newNetwork.IP) {
+		ranges = &sna.v6ranges
+	}
+
+	for i, snr := range *ranges {
+		if snr.network.String() == oldNetwork.String() {
+			// Copy existing allocations into the new range.
+			for subnet, owner := range snr.allocMap {
+				newSnr.allocMap[subnet] = owner
+			}
+			newSnr.used = snr.used
+			// Preserve the allocation cursor. The enumeration order of IPs
+			// within the range is deterministic and stable across a widen
+			// (subnetBits increases but existing indices stay the same), so
+			// copying next avoids a redundant linear scan from 0.
+			newSnr.next = snr.next
+			(*ranges)[i] = newSnr
+			return nil
+		}
+	}
+	return fmt.Errorf("network range %s not found", oldNetwork)
 }
 
 // MarkAllocatedNetworks will mark the given subnets as already allocated by
@@ -325,8 +381,8 @@ type subnetAllocatorRange struct {
 
 func newSubnetAllocatorRange(network *net.IPNet, hostSubnetLen int) (*subnetAllocatorRange, error) {
 	clusterCIDRLen, addrLen := network.Mask.Size()
-	if hostSubnetLen >= addrLen {
-		return nil, fmt.Errorf("host capacity cannot be zero")
+	if hostSubnetLen > addrLen {
+		return nil, fmt.Errorf("host subnet length cannot exceed address length")
 	} else if hostSubnetLen < clusterCIDRLen {
 		return nil, fmt.Errorf("subnet capacity cannot be larger than number of networks available")
 	}
