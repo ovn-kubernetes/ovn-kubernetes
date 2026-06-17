@@ -1,0 +1,92 @@
+name: OpenShift Test Extension Build Verification
+
+on:
+  pull_request:
+    branches: [ master,release-* ]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    name: Build OpenShift Tests Extension
+    runs-on: ubuntu-24.04
+    # Skip on draft PRs
+    if: github.event.pull_request.draft == false
+    steps:
+    - name: Check out PR code
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache: false
+      id: go
+
+    - name: Fetch OpenShift folder from downstream
+      run: |
+        set -x
+        # Always use downstream main branch for the latest openshift folder
+        TARGET_BRANCH="main"
+
+        # Clone only the openshift folder from downstream
+        git clone --depth 1 --filter=blob:none --sparse --branch "${TARGET_BRANCH}" https://github.com/openshift/ovn-kubernetes.git /tmp/downstream
+        cd /tmp/downstream
+        git sparse-checkout set openshift
+
+        # Copy openshift folder to PR workspace
+        cp -r openshift ${GITHUB_WORKSPACE}/
+
+        echo "Fetched openshift folder from downstream branch: ${TARGET_BRANCH}"
+        ls -la ${GITHUB_WORKSPACE}/openshift/
+
+    - name: Build OpenShift tests extension
+      run: |
+        set -x
+        ./openshift/hack/build-tests-ext.sh
+
+        # Verify the binary was created
+        if [ ! -f ./openshift/bin/ovn-kubernetes-tests-ext ]; then
+          echo "ERROR: Binary not found at ./openshift/bin/ovn-kubernetes-tests-ext"
+          exit 1
+        fi
+
+        echo "Binary created successfully:"
+        ls -lh ./openshift/bin/ovn-kubernetes-tests-ext
+
+    - name: List available tests
+      run: |
+        set -x
+        ./openshift/bin/ovn-kubernetes-tests-ext list tests | tee /tmp/test-list.txt
+
+        # Verify we got test output
+        if [ ! -s /tmp/test-list.txt ]; then
+          echo "ERROR: No tests listed"
+          exit 1
+        fi
+
+        echo "Found $(wc -l < /tmp/test-list.txt) test entries"
+
+    - name: Create verification artifacts
+      run: |
+        mkdir -p /tmp/verification
+
+        # Binary info
+        ls -lh ./openshift/bin/ovn-kubernetes-tests-ext > /tmp/verification/binary-info.txt
+        file ./openshift/bin/ovn-kubernetes-tests-ext >> /tmp/verification/binary-info.txt
+
+        # Test list
+        cp /tmp/test-list.txt /tmp/verification/test-list.txt
+
+        echo "Verification artifacts created:"
+        ls -la /tmp/verification/
+
+    - name: Upload verification artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: openshift-tests-ext-verification-${{ github.run_id }}
+        path: /tmp/verification/
