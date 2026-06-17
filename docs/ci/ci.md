@@ -127,3 +127,18 @@ html docs and will be available in the job artifacts for review. There is a link
 in the job run logs inside the step "Upload Artifact". Download and unzip that locally 
 to view the resulting docs after they are built to see what would be deployed to github
 pages.
+
+# Downstream Build Verification
+
+The upstream ovn-kubernetes project is consumed by various downstream projects. To help catch breaking changes early, we may run optional validation workflows for some of these downstreams.
+
+## OpenShift Tests Extension Build Verification
+
+This workflow validates that changes to `test/e2e/` don't break the OpenShift downstream test binary build. It runs automatically on PRs targeting `master`.
+
+The workflow:
+- Fetches the `openshift/` folder from [openshift/ovn-kubernetes](https://github.com/openshift/ovn-kubernetes)
+- Builds the OpenShift tests extension binary (`ovn-kubernetes-tests-ext`) using your PR's e2e tests
+- Verifies the binary is created and can list tests
+
+**If it fails:** This check is **not required** and won't block PR merges. Review the workflow logs and coordinate with @jluhrsen or @pperiyasamy if needed, especially for intentional API changes that may require downstream coordination.
