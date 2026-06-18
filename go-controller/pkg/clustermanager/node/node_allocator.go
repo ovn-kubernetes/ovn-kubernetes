@@ -72,6 +72,10 @@ func NewNodeAllocator(networkID int, netInfo util.NetInfo, nodeLister listers.No
 }
 
 func (na *NodeAllocator) Init() error {
+	if err := na.setTopologyType(); err != nil {
+		return fmt.Errorf("failed to set layer2 topology type: %w", err)
+	}
+
 	if !na.hasNodeSubnetAllocation() {
 		return nil
 	}
@@ -98,6 +102,29 @@ func (na *NodeAllocator) Init() error {
 	// update metrics for cluster subnets
 	na.recordSubnetCount()
 
+	return nil
+}
+
+// setTopologyType verifies if all nodes have the annotation Layer2UsesTransitRouter
+// and set it in config.Layer2UsesTransitRouter flag.
+// This way cluster manager does not annotate nodes with
+func (na *NodeAllocator) setTopologyType() error {
+	if !config.Layer2UsesTransitRouter {
+		nodes, err := na.nodeLister.List(labels.Everything())
+		if err != nil {
+			return fmt.Errorf("unable to get nodes from lister while setting topology type for layer2: %w", err)
+		}
+		// set it to true and check if all the nodes already have annotation
+		config.Layer2UsesTransitRouter = true
+		for _, node := range nodes {
+			if !util.UDNLayer2NodeUsesTransitRouter(node) {
+				// if at least one node doesn't have the annotation, consider none of them have Layer2UsesTransitRouter
+				config.Layer2UsesTransitRouter = false
+				return nil
+			}
+		}
+		klog.Infof("Switching to transit router for layer2 networks")
+	}
 	return nil
 }
 
@@ -377,8 +404,16 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 			updatedSubnetsMap[networkName] = validExistingSubnets
 		}
 	}
+	// Always checks topology type in annotation changes
+	err = na.setTopologyType()
+	if err != nil {
+		return fmt.Errorf("failed to set layer2 topology type: %w", err)
+	}
+
+	// TunnelID annotation is set in node only if Layer2UsesTransitRouter is disabled.
+	// Given that tunnelID only is used by `createGWRouterPeerSwitchPort`.
 	newTunnelID := types.NoTunnelID
-	if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
+	if na.HasNodeTunnelIDAllocation() {
 		existingTunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, networkName)
 		if err != nil && !util.IsAnnotationNotSetError(err) {
 			return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %v",
@@ -723,7 +758,8 @@ func (na *NodeAllocator) HasNodeSubnetAllocation() bool {
 func (na *NodeAllocator) HasNodeTunnelIDAllocation() bool {
 	return util.IsNetworkSegmentationSupportEnabled() &&
 		na.netInfo.IsPrimaryNetwork() &&
-		util.DoesNetworkRequireTunnelIDs(na.netInfo)
+		util.DoesNetworkRequireTunnelIDs(na.netInfo) &&
+		!config.Layer2UsesTransitRouter
 }
 
 func (na *NodeAllocator) markAllocatedNetworksForUnmanagedHONode(node *corev1.Node) error {
