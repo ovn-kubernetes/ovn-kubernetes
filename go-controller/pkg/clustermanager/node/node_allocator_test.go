@@ -728,11 +728,18 @@ func TestController_CleanupNodeRemovesUDNAnnotations(t *testing.T) {
 }
 
 func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
+	origLayerUsesTransitRouter := config.Layer2UsesTransitRouter
+	t.Cleanup(func() {
+		config.Layer2UsesTransitRouter = origLayerUsesTransitRouter
+	})
+
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatal(err)
 	}
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	// Start with legacy topology (no transit router)
+	config.Layer2UsesTransitRouter = false
 
 	netConf := &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
@@ -754,6 +761,7 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 			Annotations: map[string]string{},
 		},
 	}
+	// Node does NOT have transit router annotation (legacy topology)
 	node.Annotations, err = util.UpdateUDNLayer2NodeGRLRPTunnelIDs(node.Annotations, networkName, 42)
 	if err != nil {
 		t.Fatal(err)
@@ -773,6 +781,11 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Verify HasNodeTunnelIDAllocation returns true in legacy mode
+	if !na.HasNodeTunnelIDAllocation() {
+		t.Fatal("HasNodeTunnelIDAllocation should return true in legacy topology")
+	}
+
 	if err := na.CleanupNode(node.Name, node); err != nil {
 		t.Fatalf("CleanupNode failed: %v", err)
 	}
@@ -786,5 +799,221 @@ func TestController_CleanupNodeReleasesTunnelIDs(t *testing.T) {
 	}
 	if gotID := na.idAllocator.GetID(networkName + "_" + node.Name); gotID != types.InvalidID {
 		t.Fatalf("expected tunnel ID to be released, got %d", gotID)
+	}
+}
+
+// TestCleanupNode_TransitRouterMigration verifies that tunnel ID annotations
+// are cleaned up when a node transitions to transit router topology.
+func TestCleanupNode_TransitRouterMigration(t *testing.T) {
+	origLayerUsesTransitRouter := config.Layer2UsesTransitRouter
+	t.Cleanup(func() {
+		config.Layer2UsesTransitRouter = origLayerUsesTransitRouter
+	})
+
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatal(err)
+	}
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	// Simulate transit router mode
+	config.Layer2UsesTransitRouter = true
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-l2-migration",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer2Topology,
+		Role:     types.NetworkRolePrimary,
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkName := netInfo.GetNetworkName()
+
+	// Node has stale tunnel ID annotation from legacy topology
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "node1",
+			Annotations: map[string]string{},
+		},
+	}
+	// Node now uses transit router
+	node.Annotations[util.Layer2TopologyVersion] = util.TransitRouterTopoVersion
+	// But still has legacy tunnel ID annotation
+	node.Annotations, err = util.UpdateUDNLayer2NodeGRLRPTunnelIDs(node.Annotations, networkName, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fakeClient := fake.NewClientset(node)
+	kube := &kube.Kube{KClient: fakeClient}
+
+	idAlloc := id.NewIDAllocator("tunnel-ids", 1024)
+	// Simulate that the ID was allocated in legacy mode
+	if err := idAlloc.ReserveID(networkName+"_"+node.Name, 42); err != nil {
+		t.Fatal(err)
+	}
+
+	na := &NodeAllocator{
+		nodeLister:             newFakeNodeLister([]*corev1.Node{node}),
+		kube:                   kube,
+		netInfo:                netInfo,
+		clusterSubnetAllocator: NewSubnetAllocator(),
+		idAllocator:            idAlloc,
+	}
+
+	// Verify HasNodeTunnelIDAllocation returns false in transit router mode
+	if na.HasNodeTunnelIDAllocation() {
+		t.Fatal("HasNodeTunnelIDAllocation should return false in transit router mode")
+	}
+
+	// CleanupNode should remove the stale tunnel ID annotation
+	if err := na.CleanupNode(node.Name, node); err != nil {
+		t.Fatalf("CleanupNode failed: %v", err)
+	}
+
+	// Verify annotation was removed
+	updatedNode, err := fakeClient.CoreV1().Nodes().Get(context.TODO(), node.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(updatedNode, networkName); !util.IsAnnotationNotSetError(err) {
+		t.Fatalf("expected tunnel ID annotation to be removed after migration to transit router, got: %v", err)
+	}
+
+	// Verify allocator state was released
+	if gotID := na.idAllocator.GetID(networkName + "_" + node.Name); gotID != types.InvalidID {
+		t.Fatalf("expected tunnel ID to be released from allocator, got %d", gotID)
+	}
+}
+
+// TestSyncNodeNetworkAnnotations_TunnelID verifies that tunnel ID allocation
+// is correctly skipped or performed based on the Layer2UsesTransitRouter configuration.
+func TestSyncNodeNetworkAnnotations_TunnelID(t *testing.T) {
+	tests := []struct {
+		name            string
+		transitRouter   bool
+		wantAnnotation  bool
+		wantAllocatorID bool
+	}{
+		{
+			name:            "skip tunnel ID when transit router is used",
+			transitRouter:   true,
+			wantAnnotation:  false,
+			wantAllocatorID: false,
+		},
+		{
+			name:            "allocate tunnel ID when transit router is not used",
+			transitRouter:   false,
+			wantAnnotation:  true,
+			wantAllocatorID: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origLayerUsesTransitRouter := config.Layer2UsesTransitRouter
+			t.Cleanup(func() {
+				config.Layer2UsesTransitRouter = origLayerUsesTransitRouter
+			})
+
+			if err := config.PrepareTestConfig(); err != nil {
+				t.Fatal(err)
+			}
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.Layer2UsesTransitRouter = false
+
+			netConf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: "udn-l2",
+					Type: "ovn-k8s-cni-overlay",
+				},
+				Topology: types.Layer2Topology,
+				Role:     types.NetworkRolePrimary,
+				Subnets:  "10.1.0.0/16",
+			}
+			netInfo, err := util.NewNetInfo(netConf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			networkName := netInfo.GetNetworkName()
+
+			node1 := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "node1",
+					Annotations: map[string]string{},
+				},
+			}
+
+			fakeClient := fake.NewClientset(node1)
+			kube := &kube.Kube{KClient: fakeClient}
+
+			idAlloc := id.NewIDAllocator("tunnel-ids", 1024)
+			// Reserve ID 0 as it's not usable (types.NoTunnelID)
+			if err := idAlloc.ReserveID("zero", types.NoTunnelID); err != nil {
+				t.Fatal(err)
+			}
+
+			na := &NodeAllocator{
+				nodeLister:             newFakeNodeLister([]*corev1.Node{node1}),
+				kube:                   kube,
+				netInfo:                netInfo,
+				networkID:              1,
+				clusterSubnetAllocator: NewSubnetAllocator(),
+				idAllocator:            idAlloc,
+			}
+
+			// Set the topology mode directly (setTopologyType is now in ClusterManager)
+			config.Layer2UsesTransitRouter = tt.transitRouter
+
+			// Verify HasNodeTunnelIDAllocation returns the expected value
+			expectedHasTunnelID := !tt.transitRouter
+			if na.HasNodeTunnelIDAllocation() != expectedHasTunnelID {
+				t.Fatalf("HasNodeTunnelIDAllocation()=%v, want %v", na.HasNodeTunnelIDAllocation(), expectedHasTunnelID)
+			}
+
+			// Sync node annotations
+			if err := na.syncNodeNetworkAnnotations(node1); err != nil {
+				t.Fatalf("syncNodeNetworkAnnotations failed: %v", err)
+			}
+
+			// Verify tunnel ID annotation
+			updatedNode, err := fakeClient.CoreV1().Nodes().Get(context.TODO(), node1.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(updatedNode, networkName)
+			if tt.wantAnnotation {
+				if err != nil {
+					t.Fatalf("tunnel ID annotation should be set, got error: %v", err)
+				}
+				if tunnelID == types.InvalidID {
+					t.Fatal("tunnel ID should have a valid value")
+				}
+			} else {
+				if !util.IsAnnotationNotSetError(err) {
+					t.Fatalf("tunnel ID annotation should not be set, got: %v (error: %v)", updatedNode.Annotations, err)
+				}
+			}
+
+			// Verify allocator state
+			allocatorID := na.idAllocator.GetID(networkName + "_" + node1.Name)
+			if tt.wantAllocatorID {
+				if allocatorID == types.InvalidID {
+					t.Fatal("tunnel ID should be allocated in the allocator")
+				}
+				if tt.wantAnnotation && allocatorID != tunnelID {
+					t.Fatalf("allocated tunnel ID mismatch: allocator has %d, annotation has %d", allocatorID, tunnelID)
+				}
+			} else {
+				if allocatorID != types.InvalidID {
+					t.Fatalf("tunnel ID should not be allocated in the allocator, got %d", allocatorID)
+				}
+			}
+		})
 	}
 }

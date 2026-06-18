@@ -230,6 +230,9 @@ func NewClusterManager(
 // Start the cluster manager.
 func (cm *ClusterManager) Start(ctx context.Context) error {
 	klog.Info("Starting the cluster manager")
+	if err := cm.setTopologyType(); err != nil {
+		return fmt.Errorf("failed to set layer2 topology type: %w", err)
+	}
 
 	// Start and sync the watch factory to begin listening for events
 	if err := cm.wf.Start(); err != nil {
@@ -381,6 +384,29 @@ func (cm *ClusterManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) er
 func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 	if cm.raController != nil {
 		cm.raController.ReconcileNetwork(name, old, new)
+	}
+	return nil
+}
+
+// setTopologyType verifies if all nodes have the annotation Layer2UsesTransitRouter
+// and set it in config.Layer2UsesTransitRouter flag.
+// This way, cluster manager does not annotate nodes with tunnel IDs.
+func (cm *ClusterManager) setTopologyType() error {
+	if !config.Layer2UsesTransitRouter {
+		nodes, err := cm.client.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("unable to get nodes from informer while setting topology type for layer2: %w", err)
+		}
+		// set it to true and check if all the nodes already have annotation
+		config.Layer2UsesTransitRouter = true
+		for _, node := range nodes.Items {
+			if !util.UDNLayer2NodeUsesTransitRouter(&node) {
+				// if at least one node doesn't have the annotation, consider none of them have Layer2UsesTransitRouter
+				config.Layer2UsesTransitRouter = false
+				return nil
+			}
+		}
+		klog.Infof("Switching to transit router for layer2 networks")
 	}
 	return nil
 }
