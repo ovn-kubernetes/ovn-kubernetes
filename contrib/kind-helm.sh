@@ -648,6 +648,10 @@ install_online_ovn_kubernetes_crds() {
   run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_baselineadminnetworkpolicies.yaml
 }
 
+install_single_subnet_udn_admission_policy() {
+  run_kubectl apply -f "${DIR}/network-segmentation/admission.single-subnet.yaml"
+}
+
 check_dependencies
 parse_args "$@"
 set_default_params
@@ -750,6 +754,10 @@ fi
 
 if [ "$ENABLE_MULTI_NET" == true ]; then
   enable_multi_net
+fi
+
+if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "${OVN_E2E_ENABLE_MULTI_UDN_SUBNETS:-true}" == "false" ]; then
+  install_single_subnet_udn_admission_policy
 fi
 
 # if ! kubectl wait -n ovn-kubernetes --for=condition=ready pods --all --timeout=300s ; then

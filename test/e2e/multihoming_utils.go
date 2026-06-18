@@ -40,6 +40,10 @@ func joinStrings(vals ...string) string {
 	return strings.Join(vals, ",")
 }
 
+func multiUDNSubnetsEnabled() bool {
+	return enableMultiUDNSubnets
+}
+
 func primaryLayer3MultiCIDRs() string {
 	return joinStrings(primaryLayer3MultiIPv4CIDRs(), primaryLayer3MultiIPv6CIDRs())
 }
@@ -65,11 +69,19 @@ func primaryLayer3IPv6CIDRs() (string, string) {
 }
 
 func primaryLayer3MultiIPv4CIDRs() string {
+	if !multiUDNSubnetsEnabled() {
+		subnet, _ := allocators.GetFirstUDNSubnets()
+		return subnet
+	}
 	subnet1, subnet2 := primaryLayer3IPv4CIDRs()
 	return joinStrings(subnet1, subnet2)
 }
 
 func primaryLayer3MultiIPv6CIDRs() string {
+	if !multiUDNSubnetsEnabled() {
+		_, subnet := allocators.GetFirstUDNSubnets()
+		return subnet
+	}
 	subnet1, subnet2 := primaryLayer3IPv6CIDRs()
 	return joinStrings(subnet1, subnet2)
 }

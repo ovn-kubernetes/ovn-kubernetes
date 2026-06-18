@@ -65,6 +65,22 @@ const (
 	netexecPort            = 8080
 )
 
+func primaryLayer3RouteAdvertisementSubnets(v4Primary, v4Secondary, v6Primary, v6Secondary string) []udnv1.Layer3Subnet {
+	subnets := []udnv1.Layer3Subnet{
+		{CIDR: udnv1.CIDR(v4Primary), HostSubnet: 24},
+		{CIDR: udnv1.CIDR(v6Primary), HostSubnet: 64},
+	}
+	if !multiUDNSubnetsEnabled() {
+		return subnets
+	}
+	return []udnv1.Layer3Subnet{
+		{CIDR: udnv1.CIDR(v4Primary), HostSubnet: 24},
+		{CIDR: udnv1.CIDR(v4Secondary), HostSubnet: 24},
+		{CIDR: udnv1.CIDR(v6Primary), HostSubnet: 64},
+		{CIDR: udnv1.CIDR(v6Secondary), HostSubnet: 64},
+	}
+}
+
 func init() {
 	if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
 		images.Add(images.FRR())
@@ -964,19 +980,12 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						Topology: udnv1.NetworkTopologyLayer3,
 						Layer3: &udnv1.Layer3Config{
 							Role: "Primary",
-							Subnets: []udnv1.Layer3Subnet{{
-								CIDR:       "103.103.0.0/23",
-								HostSubnet: 24,
-							}, {
-								CIDR:       "103.104.0.0/16",
-								HostSubnet: 24,
-							}, {
-								CIDR:       "2014:100:200::0/63",
-								HostSubnet: 64,
-							}, {
-								CIDR:       "2014:100:201::0/48",
-								HostSubnet: 64,
-							}},
+							Subnets: primaryLayer3RouteAdvertisementSubnets(
+								"103.103.0.0/23",
+								"103.104.0.0/16",
+								"2014:100:200::0/63",
+								"2014:100:201::0/48",
+							),
 						},
 					},
 				},
@@ -2051,19 +2060,12 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Topology: udnv1.NetworkTopologyLayer3,
 					Layer3: &udnv1.Layer3Config{
 						Role: "Primary",
-						Subnets: []udnv1.Layer3Subnet{{
-							CIDR:       "102.102.0.0/23",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "102.104.0.0/16",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "2013:100:200::0/63",
-							HostSubnet: 64,
-						}, {
-							CIDR:       "2013:100:201::0/48",
-							HostSubnet: 64,
-						}},
+						Subnets: primaryLayer3RouteAdvertisementSubnets(
+							"102.102.0.0/23",
+							"102.104.0.0/16",
+							"2013:100:200::0/63",
+							"2013:100:201::0/48",
+						),
 					},
 				},
 			},
@@ -2077,19 +2079,12 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Topology: udnv1.NetworkTopologyLayer3,
 					Layer3: &udnv1.Layer3Config{
 						Role: "Primary",
-						Subnets: []udnv1.Layer3Subnet{{
-							CIDR:       "103.103.0.0/23",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "103.104.0.0/16",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "2014:100:200::0/63",
-							HostSubnet: 64,
-						}, {
-							CIDR:       "2014:100:201::0/48",
-							HostSubnet: 64,
-						}},
+						Subnets: primaryLayer3RouteAdvertisementSubnets(
+							"103.103.0.0/23",
+							"103.104.0.0/16",
+							"2014:100:200::0/63",
+							"2014:100:201::0/48",
+						),
 					},
 				},
 			},

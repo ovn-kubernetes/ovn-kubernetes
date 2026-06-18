@@ -945,6 +945,12 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 	})
 
 	Context("layer3 primary network with multi-subnets", func() {
+		BeforeEach(func() {
+			if !multiUDNSubnetsEnabled() {
+				e2eskipper.Skipf("skipping multi-subnet UDN runtime coverage when --enable-multi-udn-subnets=false")
+			}
+		})
+
 		DescribeTableSubtree("created using",
 			func(createNetworkFn func(netConfig *networkAttachmentConfigParams) error) {
 

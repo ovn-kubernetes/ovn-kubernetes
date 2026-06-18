@@ -30,6 +30,8 @@ import (
 
 // https://github.com/kubernetes/kubernetes/blob/v1.16.4/test/e2e/e2e_test.go#L62
 
+var enableMultiUDNSubnets bool
+
 // handleFlags sets up all flags and parses the command line.
 func handleFlags() {
 	e2econfig.CopyFlags(e2econfig.Flags, flag.CommandLine)
@@ -37,6 +39,7 @@ func handleFlags() {
 	framework.RegisterClusterFlags(flag.CommandLine)
 	diagnostics.RegisterFlags(flag.CommandLine)
 	flag.StringVar(&reportPath, "report-path", "/tmp/kind/logs", "the path to be used to dump test failure information")
+	flag.BoolVar(&enableMultiUDNSubnets, "enable-multi-udn-subnets", true, "enable primary UDN/CUDN e2e coverage that uses multiple subnets per IP family")
 	flag.Parse()
 }
 

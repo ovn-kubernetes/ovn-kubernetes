@@ -187,7 +187,7 @@ func newTestNetworkSubnetsAllocator() func(bool) ([]string, []string) {
 		v4 := []string{fmt.Sprintf("172.%d.0.0/16", 30+i)}
 		// Allocated networks for ipv6 are 2014:100:201::0/60, 2014:100:202::0/60, ... (non-overlapping /60s)
 		v6 := []string{fmt.Sprintf("2014:100:%d::0/60", 200+i)}
-		if multiSubnet {
+		if multiSubnet && multiUDNSubnetsEnabled() {
 			v4 = []string{
 				fmt.Sprintf("172.%d.0.0/23/24", 30+i),
 				fmt.Sprintf("172.%d.0.0/16/24", 31+i),

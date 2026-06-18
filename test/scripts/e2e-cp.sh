@@ -121,6 +121,10 @@ if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi
 
+if [ "${OVN_E2E_ENABLE_MULTI_UDN_SUBNETS:-true}" != "true" ]; then
+  skip "Network Segmentation: API validations.*ClusterUserDefinedNetwork, layer3, multi-subnets"
+fi
+
 # Only run Node IP/MAC address migration tests if they are explicitly requested
 IP_MIGRATION_TESTS="Node IP and MAC address migration"
 if [[ "${WHAT}" != "${IP_MIGRATION_TESTS}"* ]]; then
@@ -261,6 +265,11 @@ pushd e2e
 
 go mod download
 
+E2E_MULTI_UDN_SUBNETS_ARGS=()
+if [ -n "${OVN_E2E_ENABLE_MULTI_UDN_SUBNETS:-}" ]; then
+  E2E_MULTI_UDN_SUBNETS_ARGS+=(--enable-multi-udn-subnets="${OVN_E2E_ENABLE_MULTI_UDN_SUBNETS}")
+fi
+
 if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
   # EVPN tests are parallel-safe (unique per-test resource names, randomized
   # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
@@ -281,7 +290,8 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
         -provider skeleton \
         -kubeconfig "${KUBECONFIG}" \
         ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
-        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
+        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"} \
+        "${E2E_MULTI_UDN_SUBNETS_ARGS[@]}"
 else
   go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
           -ginkgo.v \
@@ -294,6 +304,7 @@ else
           -provider skeleton \
           -kubeconfig ${KUBECONFIG} \
           ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
-          ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
+          ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"} \
+          "${E2E_MULTI_UDN_SUBNETS_ARGS[@]}"
 fi
 popd
