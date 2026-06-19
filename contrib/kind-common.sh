@@ -1220,229 +1220,6 @@ readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}
 readonly FRR_EXTERNAL_DEMO_IMAGE=${FRR_DEPLOYED_IMAGE}
-readonly FRR_TMP_DIR=$(mktemp -d -u)
-
-clone_frr() {
-  [ -d "$FRR_TMP_DIR" ] || {
-    mkdir -p "$FRR_TMP_DIR" && trap 'rm -rf $FRR_TMP_DIR' EXIT
-    pushd "$FRR_TMP_DIR" || exit 1
-    git clone --no-tags --single-branch --branch main https://github.com/metallb/frr-k8s
-    pushd frr-k8s
-    git checkout --detach "$FRR_K8S_GIT_REF"
-    popd
-
-    # Download the patches
-    curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp-v0.0.21.tar.gz | tar xzvf - frr-k8s-ovnk-bgp-v0.0.21/patches --strip-components 1
-
-    # Change into the cloned repo directory before applying patches
-    pushd frr-k8s
-    # The OVN-K demo patch was authored before upstream bumped the demo
-    # image. Normalize that context before applying the patch; the image is
-    # bumped to FRR_EXTERNAL_DEMO_IMAGE below.
-    sed -i 's|quay.io/frrouting/frr:10.4.3|quay.io/frrouting/frr:9.1.0|g' hack/demo/demo.sh
-    git apply ../patches/*
-
-    # The upstream frr-k8s demo.sh hardcodes quay.io/frrouting/frr:9.1.0,
-    # which crashes on musl libc (Alpine) due to a race condition in
-    # pthread_setname_np during BGP keepalive thread startup
-    # (https://github.com/FRRouting/frr/issues/15699, fixed in FRR 10.1 by
-    # https://github.com/FRRouting/frr/pull/15714).
-    #
-    # Bump to 10.4.1 for upstream demo was posted here: https://github.com/metallb/frr-k8s/pull/404
-    # We bump further to 10.6.0 to include additional fixes for EVPN and coredumps:
-    # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3907335193
-    # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5874#issuecomment-3898408592
-    # https://github.com/FRRouting/frr/pull/20496
-    #
-    # Note: 10.6.0 carries the bfdd coredump fix:
-    # https://github.com/FRRouting/frr/pull/19822
-    # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6299
-    replace_in_file_or_exit \
-      hack/demo/demo.sh \
-      "${FRR_K8S_UPSTREAM_FRR_IMAGE}" \
-      "${FRR_EXTERNAL_DEMO_IMAGE}"
-
-    popd
-
-    popd || exit 1
-  }
-}
-
-deploy_frr_external_container() {
-  echo "Deploying FRR external container ..."
-  clone_frr
- 
-  pushd "$FRR_TMP_DIR" || exit 1
-  run_kubectl apply -f frr-k8s/charts/frr-k8s/charts/crds/templates/
-  popd || exit 1
- 
-  # apply the demo which will deploy an external FRR container that the cluster
-  # can peer with acting as BGP (reflector) external gateway
-  pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
-  # modify config template to configure neighbors as route reflector clients
-  # First check if IPv4 network already exists
-  grep -q 'network '"${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
-    sed -i '/address-family ipv4 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV4}"'' frr/frr.conf.tmpl
-
-  # Add route reflector client config
-  sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
-
-  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    # Check if IPv6 address-family section exists
-    if ! grep -q 'address-family ipv6 unicast' frr/frr.conf.tmpl; then
-      # Add IPv6 address-family section if it doesn't exist
-      sed -i '/exit-address-family/a \ \
-  address-family ipv6 unicast\
-    network '"${BGP_SERVER_NET_SUBNET_IPV6}"'\
-  exit-address-family' frr/frr.conf.tmpl
-    else
-      # Add network to existing IPv6 section
-      sed -i '/address-family ipv6 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV6}"'' frr/frr.conf.tmpl
-    fi
-
-    # Add route-reflector-client for IPv6 neighbors
-    sed -i '/neighbor fc00.*remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
-  fi
-  if [ "${OCI_BIN}" == "podman" ]; then
-    # frr-k8s' demo script prefers docker when both docker and podman are
-    # installed. Force its podman path, and avoid its host-network fallback
-    # because podman cannot later attach a host-network container to bgpnet.
-    replace_in_file_or_exit \
-      ./demo.sh \
-      'CLI=docker' \
-      'CLI=podman'
-    replace_in_file_or_exit \
-      ./demo.sh \
-      'CLI_BR_NET_BY_SUBNET_FN="docker_get_br_net_by_subnet"' \
-      'CLI_BR_NET_BY_SUBNET_FN="podman_get_br_net_by_subnet"'
-    sed -i '/^pushd \.\/frr\/ && {/i\
-if [ "$CLI" = "podman" ]; then\
-    NETWORK=${FRR_K8S_DEMO_NETWORK:-kind}\
-fi\
-' ./demo.sh
-  fi
-  ./demo.sh
-  popd || exit 1
-  if frr_k8s_remote_enabled && [ -n "${DPU_SIM_GATEWAY_NETWORK:-}" ]; then
-    configure_dpu_sim_frr_gateway_peers
-  fi
-  if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    # Enable IPv6 forwarding in FRR
-    $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
-    # Enable keep_addr_on_down to preserve IPv6 addresses during VRF enslavement.
-    # Without this, IPv6 global addresses are removed when interfaces are moved to a VRF,
-    # causing FRR/zebra to fail creating FIB nexthop groups ("no fib nhg" bug).
-    # See: https://docs.kernel.org/networking/vrf.html (section 4: Enslave L3 interfaces)
-    #      https://github.com/FRRouting/frr/issues/1666
-    $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.keep_addr_on_down=1
-  fi
-
-  if [ "$ENABLE_EVPN" == true ]; then
-    echo "Configuring global EVPN BGP on external FRR (advertise-all-vni + neighbor activation)..."
-    # Enable l2vpn evpn address-family, activate all neighbors, and advertise-all-vni.
-    # Neighbors are already configured by demo.sh; extract them from the running config.
-    # This is cluster-level infrastructure shared across all EVPN tests; configured once
-    # at install time so individual tests don't need to manage it.
-    # Wait for FRR daemons to be ready ("Not all daemons are up, cannot write config").
-    local attempts=0 daemon_status
-    while ! daemon_status=$($OCI_BIN exec frr vtysh -c "show daemons" 2>&1); do
-      if (( ++attempts > 30 )); then
-        echo "error: FRR daemons did not become ready after 30 attempts"
-        echo "last daemon status: $daemon_status"
-        exit 1
-      fi
-      sleep 1
-    done
-    local bgp_neighbors vtysh_cmds
-    bgp_neighbors=$($OCI_BIN exec frr vtysh -c "show running-config" | grep "^ neighbor.*remote-as" | awk '{print $2}')
-    vtysh_cmds=(-c "configure terminal" -c "router bgp 64512" -c "address-family l2vpn evpn")
-    for neighbor in $bgp_neighbors; do
-      vtysh_cmds+=(-c "neighbor $neighbor activate")
-      vtysh_cmds+=(-c "neighbor $neighbor route-reflector-client")
-    done
-    vtysh_cmds+=(-c "advertise-all-vni" -c "exit-address-family" -c "end" -c "write memory")
-    $OCI_BIN exec frr vtysh "${vtysh_cmds[@]}"
-    echo "Global EVPN BGP config complete on external FRR"
-  fi
-}
-
-deploy_bgp_external_server() {
-  # We create an external docker container that acts as the server (or client) outside the cluster
-  # in the e2e tests that levergae router advertisements.
-  # This container will be connected to the frr container deployed above to simulate a realistic
-  # network topology
-  # -----------------               ------------------                         ---------------------
-  # |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
-  # |   external    |<------------- |   FRR router   |<------ KIND cluster --  ---------------------
-  # |    server     |               |                |                         |    ovn-worker     |   (client pod advertised
-  # -----------------               ------------------                         ---------------------    using RouteAdvertisements
-  #                                                                            |    ovn-worker2    |    from default pod network)
-  #                                                                            ---------------------
-  local ip_family ipv6_network
-  if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    ip_family="dual"
-    ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
-  elif  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    ip_family="ipv6"
-    ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
-  else
-    ip_family="ipv4"
-    ipv6_network=""
-  fi
-  $OCI_BIN rm -f bgpserver
-  $OCI_BIN network rm -f bgpnet
-  $OCI_BIN network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
-  $OCI_BIN network connect bgpnet frr
-  $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p "${BGP_SERVER_HOST_PORT}:8080"  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
-  # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
-  # cluster for return traffic
-  local bgp_network_frr_v4 bgp_network_frr_v6 kind_network_frr_v4 kind_network_frr_v6
-  bgp_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.IPAddress}}' frr)
-  echo "FRR bgp network IPv4: ${bgp_network_frr_v4}"
-  $OCI_BIN exec bgpserver ip route replace default via "$bgp_network_frr_v4"
-  if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
-    bgp_network_frr_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.GlobalIPv6Address}}' frr)
-    echo "FRR bgp network IPv6: ${bgp_network_frr_v6}"
-    $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
-  fi
-  if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ]; then
-    kind_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' frr)
-    echo "FRR kind network IPv4: ${kind_network_frr_v4}"
-    # If UDN isolation is in loose disabled, we need to set the default gateway for the nodes in the cluster
-    # to the FRR router so that cross-UDN traffic can be routed back to the pods in the cluster in the loose mode.
-    echo "Setting default gateway for nodes in the cluster to FRR router IPv4: ${kind_network_frr_v4}"
-    set_nodes_default_gw "$kind_network_frr_v4"
-    if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
-      kind_network_frr_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' frr)
-      echo "FRR kind network IPv6: ${kind_network_frr_v6}"
-      set_nodes_default_gw "$kind_network_frr_v6"
-    fi
-  else
-    # disable the default route to make sure the container only routes accross
-    # directly connected or learnt networks (doing this at the very end since
-    # docker changes the routing table when a new network is connected)
-    $OCI_BIN exec frr ip route delete default
-    $OCI_BIN exec frr ip route
-    $OCI_BIN exec frr ip -6 route delete default
-    $OCI_BIN exec frr ip -6 route
-  fi
-}
-
-set_nodes_default_gw() {
-  local gw="$1"
-  local ip_cmd="ip"
-  local route_cmd="route replace default via"
-
-  # Check if $gw is IPv6 (contains ':')
-  if [[ "$gw" == *:* ]]; then
-    ip_cmd="ip -6"
-  fi
-
-  KIND_NODES=$(kind_get_nodes)
-  for node in $KIND_NODES; do
-    $OCI_BIN exec "$node" $ip_cmd $route_cmd "$gw"
-  done
-}
 
 destroy_bgp() {
   if $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^bgpserver$'; then
@@ -1456,173 +1233,45 @@ destroy_bgp() {
   fi
 }
 
-install_frr_k8s_crds() {
-  echo "Installing frr-k8s CRDs ..."
-  clone_frr
-  kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/crd/bases/
-}
-
-install_frr_k8s() {
-  local bgp_port=${1:-0}
-  echo "Installing frr-k8s ..."
-  clone_frr
-
-  # apply frr-k8s
-
-  # The all-in-one manifest is only consumed here (deploy_frr_external_container
-  # uses CRDs and the demo scripts, not this manifest), so the fix lives here
-  # rather than in clone_frr.
-  #
-  # gcr.io/kubebuilder/kube-rbac-proxy is unavailable after Google's Container
-  # Registry shutdown (https://cloud.google.com/container-registry/docs/deprecations/container-registry-deprecation).
-  # Upstream bug: https://github.com/metallb/metallb/issues/2619
-  # Use the same image from the Kubernetes community registry instead.
-  # REVERT ME: when https://github.com/metallb/metallb/issues/2619 is fixed
-  sed -i 's|gcr.io/kubebuilder/kube-rbac-proxy|registry.k8s.io/kubebuilder/kube-rbac-proxy|g' \
-    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-
-  replace_in_file_or_exit \
-    "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml \
-    "${FRR_K8S_ALL_IN_ONE_UPSTREAM_FRR_IMAGE}" \
-    "${FRR_K8S_FRR_IMAGE}"
-
-  if [ "${bgp_port}" -ne 0 ]; then
-    local frr_yaml="${FRR_TMP_DIR}/frr-k8s/config/all-in-one/frr-k8s.yaml"
-    grep -q 'bgpd_options=.*-p 0' "$frr_yaml" || {
-      echo "expected bgpd_options with '-p 0' not found in $frr_yaml"
-      exit 1
-    }
-    sed -i "s/bgpd_options=\"\(.*\)-p 0\(.*\)\"/bgpd_options=\"\1-p ${bgp_port}\2\"/g" "$frr_yaml"
-    grep -q "bgpd_options=.*-p ${bgp_port}" "$frr_yaml" || {
-      echo "failed to patch bgpd_options to use port ${bgp_port}"
-      exit 1
-    }
-  fi
-  install_frr_k8s_host_api_crds
-  kubectl apply -f "${FRR_TMP_DIR}"/frr-k8s/config/all-in-one/frr-k8s.yaml
-  create_frr_k8s_remote_kubeconfig_secret
-  configure_frr_k8s_remote_daemonsets
-}
-
-wait_for_frr_k8s() {
-  if kubectl -n frr-k8s-system get deployment frr-k8s-statuscleaner >/dev/null 2>&1; then
-    kubectl wait -n frr-k8s-system deployment frr-k8s-statuscleaner --for condition=Available --timeout 2m
-  fi
-  if kubectl -n frr-k8s-system get daemonset frr-k8s-daemon >/dev/null 2>&1; then
-    kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
-    return
-  fi
-  local ds found=false
-  for ds in $(kubectl -n frr-k8s-system get daemonset -l dpu-sim.ovn.org/frr-remote=true -o name); do
-    found=true
-    kubectl rollout status -n frr-k8s-system "${ds}" --timeout 2m
-  done
-  if [ "${found}" != true ]; then
-    echo "No local or remote FRR-K8S daemonsets were found in namespace frr-k8s-system" >&2
-    return 1
-  fi
-}
-
-apply_frr_k8s_receive_config() {
-  # apply a BGP peer configration with the external gateway that does not
-  # exchange routes
-  pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
-  sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
-  if frr_k8s_remote_enabled && [ -n "${DPU_SIM_GATEWAY_NETWORK:-}" ]; then
-    configure_dpu_sim_frr_receive_config receive_filtered.yaml
-  fi
-  # Allow receiving the bgp external server's prefix
-  sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
-  # If IPv6 is enabled, add the IPv6 prefix as well
-  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    # Find all line numbers where the IPv4 prefix is defined
-    IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
-    # Process each occurrence of the IPv4 prefix in reverse order to avoid line number shifting
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
-      # Insert the IPv6 prefix after each IPv4 prefix line
-      sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
-    done
+# Build and run the bgp-setup tool from test/e2e/_output/bin/bgp-setup
+# Arguments:
+#   $1 - phase: "deploy-frr", "deploy-bgp-server", "deploy-containers", "install-frr-k8s", or "all"
+#   $2 - (optional) extra flags to pass to bgp-setup (e.g., "--bgp-port=179")
+run_bgp_setup() {
+  local phase="${1:-all}"
+  local extra_flags="${2:-}"
+  local bgp_setup_bin="${DIR}/../test/e2e/_output/bin/bgp-setup"
+  
+  # Build bgp-setup if it doesn't exist or if source is newer
+  if [ ! -f "$bgp_setup_bin" ] || [ "${DIR}/../test/e2e/cmd/bgp-setup/main.go" -nt "$bgp_setup_bin" ]; then
+    echo "Building bgp-setup tool..."
+    mkdir -p "${DIR}/../test/e2e/_output/bin"
+    pushd "${DIR}/../test/e2e" > /dev/null
+    go build -o _output/bin/bgp-setup ./cmd/bgp-setup
+    popd > /dev/null
   fi
   
-  # frr-k8s webhook is declaring readiness before its endpoint is serving.
-  # Let's do our own probing. Also will print logs in case of failure so we get
-  # insights on why this is hapenning. In remote mode the host API does not use
-  # the DPU-cluster webhook service, so skip this probe.
-  local r
-  r=0
-  if ! frr_k8s_remote_enabled; then
-    timeout 60s bash -x <<EOF || r=$?
-echo "Attempting to reach frr-k8s webhook"
-kind export kubeconfig --name ovn
-while true; do
-CLUSTER_IP=\$(kubectl get svc -n frr-k8s-system frr-k8s-webhook-service -o jsonpath='{.spec.clusterIP}')
-# Wrap IPv6 addresses in brackets for URL syntax
-[[ \${CLUSTER_IP} =~ : ]] && CLUSTER_IP="[\${CLUSTER_IP}]"
-$OCI_BIN exec ovn-control-plane curl -ksS --connect-timeout 0.1 https://\${CLUSTER_IP}
-[ \$? -eq 0 ] && exit 0
-echo "Couldn't reach frr-k8s webhook, trying in 1s..."
-sleep 1s
-done
-EOF
-  fi
-  echo "r=$r"
-  if [ "$r" -ne "0" ]; then
-    kubectl describe pod -n frr-k8s-system -l app=frr-k8s-webhook-server
-    kubectl logs -n frr-k8s-system -l app=frr-k8s-webhook-server
-  fi
-
-  local kubectl_cmd=(kubectl)
-  if frr_k8s_remote_enabled; then
-    kubectl_cmd=(kubectl --kubeconfig "$(frr_k8s_host_kubeconfig)")
-  fi
-  "${kubectl_cmd[@]}" apply -n frr-k8s-system -f receive_filtered.yaml
-  popd || exit 1
-}
-
-configure_frr_k8s_routes() {
-  # Add routes for pod networks dynamically into the github runner for return traffic to pass back
-  if [ "$ADVERTISE_DEFAULT_NETWORK" = "true" ]; then
-    echo "Adding routes for Kubernetes pod networks..."
-    NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
-    echo "Found nodes: $NODES"
-    for node in $NODES; do
-      # Get the addresses
-      node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-      # Get subnet information
-      subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
-      
-      if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
-        # Extract IPv4 address (first address)
-        node_ipv4=$(echo "$node_ips" | awk '{print $1}')
-        ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
-        
-        # Add IPv4 route
-        if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
-          echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
-          sudo ip route replace $ipv4_subnet via $node_ipv4
-        fi
-      fi
-
-      # Add IPv6 route if enabled
-      if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-        # Extract IPv6 address (second address, if present)
-        node_ipv6=$(echo "$node_ips" | awk '{print $2}')
-        ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
-        
-        if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
-          echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
-          sudo ip -6 route replace $ipv6_subnet via $node_ipv6
-        fi
-      fi
-    done
-  fi
-
-  rm -rf "${FRR_TMP_DIR}"
-}
-
-configure_frr_k8s() {
-  apply_frr_k8s_receive_config
-  configure_frr_k8s_routes
+  echo "Running bgp-setup with phase: $phase"
+  
+  # Determine IPv4/IPv6 flags
+  local ipv4_flag="${PLATFORM_IPV4_SUPPORT:-true}"
+  local ipv6_flag="${PLATFORM_IPV6_SUPPORT:-false}"
+  
+  "$bgp_setup_bin" \
+    --phase="$phase" \
+    --container-runtime="$OCI_BIN" \
+    --ipv4="$ipv4_flag" \
+    --ipv6="$ipv6_flag" \
+    --bgp-server-subnet-ipv4="${BGP_SERVER_NET_SUBNET_IPV4}" \
+    --bgp-server-subnet-ipv6="${BGP_SERVER_NET_SUBNET_IPV6}" \
+    --frr-k8s-version="${FRR_K8S_GIT_REF:-${FRR_K8S_VERSION:-v0.0.21}}" \
+    --frr-image="${FRR_DEPLOYED_IMAGE}" \
+    --network-name="${NETWORK_NAME:-default}" \
+    --cluster-name="${KIND_CLUSTER_NAME:-ovn}" \
+    --isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE:-strict}" \
+    --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK:-false}" \
+    --kubeconfig="${KUBECONFIG}" \
+    ${extra_flags}
 }
 
 setup_coredumps() {
@@ -1888,6 +1537,21 @@ delete() {
   timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
   sleep 5
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
+
+  # Clean up stale endpoints from kind network that kind delete may leave behind
+  # Use network inspect to get containers still connected to the kind network
+  local cluster_name="${KIND_CLUSTER_NAME:-ovn}"
+  local stale_endpoints
+  stale_endpoints=$($OCI_BIN network inspect kind --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null || true)
+  if [ -n "$stale_endpoints" ]; then
+    echo "Cleaning up stale endpoints from kind network..."
+    for endpoint in $stale_endpoints; do
+      # Only disconnect endpoints belonging to this cluster or frr
+      if [[ "$endpoint" == "${cluster_name}-"* ]] || [[ "$endpoint" == "frr" ]] || [[ "$endpoint" == "bgpserver" ]]; then
+        $OCI_BIN network disconnect -f kind "$endpoint" 2>/dev/null || true
+      fi
+    done
+  fi
 }
 
 create_kind_cluster() {
