@@ -95,6 +95,12 @@ type NetConf struct {
 	// Only valid when Transport is "no-overlay".
 	OutboundSNAT string `json:"outboundSNAT,omitempty"`
 
+	// NoOverlayRouting configures whether pod network routing is managed by
+	// OVN-Kubernetes or externally when using no-overlay transport.
+	// Valid values are "managed" and "unmanaged".
+	// Only valid when Transport is "no-overlay".
+	NoOverlayRouting string `json:"noOverlayRouting,omitempty"`
+
 	// EVPNConfig contains configuration for EVPN mode.
 	// Only valid when Transport is "evpn".
 	EVPN *EVPNConfig `json:"evpn,omitempty"`
@@ -147,6 +153,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		PhysicalNetworkName   string      `json:"physicalNetworkName,omitempty"`
 		Transport             string      `json:"transport,omitempty"`
 		OutboundSNAT          string      `json:"outboundSNAT,omitempty"`
+		NoOverlayRouting      string      `json:"noOverlayRouting,omitempty"`
 		EVPN                  *EVPNConfig `json:"evpn,omitempty"`
 		DeviceID              string      `json:"deviceID,omitempty"`
 		LogFile               string      `json:"logFile,omitempty"`
@@ -176,6 +183,7 @@ func (n NetConf) MarshalJSON() ([]byte, error) {
 		PhysicalNetworkName:   n.PhysicalNetworkName,
 		Transport:             n.Transport,
 		OutboundSNAT:          n.OutboundSNAT,
+		NoOverlayRouting:      n.NoOverlayRouting,
 		EVPN:                  n.EVPN,
 		DeviceID:              n.DeviceID,
 		LogFile:               n.LogFile,

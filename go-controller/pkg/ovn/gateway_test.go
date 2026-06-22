@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
@@ -17,8 +18,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/utils/net"
 
+	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
+	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -114,7 +118,11 @@ func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbte
 	})
 	grStaticRoutes := []string{}
 	var hasIPv4, hasIPv6 bool
-	for i, subnet := range clusterIPSubnets {
+	gwRouteSubnets := clusterIPSubnets
+	if config.IsDefaultNetworkUnmanagedNoOverlay() && !isPodNetworkAdvertised {
+		gwRouteSubnets = hostSubnets
+	}
+	for i, subnet := range gwRouteSubnets {
 		if utilnet.IsIPv6CIDR(subnet) {
 			hasIPv6 = true
 		} else {
@@ -437,6 +445,160 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 	ginkgo.AfterEach(func() {
 		fakeOvn.shutdown()
 	})
+
+	ginkgo.DescribeTable("uses expected gateway routes for unmanaged no-overlay without RouteAdvertisements",
+		func(enableRouteAdvertisementsFeature bool, routeAdvertisements []*ratypes.RouteAdvertisements, expectHostSubnetRoute bool) {
+			config.Default.Transport = types.NetworkTransportNoOverlay
+			config.NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
+			config.NoOverlay.Routing = config.NoOverlayRoutingUnmanaged
+			config.OVNKubernetesFeature.EnableMultiNetwork = enableRouteAdvertisementsFeature
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = enableRouteAdvertisementsFeature
+
+			gwRouterName := types.GWRouterPrefix + nodeName
+			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					&nbdb.LogicalRouter{
+						UUID: gwRouterName + "-UUID",
+						Name: gwRouterName,
+					},
+				},
+			})
+			for _, ra := range routeAdvertisements {
+				gomega.Expect(fakeOvn.watcher.RouteAdvertisementsInformer().Informer().GetStore().Add(ra)).To(gomega.Succeed())
+			}
+
+			gw := &GatewayManager{
+				nodeName:     nodeName,
+				gwRouterName: gwRouterName,
+				nbClient:     fakeOvn.nbClient,
+				netInfo:      &util.DefaultNetInfo{},
+				watchFactory: fakeOvn.watcher,
+			}
+			gwConfig := &GatewayConfig{
+				annoConfig: &util.L3GatewayConfig{
+					NextHops: ovntest.MustParseIPs("169.255.33.1"),
+				},
+				clusterSubnets:             ovntest.MustParseIPNets("10.128.0.0/14"),
+				hostSubnets:                ovntest.MustParseIPNets("10.130.0.0/23"),
+				ovnClusterLRPToJoinIfAddrs: ovntest.MustParseIPNets("100.64.0.1/16"),
+			}
+
+			err := gw.updateGWRouterStaticRoutes(gwConfig, types.GWRouterToExtSwitchPrefix+gwRouterName, &nbdb.LogicalRouter{Name: gwRouterName})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(fakeOvn.nbClient, &nbdb.LogicalRouter{Name: gwRouterName}, func(*nbdb.LogicalRouterStaticRoute) bool {
+				return true
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			prefixes := map[string]bool{}
+			for _, route := range routes {
+				prefixes[route.IPPrefix] = true
+			}
+			if expectHostSubnetRoute {
+				gomega.Expect(prefixes).To(gomega.HaveKey("10.130.0.0/23"))
+				gomega.Expect(prefixes).NotTo(gomega.HaveKey("10.128.0.0/14"))
+			} else {
+				gomega.Expect(prefixes).To(gomega.HaveKey("10.128.0.0/14"))
+				gomega.Expect(prefixes).NotTo(gomega.HaveKey("10.130.0.0/23"))
+			}
+			gomega.Expect(prefixes).To(gomega.HaveKey("0.0.0.0/0"))
+		},
+		ginkgo.Entry("when RouteAdvertisements are disabled", false, nil, true),
+		ginkgo.Entry("when RouteAdvertisements are enabled and no default pod-network RA exists", true, nil, true),
+		ginkgo.Entry("when RouteAdvertisements are enabled and a default pod-network RA exists", true, []*ratypes.RouteAdvertisements{{
+			ObjectMeta: metav1.ObjectMeta{Name: "default-pod-network-ra"},
+			Spec: ratypes.RouteAdvertisementsSpec{
+				NetworkSelectors: apitypes.NetworkSelectors{{
+					NetworkSelectionType: apitypes.DefaultNetwork,
+				}},
+				Advertisements: []ratypes.AdvertisementType{ratypes.PodNetwork},
+			},
+		}}, false),
+	)
+
+	ginkgo.DescribeTable("programs expected GR static routes for CUDN no-overlay",
+		func(noOverlayRouting string, podNetworkAdvertisements map[string][]string, hasStaleClusterSubnetRoute, expectHostSubnetRoute bool) {
+			networkName := util.GenerateCUDNNetworkName("blue")
+			gwRouterName := types.GWRouterPrefix + nodeName
+			gwRouter := &nbdb.LogicalRouter{
+				UUID: gwRouterName + "-UUID",
+				Name: gwRouterName,
+			}
+			nbData := []libovsdbtest.TestData{gwRouter}
+			if hasStaleClusterSubnetRoute {
+				const staleRouteUUID = "stale-cluster-subnet-route-UUID"
+				gwRouter.StaticRoutes = []string{staleRouteUUID}
+				nbData = append(nbData, &nbdb.LogicalRouterStaticRoute{
+					UUID:     staleRouteUUID,
+					IPPrefix: "10.128.0.0/16",
+					Nexthop:  "100.64.0.1",
+					ExternalIDs: map[string]string{
+						types.NetworkExternalID:  networkName,
+						types.TopologyExternalID: types.Layer3Topology,
+					},
+				})
+			}
+			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+				NBData: nbData,
+			})
+
+			netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: networkName,
+					Type: "ovn-k8s-cni-overlay",
+				},
+				Topology:         types.Layer3Topology,
+				Role:             types.NetworkRolePrimary,
+				Subnets:          "10.128.0.0/16/24",
+				Transport:        types.NetworkTransportNoOverlay,
+				OutboundSNAT:     types.NoOverlaySNATEnabled,
+				NoOverlayRouting: noOverlayRouting,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			netInfo.(util.MutableNetInfo).SetPodNetworkAdvertisedVRFs(podNetworkAdvertisements)
+
+			gw := &GatewayManager{
+				nodeName:     nodeName,
+				gwRouterName: gwRouterName,
+				nbClient:     fakeOvn.nbClient,
+				netInfo:      netInfo,
+			}
+			gwConfig := &GatewayConfig{
+				annoConfig: &util.L3GatewayConfig{
+					NextHops: ovntest.MustParseIPs("169.255.33.1"),
+				},
+				clusterSubnets:             ovntest.MustParseIPNets("10.128.0.0/16"),
+				hostSubnets:                ovntest.MustParseIPNets("10.128.1.0/24"),
+				ovnClusterLRPToJoinIfAddrs: ovntest.MustParseIPNets("100.64.0.1/16"),
+			}
+
+			err = gw.updateGWRouterStaticRoutes(gwConfig, types.GWRouterToExtSwitchPrefix+gwRouterName, &nbdb.LogicalRouter{Name: gwRouterName})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(fakeOvn.nbClient, &nbdb.LogicalRouter{Name: gwRouterName}, func(*nbdb.LogicalRouterStaticRoute) bool {
+				return true
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			prefixes := map[string]bool{}
+			for _, route := range routes {
+				prefixes[route.IPPrefix] = true
+			}
+			if expectHostSubnetRoute {
+				gomega.Expect(prefixes).To(gomega.HaveKey("10.128.1.0/24"))
+				gomega.Expect(prefixes).NotTo(gomega.HaveKey("10.128.0.0/16"))
+			} else {
+				gomega.Expect(prefixes).To(gomega.HaveKey("10.128.0.0/16"))
+				gomega.Expect(prefixes).NotTo(gomega.HaveKey("10.128.1.0/24"))
+			}
+			gomega.Expect(prefixes).To(gomega.HaveKey("0.0.0.0/0"))
+		},
+		ginkgo.Entry("uses host-subnet routes for unmanaged routing without pod-network advertisements", config.NoOverlayRoutingUnmanaged, map[string][]string{}, false, true),
+		ginkgo.Entry("removes stale cluster-subnet routes for unmanaged routing without pod-network advertisements", config.NoOverlayRoutingUnmanaged, map[string][]string{}, true, true),
+		ginkgo.Entry("uses cluster-subnet routes for unmanaged routing with pod-network advertisements", config.NoOverlayRoutingUnmanaged, map[string][]string{nodeName: {types.DefaultNetworkName}}, false, false),
+		ginkgo.Entry("uses cluster-subnet routes for managed routing without pod-network advertisements", config.NoOverlayRoutingManaged, map[string][]string{}, false, false),
+	)
 
 	ginkgo.Context("Gateway Creation Operations Shared Gateway Mode", func() {
 		ginkgo.BeforeEach(func() {

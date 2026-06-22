@@ -4,7 +4,7 @@
 package networkmanager
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -18,6 +18,7 @@ import (
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -173,6 +174,10 @@ func TestSetAdvertisements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			t.Cleanup(func() {
+				g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			})
 
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
@@ -196,18 +201,9 @@ func TestSetAdvertisements(t *testing.T) {
 			nad, err := buildNADWithAnnotations(name, namespace, tt.network, nadAnnotations)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &tt.node, metav1.CreateOptions{})
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra, metav1.CreateOptions{})
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-
-			err = wf.Start()
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			defer wf.Shutdown()
-			g.Expect(nm.Start()).To(gomega.Succeed())
-			defer nm.Stop()
+			g.Expect(wf.NADInformer().Informer().GetStore().Add(nad)).To(gomega.Succeed())
+			g.Expect(wf.NodeCoreInformer().Informer().GetStore().Add(&tt.node)).To(gomega.Succeed())
+			g.Expect(wf.RouteAdvertisementsInformer().Informer().GetStore().Add(tt.ra)).To(gomega.Succeed())
 
 			netInfo, err := util.NewNetInfo(tt.network)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -221,33 +217,198 @@ func TestSetAdvertisements(t *testing.T) {
 				return nil
 			}
 
-			nm.EnsureNetwork(mutableNetInfo)
+			nm.setNetwork(mutableNetInfo.GetNetworkName(), mutableNetInfo)
+			err = nm.syncNetwork(mutableNetInfo.GetNetworkName())
 
-			meetsExpectations := func(g gomega.Gomega) {
-				tcm.Lock()
-				defer tcm.Unlock()
-				var reconcilable ReconcilableNetworkController
-				switch tt.network.Name {
-				case types.DefaultNetworkName:
-					reconcilable = tcm.GetDefaultNetworkController()
-				default:
-					reconcilable = tcm.controllers[testNetworkKey(netInfo)]
-				}
-
-				if tt.expectNoNetwork {
-					g.Expect(reconcilable).To(gomega.BeNil())
-					return
-				}
-				g.Expect(reconcilable).ToNot(gomega.BeNil())
-
-				if tt.expected == nil {
-					tt.expected = map[string][]string{}
-				}
-				g.Expect(reconcilable.GetPodNetworkAdvertisedVRFs()).To(gomega.Equal(tt.expected))
+			tcm.Lock()
+			defer tcm.Unlock()
+			var reconcilable ReconcilableNetworkController
+			switch tt.network.Name {
+			case types.DefaultNetworkName:
+				reconcilable = tcm.GetDefaultNetworkController()
+			default:
+				reconcilable = tcm.controllers[testNetworkKey(netInfo)]
 			}
 
-			g.Eventually(meetsExpectations).Should(gomega.Succeed())
-			g.Consistently(meetsExpectations).Should(gomega.Succeed())
+			if tt.expectNoNetwork {
+				g.Expect(err).To(gomega.HaveOccurred())
+				g.Expect(reconcilable).To(gomega.BeNil())
+				return
+			}
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(reconcilable).ToNot(gomega.BeNil())
+
+			if tt.expected == nil {
+				tt.expected = map[string][]string{}
+			}
+			g.Expect(reconcilable.GetPodNetworkAdvertisedVRFs()).To(gomega.Equal(tt.expected))
+		})
+	}
+}
+
+func TestSetAdvertisedVRFsDefaultNetworkWithoutRouteAdvertisements(t *testing.T) {
+	testNADName := "ovn-kubernetes/default"
+	testNodeName := "node1"
+	defaultNetwork := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: types.DefaultNetworkName,
+			Type: "ovn-k8s-cni-overlay",
+		},
+		MTU: 1400,
+	}
+	relevantRA := &ratypes.RouteAdvertisements{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "default-ra",
+		},
+		Spec: ratypes.RouteAdvertisementsSpec{
+			Advertisements: []ratypes.AdvertisementType{ratypes.PodNetwork},
+			NetworkSelectors: apitypes.NetworkSelectors{{
+				NetworkSelectionType: apitypes.DefaultNetwork,
+			}},
+		},
+	}
+	acceptedRelevantRA := relevantRA.DeepCopy()
+	acceptedRelevantRA.Status.Conditions = []metav1.Condition{{
+		Type:               "Accepted",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: acceptedRelevantRA.Generation,
+	}}
+	notAcceptedRelevantRA := relevantRA.DeepCopy()
+	notAcceptedRelevantRA.Name = "not-accepted-default-ra"
+	egressIPRA := relevantRA.DeepCopy()
+	egressIPRA.Name = "egress-ip-ra"
+	egressIPRA.Spec.Advertisements = []ratypes.AdvertisementType{ratypes.EgressIP}
+	egressIPRA.Status.Conditions = []metav1.Condition{{
+		Type:               "Accepted",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: egressIPRA.Generation,
+	}}
+
+	tests := []struct {
+		name                      string
+		enableRouteAdvertisements bool
+		ras                       []*ratypes.RouteAdvertisements
+		nadRANames                []string
+		expectErr                 bool
+		expected                  map[string][]string
+	}{
+		{
+			name:                      "sets default network pod advertisements when RouteAdvertisements are enabled and no relevant RA exists",
+			enableRouteAdvertisements: true,
+			expected: map[string][]string{
+				testNodeName: {types.DefaultNetworkName},
+			},
+		},
+		{
+			name:                      "sets default network pod advertisements when RouteAdvertisements are disabled",
+			enableRouteAdvertisements: false,
+			expected: map[string][]string{
+				testNodeName: {types.DefaultNetworkName},
+			},
+		},
+		{
+			name:                      "sets default network pod advertisements when the default NAD references only an EgressIP RouteAdvertisements",
+			enableRouteAdvertisements: true,
+			ras:                       []*ratypes.RouteAdvertisements{egressIPRA},
+			nadRANames:                []string{egressIPRA.Name},
+			expected: map[string][]string{
+				testNodeName: {types.DefaultNetworkName},
+			},
+		},
+		{
+			name:                      "uses accepted matching RouteAdvertisements when the default NAD references it",
+			enableRouteAdvertisements: true,
+			ras:                       []*ratypes.RouteAdvertisements{acceptedRelevantRA},
+			nadRANames:                []string{acceptedRelevantRA.Name},
+			expected: map[string][]string{
+				testNodeName: {types.DefaultNetworkName},
+			},
+		},
+		{
+			name:                      "waits when a relevant RA exists before the default NAD references it",
+			enableRouteAdvertisements: true,
+			ras:                       []*ratypes.RouteAdvertisements{acceptedRelevantRA},
+			expected:                  map[string][]string{},
+		},
+		{
+			name:                      "uses accepted matching RouteAdvertisements from the default NAD when another relevant RA is not accepted",
+			enableRouteAdvertisements: true,
+			ras:                       []*ratypes.RouteAdvertisements{acceptedRelevantRA, notAcceptedRelevantRA},
+			nadRANames:                []string{acceptedRelevantRA.Name},
+			expected: map[string][]string{
+				testNodeName: {types.DefaultNetworkName},
+			},
+		},
+		{
+			name:                      "waits when a relevant RA exists without accepted status before the default NAD references it",
+			enableRouteAdvertisements: true,
+			ras:                       []*ratypes.RouteAdvertisements{relevantRA},
+			expected:                  map[string][]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			t.Cleanup(func() {
+				g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			})
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = tt.enableRouteAdvertisements
+			config.Default.Transport = types.NetworkTransportNoOverlay
+			config.NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
+			config.NoOverlay.Routing = config.NoOverlayRoutingUnmanaged
+
+			fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			tcm := &testControllerManager{
+				controllers: map[string]NetworkController{},
+				defaultNetwork: &testNetworkController{
+					ReconcilableNetInfo: &util.DefaultNetInfo{},
+				},
+			}
+			nm := newNetworkController("", "", "", tcm, wf)
+
+			namespace, name, err := cache.SplitMetaNamespaceKey(testNADName)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			nadAnnotations := map[string]string{}
+			if len(tt.nadRANames) > 0 {
+				nadRAJSON, err := json.Marshal(tt.nadRANames)
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				nadAnnotations[types.OvnRouteAdvertisementsKey] = string(nadRAJSON)
+			}
+			nad, err := buildNADWithAnnotations(name, namespace, defaultNetwork, nadAnnotations)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(wf.NADInformer().Informer().GetStore().Add(nad)).To(gomega.Succeed())
+			g.Expect(wf.NodeCoreInformer().Informer().GetStore().Add(&corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: testNodeName},
+			})).To(gomega.Succeed())
+			for _, ra := range tt.ras {
+				g.Expect(wf.RouteAdvertisementsInformer().Informer().GetStore().Add(ra)).To(gomega.Succeed())
+			}
+
+			netInfo, err := util.NewNetInfo(defaultNetwork)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			mutableNetInfo := util.NewMutableNetInfo(netInfo)
+			mutableNetInfo.AddNADs(testNADName)
+			nm.getNADKeysForNetwork = func(networkName string) []string {
+				if networkName == mutableNetInfo.GetNetworkName() {
+					return []string{testNADName}
+				}
+				return nil
+			}
+
+			err = nm.setAdvertisements(mutableNetInfo)
+			if tt.expectErr {
+				g.Expect(err).To(gomega.HaveOccurred())
+				return
+			}
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(mutableNetInfo.GetPodNetworkAdvertisedVRFs()).To(gomega.Equal(tt.expected))
 		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -517,11 +518,75 @@ func (gw *GatewayManager) createGWRouterPort(gwConfig *GatewayConfig,
 	return nil
 }
 
+// shouldUseNoOverlayHostSubnetRoutesWithoutAdvertisements returns true when the
+// gateway router should route only local host subnets through OVN. The external
+// default route is programmed separately from the gateway next hops.
+func (gw *GatewayManager) shouldUseNoOverlayHostSubnetRoutesWithoutAdvertisements() bool {
+	if gw.netInfo.Transport() != types.NetworkTransportNoOverlay {
+		return false
+	}
+	if !gw.netInfo.IsDefault() {
+		return gw.netInfo.IsPrimaryNetwork() &&
+			gw.netInfo.NoOverlayRouting() == config.NoOverlayRoutingUnmanaged &&
+			len(gw.netInfo.GetPodNetworkAdvertisedVRFs()) == 0
+	}
+	if config.NoOverlay.Routing != config.NoOverlayRoutingUnmanaged {
+		return false
+	}
+	if !util.IsRouteAdvertisementsEnabled() {
+		return true
+	}
+	ras, err := gw.watchFactory.RouteAdvertisementsInformer().Lister().List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list RouteAdvertisements while checking unmanaged no-overlay routing without advertisements: %v", err)
+		return false
+	}
+	for _, ra := range ras {
+		if util.RAAdvertisesDefaultNetwork(ra) {
+			return false
+		}
+	}
+	return true
+}
+
+func (gw *GatewayManager) deleteGWRouterClusterSubnetRoutes(clusterSubnets []*net.IPNet) error {
+	clusterSubnetPrefixes := sets.New[string]()
+	for _, clusterSubnet := range clusterSubnets {
+		clusterSubnetPrefixes.Insert(clusterSubnet.String())
+	}
+	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+		networkName, isUserDefinedNetwork := item.ExternalIDs[types.NetworkExternalID]
+		if !isUserDefinedNetwork {
+			networkName = types.DefaultNetworkName
+		}
+		if networkName != gw.netInfo.GetNetworkName() {
+			return false
+		}
+		return clusterSubnetPrefixes.Has(item.IPPrefix) &&
+			libovsdbops.PolicyEqualPredicate(nil, item.Policy) &&
+			item.OutputPort == nil
+	}
+	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(gw.nbClient, gw.gwRouterName, p); err != nil {
+		return fmt.Errorf("failed to delete gateway router cluster subnet routes for no-overlay without advertisements: %w", err)
+	}
+	return nil
+}
+
 func (gw *GatewayManager) updateGWRouterStaticRoutes(gwConfig *GatewayConfig, externalRouterPort string,
 	gwRouter *nbdb.LogicalRouter) error {
 	if len(gwConfig.ovnClusterLRPToJoinIfAddrs) > 0 {
+		routeSubnets := gwConfig.clusterSubnets
+		if gw.shouldUseNoOverlayHostSubnetRoutesWithoutAdvertisements() {
+			routeSubnets = gwConfig.hostSubnets
+			// We want to route only this node's local pod subnets through OVN.
+			// Remove routes for the cluster pod subnets left from an RA-backed
+			// or an older configuration before adding the local-node pod subnet routes.
+			if err := gw.deleteGWRouterClusterSubnetRoutes(gwConfig.clusterSubnets); err != nil {
+				return err
+			}
+		}
 		// this is only the case for layer3 topology
-		for _, entry := range gwConfig.clusterSubnets {
+		for _, entry := range routeSubnets {
 			drLRPIfAddr, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(entry), gwConfig.ovnClusterLRPToJoinIfAddrs)
 			if err != nil {
 				return fmt.Errorf("failed to add a static route in GR %s with distributed "+
