@@ -737,6 +737,7 @@ func setupMACVRFExternalContainer(ictx infraapi.Context, container infraapi.Exte
 			[]string{"sh", "-c", strings.Join(shellCmds, " && ")}); err != nil {
 			return nil, fmt.Errorf("failed to reassign IPs on container %s (network %s): %w", container.Name, networkName, err)
 		}
+		info.containerIPs = containerIPs
 		framework.Logf("Reassigned container %s (network %s) IPs to CUDN IPs: %v", container.Name, networkName, containerIPs)
 	}
 

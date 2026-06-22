@@ -3261,27 +3261,33 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 									)
 								}
 
-								if networkType == cudnAdvertisedEVPNOverlappingCIDRSharedVTEP {
+								if networkType == cudnAdvertisedEVPNOverlappingCIDRSharedVTEP &&
+									testNetworkSpec.EVPN != nil && testNetworkSpec.EVPN.MACVRF != nil {
 									// The outer "It can reach external servers on the same network" block already
 									// tests north-south connectivity for the tested network in isolation.
 									// This additional check runs within the "other network is set up" context,
 									// verifying that VNI isolation holds for north-south traffic: even when
-									// the other network shares the same VTEP IP and its external server is
-									// reachable at the same IP, the tested pod still reaches only its own
-									// external server (identified by hostname) rather than the other network's.
-									ginkgo.By("Ensuring the tested network pod reaches its own external servers at the shared IP (north-south VNI isolation)")
-									for _, externalServer := range externalServers {
-										testForIPFamilies(
-											ipFamilySet,
-											func(family utilnet.IPFamily) {
-												ginkgo.GinkgoHelper()
-												serverIP := getExternalServerIPForFamily(externalServer, family)
-												gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
-												framework.Logf("Ensuring testPod reaches its external server %q at shared IP %s (IPv%v)", externalServer, serverIP, family)
-												testPodToHostnameAndExpect(testPod, serverIP, externalServer)
-											},
-										)
-									}
+									// the other network shares the same VTEP IP and its MAC-VRF external server
+									// is reachable at the same IP (both networks derive container IPs from the
+									// shared CUDN subnet), the tested pod still reaches only its own external
+									// server (identified by hostname) rather than the other network's.
+									// Only the MAC-VRF server is checked here: it is the only one whose IP is
+									// shared between both networks (secondToLastIP of the CUDN subnet).
+									// IP-VRF containers are allocated from a separate per-network subnet
+									// (bgpAlloc.IPVRFSubnet6), so they have distinct IPs and there is no
+									// shared-IP VNI ambiguity to verify.
+									ginkgo.By("Ensuring the tested network pod reaches its own MAC-VRF external server at the shared IP (north-south VNI isolation)")
+									macVRFServerName := testNetworkName + "-macvrf-agnhost"
+									testForIPFamilies(
+										ipFamilySet,
+										func(family utilnet.IPFamily) {
+											ginkgo.GinkgoHelper()
+											serverIP := getExternalServerIPForFamily(macVRFServerName, family)
+											gomega.Expect(serverIP).NotTo(gomega.BeEmpty())
+											framework.Logf("Ensuring testPod reaches its external server %q at shared IP %s (IPv%v)", macVRFServerName, serverIP, family)
+											testPodToHostnameAndExpect(testPod, serverIP, macVRFServerName)
+										},
+									)
 								}
 							})
 						},
