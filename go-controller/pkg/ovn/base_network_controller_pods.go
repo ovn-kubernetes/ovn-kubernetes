@@ -247,9 +247,14 @@ func (bnc *BaseNetworkController) deletePodLogicalPort(pod *corev1.Pod, portInfo
 			podDesc, expectedSwitchName, switchName, portUUID)
 	}
 
-	shouldRelease, err := bnc.shouldReleaseDeletedPod(pod, switchName, nadKey, podIfAddrs)
-	if err != nil {
-		return nil, fmt.Errorf("unable to determine if ip should be released: %v", err)
+	// IP collision check only needed when this controller owns IPAM.
+	// For L2/localnet, cluster-manager allocates IPs centrally.
+	shouldRelease := false
+	if bnc.allocatesPodAnnotation() {
+		shouldRelease, err = bnc.shouldReleaseDeletedPod(pod, switchName, nadKey, podIfAddrs)
+		if err != nil {
+			return nil, fmt.Errorf("unable to determine if ip should be released: %v", err)
+		}
 	}
 
 	var allOps, ops []ovsdb.Operation
@@ -1132,11 +1137,7 @@ func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switc
 	}
 
 	var shouldRelease bool
-	// for user-defined network IPs allocated from cluster manager, we will check
-	// if other pods are using the same IPs just in case we are processing
-	// events in different order than cluster manager did (best effort, there
-	// can still be issues with this)
-	if !bnc.allocatesPodAnnotation() || !zoneOwnsSubnet {
+	if !zoneOwnsSubnet {
 		shouldRelease, err = shouldReleasePodIPs()
 	} else {
 		shouldRelease, err = bnc.lsManager.ConditionalIPRelease(switchName, podIfAddrs, shouldReleasePodIPs)
