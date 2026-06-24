@@ -612,26 +612,15 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		sriovnetMock := &utilMock.SriovnetOps{}
 		util.SetSriovnetOpsInst(sriovnetMock)
 		sriovnetMock.On("GetRepresentorPortFlavour", hostRep).Return(sriovnet.PortFlavour(sriovnet.PORT_FLAVOUR_PCI_PF), nil)
+		// GetDPUHostRepInterface walks every interface on brphys; the uplink
+		// (p0) is not a representor, so flag it as such.
+		sriovnetMock.On("GetRepresentorPortFlavour", uplinkPort).Return(sriovnet.PortFlavour(0), fmt.Errorf("not a representor")).Maybe()
 		sriovnetMock.On("GetRepresentorPeerMacAddress", hostRep).Return(ovntest.MustParseMAC(hostMAC), nil)
 		// exec Mocks
 		fexec := ovntest.NewLooseCompareFakeExec()
-		// gatewayInitInternal — port-to-br / br-exists for brphys are now
-		// served by the libovsdb harness (seeded with Bridge{Name: brphys}).
-		// getIntfName
-		// GetNicName
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 list-ports " + brphys,
-			Output: "p0",
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Port " + uplinkPort + " Interfaces",
-			Output: "p0",
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Interface " + uplinkPort + " Type",
-			Output: "system",
-		})
-		// getIntfName
+		// gatewayInitInternal — port-to-br / br-exists / GetNicName lookups
+		// for brphys are now served by the libovsdb harness seeded above.
+		// getIntfName: ofport lookup still shells out.
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 get interface p0 ofport",
 		})
@@ -673,19 +662,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			fmt.Sprintf("ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add %s %s %d %s", brphys, hostRep, gatewayVLANID, hostMAC),
 		})
-		// GetDPUHostRepInterface
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 list-ports " + brphys,
-			Output: hostRep,
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Port " + hostRep + " Interfaces",
-			Output: hostRep,
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Interface " + hostRep + " Name",
-			Output: hostRep,
-		})
+		// GetDPUHostRepInterface served by the libovsdb harness seeded above.
 		// newGatewayOpenFlowManager
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 get Interface patch-" + brphys + "_node1-to-br-int ofport",
@@ -695,20 +672,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "ovs-vsctl --timeout=15 get interface " + uplinkPort + " ofport",
 			Output: "7",
 		})
-		// GetDPUHostRepInterface
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 list-ports " + brphys,
-			Output: hostRep,
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Port pf0hpf Interfaces",
-			Output: hostRep,
-		})
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-vsctl --timeout=15 get Interface pf0hpf Name",
-			Output: hostRep,
-		})
-		// newGatewayOpenFlowManager
+		// GetDPUHostRepInterface served by the libovsdb harness seeded above.
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 get interface " + hostRep + " ofport",
 			Output: "9",
@@ -807,12 +771,17 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			// Seed brphys as an existing bridge so bridgeconfig's
-			// libovsdb lookup matches the old "br-exists" success path.
+			// Seed brphys with its uplink (p0, Type=system) and host
+			// representor (pf0hpf) so GetNicName and GetDPUHostRepInterface
+			// can resolve via libovsdb.
 			ovsClient, ovsCleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
 				OVSData: []libovsdbtest.TestData{
 					&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"brphys-uuid"}},
-					&vswitchd.Bridge{UUID: "brphys-uuid", Name: brphys},
+					&vswitchd.Bridge{UUID: "brphys-uuid", Name: brphys, Ports: []string{"p0-port-uuid", "pf0hpf-port-uuid"}},
+					&vswitchd.Port{UUID: "p0-port-uuid", Name: uplinkPort, Interfaces: []string{"p0-iface-uuid"}},
+					&vswitchd.Interface{UUID: "p0-iface-uuid", Name: uplinkPort, Type: "system"},
+					&vswitchd.Port{UUID: "pf0hpf-port-uuid", Name: hostRep, Interfaces: []string{"pf0hpf-iface-uuid"}},
+					&vswitchd.Interface{UUID: "pf0hpf-iface-uuid", Name: hostRep},
 				},
 			})
 			Expect(err).NotTo(HaveOccurred())

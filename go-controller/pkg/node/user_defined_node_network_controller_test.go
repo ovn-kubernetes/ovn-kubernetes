@@ -201,7 +201,8 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 					Name:  "breth0",
 					Ports: []string{"breth0-port-uuid", "eth0-port-uuid"},
 				},
-				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0"},
+				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0", Interfaces: []string{"breth0-iface-uuid"}},
+				&vswitchd.Interface{UUID: "breth0-iface-uuid", Name: "breth0", Type: "system"},
 				&vswitchd.Port{UUID: "eth0-port-uuid", Name: "eth0"},
 			},
 		})
