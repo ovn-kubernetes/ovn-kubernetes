@@ -67,7 +67,7 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *knet.Pod", obj)
 		}
-		return bsnc.reconcilePodForUserDefinedNetwork(nil, pod, false)
+		return bsnc.reconcilePodForUserDefinedNetwork(pod)
 
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
@@ -110,10 +110,9 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCommon(objType reflect.Type, oldObj, newObj interface{}, inRetryCache bool) error {
 	switch objType {
 	case factory.PodType:
-		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return bsnc.reconcilePodForUserDefinedNetwork(oldPod, newPod, inRetryCache)
+		return bsnc.reconcilePodForUserDefinedNetwork(newPod)
 
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -204,12 +203,62 @@ func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCo
 }
 
 // reconcilePodForUserDefinedNetwork is the pod reconciliation entry point for
-// UDN controllers. It centralizes the add/update decision while the
-// implementation still delegates to the legacy ensure path.
-func (bsnc *BaseUserDefinedNetworkController) reconcilePodForUserDefinedNetwork(oldPod, pod *corev1.Pod, inRetryCache bool) error {
-	addPort := oldPod == nil || shouldAddPort(oldPod, pod, inRetryCache) ||
-		bsnc.dhcpPodNetworkUpdated(oldPod, pod)
+// UDN controllers. It computes the add/update decision from current controller
+// state while the implementation still delegates to the legacy ensure path.
+func (bsnc *BaseUserDefinedNetworkController) reconcilePodForUserDefinedNetwork(pod *corev1.Pod) error {
+	addPort := bsnc.shouldEnsurePodForUserDefinedNetwork(pod)
 	return bsnc.ensurePodForUserDefinedNetwork(pod, addPort)
+}
+
+func (bsnc *BaseUserDefinedNetworkController) shouldEnsurePodForUserDefinedNetwork(pod *corev1.Pod) bool {
+	if !util.PodScheduled(pod) || !bsnc.podExpectedInLogicalCache(pod) {
+		return false
+	}
+
+	nadKeys, err := bsnc.getPodNADKeys(pod)
+	if err != nil {
+		// Malformed network selection annotation. Run the ensure path so the
+		// configuration error is surfaced to the user as a pod event.
+		return true
+	}
+	for _, nadKey := range nadKeys {
+		portInfo, err := bsnc.logicalPortCache.get(pod, nadKey)
+		if err != nil || !portInfo.expires.IsZero() {
+			return true
+		}
+		if bsnc.dhcpPodNetworkOutOfSync(pod, nadKey, portInfo) {
+			return true
+		}
+	}
+
+	if len(nadKeys) > 0 || !bsnc.IsPrimaryNetwork() {
+		return false
+	}
+
+	activeNetwork, err := bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
+	if err != nil {
+		return true
+	}
+	return activeNetwork != nil && activeNetwork.GetNetworkName() == bsnc.GetNetworkName()
+}
+
+// dhcpPodNetworkOutOfSync reports whether the current DHCP-owned pod
+// annotation differs from the state recorded when the logical port was last
+// programmed. This keeps DHCP updates level driven: retries make the same
+// decision from current desired and applied state without relying on an old
+// informer object.
+func (bsnc *BaseUserDefinedNetworkController) dhcpPodNetworkOutOfSync(pod *corev1.Pod, nadKey string, portInfo *lpInfo) bool {
+	if bsnc.IPAMType() != types.IPAMTypeDHCP {
+		return false
+	}
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
+	if err != nil {
+		// A removed entry should not churn a live port. Any malformed entry is
+		// reprocessed so the ensure path surfaces the configuration error.
+		return !util.IsAnnotationNotSetError(err)
+	}
+	return !reflect.DeepEqual(podAnnotation.MAC, portInfo.mac) ||
+		!reflect.DeepEqual(podAnnotation.IPs, portInfo.ips)
 }
 
 // ensurePodForUserDefinedNetwork tries to set up the User Defined Network for a pod. It returns nil on success and error
@@ -1103,71 +1152,6 @@ func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration
 // node where the pod was scheduled
 func (bsnc *BaseUserDefinedNetworkController) hasPodLogicalPort(pod *corev1.Pod) bool {
 	return pod != nil && (bsnc.isPodScheduledOnLocalNode(pod) || bsnc.isLayer2WithInterconnectTransport())
-}
-
-func shouldAddPort(oldPod, newPod *corev1.Pod, inRetryCache bool) bool {
-	return inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
-}
-
-// dhcpPodNetworkUpdated returns true when this network learns IPs from an
-// external DHCP server and this network's entries in the pod-networks
-// annotation were added or updated. ovnkube-node patches the DHCP-learned IP
-// into the annotation during CNI ADD after the port was first created, and
-// may patch it again with a different lease if the sandbox is recreated
-// before the pod reaches Running. So the port must be reprocessed to pick up
-// the IP.
-//
-// DHCP IPAM is localnet-secondary only, so the consumers of the
-// changed IP are exactly the features supported on such networks: the LSP
-// itself (addresses/port security) handled here, plus MultiNetworkPolicy and
-// NetworkQoS, which re-evaluate the pod's addresses from their own pod
-// UPDATE handlers.
-//
-// The annotation is a single blob shared by every network the pod attaches
-// to, and DHCP pods are multi-homed by construction (localnet is
-// secondary-only), so a whole-string comparison would turn every other
-// network's annotation write (at least one per network during pod bring-up)
-// into a spurious full addLogicalPort pass with a real NBDB transaction.
-// Compare only the entries belonging to this network, resolved the same way
-// removePodForUserDefinedNetwork does.
-//
-// A removed entry deliberately does NOT trigger: nothing legitimately removes
-// a DHCP entry from a live pod, and reprocessing the port without its
-// annotation would only churn (the CNI is the annotation's single writer).
-func (bsnc *BaseUserDefinedNetworkController) dhcpPodNetworkUpdated(oldPod, newPod *corev1.Pod) bool {
-	if bsnc.IPAMType() != types.IPAMTypeDHCP || oldPod == nil || newPod == nil {
-		return false
-	}
-	if oldPod.Annotations[types.OvnPodAnnotationName] == newPod.Annotations[types.OvnPodAnnotationName] {
-		return false
-	}
-	// If either annotation cannot be parsed, we cannot tell whether this
-	// network's entry changed, so return true and reprocess the port. A
-	// needless reprocess is harmless (addLogicalPort is idempotent), but
-	// skipping a real DHCP IP update would leave the port without its
-	// address forever, as no later event retries it.
-	oldNetworks, err := util.UnmarshalPodAnnotationAllNetworks(oldPod.Annotations)
-	if err != nil {
-		klog.Warningf("Failed to unmarshal pod-networks annotation of old pod %s/%s on network %s, reprocessing the port: %v",
-			oldPod.Namespace, oldPod.Name, bsnc.GetNetworkName(), err)
-		return true
-	}
-	newNetworks, err := util.UnmarshalPodAnnotationAllNetworks(newPod.Annotations)
-	if err != nil {
-		klog.Warningf("Failed to unmarshal pod-networks annotation of pod %s/%s on network %s, reprocessing the port: %v",
-			newPod.Namespace, newPod.Name, bsnc.GetNetworkName(), err)
-		return true
-	}
-	for nadKey, newEntry := range newNetworks {
-		if bsnc.networkManager.GetNetworkNameForNADKey(nadKey) != bsnc.GetNetworkName() {
-			continue
-		}
-		oldEntry, existed := oldNetworks[nadKey]
-		if !existed || !reflect.DeepEqual(oldEntry, newEntry) {
-			return true
-		}
-	}
-	return false
 }
 
 func nodesToInterfaces(nodes []*corev1.Node) []interface{} {
