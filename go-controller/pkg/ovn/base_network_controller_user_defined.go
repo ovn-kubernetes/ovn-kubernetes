@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -480,9 +481,9 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 	podDesc := pod.Namespace + "/" + pod.Name
 
-	// for a specific NAD belongs to this network, Pod's logical port might already be created half-way
-	// without its lpInfo cache being created; need to deleted resources created for that NAD as well.
-	// So, first get all nadKeys from pod annotation, but handle NADs belong to this network only.
+	// Use both desired annotation state and applied cache state. A pod may have
+	// an LSP cached for this network even if the delete object has stale or
+	// missing OVN network annotation state.
 	podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 	if err != nil {
 		return err
@@ -499,13 +500,27 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		return nil
 	}
 
-	var alreadyProcessed bool
-	for nadKey, podAnnotation := range podNetworks {
+	nadKeys := map[string]struct{}{}
+	for nadKey := range podNetworks {
 		networkName := bsnc.networkManager.GetNetworkNameForNADKey(nadKey)
-		if networkName == "" || networkName != bsnc.GetNetworkName() {
-			continue
+		if networkName == bsnc.GetNetworkName() {
+			nadKeys[nadKey] = struct{}{}
 		}
+	}
+	for nadKey := range portInfoMap {
+		networkName := bsnc.networkManager.GetNetworkNameForNADKey(nadKey)
+		if networkName == bsnc.GetNetworkName() {
+			nadKeys[nadKey] = struct{}{}
+		}
+	}
+	orderedNADKeys := make([]string, 0, len(nadKeys))
+	for nadKey := range nadKeys {
+		orderedNADKeys = append(orderedNADKeys, nadKey)
+	}
+	sort.Strings(orderedNADKeys)
 
+	var alreadyProcessed bool
+	for _, nadKey := range orderedNADKeys {
 		// pod has a network managed by this controller
 		klog.Infof("Deleting pod: %s for network %s, NAD key: %s", podDesc, bsnc.GetNetworkName(), nadKey)
 
@@ -521,7 +536,18 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		}
 
 		if kubevirt.IsPodAllowedForMigration(pod, bsnc.GetNetInfo()) {
-			if err = bsnc.enableSourceLSPFailedLiveMigration(pod, nadKey, podAnnotation.MAC, podAnnotation.IPs); err != nil {
+			var mac string
+			var ips []string
+			if podAnnotation, ok := podNetworks[nadKey]; ok {
+				mac = podAnnotation.MAC
+				ips = podAnnotation.IPs
+			} else if portInfo := portInfoMap[nadKey]; portInfo != nil {
+				if len(portInfo.mac) > 0 {
+					mac = portInfo.mac.String()
+				}
+				ips = util.IPNetsToStringSlice(portInfo.ips)
+			}
+			if err = bsnc.enableSourceLSPFailedLiveMigration(pod, nadKey, mac, ips); err != nil {
 				return err
 			}
 		}
