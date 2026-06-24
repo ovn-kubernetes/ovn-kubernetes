@@ -32,12 +32,173 @@ import (
 // use an "accept" rule to override a later "drop" rule), then those rules will need to
 // either both be iptables or both be nftables.
 
-// nftables chain names
+// nftables chain/set/map names
 const (
 	nftablesLocalGatewayMasqChain = "ovn-kube-local-gw-masq"
 	nftablesPodSubnetMasqChain    = "ovn-kube-pod-subnet-masq"
 	nftablesUDNMasqChain          = "ovn-kube-udn-masq"
+
+	nftablesITPMarkSetV4     = "itp-services-to-mark-v4"
+	nftablesITPMarkSetV6     = "itp-services-to-mark-v6"
+	nftablesITPServicesMapV4 = "itp-services-to-redirect-v4"
+	nftablesITPServicesMapV6 = "itp-services-to-redirect-v6"
 )
+
+// initGatewayNFTables initializes chains/sets/maps used for Service proxying
+// rules.
+//
+// FIXME: This function is only called if config.NodeportEnable is true, but it and
+// getGatewayNFTRules are also used for `internalTrafficPolicy: Local` handling, which
+// should not be gated behind config.NodeportEnable.
+func initGatewayNFTables() error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+
+	tx := nft.NewTransaction()
+
+	tx.Add(&knftables.Chain{
+		Name:    "services-itp",
+		Comment: knftables.PtrTo("Redirects for traffic with InternalTrafficPolicy: Local"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services-itp",
+	})
+
+	// Create chains that hook to netfilter and invoke our service chains as appropriate.
+	tx.Add(&knftables.Chain{
+		Name:     "services-output",
+		Type:     knftables.PtrTo(knftables.NATType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.DNATPriority),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services-output",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-output",
+		Rule:  "jump services-itp",
+	})
+
+	// Add the remaining chains/sets/maps for InternalTrafficPolicy: Local. (We
+	// already created the "services-itp" chain above and called it from NAT Output.)
+	tx.Add(&knftables.Set{
+		Name:    nftablesITPMarkSetV4,
+		Type:    "ipv4_addr . inet_proto . inet_service",
+		Comment: knftables.PtrTo("InternalTrafficPolicy: Local traffic to mark for special routing"),
+	})
+	tx.Add(&knftables.Set{
+		Name:    nftablesITPMarkSetV6,
+		Type:    "ipv6_addr . inet_proto . inet_service",
+		Comment: knftables.PtrTo("InternalTrafficPolicy: Local traffic to mark for special routing"),
+	})
+	tx.Add(&knftables.Map{
+		Name:    nftablesITPServicesMapV4,
+		Type:    "ipv4_addr . inet_proto . inet_service : inet_service",
+		Comment: knftables.PtrTo("Port redirections for ordinary InternalTrafficPolicy: Local traffic"),
+	})
+	tx.Add(&knftables.Map{
+		Name:    nftablesITPServicesMapV6,
+		Type:    "ipv6_addr . inet_proto . inet_service : inet_service",
+		Comment: knftables.PtrTo("Port redirections for ordinary InternalTrafficPolicy: Local traffic"),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-itp",
+		Rule: knftables.Concat(
+			"ip redirect to ip daddr . meta l4proto . th dport map", "@", nftablesITPServicesMapV4,
+		),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-itp",
+		Rule: knftables.Concat(
+			"ip6 redirect to ip6 daddr . meta l4proto . th dport map", "@", nftablesITPServicesMapV6,
+		),
+	})
+
+	tx.Add(&knftables.Chain{
+		Name:     "services-itp-mark",
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.ManglePriority),
+		Comment:  knftables.PtrTo("Chain to mark InternalTrafficPolicy: Local traffic for special routing"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: "services-itp-mark",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-itp-mark",
+		Rule: knftables.Concat(
+			"ip daddr . meta l4proto . th dport", "@", nftablesITPMarkSetV4,
+			"mark set", types.OVNKubeITPMark,
+		),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-itp-mark",
+		Rule: knftables.Concat(
+			"ip6 daddr . meta l4proto . th dport", "@", nftablesITPMarkSetV6,
+			"mark set", types.OVNKubeITPMark,
+		),
+	})
+
+	if err := nft.Run(context.TODO(), tx); err != nil {
+		return fmt.Errorf("could not set up service nftables rules: %w", err)
+	}
+
+	// If there are legacy IPTables rules left around, clean them up, ignoring errors.
+	cleanupGatewayServiceIPTables()
+
+	return nil
+}
+
+// getITPLocalNFTRules returns the `InternalTrafficPolicy: Local`-related rules for the provided service
+// `svcPort` corresponds to port details for this service as specified in the service object
+// `clusterIP` is clusterIP is the VIP of the service to match on
+// `svcHasLocalHostNetEndPnt` is true if this service has at least one host-networked endpoint that is local to this node
+func getITPLocalNFTRules(svcPort corev1.ServicePort, clusterIP string, svcHasLocalHostNetEndPnt bool) []knftables.Object {
+	// If the service has a local host-network endpoint, add a rule that will cause
+	// traffic to the ITP service from this host to be redirected to that endpoint.
+	if svcHasLocalHostNetEndPnt {
+		var mapName string
+		if utilnet.IsIPv4String(clusterIP) {
+			mapName = nftablesITPServicesMapV4
+		} else {
+			mapName = nftablesITPServicesMapV6
+		}
+		return []knftables.Object{
+			&knftables.Element{
+				Map: mapName,
+				Key: []string{
+					clusterIP,
+					strings.ToLower(string(svcPort.Protocol)),
+					fmt.Sprintf("%v", svcPort.Port),
+				},
+				Value: []string{
+					fmt.Sprintf("%v", int32(svcPort.TargetPort.IntValue())),
+				},
+			},
+		}
+	}
+
+	// Otherwise, add a rule that will cause traffic to the ITP service from this host
+	// to be marked (which will then cause it to be steered to ovn-k8s-mp0).
+	var setName string
+	if utilnet.IsIPv4String(clusterIP) {
+		setName = nftablesITPMarkSetV4
+	} else {
+		setName = nftablesITPMarkSetV6
+	}
+	return []knftables.Object{
+		&knftables.Element{
+			Set: setName,
+			Key: []string{
+				clusterIP,
+				strings.ToLower(string(svcPort.Protocol)),
+				fmt.Sprintf("%v", svcPort.Port),
+			},
+		},
+	}
+}
 
 // getNoSNATNodePortRules returns elements to add to the "mgmtport-no-snat-nodeports"
 // set to prevent SNAT of sourceIP when passing through the management port, for an
@@ -134,9 +295,15 @@ func getUDNExternalIPsMarkNFTRules(svcPort corev1.ServicePort, externalIPs []str
 
 // getGatewayNFTRules returns nftables rules for service. This must be used in conjunction
 // with getGatewayIPTRulesForService.
+//
+// FIXME: This function is only called if config.NodeportEnable is true, but it is also
+// used for `internalTrafficPolicy: Local` handling, which should not be gated behind
+// config.NodeportEnable.
 func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []knftables.Object {
 	rules := make([]knftables.Object, 0)
+	clusterIPs := util.GetClusterIPs(service)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
+	svcTypeIsITPLocal := util.ServiceInternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {
 		if svcTypeIsETPLocal && !svcHasLocalHostNetEndPnt {
 			// For `externalTrafficPolicy: Local` services with pod-network
@@ -146,6 +313,12 @@ func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEnd
 				rules = append(rules, getNoSNATNodePortRules(svcPort)...)
 			} else if len(util.GetExternalAndLBIPs(service)) > 0 {
 				rules = append(rules, getNoSNATLoadBalancerIPRules(svcPort, localEndpoints)...)
+			}
+		}
+
+		if svcTypeIsITPLocal {
+			for _, clusterIP := range clusterIPs {
+				rules = append(rules, getITPLocalNFTRules(svcPort, clusterIP, svcHasLocalHostNetEndPnt)...)
 			}
 		}
 	}
@@ -166,6 +339,18 @@ func getGatewayNFTContainerObjects() []knftables.Object {
 		},
 		&knftables.Set{
 			Name: types.NFTMgmtPortNoSNATServicesV6,
+		},
+		&knftables.Set{
+			Name: nftablesITPMarkSetV4,
+		},
+		&knftables.Set{
+			Name: nftablesITPMarkSetV6,
+		},
+		&knftables.Map{
+			Name: nftablesITPServicesMapV4,
+		},
+		&knftables.Map{
+			Name: nftablesITPServicesMapV6,
 		},
 	}
 }

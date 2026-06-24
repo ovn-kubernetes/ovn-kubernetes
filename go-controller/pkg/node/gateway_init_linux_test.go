@@ -98,6 +98,22 @@ add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq
 add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
 `
 
+// The additional rules expected if initGatewayNodePortNFTables() is called
+const nftablesRulesGatewayNodePort = `
+      add chain inet ovn-kubernetes services-itp { comment "Redirects for traffic with InternalTrafficPolicy: Local" ; }
+      add chain inet ovn-kubernetes services-itp-mark { type filter hook output priority -150 ; comment "Chain to mark InternalTrafficPolicy: Local traffic for special routing" ; }
+      add chain inet ovn-kubernetes services-output { type nat hook output priority -100 ; }
+      add set inet ovn-kubernetes itp-services-to-mark-v4 { type ipv4_addr . inet_proto . inet_service ; comment "InternalTrafficPolicy: Local traffic to mark for special routing" ; }
+      add set inet ovn-kubernetes itp-services-to-mark-v6 { type ipv6_addr . inet_proto . inet_service ; comment "InternalTrafficPolicy: Local traffic to mark for special routing" ; }
+      add map inet ovn-kubernetes itp-services-to-redirect-v4 { type ipv4_addr . inet_proto . inet_service : inet_service ; comment "Port redirections for ordinary InternalTrafficPolicy: Local traffic" ; }
+      add map inet ovn-kubernetes itp-services-to-redirect-v6 { type ipv6_addr . inet_proto . inet_service : inet_service ; comment "Port redirections for ordinary InternalTrafficPolicy: Local traffic" ; }
+      add rule inet ovn-kubernetes services-itp ip redirect to ip daddr . meta l4proto . th dport map @itp-services-to-redirect-v4
+      add rule inet ovn-kubernetes services-itp ip6 redirect to ip6 daddr . meta l4proto . th dport map @itp-services-to-redirect-v6
+      add rule inet ovn-kubernetes services-itp-mark ip daddr . meta l4proto . th dport @itp-services-to-mark-v4 mark set 0x1745ec
+      add rule inet ovn-kubernetes services-itp-mark ip6 daddr . meta l4proto . th dport @itp-services-to-mark-v6 mark set 0x1745ec
+      add rule inet ovn-kubernetes services-output jump services-itp
+`
+
 func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 	eth0Name, eth0MAC, eth0GWIP, eth0CIDR string, gatewayVLANID uint, l netlink.Link, hwOffload, setNodeIP bool) {
 	const mtu string = "1234"
@@ -517,20 +533,13 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 				"OUTPUT": []string{
 					"-j OVN-KUBE-EXTERNALIP",
 					"-j OVN-KUBE-NODEPORT",
-					"-j OVN-KUBE-ITP",
 				},
 				"OVN-KUBE-NODEPORT":   []string{},
 				"OVN-KUBE-EXTERNALIP": []string{},
 				"OVN-KUBE-ETP":        []string{},
-				"OVN-KUBE-ITP":        []string{},
 			},
 			"filter": {},
-			"mangle": {
-				"OUTPUT": []string{
-					"-j OVN-KUBE-ITP",
-				},
-				"OVN-KUBE-ITP": []string{},
-			},
+			"mangle": {},
 		}
 		f4 := iptV4.(*util.FakeIPTables)
 		err = f4.MatchState(expectedTables, nil)
@@ -545,7 +554,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := nftablesRulesBase
+		expectedNFT := nftablesRulesBase + nftablesRulesGatewayNodePort
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1430,22 +1439,15 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 				"OUTPUT": []string{
 					"-j OVN-KUBE-EXTERNALIP",
 					"-j OVN-KUBE-NODEPORT",
-					"-j OVN-KUBE-ITP",
 				},
 				"OVN-KUBE-NODEPORT": []string{},
 				"OVN-KUBE-EXTERNALIP": []string{
 					fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v", service.Spec.Ports[0].Protocol, externalIP, service.Spec.Ports[0].Port, service.Spec.ClusterIP, service.Spec.Ports[0].Port),
 				},
 				"OVN-KUBE-ETP": []string{},
-				"OVN-KUBE-ITP": []string{},
 			},
 			"filter": {},
-			"mangle": {
-				"OUTPUT": []string{
-					"-j OVN-KUBE-ITP",
-				},
-				"OVN-KUBE-ITP": []string{},
-			},
+			"mangle": {},
 		}
 		f4 := iptV4.(*util.FakeIPTables)
 		err = f4.MatchState(expectedTables, nil)
@@ -1460,7 +1462,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway
+		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway + nftablesRulesGatewayNodePort
 		if util.IsNetworkSegmentationSupportEnabled() {
 			expectedNFT += nftablesRulesUDN
 		}

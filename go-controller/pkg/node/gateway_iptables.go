@@ -19,7 +19,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nodeipt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -28,7 +27,7 @@ const (
 	iptableNodePortChain   = "OVN-KUBE-NODEPORT"   // called from nat-PREROUTING and nat-OUTPUT
 	iptableExternalIPChain = "OVN-KUBE-EXTERNALIP" // called from nat-PREROUTING and nat-OUTPUT
 	iptableETPChain        = "OVN-KUBE-ETP"        // called from nat-PREROUTING only
-	iptableITPChain        = "OVN-KUBE-ITP"        // called from mangle-OUTPUT and nat-OUTPUT
+	iptableITPChain        = "OVN-KUBE-ITP"        // only cleaned up; never used
 )
 
 func clusterIPTablesProtocols() []iptables.Protocol {
@@ -78,25 +77,13 @@ func deleteIptRules(rules []nodeipt.Rule) error {
 }
 
 func getGatewayInitRules(chain string, proto iptables.Protocol) []nodeipt.Rule {
-	iptRules := []nodeipt.Rule{}
-	if chain == iptableITPChain {
-		iptRules = append(iptRules,
-			nodeipt.Rule{
-				Table:    "mangle",
-				Chain:    "OUTPUT",
-				Args:     []string{"-j", chain},
-				Protocol: proto,
-			},
-		)
-	} else {
-		iptRules = append(iptRules,
-			nodeipt.Rule{
-				Table:    "nat",
-				Chain:    "PREROUTING",
-				Args:     []string{"-j", chain},
-				Protocol: proto,
-			},
-		)
+	iptRules := []nodeipt.Rule{
+		{
+			Table:    "nat",
+			Chain:    "PREROUTING",
+			Args:     []string{"-j", chain},
+			Protocol: proto,
+		},
 	}
 	if chain != iptableETPChain { // ETP chain only meant for external traffic
 		iptRules = append(iptRules,
@@ -141,44 +128,6 @@ func getNodePortIPTRules(svcPort corev1.ServicePort, targetIP string, targetPort
 				"--to-destination", util.JoinHostPortInt32(targetIP, targetPort),
 			},
 			Protocol: getIPTablesProtocol(targetIP),
-		},
-	}
-}
-
-// getITPLocalIPTRules returns the IPTable REDIRECT or MARK rules for the provided service
-// `svcPort` corresponds to port details for this service as specified in the service object
-// `clusterIP` is clusterIP is the VIP of the service to match on
-// `svcHasLocalHostNetEndPnt` is true if this service has at least one host-networked endpoint that is local to this node
-// NOTE: Currently invoked only for Internal Traffic Policy
-func getITPLocalIPTRules(svcPort corev1.ServicePort, clusterIP string, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
-	if svcHasLocalHostNetEndPnt {
-		return []nodeipt.Rule{
-			{
-				Table: "nat",
-				Chain: iptableITPChain,
-				Args: []string{
-					"-p", string(svcPort.Protocol),
-					"-d", clusterIP,
-					"--dport", fmt.Sprintf("%v", svcPort.Port),
-					"-j", "REDIRECT",
-					"--to-port", fmt.Sprintf("%v", int32(svcPort.TargetPort.IntValue())),
-				},
-				Protocol: getIPTablesProtocol(clusterIP),
-			},
-		}
-	}
-	return []nodeipt.Rule{
-		{
-			Table: "mangle",
-			Chain: iptableITPChain,
-			Args: []string{
-				"-p", string(svcPort.Protocol),
-				"-d", string(clusterIP),
-				"--dport", fmt.Sprintf("%d", svcPort.Port),
-				"-j", "MARK",
-				"--set-xmark", string(types.OVNKubeITPMark),
-			},
-			Protocol: getIPTablesProtocol(clusterIP),
 		},
 	}
 }
@@ -428,16 +377,13 @@ func addChaintoTable(ipt util.IPTablesHelper, tableName, chain string) {
 func handleGatewayIPTables(iptCallback func(rules []nodeipt.Rule) error, genGatewayChainRules func(chain string, proto iptables.Protocol) []nodeipt.Rule) error {
 	rules := make([]nodeipt.Rule, 0)
 	// (NOTE: Order is important, add jump to iptableETPChain before jump to NP/EIP chains)
-	for _, chain := range []string{iptableITPChain, iptableNodePortChain, iptableExternalIPChain, iptableETPChain} {
+	for _, chain := range []string{iptableNodePortChain, iptableExternalIPChain, iptableETPChain} {
 		for _, proto := range clusterIPTablesProtocols() {
 			ipt, err := util.GetIPTablesHelper(proto)
 			if err != nil {
 				return err
 			}
 			addChaintoTable(ipt, "nat", chain)
-			if chain == iptableITPChain {
-				addChaintoTable(ipt, "mangle", chain)
-			}
 			rules = append(rules, genGatewayChainRules(chain, proto)...)
 		}
 	}
@@ -475,6 +421,22 @@ func cleanupSharedGatewayIPTChains() {
 	}
 }
 
+func cleanupGatewayServiceIPTables() {
+	// We clean up both IPv4 and IPv6, regardless of what is currently in use
+	for _, proto := range []iptables.Protocol{iptables.ProtocolIPv4, iptables.ProtocolIPv6} {
+		ipt, err := util.GetIPTablesHelper(proto)
+		if err != nil {
+			continue
+		}
+		for _, chain := range []string{iptableITPChain} {
+			_ = ipt.ClearChain("nat", chain)
+			_ = ipt.DeleteChain("nat", chain)
+		}
+		_ = ipt.ClearChain("mangle", iptableITPChain)
+		_ = ipt.DeleteChain("mangle", iptableITPChain)
+	}
+}
+
 func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
 	var errors []error
 	var err error
@@ -494,15 +456,10 @@ func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
 // to ovn-k8s-mp0 preserving sourceIP are added.
 //
 // case2: (default) A DNAT rule towards clusterIP svc is added ALWAYS.
-//
-// case3: if svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that redirects clusterIP traffic to host targetPort is added.
-//
-//	if !svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that marks clusterIP traffic to steer it to ovn-k8s-mp0 is added.
 func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
 	rules := make([]nodeipt.Rule, 0)
 	clusterIPs := util.GetClusterIPs(service)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
-	svcTypeIsITPLocal := util.ServiceInternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {
 		if util.ServiceTypeHasNodePort(service) {
 			err := util.ValidatePort(svcPort.Protocol, svcPort.NodePort)
@@ -550,12 +507,6 @@ func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEnd
 				}
 				// case2 (see function description for details)
 				rules = append(rules, getExternalIPTRules(svcPort, externalIP, clusterIP, svcHasLocalHostNetEndPnt, false)...)
-			}
-		}
-		if svcTypeIsITPLocal {
-			// case3 (see function decription for details)
-			for _, clusterIP := range clusterIPs {
-				rules = append(rules, getITPLocalIPTRules(svcPort, clusterIP, svcHasLocalHostNetEndPnt)...)
 			}
 		}
 	}
