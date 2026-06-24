@@ -816,19 +816,18 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 		if ofPortPhys != "" {
 			for _, netConfig := range b.patchedNetConfigs() {
-				// table0, for SGW UDN no-overlay networks, handle cross-node traffic
+				// table0, for SGW UDN networks, handle traffic
 				// that has already been SNATed to node IP by the gateway router.
-				if !netConfig.IsDefaultNetwork() && netConfig.Transport == types.NetworkTransportNoOverlay && config.Gateway.Mode == config.GatewayModeShared {
+				if !netConfig.IsDefaultNetwork() && config.Gateway.Mode == config.GatewayModeShared {
 					// Commit to conntrack and send directly to the physical port.
-					// SNAT to the node IP may already have happened on the UDN GW
-					// router because lb_force_snat_ip=router_ip. SNAT to the same
-					// node IP again here so zone 64000 can resolve source-port collisions.
+					// SNAT to the node IP already happened on the UDN GW router.
+					// Use all-zero SNAT so zone 64000 has a NAT action without
+					// applying a second explicit node-IP SNAT.
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=99, in_port=%s, dl_src=%s, %s, nw_src=%s, "+
-							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
+							"actions=ct(commit, zone=%d, nat(src=0.0.0.0), exec(set_field:%s->ct_mark)), output:%s",
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4,
 							physicalIP.IP, config.Default.ConntrackZone,
-							physicalIP.IP,
 							netConfig.MasqCTMark, ofPortPhys))
 				}
 				if netConfig.IsDefaultNetwork() && isDPUSharedNoOverlay() {
@@ -877,7 +876,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, false)...)
 					}
 				} else {
-					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
+					// For UDN legacy egress, keep the SNAT from masquerade IP
+					// to node IP. Existing upgraded connections may still use
+					// this v1 path, while new v2 traffic matches the node-IP
+					// all-zero SNAT flow above.
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
 							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
@@ -942,19 +944,18 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 		if ofPortPhys != "" {
 			for _, netConfig := range b.patchedNetConfigs() {
-				// table0, for SGW UDN no-overlay networks, handle cross-node traffic
+				// table0, for SGW UDN networks, handle traffic
 				// that has already been SNATed to node IP by the gateway router.
-				if !netConfig.IsDefaultNetwork() && netConfig.Transport == types.NetworkTransportNoOverlay && config.Gateway.Mode == config.GatewayModeShared {
+				if !netConfig.IsDefaultNetwork() && config.Gateway.Mode == config.GatewayModeShared {
 					// Commit to conntrack and send directly to the physical port.
-					// SNAT to the node IP may already have happened on the UDN GW
-					// router because lb_force_snat_ip=router_ip. SNAT to the same
-					// node IP again here so zone 64000 can resolve source-port collisions.
+					// SNAT to the node IP already happened on the UDN GW router.
+					// Use all-zero SNAT so zone 64000 has a NAT action without
+					// applying a second explicit node-IP SNAT.
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=99, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
-							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
+							"actions=ct(commit, zone=%d, nat(src=::), exec(set_field:%s->ct_mark)), output:%s",
 							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6,
 							protoPrefixV6, physicalIP.IP, config.Default.ConntrackZone,
-							physicalIP.IP,
 							netConfig.MasqCTMark, ofPortPhys))
 				}
 				if netConfig.IsDefaultNetwork() && isDPUSharedNoOverlay() {
@@ -1003,7 +1004,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 						dftFlows = append(dftFlows, hostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnets, true)...)
 					}
 				} else {
-					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
+					// For UDN legacy egress, keep the SNAT from masquerade IP
+					// to node IP. Existing upgraded connections may still use
+					// this v1 path, while new v2 traffic matches the node-IP
+					// all-zero SNAT flow above.
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
 							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",

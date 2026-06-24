@@ -248,6 +248,10 @@ const (
 	LoadBalancerOwnerExternalID = OvnK8sPrefix + "/" + "owner"
 	// key for UDN enabled services routes
 	UDNEnabledServiceExternalID = OvnK8sPrefix + "/" + "udn-enabled-default-service"
+	// key for UDN egress SNAT version on OVN NAT rows
+	UDNEgressSNATVersionExternalID = OvnK8sPrefix + "/" + "udn-egress-snat-version"
+	// value for UDN egress SNAT rows that use the node IP on the gateway router
+	UDNEgressSNATVersionV2 = "v2"
 	// key for management port name, indicating the netdev link name associated with the given management port representor OVS interface
 	OvnManagementPortNameExternalID = OvnK8sPrefix + "/management-port-name"
 	// EVPNVTEPExternalID is the external-id key used to tag OVS ports with their EVPN VTEP name
