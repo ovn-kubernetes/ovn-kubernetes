@@ -67,7 +67,7 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *knet.Pod", obj)
 		}
-		return bsnc.reconcilePodForUserDefinedNetwork(nil, pod, false)
+		return bsnc.reconcilePodForUserDefinedNetwork(pod)
 
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
@@ -110,10 +110,9 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 func (bsnc *BaseUserDefinedNetworkController) UpdateUserDefinedNetworkResourceCommon(objType reflect.Type, oldObj, newObj interface{}, inRetryCache bool) error {
 	switch objType {
 	case factory.PodType:
-		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return bsnc.reconcilePodForUserDefinedNetwork(oldPod, newPod, inRetryCache)
+		return bsnc.reconcilePodForUserDefinedNetwork(newPod)
 
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -204,11 +203,35 @@ func (bsnc *BaseUserDefinedNetworkController) DeleteUserDefinedNetworkResourceCo
 }
 
 // reconcilePodForUserDefinedNetwork is the pod reconciliation entry point for
-// UDN controllers. It centralizes the add/update decision while the
-// implementation still delegates to the legacy ensure path.
-func (bsnc *BaseUserDefinedNetworkController) reconcilePodForUserDefinedNetwork(oldPod, pod *corev1.Pod, inRetryCache bool) error {
-	addPort := oldPod == nil || shouldAddPort(oldPod, pod, inRetryCache)
+// UDN controllers. It computes the add/update decision from current controller
+// state while the implementation still delegates to the legacy ensure path.
+func (bsnc *BaseUserDefinedNetworkController) reconcilePodForUserDefinedNetwork(pod *corev1.Pod) error {
+	addPort := bsnc.shouldEnsurePodForUserDefinedNetwork(pod)
 	return bsnc.ensurePodForUserDefinedNetwork(pod, addPort)
+}
+
+func (bsnc *BaseUserDefinedNetworkController) shouldEnsurePodForUserDefinedNetwork(pod *corev1.Pod) bool {
+	if !util.PodScheduled(pod) || !bsnc.podExpectedInLogicalCache(pod) {
+		return false
+	}
+
+	nadKeys := bsnc.getPodNADKeys(pod)
+	for _, nadKey := range nadKeys {
+		portInfo, err := bsnc.logicalPortCache.get(pod, nadKey)
+		if err != nil || !portInfo.expires.IsZero() {
+			return true
+		}
+	}
+
+	if len(nadKeys) > 0 || !bsnc.IsPrimaryNetwork() {
+		return false
+	}
+
+	activeNetwork, err := bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
+	if err != nil {
+		return true
+	}
+	return activeNetwork != nil && activeNetwork.GetNetworkName() == bsnc.GetNetworkName()
 }
 
 // ensurePodForUserDefinedNetwork tries to set up the User Defined Network for a pod. It returns nil on success and error
@@ -1084,10 +1107,6 @@ func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration
 // node where the pod was scheduled
 func (bsnc *BaseUserDefinedNetworkController) hasPodLogicalPort(pod *corev1.Pod) bool {
 	return pod != nil && (bsnc.isPodScheduledinLocalZone(pod) || bsnc.isLayer2WithInterconnectTransport())
-}
-
-func shouldAddPort(oldPod, newPod *corev1.Pod, inRetryCache bool) bool {
-	return inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
 }
 
 func nodesToInterfaces(nodes []*corev1.Node) []interface{} {
