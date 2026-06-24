@@ -809,6 +809,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch))
 	}
 
+	if util.IsNetworkSegmentationSupportEnabled() {
+		dftFlows = append(dftFlows, b.arpFilterFlows(bridgeMacAddress)...)
+	}
+
 	if config.IPv4Mode {
 		physicalIP, err := util.MatchFirstIPNetFamily(false, bridgeIPs)
 		if err != nil {
@@ -1277,6 +1281,43 @@ func (b *BridgeConfiguration) allowNodeIPGARPFlows(nodeIPs []net.IP) []string {
 			flows = append(flows, generateGratuitousARPAllowFlow(netConfig.OfPortPatch, nodeIP, priority))
 		}
 
+	}
+	return flows
+}
+
+// arpFilterFlows ensures only the default network GR replies to ARP requests
+// for the local node IP. When an ARP request arrives on br-ex, the priority-10
+// fan-out rule replicates it to every patch port. All CUDN GRs share the same
+// node IP on their external interface, so every one of them generates an ARP
+// reply. These duplicate replies flood the physical network and cause remote
+// nodes to passively learn lots of MAC_Bindings, driving ovs-vswitchd CPU up.
+//
+// Two flows per node IP (IPv4 only, ARP is IPv4):
+//   - priority 12: allow ARP replies from the default network patch port
+//   - priority 11: drop ARP replies from any other patch port
+//
+// Must be called with bridge.mutex held.
+func (b *BridgeConfiguration) arpFilterFlows(bridgeMacAddress string) []string {
+	defaultNetConfig, found := b.netConfig[types.DefaultNetworkName]
+	if !found || defaultNetConfig.OfPortPatch == "" {
+		return nil
+	}
+
+	var flows []string
+	for _, ip := range b.ips {
+		if ip.IP.To4() == nil {
+			continue
+		}
+		// allow ARP replies for the node IP from the default network patch port
+		flows = append(flows,
+			fmt.Sprintf("cookie=%s, priority=12, table=0, in_port=%s, dl_src=%s, arp, arp_op=2, arp_spa=%s, "+
+				"actions=output:NORMAL",
+				nodetypes.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch, bridgeMacAddress, ip.IP))
+		// drop ARP replies for the node IP from all other patch ports
+		flows = append(flows,
+			fmt.Sprintf("cookie=%s, priority=11, table=0, dl_src=%s, arp, arp_op=2, arp_spa=%s, "+
+				"actions=drop",
+				nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, ip.IP))
 	}
 	return flows
 }
