@@ -758,7 +758,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 	if config.IsModeDPU() || config.IsModeFull() {
 		// Bootstrap flows in OVS if just normal flow is present
-		if err := bootstrapOVSFlows(nc.name); err != nil {
+		if err := bootstrapOVSFlows(nc.ovsClient, nc.name); err != nil {
 			return fmt.Errorf("failed to bootstrap OVS flows: %w", err)
 		}
 	}

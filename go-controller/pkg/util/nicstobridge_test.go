@@ -21,147 +21,81 @@ import (
 )
 
 func TestGetNicName(t *testing.T) {
-	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
-	mockExecRunner := new(mocks.ExecRunner)
-	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-	// below is defined in ovs.go
-	RunCmdExecRunner = mockExecRunner
-	// note runner is defined in ovs.go file
-	runner = &execHelper{exec: mockKexecIface}
 	tests := []struct {
-		desc                string
-		errMatch            error
-		outputExp           string
-		inpBrName           string
-		onRetArgsExecIface  []ovntest.TestifyMockHelper
-		onRetArgsKexecIface []ovntest.TestifyMockHelper
+		desc      string
+		errMatch  error
+		outputExp string
+		inpBrName string
+		ovsData   []libovsdbtest.TestData
 	}{
 		{
-			desc:      "empty string as inputBrName",
-			errMatch:  fmt.Errorf("failed to get list of ports on bridge"),
-			outputExp: "",
-			inpBrName: "",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("test error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
+			desc:      "bridge not present in ovsdb",
+			errMatch:  fmt.Errorf("failed to get bridge"),
+			inpBrName: "missing",
+			ovsData:   []libovsdbtest.TestData{&vswitchd.OpenvSwitch{UUID: "root-ovs"}},
 		},
 		{
-			desc:      "test code path when `ovs-vsctl get Port port Interfaces` returns error",
-			errMatch:  fmt.Errorf("failed to get port"),
-			outputExp: "",
-			inpBrName: "testPortName",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("port1\nport2")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-		},
-		{
-			desc:      "test code path when `ovs-vsctl get Interface ifaceId Type` returns error",
-			errMatch:  fmt.Errorf("failed to get Interface"),
-			outputExp: "",
-			inpBrName: "testPortName",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("port1")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-		},
-		{
-			desc:      "test code path when `ovs-vsctl get Interface ifaceId Type` returns `system`",
+			desc:      "single system-typed port returns the port name",
 			outputExp: "port1",
-			inpBrName: "testPortName",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("port1")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
+			inpBrName: "br0",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br0-uuid"}},
+				&vswitchd.Bridge{UUID: "br0-uuid", Name: "br0", Ports: []string{"port1-uuid"}},
+				&vswitchd.Port{UUID: "port1-uuid", Name: "port1", Interfaces: []string{"iface1-uuid"}},
+				&vswitchd.Interface{UUID: "iface1-uuid", Name: "port1", Type: "system"},
 			},
 		},
 		{
-			desc:      "test code path when `ovs-vsctl br-get-external-id` returns error",
-			errMatch:  fmt.Errorf("failed to get the bridge-uplink for the bridge"),
-			outputExp: "",
-			inpBrName: "testPortName",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("port1")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("internal")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), fmt.Errorf("mock error")}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
+			desc:      "no system port, bridge-uplink external-id wins over br-prefix fallback",
+			outputExp: "uplink-iface",
+			inpBrName: "brOther",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br-uuid"}},
+				&vswitchd.Bridge{UUID: "br-uuid", Name: "brOther", Ports: []string{"port-uuid"}, ExternalIDs: map[string]string{"bridge-uplink": "uplink-iface"}},
+				&vswitchd.Port{UUID: "port-uuid", Name: "internal-port", Interfaces: []string{"iface-uuid"}},
+				&vswitchd.Interface{UUID: "iface-uuid", Name: "internal-port", Type: "internal"},
 			},
 		},
 		{
-			desc:      "test code path when input bridge name has prefix `br` and stdout is empty",
+			desc:      "no system port, no bridge-uplink, br-prefix is stripped",
 			outputExp: "Name",
 			inpBrName: "brName",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("port1")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("internal")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), nil}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br-uuid"}},
+				&vswitchd.Bridge{UUID: "br-uuid", Name: "brName", Ports: []string{"port-uuid"}},
+				&vswitchd.Port{UUID: "port-uuid", Name: "internal-port", Interfaces: []string{"iface-uuid"}},
+				&vswitchd.Interface{UUID: "iface-uuid", Name: "internal-port", Type: "internal"},
 			},
 		},
 		{
-			desc:      "test code path when input bridge name has NO prefix `br`",
-			outputExp: "someoutput",
-			inpBrName: "testName",
-			onRetArgsExecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("port1")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("internal")), bytes.NewBuffer([]byte("")), nil}},
-				{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string", "string", "string", "string", "string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("someoutput")), bytes.NewBuffer([]byte("")), nil}},
-			},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
+			desc:      "no system port, no bridge-uplink, no br-prefix returns explicit error",
+			outputExp: "",
+			errMatch:  fmt.Errorf("unable to resolve uplink for bridge"),
+			inpBrName: "noprefix",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br-uuid"}},
+				&vswitchd.Bridge{UUID: "br-uuid", Name: "noprefix", Ports: []string{"port-uuid"}},
+				&vswitchd.Port{UUID: "port-uuid", Name: "internal-port", Interfaces: []string{"iface-uuid"}},
+				&vswitchd.Interface{UUID: "iface-uuid", Name: "internal-port", Type: "internal"},
 			},
 		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			ovntest.ProcessMockFnList(&mockExecRunner.Mock, tc.onRetArgsExecIface)
-			ovntest.ProcessMockFnList(&mockKexecIface.Mock, tc.onRetArgsKexecIface)
+			ovsClient, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: tc.ovsData})
+			require.NoError(t, err, "harness setup")
+			t.Cleanup(cleanup.Cleanup)
 
-			res, err := GetNicName(tc.inpBrName)
-
+			res, err := GetNicName(ovsClient, tc.inpBrName)
 			t.Log(res, err)
 
 			if tc.errMatch != nil {
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
+				require.NoError(t, err)
 				assert.Equal(t, tc.outputExp, res)
 			}
-			mockExecRunner.AssertExpectations(t)
-			mockKexecIface.AssertExpectations(t)
 		})
 	}
 }
@@ -578,14 +512,6 @@ func TestNicToBridge(t *testing.T) {
 }
 
 func TestBridgeToNic(t *testing.T) {
-	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
-	mockExecRunner := new(mocks.ExecRunner)
-	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-	// below is defined in ovs.go
-	RunCmdExecRunner = mockExecRunner
-	// note runner is defined in ovs.go file
-	runner = &execHelper{exec: mockKexecIface}
-
 	mockNetLinkOps := new(mocks.NetLinkOps)
 	mockLink := new(netlink_mocks.Link)
 	// below is defined in net_linux.go
@@ -642,26 +568,12 @@ func TestBridgeToNic(t *testing.T) {
 		// saveRoute -> delAddRoute -> newLink.Attrs().Index
 		{OnCallMethodName: "Attrs", OnCallMethodArgType: []string{}, RetArgList: []interface{}{&netlink.LinkAttrs{Name: "testIfaceName"}}},
 	}
-	// GetNicName mock setup (three ovs-vsctl calls)
-	nicNameExec := []ovntest.TestifyMockHelper{
-		{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 4, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("eth0")), bytes.NewBuffer([]byte("")), nil}},
-		{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("[080841d8-4e12-4003-b0ac-36fefd63bae1]")), bytes.NewBuffer([]byte("")), nil}},
-		{OnCallMethodName: "RunCmd", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{bytes.NewBuffer([]byte("system")), bytes.NewBuffer([]byte("")), nil}},
-	}
-	nicNameKexec := []ovntest.TestifyMockHelper{
-		{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 5, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-		{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-		{OnCallMethodName: "Command", OnCallMethodsArgsStrTypeAppendCount: 6, OnCallMethodArgType: []string{}, RetArgList: []interface{}{mockCmd}},
-	}
-
 	tests := []struct {
 		desc                     string
 		inpBridge                string
 		errExp                   bool
 		initialOvsData           []libovsdbtest.TestData
 		expectedOvsData          []libovsdbtest.TestData
-		onRetArgsExecUtilsIface  []ovntest.TestifyMockHelper
-		onRetArgsKexecIface      []ovntest.TestifyMockHelper
 		onRetArgsNetLinkLibOpers []ovntest.TestifyMockHelper
 		onRetArgsLinkIfaceOpers  []ovntest.TestifyMockHelper
 	}{
@@ -699,25 +611,13 @@ func TestBridgeToNic(t *testing.T) {
 			desc:           "retrieving interface link using nic name fails",
 			inpBridge:      "breth0",
 			errExp:         true,
-			initialOvsData: minimalOvs(),
-			onRetArgsExecUtilsIface: nicNameExec,
-			onRetArgsKexecIface:     nicNameKexec,
+			initialOvsData: bridgeWithPatch(),
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "AddrList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{[]netlink.Addr{{IPNet: ovntest.MustParseIPNet("192.168.1.15/24")}}, nil}},
 				{OnCallMethodName: "RouteList", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil, nil}},
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
-		},
-		{
-			desc:                     "bridge not present in ovsdb cache returns an error",
-			inpBridge:                "breth0",
-			errExp:                   true,
-			initialOvsData:           minimalOvs(),
-			onRetArgsExecUtilsIface:  nicNameExec,
-			onRetArgsKexecIface:      nicNameKexec,
-			onRetArgsNetLinkLibOpers: netlinkPrelude,
-			onRetArgsLinkIfaceOpers:  linkAttrsPrelude,
 		},
 		{
 			desc:                     "deletes bridge and removes patch peer from br-int; non-patch ports are ignored",
@@ -728,16 +628,12 @@ func TestBridgeToNic(t *testing.T) {
 				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{brIntUUID}},
 				&vswitchd.Bridge{UUID: brIntUUID, Name: "br-int"},
 			},
-			onRetArgsExecUtilsIface:  nicNameExec,
-			onRetArgsKexecIface:      nicNameKexec,
 			onRetArgsNetLinkLibOpers: netlinkPrelude,
 			onRetArgsLinkIfaceOpers:  linkAttrsPrelude,
 		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			ovntest.ProcessMockFnList(&mockExecRunner.Mock, tc.onRetArgsExecUtilsIface)
-			ovntest.ProcessMockFnList(&mockKexecIface.Mock, tc.onRetArgsKexecIface)
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
@@ -758,8 +654,6 @@ func TestBridgeToNic(t *testing.T) {
 				assert.True(t, ok, matcher.FailureMessage(ovsClient))
 				assert.NoError(t, mErr)
 			}
-			mockKexecIface.AssertExpectations(t)
-			mockExecRunner.AssertExpectations(t)
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
 		})

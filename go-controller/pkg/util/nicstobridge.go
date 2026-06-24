@@ -33,35 +33,49 @@ func GetBridgeName(iface string) string {
 	return fmt.Sprintf("br%s", iface)
 }
 
-// getBridgePortsInterfaces returns a mapping of bridge brName ports to its interfaces
-func getBridgePortsInterfaces(brName string) (map[string][]string, error) {
-	stdout, stderr, err := RunOVSVsctl("list-ports", brName)
+// getBridgePortsInterfaces returns a mapping of bridge brName ports to their
+// resolved Interface rows.
+func getBridgePortsInterfaces(ovsClient libovsdbclient.Client, brName string) (map[string][]*vswitchd.Interface, error) {
+	br, err := ovsops.GetBridge(ovsClient, brName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get list of ports on bridge %q:, stderr: %q, error: %v",
-			brName, stderr, err)
+		return nil, fmt.Errorf("failed to get bridge %q: %w", brName, err)
 	}
 
-	portsToInterfaces := make(map[string][]string)
-	for _, port := range strings.Split(stdout, "\n") {
-		stdout, stderr, err = RunOVSVsctl("get", "Port", port, "Interfaces")
+	portsToInterfaces := make(map[string][]*vswitchd.Interface)
+	for _, portUUID := range br.Ports {
+		port := &vswitchd.Port{UUID: portUUID}
+		ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+		err := ovsClient.Get(ctx, port)
+		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get port %q on bridge %q:, stderr: %q, error: %v",
-				port, brName, stderr, err)
-
+			return nil, fmt.Errorf("failed to get port %s on bridge %q: %w", portUUID, brName, err)
 		}
-		// remove brackets on list of interfaces
-		ifaces := strings.TrimPrefix(strings.TrimSuffix(stdout, "]"), "[")
-		portsToInterfaces[port] = strings.Split(ifaces, ",")
+		ifaces := make([]*vswitchd.Interface, 0, len(port.Interfaces))
+		for _, ifaceUUID := range port.Interfaces {
+			iface := &vswitchd.Interface{UUID: ifaceUUID}
+			ctx, cancel := context.WithTimeout(context.Background(), ovntypes.OVSDBTimeout)
+			err := ovsClient.Get(ctx, iface)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get interface %s on port %q: %w", ifaceUUID, port.Name, err)
+			}
+			ifaces = append(ifaces, iface)
+		}
+		portsToInterfaces[port.Name] = ifaces
 	}
 	return portsToInterfaces, nil
 }
 
 // GetNicName returns the physical NIC name, given an OVS bridge name
 // configured by NicToBridge()
-func GetNicName(brName string) (string, error) {
+func GetNicName(ovsClient libovsdbclient.Client, brName string) (string, error) {
+	br, err := ovsops.GetBridge(ovsClient, brName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get bridge %q: %w", brName, err)
+	}
+
 	// Check for system type port (required to be set if using NetworkManager)
-	var stdout, stderr string
-	portsToInterfaces, err := getBridgePortsInterfaces(brName)
+	portsToInterfaces, err := getBridgePortsInterfaces(ovsClient, brName)
 	if err != nil {
 		return "", err
 	}
@@ -69,14 +83,7 @@ func GetNicName(brName string) (string, error) {
 	systemPorts := make([]string, 0)
 	for port, ifaces := range portsToInterfaces {
 		for _, iface := range ifaces {
-			stdout, stderr, err = RunOVSVsctl("get", "Interface", strings.TrimSpace(iface), "Type")
-			if err != nil {
-				return "", fmt.Errorf("failed to get Interface %q Type on bridge %q:, stderr: %q, error: %v",
-					iface, brName, stderr, err)
-
-			}
-			// If system Type we know this is the OVS port is the NIC
-			if stdout == "system" {
+			if iface.Type == "system" {
 				systemPorts = append(systemPorts, port)
 			}
 		}
@@ -88,19 +95,17 @@ func GetNicName(brName string) (string, error) {
 			"this method of determining the uplink port", brName)
 	}
 
-	// Check for bridge-uplink to indicate the NIC
-	stdout, stderr, err = RunOVSVsctl(
-		"br-get-external-id", brName, "bridge-uplink")
-	if err != nil {
-		return "", fmt.Errorf("failed to get the bridge-uplink for the bridge %q:, stderr: %q, error: %v",
-			brName, stderr, err)
-	}
-	if stdout == "" && strings.HasPrefix(brName, "br") {
+	// Check for bridge-uplink to indicate the NIC.
+	uplink := br.ExternalIDs["bridge-uplink"]
+	if uplink == "" && strings.HasPrefix(brName, "br") {
 		// This would happen if the bridge was created before the bridge-uplink
 		// changes got integrated. Assuming naming format of "br<nic name>".
 		return brName[len("br"):], nil
 	}
-	return stdout, nil
+	if uplink == "" {
+		return "", fmt.Errorf("unable to resolve uplink for bridge %q: no system-typed port, no bridge-uplink external-id, and bridge name has no \"br\" prefix to strip", brName)
+	}
+	return uplink, nil
 }
 
 func saveIPAddress(oldLink, newLink netlink.Link, addrs []netlink.Addr) error {
@@ -306,7 +311,7 @@ func BridgeToNic(ovsClient libovsdbclient.Client, bridge string) error {
 		return err
 	}
 
-	nicName, err := GetNicName(bridge)
+	nicName, err := GetNicName(ovsClient, bridge)
 	if err != nil {
 		return err
 	}

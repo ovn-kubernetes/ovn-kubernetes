@@ -14,6 +14,8 @@ import (
 
 	"k8s.io/klog/v2"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
@@ -413,7 +415,7 @@ func checkPorts(netConfigs []*bridgeconfig.BridgeUDNConfiguration, physIntf, ofP
 
 // bootstrapOVSFlows handles ensuring basic, required flows are in place. This is done before OpenFlow manager has
 // been created/started, and only done when there is just a NORMAL flow programmed and OVN/OVS is already setup
-func bootstrapOVSFlows(nodeName string) error {
+func bootstrapOVSFlows(ovsClient libovsdbclient.Client, nodeName string) error {
 	// see if patch port exists already
 	var portsOutput string
 	var stderr string
@@ -454,7 +456,7 @@ func bootstrapOVSFlows(nodeName string) error {
 
 	var bridgeMACAddress net.HardwareAddr
 	if config.IsModeDPU() {
-		bridgeMACAddress, err = util.GetDPUOps().GetHostGatewayMACAddress(bridge, nodeName)
+		bridgeMACAddress, err = util.GetDPUOps().GetHostGatewayMACAddress(ovsClient, bridge, nodeName)
 		if err != nil {
 			return err
 		}

@@ -138,20 +138,8 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 }
 
 func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
-	// getIntfName
-	// GetNicName
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 list-ports breth0",
-		Output: "breth0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Port breth0 Interfaces",
-		Output: "breth0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 get Interface breth0 Type",
-		Output: "system",
-	})
+	// GetNicName lookups (list-ports / get Port Interfaces / get Interface Type)
+	// are now served by the libovsdb harness seeded in BeforeEach.
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 mac_in_use",
 		Output: "00:00:00:55:66:99",
@@ -338,7 +326,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 					Name:  "breth0",
 					Ports: []string{"breth0-port-uuid", "eth0-port-uuid"},
 				},
-				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0"},
+				&vswitchd.Port{UUID: "breth0-port-uuid", Name: "breth0", Interfaces: []string{"breth0-iface-uuid"}},
+				&vswitchd.Interface{UUID: "breth0-iface-uuid", Name: "breth0", Type: "system"},
 				&vswitchd.Port{UUID: "eth0-port-uuid", Name: "eth0"},
 			},
 		})
