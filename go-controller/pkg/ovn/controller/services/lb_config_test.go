@@ -1167,6 +1167,168 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "LB service with AllocateLoadBalancerNodePorts=false should not create NodePort LB",
+			args: args{
+				slices: makeV4SliceWithEndpoints(
+					corev1.ProtocolTCP,
+					kubetest.MakeReadyEndpoint(nodeA, "10.128.0.2"),
+					kubetest.MakeReadyEndpoint(nodeB, "10.128.1.2"),
+				),
+				service: &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: corev1.ServiceSpec{
+						Type:                          corev1.ServiceTypeLoadBalancer,
+						ClusterIP:                     "192.168.1.1",
+						ClusterIPs:                    []string{"192.168.1.1"},
+						AllocateLoadBalancerNodePorts: ptr.To(false),
+						Ports: []corev1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: outportstr,
+							NodePort:   5, // This should be ignored when AllocateLoadBalancerNodePorts=false
+						}},
+						ExternalIPs: []string{"4.2.2.2"},
+					},
+					Status: corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
+								IP: "5.5.5.5",
+							}},
+						},
+					},
+				},
+			},
+			resultsSame: true,
+			resultSharedGatewayCluster: []lbConfig{
+				{
+					vips:     []string{"192.168.1.1", "4.2.2.2", "5.5.5.5"},
+					protocol: corev1.ProtocolTCP,
+					inport:   inport,
+					clusterEndpoints: util.LBEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: util.PortToLBEndpoints{},
+				},
+			},
+			// No NodePort LB should be created
+			resultSharedGatewayNode: nil,
+		},
+		{
+			name: "LB service with AllocateLoadBalancerNodePorts=true should create NodePort LB",
+			args: args{
+				slices: makeV4SliceWithEndpoints(
+					corev1.ProtocolTCP,
+					kubetest.MakeReadyEndpoint(nodeA, "10.128.0.2"),
+					kubetest.MakeReadyEndpoint(nodeB, "10.128.1.2"),
+				),
+				service: &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: corev1.ServiceSpec{
+						Type:                          corev1.ServiceTypeLoadBalancer,
+						ClusterIP:                     "192.168.1.1",
+						ClusterIPs:                    []string{"192.168.1.1"},
+						AllocateLoadBalancerNodePorts: ptr.To(true),
+						Ports: []corev1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: outportstr,
+							NodePort:   5,
+						}},
+						ExternalIPs: []string{"4.2.2.2"},
+					},
+					Status: corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
+								IP: "5.5.5.5",
+							}},
+						},
+					},
+				},
+			},
+			resultsSame: true,
+			resultSharedGatewayCluster: []lbConfig{
+				{
+					vips:     []string{"192.168.1.1", "4.2.2.2", "5.5.5.5"},
+					protocol: corev1.ProtocolTCP,
+					inport:   inport,
+					clusterEndpoints: util.LBEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: util.PortToLBEndpoints{},
+				},
+			},
+			// NodePort LB should be created as a template config (since no ETP and no affinity timeout)
+			resultSharedGatewayTemplate: []lbConfig{
+				{
+					vips:        []string{"node"},
+					protocol:    corev1.ProtocolTCP,
+					inport:      5,
+					hasNodePort: true,
+					clusterEndpoints: util.LBEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: util.PortToLBEndpoints{},
+				},
+			},
+		},
+		{
+			name: "NodePort service should always create NodePort LB regardless of AllocateLoadBalancerNodePorts",
+			args: args{
+				slices: makeV4SliceWithEndpoints(
+					corev1.ProtocolTCP,
+					kubetest.MakeReadyEndpoint(nodeA, "10.128.0.2"),
+					kubetest.MakeReadyEndpoint(nodeB, "10.128.1.2"),
+				),
+				service: &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
+					Spec: corev1.ServiceSpec{
+						Type:       corev1.ServiceTypeNodePort,
+						ClusterIP:  "192.168.1.1",
+						ClusterIPs: []string{"192.168.1.1"},
+						Ports: []corev1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: outportstr,
+							NodePort:   5,
+						}},
+					},
+				},
+			},
+			resultsSame: true,
+			resultSharedGatewayCluster: []lbConfig{
+				{
+					vips:     []string{"192.168.1.1"},
+					protocol: corev1.ProtocolTCP,
+					inport:   inport,
+					clusterEndpoints: util.LBEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: util.PortToLBEndpoints{},
+				},
+			},
+			// NodePort LB should be created as a template config
+			resultSharedGatewayTemplate: []lbConfig{
+				{
+					vips:        []string{"node"},
+					protocol:    corev1.ProtocolTCP,
+					inport:      5,
+					hasNodePort: true,
+					clusterEndpoints: util.LBEndpoints{
+						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
+						Port:  outport,
+					},
+					nodeEndpoints: util.PortToLBEndpoints{},
+				},
+			},
+		},
 	}
 
 	for i, tt := range tests {

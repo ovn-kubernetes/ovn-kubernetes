@@ -195,7 +195,20 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 		// NodePort services get a per-node load balancer, but with the node's physical IP as the vip
 		// Thus, the vip "node" will be expanded later.
 		// This is NEVER influenced by InternalTrafficPolicy
-		if svcPort.NodePort != 0 {
+		//
+		// Only create NodePort load balancers if the service type requires NodePorts
+		// Note: We cannot rely on svcPort.NodePort != 0 because Kubernetes keeps the
+		// NodePort value internally even after it's removed from the spec when
+		// allocateLoadBalancerNodePorts=false. We must check the service type and
+		// allocation policy instead.
+		//
+		// Create NodePort LBs for:
+		// 1. NodePort services (always have NodePorts)
+		// 2. LoadBalancer services where allocateLoadBalancerNodePorts is not explicitly false
+		shouldCreateNodePortLB := service.Spec.Type == corev1.ServiceTypeNodePort ||
+			(service.Spec.Type == corev1.ServiceTypeLoadBalancer && util.LoadBalancerServiceHasNodePortAllocation(service))
+
+		if shouldCreateNodePortLB && svcPort.NodePort != 0 {
 			nodePortLBConfig := lbConfig{
 				protocol:             svcPort.Protocol,
 				inport:               svcPort.NodePort,
