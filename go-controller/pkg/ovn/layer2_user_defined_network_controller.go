@@ -132,8 +132,7 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 	switch h.objType {
 	case factory.PodType:
 		newPod := newObj.(*corev1.Pod)
-		oldPod := oldObj.(*corev1.Pod)
-		if err := h.oc.reconcilePodForUserDefinedNetwork(oldPod, newPod, inRetryCache); err != nil {
+		if err := h.oc.reconcilePodForUserDefinedNetwork(newPod); err != nil {
 			return err
 		}
 
