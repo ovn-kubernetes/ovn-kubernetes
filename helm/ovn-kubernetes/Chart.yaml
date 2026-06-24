@@ -24,14 +24,6 @@ dependencies:
     version: 1.3.0
     tags:
       - ovnkube-identity
-  - name: ovnkube-node
-    version: 1.3.0
-    tags:
-      - ovnkube-node
-  - name: ovnkube-node-dpu
-    version: 1.3.0
-    tags:
-      - ovnkube-node-dpu
   - name: ovnkube-node-dpu-host
     version: 1.3.0
     tags:

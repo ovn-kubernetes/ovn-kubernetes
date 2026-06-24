@@ -622,8 +622,8 @@ false
 			<td><pre lang="json">
 {
   "ovn-ipsec": false,
-  "ovnkube-node-dpu": false,
-  "ovnkube-node-dpu-host": false
+  "ovnkube-node-dpu-host": false,
+  "ovnkube-single-node-zone-dpu": false
 }
 </pre>
 </td>

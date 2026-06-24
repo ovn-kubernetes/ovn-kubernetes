@@ -5,10 +5,8 @@
 tags:
   ovs-node: false
   ovn-ipsec: false
-  ovnkube-node: false
   ovnkube-control-plane: false
   ovnkube-node-dpu-host: false
-  ovnkube-node-dpu: false
   ovnkube-single-node-zone: false
 
 # -- Whether or not call `lookup` Helm function, set it to `true` if you want to run `helm dry-run/template/lint`

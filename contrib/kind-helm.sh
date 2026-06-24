@@ -573,7 +573,7 @@ create_ovn_kubernetes() {
       else
         helm_image_args="--set global.image.repository=${OVN_IMAGE%:*} --set global.image.tag=${OVN_IMAGE##*:}"
       fi
-      helm_log_args="--set ovnkube-control-plane.logLevel=${MASTER_LOG_LEVEL} --set ovnkube-node.logLevel=${NODE_LOG_LEVEL} --set ovnkube-single-node-zone.ovnkubeNodeLogLevel=${NODE_LOG_LEVEL} --set-string ovnkube-single-node-zone.nbLogLevel=\"${OVN_LOG_LEVEL_NB}\" --set-string ovnkube-single-node-zone.sbLogLevel=\"${OVN_LOG_LEVEL_SB}\" --set-string ovnkube-single-node-zone.northdLogLevel=\"${OVN_LOG_LEVEL_NORTHD}\" --set-string ovnkube-node.ovnControllerLogLevel=\"${OVN_LOG_LEVEL_CONTROLLER}\" --set-string ovnkube-single-node-zone.ovnControllerLogLevel=\"${OVN_LOG_LEVEL_CONTROLLER}\""
+      helm_log_args="--set ovnkube-control-plane.logLevel=${MASTER_LOG_LEVEL} --set ovnkube-single-node-zone.ovnkubeNodeLogLevel=${NODE_LOG_LEVEL} --set-string ovnkube-single-node-zone.nbLogLevel=\"${OVN_LOG_LEVEL_NB}\" --set-string ovnkube-single-node-zone.sbLogLevel=\"${OVN_LOG_LEVEL_SB}\" --set-string ovnkube-single-node-zone.northdLogLevel=\"${OVN_LOG_LEVEL_NORTHD}\" --set-string ovnkube-single-node-zone.ovnControllerLogLevel=\"${OVN_LOG_LEVEL_CONTROLLER}\""
     fi
     cmd=$(cat <<EOF
 helm upgrade --install ovn-kubernetes . -f "${value_file}" ${extra_values_args} \
