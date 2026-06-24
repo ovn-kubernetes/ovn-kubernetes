@@ -120,7 +120,7 @@ func TestBuildSNATWithAllowedExtIPs(t *testing.T) {
 	}
 }
 
-func TestEquivalentNATChecksProvidedExtIPAddressSets(t *testing.T) {
+func TestEquivalentNATChecksAllowedExtIPsButNotExemptedExtIPs(t *testing.T) {
 	externalIP := net.ParseIP("169.254.0.12")
 	_, logicalIP, err := net.ParseCIDR("100.128.0.0/24")
 	if err != nil {
@@ -137,6 +137,12 @@ func TestEquivalentNATChecksProvidedExtIPAddressSets(t *testing.T) {
 	broadSearch := BuildSNATWithMatch(&externalIP, logicalIP, "rtos-blue-node", externalIDs, "")
 	if !isEquivalentNAT(existing, broadSearch) {
 		t.Fatal("expected broad SNAT search without allowed_ext_ips to still match")
+	}
+
+	existing = BuildSNATWithExemptedExtIPs(&externalIP, logicalIP, "rtos-blue-node", externalIDs, "", "old-exempted-ext-ips-uuid")
+	searched = BuildSNATWithExemptedExtIPs(&externalIP, logicalIP, "rtos-blue-node", externalIDs, "", "new-exempted-ext-ips-uuid")
+	if !isEquivalentNAT(existing, searched) {
+		t.Fatal("expected SNATs with different exempted_ext_ips to match for update")
 	}
 }
 
