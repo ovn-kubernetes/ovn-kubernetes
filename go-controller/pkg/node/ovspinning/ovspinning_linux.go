@@ -179,7 +179,7 @@ func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet) error {
 	}
 
 	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity", ovsVSwitchdPID)
-	return setProcessCPUAffinity(ovsVSwitchdPID, set)
+	return setProcessCPUAffinity(ovsVSwitchdPID, "pmd", set)
 }
 
 func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
@@ -190,7 +190,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 	}
 
 	klog.V(5).Infof("Managing ovsdb-server[%s] daemon CPU affinity", ovsDBserverPID)
-	return setProcessCPUAffinity(ovsDBserverPID, set)
+	return setProcessCPUAffinity(ovsDBserverPID, "", set)
 }
 
 // setProcessCPUAffinity sets the CPU affinity of a target process and all its threads
@@ -204,6 +204,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 //
 // Parameters:
 //   - targetPIDStr: string representation of the target process ID
+//   - skippedThreadsPrefix: prefix of threads to skip; if empty, all threads are affected
 //   - set: pointer to the desired CPU set; if empty, current process affinity is used
 //
 // Returns:
@@ -212,7 +213,7 @@ func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 // The function skips setting affinity if the target process already has the desired
 // CPU affinity. Individual thread affinity setting failures are logged as warnings
 // but don't stop the overall operation.
-func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
+func setProcessCPUAffinity(targetPIDStr string, skippedThreadsPrefix string, set *cpuset.CPUSet) error {
 
 	targetPID, err := strconv.Atoi(targetPIDStr)
 	if err != nil {
@@ -240,7 +241,7 @@ func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
 		return nil
 	}
 
-	taskIDs, err := getThreadsOfProcess(targetPID)
+	taskIDs, err := getThreadsOfProcess(targetPID, skippedThreadsPrefix)
 	if err != nil {
 		return fmt.Errorf("can't get tasks of PID(%d):%w", targetPID, err)
 	}
@@ -303,8 +304,8 @@ func printCPUSet(cpus unix.CPUSet) string {
 	return strings.TrimRight(result.String(), ",")
 }
 
-// getThreadsOfProcess returns the list of thread IDs of the given process
-func getThreadsOfProcess(pid int) ([]int, error) {
+// getThreadsOfProcess returns the list of thread IDs of the given process skipping some threads
+func getThreadsOfProcess(pid int, prefix string) ([]int, error) {
 	taskFolders, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
 	if err != nil {
 		return nil, fmt.Errorf("unable to find %d tasks: %v", pid, err)
@@ -312,6 +313,16 @@ func getThreadsOfProcess(pid int) ([]int, error) {
 
 	ret := []int{}
 	for _, taskFolder := range taskFolders {
+		if prefix != "" {
+			threadName, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/comm", pid, taskFolder.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("unable to get name of task ID %d: %s, %v", pid, taskFolder.Name(), err)
+			}
+
+			if strings.HasPrefix(string(threadName), prefix) {
+				continue
+			}
+		}
 		taskID, err := strconv.Atoi(taskFolder.Name())
 		if err != nil {
 			return nil, fmt.Errorf("unable to get task ID of %d: %s, %v", pid, taskFolder.Name(), err)
