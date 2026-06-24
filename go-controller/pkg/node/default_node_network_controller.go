@@ -37,7 +37,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
@@ -563,6 +563,9 @@ func isOVNControllerReady(ovsClient client.Client) (bool, error) {
 
 	// check whether br-int exists on node
 	if _, err := ovsops.GetBridge(ovsClient, "br-int"); err != nil {
+		if !errors.Is(err, client.ErrNotFound) {
+			return false, fmt.Errorf("could not check br-int bridge existence: %w", err)
+		}
 		return false, nil
 	}
 

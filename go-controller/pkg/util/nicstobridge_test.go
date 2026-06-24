@@ -44,6 +44,17 @@ func TestGetNicName(t *testing.T) {
 			},
 		},
 		{
+			desc:      "bridge-uplink external-id wins over system port",
+			outputExp: "uplink-iface",
+			inpBrName: "br0",
+			ovsData: []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root-ovs", Bridges: []string{"br0-uuid"}},
+				&vswitchd.Bridge{UUID: "br0-uuid", Name: "br0", Ports: []string{"port1-uuid"}, ExternalIDs: map[string]string{"bridge-uplink": "uplink-iface"}},
+				&vswitchd.Port{UUID: "port1-uuid", Name: "port1", Interfaces: []string{"iface1-uuid"}},
+				&vswitchd.Interface{UUID: "iface1-uuid", Name: "port1", Type: "system"},
+			},
+		},
+		{
 			desc:      "no system port, bridge-uplink external-id wins over br-prefix fallback",
 			outputExp: "uplink-iface",
 			inpBrName: "brOther",

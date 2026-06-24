@@ -21,6 +21,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 )
 
 // DPU operations abstraction.
@@ -106,7 +107,12 @@ func IsSimulatedDPU() bool {
 type SwitchdevDPUOps struct{}
 
 func (n *SwitchdevDPUOps) GetDPUHostRepInterface(ovsClient libovsdbclient.Client, bridgeName string) (string, error) {
-	portsToInterfaces, err := getBridgePortsInterfaces(ovsClient, bridgeName)
+	br, err := ovsops.GetBridge(ovsClient, bridgeName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get bridge %q: %w", bridgeName, err)
+	}
+
+	portsToInterfaces, err := getBridgePortsInterfaces(ovsClient, br)
 	if err != nil {
 		return "", err
 	}

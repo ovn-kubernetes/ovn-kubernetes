@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
+
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
@@ -15,13 +18,39 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
+// OVS bridge predicates for filtering.
+type ovsBridgePredicate func(*vswitchd.Bridge) bool
+
 // OVS port predicates for filtering
 type ovsPortPredicate func(*vswitchd.Port) bool
+
+// OVS interface predicates for filtering.
+type ovsInterfacePredicate func(*vswitchd.Interface) bool
+
+// GetOpenvSwitch returns the singleton Open_vSwitch row from the cache.
+// When no row exists, the returned error wraps libovsdbclient.ErrNotFound so
+// callers can detect that case via errors.Is. This is the libovsdb equivalent
+// of `ovs-vsctl list Open_vSwitch`.
+func GetOpenvSwitch(ovsClient libovsdbclient.Client) (*vswitchd.OpenvSwitch, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+	defer cancel()
+	openvSwitchList := []*vswitchd.OpenvSwitch{}
+	err := ovsClient.List(ctx, &openvSwitchList)
+	if err != nil {
+		return nil, err
+	}
+	if len(openvSwitchList) == 0 {
+		return nil, fmt.Errorf("no openvSwitch entry found: %w", libovsdbclient.ErrNotFound)
+	}
+
+	return openvSwitchList[0], nil
+}
 
 // UpdateOpenvSwitchExternalIDs merges the given map into the Open_vSwitch
 // row's external_ids. Every entry in the map is inserted or overwritten;
 // existing keys that are not in the map are left alone. Returns ErrNotFound
-// if the row does not exist.
+// if the row does not exist. This is the libovsdb equivalent of
+// `ovs-vsctl set Open_vSwitch . external_ids:key=value ...`.
 func UpdateOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, kv map[string]string) error {
 	if len(kv) == 0 {
 		return nil
@@ -41,7 +70,8 @@ func UpdateOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, kv map[string
 
 // RemoveOpenvSwitchExternalIDs removes the given keys from the Open_vSwitch
 // row's external_ids. Keys that are not present, and a missing row, are both
-// no-ops.
+// no-ops. This is the libovsdb equivalent of
+// `ovs-vsctl --if-exists remove Open_vSwitch . external_ids <key> ...`.
 func RemoveOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, keys ...string) error {
 	if len(keys) == 0 {
 		return nil
@@ -64,7 +94,8 @@ func RemoveOpenvSwitchExternalIDs(ovsClient libovsdbclient.Client, keys ...strin
 	return m.Delete(opModel)
 }
 
-// FindOVSPortsWithPredicate returns all OVS ports matching the predicate.
+// FindOVSPortsWithPredicate returns all OVS ports matching the predicate. This
+// is the libovsdb equivalent of `ovs-vsctl find Port <conditions>`.
 func FindOVSPortsWithPredicate(ovsClient libovsdbclient.Client, p ovsPortPredicate) ([]*vswitchd.Port, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
 	defer cancel()
@@ -73,35 +104,53 @@ func FindOVSPortsWithPredicate(ovsClient libovsdbclient.Client, p ovsPortPredica
 	return ports, err
 }
 
-// GetBridgeContainingPort returns the OVS bridge that owns the named port.
+// ListBridges looks up all OVS bridges from the cache. This is the libovsdb
+// equivalent of `ovs-vsctl list-br`.
+func ListBridges(ovsClient libovsdbclient.Client) ([]*vswitchd.Bridge, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+	defer cancel()
+	searchedBridges := []*vswitchd.Bridge{}
+	err := ovsClient.List(ctx, &searchedBridges)
+	return searchedBridges, err
+}
+
+// FindBridgesWithPredicate returns all OVS bridges in the cache that match the
+// predicate. This is the libovsdb equivalent of `ovs-vsctl find Bridge
+// <conditions>`.
+func FindBridgesWithPredicate(ovsClient libovsdbclient.Client, p ovsBridgePredicate) ([]*vswitchd.Bridge, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+	defer cancel()
+	searchedBridges := []*vswitchd.Bridge{}
+
+	err := ovsClient.WhereCache(p).List(ctx, &searchedBridges)
+	return searchedBridges, err
+}
+
+// GetPortBridge returns the OVS bridge that owns the named port.
 // Returns ErrNotFound if the port does not exist or no bridge references it
 // in its ports column. This is the libovsdb equivalent of
 // `ovs-vsctl port-to-br <port>`.
-func GetBridgeContainingPort(ovsClient libovsdbclient.Client, portName string) (*vswitchd.Bridge, error) {
+func GetPortBridge(ovsClient libovsdbclient.Client, portName string) (*vswitchd.Bridge, error) {
 	port, err := GetOVSPort(ovsClient, portName)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
-	defer cancel()
-	bridges := []*vswitchd.Bridge{}
-	if err := ovsClient.List(ctx, &bridges); err != nil {
-		return nil, err
-	}
-	var matchingBridge *vswitchd.Bridge
-	for _, bridge := range bridges {
+	bridges, err := FindBridgesWithPredicate(ovsClient, func(bridge *vswitchd.Bridge) bool {
 		for _, uuid := range bridge.Ports {
 			if uuid == port.UUID {
-				if matchingBridge != nil {
-					return nil, fmt.Errorf("OVSDB corruption: port %q is referenced by multiple bridges: %w", portName, errMultipleResults)
-				}
-				matchingBridge = bridge
-				break
+				return true
 			}
 		}
+		return false
+	})
+	if err != nil {
+		return nil, err
 	}
-	if matchingBridge != nil {
-		return matchingBridge, nil
+	if len(bridges) > 1 {
+		return nil, fmt.Errorf("OVSDB corruption: port %q is referenced by multiple bridges: %w", portName, errMultipleResults)
+	}
+	if len(bridges) == 1 {
+		return bridges[0], nil
 	}
 	return nil, fmt.Errorf("no bridge contains port %q: %w", portName, libovsdbclient.ErrNotFound)
 }
@@ -121,6 +170,15 @@ func GetBridgeContainingPort(ovsClient libovsdbclient.Client, portName string) (
 // (or the bridge's same-named internal port) already exists on a different
 // bridge the call fails, matching `ovs-vsctl add-port`'s cross-bridge
 // behaviour.
+//
+// This is the libovsdb equivalent of:
+//
+//	ovs-vsctl -- --may-exist add-br <bridge>
+//	          -- br-set-external-id <bridge> bridge-id <bridge>
+//	          -- br-set-external-id <bridge> bridge-uplink <uplink>
+//	          -- set bridge <bridge> fail-mode=standalone other_config:hwaddr=<hwaddr>
+//	          -- --may-exist add-port <bridge> <uplink>
+//	          -- set port <uplink> other-config:transient=true
 func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplinkName, hwaddr string) error {
 	// Refuse to silently re-parent any port that's already attached to a
 	// different bridge — ovs-vsctl add-port errors out in that case. This
@@ -130,7 +188,7 @@ func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplink
 		if portName == "" {
 			continue
 		}
-		existing, err := GetBridgeContainingPort(ovsClient, portName)
+		existing, err := GetPortBridge(ovsClient, portName)
 		if err != nil {
 			if errors.Is(err, libovsdbclient.ErrNotFound) {
 				continue
@@ -142,10 +200,9 @@ func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplink
 		}
 	}
 
-	failMode := vswitchd.BridgeFailModeStandalone
 	bridge := &vswitchd.Bridge{
 		Name:     bridgeName,
-		FailMode: &failMode,
+		FailMode: ptr.To(vswitchd.BridgeFailModeStandalone),
 		ExternalIDs: map[string]string{
 			"bridge-id":     bridgeName,
 			"bridge-uplink": uplinkName,
@@ -174,7 +231,8 @@ func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplink
 		BulkOp:      false,
 	}
 	internalPortModel := operationModel{
-		Model: internalPort,
+		Model:          internalPort,
+		OnModelUpdates: []interface{}{&internalPort.Interfaces},
 		DoAfter: func() {
 			bridge.Ports = append(bridge.Ports, internalPort.UUID)
 		},
@@ -191,6 +249,7 @@ func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplink
 	}
 	uplinkPortModel := operationModel{
 		Model:            uplinkPort,
+		OnModelUpdates:   []interface{}{&uplinkPort.Interfaces},
 		OnModelMutations: []interface{}{&uplinkPort.OtherConfig},
 		DoAfter: func() {
 			bridge.Ports = append(bridge.Ports, uplinkPort.UUID)
@@ -229,7 +288,8 @@ func CreateOrUpdateNicBridge(ovsClient libovsdbclient.Client, bridgeName, uplink
 	return err
 }
 
-// GetBridge looks up an OVS bridge by name.
+// GetBridge looks up an OVS bridge by name. This is the libovsdb equivalent of
+// `ovs-vsctl br-exists <name>` plus `ovs-vsctl list Bridge <name>`.
 func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, error) {
 	found := []*vswitchd.Bridge{}
 	opModel := operationModel{
@@ -247,9 +307,11 @@ func GetBridge(ovsClient libovsdbclient.Client, name string) (*vswitchd.Bridge, 
 	return found[0], nil
 }
 
-// DeleteBridge deletes an OVS bridge along with all its ports and interfaces
-// and detaches it from the Open_vSwitch root row. It is idempotent: a missing
-// bridge is not an error.
+// DeleteBridge deletes an OVS bridge and detaches it from the Open_vSwitch root
+// row. OVSDB garbage collection removes Port and Interface rows that become
+// unreachable through the bridge's strong references. It is idempotent: a
+// missing bridge is not an error. This is the libovsdb equivalent of
+// `ovs-vsctl --if-exists del-br <name>`.
 func DeleteBridge(ovsClient libovsdbclient.Client, bridgeName string) error {
 	ops, err := DeleteBridgeOps(ovsClient, nil, bridgeName)
 	if err != nil {
@@ -262,9 +324,9 @@ func DeleteBridge(ovsClient libovsdbclient.Client, bridgeName string) error {
 	return err
 }
 
-// DeleteBridgeOps returns operations to delete an OVS bridge and all its ports
-// and interfaces, and to detach the bridge from the Open_vSwitch root row's
-// bridges set. A missing bridge yields zero operations.
+// DeleteBridgeOps returns operations to delete an OVS bridge and detach it from
+// the Open_vSwitch root row's bridges set. A missing bridge yields zero
+// operations.
 func DeleteBridgeOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, bridgeName string) ([]ovsdb.Operation, error) {
 	bridge, err := GetBridge(ovsClient, bridgeName)
 	if err != nil {
@@ -275,34 +337,6 @@ func DeleteBridgeOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, bri
 	}
 
 	m := newModelClient(ovsClient)
-
-	// Cascade-delete each port's interfaces and the port itself. We hydrate
-	// each Port from cache via ovsClient.Get to learn its Interfaces UUIDs.
-	for _, portUUID := range bridge.Ports {
-		port := &vswitchd.Port{UUID: portUUID}
-		ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
-		err := ovsClient.Get(ctx, port)
-		cancel()
-		if err != nil {
-			if errors.Is(err, libovsdbclient.ErrNotFound) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to look up Port %s on bridge %s: %w", portUUID, bridgeName, err)
-		}
-		for _, ifaceUUID := range port.Interfaces {
-			iface := &vswitchd.Interface{UUID: ifaceUUID}
-			ops, err = m.DeleteOps(ops, operationModel{Model: iface, ErrNotFound: false, BulkOp: false})
-			if err != nil {
-				return nil, fmt.Errorf("failed to build delete ops for Interface %s: %w", ifaceUUID, err)
-			}
-		}
-		ops, err = m.DeleteOps(ops, operationModel{Model: port, ErrNotFound: false, BulkOp: false})
-		if err != nil {
-			return nil, fmt.Errorf("failed to build delete ops for Port %s: %w", portUUID, err)
-		}
-	}
-
-	// Detach the bridge from Open_vSwitch.bridges and delete the bridge row.
 	ovs := &vswitchd.OpenvSwitch{Bridges: []string{bridge.UUID}}
 	return m.DeleteOps(ops,
 		operationModel{
@@ -340,6 +374,60 @@ func GetOVSInterface(ovsClient libovsdbclient.Client, name string) (*vswitchd.In
 	return found[0], nil
 }
 
+// RemoveOVSInterfaceExternalIDs removes the given keys from an Interface's
+// external_ids. Missing keys are no-ops.
+func RemoveOVSInterfaceExternalIDs(ovsClient libovsdbclient.Client, name string, keys ...string) error {
+	ops, err := RemoveOVSInterfaceExternalIDsOps(ovsClient, nil, name, keys...)
+	if err != nil {
+		return err
+	}
+	_, err = TransactAndCheck(ovsClient, ops)
+	return err
+}
+
+// RemoveOVSInterfaceExternalIDsOps returns operations that remove the given
+// keys from an Interface's external_ids. Missing keys are no-ops.
+func RemoveOVSInterfaceExternalIDsOps(ovsClient libovsdbclient.Client, ops []ovsdb.Operation, name string, keys ...string) ([]ovsdb.Operation, error) {
+	if len(keys) == 0 {
+		return ops, nil
+	}
+	ids := make(map[string]string, len(keys))
+	for _, key := range keys {
+		ids[key] = ""
+	}
+	iface := &vswitchd.Interface{Name: name, ExternalIDs: ids}
+	opModel := operationModel{
+		Model:            iface,
+		OnModelMutations: []interface{}{&iface.ExternalIDs},
+		ErrNotFound:      false,
+		BulkOp:           false,
+	}
+	m := newModelClient(ovsClient)
+	return m.DeleteOps(ops, opModel)
+}
+
+// ListInterfaces looks up all OVS interfaces from the cache. This is the
+// libovsdb equivalent of `ovs-vsctl list Interface`.
+func ListInterfaces(ovsClient libovsdbclient.Client) ([]*vswitchd.Interface, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+	defer cancel()
+	searchedInterfaces := []*vswitchd.Interface{}
+	err := ovsClient.List(ctx, &searchedInterfaces)
+	return searchedInterfaces, err
+}
+
+// FindInterfacesWithPredicate returns all OVS interfaces in the cache that
+// match the predicate. This is the libovsdb equivalent of
+// `ovs-vsctl find Interface <conditions>`.
+func FindInterfacesWithPredicate(ovsClient libovsdbclient.Client, p ovsInterfacePredicate) ([]*vswitchd.Interface, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), types.OVSDBTimeout)
+	defer cancel()
+	searchedInterfaces := []*vswitchd.Interface{}
+
+	err := ovsClient.WhereCache(p).List(ctx, &searchedInterfaces)
+	return searchedInterfaces, err
+}
+
 // GetOVSPort looks up an OVS port by name. Returns ErrNotFound if no port with
 // that name exists. This is the libovsdb equivalent of
 // `ovs-vsctl find Port name=<name>`.
@@ -363,7 +451,10 @@ func GetOVSPort(ovsClient libovsdbclient.Client, name string) (*vswitchd.Port, e
 // CreateOrUpdatePortWithInterface creates or updates an OVS port and its interface on a bridge.
 // This creates both the Port and Interface objects atomically in a single transaction,
 // and attaches the port to the specified bridge.
-// The interface type is set to "internal".
+// The interface type is set to "internal". This is the libovsdb equivalent of:
+//
+//	ovs-vsctl --may-exist add-port <bridge> <port>
+//	          -- set Interface <port> type=internal external_ids:...
 func CreateOrUpdatePortWithInterface(ovsClient libovsdbclient.Client, bridgeName, portName string, portExternalIDs, ifaceExternalIDs map[string]string) error {
 	ops, err := CreateOrUpdatePortWithInterfaceOps(ovsClient, nil, bridgeName, portName, portExternalIDs, ifaceExternalIDs)
 	if err != nil {
@@ -450,7 +541,7 @@ func CreateOrUpdatePodPortOps(ovsClient libovsdbclient.Client, ops []ovsdb.Opera
 	// below would leave the same Port UUID in two Bridges' ports lists.
 	// This matches the user-space safety check that `ovs-vsctl
 	// --may-exist add-port BRIDGE PORT` performs.
-	existing, err := GetBridgeContainingPort(ovsClient, portName)
+	existing, err := GetPortBridge(ovsClient, portName)
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 		return nil, err
 	}
@@ -463,8 +554,9 @@ func CreateOrUpdatePodPortOps(ovsClient libovsdbclient.Client, ops []ovsdb.Opera
 	bridge := &vswitchd.Bridge{Name: bridgeName}
 
 	ifaceModel := operationModel{
-		Model:          iface,
-		OnModelUpdates: []interface{}{&iface.Type, &iface.Options, &iface.MTURequest, &iface.ExternalIDs},
+		Model:            iface,
+		OnModelUpdates:   []interface{}{&iface.Type, &iface.Options, &iface.MTURequest},
+		OnModelMutations: []interface{}{&iface.ExternalIDs},
 		DoAfter: func() {
 			port.Interfaces = []string{iface.UUID}
 		},
@@ -472,8 +564,9 @@ func CreateOrUpdatePodPortOps(ovsClient libovsdbclient.Client, ops []ovsdb.Opera
 		BulkOp:      false,
 	}
 	portModel := operationModel{
-		Model:          port,
-		OnModelUpdates: []interface{}{&port.OtherConfig, &port.ExternalIDs},
+		Model:            port,
+		OnModelUpdates:   []interface{}{&port.Interfaces},
+		OnModelMutations: []interface{}{&port.OtherConfig, &port.ExternalIDs},
 		DoAfter: func() {
 			bridge.Ports = append(bridge.Ports, port.UUID)
 		},
@@ -494,9 +587,9 @@ func CreateOrUpdatePodPortOps(ovsClient libovsdbclient.Client, ops []ovsdb.Opera
 // DeletePortWithInterfaces deletes an OVS port and all its interfaces from a
 // bridge. The deletion is scoped to bridgeName: a port that exists with the
 // given name but is attached to a different bridge is left untouched, matching
-// the semantics of `ovs-vsctl --if-exists del-port <bridge> <port>`. The
-// function is idempotent - a missing port, or a missing bridge, are both
-// no-ops.
+// the semantics of `ovs-vsctl --if-exists --with-iface del-port <bridge>
+// <port>`. The function is idempotent - a missing port, or a missing bridge,
+// are both no-ops.
 func DeletePortWithInterfaces(ovsClient libovsdbclient.Client, bridgeName, portName string) error {
 	port, err := GetOVSPort(ovsClient, portName)
 	if err != nil {
@@ -520,6 +613,7 @@ func DeletePortWithInterfaces(ovsClient libovsdbclient.Client, bridgeName, portN
 		}
 	}
 	if !onBridge {
+		klog.Warningf("OVS port %q exists but is not attached to bridge %q; leaving it untouched", portName, bridgeName)
 		return nil // Port lives on a different bridge; out of scope
 	}
 	ops, err := DeletePortWithInterfacesOps(ovsClient, nil, port, bridgeName)
