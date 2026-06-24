@@ -32,7 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/egressip"
@@ -1957,7 +1957,7 @@ func cleanupSharedGateway(ovsClient libovsdbclient.Client) error {
 			return fmt.Errorf("failed to list ovn-localnet-port ports: %w", err)
 		}
 		for _, port := range ports {
-			bridge, err := ovsops.GetBridgeContainingPort(ovsClient, port.Name)
+			bridge, err := ovsops.GetPortBridge(ovsClient, port.Name)
 			if err != nil {
 				if errors.Is(err, libovsdbclient.ErrNotFound) {
 					continue

@@ -37,7 +37,7 @@ import (
 	networkqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"

@@ -17,7 +17,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"

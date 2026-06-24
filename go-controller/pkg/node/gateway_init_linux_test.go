@@ -37,7 +37,7 @@ import (
 	udnfakeclient "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"

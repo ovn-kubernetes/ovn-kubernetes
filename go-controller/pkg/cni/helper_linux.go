@@ -27,7 +27,7 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
