@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -41,6 +42,7 @@ import (
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/addresssetmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/sbdb"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -441,6 +443,35 @@ func startDefaultNodeController(oc *DefaultNetworkController) {
 	})
 }
 
+func expectRecordedClusterSNATInsertWithExemption(recordingClient *libovsdbtest.RecordingClient, logicalIP, exemptedExtIP string) {
+	var clusterSNATInsertOps []ovsdb.Operation
+	for _, txn := range recordingClient.Transactions {
+		for _, op := range txn {
+			if op.Op == ovsdb.OperationInsert && op.Table == "NAT" &&
+				op.Row["type"] == nbdb.NATTypeSNAT && op.Row["logical_ip"] == logicalIP {
+				clusterSNATInsertOps = append(clusterSNATInsertOps, op)
+			}
+		}
+	}
+	gomega.Expect(clusterSNATInsertOps).To(gomega.HaveLen(1))
+	gomega.Expect(clusterSNATInsertOps[0].Row).To(gomega.HaveKey("exempted_ext_ips"))
+	exemptedExtIPs, ok := clusterSNATInsertOps[0].Row["exempted_ext_ips"].(ovsdb.OvsSet)
+	gomega.Expect(ok).To(gomega.BeTrue())
+	gomega.Expect(exemptedExtIPs.GoSet).To(gomega.ConsistOf(ovsdb.UUID{GoUUID: exemptedExtIP}))
+}
+
+func expectRouterClusterSNATWithExemption(routerNATs []*nbdb.NAT, logicalIP, exemptedExtIP string) {
+	var clusterSNATs []*nbdb.NAT
+	for _, nat := range routerNATs {
+		if nat.Type == nbdb.NATTypeSNAT && nat.LogicalIP == logicalIP {
+			clusterSNATs = append(clusterSNATs, nat)
+		}
+	}
+	gomega.Expect(clusterSNATs).To(gomega.HaveLen(1))
+	gomega.Expect(clusterSNATs[0].ExemptedExtIPs).NotTo(gomega.BeNil())
+	gomega.Expect(*clusterSNATs[0].ExemptedExtIPs).To(gomega.Equal(exemptedExtIP))
+}
+
 var _ = ginkgo.Describe("Default network controller operations", func() {
 	var (
 		app      *cli.App
@@ -763,6 +794,66 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
+			"--init-gateways",
+			"--nodeport",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("syncs dual-stack no-overlay SNAT exemption address set before gateway NATs", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			config.Default.Transport = types.NetworkTransportNoOverlay
+			config.NoOverlay.OutboundSNAT = types.NoOverlaySNATEnabled
+			oc.addressSetFactory = addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+			oc.ovnClusterLRPToJoinIfAddrs, err = oc.getOVNClusterRouterPortToJoinSwitchIfAddrs()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			dualStackGatewayConfig := node1.gatewayConfig(config.GatewayModeLocal, uint(vlanID))
+			dualStackGatewayConfig.IPAddresses = ovntest.MustParseIPNets(node1.GatewayRouterIPMask, "fd99::2/64")
+			dualStackGatewayConfig.NextHops = ovntest.MustParseIPs(node1.GatewayRouterNextHop, "fd99::1")
+			gomega.Expect(util.SetL3GatewayConfig(nodeAnnotator, dualStackGatewayConfig)).To(gomega.Succeed())
+			gomega.Expect(util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(node1.NodeSubnet, "aef0:0:0:1::/64"))).To(gomega.Succeed())
+			gomega.Expect(util.SetNodeHostCIDRs(nodeAnnotator, sets.New(fmt.Sprintf("%s/24", node1.NodeIP), "fd99::2/64"))).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+
+			recordingClient := libovsdbtest.NewRecordingClient(nbClient)
+			oc.nbClient = recordingClient
+			node, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			err = oc.addUpdateLocalNodeEvent(node, &nodeSyncs{
+				syncNode:              true,
+				syncClusterRouterPort: true,
+				syncMgmtPort:          true,
+				syncGw:                true,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			as, err := getNoOverlaySNATExemptionAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(as).NotTo(gomega.BeNil())
+			v4UUID, v6UUID := as.GetASUUID()
+			gomega.Expect(v4UUID).NotTo(gomega.BeEmpty())
+			gomega.Expect(v6UUID).NotTo(gomega.BeEmpty())
+
+			expectRecordedClusterSNATInsertWithExemption(recordingClient, clusterCIDR, v4UUID)
+			expectRecordedClusterSNATInsertWithExemption(recordingClient, clusterv6CIDR, v6UUID)
+
+			routerNATs, err := libovsdbops.GetRouterNATs(nbClient, &nbdb.LogicalRouter{Name: types.GWRouterPrefix + node1.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			expectRouterClusterSNATWithExemption(routerNATs, clusterCIDR, v4UUID)
+			expectRouterClusterSNATWithExemption(routerNATs, clusterv6CIDR, v6UUID)
+			_, failed := oc.gatewaysFailed.Load(testNode.Name)
+			gomega.Expect(failed).To(gomega.BeFalse())
+
+			return nil
+		}
+
+		err := app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR + "," + clusterv6CIDR,
+			"-k8s-service-cidr=10.96.0.0/16,fd00:10:96::/112",
 			"--init-gateways",
 			"--nodeport",
 		})
