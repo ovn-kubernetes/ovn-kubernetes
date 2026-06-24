@@ -80,6 +80,22 @@ data:
     frr-namespace = {{ .Values.global.managedBGPFRRNamespace | default "frr-k8s-system" }}
 {{- end }}
 {{- end }}
+{{- if .Values.global.enableTracing }}
+
+    [ovnkubernetesfeature]
+    enable-tracing=true
+
+    [tracing]
+    endpoint={{ .Values.global.tracing.endpoint }}
+    insecure={{ .Values.global.tracing.insecure }}
+    service-name={{ .Values.global.tracing.serviceName }}
+    sampling-rate={{ .Values.global.tracing.samplingRate }}
+    propagated-context-annotation-key={{ .Values.global.tracing.propagatedContextAnnotationKey }}
+    export-timeout={{ .Values.global.tracing.exportTimeout }}
+    batch-timeout={{ .Values.global.tracing.batchTimeout }}
+    max-export-batch-size={{ .Values.global.tracing.maxExportBatchSize }}
+    max-queue-size={{ .Values.global.tracing.maxQueueSize }}
+{{- end }}
 
 {{- if or .Values.global.skipCallToK8s (eq (include "needNamespace" $hostNetworkNamespace) "true") }}
 ---

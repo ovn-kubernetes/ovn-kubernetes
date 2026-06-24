@@ -13,6 +13,7 @@ import (
 	"time"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"go.opentelemetry.io/otel/codes"
 	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +35,7 @@ import (
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	logicalswitchmanager "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -456,7 +458,7 @@ func (bnc *BaseNetworkController) ensurePodAnnotation(pod *corev1.Pod, nadKey st
 	return podAnnotation, true, nil
 }
 
-func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKey string,
+func (bnc *BaseNetworkController) addLogicalPortToNetwork(ctx context.Context, pod *corev1.Pod, nadKey string,
 	network *nadapi.NetworkSelectionElement, enable *bool) (ops []ovsdb.Operation,
 	lsp *nbdb.LogicalSwitchPort, podAnnotation *util.PodAnnotation, newlyCreatedPort bool, err error) {
 	var ls *nbdb.LogicalSwitch
@@ -582,9 +584,9 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(pod *corev1.Pod, nadKe
 	// functionally equivalent going forward.
 	var annotationUpdated bool
 	if bnc.IsUserDefinedNetwork() {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(pod, existingLSP, nadKey, network, networkRole)
+		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotationForUserDefinedNetwork(ctx, pod, existingLSP, nadKey, network, networkRole)
 	} else {
-		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(pod, existingLSP, podDesc, nadKey, network, networkRole)
+		podAnnotation, annotationUpdated, err = bnc.allocatePodAnnotation(ctx, pod, existingLSP, podDesc, nadKey, network, networkRole)
 	}
 
 	if err != nil {
@@ -828,7 +830,7 @@ func calculateStaticMAC(podDesc string, mac string) (net.HardwareAddr, error) {
 }
 
 // allocatePodAnnotation and update the corresponding pod annotation.
-func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc,
+func (bnc *BaseNetworkController) allocatePodAnnotation(ctx context.Context, pod *corev1.Pod, existingLSP *nbdb.LogicalSwitchPort, podDesc,
 	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
 	var releaseIPs bool
 	var podMac net.HardwareAddr
@@ -971,7 +973,13 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 	klog.V(5).Infof("Annotation values: ip=%v ; mac=%s ; gw=%s",
 		podIfAddrs, podMac, podAnnotation.Gateways)
 	annoStart := time.Now()
+	_, annotationSpan := tracing.StartSpan(ctx, "update-pod-network-annotation")
 	err = bnc.updatePodAnnotationWithRetry(pod, podAnnotation, nadKey)
+	if err != nil {
+		annotationSpan.RecordError(err)
+		annotationSpan.SetStatus(codes.Error, err.Error())
+	}
+	annotationSpan.End()
 	podAnnoTime := time.Since(annoStart)
 	klog.Infof("[%s] addLogicalPort annotation time took %v", podDesc, podAnnoTime)
 	if err != nil {
@@ -984,7 +992,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 
 // allocatePodAnnotationForUserDefinedNetwork and update the corresponding pod
 // annotation.
-func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod *corev1.Pod, lsp *nbdb.LogicalSwitchPort,
+func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(ctx context.Context, pod *corev1.Pod, lsp *nbdb.LogicalSwitchPort,
 	nadKey string, network *nadapi.NetworkSelectionElement, networkRole string) (*util.PodAnnotation, bool, error) {
 	switchName, err := bnc.getExpectedSwitchName(pod)
 	if err != nil {
@@ -1033,6 +1041,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod
 			nadKey, pod.Namespace, pod.Name, pod.Spec.NodeName, err)
 	}
 	updatedPod, podAnnotation, err := bnc.podAnnotationAllocator.AllocatePodAnnotation(
+		ctx,
 		ipAllocator,
 		node,
 		pod,

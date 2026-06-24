@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/security/advancedtls"
 
 	"k8s.io/klog/v2"
@@ -26,18 +27,17 @@ const (
 	serviceEgressIPNode = "Service_Egress_IP"
 )
 
-// UnimplementedHealthServer must be embedded to have forward compatible implementations.
 type healthServer struct {
-	UnimplementedHealthServer
+	grpc_health_v1.UnimplementedHealthServer
 }
 
-func (healthServer) Check(_ context.Context, req *HealthCheckRequest) (*HealthCheckResponse, error) {
-	response := HealthCheckResponse{}
+func (healthServer) Check(_ context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	response := grpc_health_v1.HealthCheckResponse{}
 
 	if req.GetService() == serviceEgressIPNode {
-		response.Status = HealthCheckResponse_SERVING
+		response.Status = grpc_health_v1.HealthCheckResponse_SERVING
 	} else {
-		response.Status = HealthCheckResponse_NOT_SERVING
+		response.Status = grpc_health_v1.HealthCheckResponse_NOT_SERVING
 	}
 	return &response, nil
 }
@@ -108,7 +108,7 @@ func (ehs *egressIPHealthServer) Run(stopCh <-chan struct{}) {
 	go func() {
 		defer wg.Done()
 
-		RegisterHealthServer(grpcServer, &healthServer{})
+		grpc_health_v1.RegisterHealthServer(grpcServer, &healthServer{})
 		klog.Infof("Starting Egress IP Health Server on %s:%d", ehs.nodeMgmtIP.String(), ehs.healthCheckPort)
 		if err := grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
 			klog.Fatalf("Egress IP Health checking server failed: %v", err)
@@ -217,7 +217,7 @@ func (ehc *egressIPHealthClient) Probe(dialCtx context.Context) bool {
 		return false
 	}
 
-	response, err := NewHealthClient(ehc.conn).Check(dialCtx, &HealthCheckRequest{Service: serviceEgressIPNode})
+	response, err := grpc_health_v1.NewHealthClient(ehc.conn).Check(dialCtx, &grpc_health_v1.HealthCheckRequest{Service: serviceEgressIPNode})
 	if err != nil {
 		// check failed. What we will return here will depend on ehc.probeFailed. If this is the first failure,
 		// let's tolerate it to account for cases where session went down and we just need it re-established.
@@ -231,5 +231,5 @@ func (ehc *egressIPHealthClient) Probe(dialCtx context.Context) bool {
 
 	ehc.probeFailed = false
 	klog.V(5).Infof("Got response from %s (%s): %v", ehc.nodeName, ehc.nodeAddr, response.GetStatus())
-	return response.GetStatus() == HealthCheckResponse_SERVING
+	return response.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
 }

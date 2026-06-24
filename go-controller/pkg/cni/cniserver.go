@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/mux"
 	nadv1Listers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
+	"go.opentelemetry.io/otel/codes"
 
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -34,6 +35,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/tracing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -288,6 +290,36 @@ func (s *Server) handleCNIRequest(r *http.Request) (result []byte, err error) {
 	if err != nil {
 		klog.Infof("Failed to convert CNI request %+v to PodRequest, err %v", cr, err)
 		return nil, err
+	}
+	var linkedAnnotations map[string]string
+	if s.clientSet != nil && s.clientSet.podLister != nil && request.PodNamespace != "" && request.PodName != "" {
+		pod, podErr := s.clientSet.podLister.Pods(request.PodNamespace).Get(request.PodName)
+		if podErr == nil && pod != nil {
+			linkedAnnotations = pod.Annotations
+		}
+	}
+	ctx = tracing.ContextWithSpanNamePrefix(ctx, cniSpanPrefix)
+	if operation := cniSpanOperation(request.Command); operation != "" {
+		var spanErr error
+		ctx, span := tracing.StartLinkedSpan(ctx, operation, linkedAnnotations)
+		request.ctx = ctx
+		span.SetAttributes(cniRequestAttrs(request)...)
+		defer func() {
+			span.SetAttributes(cniRequestAttrs(request)...)
+			if spanErr != nil {
+				span.RecordError(spanErr)
+				span.SetStatus(codes.Error, spanErr.Error())
+			}
+			span.End()
+			if flushErr := tracing.ForceFlush(context.Background()); flushErr != nil {
+				klog.V(4).Infof("CNI trace flush failed for %s/%s: %v", request.PodNamespace, request.PodName, flushErr)
+			}
+		}()
+		defer func() {
+			spanErr = err
+		}()
+	} else {
+		request.ctx = ctx
 	}
 	var response *Response
 	defer func() {
