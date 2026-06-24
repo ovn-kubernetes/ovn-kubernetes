@@ -1277,9 +1277,8 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				expectedData = append(expectedData, policyPG)
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 
-				oldPod := pod.DeepCopy()
 				pod.Labels = map[string]string{labelName: "does-not-match"}
-				gomega.Expect(fakeOvn.controller.ensureLocalZonePod(oldPod, pod, false)).To(gomega.Succeed())
+				gomega.Expect(fakeOvn.controller.ensureLocalZonePod(pod, false)).To(gomega.Succeed())
 
 				expectedData = getUpdatedInitialDB([]testPod{nPodTest})
 				expectedData = append(expectedData, getDefaultDenyData(newNetpolDataParams(networkPolicy))...)
