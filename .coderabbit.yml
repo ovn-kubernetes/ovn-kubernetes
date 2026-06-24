@@ -3,7 +3,9 @@ language: "en-US"
 early_access: false
 reviews:
   profile: "chill"
-  request_changes_workflow: false
+  # When true, CodeRabbit submits a "Request Changes" review on failing
+  # checks, which blocks the PR from merging until resolved or overridden.
+  request_changes_workflow: true
   high_level_summary: true
   # Place the summary in the walkthrough comment instead of editing the PR description
   # which is pretty invasive
@@ -17,6 +19,17 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    # https://docs.coderabbit.ai/configuration/auto-review#auto_pause_after_reviewed_commits
+    # Pause automatic reviews after this many reviewed commits on a single PR.
+    # The counter resets each time the pause is lifted via "@coderabbitai resume".
+    # Set to 0 to disable. Default is 5.
+    # NOTE: Keep PRs in draft until they are ready for review to avoid
+    # consuming CodeRabbit tokens on work-in-progress commits. Even large PRs
+    # should not need more than 7 new commits than original plan if the design is sound.
+    # Reviewers: try to provide a complete round of feedback in one pass so
+    # the author can address everything in a single push, rather than
+    # trickling comments across multiple rounds that each trigger a re-review.
+    auto_pause_after_reviewed_commits: 7
   path_instructions:
     - path: "**"
       instructions: |
@@ -148,8 +161,12 @@ reviews:
         - Use klog for logging (not fmt.Print or log.*). Flag misuse
           of log levels (e.g. klog.Infof for errors instead of klog.Errorf or klog.Warningf,
           klog.V(5) for important events that should be at lower verbosity).
-        - Errors must be wrapped with context using fmt.Errorf("...: %w",
-          err) — flag bare error returns without wrapping.
+        - Flag bare error returns (return err) without adding
+          context. Errors should be wrapped with fmt.Errorf to add
+          context. Use %w when the caller should be able to inspect
+          the underlying error with errors.Is/errors.As. Use %v
+          when the underlying error is an implementation detail that
+          should not be exposed as part of the API.
         - Flag hardcoded values — these must come from
           config or constants.
         - Consider performance at scale — flag code that may degrade
@@ -270,5 +287,340 @@ reviews:
         - Changes to this package without unit tests: flag it.
   path_filters:
     - "!**/vendor/**"
+  # https://docs.coderabbit.ai/pr-reviews/pre-merge-checks
+  # NOTE: "@coderabbitai ignore pre-merge checks" overrides ALL failing
+  # checks on the PR, not individual ones. There is no per-check override.
+  # Authors should fix all fixable checks before using the override, and
+  # document justification for each ignored check in the PR description.
+  pre_merge_checks:
+    # When true, only requested reviewers (not the PR author) can override
+    # failing pre-merge checks via the "Ignore" checkbox or the
+    # "@coderabbitai ignore pre-merge checks" command. Overrides are logged
+    # for auditability. When false, anyone (including the author) can override.
+    override_requested_reviewers_only: false
+    docstrings:
+      mode: "warning"
+      threshold: 80
+    title:
+      mode: "error"
+      requirements: >-
+        Title should follow the project convention: 'subcomponent: short description'.
+        Use imperative mood, as if giving orders to the codebase to change its
+        behaviour, e.g. 'make xyzzy do frotz' instead of 'makes xyzzy do frotz'
+        or 'changed xyzzy to do frotz'.
+        Use lowercase except for proper nouns, acronyms, and code identifiers.
+        Keep under 72 characters. Examples: 'networkpolicy: validate ipBlock strictly',
+        'egressip: fix frequently rebalancing IPs'.
+    description:
+      mode: "error"
+    issue_assessment:
+      mode: "error"
+    # https://docs.coderabbit.ai/pr-reviews/custom-checks
+    custom_checks:
+      - name: "Unit Tests for Go Changes"
+        mode: "error"
+        instructions: >-
+          If Go source files (*.go) under go-controller/pkg/ or
+          go-controller/cmd/ are added or modified (excluding files
+          under go-controller/vendor/ and *_test.go files), check
+          whether corresponding *_test.go files are also added or
+          modified in this PR. Exclude documentation-only, CI, or
+          script changes.
+
+          Fail if production Go code changed with no test file changes.
+          Pass only if no production Go files changed, or if test files
+          are included alongside the production changes.
+
+          If failing, advise the author: if there is a valid reason for
+          not including tests (e.g. existing tests already cover the
+          change, the change is trivial, or testing is infeasible),
+          document that justification in the PR description under
+          "How to verify it" and then, once all other pre-merge checks
+          are also addressed, use "@coderabbitai ignore pre-merge
+          checks" to override.
+      - name: "E2E Tests for Feature Changes"
+        mode: "error"
+        instructions: >-
+          If Go source files (*.go) under go-controller/pkg/ or
+          go-controller/cmd/ are added or modified in a way that adds
+          new user-facing behavior or changes existing user-facing
+          behavior (excluding vendor/, *_test.go, pure refactors with
+          no behavioral change, and internal-only changes), check
+          whether files under test/e2e/ are also added or modified in
+          this PR.
+
+          Fail if user-facing behavior changed with no E2E test changes.
+          Pass only if no user-facing behavior changed, or if E2E test
+          files are included.
+
+          If failing, advise the author: if E2E tests are genuinely not
+          feasible for this change, document the justification in the
+          PR description under "How to verify it" and then, once all
+          other pre-merge checks are also addressed, use
+          "@coderabbitai ignore pre-merge checks" to override.
+      - name: "Docs for Feature and Behavior Changes"
+        mode: "error"
+        instructions: >-
+          If a PR introduces a new feature, implements an OKEP, changes
+          user-facing behavior, fixes a significant bug that alters
+          expected behavior, or modifies architecture or control flows,
+          check whether files under docs/ are also added or modified.
+
+          Pass if the change is a minor bug fix, pure refactor,
+          test-only change, CI/infra change, or internal-only change
+          that does not affect user-facing behavior or architecture.
+          Also pass if docs/ files are included.
+
+          Fail if the PR adds or changes user-facing behavior,
+          architecture, or flows without any docs/ changes.
+
+          If the PR establishes a new coding pattern, convention, or
+          precedent (e.g. how controllers should be structured, how
+          APIs should be designed, how errors should be handled), the
+          developer guide (docs/developer-guide/) or contributor guide
+          (CONTRIBUTING.md) must be updated to document the new
+          convention. Fail if a new pattern is introduced without
+          documenting it for future contributors.
+
+          Fail if a new doc page (*.md) is added under docs/ but the
+          mkdocs.yml nav section is not updated to include it.
+
+          If failing, advise the author: if docs are genuinely not
+          required for this change, document the reasoning in the PR
+          description and then use "@coderabbitai ignore pre-merge
+          checks" to override.
+      - name: "Stale Project Docs and Config"
+        mode: "error"
+        instructions: >-
+          Check whether changes in this PR make any of the following
+          project files stale or inaccurate: .coderabbit.yml (path
+          instructions, pre-merge checks, global review instructions),
+          CONTRIBUTING.md, AGENTS.md, docs/developer-guide/,
+          docs/governance/, ARCHITECTURE.md, CODEOWNERS, or mkdocs.yml
+          navigation entries.
+
+          Examples of staleness:
+
+          1. A file or directory is renamed, moved, or deleted but is
+          still referenced by path in .coderabbit.yml
+          path_instructions or CODEOWNERS.
+
+          2. A process described in CONTRIBUTING.md is changed by the
+          PR but the doc is not updated.
+
+          3. A code entity (CRD, flag, binary, config key) is renamed
+          or removed but still referenced in docs or AGENTS.md.
+
+          4. Architecture or component boundaries change but
+          ARCHITECTURE.md is not updated.
+
+          Fail if any project docs or config become stale due to the
+          changes. Pass only if the PR does not introduce any such
+          staleness, or if the affected docs/config files are also
+          updated in this PR.
+
+          If failing, advise the author: update the affected
+          docs/config files in this PR, or if the flagged staleness is
+          a false positive, explain why in a PR comment and use
+          "@coderabbitai ignore pre-merge checks" to override.
+      - name: "Test Structure and Quality"
+        mode: "warning"
+        instructions: >-
+          Review test code (go-controller/**/*_test.go and test/e2e/**)
+          for these quality requirements:
+
+          1. Single responsibility: each It block should test one
+          specific behavior. Flag tests that assert multiple unrelated
+          behaviors.
+
+          2. Setup and cleanup: tests should use BeforeEach/AfterEach
+          for setup and cleanup. Flag tests that create resources
+          without cleanup, especially cluster-scoped resources.
+          FakeOVN, fake clients, and test fixtures must be shut down
+          or cleaned up.
+
+          3. Timeouts: operations that interact with the cluster must
+          include appropriate timeouts. Flag indefinite waits or
+          missing timeouts on Eventually/Consistently calls.
+
+          4. Assertion messages: assertions should include meaningful
+          failure messages that help diagnose what went wrong.
+          Bad: Expect(err).NotTo(HaveOccurred()).
+          Good: Expect(err).NotTo(HaveOccurred(), "failed to create
+          test pod").
+
+          5. Flag time.Sleep in tests: use gomega
+          Eventually/Consistently for async assertions instead.
+
+          6. Flag os.Setenv in tests: use t.Setenv which auto-restores
+          on cleanup to avoid env pollution across tests.
+
+          7. Flag bare t.Fatal(err) or t.Fatalf calls that only pass
+          the error without describing what operation failed. Must
+          include context, e.g. t.Fatalf("failed to create pod: %v",
+          err).
+
+          8. Tests requiring root/cap_net_admin must use
+          ovntest.OnSupportedPlatformsIt instead of ginkgo.It.
+
+          9. E2E tests must be provider-agnostic: flag hardcoded
+          network names, node access methods, container runtime calls,
+          or assumptions that only work on KIND.
+      - name: "Go Code Quality"
+        mode: "warning"
+        instructions: >-
+          Check new or modified Go code (excluding vendor/ and
+          *_test.go) for these objective issues:
+
+          1. Flag use of fmt.Print, fmt.Println, log.Print, log.Fatal,
+          or log.* for logging. The project uses klog exclusively.
+
+          2. Flag bare error returns without context wrapping. Errors
+          must be wrapped with fmt.Errorf("...: %w", err). Use %w when
+          the caller should be able to inspect the underlying error
+          with errors.Is/errors.As. Use %v when the underlying error
+          is an implementation detail that should not be exposed as
+          part of the API.
+
+          3. Flag bare integers passed as time.Duration without
+          explicit units. Must use e.g. 10*time.Second, not 10.
+
+          4. Flag err := inside nested blocks that shadow an outer err
+          variable, silently losing errors.
+
+          5. Flag changes that only handle IPv4 without considering
+          IPv6. Dual-stack (IPv4+IPv6) must always be considered.
+
+          6. Flag unprotected concurrent map or slice access. Shared
+          state between goroutines must be guarded by locks.
+
+          7. Flag missing Close()/defer on netns.Get() or
+          netlink.Handle which cause namespace handle and VRF leaks.
+      - name: "Commit Message Quality"
+        mode: "error"
+        instructions: >-
+          Check commit messages and structure in this PR for quality:
+
+          1. Each commit must be a logical, self-contained unit of
+          change. Flag commits that bundle unrelated changes together.
+
+          2. Subject line should be concise and descriptive, under 72
+          characters. Use imperative mood, as if giving orders to the
+          codebase to change its behaviour, e.g. "make xyzzy do frotz"
+          instead of "makes xyzzy do frotz" or "changed xyzzy to do
+          frotz". Prefix with the affected component when scoped
+          (e.g. "egressip: fix frequently rebalancing IPs",
+          "networkpolicy: validate ipBlock strictly").
+
+          3. Body must be present and explain why the change is needed,
+          not just what was changed. The code diff already shows what.
+
+          4. Flag vague, uninformative, or generic messages like "fix",
+          "update", "wip", "changes", "misc", or "address review
+          comments" that provide no meaningful context. Review feedback
+          should be squashed into the relevant logical commit, not
+          added as a separate "address review comments" commit.
+
+          5. Flag overly verbose commit messages that read like
+          AI-generated changelogs — listing every function name,
+          variable, or line changed. Commit messages should explain
+          intent at a high level, not narrate the diff.
+
+          6. No merge commits (e.g. "Merge branch 'master' into ..."
+          or "Merge remote-tracking branch ..."). The author should
+          rebase onto the target branch instead. Run "git rebase
+          origin/master" to replace merge commits with a linear
+          history.
+
+          Fail if any commit violates any of the above points.
+          Pass only if all commits satisfy all 6 criteria.
+      - name: "No Downstream References"
+        mode: "error"
+        instructions: >-
+          Check the PR title, description, and commit messages for
+          references to Jira tickets (e.g. JIRA-1234, OCPBUGS-1234,
+          CORENET-1234), downstream issue trackers, or product-specific
+          bug IDs.
+
+          Fail if any downstream reference is found without a
+          corresponding upstream GitHub issue link. Pass only if no
+          downstream references are found, or if an upstream GitHub
+          issue is linked alongside.
+
+          The author should clone the issue to an upstream GitHub issue
+          and link that instead. If failing, advise the author: create
+          a corresponding upstream GitHub issue, link it in the PR,
+          and remove or replace the downstream reference. Use
+          "@coderabbitai ignore pre-merge checks" only if the
+          downstream reference is justified and explained in the PR
+          description.
+      - name: "Large PR Warning"
+        mode: "warning"
+        instructions: >-
+          Flag PRs that are excessively large or difficult to review.
+
+          Fail if the PR changes more than 7000 lines (additions +
+          deletions), or if it implements an entire OKEP or large
+          feature end-to-end in a single PR touching many unrelated
+          components.
+
+          Pass if the PR is under 7000 lines, or if it is large but
+          all changes are tightly related (e.g. a single large
+          refactor, codegen output, or vendor update).
+
+          Large PRs are a nightmare for reviewers, lead to shallow
+          reviews, and increase the risk of bugs slipping through.
+          Advise the author to split the work into smaller, focused
+          PRs with functional changes scoped to individual components
+          or logical steps. Each PR should be independently reviewable
+          and mergeable.
+      - name: "AI-Generated Code Smell"
+        mode: "error"
+        instructions: >-
+          Flag signs of AI-generated code that was not properly
+          reviewed by the author before submission:
+
+          1. Obvious comment slop: comments that merely restate the
+          code they annotate (e.g. "// set a to b" above "a = b",
+          "// return the error" above "return err", "// create the
+          pod" above "CreatePod()"). These add no value and clutter
+          the codebase.
+
+          2. Large blocks of unit tests that appear auto-generated
+          and are unrelated to the functional changes in the PR. Flag
+          if the PR adds hundreds of lines of tests for code that was
+          not modified in this PR.
+
+          3. Overly verbose or boilerplate-heavy code that follows
+          repetitive patterns suggesting template expansion rather
+          than thoughtful implementation.
+
+          4. Comments or variable names that reference AI tools or
+          prompts (e.g. "as suggested by", "generated by", "TODO:
+          verify this AI suggestion").
+
+          Fail if any of the above 4 patterns are found in new or
+          modified code. Pass only if the code is clean, comments add
+          genuine value, and test changes are proportional to the
+          functional changes.
+      - name: "AI Config Authorship Restriction"
+        mode: "error"
+        instructions: >-
+          If the PR modifies .coderabbit.yml, any **/AGENTS.md, or
+          any **/ARCHITECTURE.md file, check whether the PR author's
+          GitHub handle is listed in MAINTAINERS.md as a current
+          maintainer. These files control AI review behavior, agent
+          instructions, and architectural documentation — changes
+          from external contributors or non-SMEs risk degrading
+          review quality or introducing security issues.
+
+          Fail if the PR author is not listed in MAINTAINERS.md and
+          the PR modifies .coderabbit.yml, any **/AGENTS.md, or any
+          **/ARCHITECTURE.md file. Advise the author that these
+          files may only be changed by recognized maintainers listed
+          in MAINTAINERS.md.
+
+          Pass only if none of those files are modified, or the PR
+          author is listed in MAINTAINERS.md as a current maintainer.
 chat:
   auto_reply: true
