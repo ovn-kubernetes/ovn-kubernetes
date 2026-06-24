@@ -66,6 +66,8 @@ type GatewayManager struct {
 	routerLoadBalancerGroupUUID string
 
 	transitRouterInfo *transitRouterInfo
+
+	cleanupDuplicateNoOverlayClusterSNATsFn func(*GatewayManager, *nbdb.LogicalRouter, []*nbdb.NAT) error
 }
 
 type GatewayOption func(*GatewayManager)
@@ -172,6 +174,12 @@ func WithLoadBalancerGroups(routerLBGroup, clusterLBGroup, switchLBGroup string)
 func WithNetworkNameForNADKeyResolver(getNetworkNameForNADKey func(nadKey string) string) GatewayOption {
 	return func(manager *GatewayManager) {
 		manager.getNetworkNameForNADKey = getNetworkNameForNADKey
+	}
+}
+
+func WithDuplicateNoOverlayClusterSNATCleanup(cleanup func(*GatewayManager, *nbdb.LogicalRouter, []*nbdb.NAT) error) GatewayOption {
+	return func(manager *GatewayManager) {
+		manager.cleanupDuplicateNoOverlayClusterSNATsFn = cleanup
 	}
 }
 
@@ -948,6 +956,11 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 		if err != nil {
 			return fmt.Errorf("failed to update SNAT rule for pod on router %s error: %v", gw.gwRouterName, err)
 		}
+		if gw.cleanupDuplicateNoOverlayClusterSNATsFn != nil {
+			if err := gw.cleanupDuplicateNoOverlayClusterSNATsFn(gw, gwRouter, nats); err != nil {
+				return fmt.Errorf("failed to cleanup duplicate no-overlay SNATs on router %s error: %w", gw.gwRouterName, err)
+			}
+		}
 	} else {
 		// ensure we do not have any leftover SNAT entries after an upgrade
 		for _, logicalSubnet := range gwConfig.clusterSubnets {
@@ -964,6 +977,90 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 		return fmt.Errorf("failed to sync stale SNATs on node %s: %v", nodeName, err)
 	}
 	return nil
+}
+
+// cleanupDuplicateNoOverlayClusterSNATs removes stale default-network no-overlay
+// cluster-subnet SNATs that only differ by missing or outdated exempted_ext_ips.
+func (gw *GatewayManager) cleanupDuplicateNoOverlayClusterSNATs(gwRouter *nbdb.LogicalRouter, desiredNATs []*nbdb.NAT) error {
+	routerNATs, err := libovsdbops.GetRouterNATs(gw.nbClient, gwRouter)
+	if err != nil {
+		return fmt.Errorf("unable to get NAT entries for router %+v: %w", gwRouter, err)
+	}
+
+	staleNATUUIDs := sets.Set[string]{}
+	for _, desiredNAT := range desiredNATs {
+		if desiredNAT.ExemptedExtIPs == nil || *desiredNAT.ExemptedExtIPs == "" {
+			continue
+		}
+
+		matches := []*nbdb.NAT{}
+		for _, routerNAT := range routerNATs {
+			if isEquivalentNoOverlayClusterSNATForCleanup(routerNAT, desiredNAT) {
+				matches = append(matches, routerNAT)
+			}
+		}
+		if len(matches) < 2 {
+			continue
+		}
+
+		keepUUID := ""
+		for _, nat := range matches {
+			if ptr.Equal(nat.ExemptedExtIPs, desiredNAT.ExemptedExtIPs) {
+				keepUUID = nat.UUID
+				break
+			}
+		}
+		if keepUUID == "" {
+			return fmt.Errorf("unable to find desired NAT with exempted_ext_ips %q among %d duplicate SNATs on router %s",
+				*desiredNAT.ExemptedExtIPs, len(matches), gwRouter.Name)
+		}
+
+		for _, nat := range matches {
+			if nat.UUID != keepUUID {
+				staleNATUUIDs.Insert(nat.UUID)
+			}
+		}
+	}
+
+	if staleNATUUIDs.Len() == 0 {
+		return nil
+	}
+
+	ops, err := libovsdbops.DeleteNATsWithPredicateOps(gw.nbClient, nil, func(nat *nbdb.NAT) bool {
+		return staleNATUUIDs.Has(nat.UUID)
+	})
+	if err != nil {
+		return fmt.Errorf("unable to build duplicate no-overlay SNAT cleanup operations for router %s: %w", gwRouter.Name, err)
+	}
+	_, err = libovsdbops.TransactAndCheck(gw.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("unable to delete duplicate no-overlay SNATs on router %s: %w", gwRouter.Name, err)
+	}
+	return nil
+}
+
+func isEquivalentNoOverlayClusterSNATForCleanup(existing, desired *nbdb.NAT) bool {
+	if existing.Type != nbdb.NATTypeSNAT || desired.Type != nbdb.NATTypeSNAT {
+		return false
+	}
+	if existing.ExternalIP != desired.ExternalIP ||
+		existing.LogicalIP != desired.LogicalIP ||
+		existing.Match != desired.Match ||
+		existing.ExternalPortRange != desired.ExternalPortRange ||
+		existing.Priority != desired.Priority {
+		return false
+	}
+	if !maps.Equal(existing.ExternalIDs, desired.ExternalIDs) ||
+		!maps.Equal(existing.Options, desired.Options) {
+		return false
+	}
+	if !ptr.Equal(existing.LogicalPort, desired.LogicalPort) ||
+		!ptr.Equal(existing.ExternalMAC, desired.ExternalMAC) ||
+		!ptr.Equal(existing.GatewayPort, desired.GatewayPort) ||
+		!ptr.Equal(existing.AllowedExtIPs, desired.AllowedExtIPs) {
+		return false
+	}
+	return true
 }
 
 // gatewayInit creates a gateway router for the local chassis.

@@ -896,5 +896,25 @@ func (oc *DefaultNetworkController) gatewayOptions() []GatewayOption {
 			oc.switchLoadBalancerGroupUUID,
 		))
 	}
+	if util.IsNoOverlaySNATExemptionNeeded(oc) {
+		opts = append(opts, WithDuplicateNoOverlayClusterSNATCleanup(oc.cleanupDuplicateNoOverlayClusterSNATsOnce))
+	}
 	return opts
+}
+
+func (oc *DefaultNetworkController) cleanupDuplicateNoOverlayClusterSNATsOnce(gw *GatewayManager, gwRouter *nbdb.LogicalRouter, desiredNATs []*nbdb.NAT) error {
+	oc.duplicateNoOverlayClusterSNATCleanupLock.Lock()
+	defer oc.duplicateNoOverlayClusterSNATCleanupLock.Unlock()
+
+	if oc.duplicateNoOverlayClusterSNATCleanupDoneRouters == nil {
+		oc.duplicateNoOverlayClusterSNATCleanupDoneRouters = map[string]struct{}{}
+	}
+	if _, ok := oc.duplicateNoOverlayClusterSNATCleanupDoneRouters[gwRouter.Name]; ok {
+		return nil
+	}
+	if err := gw.cleanupDuplicateNoOverlayClusterSNATs(gwRouter, desiredNATs); err != nil {
+		return err
+	}
+	oc.duplicateNoOverlayClusterSNATCleanupDoneRouters[gwRouter.Name] = struct{}{}
+	return nil
 }
