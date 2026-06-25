@@ -38,6 +38,7 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	"k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	utilnet "k8s.io/utils/net"
 )
@@ -3063,6 +3064,144 @@ spec:
 			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(),
 				"Neighbor entry should appear")
 			gomega.Expect(neighborMAC).Should(gomega.Equal(inf.MAC), "neighbor entry should have the correct MAC address")
+		})
+
+		ginkgo.It("[secondary-host-eip] should prevent pod IP leakage during reconciliation when new pod added to existing EgressIP namespace", func() {
+			if isUserDefinedNetwork(netConfigParams) {
+				ginkgo.Skip("Unsupported for UDNs")
+			}
+
+			const (
+				numStressPods  = 50 // Create many pods to slow down reconciliation
+				triggerPodName = "trigger-pod"
+				podNamePrefix  = "stress-pod"
+			)
+
+			egressIPSecondaryHost := "10.10.10.100"
+			if isIPv6TestRun {
+				egressIPSecondaryHost = "2001:db8:abcd:1234::100"
+			}
+
+			ginkgo.By("Step 0: Set egress node as available for egress")
+			egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
+			egressNodeAvailabilityHandler.Enable(egress1Node.name)
+			defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
+
+			ginkgo.By("Step 1: Label namespace for egress IP selection")
+			podNamespace := f.Namespace
+			namespaceLabels := map[string]string{
+				"egress-test": "true",
+			}
+			updateNamespaceLabels(f, podNamespace, namespaceLabels)
+
+			ginkgo.By(fmt.Sprintf("Step 2: Create %d stress pods and collect their IPs", numStressPods))
+			for i := 0; i < numStressPods; i++ {
+				podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
+				_, err := createGenericPodWithLabel(f, podName, pod1Node.name, f.Namespace.Name,
+					getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+				framework.ExpectNoError(err, "failed to create stress pod %s", podName)
+				podIP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, podName)
+				framework.ExpectNoError(err, "failed to get IP for stress pod %s", podName)
+				framework.Logf("Stress pod %s has IP %s", podName, podIP.String())
+			}
+
+			ginkgo.By("Step 4: Create EgressIP object targeting the namespace and pods")
+			egressIPConfig := `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - "` + egressIPSecondaryHost + `"
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            egress-test: "true"
+`
+			framework.ExpectNoError(os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644),
+				"failed to write EgressIP config")
+			defer func() {
+				if err := os.Remove(egressIPYaml); err != nil {
+					framework.Logf("Unable to remove the EgressIP config from disk: %v", err)
+				}
+			}()
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("Step 5: Verify EgressIP status is assigned to egress node")
+			statuses := verifyEgressIPStatusLengthEquals(1, nil)
+			gomega.Expect(statuses[0].Node).To(gomega.Equal(egress1Node.name),
+				"EgressIP should be assigned to egress node")
+			gomega.Expect(statuses[0].EgressIP).To(gomega.Equal(egressIPSecondaryHost),
+				"EgressIP should match configured address")
+
+			ginkgo.By("Step 7: Start packet capture on external container BEFORE creating trigger pod")
+			targetIP := secondaryTargetExternalContainer.GetIPv4()
+			if isIPv6TestRun {
+				targetIP = secondaryTargetExternalContainer.GetIPv6()
+			}
+			targetPort := secondaryTargetExternalContainer.GetPortStr()
+
+			ginkgo.By("Step 8: Create trigger pod with netexec server")
+			dst := net.JoinHostPort(targetIP, targetPort)
+			connectCmd := fmt.Sprintf("while true; do curl -s --max-time 0.1 --connect-timeout 0.1 http://%s/clientip; echo ; done", dst)
+			p, err := createGenericPodWithLabel(f, triggerPodName, pod1Node.name, f.Namespace.Name,
+				[]string{"/bin/sh", "-c", connectCmd}, podEgressLabel)
+			framework.ExpectNoError(err, "failed to create trigger pod")
+
+			ginkgo.By("Step 9: Get trigger pod IP for leak detection")
+			triggerPodIP := p.Status.PodIP
+			framework.Logf("Trigger pod %s has IP %s - will verify this IP never appears as source", triggerPodName, triggerPodIP)
+
+			ginkgo.By("Step 10: Wait for traffic generation - pod is sending requests continuously")
+			framework.Logf("Waiting 30 seconds while trigger pod sends continuous traffic and collects responses...")
+			time.Sleep(10 * time.Second)
+
+			ginkgo.By("Step 11: Check trigger pod logs to verify NO pod IP as source")
+			containerName := fmt.Sprintf("%s-container", triggerPodName)
+			podLogs, err := e2epod.GetPodLogs(context.TODO(), f.ClientSet, f.Namespace.Name, triggerPodName, containerName)
+			framework.ExpectNoError(err, "failed to get trigger pod logs")
+			// The /clientip endpoint returns the source IP in format "IP:port"
+			// For IPv4: "10.10.10.100:12345", for IPv6: "[2001:db8::1]:12345"
+			// Use net.SplitHostPort to properly parse both IPv4 and IPv6
+			lines := strings.Split(podLogs, "\n")
+			podIPCount := 0
+			egressIPCount := 0
+			totalResponses := 0
+
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				sourceIP, _, err := net.SplitHostPort(line)
+				if err != nil {
+					continue
+				}
+				totalResponses++
+
+				if sourceIP == triggerPodIP {
+					podIPCount++
+					framework.Logf("LEAK DETECTED: Pod IP %s found as source in response: %s", triggerPodIP, line)
+				} else if sourceIP == egressIPSecondaryHost {
+					egressIPCount++
+				}
+			}
+
+			framework.Logf("Analyzed %d responses from /clientip endpoint", totalResponses)
+			framework.Logf("Responses with pod IP %s as source: %d", triggerPodIP, podIPCount)
+			framework.Logf("Responses with EgressIP %s as source: %d", egressIPSecondaryHost, egressIPCount)
+
+			gomega.Expect(podIPCount).To(gomega.Equal(0),
+				"CRITICAL: Found %d responses with pod IP %s as source - indicates traffic leak during race window!",
+				podIPCount, triggerPodIP)
+
+			gomega.Expect(egressIPCount).To(gomega.BeNumerically(">", 0),
+				"Should see responses with EgressIP %s as source", egressIPSecondaryHost)
+
+			framework.Logf("SUCCESS: All %d responses used EgressIP, ZERO used pod IP - no leakage detected!", egressIPCount)
+			framework.Logf("Test completed successfully - pod IP leak prevention is working correctly")
 		})
 
 		// two pods attached to different namespaces but the same role primary user defined network
