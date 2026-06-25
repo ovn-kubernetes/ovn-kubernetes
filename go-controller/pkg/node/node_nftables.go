@@ -6,6 +6,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"net"
 
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
@@ -201,6 +202,67 @@ func setupPMTUDNFTChain() error {
 	err = nft.Run(context.TODO(), tx)
 	if err != nil {
 		return fmt.Errorf("could not update nftables rule for PMTUD: %v", err)
+	}
+	return nil
+}
+
+const nftSecondaryEgressIPChain = "secondary-egressip-check"
+
+// setupSecondaryEgressIPNFTChain sets up nftables chain and rules for secondary host EgressIP.
+// Runs in postrouting after iptables SNAT. Drops packets with SecondaryEgressIPMark that still
+// have source IP from node subnets (indicating SNAT rule was not applied).
+func setupSecondaryEgressIPNFTChain(nodeSubnets []*net.IPNet) error {
+	if len(nodeSubnets) == 0 {
+		return nil
+	}
+
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("failed to get nftables helper: %w", err)
+	}
+
+	tx := nft.NewTransaction()
+
+	// Create postrouting chain with priority 150 (after iptables NAT at priority 100)
+	tx.Add(&knftables.Chain{
+		Name:     nftSecondaryEgressIPChain,
+		Comment:  knftables.PtrTo("Drop secondary EgressIP packets if SNAT not applied"),
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.PostroutingHook),
+		Priority: knftables.PtrTo(knftables.BaseChainPriority("150")), // After iptables NAT (priority 100)
+	})
+
+	// Flush existing rules
+	tx.Flush(&knftables.Chain{
+		Name: nftSecondaryEgressIPChain,
+	})
+
+	// Add drop rule for each node subnet
+	for _, subnet := range nodeSubnets {
+		if subnet.IP.To4() != nil && config.IPv4Mode {
+			tx.Add(&knftables.Rule{
+				Chain: nftSecondaryEgressIPChain,
+				Rule: knftables.Concat(
+					"meta mark", types.SecondaryEgressIPMark,
+					"ip saddr", subnet.String(),
+					"counter drop",
+				),
+			})
+		} else if subnet.IP.To4() == nil && config.IPv6Mode {
+			tx.Add(&knftables.Rule{
+				Chain: nftSecondaryEgressIPChain,
+				Rule: knftables.Concat(
+					"meta mark", types.SecondaryEgressIPMark,
+					"ip6 saddr", subnet.String(),
+					"counter drop",
+				),
+			})
+		}
+	}
+
+	err = nft.Run(context.TODO(), tx)
+	if err != nil {
+		return fmt.Errorf("failed to setup secondary EgressIP nftables chain: %w", err)
 	}
 	return nil
 }
