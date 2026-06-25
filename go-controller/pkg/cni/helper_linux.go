@@ -566,10 +566,14 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 		}
 	}
 
-	// Add the new sandbox's OVS port, tag the port as transient so stale
-	// pod ports are scrubbed on hard reboot
+	// Add the new sandbox's OVS port. Do NOT tag the port as transient:
+	// in containerized OVS, ovs-server restarts on every helm upgrade /
+	// ovs-node container restart, and --delete-transient-ports would
+	// silently scrub the live pod veth row from conf.db. No reconciler
+	// re-adds it, so every non-hostNetwork pod on the node would lose
+	// connectivity until kubectl delete pod forces a fresh CNI ADD.
 	ovsArgs := []string{
-		"--may-exist", "add-port", "br-int", hostIfaceName, "other_config:transient=true",
+		"--may-exist", "add-port", "br-int", hostIfaceName,
 		"--", "set", "interface", hostIfaceName,
 		fmt.Sprintf("external_ids:attached_mac=%s", ifInfo.MAC),
 		fmt.Sprintf("external_ids:iface-id=%s", ifaceID),
