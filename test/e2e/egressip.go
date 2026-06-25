@@ -3651,6 +3651,277 @@ spec:
 			role:     "primary",
 		}),
 	)
+
+	/* This test does the following:
+	   0. Label egress1Node as egress node
+	   1. Create an EgressIP object
+	   2. Verify the EgressIP is assigned to egress1Node
+	   3. Create a client pod with EgressIP label
+	   4. Check connectivity from client pod to an external "node" and verify that the srcIP is the expected egressIP
+	   5. Start continuous TCP/UDP traffic monitoring in the client pod
+	   6. Trigger failover by labeling egress2Node and unlabeling the egress1Node
+	   7. Verify EgressIP is moved to egress2Node
+	   8. Stop traffic monitor and analyze results from the log file
+	   9. Summary of failover duration, connection successful/failed count and downtime
+	*/
+	ginkgo.It("Should measure EgressIP failover duration and failover impact on connection", func() {
+		ginkgo.By("0. Label egress1Node as egress node")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		framework.Logf("Added egress-assignable label to node %s", egress1Node.name)
+		e2enode.ExpectNodeHasLabel(context.TODO(), f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		podNamespace := f.Namespace
+		labels := map[string]string{
+			"name": f.Namespace.Name,
+		}
+		updateNamespaceLabels(f, podNamespace, labels)
+
+		ginkgo.By("1. Create an EgressIP object")
+		var egressIP net.IP
+		var err error
+		if isIPv6TestRun {
+			egressIP, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Egress IP")
+		egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+		err = os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644)
+		framework.ExpectNoError(err, "Unable to write EgressIP CRD config to disk")
+		framework.Logf("Creating EgressIP: %s", egressIP.String())
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("2. Verify the EgressIP is assigned to egress1Node")
+		statuses := verifyEgressIPStatusLengthEquals(1, nil)
+		if statuses[0].Node != egress1Node.name {
+			framework.Failf("Step 2. Check that the status is of length one and that it is assigned to egress1Node, failed")
+		}
+		framework.Logf("EgressIP %s is assigned to node %s", egressIP.String(), egress1Node.name)
+
+		ginkgo.By("3. Create a client pod with EgressIP label")
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, podNamespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+		framework.ExpectNoError(err, "Step 3. Create client pod with EgressIP label, failed, err: %v", err)
+		framework.Logf("Created pod %s on node %s", pod1Name, pod1Node.name)
+
+		ginkgo.By("4. Check connectivity from client pod to an external node and verify that the srcIP is the expected egressIP")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP.String()}))
+		framework.ExpectNoError(err, "Step 4. Check connectivity from client pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+		framework.Logf("Verified connectivity with EgressIP %s", egressIP.String())
+
+		ginkgo.By("5. Start continuous TCP/UDP traffic monitoring in the client pod")
+		targetIP := primaryTargetExternalContainer.GetIPv4()
+		if isIPv6TestRun {
+			targetIP = primaryTargetExternalContainer.GetIPv6()
+		}
+		trafficScript := fmt.Sprintf(`#!/bin/sh
+TARGET_IP=%s
+TARGET_PORT=%s
+OUTPUT_FILE=/tmp/traffic-log.csv
+echo "timestamp,protocol,status" > $OUTPUT_FILE
+
+while true; do
+    # TCP test
+    START_NS=$(date +%%s%%N 2>/dev/null || echo "$(date +%%s)000000000")
+    # Extract nanoseconds from START_NS
+    TIMESTAMP_NS=$(( START_NS %% 1000000000 ))
+    TIMESTAMP=$(date "+%%H:%%M:%%S").$TIMESTAMP_NS
+
+    if timeout 1 curl -s --connect-timeout 1 http://$TARGET_IP:$TARGET_PORT/clientip > /dev/null 2>&1; then
+        echo "$TIMESTAMP,TCP,SUCCESS" >> $OUTPUT_FILE
+    else
+        echo "$TIMESTAMP,TCP,FAILURE" >> $OUTPUT_FILE
+    fi
+    sleep 0.01
+
+    # UDP test
+    START_NS=$(date +%%s%%N 2>/dev/null || echo "$(date +%%s)000000000")
+    # Extract nanoseconds from START_NS
+    TIMESTAMP_NS=$(( START_NS %% 1000000000 ))
+    TIMESTAMP=$(date "+%%H:%%M:%%S").$TIMESTAMP_NS
+
+    if echo "test" | timeout 1 nc -u -w 1 $TARGET_IP $TARGET_PORT 2>&1; then
+        echo "$TIMESTAMP,UDP,SUCCESS" >> $OUTPUT_FILE
+    else
+        echo "$TIMESTAMP,UDP,FAILURE" >> $OUTPUT_FILE
+    fi
+    sleep 0.01
+done
+`, targetIP, primaryTargetExternalContainer.GetPortStr())
+
+		// Write and start the script in the pod
+		e2ekubectl.RunKubectlOrDie(podNamespace.Name, "exec", pod1Name, "--", "sh", "-c",
+			fmt.Sprintf("cat > /tmp/traffic-monitor.sh << 'SCRIPT_EOF'\n%s\nSCRIPT_EOF", trafficScript))
+		e2ekubectl.RunKubectlOrDie(podNamespace.Name, "exec", pod1Name, "--", "chmod", "+x", "/tmp/traffic-monitor.sh")
+		e2ekubectl.RunKubectlOrDie(podNamespace.Name, "exec", pod1Name, "--", "sh", "-c",
+			"nohup /tmp/traffic-monitor.sh > /tmp/monitor.log 2>&1 & echo $! > /tmp/monitor.pid")
+		framework.Logf("Started background traffic monitor in pod %s", pod1Name)
+		// Wait a bit more for connectivity to stabilize
+		time.Sleep(2 * time.Second)
+
+		ginkgo.By("6. Trigger failover by labeling egress2Node and unlabeling the egress1Node")
+		failoverStartTime := time.Now().UTC()
+		framework.Logf("Failover started at %s (UTC)", failoverStartTime.Format(time.RFC3339Nano))
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		framework.Logf("Added egress-assignable label to node %s", egress2Node.name)
+		e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+		framework.Logf("Removed egress-assignable label from node %s", egress1Node.name)
+
+		ginkgo.By("7. Verify EgressIP is moved to egress2Node")
+		var failoverCompleteTime time.Time
+		err = wait.PollImmediate(retryInterval, 2*time.Minute, func() (bool, error) {
+			statuses := getEgressIPStatusItems()
+			if len(statuses) == 1 && statuses[0].Node == egress2Node.name {
+				failoverCompleteTime = time.Now().UTC()
+				return true, nil
+			}
+			return false, nil
+		})
+		framework.ExpectNoError(err, "Step 7. Verify EgressIP is moved to egress2Node, failed: %v", err)
+		failoverDuration := failoverCompleteTime.Sub(failoverStartTime)
+		framework.Logf("EgressIP moved to node %s", egress2Node.name)
+		framework.Logf("Failover completed at %s (UTC)", failoverCompleteTime.Format(time.RFC3339Nano))
+		framework.Logf("Failover duration: %v", failoverDuration)
+		// Wait a bit more for connectivity to stabilize
+		time.Sleep(5 * time.Second)
+
+		ginkgo.By("8. Stop traffic monitor and analyze results from the log file")
+		// Stop the background process
+		pidOut, _ := e2ekubectl.RunKubectl(podNamespace.Name, "exec", pod1Name, "--", "cat", "/tmp/monitor.pid")
+		if pid := strings.TrimSpace(pidOut); pid != "" {
+			e2ekubectl.RunKubectl(podNamespace.Name, "exec", pod1Name, "--", "kill", pid)
+		}
+		time.Sleep(1 * time.Second)
+
+		// Retrieve the CSV log file
+		trafficLog, err := e2ekubectl.RunKubectl(podNamespace.Name, "exec", pod1Name, "--", "cat", "/tmp/traffic-log.csv")
+		framework.ExpectNoError(err, "Failed to retrieve traffic log")
+
+		// Parse and analyze results
+		type connectivityResult struct {
+			timestamp time.Time
+			protocol  string
+			success   bool
+		}
+		tcpResults := []connectivityResult{}
+		udpResults := []connectivityResult{}
+
+		lines := strings.Split(trafficLog, "\n")
+		parseErrorCount := 0
+
+		for i, line := range lines {
+			if i == 0 || strings.TrimSpace(line) == "" {
+				continue // Skip header and empty lines
+			}
+
+			parts := strings.Split(line, ",")
+			if len(parts) < 3 {
+				framework.Logf("Warning: line %d has insufficient fields: %s", i+1, line)
+				continue
+			}
+
+			timeStr := strings.TrimSpace(parts[0])
+			timeOnly, err := time.Parse("15:04:05.000000000", timeStr)
+			if err != nil {
+				framework.Logf("Failed to parse timestamp: %v", err)
+				parseErrorCount++
+				continue
+			}
+
+			// Combine time-of-day with failover date to create full timestamp
+			year, month, day := failoverStartTime.Year(), failoverStartTime.Month(), failoverStartTime.Day()
+			timestamp := time.Date(year, month, day, timeOnly.Hour(), timeOnly.Minute(), timeOnly.Second(), timeOnly.Nanosecond(), time.UTC)
+			protocol := strings.TrimSpace(parts[1])
+			success := strings.TrimSpace(parts[2]) == "SUCCESS"
+			result := connectivityResult{
+				timestamp: timestamp,
+				protocol:  protocol,
+				success:   success,
+			}
+			if protocol == "TCP" {
+				tcpResults = append(tcpResults, result)
+			} else if protocol == "UDP" {
+				udpResults = append(udpResults, result)
+			}
+		}
+
+		if parseErrorCount > 0 {
+			framework.Logf("Warning: Failed to parse %d timestamp entries", parseErrorCount)
+		}
+		framework.Logf("Parsed %d TCP results and %d UDP results from CSV", len(tcpResults), len(udpResults))
+
+		ginkgo.By("9. Summary of failover duration, connection successful/failed count and downtime")
+		// Only analyze results after failover started to measure impact caused by failover
+		analyzeProtocolResults := func(protocol string, results []connectivityResult, startTime time.Time) (int, int, time.Duration) {
+			successCount := 0
+			failureCount := 0
+			var totalDowntime time.Duration
+			var downtimeStart time.Time
+			inDowntime := false
+
+			for _, result := range results {
+				// Skip results before failover
+				if result.timestamp.Before(startTime) {
+					continue
+				}
+
+				if result.success {
+					successCount++
+					// If we were in downtime, this marks recovery
+					if inDowntime && !downtimeStart.IsZero() {
+						totalDowntime += result.timestamp.Sub(downtimeStart)
+						inDowntime = false
+						downtimeStart = time.Time{}
+					}
+				} else {
+					failureCount++
+					// Start of a new downtime period
+					if !inDowntime {
+						downtimeStart = result.timestamp
+						inDowntime = true
+					}
+				}
+			}
+			// Handle case where downtime hasn't recovered yet
+			if inDowntime && !downtimeStart.IsZero() && len(results) > 0 {
+				// Use last result timestamp
+				for i := len(results) - 1; i >= 0; i-- {
+					if !results[i].timestamp.Before(startTime) {
+						totalDowntime += results[i].timestamp.Sub(downtimeStart)
+						break
+					}
+				}
+			}
+			return successCount, failureCount, totalDowntime
+		}
+
+		tcpSuccess, tcpFailure, tcpDowntime := analyzeProtocolResults("TCP", tcpResults, failoverStartTime)
+		udpSuccess, udpFailure, udpDowntime := analyzeProtocolResults("UDP", udpResults, failoverStartTime)
+		framework.Logf("╔══════════════════════════════════════════════════════════════════════╗")
+		framework.Logf("║                  EGRESSIP FAILOVER TEST SUMMARY                      ║")
+		framework.Logf("╠══════════════════════════════════════════════════════════════════════╣")
+		framework.Logf("║ Failover Start:      %-47s ║", failoverStartTime.Format("2006-01-02 15:04:05.000000000 UTC"))
+		framework.Logf("║ Failover Complete:   %-47s ║", failoverCompleteTime.Format("2006-01-02 15:04:05.000000000 UTC"))
+		framework.Logf("║ Failover Duration:   %-47v ║", failoverDuration)
+		framework.Logf("╠══════════════════════════════════════════════════════════════════════╣")
+		framework.Logf("║ TCP Results (after failover):                                        ║")
+		framework.Logf("║   Total:              %-46d ║", tcpSuccess+tcpFailure)
+		framework.Logf("║   Successful:         %-46d ║", tcpSuccess)
+		framework.Logf("║   Failed:             %-46d ║", tcpFailure)
+		framework.Logf("║   Total Downtime:     %-46v ║", tcpDowntime)
+		framework.Logf("╠══════════════════════════════════════════════════════════════════════╣")
+		framework.Logf("║ UDP Results (after failover):                                        ║")
+		framework.Logf("║   Total:              %-46d ║", udpSuccess+udpFailure)
+		framework.Logf("║   Successful:         %-46d ║", udpSuccess)
+		framework.Logf("║   Failed:             %-46d ║", udpFailure)
+		framework.Logf("║   Total Downtime:     %-46v ║", udpDowntime)
+		framework.Logf("╚══════════════════════════════════════════════════════════════════════╝")
+
+		// Verify that connectivity was eventually restored
+		gomega.Expect(tcpSuccess).Should(gomega.BeNumerically(">", 0), "TCP should have some successful connections")
+		gomega.Expect(udpSuccess).Should(gomega.BeNumerically(">", 0), "UDP should have some successful connections")
+	})
 },
 	ginkgo.Entry(
 		"Cluster Default Network",
