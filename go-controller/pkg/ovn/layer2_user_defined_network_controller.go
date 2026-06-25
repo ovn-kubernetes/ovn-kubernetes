@@ -1121,6 +1121,14 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 	networkName := oc.GetNetworkName()
 	networkID := oc.GetNetworkID()
 
+	nodeIPs := make([]net.IP, 0, len(l3GatewayConfig.IPAddresses))
+	for _, nodeIP := range l3GatewayConfig.IPAddresses {
+		if nodeIP == nil {
+			continue
+		}
+		nodeIPs = append(nodeIPs, nodeIP.IP)
+	}
+
 	masqIPs, err := udn.GetUDNGatewayMasqueradeIPs(networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get masquerade IPs, network %s (%d): %v", networkName, networkID, err)
@@ -1128,13 +1136,19 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 
 	l3GatewayConfig.IPAddresses = append(l3GatewayConfig.IPAddresses, masqIPs...)
 
-	// Always SNAT to the per network masquerade IP.
-	var externalIPs []net.IP
+	masqExternalIPs := make([]net.IP, 0, len(masqIPs))
 	for _, masqIP := range masqIPs {
 		if masqIP == nil {
 			continue
 		}
-		externalIPs = append(externalIPs, masqIP.IP)
+		masqExternalIPs = append(masqExternalIPs, masqIP.IP)
+	}
+
+	externalIPs := masqExternalIPs
+	if config.Gateway.Mode == config.GatewayModeShared && len(nodeIPs) > 0 {
+		// Temporary offload experiment: make the UDN GR SNAT directly
+		// to the node IP and avoid the second SNAT on the gateway bridge.
+		externalIPs = nodeIPs
 	}
 
 	// Use the host subnets present in the network attachment definition.
