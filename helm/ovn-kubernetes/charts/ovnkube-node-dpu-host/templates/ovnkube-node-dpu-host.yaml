@@ -81,6 +81,11 @@ spec:
           # We mount our socket here
         - mountPath: /var/run/ovn-kubernetes
           name: host-var-run-ovn-kubernetes
+        {{- if and .Values.global.kata (eq .Values.global.kata.enableDAN true) }}
+        # mount kata container DAN config dir
+        - mountPath: /var/run/ovn-kubernetes/dans
+          name: host-kata-dan-config-dir
+        {{- end }}
         # CNI related mounts which we take over
         - mountPath: /opt/cni/bin
           name: host-opt-cni-bin
@@ -245,6 +250,10 @@ spec:
             configMapKeyRef:
               name: ovn-config
               key: host_network_namespace
+        {{- if and .Values.global.kata (eq .Values.global.kata.enableDAN true) }}
+        - name: OVNKUBE_ENABLE_KATA_DAN
+          value: "true"
+        {{- end }}
         - name: POD_NAME
           valueFrom:
             fieldRef:
@@ -273,6 +282,12 @@ spec:
       - name: host-var-run-ovn-kubernetes
         hostPath:
           path: /var/run/ovn-kubernetes
+      {{- if and .Values.global.kata (eq .Values.global.kata.enableDAN true) }}
+      - name: host-kata-dan-config-dir
+        hostPath:
+          path: {{ .Values.global.kata.danConfigDir | default "/run/kata-containers/dans" }}
+          type: DirectoryOrCreate
+      {{- end }}
       - name: host-opt-cni-bin
         hostPath:
           path: /opt/cni/bin

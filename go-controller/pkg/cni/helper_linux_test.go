@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,8 @@ import (
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -27,6 +30,7 @@ import (
 	"sigs.k8s.io/knftables"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	cni_type_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/cni/pkg/types"
 	cni_ns_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/plugins/pkg/ns"
@@ -1246,6 +1250,160 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 			}
 			tc.inpPodRequest.deletePodConntrack()
 			mockTypeResult.AssertExpectations(t)
+		})
+	}
+}
+
+func readFile(tb testing.TB, filename string) []byte {
+	tb.Helper()
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		tb.Fatalf("failed to read input yaml file: %v", err)
+	}
+	return data
+}
+
+func TestPodRequest_generateDanConfig(t *testing.T) {
+
+	tempDir := t.TempDir()
+	origDanConfDir := config.Default.KataDanConfDir
+	config.Default.KataDanConfDir = tempDir
+	t.Cleanup(func() {
+		config.Default.KataDanConfDir = origDanConfDir
+	})
+
+	ip1 := ovntest.MustParseIPNet("10.10.0.5/24")
+	gw1 := net.ParseIP("10.10.0.1").To4()
+	mac1, _ := net.ParseMAC("0a:58:0a:0a:00:05")
+	dest1 := ovntest.MustParseIPNet("10.10.0.0/16")
+	nextHop1 := gw1
+
+	ip2 := ovntest.MustParseIPNet("10.20.0.7/24")
+	gw2 := net.ParseIP("10.20.0.1").To4()
+	mac2, _ := net.ParseMAC("0a:58:0a:14:00:07")
+	dest2 := ovntest.MustParseIPNet("10.20.0.0/16")
+	nextHop2 := gw2
+
+	type Request struct {
+		podRequest *PodRequest
+		ifInfo     *PodInterfaceInfo
+	}
+
+	tests := []struct {
+		name     string
+		requests []Request
+	}{
+		{
+			name: "dan-one-network",
+			requests: []Request{
+				{
+					podRequest: &PodRequest{
+						PodNamespace: "ns",
+						PodName:      "foo",
+						PodUID:       "pod-1",
+						SandboxID:    "sandbox-1",
+						Netns:        "netns",
+						IfName:       "eth0",
+						IsVFIO:       true,
+						netName:      "default",
+						nadName:      "default",
+						CNIConf: &ovncnitypes.NetConf{
+							DeviceID: "0000:84:02.0",
+						},
+					},
+					ifInfo: &PodInterfaceInfo{
+						MTU: 1500,
+						PodAnnotation: util.PodAnnotation{
+							IPs:      []*net.IPNet{ip1},
+							MAC:      mac1,
+							Gateways: []net.IP{gw1},
+							Routes: []util.PodRoute{
+								{Dest: dest1, NextHop: nextHop1},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "dan-two-network",
+			requests: []Request{
+				{
+					podRequest: &PodRequest{
+						PodNamespace: "ns",
+						PodName:      "foo",
+						PodUID:       "pod-2",
+						SandboxID:    "sandbox-2",
+						Netns:        "netns",
+						IfName:       "eth0",
+						IsVFIO:       true,
+						netName:      "default",
+						nadName:      "default",
+						CNIConf: &ovncnitypes.NetConf{
+							DeviceID: "0000:84:02.0",
+						},
+					},
+					ifInfo: &PodInterfaceInfo{
+						MTU: 1500,
+						PodAnnotation: util.PodAnnotation{
+
+							IPs:      []*net.IPNet{ip1},
+							MAC:      mac1,
+							Gateways: []net.IP{gw1},
+							Routes: []util.PodRoute{
+								{Dest: dest1, NextHop: nextHop1},
+							},
+						},
+					},
+				},
+				{
+					podRequest: &PodRequest{
+						PodNamespace: "ns",
+						PodName:      "foo",
+						PodUID:       "pod-2",
+						SandboxID:    "sandbox-2",
+						Netns:        "netns",
+						IfName:       "net1",
+						IsVFIO:       true,
+						netName:      "stream",
+						nadName:      "stream",
+						CNIConf: &ovncnitypes.NetConf{
+							DeviceID: "0000:84:02.1",
+						},
+					},
+					ifInfo: &PodInterfaceInfo{
+						MTU: 9000,
+						PodAnnotation: util.PodAnnotation{
+							IPs: []*net.IPNet{ip2},
+							MAC: mac2,
+							Routes: []util.PodRoute{
+								{Dest: dest2, NextHop: nextHop2},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+
+			expected := readFile(t, fmt.Sprintf("testdata/%s.json", tc.name))
+			for _, r := range tc.requests {
+				err := r.podRequest.generateDanConfig(r.ifInfo, r.podRequest.CNIConf.DeviceID)
+				require.NoError(t, err)
+			}
+
+			danConfig := getDanConfigPath(config.Default.KataDanConfDir, tc.requests[0].podRequest.SandboxID)
+			actual := readFile(t, danConfig)
+
+			if diff := cmp.Diff(string(expected), string(actual),
+				cmpopts.AcyclicTransformer("multiline", func(s string) []string {
+					return strings.Split(s, "\n")
+				})); diff != "" {
+				t.Fatalf("Diff:\n%s", diff)
+			}
 		})
 	}
 }

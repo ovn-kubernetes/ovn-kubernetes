@@ -2088,6 +2088,7 @@ func TestGetNodeManagementIP(t *testing.T) {
 			result := netInfo.GetNodeManagementIP(hostSubnet)
 			if result == nil {
 				t.Fatalf("GetNodeManagementIP returned nil")
+				return
 			}
 
 			if !result.IP.Equal(tc.expectedIP.IP) {
@@ -2497,6 +2498,7 @@ func TestGetNodeGatewayIP(t *testing.T) {
 			result := netInfo.GetNodeGatewayIP(hostSubnet)
 			if result == nil {
 				t.Fatalf("GetNodeGatewayIP returned nil")
+				return
 			}
 
 			if !result.IP.Equal(tc.expectedIP.IP) {

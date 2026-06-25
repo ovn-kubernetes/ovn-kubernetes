@@ -31,6 +31,8 @@ const ServerRunDir string = "/var/run/ovn-kubernetes/cni/"
 const serverSocketName string = "ovn-cni-server.sock"
 const serverSocketPath string = ServerRunDir + "/" + serverSocketName
 
+const KataRuntime string = "kata"
+
 // KubeAPIAuth contains information necessary to create a Kube API client
 type KubeAPIAuth struct {
 	// Kubeconfig is the path to a kubeconfig

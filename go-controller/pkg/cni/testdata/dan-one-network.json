@@ -1,0 +1,30 @@
+{
+  "netns": "netns",
+  "devices": [
+    {
+      "name": "eth0",
+      "guest_mac": "0a:58:0a:0a:00:05",
+      "device": {
+        "type": "vfio",
+        "pci_device_id": "0000:84:02.0"
+      },
+      "network_info": {
+        "interface": {
+          "ip_addresses": [
+            "10.10.0.5/24"
+          ],
+          "mtu": 1500
+        },
+        "routes": [
+          {
+            "gateway": "10.10.0.1"
+          },
+          {
+            "dest": "10.10.0.0/16",
+            "gateway": "10.10.0.1"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -106,6 +106,7 @@ var (
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
 		Transport:                    "",
+		KataDanConfDir:               "", // disable by default
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -360,6 +361,9 @@ type DefaultConfig struct {
 	// Accepts: "" (empty, uses OVN default overlay) or "no-overlay".
 	// Defaults to "" (empty).
 	Transport string `gcfg:"transport"`
+
+	// Base directory of DAN(Directly Attachable Network) config for Kata Container.
+	KataDanConfDir string `gcfg:"kata-dan-conf-dir"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -1104,6 +1108,12 @@ var CommonFlags = []cli.Flag{
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.StringFlag{
+		Name:        "kata-dan-conf-dir",
+		Usage:       "Base directory of DAN(Directly Attachable Network) config for Kata Container",
+		Destination: &cliConfig.Default.KataDanConfDir,
+		Value:       Default.KataDanConfDir,
 	},
 }
 

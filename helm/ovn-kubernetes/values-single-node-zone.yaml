@@ -67,6 +67,11 @@ global:
   enableEgressQos: true
   # -- Enables network QoS support from/to pods
   enableNetworkQos: false
+  kata:
+    # -- enable Kata Containers DAN (Directly Attachable Network) integration; when true, mount DAN config dir into ovnkube-node and set OVNKUBE_ENABLE_KATA_DAN
+    enableDAN: false
+    # -- host path for Kata DAN config directory; mounted into the container at /var/run/ovn-kubernetes/dans
+    danConfigDir: /run/kata-containers/dans
   # -- Enables multicast support between the pods within the same namespace
   enableMulticast: ""
   # -- Configure to use multiple NetworkAttachmentDefinition CRD feature with ovn-kubernetes
