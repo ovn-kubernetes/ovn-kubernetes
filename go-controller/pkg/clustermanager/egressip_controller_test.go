@@ -4082,6 +4082,130 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("ensure egressIP is assigned when cloud private ip config has spec/status node mismatch", func() {
+			app.Action = func(*cli.Context) error {
+				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
+				node1IPv4 := "192.168.126.12/24"
+				node2IPv4 := "192.168.126.51/24"
+				egressIP := "192.168.126.101"
+
+				// Create two egress-assignable nodes
+				node1 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4, ""),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4NodeSubnet, v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+
+				node2 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node2Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4, ""),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\": [\"%s\",\"%s\"]}", v4NodeSubnet, v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+
+				// Setup allocator nodes
+				egressNode1 := setupNode(node1Name, []string{node1IPv4}, map[string]string{})
+				egressNode2 := setupNode(node2Name, []string{node2IPv4}, map[string]string{})
+
+				// Create EgressIP (initially no status)
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{egressIP},
+					},
+				}
+
+				// Create CloudPrivateIPConfig with MISMATCH
+				// This simulates: controller wants node2, but cloud has it on node1
+				cloudPrivateIPConfig := ocpcloudnetworkapi.CloudPrivateIPConfig{
+					ObjectMeta: newCloudPrivateIPConfigMeta(egressIP),
+					Spec: ocpcloudnetworkapi.CloudPrivateIPConfigSpec{
+						Node: node2Name, // Controller wants this node
+					},
+					Status: ocpcloudnetworkapi.CloudPrivateIPConfigStatus{
+						Node: node1Name, // Cloud has it on this node (MISMATCH!)
+						Conditions: []metav1.Condition{
+							{
+								Status: metav1.ConditionTrue,
+								Type:   string(ocpcloudnetworkapi.Assigned),
+							},
+						},
+					},
+				}
+
+				// Start fake cluster manager
+				fakeClusterManagerOVN.start(
+					&egressipv1.EgressIPList{
+						Items: []egressipv1.EgressIP{eIP},
+					},
+					&ocpcloudnetworkapi.CloudPrivateIPConfigList{
+						Items: []ocpcloudnetworkapi.CloudPrivateIPConfig{cloudPrivateIPConfig},
+					},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
+					},
+				)
+
+				// Setup allocator cache
+				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode1.name] = &egressNode1
+				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
+
+				// Start watchers
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				_, err = fakeClusterManagerOVN.eIPC.WatchCloudPrivateIPConfig()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify: EgressIP should be assigned to node1 (where cloud has it)
+				// NOT node2 (where controller initially wanted it)
+				gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
+				egressIPs, nodes := getEgressIPStatus(egressIPName)
+				gomega.Expect(nodes[0]).To(gomega.Equal(node1Name)) // Cloud reality wins
+				gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
+
+				// Verify: Cache synced to node1 (not node2)
+				gomega.Expect(egressNode1.allocations).To(gomega.HaveKey(egressIP))
+				gomega.Expect(egressNode1.allocations[egressIP]).To(gomega.Equal(egressIPName))
+				gomega.Expect(egressNode2.allocations).NotTo(gomega.HaveKey(egressIP))
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		// This test validates that if the allocator cache contains valid entries that match
 		// the egress IP status items, no reassignment shall happen.
 		// In order to do so, it does 2 comparisons:

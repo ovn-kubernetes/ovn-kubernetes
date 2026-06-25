@@ -1708,6 +1708,62 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(old, new *o
 				}
 				return nil
 			}
+
+			// Check for spec/status node mismatch (upgrade desync scenario #8)
+			// This happens when:
+			// 1. Old EgressIP deleted but CPIC persists in cloud on node A
+			// 2. New EgressIP reuses same IP during cluster upgrade
+			// 3. Controller wants to assign to node B (spec.node=B)
+			// 4. Cloud still has it on node A (status.node=A, status=True)
+			// Result: spec != status causing permanent retry storm
+			if ocpcloudnetworkapi.CloudPrivateIPConfigConditionType(cond.Type) == ocpcloudnetworkapi.Assigned &&
+				corev1.ConditionStatus(cond.Status) == corev1.ConditionTrue &&
+				newCloudPrivateIPConfig.Spec.Node != "" &&
+				newCloudPrivateIPConfig.Status.Node != "" &&
+				newCloudPrivateIPConfig.Spec.Node != newCloudPrivateIPConfig.Status.Node {
+
+				egressIPName, exists := newCloudPrivateIPConfig.Annotations[util.OVNEgressIPOwnerRefLabel]
+				if !exists {
+					// No owner annotation - log warning but don't retry
+					klog.Warningf("CloudPrivateIPConfig %s has spec/status node mismatch "+
+						"(spec=%s, status=%s) but missing EgressIP owner annotation",
+						newCloudPrivateIPConfig.Name,
+						newCloudPrivateIPConfig.Spec.Node,
+						newCloudPrivateIPConfig.Status.Node)
+					return nil
+				}
+
+				klog.Warningf("CloudPrivateIPConfig %s spec/status node mismatch detected: "+
+					"spec.node=%s but status.node=%s (status=True) for EgressIP %s. "+
+					"Accepting cloud reality and syncing cache to status.node.",
+					newCloudPrivateIPConfig.Name,
+					newCloudPrivateIPConfig.Spec.Node,
+					newCloudPrivateIPConfig.Status.Node,
+					egressIPName)
+
+				// Strategy: Accept cloud reality (status.node) to minimize disruption
+				// Clean cache entry on spec.node (where we THOUGHT it should be)
+				eIPC.deleteAllAllocatorEgressIPAssignments(egressIPName, newCloudPrivateIPConfig.Name)
+
+				// Trigger reconciliation to sync cache to actual cloud state (status.node)
+				egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
+				if err != nil {
+					if apierrors.IsNotFound(err) {
+						// EgressIP was deleted - this is expected during cleanup
+						klog.Infof("EgressIP %s not found during spec/status mismatch reconciliation, likely deleted", egressIPName)
+						return nil
+					}
+					return fmt.Errorf("failed to get EgressIP %s for spec/status mismatch reconciliation: %w", egressIPName, err)
+				}
+
+				// Reconcile to update cache to match reality
+				if err := eIPC.reconcileEgressIP(nil, egressIP); err != nil {
+					return fmt.Errorf("failed to reconcile EgressIP %s after spec/status node mismatch: %w", egressIPName, err)
+				}
+
+				// Return nil to skip normal processing (we've handled it)
+				return nil
+			}
 		}
 
 		// We should only proceed to setting things up for objects where the new
