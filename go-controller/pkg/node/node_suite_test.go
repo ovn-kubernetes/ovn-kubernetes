@@ -6,6 +6,8 @@ package node
 import (
 	"testing"
 
+	"github.com/spf13/afero"
+
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
 	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
@@ -31,3 +33,7 @@ func TestNodeSuite(t *testing.T) {
 	nodenft.SetFakeNFTablesHelper()
 	RunSpecs(t, "Node Suite")
 }
+
+var _ = BeforeEach(func() {
+	util.AppFs = afero.NewMemMapFs()
+})
