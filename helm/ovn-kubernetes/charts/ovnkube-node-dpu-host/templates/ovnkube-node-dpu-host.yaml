@@ -31,7 +31,7 @@ spec:
       - name: {{ .Values.global.imagePullSecretName }}
       {{- end }}
       priorityClassName: "system-cluster-critical"
-      serviceAccountName: ovnkube-node
+      serviceAccountName: ovnkube-node-dpu-host
       hostNetwork: true
       dnsPolicy: Default
       {{- if eq (hasKey .Values.global "unprivilegedMode" | ternary .Values.global.unprivilegedMode false) false }}
