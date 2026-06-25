@@ -41,6 +41,7 @@ import (
 	ovnkube "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	ovniptables "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	nodenft "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -280,6 +281,14 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// Initialize fake nftables helper and egress IP unready chain
+	// This mimics what the real Run() method does
+	nodenft.SetFakeNFTablesHelper()
+	if err := c.initEgressIPUnreadyNFTChain(); err != nil {
+		return nil, nil, err
+	}
+
 	_, err = c.namespaceInformer.AddEventHandler(
 		factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.onNamespaceAdd,

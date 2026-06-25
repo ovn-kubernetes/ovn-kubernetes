@@ -327,6 +327,11 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 		return fmt.Errorf("failed to run EgressIP controller because migration from using address labels to a node annotation failed: %v", err)
 	}
 
+	// Initialize nftables chain and sets for egress IP unready traffic
+	if err := c.initEgressIPUnreadyNFTChain(); err != nil {
+		return fmt.Errorf("failed to initialize egress IP unready nftables: %w", err)
+	}
+
 	err = wait.PollUntilContextTimeout(wait.ContextForChannel(stopCh), 1*time.Second, 10*time.Second, true,
 		func(_ context.Context) (done bool, err error) {
 			if err := c.repairNode(); err != nil {
@@ -826,6 +831,15 @@ func (c *Controller) deleteIPConfig(podIPConfigToDelete *podIPConfig) error {
 	if err := c.ruleManager.Delete(podIPConfigToDelete.ipRule); err != nil {
 		return err
 	}
+
+	// Remove pod IP from ready set (nftables)
+	podIP := getPodIPFromConfig(podIPConfigToDelete)
+	if podIP != nil {
+		if err := c.removePodIPFromReadySet(podIP); err != nil {
+			return fmt.Errorf("failed to remove pod from ready set: %v", err)
+		}
+	}
+
 	if podIPConfigToDelete.v6 {
 		if err := c.iptablesManager.DeleteRule(utiliptables.TableNAT, iptChainName, utiliptables.ProtocolIPv6,
 			podIPConfigToDelete.ipTableRule); err != nil {
@@ -869,6 +883,17 @@ func (c *Controller) applyPodConfig(existingPodIPsConfig *podIPConfigList, updat
 				return fmt.Errorf("failed to ensure rules (%+v) in chain %s: %v", newPodIPConfig.ipTableRule, iptChainName, err)
 			}
 		}
+
+		// Add pod IP to ready set (nftables)
+		// This signals that SNAT is configured and traffic can flow
+		podIP := getPodIPFromConfig(newPodIPConfig)
+		if podIP != nil {
+			if err := c.addPodIPToReadySet(podIP); err != nil {
+				existingPodIPsConfig.insertOverwriteFailed(*newPodIPConfig)
+				return fmt.Errorf("failed to add pod to ready set: %v", err)
+			}
+		}
+
 		existingPodIPsConfig.insertOverwrite(*newPodIPConfig)
 	}
 	return nil
