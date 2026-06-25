@@ -109,7 +109,7 @@ var _ = Describe("DPU Annotations test", func() {
 			})
 
 			It("Get correct Pod annotation for default network", func() {
-				annot, err = MarshalPodDPUConnStatus(annot, &defaultCS, "default")
+				annot, err = MarshalPodDPUConnStatus(annot, map[string]*DPUConnectionStatus{"default": &defaultCS})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				pcs, err := UnmarshalPodDPUConnStatus(annot, "default")
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -125,7 +125,7 @@ var _ = Describe("DPU Annotations test", func() {
 		Context("Second network", func() {
 			It("Get correct Pod annotation for Second network with legacy default network annoation", func() {
 				annot[DPUConnectionStatusAnnot] = legacyAnnot
-				annot, err = MarshalPodDPUConnStatus(annot, &secondCS, "second")
+				annot, err = MarshalPodDPUConnStatus(annot, map[string]*DPUConnectionStatus{"second": &secondCS})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				pcd, err := UnmarshalPodDPUConnStatus(annot, "default")
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -136,9 +136,9 @@ var _ = Describe("DPU Annotations test", func() {
 			})
 
 			It("Get correct Pod annotation for second network", func() {
-				annot, err = MarshalPodDPUConnStatus(annot, &defaultCS, "default")
+				annot, err = MarshalPodDPUConnStatus(annot, map[string]*DPUConnectionStatus{"default": &defaultCS})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
-				annot, err = MarshalPodDPUConnStatus(annot, &secondCS, "second")
+				annot, err = MarshalPodDPUConnStatus(annot, map[string]*DPUConnectionStatus{"second": &secondCS})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				pcd, err := UnmarshalPodDPUConnStatus(annot, "second")
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -146,7 +146,7 @@ var _ = Describe("DPU Annotations test", func() {
 			})
 
 			It("Fails to populate on missing annotations", func() {
-				annot, err = MarshalPodDPUConnStatus(annot, &defaultCS, "default")
+				annot, err = MarshalPodDPUConnStatus(annot, map[string]*DPUConnectionStatus{"default": &defaultCS})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				_, err = UnmarshalPodDPUConnStatus(annot, "second")
 				gomega.Expect(err).To(gomega.HaveOccurred())

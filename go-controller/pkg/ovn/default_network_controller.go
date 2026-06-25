@@ -566,7 +566,7 @@ func (oc *DefaultNetworkController) ReconcileNode(oldNode, newNode *corev1.Node,
 		}
 		// Reprovisioning the DPU, including OVS, changes the chassis system ID without changing the node.
 		// Delete the stale remote chassis mapping so the new chassis can be associated cleanly.
-		if oldNode != nil && config.OvnKubeNode.Mode == types.NodeModeDPU && nodeChassisChanged(oldNode, newNode) {
+		if oldNode != nil && config.IsModeDPU() && nodeChassisChanged(oldNode, newNode) {
 			if err := oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
 				aggregatedErrors = append(aggregatedErrors, err)
 			}

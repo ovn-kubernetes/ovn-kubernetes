@@ -77,13 +77,6 @@ type BaseNodeNetworkController struct {
 	// networkManager used for getting network information
 	networkManager networkmanager.Interface
 
-	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
-	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
-	// is nadName; value is DPU_ConnectionDetails when VF representor is successfully configured for that
-	// given NAD. DPU mode only
-	// Note that we assume that Pod's Network Attachment Selection Annotation will not change over time.
-	podNADToDPUCDMap sync.Map
-
 	// stopChan and WaitGroup per controller
 	stopChan chan struct{}
 	wg       *sync.WaitGroup
@@ -950,10 +943,8 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 // Start learns the subnets assigned to it by the master controller
 // and calls the SetupNode script which establishes the logical switch
-func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
+func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 	klog.Infof("Starting the default node network controller")
-
-	var err error
 
 	if nc.mgmtPortController == nil {
 		return fmt.Errorf("default node network controller hasn't been pre-started")
@@ -994,7 +985,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 	// Set masquerade IP reconciliation callback for all modes except DPU.
 	// DPU mode does not configure masquerade resources.
-	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+	if !config.IsModeDPU() {
 		gw, ok := nc.Gateway.(*gateway)
 		if !ok {
 			return fmt.Errorf("unexpected gateway type %T, expected *gateway", nc.Gateway)
@@ -1117,11 +1108,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	if config.IsModeDPU() {
-		if _, err := nc.watchPodsDPU(); err != nil {
-			return err
-		}
-	} else {
+	if !config.IsModeDPU() {
 		// start the cni server
 		if nc.cniServer != nil {
 			if err := nc.cniServer.Start(cni.ServerRunDir); err != nil {
