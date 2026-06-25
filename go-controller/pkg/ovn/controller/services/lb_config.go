@@ -24,6 +24,7 @@ import (
 // magic string used in vips to indicate that the node's physical
 // ips should be substituted in
 const placeholderNodeIPs = "node"
+const localWithFallbackAnnotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
 
 // lbConfig is the abstract desired load balancer configuration.
 // vips and endpoints are mixed families.
@@ -46,9 +47,9 @@ type lbConfig struct {
 	hasNodePort bool
 }
 
-func makeNodeSwitchTargetIPs(node string, clusterEntry util.LBEndpointEntry, c *lbConfig) (targetIPsV4, targetIPsV6 []string, v4Changed, v6Changed bool) {
-	targetIPsV4 = clusterEntry.V4IPs
-	targetIPsV6 = clusterEntry.V6IPs
+func makeNodeSwitchTargetIPs(service *corev1.Service, node string, c *lbConfig) (targetIPsV4, targetIPsV6 []string, v4Changed, v6Changed bool) {
+	targetIPsV4 = c.clusterEndpoints.V4IPs
+	targetIPsV6 = c.clusterEndpoints.V6IPs
 
 	if c.externalTrafficLocal || c.internalTrafficLocal {
 		// For ExternalTrafficPolicy=Local, remove non-local endpoints from the router/switch targets
@@ -57,24 +58,36 @@ func makeNodeSwitchTargetIPs(node string, clusterEntry util.LBEndpointEntry, c *
 		localIPsV4 := []string{}
 		localIPsV6 := []string{}
 		if localEndpoints, ok := c.nodeEndpoints[node]; ok {
-			localEntry := localEndpoints.GetEntryByPort(clusterEntry.Port)
-			localIPsV4 = localEntry.V4IPs
-			localIPsV6 = localEntry.V6IPs
+			localIPsV4 = localEndpoints.V4IPs
+			localIPsV6 = localEndpoints.V6IPs
 		}
 		targetIPsV4 = localIPsV4
 		targetIPsV6 = localIPsV6
 	}
 
+	// OCP HACK BEGIN
+	if _, set := service.Annotations[localWithFallbackAnnotation]; set && c.externalTrafficLocal {
+		// if service is annotated and is ETP=local, fallback to ETP=cluster on nodes with no local endpoints:
+		// include endpoints from other nodes
+		if len(targetIPsV4) == 0 {
+			targetIPsV4 = c.clusterEndpoints.V4IPs
+		}
+		if len(targetIPsV6) == 0 {
+			targetIPsV6 = c.clusterEndpoints.V6IPs
+		}
+	}
+	// OCP HACK END
+
 	// Local endpoints are a subset of cluster endpoints, so it is enough to compare their length
-	v4Changed = len(targetIPsV4) != len(clusterEntry.V4IPs)
-	v6Changed = len(targetIPsV6) != len(clusterEntry.V6IPs)
+	v4Changed = len(targetIPsV4) != len(c.clusterEndpoints.V4IPs)
+	v6Changed = len(targetIPsV6) != len(c.clusterEndpoints.V6IPs)
 
 	return
 }
 
-func makeNodeRouterTargetIPs(node *nodeInfo, clusterEntry util.LBEndpointEntry, c *lbConfig, hostMasqueradeIPV4, hostMasqueradeIPV6 string) (targetIPsV4, targetIPsV6 []string, v4Changed, v6Changed bool) {
-	targetIPsV4 = clusterEntry.V4IPs
-	targetIPsV6 = clusterEntry.V6IPs
+func makeNodeRouterTargetIPs(service *corev1.Service, node *nodeInfo, c *lbConfig, hostMasqueradeIPV4, hostMasqueradeIPV6 string) (targetIPsV4, targetIPsV6 []string, v4Changed, v6Changed bool, zeroRouterLocalEndpointsV4, zeroRouterLocalEndpointsV6 bool) {
+	targetIPsV4 = c.clusterEndpoints.V4IPs
+	targetIPsV6 = c.clusterEndpoints.V6IPs
 
 	if c.externalTrafficLocal {
 		// For ExternalTrafficPolicy=Local, remove non-local endpoints from the router/switch targets
@@ -82,17 +95,31 @@ func makeNodeRouterTargetIPs(node *nodeInfo, clusterEntry util.LBEndpointEntry, 
 		localIPsV4 := []string{}
 		localIPsV6 := []string{}
 		if localEndpoints, ok := c.nodeEndpoints[node.name]; ok {
-			localEntry := localEndpoints.GetEntryByPort(clusterEntry.Port)
-			localIPsV4 = localEntry.V4IPs
-			localIPsV6 = localEntry.V6IPs
+			localIPsV4 = localEndpoints.V4IPs
+			localIPsV6 = localEndpoints.V6IPs
 		}
 		targetIPsV4 = localIPsV4
 		targetIPsV6 = localIPsV6
 	}
 
+	// OCP HACK BEGIN
+	if _, set := service.Annotations[localWithFallbackAnnotation]; set && c.externalTrafficLocal {
+		// if service is annotated and is ETP=local, fallback to ETP=cluster on nodes with no local endpoints:
+		// include endpoints from other nodes
+		if len(targetIPsV4) == 0 {
+			zeroRouterLocalEndpointsV4 = true
+			targetIPsV4 = c.clusterEndpoints.V4IPs
+		}
+		if len(targetIPsV6) == 0 {
+			zeroRouterLocalEndpointsV6 = true
+			targetIPsV6 = c.clusterEndpoints.V6IPs
+		}
+	}
+	// OCP HACK END
+
 	// TODO: For all scenarios the lbAddress should be set to hostAddressesStr but this is breaking CI needs more investigation
 	lbAddresses := node.hostAddressesStr()
-	if config.IsModeFull() {
+	if config.OvnKubeNode.Mode == types.NodeModeFull {
 		lbAddresses = node.l3gatewayAddressesStr()
 	}
 
@@ -102,8 +129,8 @@ func makeNodeRouterTargetIPs(node *nodeInfo, clusterEntry util.LBEndpointEntry, 
 	targetIPsV6, v6Updated := util.UpdateIPsSlice(targetIPsV6, lbAddresses, []string{hostMasqueradeIPV6})
 
 	// Local endpoints are a subset of cluster endpoints, so it is enough to compare their length
-	v4Changed = len(targetIPsV4) != len(clusterEntry.V4IPs) || v4Updated
-	v6Changed = len(targetIPsV6) != len(clusterEntry.V6IPs) || v6Updated
+	v4Changed = len(targetIPsV4) != len(c.clusterEndpoints.V4IPs) || v4Updated
+	v6Changed = len(targetIPsV6) != len(c.clusterEndpoints.V6IPs) || v6Updated
 
 	return
 }
@@ -148,8 +175,11 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 	needsLocalEndpoints := util.ServiceExternalTrafficPolicyLocal(service) || util.ServiceInternalTrafficPolicyLocal(service)
 	portToClusterEndpoints, portToNodeToEndpoints, err := util.GetEndpointsForService(endpointSlices, service, nodes, true, needsLocalEndpoints)
 	if err != nil {
-		klog.Warningf("Failed to get endpoints for service %s/%s during LB config build: %v",
-			service.Namespace, service.Name, err)
+		if service != nil {
+			klog.Warningf("Failed to get endpoints for service %s/%s during LB config build: %v", service.Namespace, service.Name, err)
+		} else {
+			klog.Warningf("Failed to get endpoints for service during LB config build: %v", err)
+		}
 	}
 	for _, svcPort := range service.Spec.Ports {
 		svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
@@ -165,7 +195,20 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 		// NodePort services get a per-node load balancer, but with the node's physical IP as the vip
 		// Thus, the vip "node" will be expanded later.
 		// This is NEVER influenced by InternalTrafficPolicy
-		if svcPort.NodePort != 0 {
+		//
+		// Only create NodePort load balancers if the service type requires NodePorts
+		// Note: We cannot rely on svcPort.NodePort != 0 because Kubernetes keeps the
+		// NodePort value internally even after it's removed from the spec when
+		// allocateLoadBalancerNodePorts=false. We must check the service type and
+		// allocation policy instead.
+		//
+		// Create NodePort LBs for:
+		// 1. NodePort services (always have NodePorts)
+		// 2. LoadBalancer services where allocateLoadBalancerNodePorts is not explicitly false
+		shouldCreateNodePortLB := service.Spec.Type == corev1.ServiceTypeNodePort ||
+			(service.Spec.Type == corev1.ServiceTypeLoadBalancer && util.LoadBalancerServiceHasNodePortAllocation(service))
+
+		if shouldCreateNodePortLB && svcPort.NodePort != 0 {
 			nodePortLBConfig := lbConfig{
 				protocol:             svcPort.Protocol,
 				inport:               svcPort.NodePort,
@@ -225,14 +268,13 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 		// unless any of the following are true:
 		// - Any of the endpoints are host-network
 		// - ETP=local service backed by non-local-host-networked endpoints
+		// - OCP only HACK: It's an openshift-dns:default-dns service
 		//
 		// In that case, we need to create per-node LBs.
-		ips := []string{}
-		for _, ep := range clusterEndpoints {
-			ips = append(ips, ep.V4IPs...)
-			ips = append(ips, ep.V6IPs...)
-		}
-		if hasHostEndpoints(ips, netInfo) || internalTrafficLocal {
+		if hasHostEndpoints(clusterEndpoints.V4IPs, netInfo) || hasHostEndpoints(clusterEndpoints.V6IPs, netInfo) || internalTrafficLocal ||
+			// OCP only hack begin
+			(service.Namespace == "openshift-dns" && service.Name == "dns-default") {
+			// OCP only hack end
 			perNodeConfigs = append(perNodeConfigs, clusterIPConfig)
 		} else {
 			clusterConfigs = append(clusterConfigs, clusterIPConfig)
@@ -309,22 +351,20 @@ func buildClusterLBs(service *corev1.Service, configs []lbConfig, nodeInfos []no
 					service.Namespace, service.Name)
 			}
 
-			v4targets := []Addr{}
-			v6targets := []Addr{}
-			for _, entry := range config.clusterEndpoints {
-				for _, targetIP := range entry.V4IPs {
-					v4targets = append(v4targets, Addr{
-						IP:   targetIP,
-						Port: entry.Port,
-					})
-				}
+			v4targets := make([]Addr, 0, len(config.clusterEndpoints.V4IPs))
+			for _, targetIP := range config.clusterEndpoints.V4IPs {
+				v4targets = append(v4targets, Addr{
+					IP:   targetIP,
+					Port: config.clusterEndpoints.Port,
+				})
+			}
 
-				for _, targetIP := range entry.V6IPs {
-					v6targets = append(v6targets, Addr{
-						IP:   targetIP,
-						Port: entry.Port,
-					})
-				}
+			v6targets := make([]Addr, 0, len(config.clusterEndpoints.V6IPs))
+			for _, targetIP := range config.clusterEndpoints.V6IPs {
+				v6targets = append(v6targets, Addr{
+					IP:   targetIP,
+					Port: config.clusterEndpoints.Port,
+				})
 			}
 
 			rules := make([]LBRule, 0, len(config.vips))
@@ -412,71 +452,64 @@ func buildTemplateLBs(service *corev1.Service, configs []lbConfig, nodes []nodeI
 						service, proto, cfg.inport,
 						optsV6.AddressFamily, "node_router_template", netInfo))
 
-			// Phase 1: Accumulate template values and needsTemplate flags
-			// across all target port numbers. When multiple target ports
-			// coexist (e.g. during a rolling update), each port's targets
-			// must be appended into the template rather than overwriting.
-			switchV4TargetNeedsTemplate := false
-			switchV6TargetNeedsTemplate := false
-			routerV4TargetNeedsTemplate := false
-			routerV6TargetNeedsTemplate := false
-			allSharedV4Targets := []Addr{}
-			allSharedV6Targets := []Addr{}
-
-			for _, entry := range cfg.clusterEndpoints {
-				allSharedV4Targets = append(allSharedV4Targets, joinHostsPort(entry.V4IPs, entry.Port)...)
-				allSharedV6Targets = append(allSharedV6Targets, joinHostsPort(entry.V6IPs, entry.Port)...)
-
-				for _, node := range nodes {
-					switchV4TargetIPs, switchV6TargetIPs, v4Changed, v6Changed := makeNodeSwitchTargetIPs(node.name, entry, &cfg)
-					if v4Changed {
-						switchV4TargetNeedsTemplate = true
-					}
-					if v6Changed {
-						switchV6TargetNeedsTemplate = true
-					}
-
-					routerV4TargetIPs, routerV6TargetIPs, v4Changed, v6Changed := makeNodeRouterTargetIPs(
-						&node,
-						entry,
-						&cfg,
-						config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
-						config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
-
-					if v4Changed {
-						routerV4TargetNeedsTemplate = true
-					}
-					if v6Changed {
-						routerV6TargetNeedsTemplate = true
-					}
-
-					appendTemplateValue(switchV4TemplateTarget, node.chassisID,
-						addrsToString(joinHostsPort(switchV4TargetIPs, entry.Port)))
-					appendTemplateValue(switchV6TemplateTarget, node.chassisID,
-						addrsToString(joinHostsPort(switchV6TargetIPs, entry.Port)))
-					appendTemplateValue(routerV4TemplateTarget, node.chassisID,
-						addrsToString(joinHostsPort(routerV4TargetIPs, entry.Port)))
-					appendTemplateValue(routerV6TemplateTarget, node.chassisID,
-						addrsToString(joinHostsPort(routerV6TargetIPs, entry.Port)))
-				}
-			}
-
-			// Phase 2: Create rules using fully-populated template values.
-			// If all targets have exactly the same IPs on all nodes there's
-			// no need to use a template, just use the same list of explicit
-			// targets on all nodes.
-			sharedV4Targets := []Addr{}
-			sharedV6Targets := []Addr{}
-			if !switchV4TargetNeedsTemplate || !routerV4TargetNeedsTemplate {
-				sharedV4Targets = allSharedV4Targets
-			}
-			if !switchV6TargetNeedsTemplate || !routerV6TargetNeedsTemplate {
-				sharedV6Targets = allSharedV6Targets
-			}
+			allV4TargetIPs := cfg.clusterEndpoints.V4IPs
+			allV6TargetIPs := cfg.clusterEndpoints.V6IPs
 
 			for range cfg.vips {
 				klog.V(5).Infof("buildTemplateLBs() service %s/%s adding rules for network=%s",
 					service.Namespace, service.Name, netInfo.GetNetworkName())
+
+				// If all targets have exactly the same IPs on all nodes there's
+				// no need to use a template, just use the same list of explicit
+				// targets on all nodes.
+				switchV4TargetNeedsTemplate := false
+				switchV6TargetNeedsTemplate := false
+				routerV4TargetNeedsTemplate := false
+				routerV6TargetNeedsTemplate := false
+
+				for _, node := range nodes {
+
+					switchV4TargetIPs, switchV6TargetIPs, v4Changed, v6Changed := makeNodeSwitchTargetIPs(service, node.name, &cfg)
+					if !switchV4TargetNeedsTemplate && v4Changed {
+						switchV4TargetNeedsTemplate = true
+					}
+					if !switchV6TargetNeedsTemplate && v6Changed {
+						switchV6TargetNeedsTemplate = true
+					}
+
+					routerV4TargetIPs, routerV6TargetIPs, v4Changed, v6Changed, _, _ := makeNodeRouterTargetIPs(
+						service,
+						&node,
+						&cfg,
+						config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
+						config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
+
+					if !routerV4TargetNeedsTemplate && v4Changed {
+						routerV4TargetNeedsTemplate = true
+					}
+					if !routerV6TargetNeedsTemplate && v6Changed {
+						routerV6TargetNeedsTemplate = true
+					}
+
+					switchV4TemplateTarget.Value[node.chassisID] = addrsToString(
+						joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port))
+					switchV6TemplateTarget.Value[node.chassisID] = addrsToString(
+						joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port))
+
+					routerV4TemplateTarget.Value[node.chassisID] = addrsToString(
+						joinHostsPort(routerV4TargetIPs, cfg.clusterEndpoints.Port))
+					routerV6TemplateTarget.Value[node.chassisID] = addrsToString(
+						joinHostsPort(routerV6TargetIPs, cfg.clusterEndpoints.Port))
+				}
+
+				sharedV4Targets := []Addr{}
+				sharedV6Targets := []Addr{}
+				if !switchV4TargetNeedsTemplate || !routerV4TargetNeedsTemplate {
+					sharedV4Targets = joinHostsPort(allV4TargetIPs, cfg.clusterEndpoints.Port)
+				}
+				if !switchV6TargetNeedsTemplate || !routerV6TargetNeedsTemplate {
+					sharedV6Targets = joinHostsPort(allV6TargetIPs, cfg.clusterEndpoints.Port)
+				}
 
 				for _, nodeIPv4Template := range nodeIPv4Templates.AsTemplates() {
 
@@ -636,36 +669,39 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 
 			for _, cfg := range configs {
 
-				// Accumulate targets across all port numbers. When
-				// clusterEndpoints is empty (e.g. pod deleted during
-				// cycling), these remain empty and we still create
-				// rules with empty targets so OVN cleans up conntrack.
-				switchV4targets := []Addr{}
-				switchV6targets := []Addr{}
-				routerV4targets := []Addr{}
-				routerV6targets := []Addr{}
-				switchV4LocalTargets := []Addr{}
-				switchV6LocalTargets := []Addr{}
+				switchV4TargetIPs, switchV6TargetIPs, _, _ := makeNodeSwitchTargetIPs(service, node.name, &cfg)
 
-				for _, entry := range cfg.clusterEndpoints {
-					switchV4TargetIPs, switchV6TargetIPs, _, _ := makeNodeSwitchTargetIPs(node.name, entry, &cfg)
+				routerV4TargetIPs, routerV6TargetIPs, _, _, zeroRouterV4LocalEndpoints, zeroRouterV6LocalEndpoints := makeNodeRouterTargetIPs(
+					service,
+					&node,
+					&cfg,
+					config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
+					config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
 
-					routerV4TargetIPs, routerV6TargetIPs, _, _ := makeNodeRouterTargetIPs(
-						&node,
-						entry,
-						&cfg,
-						config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
-						config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
+				routerV4targets := joinHostsPort(routerV4TargetIPs, cfg.clusterEndpoints.Port)
+				routerV6targets := joinHostsPort(routerV6TargetIPs, cfg.clusterEndpoints.Port)
 
-					routerV4targets = append(routerV4targets, joinHostsPort(routerV4TargetIPs, entry.Port)...)
-					routerV6targets = append(routerV6targets, joinHostsPort(routerV6TargetIPs, entry.Port)...)
+				switchV4targets := joinHostsPort(cfg.clusterEndpoints.V4IPs, cfg.clusterEndpoints.Port)
+				switchV6targets := joinHostsPort(cfg.clusterEndpoints.V6IPs, cfg.clusterEndpoints.Port)
 
-					switchV4targets = append(switchV4targets, joinHostsPort(entry.V4IPs, entry.Port)...)
-					switchV6targets = append(switchV6targets, joinHostsPort(entry.V6IPs, entry.Port)...)
+				// OCP HACK begin
+				// TODO: Remove this hack once we add support for ITP:preferLocal and DNS operator starts using it.
+				if service.Namespace == "openshift-dns" && service.Name == "dns-default" {
+					// Select endpoints that are local to this node.
+					switchV4targetDNSips := util.FilterIPsSlice(cfg.clusterEndpoints.V4IPs, node.podSubnets, true)
+					switchV6targetDNSips := util.FilterIPsSlice(cfg.clusterEndpoints.V6IPs, node.podSubnets, true)
 
-					switchV4LocalTargets = append(switchV4LocalTargets, joinHostsPort(switchV4TargetIPs, entry.Port)...)
-					switchV6LocalTargets = append(switchV6LocalTargets, joinHostsPort(switchV6TargetIPs, entry.Port)...)
+					// If no local endpoints were found, add all the endpoints as targets.
+					if len(switchV4targetDNSips) == 0 {
+						switchV4targetDNSips = cfg.clusterEndpoints.V4IPs
+					}
+					if len(switchV6targetDNSips) == 0 {
+						switchV6targetDNSips = cfg.clusterEndpoints.V6IPs
+					}
+					switchV4targets = joinHostsPort(switchV4targetDNSips, cfg.clusterEndpoints.Port)
+					switchV6targets = joinHostsPort(switchV6targetDNSips, cfg.clusterEndpoints.Port)
 				}
+				// OCP HACK end
 
 				// Substitute the special vip "node" for the node's physical ips
 				// This is used for nodeport
@@ -691,10 +727,10 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 					if cfg.externalTrafficLocal && cfg.hasNodePort {
 						// add special masqueradeIP as a vip if its nodePort svc with ETP=local
 						mvip := config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String()
-						targetsETP := switchV4LocalTargets
+						targetsETP := joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port)
 						if isv6 {
 							mvip = config.Gateway.MasqueradeIPs.V6HostETPLocalMasqueradeIP.String()
-							targetsETP = switchV6LocalTargets
+							targetsETP = joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port)
 						}
 						switchRules = append(switchRules, LBRule{
 							Source:  Addr{IP: mvip, Port: cfg.inport},
@@ -702,9 +738,9 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 						})
 					}
 					if cfg.internalTrafficLocal && util.IsClusterIP(vip) { // ITP only applicable to CIP
-						targetsITP := switchV4LocalTargets
+						targetsITP := joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port)
 						if isv6 {
-							targetsITP = switchV6LocalTargets
+							targetsITP = joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port)
 						}
 						switchRules = append(switchRules, LBRule{
 							Source:  Addr{IP: vip, Port: cfg.inport},
@@ -728,10 +764,12 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 						Targets: targets,
 					}
 
+					localWithFallback := (isv6 && zeroRouterV6LocalEndpoints) || (!isv6 && zeroRouterV4LocalEndpoints)
+
 					// in other words, is this ExternalTrafficPolicy=local?
 					// if so, this gets a separate load balancer with SNAT disabled
 					// (but there's no need to do this if the list of targets is empty)
-					if cfg.externalTrafficLocal && len(targets) > 0 {
+					if cfg.externalTrafficLocal && len(targets) > 0 && !localWithFallback {
 						noSNATRouterRules = append(noSNATRouterRules, rule)
 					} else {
 						routerRules = append(routerRules, rule)
