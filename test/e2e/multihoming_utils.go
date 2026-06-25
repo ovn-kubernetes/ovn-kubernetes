@@ -143,6 +143,8 @@ type networkAttachmentConfigParams struct {
 	role                string
 	mtu                 int
 	physicalNetworkName string
+	labelKey            string
+	labelValue          string
 }
 
 type networkAttachmentConfig struct {
@@ -245,6 +247,7 @@ type podConfiguration struct {
 	hostNetwork            bool
 	ipRequestFromSubnet    string
 	usesExternalRouter     bool
+	staticIP               string // IP address without CIDR suffix, set by withStaticIPMAC
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
