@@ -5,7 +5,6 @@ package controllermanager
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -237,27 +236,11 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 		}
 	}
 
-	// Remove stale subnets from the advertised networks address set used for isolation
-	// NOTE: network reconciliation will take care of removing the subnets for existing networks that are no longer
+	// Remove stale subnets from the advertised networks address set used for isolation.
+	// Network reconciliation will take care of removing the subnets for existing networks that are no longer
 	// advertised.
-	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
-	advertisedSubnets, err := addressSetFactory.GetAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
-		return fmt.Errorf("failed to get advertised subnets addresset %s: %w", ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs(), err)
-	}
-	if advertisedSubnets != nil {
-		v4AdvertisedSubnets, v6AdvertisedSubnets := advertisedSubnets.GetAddresses()
-		var invalidSubnets []string
-		for _, subnet := range append(v4AdvertisedSubnets, v6AdvertisedSubnets...) {
-			if !validNetworksSubnets.Has(subnet) {
-				klog.Infof("Cleanup stale advertised subnet: %q", subnet)
-				invalidSubnets = append(invalidSubnets, subnet)
-			}
-		}
-
-		if err := advertisedSubnets.DeleteAddresses(invalidSubnets); err != nil {
-			klog.Errorf("Failed to delete stale advertised subnets: %v", invalidSubnets)
-		}
+	if err := ovn.CleanupStaleAdvertisedNetworkSubnets(cm.nbClient, validNetworksSubnets); err != nil {
+		return fmt.Errorf("failed to cleanup stale advertised subnets: %w", err)
 	}
 	return nil
 }
@@ -519,7 +502,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 
 	if util.IsRouteAdvertisementsEnabled() {
-		if err := cm.configureAdvertisedNetworkIsolation(); err != nil {
+		if err := ovn.ConfigureAdvertisedNetworkIsolation(cm.nbClient); err != nil {
 			return fmt.Errorf("failed to initialize advertised network isolation: %w", err)
 		}
 	}
@@ -579,12 +562,6 @@ func (cm *ControllerManager) Stop() {
 
 func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
-}
-
-func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
-	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
-	_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-	return err
 }
 
 func (cm *ControllerManager) setTopologyType() error {
