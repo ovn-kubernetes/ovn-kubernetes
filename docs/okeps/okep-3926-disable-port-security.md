@@ -368,6 +368,37 @@ or set it to `"Enabled"` (both are equivalent).
 | `Disabled` | `Enabled` (default)   | Enabled           | Disabled          | MAC-only security, no IPs assigned   |
 | `Disabled` | `Disabled`             | Disabled          | Enabled           | Full L2 flexibility, no restrictions |
 
+#### Future: Per-Attachment Port Security
+
+The `PortSecurityMode` enum is intentionally extensible. A future `WorkloadOptOut` mode is
+the anticipated path for per-attachment port security granularity, following the two-level
+model proven by OpenStack Neutron where a network-level default can be overridden per port.
+
+With `portSecurity.mode: WorkloadOptOut`, port security remains enabled by default on all
+LSPs attached to the network, but individual pods may opt out via a pod annotation (e.g.,
+`k8s.ovn.org/port-security-override`). The annotation is only honored on networks where
+the cluster admin has explicitly set `WorkloadOptOut`; on `Enabled` or `Disabled` networks
+the annotation has no effect. This preserves the admin as the sole decision-maker: the admin
+controls whether the network permits overrides, while the annotation is just the opt-in
+signal per attachment.
+
+This mode addresses mixed-role networks where a small number of specialized pods (virtual
+routers, nested hypervisors, keepalived pairs) need MAC freedom while the remaining pods
+benefit from anti-spoofing protection. Without per-attachment granularity, the admin must
+either disable port security for all pods or create separate networks for different security
+postures.
+
+The same per-attachment mechanism provides the natural integration point for a future
+`AllowList` mode with per-pod `allowedMACs`. Rather than fully disabling port security, a
+pod annotation could declare additional MAC addresses to append to the LSP's `port_security`
+column (e.g., `k8s.ovn.org/allowed-addresses: '{"net": ["00:00:5e:00:01:01"]}'`). OVN's
+`port_security` column natively accepts multiple MAC entries per LSP, so this maps directly
+to the underlying data model.
+
+Both extensions — `WorkloadOptOut` and `AllowList` — can be added as non-breaking enum
+additions to the existing `PortSecurityConfig` struct. The initial `Enabled`/`Disabled` API
+proposed in this OKEP is forward-compatible with these future modes.
+
 ### Implementation Details
 
 #### OVN Logical Topology
