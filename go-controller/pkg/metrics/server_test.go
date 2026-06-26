@@ -320,6 +320,7 @@ type metricsTestCase struct {
 	enableOVNDB         bool
 	enableOVNController bool
 	enableOVNNorthd     bool
+	enableScaleMetrics  bool
 	registerer          prometheus.Registerer
 	mockRunCommands     []ovntest.TestifyMockHelper
 	expectedMetrics     []string
@@ -551,6 +552,7 @@ func TestHandleMetrics(t *testing.T) {
 		{
 			name:                "OVN Controller metrics",
 			enableOVNController: true,
+			enableScaleMetrics:  true,
 			mockRunCommands: []ovntest.TestifyMockHelper{
 				// ovs-ofctl -t 5 dump-aggregate br-int
 				{
@@ -841,6 +843,10 @@ func TestHandleMetrics(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			savedEnableScaleMetrics := config.Metrics.EnableScaleMetrics
+			config.Metrics.EnableScaleMetrics = tc.enableScaleMetrics
+			defer func() { config.Metrics.EnableScaleMetrics = savedEnableScaleMetrics }()
+
 			// Configure server options
 			opts := MetricServerOptions{
 				BindAddress:                "127.0.0.1:0", // Use random port for testing
