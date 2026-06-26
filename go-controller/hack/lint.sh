@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-VERSION=v2.5.0
+VERSION=v2.12.2
 : "${GOLANGCI_LINT_VERSION:=$VERSION}"
 extra_flags=(--verbose --modules-download-mode=vendor --timeout=15m0s)
 if [ "$#" -ne 1 ]; then

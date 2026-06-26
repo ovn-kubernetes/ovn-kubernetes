@@ -574,6 +574,52 @@ fi
 			return ips
 		}
 
+		// The "should keep ip" table under the "with user defined networks and
+		// persistent ips configured" test verifies that a VM keeps its persistent
+		// UDN allocation after restart or migration. For secondary localnet
+		// dual-stack cases, OVN and Multus allocate both IPv4 and IPv6, but
+		// KubeVirt VMI status may report only IPv4 because the secondary guest
+		// interface uses IPv4-only cloud-init and DHCPv6 is not supported there.
+		// Read the full allocation from the virt-launcher pod network-status so
+		// the test still catches lost persistent IPv4 or IPv6 allocations without
+		// treating guest-invisible secondary IPv6 as lost.
+		virtLauncherNetworkStatusIPs = func(vmi *kubevirtv1.VirtualMachineInstance, networkStatusPredicate func(nadapi.NetworkStatus) bool, expectedNumberOfAddresses int) []string {
+			GinkgoHelper()
+			step := by(vmi.Name, "Wait for virt-launcher pod to report network-status addresses")
+			var ips []string
+			Eventually(func() ([]string, error) {
+				podList, err := fr.ClientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+					LabelSelector: labels.FormatLabels(map[string]string{kubevirtv1.VirtualMachineNameLabel: vmi.Name}),
+				})
+				if err != nil {
+					return nil, err
+				}
+				for i := range podList.Items {
+					pod := &podList.Items[i]
+					if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+						continue
+					}
+					networkStatuses, err := podNetworkStatus(pod, networkStatusPredicate)
+					if err != nil {
+						return nil, err
+					}
+					if len(networkStatuses) == 0 {
+						continue
+					}
+					if len(networkStatuses) > 1 {
+						return nil, fmt.Errorf("expected one network-status entry for VM %s, got %d", vmi.Name, len(networkStatuses))
+					}
+					ips = append([]string(nil), networkStatuses[0].IPs...)
+					return ips, nil
+				}
+				return nil, fmt.Errorf("missing running virt-launcher pod for VM %s", vmi.Name)
+			}).
+				WithTimeout(30*time.Second).
+				WithPolling(time.Second).
+				Should(HaveLen(expectedNumberOfAddresses), step)
+			return ips
+		}
+
 		checkConnectivity = func(vmName string, endpoints []*net.TCPConn, stage string) {
 			GinkgoHelper()
 			by(vmName, "Check connectivity "+stage)
@@ -2037,26 +2083,37 @@ ip route add %[3]s via %[4]s
 				WithPolling(time.Second).
 				Should(Succeed(), step)
 
-			// IPv6 is not supported for secondaries with IPAM since
-			// KubeVirt does not run a DHCPv6 server for bridge bindings,
-			// so the VMI status will only report IPv4 addresses.
-			// For primary UDNs, expect dual-stack (2 addresses); for
-			// secondaries, expect IPv4 only (1 address).
-			step = by(vmi.Name, "Wait for addresses at the virtual machine")
-			expectedNumberOfAddresses := len(dualCIDRs)
+			networkStatusPredicate := podNetworkStatusByNetConfigPredicate(namespace, cudn.Name, strings.ToLower(string(td.role)))
+
+			// The issue is specific to secondary KubeVirt UDNs: OVN/Multus can
+			// allocate both families, but KubeVirt status may expose only the IPv4
+			// address because the secondary guest interface is configured with
+			// IPv4-only cloud-init. We therefore need separate checks: the pod
+			// network-status must retain the full allocation, while VMI status and
+			// guest-visible checks use only the addresses KubeVirt can report. After
+			// the fix, a real lost allocation still fails the test, but missing
+			// secondary IPv6 in VMI status no longer fails a healthy VM.
+			expectedAllocatedAddressCount := len(dualCIDRs)
+			expectedStatusAddressCount := expectedAllocatedAddressCount
 			if td.role != udnv1.NetworkRolePrimary {
-				expectedNumberOfAddresses = 1
+				expectedStatusAddressCount = len(filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4)}))
 			}
-			expectedAddreses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
+
+			step = by(vmi.Name, "Wait for addresses at the virtual machine")
+			expectedAddreses := virtualMachineAddressesFromStatus(vmi, expectedStatusAddressCount)
+			expectedAllocatedAddresses := expectedAddreses
+			if td.role != udnv1.NetworkRolePrimary {
+				expectedAllocatedAddresses = virtLauncherNetworkStatusIPs(vmi, networkStatusPredicate, expectedAllocatedAddressCount)
+			}
 			if _, hasIPRequests := vmi.Annotations[kubevirt.AddressesAnnotation]; hasIPRequests {
-				Expect(expectedAddreses).To(ConsistOf(filterIPs(fr.ClientSet, staticIPv4, staticIPv6)), "expected addresses should be consistent with the static IPs")
+				Expect(expectedAllocatedAddresses).To(ConsistOf(filterIPs(fr.ClientSet, staticIPv4, staticIPv6)), "expected allocated addresses should be consistent with the static IPs")
 			}
 			if vmi.Spec.Domain.Devices.Interfaces[0].MacAddress != "" {
 				Expect(vmi.Spec.Domain.Devices.Interfaces[0].MacAddress).To(Equal(vmi.Status.Interfaces[0].MAC), "expected mac address should be consistent with the static MAC")
 			}
 
 			expectedAddresesAtGuest := expectedAddreses
-			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(namespace, cudn.Name, strings.ToLower(string(td.role))))
+			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, networkStatusPredicate)
 
 			serverIPs, serverPort := exposeVMIperfServer(td, vmi, expectedAddreses)
 
@@ -2125,8 +2182,13 @@ ip route add %[3]s via %[4]s
 			step = by(vmi.Name, fmt.Sprintf("Login to virtual machine after %s %s", td.resource.description, td.test.description))
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
 
-			obtainedAddresses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
+			obtainedAddresses := virtualMachineAddressesFromStatus(vmi, expectedStatusAddressCount)
+			obtainedAllocatedAddresses := obtainedAddresses
+			if td.role != udnv1.NetworkRolePrimary {
+				obtainedAllocatedAddresses = virtLauncherNetworkStatusIPs(vmi, networkStatusPredicate, expectedAllocatedAddressCount)
+			}
 
+			Expect(obtainedAllocatedAddresses).To(ConsistOf(expectedAllocatedAddresses))
 			Expect(obtainedAddresses).To(Equal(expectedAddreses))
 			Eventually(kubevirt.RetrieveAllGlobalAddressesFromGuest).
 				WithArguments(virtClient, vmi).

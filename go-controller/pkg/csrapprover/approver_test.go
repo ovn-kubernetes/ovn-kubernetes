@@ -346,10 +346,6 @@ func TestOVNKubeCSRController(t *testing.T) {
 				tt.expectedMaxDuration,
 				recorder)
 
-			if err != nil {
-				t.Fatal(err)
-			}
-
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name: csrName,
@@ -373,13 +369,6 @@ func TestOVNKubeCSRController(t *testing.T) {
 				if csrObj.Status.Conditions[0] != tt.expectedCondition {
 					t.Fatal(fmt.Errorf("expected:\n%v\ngot:\n%v", tt.expectedCondition, csrObj.Status.Conditions[0]))
 				}
-			}
-
-			if err != nil {
-				if err != context.DeadlineExceeded || !tt.shouldIgnore {
-					t.Fatal(fmt.Errorf("csr verification failed, err: %v", err))
-				}
-
 			}
 
 			if tt.expectedEvent != "" {
