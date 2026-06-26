@@ -858,6 +858,18 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 	klog.Infof("Node %s ready for ovn initialization with subnet %s", nc.name, util.JoinIPNets(subnets, ","))
 
+	// Setup nftables chain for secondary host EgressIP protection
+	// Use cluster-wide subnets because traffic from any node can be rerouted to this egress node
+	if config.IsModeDPUHost() || config.IsModeFull() {
+		clusterSubnets := make([]*net.IPNet, 0, len(config.Default.ClusterSubnets))
+		for _, entry := range config.Default.ClusterSubnets {
+			clusterSubnets = append(clusterSubnets, entry.CIDR)
+		}
+		if err := setupSecondaryEgressIPNFTChain(clusterSubnets); err != nil {
+			return fmt.Errorf("failed to setup secondary EgressIP nftables chain: %w", err)
+		}
+	}
+
 	// Create CNI Server
 	if config.IsModeDPUHost() || config.IsModeFull() {
 		kclient, ok := nc.Kube.(*kube.Kube)
