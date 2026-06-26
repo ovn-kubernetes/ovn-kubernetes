@@ -1311,7 +1311,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 	// sync netfilter rules once only for Full mode
 	if !npw.dpuMode {
 		// (NOTE: Order is important, add jump to iptableETPChain before jump to NP/EIP chains)
-		for _, chain := range []string{iptableITPChain, iptableExternalIPChain, iptableETPChain} {
+		for _, chain := range []string{iptableITPChain, iptableETPChain} {
 			if err = recreateIPTRules("nat", chain, keepIPTRules); err != nil {
 				errors = append(errors, err)
 			}
@@ -1703,13 +1703,6 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		// TODO: ETP and ITP is not implemented for smart NIC mode.
 		keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, nil, false)...)
 		keepNFTObjects = append(keepNFTObjects, getGatewayNFTRules(service, nil, false)...)
-	}
-
-	// sync rules once
-	for _, chain := range []string{iptableExternalIPChain} {
-		if err = recreateIPTRules("nat", chain, keepIPTRules); err != nil {
-			errors = append(errors, err)
-		}
 	}
 
 	nftContainers = append(nftContainers, getGatewayNFTContainerObjects()...)
