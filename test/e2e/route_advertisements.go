@@ -31,6 +31,7 @@ import (
 	ovnutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
@@ -642,6 +643,57 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 	})
 })
 
+// Helper functions for Layer3 subnet configurations
+func cudnLayer3SubnetsA() []udnv1.Layer3Subnet {
+	if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
+		return []udnv1.Layer3Subnet{{
+			CIDR:       "102.102.0.0/23",
+			HostSubnet: 24,
+		}, {
+			CIDR:       "102.104.0.0/16",
+			HostSubnet: 24,
+		}, {
+			CIDR:       "2013:100:200::0/63",
+			HostSubnet: 64,
+		}, {
+			CIDR:       "2013:100:201::0/48",
+			HostSubnet: 64,
+		}}
+	}
+	return []udnv1.Layer3Subnet{{
+		CIDR:       "102.102.0.0/16",
+		HostSubnet: 24,
+	}, {
+		CIDR:       "2013:100:200::0/60",
+		HostSubnet: 64,
+	}}
+}
+
+func cudnLayer3SubnetsB() []udnv1.Layer3Subnet {
+	if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.L3UDNMultiSubnetConfig) {
+		return []udnv1.Layer3Subnet{{
+			CIDR:       "103.103.0.0/23",
+			HostSubnet: 24,
+		}, {
+			CIDR:       "103.104.0.0/16",
+			HostSubnet: 24,
+		}, {
+			CIDR:       "2014:100:200::0/63",
+			HostSubnet: 64,
+		}, {
+			CIDR:       "2014:100:201::0/48",
+			HostSubnet: 64,
+		}}
+	}
+	return []udnv1.Layer3Subnet{{
+		CIDR:       "103.103.0.0/16",
+		HostSubnet: 24,
+	}, {
+		CIDR:       "2014:100:200::0/60",
+		HostSubnet: 64,
+	}}
+}
+
 var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advertised", feature.RouteAdvertisements, func() {
 	var serverContainerIPs []string
 	var frrContainerIPv4, frrContainerIPv6 string
@@ -964,20 +1016,8 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					Network: udnv1.NetworkSpec{
 						Topology: udnv1.NetworkTopologyLayer3,
 						Layer3: &udnv1.Layer3Config{
-							Role: "Primary",
-							Subnets: []udnv1.Layer3Subnet{{
-								CIDR:       "103.103.0.0/23",
-								HostSubnet: 24,
-							}, {
-								CIDR:       "103.104.0.0/16",
-								HostSubnet: 24,
-							}, {
-								CIDR:       "2014:100:200::0/63",
-								HostSubnet: 64,
-							}, {
-								CIDR:       "2014:100:201::0/48",
-								HostSubnet: 64,
-							}},
+							Role:    "Primary",
+							Subnets: cudnLayer3SubnetsB(),
 						},
 					},
 				},
@@ -1147,8 +1187,8 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 	)
 })
 
-var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks", feature.RouteAdvertisements,
-	func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
+var _ = ginkgo.Describe("BGP: isolation", feature.RouteAdvertisements, func() {
+	ginkgo.DescribeTableSubtree("between advertised networks", func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
 		const curlConnectionTimeoutCode = "28"
 		const nodePortBackendLabel = "nodeport-backend"
 		const clientNodeBackend = "client-node"
@@ -2039,148 +2079,124 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					}),
 			)
 		})
-
 	},
-	ginkgo.Entry("Layer3",
-		&udnv1.ClusterUserDefinedNetwork{
-			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "bgp-l3a-",
-				Labels:       map[string]string{"bgp-l3a": ""},
-			},
-			Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				Network: udnv1.NetworkSpec{
-					Topology: udnv1.NetworkTopologyLayer3,
-					Layer3: &udnv1.Layer3Config{
-						Role: "Primary",
-						Subnets: []udnv1.Layer3Subnet{{
-							CIDR:       "102.102.0.0/23",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "102.104.0.0/16",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "2013:100:200::0/63",
-							HostSubnet: 64,
-						}, {
-							CIDR:       "2013:100:201::0/48",
-							HostSubnet: 64,
-						}},
+		ginkgo.Entry("Layer3",
+			&udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "bgp-l3a-",
+					Labels:       map[string]string{"bgp-l3a": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role:    "Primary",
+							Subnets: cudnLayer3SubnetsA(),
+						},
+					},
+				},
+			}, &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "bgp-l3b-",
+					Labels:       map[string]string{"bgp-l3b": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role:    "Primary",
+							Subnets: cudnLayer3SubnetsB(),
+						},
 					},
 				},
 			},
-		}, &udnv1.ClusterUserDefinedNetwork{
-			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "bgp-l3b-",
-				Labels:       map[string]string{"bgp-l3b": ""},
-			},
-			Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				Network: udnv1.NetworkSpec{
-					Topology: udnv1.NetworkTopologyLayer3,
-					Layer3: &udnv1.Layer3Config{
-						Role: "Primary",
-						Subnets: []udnv1.Layer3Subnet{{
-							CIDR:       "103.103.0.0/23",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "103.104.0.0/16",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "2014:100:200::0/63",
-							HostSubnet: 64,
-						}, {
-							CIDR:       "2014:100:201::0/48",
-							HostSubnet: 64,
-						}},
+		),
+		ginkgo.Entry("Layer3 no-overlay SNAT disabled unmanaged routing", feature.NoOverlay,
+			&udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "bgp-l3-noovl-unmgd-net-a",
+					Labels: map[string]string{"bgp-l3-noovl-unmgd-net-a": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role: "Primary",
+							Subnets: []udnv1.Layer3Subnet{{
+								CIDR:       "102.102.0.0/16",
+								HostSubnet: 24,
+							}, {
+								CIDR:       "2013:100:200::0/60",
+								HostSubnet: 64,
+							}},
+						},
+						Transport: udnv1.TransportOptionNoOverlay,
+						NoOverlay: &udnv1.NoOverlayConfig{
+							OutboundSNAT: udnv1.SNATDisabled,
+							Routing:      udnv1.RoutingUnmanaged,
+						},
+					},
+				},
+			}, &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "bgp-l3-noovl-unmgd-net-b",
+					Labels: map[string]string{"bgp-l3-noovl-unmgd-net-b": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role: "Primary",
+							Subnets: []udnv1.Layer3Subnet{{
+								CIDR:       "103.103.0.0/16",
+								HostSubnet: 24,
+							}, {
+								CIDR:       "2014:100:200::0/60",
+								HostSubnet: 64,
+							}},
+						},
+						Transport: udnv1.TransportOptionNoOverlay,
+						NoOverlay: &udnv1.NoOverlayConfig{
+							OutboundSNAT: udnv1.SNATDisabled,
+							Routing:      udnv1.RoutingUnmanaged,
+						},
 					},
 				},
 			},
-		},
-	),
-	ginkgo.Entry("Layer3 no-overlay SNAT disabled unmanaged routing", feature.NoOverlay,
-		&udnv1.ClusterUserDefinedNetwork{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   "bgp-l3-noovl-unmgd-net-a",
-				Labels: map[string]string{"bgp-l3-noovl-unmgd-net-a": ""},
-			},
-			Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				Network: udnv1.NetworkSpec{
-					Topology: udnv1.NetworkTopologyLayer3,
-					Layer3: &udnv1.Layer3Config{
-						Role: "Primary",
-						Subnets: []udnv1.Layer3Subnet{{
-							CIDR:       "102.102.0.0/16",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "2013:100:200::0/60",
-							HostSubnet: 64,
-						}},
+		),
+		ginkgo.Entry("Layer2",
+			&udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "bgp-l2a-",
+					Labels:       map[string]string{"bgp-l2a": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    "Primary",
+							Subnets: udnv1.DualStackCIDRs{"102.102.0.0/16", "2013:100:200::0/60"},
+						},
 					},
-					Transport: udnv1.TransportOptionNoOverlay,
-					NoOverlay: &udnv1.NoOverlayConfig{
-						OutboundSNAT: udnv1.SNATDisabled,
-						Routing:      udnv1.RoutingUnmanaged,
+				},
+			}, &udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "bgp-l2b-",
+					Labels:       map[string]string{"bgp-l2b": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    "Primary",
+							Subnets: udnv1.DualStackCIDRs{"103.103.0.0/16", "2014:100:200::0/60"},
+						},
 					},
 				},
 			},
-		}, &udnv1.ClusterUserDefinedNetwork{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   "bgp-l3-noovl-unmgd-net-b",
-				Labels: map[string]string{"bgp-l3-noovl-unmgd-net-b": ""},
-			},
-			Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				Network: udnv1.NetworkSpec{
-					Topology: udnv1.NetworkTopologyLayer3,
-					Layer3: &udnv1.Layer3Config{
-						Role: "Primary",
-						Subnets: []udnv1.Layer3Subnet{{
-							CIDR:       "103.103.0.0/16",
-							HostSubnet: 24,
-						}, {
-							CIDR:       "2014:100:200::0/60",
-							HostSubnet: 64,
-						}},
-					},
-					Transport: udnv1.TransportOptionNoOverlay,
-					NoOverlay: &udnv1.NoOverlayConfig{
-						OutboundSNAT: udnv1.SNATDisabled,
-						Routing:      udnv1.RoutingUnmanaged,
-					},
-				},
-			},
-		},
-	),
-	ginkgo.Entry("Layer2",
-		&udnv1.ClusterUserDefinedNetwork{
-			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "bgp-l2a-",
-				Labels:       map[string]string{"bgp-l2a": ""},
-			},
-			Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				Network: udnv1.NetworkSpec{
-					Topology: udnv1.NetworkTopologyLayer2,
-					Layer2: &udnv1.Layer2Config{
-						Role:    "Primary",
-						Subnets: udnv1.DualStackCIDRs{"102.102.0.0/16", "2013:100:200::0/60"},
-					},
-				},
-			},
-		}, &udnv1.ClusterUserDefinedNetwork{
-			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "bgp-l2b-",
-				Labels:       map[string]string{"bgp-l2b": ""},
-			},
-			Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				Network: udnv1.NetworkSpec{
-					Topology: udnv1.NetworkTopologyLayer2,
-					Layer2: &udnv1.Layer2Config{
-						Role:    "Primary",
-						Subnets: udnv1.DualStackCIDRs{"103.103.0.0/16", "2014:100:200::0/60"},
-					},
-				},
-			},
-		},
-	),
-)
+		),
+	)
+})
 
 var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdvertisements, func() {
 
