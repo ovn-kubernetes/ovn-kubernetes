@@ -394,6 +394,13 @@ func createOrUpdateLogicalSwitchPorts(nbClient libovsdbclient.Client, sw *nbdb.L
 	return err
 }
 
+// CreateOrUpdateLogicalSwitchPortsOnSwitchOps creates or updates the provided
+// logical switch ports and adds them to the provided logical switch and
+// returns the corresponding ops
+func CreateOrUpdateLogicalSwitchPortsOnSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, sw *nbdb.LogicalSwitch, lsps ...*nbdb.LogicalSwitchPort) ([]ovsdb.Operation, error) {
+	return createOrUpdateLogicalSwitchPortsOps(nbClient, ops, sw, false, true, nil, lsps...)
+}
+
 // CreateOrUpdateLogicalSwitchPortsOnSwitchWithCustomFieldsOps creates or updates the provided
 // logical switch ports, adds them to the provided logical switch and returns
 // the corresponding ops
