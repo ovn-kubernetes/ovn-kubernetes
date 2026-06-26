@@ -85,22 +85,6 @@ var _ = ginkgo.Describe("[secondary-host-eip] Egress IP Packet Mark Solution Val
 		Items []egressIPObject `json:"items"`
 	}
 
-	// // Helper to get egress IP status items
-	// getEgressIPStatusItems := func() []egressIPStatus {
-	// 	egressIPObjs := &egressIPObjects{}
-	// 	egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", "-o", "json")
-	// 	if err != nil {
-	// 		framework.Failf("Error: failed to get the EgressIP object, err: %v", err)
-	// 	}
-	// 	err = json.Unmarshal([]byte(egressIPStdout), egressIPObjs)
-	// 	if err != nil {
-	// 		framework.Failf("Error: failed to unmarshal EgressIP object, err: %v", err)
-	// 	}
-	// 	if len(egressIPObjs.Items) == 0 {
-	// 		framework.Failf("Error: no EgressIP objects found")
-	// 	}
-	// 	return egressIPObjs.Items[0].Status.Items
-	// }
 	getEgressIPStatusItems := func() []egressIPStatus {
 		egressIPObj := &egressIPObject{}
 		egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "egressips", egressIPName, "-o", "json")
