@@ -104,6 +104,14 @@ add chain inet ovn-kubernetes services { comment "DNAT for ordinary NodePort/Ext
 add chain inet ovn-kubernetes services-etp { comment "Special DNAT for NodePort/ExternalIP/LB traffic with ExternalTrafficPolicy: Local" ; }
 add chain inet ovn-kubernetes services-output { type nat hook output priority -100 ; }
 add chain inet ovn-kubernetes services-prerouting { type nat hook prerouting priority -100 ; }
+add map inet ovn-kubernetes nodeports-v4 { type inet_proto . inet_service : ipv4_addr . inet_service ; comment "DNAT mappings for ordinary IPv4 NodePort traffic" ; }
+add map inet ovn-kubernetes nodeports-v6 { type inet_proto . inet_service : ipv6_addr . inet_service ; comment "DNAT mappings for ordinary IPv6 NodePort traffic" ; }
+add map inet ovn-kubernetes nodeports-etp-local-v4 { type inet_proto . inet_service : ipv4_addr . inet_service ; comment "DNAT mappings for IPv4 NodePort traffic with ExternalTrafficPolicy: Local" ; }
+add map inet ovn-kubernetes nodeports-etp-local-v6 { type inet_proto . inet_service : ipv6_addr . inet_service ; comment "DNAT mappings for IPv6 NodePort traffic with ExternalTrafficPolicy: Local" ; }
+add rule inet ovn-kubernetes services-etp fib daddr type local dnat ip addr . port to meta l4proto . th dport map @nodeports-etp-local-v4
+add rule inet ovn-kubernetes services-etp fib daddr type local dnat ip6 addr . port to meta l4proto . th dport map @nodeports-etp-local-v6
+add rule inet ovn-kubernetes services fib daddr type local dnat ip addr . port to meta l4proto . th dport map @nodeports-v4
+add rule inet ovn-kubernetes services fib daddr type local dnat ip6 addr . port to meta l4proto . th dport map @nodeports-v6
 add rule inet ovn-kubernetes services-output jump services
 add rule inet ovn-kubernetes services-prerouting jump services-etp
 add rule inet ovn-kubernetes services-prerouting jump services

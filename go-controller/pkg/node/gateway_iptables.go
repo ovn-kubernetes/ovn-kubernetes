@@ -110,40 +110,6 @@ func getGatewayInitRules(chain string, proto iptables.Protocol) []nodeipt.Rule {
 	return iptRules
 }
 
-// getNodePortIPTRules returns the IPTable DNAT rules for a service of type nodePort
-// `svcPort` corresponds to port details for this service as specified in the service object
-// `targetIP` is clusterIP towards which the DNAT of nodePort service is to be added
-// `targetPort` is the port towards which the DNAT of the nodePort service is to be added
-//
-//	case1: if svcHasLocalHostNetEndPnt=false + isETPLocal=true targetIP=config.masqueradeIP["HostETPLocalMasqueradeIP"] and targetPort=svcPort.NodePort
-//	case2: default: targetIP=clusterIP and targetPort=svcPort.Port
-//
-// `svcHasLocalHostNetEndPnt` is true if this service has at least one host-networked endpoint that is local to this node
-// `isETPLocal` is true if the svc.Spec.ExternalTrafficPolicy=Local
-func getNodePortIPTRules(svcPort corev1.ServicePort, targetIP string, targetPort int32, svcHasLocalHostNetEndPnt, isETPLocal bool) []nodeipt.Rule {
-	chainName := iptableNodePortChain
-	if !svcHasLocalHostNetEndPnt && isETPLocal {
-		// DNAT it to the masqueradeIP:nodePort instead of clusterIP:targetPort
-		targetIP = getMasqueradeVIP(targetIP)
-		chainName = iptableETPChain
-	}
-	return []nodeipt.Rule{
-		{
-			Table: "nat",
-			Chain: chainName,
-			Args: []string{
-				"-p", string(svcPort.Protocol),
-				"-m", "addrtype",
-				"--dst-type", "LOCAL",
-				"--dport", fmt.Sprintf("%d", svcPort.NodePort),
-				"-j", "DNAT",
-				"--to-destination", util.JoinHostPortInt32(targetIP, targetPort),
-			},
-			Protocol: getIPTablesProtocol(targetIP),
-		},
-	}
-}
-
 // getITPLocalIPTRules returns the IPTable REDIRECT or MARK rules for the provided service
 // `svcPort` corresponds to port details for this service as specified in the service object
 // `clusterIP` is clusterIP is the VIP of the service to match on
@@ -500,31 +466,6 @@ func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEnd
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 	svcTypeIsITPLocal := util.ServiceInternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {
-		if util.ServiceTypeHasNodePort(service) {
-			err := util.ValidatePort(svcPort.Protocol, svcPort.NodePort)
-			if err != nil {
-				klog.Errorf("Skipping service: %s, invalid service NodePort: %v", svcPort.Name, err)
-				continue
-			}
-			err = util.ValidatePort(svcPort.Protocol, svcPort.Port)
-			if err != nil {
-				klog.Errorf("Skipping service: %s, invalid service port %v", svcPort.Name, err)
-				continue
-			}
-			for _, clusterIP := range clusterIPs {
-				if svcTypeIsETPLocal && !svcHasLocalHostNetEndPnt {
-					// case1 (see function description for details)
-					// A DNAT rule to masqueradeIP is added that takes priority over DNAT to clusterIP.
-					if config.Gateway.Mode == config.GatewayModeLocal {
-						rules = append(rules, getNodePortIPTRules(svcPort, clusterIP, svcPort.NodePort, svcHasLocalHostNetEndPnt, svcTypeIsETPLocal)...)
-					}
-					// Note: getGatewayNFTRules will add rules to ensure that sourceIP is preserved
-				}
-				// case2 (see function description for details)
-				rules = append(rules, getNodePortIPTRules(svcPort, clusterIP, svcPort.Port, svcHasLocalHostNetEndPnt, false)...)
-			}
-		}
-
 		externalIPs := util.GetExternalAndLBIPs(service)
 
 		for _, externalIP := range externalIPs {
