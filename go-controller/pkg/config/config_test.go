@@ -340,6 +340,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeFull))
 			gomega.Expect(OvnKubeNode.MgmtPortNetdev).To(gomega.Equal(""))
 			gomega.Expect(OvnKubeNode.MgmtPortDPResourceName).To(gomega.Equal(""))
+			gomega.Expect(OvnKubeNode.RoutingTableIDStart).To(gomega.Equal(DefaultRoutingTableIDStart))
 			gomega.Expect(Gateway.RouterSubnet).To(gomega.Equal(""))
 			gomega.Expect(Gateway.SingleNode).To(gomega.BeFalse())
 			gomega.Expect(Gateway.DisableForwarding).To(gomega.BeFalse())
@@ -392,6 +393,41 @@ var _ = Describe("Config Operations", func() {
 		err2 := app.Run([]string{app.Name})
 		gomega.Expect(err2).NotTo(gomega.HaveOccurred())
 
+	})
+
+	It("parses routing table ID start from config file", func() {
+		err := os.WriteFile(cfgFile.Name(), []byte(`[ovnkubenode]
+routing-table-id-start=2002
+`), 0o644)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		app.Action = func(ctx *cli.Context) error {
+			cfgPath, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
+			gomega.Expect(OvnKubeNode.RoutingTableIDStart).To(gomega.Equal(2002))
+			return nil
+		}
+
+		err = app.Run([]string{app.Name, "-config-file=" + cfgFile.Name()})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	It("parses routing table ID start from CLI", func() {
+		app.Action = func(ctx *cli.Context) error {
+			cfgPath, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
+			gomega.Expect(OvnKubeNode.RoutingTableIDStart).To(gomega.Equal(2003))
+			return nil
+		}
+
+		err := app.Run([]string{
+			app.Name,
+			"--config-file=" + cfgFile.Name(),
+			"--ovnkube-node-routing-table-id-start=2003",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
 	It("uses environment variables", func() {
@@ -1516,39 +1552,33 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 	})
 
 	Describe("OVN Kube Node config", func() {
+		nodeConfig := func() OvnKubeNodeConfig {
+			return OvnKubeNode
+		}
+
 		// NOTE: We test this here as the test that overrides values also sets hybridOverlay to true
 		// which yields an invalid configuration.
 		It("Overrides value from Config file", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
-			file := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeDPU,
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
+			fileNodeConfig := nodeConfig()
+			fileNodeConfig.Mode = types.NodeModeDPU
+
+			cliConfig := config{OvnKubeNode: nodeConfig()}
+			file := config{OvnKubeNode: fileNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &file)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeDPU))
 		})
 
 		It("Overrides value from CLI", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeDPUHost,
-					MgmtPortNetdev:            "enp1s0f0v0",
-					MgmtPortDPResourceName:    "openshift.io/mgmtvf",
-					DPUNodeLeaseRenewInterval: 5,
-					DPUNodeLeaseDuration:      20,
-				},
-			}
-			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.Mode = types.NodeModeDPUHost
+			cliNodeConfig.MgmtPortNetdev = "enp1s0f0v0"
+			cliNodeConfig.MgmtPortDPResourceName = "openshift.io/mgmtvf"
+			cliNodeConfig.DPUNodeLeaseRenewInterval = 5
+			cliNodeConfig.DPUNodeLeaseDuration = 20
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeDPUHost))
 			gomega.Expect(OvnKubeNode.MgmtPortNetdev).To(gomega.Equal("enp1s0f0v0"))
@@ -1557,51 +1587,93 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			gomega.Expect(OvnKubeNode.DPUNodeLeaseDuration).To(gomega.Equal(20))
 		})
 
+		It("Overrides routing table ID start from Config file", func() {
+			cliConfig := config{OvnKubeNode: nodeConfig()}
+			file := config{OvnKubeNode: nodeConfig()}
+			file.OvnKubeNode.RoutingTableIDStart = 2000
+
+			err := buildOvnKubeNodeConfig(&cliConfig, &file)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(OvnKubeNode.RoutingTableIDStart).To(gomega.Equal(2000))
+		})
+
+		It("Overrides routing table ID start from CLI", func() {
+			cliConfig := config{OvnKubeNode: nodeConfig()}
+			cliConfig.OvnKubeNode.RoutingTableIDStart = 2001
+			file := config{OvnKubeNode: nodeConfig()}
+			file.OvnKubeNode.RoutingTableIDStart = 2000
+
+			err := buildOvnKubeNodeConfig(&cliConfig, &file)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(OvnKubeNode.RoutingTableIDStart).To(gomega.Equal(2001))
+		})
+
+		It("Fails if routing table ID start is below the reserved range", func() {
+			cliConfig := config{OvnKubeNode: nodeConfig()}
+			cliConfig.OvnKubeNode.RoutingTableIDStart = MinimumRoutingTableIDStart - 1
+
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: nodeConfig()})
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("routing-table-id-start"))
+		})
+
+		It("Succeeds if routing table ID start is at the maximum", func() {
+			cliConfig := config{OvnKubeNode: nodeConfig()}
+			cliConfig.OvnKubeNode.RoutingTableIDStart = MaximumRoutingTableIDStart
+
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: nodeConfig()})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(OvnKubeNode.RoutingTableIDStart).To(gomega.Equal(MaximumRoutingTableIDStart))
+		})
+
+		It("Fails if routing table ID start is above the maximum", func() {
+			cliConfig := config{OvnKubeNode: nodeConfig()}
+			cliConfig.OvnKubeNode.RoutingTableIDStart = MaximumRoutingTableIDStart + 1
+
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: nodeConfig()})
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("routing-table-id-start"))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("must be <="))
+		})
+
 		It("Fails with unsupported mode", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode: "invalid",
-				},
-			}
-			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.Mode = "invalid"
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("unexpected ovnkube-node-mode"))
 		})
 
 		It("Fails if hybrid overlay is enabled and ovnkube node mode is not full", func() {
 			HybridOverlay.Enabled = true
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode: types.NodeModeDPU,
-				},
-			}
-			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.Mode = types.NodeModeDPU
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring(
 				"hybrid overlay is not supported with ovnkube-node mode"))
 		})
 
 		It("Fails if DPU node lease renew interval is negative", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					DPUNodeLeaseRenewInterval: -1,
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.DPUNodeLeaseRenewInterval = -1
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("dpu-node-lease-renew-interval"))
 		})
 
 		It("Succeeds if DPU node lease renew interval is zero", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					DPUNodeLeaseRenewInterval: 0,
-					DPUNodeLeaseDuration:      10,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.DPUNodeLeaseRenewInterval = 0
+			cliNodeConfig.DPUNodeLeaseDuration = 10
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(OvnKubeNode.DPUNodeLeaseRenewInterval).To(gomega.Equal(0))
@@ -1609,25 +1681,21 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		})
 
 		It("Fails if DPU node lease duration is non-positive", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                 types.NodeModeFull,
-					DPUNodeLeaseDuration: 0,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.DPUNodeLeaseDuration = 0
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("dpu-node-lease-duration"))
 		})
 
 		It("Fails if DPU node lease duration is less than or equal to renew interval", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					DPUNodeLeaseRenewInterval: 10,
-					DPUNodeLeaseDuration:      10,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.DPUNodeLeaseRenewInterval = 10
+			cliNodeConfig.DPUNodeLeaseDuration = 10
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.Or(
@@ -1637,68 +1705,42 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		})
 
 		It("Fails if management port is provided and ovnkube node mode is dpu", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeDPU,
-					MgmtPortNetdev:            "enp1s0f0v0",
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.Mode = types.NodeModeDPU
+			cliNodeConfig.MgmtPortNetdev = "enp1s0f0v0"
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("ovnkube-node-mgmt-port-netdev or ovnkube-node-mgmt-port-dp-resource-name must not be provided"))
 		})
 
 		It("Fails if management port is not provided and ovnkube node mode is dpu-host", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeDPUHost,
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.Mode = types.NodeModeDPUHost
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
 			err := buildOvnKubeNodeConfig(&cliConfig, &config{OvnKubeNode: OvnKubeNode})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("ovnkube-node-mgmt-port-netdev or ovnkube-node-mgmt-port-dp-resource-name must be provided"))
 		})
 
 		It("Succeeds if management netdev provided in the full mode", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					MgmtPortNetdev:            "ens1f0v0",
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
-			file := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.MgmtPortNetdev = "ens1f0v0"
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
+			file := config{OvnKubeNode: nodeConfig()}
 			err := buildOvnKubeNodeConfig(&cliConfig, &file)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 
 		It("Succeeds if management port device plugin resource name provided in the full mode", func() {
-			cliConfig := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					MgmtPortDPResourceName:    "openshift.io/mgmtvf",
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
-			file := config{
-				OvnKubeNode: OvnKubeNodeConfig{
-					Mode:                      types.NodeModeFull,
-					DPUNodeLeaseDuration:      OvnKubeNode.DPUNodeLeaseDuration,
-					DPUNodeLeaseRenewInterval: OvnKubeNode.DPUNodeLeaseRenewInterval,
-				},
-			}
+			cliNodeConfig := nodeConfig()
+			cliNodeConfig.MgmtPortDPResourceName = "openshift.io/mgmtvf"
+
+			cliConfig := config{OvnKubeNode: cliNodeConfig}
+			file := config{OvnKubeNode: nodeConfig()}
 			err := buildOvnKubeNodeConfig(&cliConfig, &file)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})

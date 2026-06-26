@@ -68,6 +68,15 @@ const DefaultDBTxnTimeout = time.Second * 100
 // DefaultEphemeralPortRange is used for unit testing only
 const DefaultEphemeralPortRange = "32768-60999"
 
+// MinimumRoutingTableIDStart is the lowest allowed start of OVN-managed Linux route table IDs.
+const MinimumRoutingTableIDStart = 1000
+
+// MaximumRoutingTableIDStart is capped so adding any Linux interface index still fits in a uint32 route table ID.
+const MaximumRoutingTableIDStart = 1<<31 - 1
+
+// DefaultRoutingTableIDStart is the default start of OVN-managed Linux route table IDs.
+const DefaultRoutingTableIDStart = MinimumRoutingTableIDStart
+
 // The following are global config parameters that other modules may access directly
 var (
 	// Build information. Populated at build-time.
@@ -235,6 +244,7 @@ var (
 		Mode:                      types.NodeModeFull,
 		DPUNodeLeaseRenewInterval: 10,
 		DPUNodeLeaseDuration:      40,
+		RoutingTableIDStart:       DefaultRoutingTableIDStart,
 	}
 
 	ClusterManager = ClusterManagerConfig{
@@ -652,6 +662,8 @@ type OvnKubeNodeConfig struct {
 	DPUNodeLeaseRenewInterval int    `gcfg:"dpu-node-lease-renew-interval"`
 	DPUNodeLeaseDuration      int    `gcfg:"dpu-node-lease-duration"`
 	SimulateDPU               bool   `gcfg:"simulate-dpu"`
+	// RoutingTableIDStart is added to interface indexes to derive OVN-managed Linux route table IDs.
+	RoutingTableIDStart int `gcfg:"routing-table-id-start"`
 }
 
 // ClusterManagerConfig holds configuration for ovnkube-cluster-manager
@@ -1780,6 +1792,14 @@ var OvnKubeNodeFlags = []cli.Flag{
 		Usage:       "Use simulated DPU operations instead of real SR-IOV/switchdev hardware. Required for Kind and VM-based DPU simulation environments.",
 		Value:       OvnKubeNode.SimulateDPU,
 		Destination: &cliConfig.OvnKubeNode.SimulateDPU,
+	},
+	&cli.IntFlag{
+		Name: "ovnkube-node-routing-table-id-start",
+		Usage: fmt.Sprintf("Start of the Linux route table ID range managed by ovnkube-node "+
+			"for generated VRF and route tables. Must be between %d and %d",
+			MinimumRoutingTableIDStart, MaximumRoutingTableIDStart),
+		Value:       OvnKubeNode.RoutingTableIDStart,
+		Destination: &cliConfig.OvnKubeNode.RoutingTableIDStart,
 	},
 }
 
@@ -2945,6 +2965,14 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 	if OvnKubeNode.DPUNodeLeaseDuration <= OvnKubeNode.DPUNodeLeaseRenewInterval {
 		return fmt.Errorf("invalid dpu-node-lease-duration '%d'. must be > dpu-node-lease-renew-interval '%d'",
 			OvnKubeNode.DPUNodeLeaseDuration, OvnKubeNode.DPUNodeLeaseRenewInterval)
+	}
+	if OvnKubeNode.RoutingTableIDStart < MinimumRoutingTableIDStart {
+		return fmt.Errorf("invalid routing-table-id-start '%d'. must be >= %d",
+			OvnKubeNode.RoutingTableIDStart, MinimumRoutingTableIDStart)
+	}
+	if OvnKubeNode.RoutingTableIDStart > MaximumRoutingTableIDStart {
+		return fmt.Errorf("invalid routing-table-id-start '%d'. must be <= %d",
+			OvnKubeNode.RoutingTableIDStart, MaximumRoutingTableIDStart)
 	}
 
 	// Warn the user if both MgmtPortNetdev and MgmtPortDPResourceName are specified since they
