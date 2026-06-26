@@ -6,7 +6,9 @@ package networkmanager
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/gomega"
@@ -452,4 +454,188 @@ func TestNetworkControllerStopsNetworkOnStartFailure(t *testing.T) {
 	expectedNetworkKey := testNetworkKey(netInfo)
 	g.Expect(tcm.started).To(gomega.Equal([]string{expectedNetworkKey}))
 	g.Expect(tcm.stopped).To(gomega.Equal([]string{expectedNetworkKey}))
+}
+
+// TestNetworkController_ConcurrentReconciliation validates that the networkReconciler
+// can safely handle concurrent network additions and deletions without data races.
+func TestNetworkController_ConcurrentReconciliation(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+	}
+	nm := newNetworkController("test", "", "", tcm, wf)
+
+	err = wf.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer wf.Shutdown()
+
+	g.Expect(nm.Start()).To(gomega.Succeed())
+	defer nm.Stop()
+
+	const numNetworks = 20
+	const numIterations = 3
+
+	for iteration := 0; iteration < numIterations; iteration++ {
+		t.Logf("Iteration %d/%d: Testing concurrent add/delete of %d networks", iteration+1, numIterations, numNetworks)
+
+		// Phase 1: Concurrent network additions
+		var addWg sync.WaitGroup
+		for i := 0; i < numNetworks; i++ {
+			addWg.Add(1)
+			go func(idx int) {
+				defer addWg.Done()
+
+				// Create a test network
+				networkName := fmt.Sprintf("test-net-%d-%d", iteration, idx)
+				netConf := &ovncnitypes.NetConf{
+					NetConf: cnitypes.NetConf{
+						Name: networkName,
+						Type: "ovn-k8s-cni-overlay",
+					},
+					Topology: "layer2",
+					Role:     "secondary",
+					MTU:      1400,
+				}
+
+				netInfo, err := util.NewNetInfo(netConf)
+				if err != nil {
+					t.Errorf("Failed to create NetInfo for %s: %v", networkName, err)
+					return
+				}
+
+				mutableNetInfo := util.NewMutableNetInfo(netInfo)
+				nm.EnsureNetwork(mutableNetInfo)
+			}(i)
+		}
+		addWg.Wait()
+
+		// getAllNetworks() returns only secondary networks, not the default network
+		g.Eventually(nm.getAllNetworks, 5*time.Second, 100*time.Millisecond).
+			Should(gomega.HaveLen(numNetworks))
+
+		// Phase 2: Concurrent network deletions
+		var delWg sync.WaitGroup
+		for i := 0; i < numNetworks; i++ {
+			delWg.Add(1)
+			go func(idx int) {
+				defer delWg.Done()
+				networkName := fmt.Sprintf("test-net-%d-%d", iteration, idx)
+				nm.DeleteNetwork(networkName)
+			}(i)
+		}
+		delWg.Wait()
+
+		g.Eventually(nm.getAllNetworks).WithTimeout(5*time.Second).
+			WithPolling(100*time.Millisecond).Should(gomega.BeEmpty(),
+			"all test networks should be deleted")
+	}
+}
+
+// TestNetworkController_ConcurrentReconciliationMixed validates concurrent operations
+// with mixed add, update, and delete operations happening simultaneously.
+func TestNetworkController_ConcurrentReconciliationMixed(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+	}
+	nm := newNetworkController("test", "", "", tcm, wf)
+
+	err = wf.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer wf.Shutdown()
+
+	g.Expect(nm.Start()).To(gomega.Succeed())
+	defer nm.Stop()
+
+	const numOperations = 30
+	const numUniqueNetworks = 10
+	var wg sync.WaitGroup
+
+	for i := 0; i < numOperations; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+
+			networkName := fmt.Sprintf("mixed-net-%d", idx%numUniqueNetworks)
+			netConf := &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					Name: networkName,
+					Type: "ovn-k8s-cni-overlay",
+				},
+				Topology: "layer2",
+				Role:     "secondary",
+				MTU:      1400,
+			}
+
+			netInfo, err := util.NewNetInfo(netConf)
+			if err != nil {
+				t.Errorf("Failed to create NetInfo: %v", err)
+				return
+			}
+
+			mutableNetInfo := util.NewMutableNetInfo(netInfo)
+
+			// Randomly add or delete
+			if idx%3 == 0 {
+				nm.DeleteNetwork(networkName)
+			} else {
+				nm.EnsureNetwork(mutableNetInfo)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Ensure all networks exist to reach a deterministic final state
+	for i := 0; i < numUniqueNetworks; i++ {
+		networkName := fmt.Sprintf("mixed-net-%d", i)
+		netConf := &ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{
+				Name: networkName,
+				Type: "ovn-k8s-cni-overlay",
+			},
+			Topology: "layer2",
+			Role:     "secondary",
+			MTU:      1400,
+		}
+
+		netInfo, err := util.NewNetInfo(netConf)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+
+		mutableNetInfo := util.NewMutableNetInfo(netInfo)
+		nm.EnsureNetwork(mutableNetInfo)
+	}
+
+	// Verify all networks exist (deterministic final state)
+	g.Eventually(func(g gomega.Gomega) {
+		networks := nm.getAllNetworks()
+		// getAllNetworks() returns secondary networks only
+		g.Expect(networks).To(gomega.HaveLen(numUniqueNetworks),
+			"Expected %d networks after mixed operations, got %d", numUniqueNetworks, len(networks))
+
+		// Verify each network can be retrieved
+		for _, network := range networks {
+			retrieved := nm.getNetwork(network.GetNetworkName())
+			g.Expect(retrieved).ToNot(gomega.BeNil())
+		}
+	}).Should(gomega.Succeed())
 }
