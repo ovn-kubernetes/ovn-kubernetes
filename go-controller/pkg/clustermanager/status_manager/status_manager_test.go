@@ -645,8 +645,8 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 			},
 		}
 		egressFirewall.ManagedFields = []metav1.ManagedFieldsEntry{
-			{Manager: "zone1", Subresource: "status", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{"f:messages":{"v:\"zone1: zone1: EgressFirewall Rules applied\"":{}}}}`)}},
-			{Manager: "zone2", Subresource: "status", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{"f:messages":{"v:\"zone2: zone2: EgressFirewall Rules applied\"":{}}}}`)}},
+			{Manager: "zone1", Subresource: "status", FieldsV1: metav1.NewFieldsV1(`{"f:status":{"f:messages":{"v:\"zone1: zone1: EgressFirewall Rules applied\"":{}}}}`)},
+			{Manager: "zone2", Subresource: "status", FieldsV1: metav1.NewFieldsV1(`{"f:status":{"f:messages":{"v:\"zone2: zone2: EgressFirewall Rules applied\"":{}}}}`)},
 		}
 
 		// Set up a reactor to intercept cleanup patches and track which zones are cleaned
@@ -720,12 +720,12 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		}
 		egressFirewall.ManagedFields = []metav1.ManagedFieldsEntry{
 			// Valid managedFields with actual message content nested inside
-			{Manager: "zone1", Subresource: "status", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{"f:messages":{"v:\"zone1: EgressFirewall Rules applied\"":{}}}}`)}},
-			{Manager: "zone2", Subresource: "status", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{"f:messages":{"v:\"zone2: EgressFirewall Rules applied\"":{}}}}`)}},
+			{Manager: "zone1", Subresource: "status", FieldsV1: metav1.NewFieldsV1(`{"f:status":{"f:messages":{"v:\"zone1: EgressFirewall Rules applied\"":{}}}}`)},
+			{Manager: "zone2", Subresource: "status", FieldsV1: metav1.NewFieldsV1(`{"f:status":{"f:messages":{"v:\"zone2: EgressFirewall Rules applied\"":{}}}}`)},
 			// Stale managedField with empty status (left by buggy code when zone was deleted)
-			{Manager: "zone3-deleted", Subresource: "status", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{}}`)}},
+			{Manager: "zone3-deleted", Subresource: "status", FieldsV1: metav1.NewFieldsV1(`{"f:status":{}}`)},
 			// Legitimate cluster-manager managedField with its own nested structure
-			{Manager: "cluster-manager", Subresource: "status", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:status":{"f:status":{}}}`)}},
+			{Manager: "cluster-manager", Subresource: "status", FieldsV1: metav1.NewFieldsV1(`{"f:status":{"f:status":{}}}`)},
 		}
 
 		var cleanupCalled atomic.Uint32

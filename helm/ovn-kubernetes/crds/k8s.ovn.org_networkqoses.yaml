@@ -67,7 +67,7 @@ spec:
                           description: |-
                             burst The value of burst rate limit in kilobits.
                             This also needs rate to be specified.
-                          format: int32
+                          format: int64
                           maximum: 4294967295
                           minimum: 1
                           type: integer
@@ -75,7 +75,7 @@ spec:
                           description: |-
                             rate The value of rate limit in kbps. Traffic over the limit
                             will be dropped.
-                          format: int32
+                          format: int64
                           maximum: 4294967295
                           minimum: 1
                           type: integer

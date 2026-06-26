@@ -434,7 +434,7 @@ func onModels(models interface{}, do func(interface{}) error) error {
 	if !v.IsValid() {
 		return nil
 	}
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil
 		}
@@ -453,7 +453,7 @@ func onModels(models interface{}, do func(interface{}) error) error {
 			}
 		case reflect.Interface:
 			fallthrough
-		case reflect.Ptr:
+		case reflect.Pointer:
 			for i := 0; i < v.Len(); i++ {
 				model := v.Index(i).Interface()
 				err := do(model)
