@@ -316,7 +316,12 @@ func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
 	dropACL := BuildAdvertisedNetworkSubnetsDropACL(addrSet)
 	pg := libovsdbutil.BuildPortGroup(GetAdvertisedNetworkSubnetsDropPGdbIDs(), nil, nil)
 
-	ops, err := libovsdbops.CreateOrUpdateACLsOps(nbClient, nil, nil, dropACL)
+	ops, err := migrateAdvertisedNetworkDropACLToPortGroup(nbClient, pg, dropACL)
+	if err != nil {
+		return err
+	}
+
+	ops, err = libovsdbops.CreateOrUpdateACLsOps(nbClient, ops, nil, dropACL)
 	if err != nil {
 		return fmt.Errorf("failed to create or update advertised network isolation drop ACL: %w", err)
 	}
@@ -332,6 +337,64 @@ func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
 		return fmt.Errorf("failed to configure advertised network isolation: %w", err)
 	}
 	return nil
+}
+
+// migrateAdvertisedNetworkDropACLToPortGroup handles upgrade from switch-based drop ACL.
+// If the port group already exists, migration was already done. Otherwise, it finds all
+// drop ACLs on switches (there may be duplicates from a race condition where multiple
+// networks were advertised concurrently), removes them from switches, and adds the stor
+// ports of affected switches to the provided port group model so the PG-based drop ACL
+// takes over. It sets dropACL.UUID to the first existing ACL's UUID so the caller can
+// update it in place.
+func migrateAdvertisedNetworkDropACLToPortGroup(nbClient libovsdbclient.Client, pg *nbdb.PortGroup, dropACL *nbdb.ACL) ([]ovsdb.Operation, error) {
+	_, err := libovsdbops.GetPortGroup(nbClient, &nbdb.PortGroup{Name: pg.Name})
+	if err == nil {
+		return nil, nil
+	}
+	if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return nil, fmt.Errorf("failed to get advertised network isolation port group: %w", err)
+	}
+
+	existingDropACLs, err := libovsdbops.FindACLsWithPredicate(nbClient,
+		libovsdbops.GetPredicate[*nbdb.ACL](GetAdvertisedNetworkSubnetsDropACLdbIDs(), nil))
+	if err != nil {
+		return nil, fmt.Errorf("failed to find advertised network drop ACLs: %w", err)
+	}
+	if len(existingDropACLs) == 0 {
+		return nil, nil
+	}
+
+	dropACL.UUID = existingDropACLs[0].UUID
+
+	allDropACLUUIDs := sets.New[string]()
+	for _, acl := range existingDropACLs {
+		allDropACLUUIDs.Insert(acl.UUID)
+	}
+
+	var ops []ovsdb.Operation
+	var affectedSwitches []string
+	p := func(sw *nbdb.LogicalSwitch) bool {
+		if allDropACLUUIDs.HasAny(sw.ACLs...) {
+			affectedSwitches = append(affectedSwitches, sw.Name)
+			return true
+		}
+		return false
+	}
+	ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(nbClient, ops, p, existingDropACLs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to remove stale drop ACLs from switches: %w", err)
+	}
+
+	for _, swName := range affectedSwitches {
+		storPortName := types.SwitchToRouterPrefix + swName
+		storLSP, err := libovsdbops.GetLogicalSwitchPort(nbClient, &nbdb.LogicalSwitchPort{Name: storPortName})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get stor port %s: %w", storPortName, err)
+		}
+		pg.Ports = append(pg.Ports, storLSP.UUID)
+	}
+
+	return ops, nil
 }
 
 // CleanupStaleAdvertisedNetworkSubnets removes subnets from the advertised network subnets address set
