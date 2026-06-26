@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
@@ -37,6 +38,11 @@ const (
 	nftablesLocalGatewayMasqChain = "ovn-kube-local-gw-masq"
 	nftablesPodSubnetMasqChain    = "ovn-kube-pod-subnet-masq"
 	nftablesUDNMasqChain          = "ovn-kube-udn-masq"
+
+	nftablesNodePortsV4    = "nodeports-v4"
+	nftablesNodePortsV6    = "nodeports-v6"
+	nftablesETPNodePortsV4 = "nodeports-etp-local-v4"
+	nftablesETPNodePortsV6 = "nodeports-etp-local-v6"
 )
 
 // initGatewayNFTables initializes chains/sets/maps used for Service proxying rules.
@@ -95,11 +101,111 @@ func initGatewayNFTables() error {
 		Rule:  "jump services",
 	})
 
+	// Create the maps and rules for ETP:Local services
+	tx.Add(&knftables.Map{
+		Name:    nftablesETPNodePortsV4,
+		Type:    "inet_proto . inet_service : ipv4_addr . inet_service",
+		Comment: knftables.PtrTo("DNAT mappings for IPv4 NodePort traffic with ExternalTrafficPolicy: Local"),
+	})
+	tx.Add(&knftables.Map{
+		Name:    nftablesETPNodePortsV6,
+		Type:    "inet_proto . inet_service : ipv6_addr . inet_service",
+		Comment: knftables.PtrTo("DNAT mappings for IPv6 NodePort traffic with ExternalTrafficPolicy: Local"),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-etp",
+		Rule: knftables.Concat(
+			"fib daddr type local",
+			"dnat ip addr . port to",
+			"meta l4proto . th dport map", "@", nftablesETPNodePortsV4,
+		),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-etp",
+		Rule: knftables.Concat(
+			"fib daddr type local",
+			"dnat ip6 addr . port to",
+			"meta l4proto . th dport map", "@", nftablesETPNodePortsV6,
+		),
+	})
+
+	// Create the maps and rules for ordinary (ETP:Cluster) services
+	tx.Add(&knftables.Map{
+		Name:    nftablesNodePortsV4,
+		Type:    "inet_proto . inet_service : ipv4_addr . inet_service",
+		Comment: knftables.PtrTo("DNAT mappings for ordinary IPv4 NodePort traffic"),
+	})
+	tx.Add(&knftables.Map{
+		Name:    nftablesNodePortsV6,
+		Type:    "inet_proto . inet_service : ipv6_addr . inet_service",
+		Comment: knftables.PtrTo("DNAT mappings for ordinary IPv6 NodePort traffic"),
+	})
+
+	tx.Add(&knftables.Rule{
+		Chain: "services",
+		Rule: knftables.Concat(
+			"fib daddr type local",
+			"dnat ip addr . port to",
+			"meta l4proto . th dport map", "@", nftablesNodePortsV4,
+		),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services",
+		Rule: knftables.Concat(
+			"fib daddr type local",
+			"dnat ip6 addr . port to",
+			"meta l4proto . th dport map", "@", nftablesNodePortsV6,
+		),
+	})
+
 	if err := nft.Run(context.TODO(), tx); err != nil {
 		return fmt.Errorf("could not set up service nftables rules: %w", err)
 	}
 
 	return nil
+}
+
+// getNodePortNFTRules returns the nftables DNAT rules for a service of type nodePort.
+// `svcPort` corresponds to port details for this service as specified in the service object.
+// `targetIP` is the clusterIP towards which the DNAT of nodePort service is to be added.
+// `targetPort` is the port towards which the DNAT of the nodePort service is to be added
+//
+//	case1: if svcHasLocalHostNetEndPnt=false + isETPLocal=true targetIP=config.masqueradeIP["HostETPLocalMasqueradeIP"] and targetPort=svcPort.NodePort
+//	case2: default: targetIP=clusterIP and targetPort=svcPort.Port
+//
+// `svcHasLocalHostNetEndPnt` is true if this service has at least one host-networked endpoint that is local to this node
+// `isETPLocal` is true if the svc.Spec.ExternalTrafficPolicy=Local
+func getNodePortNFTRules(svcPort corev1.ServicePort, targetIP string, targetPort int32, svcHasLocalHostNetEndPnt, isETPLocal bool) []knftables.Object {
+	var mapName string
+	if !svcHasLocalHostNetEndPnt && isETPLocal {
+		// DNAT it to the masqueradeIP:nodePort instead of clusterIP:targetPort
+		targetIP = getMasqueradeVIP(targetIP)
+		if utilnet.IsIPv4String(targetIP) {
+			mapName = nftablesETPNodePortsV4
+		} else {
+			mapName = nftablesETPNodePortsV6
+		}
+	} else {
+		if utilnet.IsIPv4String(targetIP) {
+			mapName = nftablesNodePortsV4
+		} else {
+			mapName = nftablesNodePortsV6
+		}
+	}
+
+	return []knftables.Object{
+		&knftables.Element{
+			Map: mapName,
+			Key: []string{
+				strings.ToLower(string(svcPort.Protocol)),
+				fmt.Sprintf("%d", svcPort.NodePort),
+			},
+			Value: []string{
+				targetIP,
+				fmt.Sprintf("%d", targetPort),
+			},
+		},
+	}
 }
 
 // getNoSNATNodePortRules returns elements to add to the "mgmtport-no-snat-nodeports"
@@ -199,15 +305,40 @@ func getUDNExternalIPsMarkNFTRules(svcPort corev1.ServicePort, externalIPs []str
 // with getGatewayIPTRulesForService.
 func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []knftables.Object {
 	rules := make([]knftables.Object, 0)
+	clusterIPs := util.GetClusterIPs(service)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {
+		if util.ServiceTypeHasNodePort(service) {
+			err := util.ValidatePort(svcPort.Protocol, svcPort.NodePort)
+			if err != nil {
+				klog.Errorf("Skipping service: %s, invalid service NodePort: %v", svcPort.Name, err)
+				continue
+			}
+			err = util.ValidatePort(svcPort.Protocol, svcPort.Port)
+			if err != nil {
+				klog.Errorf("Skipping service: %s, invalid service port %v", svcPort.Name, err)
+				continue
+			}
+			for _, clusterIP := range clusterIPs {
+				if svcTypeIsETPLocal && !svcHasLocalHostNetEndPnt {
+					// case1 (see function description for details)
+					// A DNAT rule to masqueradeIP is added that takes priority over DNAT to clusterIP.
+					if config.Gateway.Mode == config.GatewayModeLocal {
+						rules = append(rules, getNodePortNFTRules(svcPort, clusterIP, svcPort.NodePort, svcHasLocalHostNetEndPnt, svcTypeIsETPLocal)...)
+					}
+					// add a skip SNAT rule to preserve sourceIP for etp=local traffic
+					rules = append(rules, getNoSNATNodePortRules(svcPort)...)
+				}
+				// case2 (see function description for details)
+				rules = append(rules, getNodePortNFTRules(svcPort, clusterIP, svcPort.Port, svcHasLocalHostNetEndPnt, false)...)
+			}
+		}
+
 		if svcTypeIsETPLocal && !svcHasLocalHostNetEndPnt {
 			// For `externalTrafficPolicy: Local` services with pod-network
 			// endpoints, we need to add rules to prevent them from being SNATted
 			// when entering the management port, to preserve the client IP.
-			if util.ServiceTypeHasNodePort(service) {
-				rules = append(rules, getNoSNATNodePortRules(svcPort)...)
-			} else if len(util.GetExternalAndLBIPs(service)) > 0 {
+			if !util.ServiceTypeHasNodePort(service) && len(util.GetExternalAndLBIPs(service)) > 0 {
 				rules = append(rules, getNoSNATLoadBalancerIPRules(svcPort, localEndpoints)...)
 			}
 		}
@@ -229,6 +360,18 @@ func getGatewayNFTContainerObjects() []knftables.Object {
 		},
 		&knftables.Set{
 			Name: types.NFTMgmtPortNoSNATServicesV6,
+		},
+		&knftables.Map{
+			Name: nftablesNodePortsV4,
+		},
+		&knftables.Map{
+			Name: nftablesNodePortsV6,
+		},
+		&knftables.Map{
+			Name: nftablesETPNodePortsV4,
+		},
+		&knftables.Map{
+			Name: nftablesETPNodePortsV6,
 		},
 	}
 }
