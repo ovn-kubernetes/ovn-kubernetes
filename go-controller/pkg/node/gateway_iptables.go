@@ -149,55 +149,6 @@ func getITPLocalIPTRules(svcPort corev1.ServicePort, clusterIP string, svcHasLoc
 	}
 }
 
-func computeProbability(n, i int) string {
-	return fmt.Sprintf("%0.10f", 1.0/float64(n-i+1))
-}
-
-// generateIPTRulesForLoadBalancersWithoutNodePorts generates iptables DNAT rules for load balancer services
-// without NodePort allocation. It performs statistical load balancing between endpoints via iptables.
-func generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort corev1.ServicePort, externalIP string, localEndpoints util.PortToLBEndpoints) []nodeipt.Rule {
-	if len(localEndpoints) == 0 {
-		// either its smart nic mode; etp&itp not implemented, OR
-		// fetching endpointSlices error-ed out prior to reaching here so nothing to do
-		return []nodeipt.Rule{}
-	}
-
-	// Get the endpoints for the port key.
-	// svcPortKey is of format e.g. "TCP/my-port-name" or "TCP/" if name is empty
-	// (is the case when only a single ServicePort is defined on this service).
-	svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
-	lbEndpoints := localEndpoints[svcPortKey]
-
-	// Get IPv4 or IPv6 IPs, depending on the type of the service's external IP.
-	destinations := lbEndpoints.GetV4Destinations()
-	if utilnet.IsIPv6String(externalIP) {
-		destinations = lbEndpoints.GetV6Destinations()
-	}
-
-	numLocalEndpoints := len(destinations)
-	iptRules := make([]nodeipt.Rule, 0, numLocalEndpoints)
-	for i, destination := range destinations {
-		iptRules = append([]nodeipt.Rule{
-			{
-				Table: "nat",
-				Chain: iptableETPChain,
-				Args: []string{
-					"-p", string(svcPort.Protocol),
-					"-d", externalIP,
-					"--dport", fmt.Sprintf("%v", svcPort.Port),
-					"-j", "DNAT",
-					"--to-destination", util.JoinHostPortInt32(destination.IP, destination.Port),
-					"-m", "statistic",
-					"--mode", "random",
-					"--probability", computeProbability(numLocalEndpoints, i+1),
-				},
-				Protocol: getIPTablesProtocol(externalIP),
-			},
-		}, iptRules...)
-	}
-	return iptRules
-}
-
 func getGatewayForwardRules(cidrs []*net.IPNet) map[iptables.Protocol][]nodeipt.Rule {
 	returnRules := map[iptables.Protocol][]nodeipt.Rule{}
 
@@ -421,37 +372,14 @@ func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
 // getGatewayIPTRules returns ClusterIP, NodePort, ExternalIP and LoadBalancer iptables
 // rules for service. This must be used in conjunction with getGatewayNFTRules.
 //
-// case1: If !svcHasLocalHostNetEndPnt and svcTypeIsETPLocal rules that redirect traffic
-// to ovn-k8s-mp0 preserving sourceIP are added.
-//
 // case3: if svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that redirects clusterIP traffic to host targetPort is added.
 //
 //	if !svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that marks clusterIP traffic to steer it to ovn-k8s-mp0 is added.
 func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
 	rules := make([]nodeipt.Rule, 0)
 	clusterIPs := util.GetClusterIPs(service)
-	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 	svcTypeIsITPLocal := util.ServiceInternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {
-		externalIPs := util.GetExternalAndLBIPs(service)
-
-		for _, externalIP := range externalIPs {
-			err := util.ValidatePort(svcPort.Protocol, svcPort.Port)
-			if err != nil {
-				klog.Errorf("Skipping service: %s, invalid service port %v", svcPort.Name, err)
-				continue
-			}
-			if _, err := util.MatchIPStringFamily(utilnet.IsIPv6String(externalIP), clusterIPs); err == nil {
-				if svcTypeIsETPLocal && !svcHasLocalHostNetEndPnt {
-					// case1 (see function description for details)
-					// DNAT traffic to masqueradeIP:nodePort instead of clusterIP:Port. We are leveraging the existing rules for NODEPORT
-					// service so no need to add a rule to skip SNAT since the corresponding nodePort svc would have one.
-					if !util.ServiceTypeHasNodePort(service) {
-						rules = append(rules, generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort, externalIP, localEndpoints)...)
-					}
-				}
-			}
-		}
 		if svcTypeIsITPLocal {
 			// case3 (see function decription for details)
 			for _, clusterIP := range clusterIPs {

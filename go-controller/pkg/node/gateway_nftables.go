@@ -48,6 +48,8 @@ const (
 	nftablesExternalIPsV6    = "external-ips-v6"
 	nftablesETPExternalIPsV4 = "external-ips-etp-local-v4"
 	nftablesETPExternalIPsV6 = "external-ips-etp-local-v6"
+
+	nftablesETPNoNodePortChain = "services-etp-no-nodeport"
 )
 
 // initGatewayNFTables initializes chains/sets/maps used for Service proxying rules.
@@ -73,6 +75,13 @@ func initGatewayNFTables() error {
 	tx.Flush(&knftables.Chain{
 		Name: "services-etp",
 	})
+	tx.Add(&knftables.Chain{
+		Name:    nftablesETPNoNodePortChain,
+		Comment: knftables.PtrTo("Special DNAT for ExternalIP/LB traffic with ExternalTrafficPolicy: Local and no NodePorts"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: nftablesETPNoNodePortChain,
+	})
 
 	// Create chains that hook to netfilter and invoke our service chains as appropriate.
 	tx.Add(&knftables.Chain{
@@ -87,6 +96,12 @@ func initGatewayNFTables() error {
 	tx.Add(&knftables.Rule{
 		Chain: "services-prerouting",
 		Rule:  "jump services-etp",
+	})
+	tx.Add(&knftables.Rule{
+		Chain: "services-prerouting",
+		Rule: knftables.Concat(
+			"jump", nftablesETPNoNodePortChain,
+		),
 	})
 	tx.Add(&knftables.Rule{
 		Chain: "services-prerouting",
@@ -257,6 +272,66 @@ func getNodePortNFTRules(svcPort corev1.ServicePort, targetIP string, targetPort
 				targetIP,
 				fmt.Sprintf("%d", targetPort),
 			},
+		},
+	}
+}
+
+func generateNFTRulesForLoadBalancersWithoutNodePorts(service *corev1.Service, svcPort corev1.ServicePort, externalIP string, localEndpoints util.PortToLBEndpoints) []knftables.Object {
+	// Get the endpoints for the port key.
+	// svcPortKey is of format e.g. "TCP/my-port-name" or "TCP/" if name is empty
+	// (is the case when only a single ServicePort is defined on this service).
+	svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+	lbEndpoints := localEndpoints[svcPortKey]
+
+	// Get IPv4 or IPv6 IPs, depending on the type of the service's external IP.
+	destinations := lbEndpoints.GetV4Destinations()
+	if utilnet.IsIPv6String(externalIP) {
+		destinations = lbEndpoints.GetV6Destinations()
+	}
+	numLocalEndpoints := len(destinations)
+	if numLocalEndpoints == 0 {
+		return nil
+	}
+
+	ipX := "ip"
+	if utilnet.IsIPv6String(externalIP) {
+		ipX = "ip6"
+	}
+	comment := service.Namespace + "/" + service.Name + ":" + svcPort.Name
+
+	// Build comma-separated list of "NUMBER : IP" mappings
+	mappings := make([]string, 0, numLocalEndpoints*2)
+	for i, destination := range destinations {
+		if i != 0 {
+			mappings = append(mappings, ",")
+		}
+		mappings = append(mappings, fmt.Sprintf("%d : %s . %d", i, destination.IP, destination.Port))
+	}
+
+	// There's no good way to do this with a single static rule and only add and
+	// remove set/map elements like we do for everything else. In particular, you
+	// can't have nested maps, so we'd have to have the "ip . protocol . port" and the
+	// random endpoint number be in the same map. (So we'd have to have one map and
+	// rule for single-endpoint services, another map and rule for 2-endpoint
+	// services, etc.)
+	//
+	// If the O(n)-ness here turns out to be a problem, an alternative implementation
+	// would be to have a vmap from "ip . protocol . port" to a jump rule, and then
+	// have each Service have its own chain with a single "dnat to random map entry"
+	// rule. That would be slightly more complicated to manage, but it would make it
+	// O(1)...
+	return []knftables.Object{
+		&knftables.Rule{
+			Chain: nftablesETPNoNodePortChain,
+			Rule: knftables.Concat(
+				ipX, "daddr", externalIP,
+				"meta l4proto", strings.ToLower(string(svcPort.Protocol)),
+				"th dport", svcPort.Port,
+				"dnat", ipX, "addr . port to",
+				"numgen random mod", numLocalEndpoints,
+				"map {", mappings, "}",
+			),
+			Comment: &comment,
 		},
 	}
 }
@@ -447,7 +522,7 @@ func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEnd
 					// DNAT traffic to masqueradeIP:nodePort instead of clusterIP:Port. We are leveraging the existing rules for NODEPORT
 					// service so no need to add a rule to skip SNAT since the corresponding nodePort svc would have one.
 					if !util.ServiceTypeHasNodePort(service) {
-						// getGatewayIPTRulesForService generates the DNAT rules for now.
+						rules = append(rules, generateNFTRulesForLoadBalancersWithoutNodePorts(service, svcPort, externalIP, localEndpoints)...)
 						// The SNAT rules are per endpoint and should only be created one time per endpoint and port combination
 						if !snatRulesCreated {
 							rules = append(rules, getNoSNATLoadBalancerIPRules(svcPort, localEndpoints)...)
@@ -503,6 +578,9 @@ func getGatewayNFTContainerObjects() []knftables.Object {
 		},
 		&knftables.Map{
 			Name: nftablesETPExternalIPsV6,
+		},
+		&knftables.Chain{
+			Name: nftablesETPNoNodePortChain,
 		},
 	}
 }
