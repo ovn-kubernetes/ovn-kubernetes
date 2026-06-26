@@ -1323,7 +1323,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 	// sync netfilter rules once only for Full mode
 	if !npw.dpuMode {
 		// (NOTE: Order is important, add jump to iptableETPChain before jump to NP/EIP chains)
-		for _, chain := range []string{iptableITPChain, iptableNodePortChain, iptableExternalIPChain, iptableETPChain} {
+		for _, chain := range []string{iptableITPChain, iptableExternalIPChain, iptableETPChain} {
 			if err = recreateIPTRules("nat", chain, keepIPTRules); err != nil {
 				errors = append(errors, err)
 			}
@@ -1718,7 +1718,7 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 	}
 
 	// sync rules once
-	for _, chain := range []string{iptableNodePortChain, iptableExternalIPChain} {
+	for _, chain := range []string{iptableExternalIPChain} {
 		if err = recreateIPTRules("nat", chain, keepIPTRules); err != nil {
 			errors = append(errors, err)
 		}
