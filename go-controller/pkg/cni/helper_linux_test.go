@@ -20,9 +20,15 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
+	corev1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	kexec "k8s.io/utils/exec"
 	"sigs.k8s.io/knftables"
 
@@ -1244,10 +1250,291 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 					}
 				}
 			}
-			tc.inpPodRequest.deletePodConntrack()
+			tc.inpPodRequest.deletePodConntrack(nil)
 			mockTypeResult.AssertExpectations(t)
 		})
 	}
+}
+
+func TestPodRequest_migrationPreservedIPs(t *testing.T) {
+	const (
+		ns      = "kv-live-migration-84"
+		vmName  = "vm1"
+		srcName = "virt-launcher-vm1-source"
+		tgtName = "virt-launcher-vm1-target"
+		udnNAD  = ns + "/net1"
+
+		// The default-network IPs are pod-specific: the cluster default
+		// network allocates per-node subnets, so they are never preserved
+		// across live migration and are released with their pod.
+		srcDefaultIPv4 = "10.244.1.4"
+		tgtDefaultIPv4 = "10.244.2.20"
+
+		// The (dual-stack) UDN IPs are common to source and target pods:
+		// they are preserved across live migration via the IPAMClaim.
+		commonUDNIPv4 = "10.100.200.5"
+		commonUDNIPv6 = "fd10:0:2b:f000::5"
+	)
+
+	var (
+		migrationTargetReadyAnnotation = map[string]string{
+			kubevirtv1.MigrationTargetReadyTimestamp: "2026-06-29T06:14:48Z",
+		}
+	)
+
+	// podNetworksAnnotation renders the OVN pod-networks annotation wire
+	// format for the given NAD key -> IPs (CIDR) mapping.
+	podNetworksAnnotation := func(networks map[string][]string) string {
+		podNetworks := map[string]map[string][]string{}
+		for nad, ips := range networks {
+			podNetworks[nad] = map[string][]string{"ip_addresses": ips}
+		}
+		raw, err := json.Marshal(podNetworks)
+		require.NoError(t, err)
+		return string(raw)
+	}
+
+	srcNetworks := map[string][]string{
+		"default": {srcDefaultIPv4 + "/24"},
+		udnNAD:    {commonUDNIPv4 + "/24", commonUDNIPv6 + "/64"},
+	}
+
+	tgtNetworks := map[string][]string{
+		"default": {tgtDefaultIPv4 + "/24"},
+		udnNAD:    {commonUDNIPv4 + "/24", commonUDNIPv6 + "/64"},
+	}
+
+	tgtNetworksIPv6Only := map[string][]string{
+		"default": {tgtDefaultIPv4 + "/24"},
+		udnNAD:    {commonUDNIPv6 + "/64"},
+	}
+
+	// virtPod builds a virt-launcher pod for vm1 with the given annotations,
+	// pod phase and OVN pod-networks annotation (NAD key -> IPs in CIDR
+	// format). The target pod gets a later creation timestamp than the
+	// source, since DiscoverLiveMigrationStatus relies on creation time
+	// ordering to tell them apart.
+	virtPod := func(name string, anns map[string]string, phase corev1.PodPhase, networks map[string][]string) *corev1.Pod {
+		if anns == nil {
+			anns = map[string]string{}
+		}
+		anns[kubevirtv1.DomainAnnotation] = vmName
+		if networks != nil {
+			anns[ovntypes.OvnPodAnnotationName] = podNetworksAnnotation(networks)
+		}
+		creation := metav1.NewTime(time.Date(2026, 6, 29, 6, 0, 0, 0, time.UTC))
+		if name == tgtName {
+			creation = metav1.NewTime(creation.Add(time.Minute))
+		}
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				Namespace:         ns,
+				UID:               ktypes.UID(name),
+				CreationTimestamp: creation,
+				Labels:            map[string]string{kubevirtv1.AppLabel: "virt-launcher", kubevirtv1.VirtualMachineNameLabel: vmName},
+				Annotations:       anns,
+			},
+		}
+		pod.Status.Phase = phase
+		return pod
+	}
+
+	nonVMPod := func(name string) *corev1.Pod {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: ktypes.UID(name)}}
+	}
+
+	newLister := func(pods ...*corev1.Pod) corev1listers.PodLister {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		for _, p := range pods {
+			require.NoError(t, indexer.Add(p))
+		}
+		return corev1listers.NewPodLister(indexer)
+	}
+
+	tests := []struct {
+		desc     string
+		podName  string
+		lister   corev1listers.PodLister
+		expected sets.Set[string]
+	}{
+		{
+			desc:     "nil lister (unprivileged shim) -> nothing preserved, flush all",
+			lister:   nil,
+			expected: sets.New[string](),
+		},
+		{
+			desc:     "pod not in lister -> nothing preserved, flush all",
+			lister:   newLister(virtPod(tgtName, migrationTargetReadyAnnotation, "", tgtNetworks)),
+			expected: sets.New[string](),
+		},
+		{
+			desc:     "single VM pod, no migration -> nothing preserved, flush all",
+			lister:   newLister(virtPod(srcName, nil, "", srcNetworks)),
+			expected: sets.New[string](),
+		},
+		{
+			desc:     "non-VM pod -> nothing preserved, flush all",
+			lister:   newLister(nonVMPod(srcName)),
+			expected: sets.New[string](),
+		},
+		{
+			desc:   "migration in progress -> only the shared UDN IPs preserved (dual-stack), default-network IPs not preserved",
+			lister: newLister(virtPod(srcName, nil, "", srcNetworks), virtPod(tgtName, nil, "", tgtNetworks)),
+			// Default-network IPs come from per-node subnets and move with
+			// the pod, not with the VM: the source one is genuinely released
+			// and the target one is excluded from the preserved set.
+			expected: sets.New(commonUDNIPv4, commonUDNIPv6),
+		},
+		{
+			desc:     "migration target ready -> shared UDN IPs preserved (dual-stack)",
+			lister:   newLister(virtPod(srcName, nil, "", srcNetworks), virtPod(tgtName, migrationTargetReadyAnnotation, "", tgtNetworks)),
+			expected: sets.New(commonUDNIPv4, commonUDNIPv6),
+		},
+		{
+			desc:     "migration in progress, IPv6-only UDN -> IPv6 preserved",
+			lister:   newLister(virtPod(srcName, nil, "", srcNetworks), virtPod(tgtName, nil, "", tgtNetworksIPv6Only)),
+			expected: sets.New(commonUDNIPv6),
+		},
+		{
+			desc:     "migration in progress, target without OVN annotation -> nothing preserved, flush all",
+			lister:   newLister(virtPod(srcName, nil, "", srcNetworks), virtPod(tgtName, nil, "", nil)),
+			expected: sets.New[string](),
+		},
+		{
+			desc:     "migration failed (target completed, source living) -> nothing preserved, flush all",
+			lister:   newLister(virtPod(srcName, nil, "", srcNetworks), virtPod(tgtName, nil, corev1.PodSucceeded, tgtNetworks)),
+			expected: sets.New[string](),
+		},
+		{
+			desc:    "deleting the failed migration target -> shared UDN IPs preserved",
+			podName: tgtName,
+			lister:  newLister(virtPod(srcName, nil, "", srcNetworks), virtPod(tgtName, nil, corev1.PodSucceeded, tgtNetworks)),
+			// The migration failed and the source pod keeps hosting the VM:
+			// its UDN established connections must not be broken. Its
+			// default-network IP is not at risk from the target's DEL (it
+			// lives on another node's subnet and cannot appear in the
+			// target's PrevResult), so it is not in the preserved set.
+			expected: sets.New(commonUDNIPv4, commonUDNIPv6),
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			podName := tc.podName
+			if podName == "" {
+				podName = srcName
+			}
+			pr := &PodRequest{
+				PodNamespace: ns,
+				PodName:      podName,
+				nadKey:       ovntypes.DefaultNetworkName,
+			}
+			require.Equal(t, tc.expected, pr.migrationPreservedIPs(tc.lister))
+		})
+	}
+}
+
+// TestPodRequest_deletePodConntrackLiveMigration asserts that deletePodConntrack
+// suppresses the conntrack flush exactly for the IPs preserved on the live
+// migration target pod, while still flushing the released ones.
+func TestPodRequest_deletePodConntrackLiveMigration(t *testing.T) {
+	const (
+		ns      = "kv-live-migration-84"
+		vmName  = "vm1"
+		srcName = "virt-launcher-vm1-source"
+		tgtName = "virt-launcher-vm1-target"
+		udnNAD  = ns + "/net1"
+	)
+	// The target pod gets a later creation timestamp than the source, since
+	// DiscoverLiveMigrationStatus relies on creation time ordering to tell
+	// them apart.
+	virtPod := func(name string, networks string) *corev1.Pod {
+		creation := metav1.NewTime(time.Date(2026, 6, 29, 6, 0, 0, 0, time.UTC))
+		if name == tgtName {
+			creation = metav1.NewTime(creation.Add(time.Minute))
+		}
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				Namespace:         ns,
+				UID:               ktypes.UID(name),
+				CreationTimestamp: creation,
+				Labels:            map[string]string{kubevirtv1.AppLabel: "virt-launcher", kubevirtv1.VirtualMachineNameLabel: vmName},
+				Annotations: map[string]string{
+					kubevirtv1.DomainAnnotation:   vmName,
+					ovntypes.OvnPodAnnotationName: networks,
+				},
+			},
+		}
+	}
+	newLister := func(pods ...*corev1.Pod) corev1listers.PodLister {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		for _, p := range pods {
+			require.NoError(t, indexer.Add(p))
+		}
+		return corev1listers.NewPodLister(indexer)
+	}
+	// The pod being torn down owns the released default-network IPv4 address
+	// plus the dual-stack UDN addresses preserved on the migration target.
+	newPodRequest := func(t *testing.T) *PodRequest {
+		t.Helper()
+		prevResult := &current.Result{
+			CNIVersion: "1.1.0",
+			Interfaces: []*current.Interface{{Name: "eth0", Sandbox: "blah"}, {Name: "ovn-udn1", Sandbox: "blah"}},
+			IPs: []*current.IPConfig{
+				{Interface: &[]int{0}[0], Address: *ovntest.MustParseIPNet("10.244.1.4/24")},
+				{Interface: &[]int{1}[0], Address: *ovntest.MustParseIPNet("10.100.200.5/24")},
+				{Interface: &[]int{1}[0], Address: *ovntest.MustParseIPNet("fd10:0:2b:f000::5/64")},
+			},
+		}
+		raw, err := json.Marshal(prevResult)
+		require.NoError(t, err)
+		parsedResult, err := current.NewResult(raw)
+		require.NoError(t, err)
+		return &PodRequest{
+			PodNamespace: ns,
+			PodName:      srcName,
+			nadKey:       ovntypes.DefaultNetworkName,
+			CNIConf: &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{
+					PrevResult: parsedResult,
+				},
+			},
+		}
+	}
+	srcNetworks := `{"default":{"ip_addresses":["10.244.1.4/24"]},"` + udnNAD + `":{"ip_addresses":["10.100.200.5/24","fd10:0:2b:f000::5/64"]}}`
+	tgtNetworks := `{"default":{"ip_addresses":["10.244.2.20/24"]},"` + udnNAD + `":{"ip_addresses":["10.100.200.5/24","fd10:0:2b:f000::5/64"]}}`
+
+	t.Run("live migration in progress: flushes only the released IP, keeps the preserved dual-stack UDN IPs", func(t *testing.T) {
+		mockNetLinkOps := new(util_mocks.NetLinkOps)
+		util.SetNetLinkOpMockInst(mockNetLinkOps)
+		// Only the released default-network IPv4 address is flushed; no
+		// IPv6 flush at all since the only IPv6 address is preserved.
+		mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V4), mock.Anything).
+			Return(uint(1), nil).Once()
+
+		lister := newLister(virtPod(srcName, srcNetworks), virtPod(tgtName, tgtNetworks))
+		newPodRequest(t).deletePodConntrack(lister)
+
+		mockNetLinkOps.AssertExpectations(t)
+		mockNetLinkOps.AssertNumberOfCalls(t, "ConntrackDeleteFilters", 1)
+	})
+
+	t.Run("no other living VM pod: flushes all the IPs", func(t *testing.T) {
+		mockNetLinkOps := new(util_mocks.NetLinkOps)
+		util.SetNetLinkOpMockInst(mockNetLinkOps)
+		mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V4), mock.Anything).
+			Return(uint(1), nil).Twice()
+		mockNetLinkOps.On("ConntrackDeleteFilters", netlink.ConntrackTableType(netlink.ConntrackTable), netlink.InetFamily(netlink.FAMILY_V6), mock.Anything).
+			Return(uint(1), nil).Once()
+
+		lister := newLister(virtPod(srcName, srcNetworks))
+		newPodRequest(t).deletePodConntrack(lister)
+
+		mockNetLinkOps.AssertExpectations(t)
+		mockNetLinkOps.AssertNumberOfCalls(t, "ConntrackDeleteFilters", 3)
+	})
 }
 
 func TestConfigureOVS(t *testing.T) {
