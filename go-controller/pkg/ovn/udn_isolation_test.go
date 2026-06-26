@@ -155,7 +155,7 @@ var _ = Describe("UDN Isolation", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = false
 
-		fakeOVN := NewFakeOVN(true)
+		fakeOVN := NewFakeOVN(false)
 
 		netInfoBefore := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16", "192.168.1.0/24")
 		nadBefore, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoBefore.netconf())
@@ -177,11 +177,15 @@ var _ = Describe("UDN Isolation", func() {
 		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{nodeName: {"vrf"}})
 		Expect(util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)).To(Succeed())
 
-		_, err = l3Controller.addressSetFactory.EnsureAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(ConfigureAdvertisedNetworkIsolation(fakeOVN.nbClient)).To(Succeed())
+		switchName := l3Controller.GetNetworkScopedSwitchName(nodeName)
 		Expect(libovsdbops.CreateOrUpdateLogicalSwitch(fakeOVN.nbClient, &nbdb.LogicalSwitch{
-			Name: l3Controller.GetNetworkScopedSwitchName(nodeName),
+			Name: switchName,
 		})).To(Succeed())
+		Expect(libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(fakeOVN.nbClient,
+			&nbdb.LogicalSwitch{Name: switchName},
+			&nbdb.LogicalSwitchPort{Name: types.SwitchToRouterPrefix + switchName, Type: "router"},
+		)).To(Succeed())
 
 		Expect(l3Controller.addAdvertisedNetworkIsolation(nodeName)).To(Succeed())
 		getPassACL := func() *nbdb.ACL {

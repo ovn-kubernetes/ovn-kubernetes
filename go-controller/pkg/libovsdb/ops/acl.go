@@ -28,6 +28,25 @@ func getACLMutableFields(acl *nbdb.ACL) []interface{} {
 		&acl.Name, &acl.Options, &acl.Priority, &acl.Severity, &acl.Tier, &acl.SampleNew, &acl.SampleEst}
 }
 
+// GetACL looks up an ACL from the cache
+func GetACL(nbClient libovsdbclient.Client, acl *nbdb.ACL) (*nbdb.ACL, error) {
+	found := []*nbdb.ACL{}
+	opModel := operationModel{
+		Model:          acl,
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(nbClient)
+	err := m.Lookup(opModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
+
 type aclPredicate func(*nbdb.ACL) bool
 
 // FindACLsWithPredicate looks up ACLs from the cache based on a given predicate
