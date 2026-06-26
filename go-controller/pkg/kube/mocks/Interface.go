@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	mock "github.com/stretchr/testify/mock"
-
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
