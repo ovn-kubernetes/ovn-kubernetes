@@ -10,12 +10,14 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -272,6 +274,19 @@ func GetAdvertisedNetworkSubnetsAddressSetDBIDs() *libovsdbops.DbObjectIDs {
 	})
 }
 
+// GetAdvertisedNetworkSubnetsDropPGdbIDs returns the DB IDs for the advertised network subnets drop port group
+func GetAdvertisedNetworkSubnetsDropPGdbIDs() *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupAdvertisedNetwork, types.DefaultNetworkControllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey: advertisedNetworkSubnetsKey,
+		})
+}
+
+// GetAdvertisedNetworkSubnetsDropPGName returns the hashed name for the advertised network subnets drop port group
+func GetAdvertisedNetworkSubnetsDropPGName() string {
+	return libovsdbutil.GetPortGroupName(GetAdvertisedNetworkSubnetsDropPGdbIDs())
+}
+
 // GetAdvertisedNetworkSubnetsDropACLdbIDs returns the DB IDs for the advertised network subnets drop ACL
 func GetAdvertisedNetworkSubnetsDropACLdbIDs() *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLAdvertisedNetwork, types.DefaultNetworkControllerName,
@@ -288,6 +303,124 @@ func GetAdvertisedNetworkSubnetsPassACLdbIDs(controller, networkName string, net
 			libovsdbops.ObjectNameKey: networkName,
 			libovsdbops.NetworkKey:    strconv.Itoa(networkID),
 		})
+}
+
+// ConfigureAdvertisedNetworkIsolation ensures the global resources for advertised network isolation exist.
+func ConfigureAdvertisedNetworkIsolation(nbClient libovsdbclient.Client) error {
+	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+	addrSet, err := addressSetFactory.EnsureAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+	if err != nil {
+		return fmt.Errorf("failed to ensure advertised subnets address set: %w", err)
+	}
+
+	dropACL := BuildAdvertisedNetworkSubnetsDropACL(addrSet)
+	pg := libovsdbutil.BuildPortGroup(GetAdvertisedNetworkSubnetsDropPGdbIDs(), nil, nil)
+
+	ops, err := migrateAdvertisedNetworkDropACLToPortGroup(nbClient, pg, dropACL)
+	if err != nil {
+		return err
+	}
+
+	ops, err = libovsdbops.CreateOrUpdateACLsOps(nbClient, ops, nil, dropACL)
+	if err != nil {
+		return fmt.Errorf("failed to create or update advertised network isolation drop ACL: %w", err)
+	}
+
+	pg.ACLs = []string{dropACL.UUID}
+
+	ops, err = libovsdbops.CreatePortGroupOps(nbClient, ops, pg)
+	if err != nil {
+		return fmt.Errorf("failed to create advertised network isolation port group: %w", err)
+	}
+
+	if _, err = libovsdbops.TransactAndCheck(nbClient, ops); err != nil {
+		return fmt.Errorf("failed to configure advertised network isolation: %w", err)
+	}
+	return nil
+}
+
+// migrateAdvertisedNetworkDropACLToPortGroup handles upgrade from switch-based drop ACL.
+// If the port group already exists, migration was already done. Otherwise, it finds all
+// drop ACLs on switches (there may be duplicates from a race condition where multiple
+// networks were advertised concurrently), removes them from switches, and adds the stor
+// ports of affected switches to the provided port group model so the PG-based drop ACL
+// takes over. It sets dropACL.UUID to the first existing ACL's UUID so the caller can
+// update it in place.
+func migrateAdvertisedNetworkDropACLToPortGroup(nbClient libovsdbclient.Client, pg *nbdb.PortGroup, dropACL *nbdb.ACL) ([]ovsdb.Operation, error) {
+	_, err := libovsdbops.GetPortGroup(nbClient, &nbdb.PortGroup{Name: pg.Name})
+	if err == nil {
+		return nil, nil
+	}
+	if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return nil, fmt.Errorf("failed to get advertised network isolation port group: %w", err)
+	}
+
+	existingDropACLs, err := libovsdbops.FindACLsWithPredicate(nbClient,
+		libovsdbops.GetPredicate[*nbdb.ACL](GetAdvertisedNetworkSubnetsDropACLdbIDs(), nil))
+	if err != nil {
+		return nil, fmt.Errorf("failed to find advertised network drop ACLs: %w", err)
+	}
+	if len(existingDropACLs) == 0 {
+		return nil, nil
+	}
+
+	dropACL.UUID = existingDropACLs[0].UUID
+
+	allDropACLUUIDs := sets.New[string]()
+	for _, acl := range existingDropACLs {
+		allDropACLUUIDs.Insert(acl.UUID)
+	}
+
+	var ops []ovsdb.Operation
+	var affectedSwitches []string
+	p := func(sw *nbdb.LogicalSwitch) bool {
+		if allDropACLUUIDs.HasAny(sw.ACLs...) {
+			affectedSwitches = append(affectedSwitches, sw.Name)
+			return true
+		}
+		return false
+	}
+	ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(nbClient, ops, p, existingDropACLs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to remove stale drop ACLs from switches: %w", err)
+	}
+
+	for _, swName := range affectedSwitches {
+		storPortName := types.SwitchToRouterPrefix + swName
+		storLSP, err := libovsdbops.GetLogicalSwitchPort(nbClient, &nbdb.LogicalSwitchPort{Name: storPortName})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get stor port %s: %w", storPortName, err)
+		}
+		pg.Ports = append(pg.Ports, storLSP.UUID)
+	}
+
+	return ops, nil
+}
+
+// CleanupStaleAdvertisedNetworkSubnets removes subnets from the advertised network subnets address set
+// that are not in validSubnets.
+func CleanupStaleAdvertisedNetworkSubnets(nbClient libovsdbclient.Client, validSubnets sets.Set[string]) error {
+	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+	addrSet, err := addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to get advertised subnets address set: %w", err)
+	}
+	if addrSet == nil {
+		return nil
+	}
+	v4Addrs, v6Addrs := addrSet.GetAddresses()
+	var stale []string
+	for _, addr := range append(v4Addrs, v6Addrs...) {
+		if !validSubnets.Has(addr) {
+			stale = append(stale, addr)
+		}
+	}
+	if len(stale) > 0 {
+		if err := addrSet.DeleteAddresses(stale); err != nil {
+			return fmt.Errorf("failed to delete stale addresses %q from advertised network subnets address set: %w", stale, err)
+		}
+	}
+	return nil
 }
 
 // BuildAdvertisedNetworkSubnetsDropACL builds the advertised network subnets drop ACL:
@@ -316,18 +449,22 @@ func BuildAdvertisedNetworkSubnetsDropACL(advertisedNetworkSubnetsAddressSet add
 }
 
 // addAdvertisedNetworkIsolation adds advertised network isolation rules to the given node.
-// It adds the following ACLs to the node switch:
+// We end up with the following ACLs:
 // action match                                                                       priority
 // ------ --------------------------------------------------------------------------- --------
 // pass   "(ip[4|6].src == <UDN_SUBNET> && ip[4|6].dst == <UDN_SUBNET>)"                1100
 // drop   "(ip[4|6].src == $<ALL_ADV_SUBNETS> && ip[4|6].dst == $<ALL_ADV_SUBNETS>)"    1050
+// The pass ACL is added to the node switch. The drop ACL is on a port group shared by all
+// advertised networks. The stor port of this network's switch is added to that port group
+// so the drop ACL applies to the whole switch.
+// On upgrade from switch-based drop ACL, stale switch references are removed in the same transaction.
 func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string) error {
 	var passMatches, cidrs []string
 	var ops []ovsdb.Operation
 
 	addrSet, err := bnc.addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 	if err != nil {
-		return fmt.Errorf("failed to get advertised subnets addresset %s for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
+		return fmt.Errorf("failed to get advertised subnets address set for network %s: %w", bnc.GetNetworkName(), err)
 	}
 	var ipv4Subnets, ipv6Subnets []*net.IPNet
 	for _, subnet := range bnc.Subnets() {
@@ -362,6 +499,8 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 	}
 	ops = append(ops, addrOps...)
 
+	switchName := bnc.GetNetworkScopedSwitchName(nodeName)
+
 	if len(passMatches) > 0 {
 		passACL := libovsdbutil.BuildACL(
 			GetAdvertisedNetworkSubnetsPassACLdbIDs(bnc.controllerName, bnc.GetNetworkName(), bnc.GetNetworkID()),
@@ -374,22 +513,24 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 
 		ops, err = libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, ops, nil, passACL)
 		if err != nil {
-			return fmt.Errorf("failed to create or update network isolation pass ACL %s for network %s: %w", GetAdvertisedNetworkSubnetsPassACLdbIDs(bnc.controllerName, bnc.GetNetworkName(), bnc.GetNetworkID()), bnc.GetNetworkName(), err)
+			return fmt.Errorf("failed to create or update network isolation pass ACL for network %s: %w", bnc.GetNetworkName(), err)
 		}
-		ops, err = libovsdbops.AddACLsToLogicalSwitchOps(bnc.nbClient, ops, bnc.GetNetworkScopedSwitchName(nodeName), passACL)
+		ops, err = libovsdbops.AddACLsToLogicalSwitchOps(bnc.nbClient, ops, switchName, passACL)
 		if err != nil {
-			return fmt.Errorf("failed to add network isolation pass ACL to switch %s for network %s: %w", bnc.GetNetworkScopedSwitchName(nodeName), bnc.GetNetworkName(), err)
+			return fmt.Errorf("failed to add network isolation pass ACL to switch %s for network %s: %w", switchName, bnc.GetNetworkName(), err)
 		}
 	}
 
-	dropACL := BuildAdvertisedNetworkSubnetsDropACL(addrSet)
-	ops, err = libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, ops, nil, dropACL)
+	// Add the stor port to the port group
+	pgName := GetAdvertisedNetworkSubnetsDropPGName()
+	storPortName := types.SwitchToRouterPrefix + switchName
+	storLSP, err := libovsdbops.GetLogicalSwitchPort(bnc.nbClient, &nbdb.LogicalSwitchPort{Name: storPortName})
 	if err != nil {
-		return fmt.Errorf("failed to create or update network isolation drop ACL %v", err)
+		return fmt.Errorf("failed to get stor port %s: %w", storPortName, err)
 	}
-	ops, err = libovsdbops.AddACLsToLogicalSwitchOps(bnc.nbClient, ops, bnc.GetNetworkScopedSwitchName(nodeName), dropACL)
+	ops, err = libovsdbops.AddPortsToPortGroupOps(bnc.nbClient, ops, pgName, storLSP.UUID)
 	if err != nil {
-		return fmt.Errorf("failed to add network isolation drop ACL to switch %s for network %s: %w", bnc.GetNetworkScopedSwitchName(nodeName), bnc.GetNetworkName(), err)
+		return fmt.Errorf("failed to add stor port %s to advertised network isolation port group: %w", storPortName, err)
 	}
 
 	if _, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops); err != nil {
@@ -399,7 +540,8 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 }
 
 // deleteAdvertisedNetworkIsolation deletes advertised network isolation rules from the given node switch.
-// It removes the network CIDRs from the global advertised networks addresset together with the ACLs on the node switch.
+// It removes the network CIDRs from the global advertised networks address set, removes the pass ACL from
+// the node switch, and removes the stor port from the advertised network drop port group.
 func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName string) error {
 	addrSet, err := bnc.addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
@@ -418,28 +560,31 @@ func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName stri
 		}
 	}
 
+	switchName := bnc.GetNetworkScopedSwitchName(nodeName)
+
+	// Remove the pass ACL from the switch
 	passACLIDs := GetAdvertisedNetworkSubnetsPassACLdbIDs(bnc.controllerName, bnc.GetNetworkName(), bnc.GetNetworkID())
-	dropACLIDs := GetAdvertisedNetworkSubnetsDropACLdbIDs()
-	passACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](passACLIDs, nil)
-	dropACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](dropACLIDs, nil)
-	// Create a combined predicate to find both ACLs in a single lookup
-	combinedACLPredicate := func(acl *nbdb.ACL) bool {
-		// Check if ACL matches either pass or drop ACL IDs
-		return passACLPredicate(acl) || dropACLPredicate(acl)
+	passACL, err := libovsdbops.GetACL(bnc.nbClient, &nbdb.ACL{ExternalIDs: passACLIDs.GetExternalIDs()})
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("unable to find pass ACL for advertised network %s: %w", bnc.GetNetworkName(), err)
 	}
-
-	// Find both ACLs in a single lookup
-	allACLsToRemove, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, combinedACLPredicate)
-	if err != nil {
-		return fmt.Errorf("unable to find pass and/or drop ACLs for advertised network %s: %w", bnc.GetNetworkName(), err)
-	}
-
-	// ACLs referenced by the switch will be deleted by db if there are no other references
-	p := func(sw *nbdb.LogicalSwitch) bool { return sw.Name == bnc.GetNetworkScopedSwitchName(nodeName) }
-	if len(allACLsToRemove) > 0 {
-		ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(bnc.nbClient, ops, p, allACLsToRemove...)
+	if passACL != nil {
+		ops, err = libovsdbops.RemoveACLsFromLogicalSwitchOps(bnc.nbClient, ops, switchName, passACL)
 		if err != nil {
-			return fmt.Errorf("failed to create ovsdb ops for removing network isolation ACLs from the %s switch for network %s: %w", bnc.GetNetworkScopedSwitchName(nodeName), bnc.GetNetworkName(), err)
+			return fmt.Errorf("failed to remove pass ACL from switch %s for network %s: %w", switchName, bnc.GetNetworkName(), err)
+		}
+	}
+
+	// Remove the stor port from the port group
+	storPortName := types.SwitchToRouterPrefix + switchName
+	storLSP, err := libovsdbops.GetLogicalSwitchPort(bnc.nbClient, &nbdb.LogicalSwitchPort{Name: storPortName})
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to get stor port %s: %w", storPortName, err)
+	}
+	if storLSP != nil {
+		ops, err = libovsdbops.DeletePortsFromPortGroupOps(bnc.nbClient, ops, GetAdvertisedNetworkSubnetsDropPGName(), storLSP.UUID)
+		if err != nil {
+			return fmt.Errorf("failed to remove stor port %s from advertised network isolation port group: %w", storPortName, err)
 		}
 	}
 

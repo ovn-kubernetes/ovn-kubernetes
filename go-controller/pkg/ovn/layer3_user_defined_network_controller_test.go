@@ -1323,6 +1323,8 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 			userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 			podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
 
+			Expect(ConfigureAdvertisedNetworkIsolation(fakeOvn.nbClient)).To(Succeed())
+
 			// Step 4: Start watching nodes to trigger addUpdateLocalNodeEvent()
 			By("Starting node watch on L3 UDN controller")
 			Expect(fakeOvn.registerUDNNodeHandler(userDefinedNetworkName)).To(Succeed())
@@ -1477,6 +1479,8 @@ var _ = Describe("Layer3 CUDN OutboundSNAT for no-overlay mode", func() {
 
 			userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
 			podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
+
+			Expect(ConfigureAdvertisedNetworkIsolation(fakeOvn.nbClient)).To(Succeed())
 
 			// Step 4: Create and advertise a pod on the CUDN to trigger gateway SNAT creation
 			By("Starting node watch on L3 UDN controller for shared gateway mode")
