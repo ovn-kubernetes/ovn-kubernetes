@@ -29,5 +29,6 @@ func TestNodeSuite(t *testing.T) {
 	RegisterFailHandler(Fail)
 	util.SetFakeIPTablesHelpers()
 	nodenft.SetFakeNFTablesHelper()
+	util.SetSupportsIPv6InterfaceForwarding(false)
 	RunSpecs(t, "Node Suite")
 }

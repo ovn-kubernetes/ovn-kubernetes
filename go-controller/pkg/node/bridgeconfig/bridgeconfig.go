@@ -597,12 +597,9 @@ func getIntfName(gatewayIntf string) (string, error) {
 // bridgedGatewayNodeSetup enables forwarding on bridge interface, sets up the physical network name mappings for the bridge,
 // and returns an ifaceID created from the bridge name and the node name
 func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeName, physicalNetworkName string) (string, error) {
-	// IPv6 forwarding is enabled globally
-	if config.IPv4Mode {
-		err := util.SetForwardingModeForInterface(bridgeName)
-		if err != nil {
-			return "", err
-		}
+	err := util.SetForwardingModeForInterface(bridgeName)
+	if err != nil {
+		return "", err
 	}
 
 	// ovn-bridge-mappings maps a physical network name to a local ovs bridge

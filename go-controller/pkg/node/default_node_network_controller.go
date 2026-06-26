@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ip"
+	"github.com/coreos/go-iptables/iptables"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -48,6 +49,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	nodetypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/types"
+	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
@@ -1589,22 +1591,20 @@ func DummyMasqueradeIPs() []net.IP {
 	return nextHops
 }
 
-// configureGlobalForwarding configures the global forwarding settings.
-// It sets the FORWARD policy to DROP/ACCEPT based on the config.Gateway.DisableForwarding value for all enabled IP families.
-// For IPv6 it additionally always enables the global forwarding.
+// configureGlobalForwarding configures the global forwarding settings for IPv6 when
+// per-interface forwarding is not available. It enables global forwarding, and sets the
+// ip6tables FORWARD policy to DROP if config.Gateway.DisableForwarding is set (or sets it
+// back to ACCEPT if it had previously set it DROP and DisableForwarding is now unset).
+//
+// This function assumes that other forwarding setup will also be performed. Specifically,
+// you must call util.SetForwardingModeForInterface() to enable per-interface
+// forwarding on the interfaces that need it (the bridge and management port interfaces).
+// And if config.Gateway.DisableForwarding is set, you must call
+// initExternalBridgeServiceForwardingRules() to create netfilter rules to forward the
+// traffic that OVN-Kubernetes needs, and block other traffic from being forwarded.
 func configureGlobalForwarding() error {
-	// Global forwarding works differently for IPv6:
-	//   conf/all/forwarding - BOOLEAN
-	//    Enable global IPv6 forwarding between all interfaces.
-	//	  IPv4 and IPv6 work differently here; e.g. netfilter must be used
-	//	  to control which interfaces may forward packets and which not.
-	// https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt
-	//
-	// It is not possible to configure the IPv6 forwarding per interface by
-	// setting the net.ipv6.conf.<ifname>.forwarding sysctl. Instead,
-	// the opposite approach is required where the global forwarding
-	// is enabled and an iptables rule is added to restrict it by default.
-	if config.IPv6Mode {
+	if config.IPv6Mode && !util.SupportsIPv6InterfaceForwarding() {
+		// Enable global forwarding since per-interface forwarding isn't available.
 		if err := ip.EnableIP6Forward(); err != nil {
 			return fmt.Errorf("could not set the correct global forwarding value for ipv6:  %w", err)
 		}
@@ -1617,15 +1617,34 @@ func configureGlobalForwarding() error {
 			return fmt.Errorf("failed to get the iptables helper: %w", err)
 		}
 
-		target := "ACCEPT"
-		if config.Gateway.DisableForwarding {
-			target = "DROP"
-
+		desiredPolicy := ""
+		if nodeutil.NeedIPTablesForwardingRules(proto) {
+			desiredPolicy = "DROP"
+		} else {
+			// If there's evidence that we previously configured
+			// DisableForwarding, then change the policy back to ACCEPT now.
+			// (Note that the rules we look for here will be deleted later
+			// by the gateway setup.)
+			masqueradeIP := config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP
+			if proto == iptables.ProtocolIPv6 {
+				masqueradeIP = config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP
+			}
+			forwardRules := getMasqueradeIpTablesForwardRules(masqueradeIP, proto)
+			if len(forwardRules) != 0 {
+				rule := forwardRules[0]
+				if ruleExists, _ := ipt.Exists(rule.Table, rule.Chain, rule.Args...); ruleExists {
+					desiredPolicy = "ACCEPT"
+				}
+			}
 		}
-		if err := ipt.ChangePolicy("filter", "FORWARD", target); err != nil {
-			return fmt.Errorf("failed to change the forward policy to %q: %w", target, err)
+
+		if desiredPolicy != "" {
+			if err := ipt.ChangePolicy("filter", "FORWARD", desiredPolicy); err != nil {
+				return fmt.Errorf("failed to change the forward policy to %q: %w", desiredPolicy, err)
+			}
 		}
 	}
+
 	return nil
 }
 
