@@ -6,6 +6,7 @@ package node
 import (
 	"fmt"
 	"net"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -410,7 +411,9 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 
 	// Also update the node annotation if the networkID doesn't match
 	if len(updatedSubnetsMap) > 0 || networkID != types.NoNetworkID || newTunnelID != types.NoTunnelID {
+		updateStart := time.Now()
 		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, updatedSubnetsMap, networkID, newTunnelID)
+
 		if err != nil {
 			if errR := na.clusterSubnetAllocator.ReleaseNetworks(node.Name, allocatedSubnets...); errR != nil {
 				klog.Warningf("Error releasing node %s subnets: %v", node.Name, errR)
@@ -420,6 +423,11 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 				klog.Infof("Releasing node %s tunnelID for network %s since annotation update failed", node.Name, networkName)
 			}
 			return err
+		}
+
+		if na.netInfo.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
+			updateDuration := time.Since(updateStart)
+			metrics.RecordUDNUpdateNodeAnnotationDuration(networkName, updateDuration.Seconds())
 		}
 	}
 

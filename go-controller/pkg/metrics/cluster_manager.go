@@ -160,6 +160,24 @@ var metricVTEPCondition = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		"Use the 'condition' and 'status' labels to select.",
 }, []string{"name", "condition", "status"})
 
+// These metrics are being emitted per-network to provide granular data for performance testing
+// If performance issues arise due to cardinality, these metrics should be aggregated
+var metricUDNUpdateNodeAnnotationDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "udn_update_node_annotation_duration_seconds",
+	Help:      "Time spent updating node annotations during UDN network allocation.",
+	Buckets:   prometheus.ExponentialBuckets(.01, 2, 13), // 10ms to ~40s
+}, []string{"name"})
+
+var metricUDNNADSyncDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+	Name:      "udn_nad_sync_duration_seconds",
+	Help:      "Time spent syncing NetworkAttachmentDefinitions during UDN reconciliation.",
+	Buckets:   prometheus.ExponentialBuckets(.005, 2, 14), // 5ms to ~40s
+}, []string{"name"})
+
 // RegisterClusterManagerBase registers ovnkube cluster manager base metrics with the Prometheus registry.
 // This function should only be called once.
 func RegisterClusterManagerBase() {
@@ -203,6 +221,11 @@ func RegisterClusterManagerFunctional() {
 		prometheus.MustRegister(metricUDNCount)
 		prometheus.MustRegister(metricCUDNCount)
 		prometheus.MustRegister(metricCUDNCondition)
+		if config.Metrics.EnableScaleMetrics {
+			prometheus.MustRegister(metricUDNUpdateNodeAnnotationDuration)
+			prometheus.MustRegister(metricUDNNADSyncDuration)
+			registerWorkqueueMetrics(types.MetricOvnkubeNamespace, types.MetricOvnkubeSubsystemClusterManager)
+		}
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			prometheus.MustRegister(metricUDNNodesRendered)
 		}
@@ -333,4 +356,21 @@ func boolFloat64(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// RecordUDNUpdateNodeAnnotationDuration records duration of updating node annotations during UDN allocation
+func RecordUDNUpdateNodeAnnotationDuration(name string, duration float64) {
+	metricUDNUpdateNodeAnnotationDuration.WithLabelValues(name).Observe(duration)
+}
+
+// RecordUDNNADSyncDuration records duration of syncing NADs during UDN reconciliation
+func RecordUDNNADSyncDuration(name string, duration float64) {
+	metricUDNNADSyncDuration.WithLabelValues(name).Observe(duration)
+}
+
+// CleanupUDNMetrics removes all metric time series associated with a deleted UDN to prevent
+// unbounded cardinality growth. Should be called when a UDN or CUDN is fully deleted.
+func CleanupUDNMetrics(networkName string) {
+	metricUDNUpdateNodeAnnotationDuration.DeleteLabelValues(networkName)
+	metricUDNNADSyncDuration.DeleteLabelValues(networkName)
 }

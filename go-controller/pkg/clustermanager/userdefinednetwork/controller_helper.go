@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
@@ -20,13 +21,32 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utiludn "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/udn"
 )
 
-func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.NetworkAttachmentDefinition, error) {
+func (c *Controller) updateNAD(obj client.Object, namespace string) (_ *netv1.NetworkAttachmentDefinition, err error) {
+	start := time.Now()
+	defer func() {
+		if err != nil || !config.Metrics.EnableScaleMetrics {
+			return
+		}
+		duration := time.Since(start)
+		// Record workflow phase metric for NAD sync
+		// Use network-scoped name to avoid collisions between same-name UDNs in different namespaces
+		networkName := obj.GetName()
+		switch o := obj.(type) {
+		case *userdefinednetworkv1.UserDefinedNetwork:
+			networkName = util.GenerateUDNNetworkName(o.Namespace, o.Name)
+		case *userdefinednetworkv1.ClusterUserDefinedNetwork:
+			networkName = util.GenerateCUDNNetworkName(o.Name)
+		}
+		metrics.RecordUDNNADSyncDuration(networkName, duration.Seconds())
+	}()
 	if utiludn.IsPrimaryNetwork(template.GetSpec(obj)) {
 		// check if required UDN label is on namespace
 		ns, err := c.namespaceInformer.Lister().Get(namespace)

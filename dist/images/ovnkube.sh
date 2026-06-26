@@ -2042,9 +2042,16 @@ ovn-cluster-manager() {
   }
   echo "ovn_cluster_manager_ssl_opts=${ovn_cluster_manager_ssl_opts}"
 
+  ovnkube_metrics_scale_enable_flag=
+  if [[ ${ovnkube_metrics_scale_enable} == "true" ]]; then
+    ovnkube_metrics_scale_enable_flag="--metrics-enable-scale"
+  fi
+  echo "ovnkube_metrics_scale_enable_flag: ${ovnkube_metrics_scale_enable_flag}"
+
   rm -f ${OVN_RUNDIR}/ovnkube-cluster-manager.pid
 
   echo "=============== ovn-cluster-manager ========== control plane node only"
+
   /usr/bin/ovnkube --init-cluster-manager ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${egressfirewall_enabled_flag} \
@@ -2079,6 +2086,7 @@ ovn-cluster-manager() {
     ${dynamic_udn_grace_period} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_allow_icmp_netpol_flag} \
+    ${ovnkube_metrics_scale_enable_flag} \
     --gateway-mode=${ovn_gateway_mode} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --host-network-namespace ${ovn_host_network_namespace} \

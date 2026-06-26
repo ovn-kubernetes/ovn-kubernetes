@@ -50,6 +50,12 @@ var _ = Describe("MetricServer", func() {
 				t.opts.EnableOVNControllerMetrics = tc.enableOVNController
 				t.opts.EnableOVNNorthdMetrics = tc.enableOVNNorthd
 
+				savedEnableScaleMetrics := config.Metrics.EnableScaleMetrics
+				config.Metrics.EnableScaleMetrics = tc.enableScaleMetrics
+				DeferCleanup(func() {
+					config.Metrics.EnableScaleMetrics = savedEnableScaleMetrics
+				})
+
 				// Mock the exec runner for RunOvsVswitchdAppCtl calls
 				mockCmd := new(mock_k8s_io_utils_exec.Cmd)
 				mockExecRunner := new(mocks.ExecRunner)
@@ -429,6 +435,7 @@ type metricsTestCase struct {
 	enableOVNDB         bool
 	enableOVNController bool
 	enableOVNNorthd     bool
+	enableScaleMetrics  bool
 	mockRunCommands     []ovntest.TestifyMockHelper
 	expectedMetrics     []string
 }
@@ -605,6 +612,7 @@ var (
 
 	OVNControllerMetricsTestCase = metricsTestCase{
 		enableOVNController: true,
+		enableScaleMetrics:  true,
 		mockRunCommands: []ovntest.TestifyMockHelper{
 			// ovs-ofctl -t 5 dump-aggregate br-int
 			{
